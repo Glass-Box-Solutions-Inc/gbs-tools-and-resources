@@ -1,0 +1,95 @@
+{
+  "_README": "MCP Server Configuration Template for Glass Box Solutions, Inc. Replace ${PLACEHOLDERS} with actual values. See configs/ directory for per-server documentation.",
+
+  "mcpServers": {
+
+    "_section_gbs_custom": "=== GBS Custom MCP Servers ===",
+
+    "spectacles": {
+      "command": "python3",
+      "args": ["-m", "spectacles_mcp"],
+      "cwd": "${SPECTACLES_DIR}",
+      "env": {
+        "SPECTACLES_API_URL": "https://spectacles-gc2qovgs7q-uc.a.run.app"
+      },
+      "description": "[GBS] Spectacles MCP - Browser automation + VLM verification. Thin HTTP client calling the deployed Cloud Run service."
+    },
+
+    "kb-api": {
+      "command": "node",
+      "args": ["${MCP_SERVERS_DIR}/servers/kb-api-mcp/build/index.js"],
+      "env": {
+        "KB_BACKEND_URL": "https://wc-kb-backend-rs3cfj56xa-uc.a.run.app"
+      },
+      "description": "[GBS] KB API MCP - Legal research knowledge base search, AI Q&A, case graph, extraction pipeline monitoring."
+    },
+
+    "kb-db": {
+      "command": "node",
+      "args": ["${MCP_SERVERS_DIR}/servers/kb-db-mcp/build/index.js"],
+      "env": {
+        "KB_DATABASE_URL": "${KB_DATABASE_URL}"
+      },
+      "description": "[GBS] KB DB MCP - Read-only PostgreSQL access to KB database. DBA/debug tool only. See servers/kb-db-mcp/ASSESSMENT.md."
+    },
+
+    "wc-paralegal": {
+      "command": "node",
+      "args": ["${MCP_SERVERS_DIR}/servers/wc-paralegal-mcp/build/index.js"],
+      "env": {
+        "WC_PARALEGAL_URL": "http://localhost:3002"
+      },
+      "description": "[GBS] WC Paralegal MCP - Document extraction (Document AI + Gemini), case management, Gemini chat."
+    },
+
+    "social-media-mcp": {
+      "command": "node",
+      "args": ["${MCP_SERVERS_DIR}/servers/social-media-mcp/build/index.js"],
+      "env": {
+        "LINKEDIN_ACCESS_TOKEN": "${LINKEDIN_ACCESS_TOKEN}",
+        "TWITTER_BEARER_TOKEN": "${TWITTER_BEARER_TOKEN}",
+        "MASTODON_ACCESS_TOKEN": "${MASTODON_ACCESS_TOKEN}",
+        "MASTODON_INSTANCE_URL": "${MASTODON_INSTANCE_URL}"
+      },
+      "description": "[GBS] Social Media MCP - Post to LinkedIn, Twitter/X, and Mastodon with AI-powered content generation. Requires platform API tokens."
+    },
+
+    "_section_third_party": "=== Third-Party MCP Servers ===",
+
+    "n8n-mcp": {
+      "command": "npx",
+      "args": ["n8n-mcp"],
+      "env": {
+        "MCP_MODE": "stdio",
+        "LOG_LEVEL": "error",
+        "DISABLE_CONSOLE_OUTPUT": "true",
+        "N8N_API_URL": "https://glassboxinc.app.n8n.cloud/api/v1",
+        "N8N_API_KEY": "${N8N_API_KEY}"
+      },
+      "description": "[Third-party] n8n MCP - Workflow automation. Generate API key at n8n > Settings > API."
+    },
+
+    "prisma-local": {
+      "command": "npx",
+      "args": ["prisma", "mcp"],
+      "description": "[Third-party] Prisma MCP - Database migrations, schema management. Project-specific, not global."
+    },
+
+    "postgres-mcp": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-e", "DATABASE_URL", "crystaldba/postgres-mcp"],
+      "description": "[Third-party] PostgreSQL MCP Pro - Query optimization, indexing, health analysis. Requires Docker + DATABASE_URL."
+    },
+
+    "_section_external_notes": "=== External / HTTP MCPs (configure in ~/.claude.json, not here) ===",
+
+    "_linear_note": "Linear MCP uses HTTP transport with OAuth — configure in ~/.claude.json. See configs/linear.md",
+    "_notion_note": "Notion MCP is configured via Claude's built-in Notion integration, not here.",
+
+    "_section_deprecated": "=== DEPRECATED / REMOVED ===",
+
+    "_freecad_removed": "FreeCAD MCP: REMOVED (2026-03-01). No GBS relevance.",
+    "_penpot_removed": "Penpot MCP: REMOVED from template (2026-03-01). No active GBS use case. Can re-add if needed.",
+    "_better_auth_removed": "BetterAuth MCP: REMOVED from template (2026-03-01). Third-party remote MCP from chonkie.ai — security risk. Use BetterAuth docs directly."
+  }
+}

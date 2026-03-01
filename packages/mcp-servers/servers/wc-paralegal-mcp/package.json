@@ -1,0 +1,19 @@
+{
+  "name": "wc-paralegal-mcp",
+  "version": "1.0.0",
+  "description": "MCP server wrapping the WC Paralegal Backend REST API for document extraction, case management, and PD reference data",
+  "type": "module",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "axios": "^1.7.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0"
+  }
+}

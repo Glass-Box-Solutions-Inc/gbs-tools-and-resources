@@ -1,0 +1,3 @@
+Testing Mastodon client with mock fallback...
+Error testing Mastodon client: exports is not defined in ES module scope
+This file is being treated as an ES module because it has a '.js' file extension and 'C:\Users\ramsa\Desktop\social-media-mcp\package.json' contains "type": "module". To treat it as a CommonJS script, rename it to use the '.cjs' file extension.

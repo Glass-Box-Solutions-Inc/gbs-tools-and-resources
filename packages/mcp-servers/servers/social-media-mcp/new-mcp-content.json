@@ -1,0 +1,8 @@
+{
+  "mastodon": {
+    "post": "🔄 Just updated our Social Media MCP Server! Now posting seamlessly to Mastodon and LinkedIn with improved authentication flows. #MCP #SocialMedia #DevOps\n\nThe Model Context Protocol is revolutionizing how we connect AI with external services. What MCP servers are you building? Share your projects! #MCPDev"
+  },
+  "linkedin": {
+    "post": "# Social Media MCP Server Update\n\nExcited to share that we've just completed a major update to our Social Media MCP Server! This powerful tool now seamlessly posts content across multiple platforms with improved authentication flows.\n\n## Key Improvements\n\n- **Enhanced LinkedIn Integration**: Updated the client to match the latest API documentation with support for article sharing and proper formatting\n- **Robust OAuth Flow**: Completely redesigned the authentication process to use LinkedIn's default redirect URI\n- **Improved Error Handling**: Better fallback mechanisms and detailed logging\n- **Cross-Platform Support**: Unified content management across Mastodon and LinkedIn\n\n## Why MCP Matters\n\nThe Model Context Protocol (MCP) is transforming how we connect AI systems with external services. By providing a standardized interface for AI to interact with tools and data sources, MCP enables more powerful, context-aware applications.\n\nOur Social Media MCP Server demonstrates this power by allowing AI assistants to post content across multiple platforms with proper formatting and authentication.\n\n## What's Next\n\nWe're continuing to expand our MCP ecosystem with new integrations and capabilities. Stay tuned for more updates!\n\n#MCP #SocialMedia #AIIntegration #DevOps #TechInnovation"
+  }
+}

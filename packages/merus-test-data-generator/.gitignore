@@ -1,0 +1,9 @@
+output/
+logs/
+*.db
+.env
+__pycache__/
+*.pyc
+.meruscase_token
+*.token
+.auth/

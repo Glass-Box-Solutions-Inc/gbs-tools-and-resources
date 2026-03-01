@@ -1,0 +1,20 @@
+{
+  "name": "kb-db-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for read-only PostgreSQL access to the Knowledge Base database",
+  "type": "module",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0"
+  }
+}

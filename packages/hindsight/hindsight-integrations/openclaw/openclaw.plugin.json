@@ -1,0 +1,124 @@
+{
+  "id": "hindsight-openclaw",
+  "name": "Hindsight Memory",
+  "kind": "memory",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "daemonIdleTimeout": {
+        "type": "number",
+        "description": "Seconds before daemon shuts down from inactivity (0 = never)",
+        "default": 0
+      },
+      "embedPort": {
+        "type": "number",
+        "description": "Port for hindsight-embed server (auto-assigned if not specified)",
+        "default": 0
+      },
+      "bankMission": {
+        "type": "string",
+        "description": "Custom mission/context for the memory bank",
+        "default": "You are an AI assistant helping users across multiple communication channels (Telegram, Slack, Discord, etc.). Remember user preferences, instructions, and important context from conversations to provide personalized assistance."
+      },
+      "embedVersion": {
+        "type": "string",
+        "description": "hindsight-embed version to use (e.g. 'latest', '0.4.2', or empty for latest)",
+        "default": "latest"
+      },
+      "llmProvider": {
+        "type": "string",
+        "description": "LLM provider for Hindsight memory (e.g. 'openai', 'anthropic', 'gemini', 'groq', 'ollama', 'openai-codex', 'claude-code'). Takes priority over auto-detection but not over HINDSIGHT_API_LLM_PROVIDER env var.",
+        "enum": ["openai", "anthropic", "gemini", "groq", "ollama", "openai-codex", "claude-code"]
+      },
+      "llmModel": {
+        "type": "string",
+        "description": "LLM model to use (e.g. 'gpt-4o-mini', 'claude-3-5-haiku-20241022'). Used with llmProvider."
+      },
+      "llmApiKeyEnv": {
+        "type": "string",
+        "description": "Name of the env var holding the API key (e.g. 'MY_CUSTOM_KEY'). If not set, uses the standard env var for the chosen provider."
+      },
+      "embedPackagePath": {
+        "type": "string",
+        "description": "Local path to hindsight package for development (e.g. '/path/to/hindsight'). When set, uses 'uv run --directory <path>' instead of 'uvx hindsight-embed@latest'."
+      },
+      "apiPort": {
+        "type": "number",
+        "description": "Port for the openclaw profile daemon (default: 9077)",
+        "default": 9077
+      },
+      "hindsightApiUrl": {
+        "type": "string",
+        "description": "External Hindsight API URL (e.g. 'https://mcp.hindsight.devcraft.team'). When set, skips local daemon and connects directly to this API."
+      },
+      "hindsightApiToken": {
+        "type": "string",
+        "description": "API token for external Hindsight API authentication. Required if the external API has authentication enabled."
+      },
+      "dynamicBankId": {
+        "type": "boolean",
+        "description": "Enable per-channel memory banks. When true, memories are isolated by channel (e.g., slack-C123, telegram-456). When false, all channels share a single 'openclaw' bank.",
+        "default": true
+      },
+      "bankIdPrefix": {
+        "type": "string",
+        "description": "Optional prefix for bank IDs (e.g., 'prod' results in 'prod-slack-C123'). Useful for separating environments."
+      }
+    },
+    "additionalProperties": false
+  },
+  "uiHints": {
+    "daemonIdleTimeout": {
+      "label": "Daemon Idle Timeout",
+      "placeholder": "0 (never timeout)"
+    },
+    "embedPort": {
+      "label": "Embed Server Port",
+      "placeholder": "0 (auto-assign)"
+    },
+    "bankMission": {
+      "label": "Bank Mission",
+      "placeholder": "Custom context for what this agent does..."
+    },
+    "embedVersion": {
+      "label": "Hindsight Embed Version",
+      "placeholder": "latest (or pin to specific version like 0.4.2)"
+    },
+    "llmProvider": {
+      "label": "LLM Provider",
+      "placeholder": "e.g. openai, anthropic, gemini, groq"
+    },
+    "llmModel": {
+      "label": "LLM Model",
+      "placeholder": "e.g. gpt-4o-mini, claude-3-5-haiku-20241022"
+    },
+    "llmApiKeyEnv": {
+      "label": "API Key Env Var",
+      "placeholder": "e.g. MY_CUSTOM_API_KEY (optional)"
+    },
+    "embedPackagePath": {
+      "label": "Local Package Path (Dev)",
+      "placeholder": "/path/to/hindsight (for local development)"
+    },
+    "apiPort": {
+      "label": "API Port",
+      "placeholder": "9077 (default)"
+    },
+    "hindsightApiUrl": {
+      "label": "External Hindsight API URL",
+      "placeholder": "e.g. https://mcp.hindsight.devcraft.team (leave empty for local daemon)"
+    },
+    "hindsightApiToken": {
+      "label": "External API Token",
+      "placeholder": "API token if external API requires authentication"
+    },
+    "dynamicBankId": {
+      "label": "Dynamic Bank IDs",
+      "placeholder": "true (isolate memories per channel)"
+    },
+    "bankIdPrefix": {
+      "label": "Bank ID Prefix",
+      "placeholder": "e.g., prod, staging (optional)"
+    }
+  }
+}

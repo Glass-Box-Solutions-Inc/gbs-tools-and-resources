@@ -1,0 +1,151 @@
+# Social Media MCP Server - Project Rules
+
+## MCP Plugin Development Protocol
+
+⚠️ CRITICAL: DO NOT USE attempt_completion BEFORE TESTING ⚠️
+
+## Step 1: Planning (PLAN MODE)
+- What problem does this tool solve?
+  - The tool solves the problem of managing content across multiple social media platforms
+  - It automates research, content creation, and posting with platform-specific formatting
+  - It handles rate limits and provides analytics for optimization
+
+- What API/service will it use?
+  - Twitter API v2 for Twitter/X integration
+  - Mastodon API for Mastodon integration
+  - Brave Search MCP for web search
+  - Perplexity MCP for in-depth research
+  - Multiple AI models (OpenAI, Anthropic, DeepSeek, Grok, HuggingFace)
+
+- What are the authentication requirements?
+  - Twitter: OAuth 1.0a and OAuth 2.0 (API keys, access tokens)
+  - Mastodon: OAuth 2.0 (client key, client secret, access token)
+  - Brave Search: API key
+  - AI services: API keys for each service
+
+## Step 2: Implementation (ACT MODE)
+1. Bootstrap
+   - For web services, JavaScript integration, or Node.js environments:
+     ```bash
+     npx @modelcontextprotocol/create-server social-media-mcp
+     cd social-media-mcp
+     npm install
+     ```
+
+2. Core Implementation
+   - Use MCP SDK
+   - Implement comprehensive logging
+     ```typescript
+     console.error('[Setup] Initializing server...');
+     console.error('[API] Request to endpoint:', endpoint);
+     console.error('[Error] Failed with:', error);
+     ```
+   - Add type definitions
+   - Handle errors with context
+   - Implement rate limiting
+
+3. Configuration
+   - Get credentials from user if needed
+   - Add to MCP settings:
+     ```json
+     {
+       "mcpServers": {
+         "social-media-mcp": {
+           "command": "node",
+           "args": ["path/to/build/index.js"],
+           "env": {
+             "TWITTER_API_KEY": "key",
+             "TWITTER_API_SECRET": "secret",
+             "TWITTER_BEARER_TOKEN": "token",
+             "TWITTER_ACCESS_TOKEN": "token",
+             "TWITTER_ACCESS_SECRET": "secret",
+             "TWITTER_OAUTH_CLIENT": "client",
+             "TWITTER_CLIENT_SECRET": "secret",
+             "MASTODON_CLIENT_SECRET": "secret",
+             "MASTODON_CLIENT_KEY": "key",
+             "MASTODON_ACCESS_TOKEN": "token",
+             "ANTHROPIC_API_KEY": "key",
+             "DEEPSEEK_API_KEY": "key",
+             "OPENAI_API_KEY": "key",
+             "GOOGLE_API_KEY": "key",
+             "GROK_API_KEY": "key",
+             "BRAVE_API_KEY": "key",
+             "HUGGINGFACE_API_KEY": "key"
+           },
+           "disabled": false,
+           "autoApprove": []
+         }
+       }
+     }
+     ```
+
+## Step 3: Testing (BLOCKER ⛔️)
+
+<thinking>
+BEFORE using attempt_completion, I MUST verify:
+□ Have I tested EVERY tool?
+□ Have I confirmed success from the user for each test?
+□ Have I documented the test results?
+
+If ANY answer is "no", I MUST NOT use attempt_completion.
+</thinking>
+
+1. Test Each Tool (REQUIRED)
+   □ Test each tool with valid inputs
+   □ Verify output format is correct
+   ⚠️ DO NOT PROCEED UNTIL ALL TOOLS TESTED
+
+## Step 4: Completion
+❗ STOP AND VERIFY:
+□ Every tool has been tested with valid inputs
+□ Output format is correct for each tool
+
+Only after ALL tools have been tested can attempt_completion be used.
+
+## Key Requirements
+- ✓ Must use MCP SDK
+- ✓ Must have comprehensive logging
+- ✓ Must test each tool individually
+- ✓ Must handle errors gracefully
+- ⛔️ NEVER skip testing before completion
+
+## Project-Specific Patterns
+
+### Component Organization
+- Each major component should be in its own directory
+- Components should communicate through well-defined interfaces
+- Use dependency injection for better testability
+
+### Error Handling
+- All API calls should be wrapped in try/catch blocks
+- Error messages should be descriptive and include context
+- Rate limit errors should trigger the rate limit management system
+
+### Logging
+- Use structured logging with consistent format
+- Include component name, action, and relevant data
+- Log all API requests, responses, and errors
+
+### Rate Limit Management
+- Track API usage for all external services
+- Implement token bucket algorithm for rate limiting
+- Use request queuing for rate-limited operations
+- Implement fallback mechanisms between AI models
+
+### Testing Strategy
+- Unit tests for individual components
+- Integration tests for component interactions
+- End-to-end tests for complete workflows
+- Mock external APIs for reliable testing
+
+### Code Style
+- Use TypeScript for all code
+- Follow consistent naming conventions
+- Use interfaces for type definitions
+- Document public APIs with JSDoc comments
+
+### Security Practices
+- No hardcoded credentials in source code
+- Use environment variables for all secrets
+- Validate and sanitize all user inputs
+- Follow principle of least privilege for API access
