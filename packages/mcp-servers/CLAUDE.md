@@ -22,7 +22,7 @@ This repository centralizes all MCP server configurations, custom server impleme
 
 ```bash
 # Linux/macOS
-cd /home/vncuser/Desktop/mcp-servers
+cd ~/Desktop/gbs-tools-and-resources/packages/mcp-servers
 ./scripts/generate-mcp-config.sh /path/to/project/.mcp.json
 
 # Windows (PowerShell)
@@ -33,18 +33,18 @@ cd /home/vncuser/Desktop/mcp-servers
 
 ```bash
 # Social Media MCP (Node.js)
-cd /home/vncuser/Desktop/mcp-servers/servers/social-media-mcp
+cd ~/Desktop/gbs-tools-and-resources/packages/mcp-servers/servers/social-media-mcp
 npm install
 npm run build
 npm start
 
-# FreeCAD MCP (Python)
-cd /home/vncuser/Desktop/mcp-servers/servers/freecad-mcp
+# FreeCAD MCP (Python) — removed from active use; kept for reference
+cd ~/Desktop/gbs-tools-and-resources/packages/mcp-servers/servers/freecad-mcp
 uv sync                        # Install dependencies
 uv run python -m freecad_mcp   # Start server
 
 # Minimal Test MCP (Python)
-cd /home/vncuser/Desktop/mcp-servers/servers/minimal-test
+cd ~/Desktop/gbs-tools-and-resources/packages/mcp-servers/servers/minimal-test
 python server.py
 ```
 
@@ -67,7 +67,7 @@ docker run crystaldba/postgres-mcp
 ## Architecture
 
 ```
-/home/vncuser/Desktop/mcp-servers/
+~/Desktop/gbs-tools-and-resources/packages/mcp-servers/
 ├── .mcp.json.template         # Config template with ${PLACEHOLDERS}
 │
 ├── scripts/                   # Config generation scripts
@@ -201,7 +201,7 @@ Not applicable - MCP servers use the Model Context Protocol for communication, n
 | **Penpot** | No active GBS use case | 2026-03-01 |
 | **BetterAuth** | Third-party remote MCP from chonkie.ai — security risk | 2026-03-01 |
 
-**Note**: For company-wide development standards, see the main CLAUDE.md at /home/vncuser/Desktop/CLAUDE.md.
+**Note**: For company-wide development standards, see the main CLAUDE.md at `~/Desktop/CLAUDE.md`.
 
 ---
 

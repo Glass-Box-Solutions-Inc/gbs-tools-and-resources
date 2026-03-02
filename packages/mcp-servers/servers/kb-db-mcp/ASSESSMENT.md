@@ -61,7 +61,7 @@ The KB DB MCP server provides **direct read-only PostgreSQL access** to the Know
 {
   "kb-db": {
     "command": "node",
-    "args": ["/home/vncuser/Desktop/mcp-servers/servers/kb-db-mcp/build/index.js"],
+    "args": ["${MCP_SERVERS_DIR}/servers/kb-db-mcp/build/index.js"],
     "env": {
       "KB_DATABASE_URL": "postgresql://user:pass@localhost:5432/legal_research"
     }

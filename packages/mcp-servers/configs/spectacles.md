@@ -14,11 +14,21 @@ internals locally.
 
 ## Setup
 
-1. The Spectacles repo must be cloned at `/home/vncuser/Desktop/Spectacles`
+1. The Spectacles repo must be cloned (default: `~/Desktop/Spectacles`)
 2. Python `mcp` and `httpx` packages must be installed
-3. Set `SPECTACLES_API_URL` environment variable (defaults to production URL)
+3. Set `SPECTACLES_DIR` env var to the Spectacles repo path (used by `generate-mcp-config.sh`)
+4. Set `SPECTACLES_API_URL` environment variable (defaults to production URL)
 
 ## Config
+
+The template uses `${SPECTACLES_DIR}` — set this env var before running `generate-mcp-config.sh`:
+
+```bash
+export SPECTACLES_DIR=~/Desktop/Spectacles
+./scripts/generate-mcp-config.sh ~/.claude/mcp-servers.json
+```
+
+Or configure manually:
 
 ```json
 {

@@ -18,9 +18,14 @@ cp "$TEMPLATE" "$OUTPUT"
 # Replace MCP_SERVERS_DIR first
 sed -i "s|\${MCP_SERVERS_DIR}|$MCP_SERVERS_DIR|g" "$OUTPUT"
 
+# Replace SPECTACLES_DIR (default to sibling Spectacles repo on Desktop)
+SPECTACLES_DIR="${SPECTACLES_DIR:-$HOME/Desktop/Spectacles}"
+sed -i "s|\${SPECTACLES_DIR}|$SPECTACLES_DIR|g" "$OUTPUT"
+
 # Replace known env vars
 for var in PENPOT_TOKEN N8N_API_KEY BROWSERLESS_API_TOKEN GOOGLE_AI_API_KEY \
-           LINKEDIN_ACCESS_TOKEN TWITTER_BEARER_TOKEN MASTODON_ACCESS_TOKEN MASTODON_INSTANCE_URL; do
+           LINKEDIN_ACCESS_TOKEN TWITTER_BEARER_TOKEN MASTODON_ACCESS_TOKEN MASTODON_INSTANCE_URL \
+           KB_DATABASE_URL; do
     value="${!var}"
     if [ -n "$value" ]; then
         sed -i "s|\${$var}|$value|g" "$OUTPUT"

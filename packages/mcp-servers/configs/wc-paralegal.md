@@ -1,6 +1,6 @@
 # WC Paralegal MCP
 
-**Source:** Custom GBS MCP server at `/home/vncuser/Desktop/mcp-servers/servers/wc-paralegal-mcp/`
+**Source:** Custom GBS MCP server at `~/Desktop/gbs-tools-and-resources/packages/mcp-servers/servers/wc-paralegal-mcp/`
 
 Wraps the WC Paralegal Backend REST API (NestJS) for document extraction,
 case management, and Gemini chat.
@@ -15,7 +15,7 @@ Follows the exact same pattern as kb-api-mcp.
 ## Setup
 
 ```bash
-cd /home/vncuser/Desktop/mcp-servers/servers/wc-paralegal-mcp
+cd ~/Desktop/gbs-tools-and-resources/packages/mcp-servers/servers/wc-paralegal-mcp
 npm install
 npm run build
 ```
@@ -26,7 +26,7 @@ npm run build
 {
   "wc-paralegal": {
     "command": "node",
-    "args": ["/home/vncuser/Desktop/mcp-servers/servers/wc-paralegal-mcp/build/index.js"],
+    "args": ["${MCP_SERVERS_DIR}/servers/wc-paralegal-mcp/build/index.js"],
     "env": {
       "WC_PARALEGAL_URL": "http://localhost:3002"
     }
