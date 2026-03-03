@@ -1,6 +1,6 @@
 # gbs-tools-and-resources
 
-**Unified tools & resources monorepo — agent memory, PII redaction, legal research, MCP servers, dev utilities, security wordlists, and skills catalogs.**
+**Unified tools & resources monorepo — agent memory, PII redaction, legal research, MCP servers, Claude Code agents, dev utilities, security wordlists, and skills catalogs.**
 
 ---
 
@@ -23,6 +23,7 @@ This monorepo consolidates 7 previously standalone Glass Box utility/research re
 | [`packages/awesome-agent-skills/`](packages/awesome-agent-skills/) | Documentation | Curated catalog of 180+ Agent Skills for AI coding assistants | `Glass-Box-Solutions-Inc/awesome-agent-skills` |
 | [`packages/mcp-servers/`](packages/mcp-servers/) | Python, Node.js | Unified MCP server collection — configs, custom servers, templates | `Glass-Box-Solutions-Inc/mcp-servers` |
 | [`packages/merus-test-data-generator/`](packages/merus-test-data-generator/) | Python 3.12, reportlab, Faker, Click | Generates 20 realistic WC test cases with ~700 templated PDFs, populates in MerusCase | `Glass-Box-Solutions-Inc/merus-test-data-generator` |
+| [`packages/claude-code-agents/`](packages/claude-code-agents/) | Markdown (agent definitions) | 7 specialized Claude Code agent definitions for health, legaltech, infrastructure, and billing | New (2026-03-03) |
 | [`packages/SecLists-GBS-Branch/`](packages/SecLists-GBS-Branch/) | Security wordlists | Fork of danielmiessler/SecLists (placeholder — repo too large to include directly) | `Glass-Box-Solutions-Inc/SecLists-GBS-Branch` |
 
 ---
@@ -35,6 +36,7 @@ This monorepo consolidates 7 previously standalone Glass Box utility/research re
 | **yevrah_terminal** | Python 3.x, Groq API, Cohere API, CourtListener API |
 | **phileas** | Java 11+, Maven, JUnit |
 | **awesome-agent-skills** | Markdown (no build) |
+| **claude-code-agents** | Markdown (no build) |
 | **mcp-servers** | Python, Node.js/TypeScript, MCP SDK |
 | **merus-test-data-generator** | Python 3.12, reportlab, Faker, Click, SQLite |
 | **SecLists-GBS-Branch** | Text files (security wordlists) |
@@ -94,6 +96,7 @@ gbs-tools-and-resources/
     │   │   └── wc-paralegal-mcp/    # WC paralegal MCP server
     │   ├── configs/                  # MCP client configurations
     │   └── scripts/                  # Setup/utility scripts
+    ├── claude-code-agents/           # Specialized Claude Code agent definitions (Markdown)
     ├── merus-test-data-generator/    # WC test case PDF generator (Python 3.12)
     └── SecLists-GBS-Branch/          # Security wordlists reference (placeholder)
 ```

@@ -1,6 +1,6 @@
 # gbs-tools-and-resources
 
-> **Unified tools & resources monorepo** — agent memory, PII redaction, legal research, MCP servers, dev utilities, security wordlists, and skills catalogs.
+> **Unified tools & resources monorepo** — agent memory, PII redaction, legal research, MCP servers, Claude Code agents, dev utilities, security wordlists, and skills catalogs.
 
 A Glass Box Solutions, Inc. monorepo consolidating 7 standalone utility and research repositories into a single discoverable location. Follows the pattern established by [`gbs-internal-tools`](https://github.com/Glass-Box-Solutions-Inc/gbs-internal-tools) (consolidated 2026-03-01).
 
@@ -16,6 +16,7 @@ A Glass Box Solutions, Inc. monorepo consolidating 7 standalone utility and rese
 | [`packages/awesome-agent-skills/`](packages/awesome-agent-skills/) | Docs | **Agent skills catalog** — curated 180+ Agent Skills for AI coding assistants |
 | [`packages/mcp-servers/`](packages/mcp-servers/) | Python, Node.js | **MCP server collection** — configs, custom servers (knowledge-base, social-media, WC paralegal), templates |
 | [`packages/merus-test-data-generator/`](packages/merus-test-data-generator/) | Python 3.12 | **WC test data generator** — 20 realistic Workers' Comp cases with ~700 templated PDFs |
+| [`packages/claude-code-agents/`](packages/claude-code-agents/) | Markdown | **Claude Code specialized agents** — 7 domain-expert agent definitions for health, legaltech, infrastructure, and billing |
 | [`packages/SecLists-GBS-Branch/`](packages/SecLists-GBS-Branch/) | Wordlists | **Security wordlists** — GBS fork of danielmiessler/SecLists (reference placeholder) |
 
 ---
