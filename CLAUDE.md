@@ -9,7 +9,7 @@
 This monorepo consolidates 7 previously standalone Glass Box utility/research repositories into a single discoverable location. Each package retains its own structure, language, and build tooling — there is no unified build system at the monorepo root.
 
 **Consolidated from individual repos on:** 2026-03-01
-**Pattern follows:** `gbs-internal-tools` (absorbed `glass-box-board` + `glass-box-hub` on 2026-03-01)
+**Pattern follows:** `internal-tools` (absorbed command-center, glass-box-board, glass-box-hub, Squeegee on 2026-03-01)
 
 ---
 
