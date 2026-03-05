@@ -15,6 +15,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import axios, { AxiosInstance, AxiosError } from 'axios';
 
@@ -391,12 +393,54 @@ async function executeTool(
 }
 
 // ---------------------------------------------------------------------------
+// Interpretive guide fallback (served when backend endpoint is unavailable)
+// ---------------------------------------------------------------------------
+
+const INTERPRETIVE_GUIDE_FALLBACK = `# Knowledge Base Interpretive Guide
+
+How to read and interpret data from the California Workers' Compensation Knowledge Base.
+
+## Citation Literacy
+- **P1**: Citation strings are pinpoint references. "127 Cal.App.4th 274, 280, fn. 2" = page 280 footnote 2 of the Kleemann opinion (starting at p.274). Multiple citations to same case = different passages, not duplicates.
+- **P2**: Parallel citations are alternative addresses for the same opinion. "3 Cal.3d 312" and "35 Cal.Comp.Cases 500" are both Garza v. WCAB.
+- **P3**: Reporter series encode court level: Cal./Cal.2d-5th = Supreme Court; Cal.App./Cal.App.2d-5th = Court of Appeal; Cal.Comp.Cases = WC (any level).
+- **P4**: "(writ den.)" = appellate court declined review; the lower opinion IS the law.
+
+## Citation Roles
+- **P5**: Citation role (operative, background, procedural, reversal_basis, affirmance_basis, distinguished_basis) describes structural function, not importance.
+- **P6**: Role distribution reveals function: primarily "operative" = working rule; primarily "background" = foundational framework.
+
+## Data Provenance
+- **P7**: Three extraction methods: regex (66%, no LLM), hybrid (9%, per-citation LLM), consolidated (24%, per-case LLM, highest quality).
+- **P8**: All citation roles classified by Gemini 2.5 Flash (2026-03-04). Model-generated, not human annotation.
+- **P9**: "Unknown" case names are unresolved cross-references, not errors.
+
+## Corpus Composition
+- **P10**: Court hierarchy: CA Supreme Court (3%, binding) > Court of Appeal (6%, binding on WCAB) > WCAB En Banc (1.4%, binding on WCJs) > Significant Panel (24%, persuasive) > Panel (64%, persuasive).
+- **P11**: 2,574 cases cover major CA WC authority (1985-2026). Pre-2005 unpublished panels largely inaccessible.
+
+## Quality Signals
+- **P12**: Case briefs avg confidence 0.947. Principles are bimodal: 46% >= 0.95 but 37% < 0.80.
+- **P13**: Relation types: applies (82%), clarifies (14%), establishes (3%), overrules (<1%).
+- **P14**: Citation graph is directional. source_case_id -> target_case_id = "source cites target."
+
+## Query Guidance
+- **P15**: kb_search uses vector similarity on briefs + keyword matching on principles. Does NOT search citation strings. For citations, use kb_case_graph or kb_case_detail.
+- **P16**: IRAC format: Issue -> Rule -> Application -> Conclusion, plus disposition, case_type, wc_significance, primary_holding.
+
+## Known Data Caveats
+- **P17**: 16 ABANDONED cases; 3 recoverable with correct identities (Verga, State Farm/Lutz, Villanueva).
+- **P18**: Some citation strings duplicated across extraction methods.
+- **P19**: 148 short-text panel cases have zero citations (valid cases, citation-poor).
+- **P20**: ~7% of citations have no resolved target_case_id (out-of-scope or misspelled).`;
+
+// ---------------------------------------------------------------------------
 // Server bootstrap
 // ---------------------------------------------------------------------------
 
 const server = new Server(
   { name: 'kb-api-mcp', version: '1.0.0' },
-  { capabilities: { tools: {} } },
+  { capabilities: { tools: {}, resources: {} } },
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -404,6 +448,60 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   return executeTool(name, (args ?? {}) as Record<string, unknown>);
+});
+
+// ---------------------------------------------------------------------------
+// Resources — static reference documents for consuming agents
+// ---------------------------------------------------------------------------
+
+const INTERPRETIVE_GUIDE_URI = 'kb://interpretive-guide';
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  resources: [
+    {
+      uri: INTERPRETIVE_GUIDE_URI,
+      name: 'KB Interpretive Guide',
+      description:
+        'How to read and interpret data from the CA Workers\' Compensation Knowledge Base. ' +
+        'Contains 20 interpretive principles covering citation literacy, citation roles, ' +
+        'data provenance, corpus composition, quality signals, query guidance, and known data caveats. ' +
+        'Read this BEFORE interpreting KB query results.',
+      mimeType: 'text/markdown',
+    },
+  ],
+}));
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  const { uri } = request.params;
+
+  if (uri === INTERPRETIVE_GUIDE_URI) {
+    // Fetch the guide from the backend's static endpoint
+    try {
+      const response = await client.get('/api/knowledge/interpretive-guide');
+      return {
+        contents: [
+          {
+            uri: INTERPRETIVE_GUIDE_URI,
+            mimeType: 'text/markdown',
+            text: response.data,
+          },
+        ],
+      };
+    } catch {
+      // Fallback: serve a condensed inline version if the backend endpoint isn't available
+      return {
+        contents: [
+          {
+            uri: INTERPRETIVE_GUIDE_URI,
+            mimeType: 'text/markdown',
+            text: INTERPRETIVE_GUIDE_FALLBACK,
+          },
+        ],
+      };
+    }
+  }
+
+  throw new Error(`Unknown resource: ${uri}`);
 });
 
 server.onerror = (error) => {
