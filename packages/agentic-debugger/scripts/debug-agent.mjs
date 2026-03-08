@@ -1,19 +1,17 @@
 #!/usr/bin/env node
 // @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 //
-// GBS Agentic Debugger v2.0
-// Called by .github/workflows/agentic-debugger.yml
+// GBS Agentic Debugger v2.1 — Configuration-driven standalone CI debugging agent
+// Called by .github/workflows/agentic-debugger.yml (or any CI workflow)
 //
-// v1: Single-shot Anthropic Messages API call → <file> patch blocks written to disk.
-//     Problem: no tsc verification, no project context, destructive full-file rewrites.
-//
+// v1: Single-shot Anthropic Messages API call → file patch blocks written to disk.
 // v2: Orchestrates Claude Code CLI as a tool-enabled agentic loop.
-//     Claude Code can read files, make targeted edits, and run tsc to self-verify.
-//     CLAUDE.md in repo root is loaded automatically (project conventions, import type rules, etc).
+// v2.1: Configuration-driven — reads .agentic-debugger.json from repo root.
+//       Supports any test runner, configurable file scope, optional Linear integration.
 //
 // Exit codes:
-//   0 — Agent ran, changes may have been made (tsc verified)
-//   1 — Agent failed (API error, no patches, tsc gate failed) — do NOT commit
+//   0 — Agent ran, changes may have been made (type-check verified)
+//   1 — Agent failed (API error, no patches, type-check gate failed) — do NOT commit
 //   2 — Environmental failure (missing API key, network, no live service) — escalate immediately
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -24,6 +22,59 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const REPO_ROOT = resolve(__dirname, '..');
+
+// ─── Configuration loader ───────────────────────────────────────────────────
+
+const DEFAULT_CONFIG = {
+  testRunners: {
+    failurePatterns: [
+      String.raw`^FAIL\s+(?:.*/)?(src/\S+\.(?:spec|test)\.(?:ts|tsx|js|jsx))$`,
+      String.raw`^\s*FAIL\s+(\S+\.(?:spec|test)\.(?:ts|tsx|js|jsx))$`,
+    ],
+    typeCheckCommand: 'npx tsc --noEmit',
+    typeCheckTimeout: 90000,
+  },
+  fileScope: {
+    editable: ['src/**', 'test/**', 'tests/**'],
+    forbidden: ['*.lock', 'package.json', 'package-lock.json', 'pnpm-lock.yaml', '*.yml', '*.yaml', 'prisma/schema.prisma'],
+  },
+  claudeCode: {
+    maxTurns: 20,
+    timeoutMinutes: 8,
+    allowedTools: ['Read', 'Edit'],
+  },
+  linear: {
+    enabled: false,
+  },
+  maxAttempts: 5,
+  branch: 'develop',
+};
+
+function loadConfig() {
+  const configPath = resolve(REPO_ROOT, '.agentic-debugger.json');
+  if (existsSync(configPath)) {
+    try {
+      const userConfig = JSON.parse(readFileSync(configPath, 'utf8'));
+      // Deep merge (one level)
+      return {
+        testRunners: { ...DEFAULT_CONFIG.testRunners, ...userConfig.testRunners },
+        fileScope: { ...DEFAULT_CONFIG.fileScope, ...userConfig.fileScope },
+        claudeCode: { ...DEFAULT_CONFIG.claudeCode, ...userConfig.claudeCode },
+        linear: { ...DEFAULT_CONFIG.linear, ...userConfig.linear },
+        maxAttempts: userConfig.maxAttempts ?? DEFAULT_CONFIG.maxAttempts,
+        branch: userConfig.branch ?? DEFAULT_CONFIG.branch,
+      };
+    } catch (err) {
+      console.warn(`Warning: Failed to parse .agentic-debugger.json: ${err.message}`);
+      console.warn('Falling back to default configuration.');
+    }
+  }
+  return DEFAULT_CONFIG;
+}
+
+const CONFIG = loadConfig();
+
+// ─── Environment ────────────────────────────────────────────────────────────
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ATTEMPT_NUMBER = parseInt(process.env.ATTEMPT_NUMBER || '0', 10);
@@ -44,8 +95,6 @@ if (!ANTHROPIC_API_KEY) {
 }
 
 // ─── Environmental failure classifier ────────────────────────────────────────
-// These patterns indicate failures the agent cannot fix (missing live services,
-// network issues, missing secrets). Skip the agent and escalate to human.
 
 const ENVIRONMENTAL_PATTERNS = [
   /GEMINI_API_KEY/,
@@ -54,7 +103,7 @@ const ENVIRONMENTAL_PATTERNS = [
   /connect ECONNREFUSED/,
   /network timeout/i,
   /ENOTFOUND/,
-  /Cannot find module.*node_modules\/(?!.*\.spec)/,  // library import errors, not spec files
+  /Cannot find module.*node_modules\/(?!.*\.spec)/,
   /ECONNRESET/,
   /getaddrinfo ENOTFOUND/,
 ];
@@ -66,28 +115,35 @@ function detectEnvironmentalFailure(log) {
   return null;
 }
 
-// ─── Parse failing spec paths from FAIL lines ─────────────────────────────────
+// ─── Parse failing spec paths ────────────────────────────────────────────────
 
 function parseFailingSpecs(log) {
   const specs = new Set();
-  // Jest: "FAIL backend/src/.../foo.spec.ts" or "FAIL src/.../foo.spec.ts"
-  const failLineRegex = /^FAIL\s+(?:backend\/)?(src\/\S+\.spec\.ts)/gm;
-  for (const m of log.matchAll(failLineRegex)) {
-    specs.add(`backend/${m[1]}`);
+  for (const patternStr of CONFIG.testRunners.failurePatterns) {
+    const regex = new RegExp(patternStr, 'gm');
+    for (const m of log.matchAll(regex)) {
+      if (m[1]) specs.add(m[1]);
+    }
   }
   return [...specs];
 }
 
-// ─── Build the Claude Code prompt ─────────────────────────────────────────────
+// ─── Build the Claude Code prompt ────────────────────────────────────────────
 
 function buildPrompt(failures, failingSpecs) {
   const specList = failingSpecs.length > 0
     ? failingSpecs.map(s => `- \`${s}\``).join('\n')
     : '_No FAIL lines detected — use stack traces in the output above to identify files._';
 
-  return `## GBS Agentic Debugger — Attempt ${ATTEMPT_NUMBER + 1}/5
+  const editableScope = CONFIG.fileScope.editable.map(p => `\`${p}\``).join(', ');
+  const forbiddenFiles = CONFIG.fileScope.forbidden.map(p => `\`${p}\``).join(', ');
+  const typeCheckCmd = CONFIG.claudeCode.allowedTools.includes('Bash')
+    ? CONFIG.testRunners.typeCheckCommand
+    : CONFIG.testRunners.typeCheckCommand;
 
-CI tests are failing on the \`develop\` branch. Your job is to make targeted, minimal fixes.
+  return `## GBS Agentic Debugger — Attempt ${ATTEMPT_NUMBER + 1}/${CONFIG.maxAttempts}
+
+CI tests are failing on the \`${CONFIG.branch}\` branch. Your job is to make targeted, minimal fixes.
 
 ### Failing Test Output
 \`\`\`
@@ -101,11 +157,9 @@ ${specList}
 
 ### Instructions
 
-1. **Read \`CLAUDE.md\`** — understand project conventions before touching anything.
+1. **Read \`CLAUDE.md\`** if it exists — understand project conventions before touching anything.
 
-2. **Read \`backend/tsconfig.json\`** — critical. The project uses \`"isolatedModules": true\`.
-   - All type-only imports MUST use \`import type { ... }\` syntax.
-   - \`import { Prisma }\` is only valid after \`prisma generate\` — use types from the service layer instead.
+2. **Read \`tsconfig.json\`** (or equivalent config) to understand the project's TypeScript settings.
 
 3. **Read each failing spec file** to understand exactly what the tests expect.
 
@@ -120,62 +174,52 @@ ${specList}
 6. **Hard limits — violations will be reverted:**
    - Never truncate a file. If a file has N lines, your edit must leave at least 0.85*N lines.
    - Never delete an entire function, class, or endpoint — only fix its internals.
-   - Only edit files under \`backend/src/\` or \`backend/test/\`. Nothing else.
-   - Do not modify \`prisma/schema.prisma\`, CI workflows, or \`package.json\` files.
+   - Only edit files matching: ${editableScope}
+   - Do not modify: ${forbiddenFiles}
 
-7. **After editing, run \`pnpm --filter backend tsc --noEmit\`** to verify no TypeScript errors.
-   - If tsc reports errors, read the output and fix them before stopping.
-   - Do not stop until tsc is clean.
+7. **After editing, run \`${typeCheckCmd}\`** to verify no type errors.
+   - If it reports errors, read the output and fix them before stopping.
+   - Do not stop until the type check is clean.
 
-8. **Stop** when tsc is clean. Do not run the full test suite — it takes too long in this budget.
+8. **Stop** when type check is clean. Do not run the full test suite — it takes too long in this budget.
 
 The CI workflow will commit and push whatever you changed.`;
 }
 
-// ─── Run Claude Code CLI ───────────────────────────────────────────────────────
+// ─── Run Claude Code CLI ─────────────────────────────────────────────────────
 
 function runClaudeCode(prompt) {
-  // Verify claude CLI is available
   const which = spawnSync('which', ['claude'], { encoding: 'utf8' });
   if (which.status !== 0) {
     console.error('Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code');
     process.exit(1);
   }
 
-  // Write prompt to a temp file to avoid shell quoting issues with long strings
-  const promptFile = '/tmp/gbs-debug-agent-prompt.txt';
-  writeFileSync(promptFile, prompt, 'utf8');
-
-  // Tools allowed:
-  //   Read  — read any file (needs full repo access to understand context)
-  //   Edit  — edit existing files (NOT Write — prevents creating files at wrong paths)
-  //   Bash  — only tsc verification
-  // No Write, no Task, no browser, no WebSearch.
+  // Build allowed tools list from config + type-check command
   const allowedTools = [
-    'Read',
-    'Edit',
-    'Bash(pnpm --filter backend tsc --noEmit)',
+    ...CONFIG.claudeCode.allowedTools,
+    `Bash(${CONFIG.testRunners.typeCheckCommand})`,
   ].join(',');
 
   console.log('Invoking Claude Code CLI...');
   console.log(`Allowed tools: ${allowedTools}`);
-  console.log(`Max turns: 20`);
+  console.log(`Max turns: ${CONFIG.claudeCode.maxTurns}`);
 
   const result = spawnSync(
     'claude',
     [
       '--print',
       '--output-format', 'text',
-      '--dangerously-skip-permissions', // CI sandbox — no interactive user to approve tool calls
+      '--dangerously-skip-permissions',
       '--allowedTools', allowedTools,
-      '--max-turns', '20',
+      '--max-turns', String(CONFIG.claudeCode.maxTurns),
       prompt,
     ],
     {
       cwd: REPO_ROOT,
       env: { ...process.env, ANTHROPIC_API_KEY },
       stdio: 'inherit',
-      timeout: 8 * 60 * 1000, // 8 minute timeout — generous for up to 20 turns
+      timeout: CONFIG.claudeCode.timeoutMinutes * 60 * 1000,
     },
   );
 
@@ -192,44 +236,39 @@ function runClaudeCode(prompt) {
   console.log('\nClaude Code finished.');
 }
 
-// ─── Post-edit TypeScript gate ────────────────────────────────────────────────
-// Hard verification before the CI workflow is allowed to commit.
-// Claude Code already runs tsc internally, but this is a final catch.
+// ─── Post-edit type-check gate ───────────────────────────────────────────────
 
-function runTscGate() {
-  console.log('\n=== Post-edit TypeScript gate ===');
-  const result = spawnSync(
-    'pnpm',
-    ['--filter', 'backend', 'tsc', '--noEmit'],
-    {
-      cwd: REPO_ROOT,
-      stdio: 'inherit',
-      timeout: 90 * 1000,
-    },
-  );
+function runTypeCheckGate() {
+  console.log('\n=== Post-edit type-check gate ===');
+  const [cmd, ...args] = CONFIG.testRunners.typeCheckCommand.split(/\s+/);
+  const result = spawnSync(cmd, args, {
+    cwd: REPO_ROOT,
+    stdio: 'inherit',
+    timeout: CONFIG.testRunners.typeCheckTimeout,
+    shell: true,
+  });
 
   if (result.status !== 0) {
-    console.error('\n[ABORT] TypeScript check failed after agent edits.');
+    console.error('\n[ABORT] Type check failed after agent edits.');
     console.error('The agent introduced type errors. Refusing to commit broken code.');
     console.error('Manual fix required.');
     process.exit(1);
   }
 
-  console.log('TypeScript gate passed.');
+  console.log('Type-check gate passed.');
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log(`\n=== GBS Agentic Debugger v2.0 — attempt ${ATTEMPT_NUMBER + 1}/5 ===\n`);
+  console.log(`\n=== GBS Agentic Debugger v2.1 — attempt ${ATTEMPT_NUMBER + 1}/${CONFIG.maxAttempts} ===\n`);
+  console.log(`Config: ${existsSync(resolve(REPO_ROOT, '.agentic-debugger.json')) ? '.agentic-debugger.json loaded' : 'using defaults'}`);
 
   if (!FAILURES.trim()) {
     console.error('No failure log provided. Cannot proceed.');
     process.exit(1);
   }
 
-  // Environmental failure check — skip the agent entirely and signal the
-  // workflow to escalate the ticket to human-required immediately.
   const envPattern = detectEnvironmentalFailure(FAILURES);
   if (envPattern) {
     console.log(`\n[SKIP] Environmental failure detected: ${envPattern}`);
@@ -248,7 +287,7 @@ async function main() {
   const prompt = buildPrompt(FAILURES, failingSpecs);
 
   runClaudeCode(prompt);
-  runTscGate();
+  runTypeCheckGate();
 
   console.log('\n=== Debug agent completed successfully ===');
 }

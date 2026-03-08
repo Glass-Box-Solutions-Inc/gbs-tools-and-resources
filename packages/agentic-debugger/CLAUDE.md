@@ -1,6 +1,6 @@
 # Agentic Debugger
 
-**Automated CI test failure debugging agent — template for adoption.**
+**Automated CI test failure debugging agent — standalone, configuration-driven.**
 
 ---
 
@@ -8,9 +8,9 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Template for Adoption |
-| Source | `glassy-app-production` → `scripts/debug-agent.mjs` + `.github/workflows/agentic-debugger.yml` |
-| Stack | Claude Code CLI, GitHub Actions, TypeScript, Linear API |
+| Status | Standalone Package (canonical for GBS) |
+| Package | `@gbs/agentic-debugger` |
+| Stack | Claude Code CLI, GitHub Actions, Node.js |
 | Model | Claude Opus 4.6 (via Claude Code) |
 
 ---
@@ -19,18 +19,19 @@
 
 ```
 GitHub Actions Workflow
-├── Setup: pnpm, Node 20, Prisma, Postgres 16+pgvector
+├── Setup: Node.js, project dependencies
 ├── Re-run tests → capture failure output
 ├── debug-agent.mjs
+│   ├── Load .agentic-debugger.json config
 │   ├── Environmental failure detection (exit 2)
-│   ├── Failing spec parsing (Jest regex)
+│   ├── Failing spec parsing (configurable patterns)
 │   ├── Claude Code CLI invocation
-│   │   ├── Max 20 turns, 8-min timeout
-│   │   ├── Allowed tools: Read, Edit, Bash(tsc only)
+│   │   ├── Configurable turns and timeout
+│   │   ├── Allowed tools: Read, Edit, Bash(type-check)
 │   │   └── Reads CLAUDE.md for project conventions
-│   └── TypeScript verification gate (tsc --noEmit)
-├── Commit & push (if tsc passes)
-└── Linear ticket update
+│   └── Type-check verification gate
+├── Commit & push (if type-check passes)
+└── Linear ticket update (if configured)
 ```
 
 ---
@@ -39,16 +40,29 @@ GitHub Actions Workflow
 
 | File | Purpose |
 |------|---------|
-| `scripts/debug-agent.mjs` | Agent orchestrator — failure parsing, Claude CLI invocation, tsc gate |
-| `workflows/agentic-debugger.yml` | GitHub Actions workflow — job runner, service setup, Linear integration |
+| `scripts/debug-agent.mjs` | Agent orchestrator — config loader, failure parsing, Claude CLI, type-check gate |
+| `workflows/agentic-debugger.yml` | Project-agnostic GitHub Actions workflow template |
+| `workflows/examples/agentic-debugger.glassy.yml` | Glassy PAI-specific variant (PostgreSQL, pnpm, Prisma) |
+| `.agentic-debugger.json` | Default configuration with sensible defaults |
+| `package.json` | Package manifest with bin entry for debug-agent |
+| `.env.example` | Environment variable template |
 
 ---
 
-## Key Dependencies
+## Configuration
 
-- `@anthropic-ai/claude-code` — Claude Code CLI (installed at runtime in workflow)
-- GitHub Actions services: PostgreSQL 16 + pgvector
-- Secrets: `ANTHROPIC_API_KEY`, `LINEAR_API_KEY`
+The agent reads `.agentic-debugger.json` from the target repo root. Key settings:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `testRunners.failurePatterns` | Regex patterns to extract failing spec files | Jest/Vitest FAIL patterns |
+| `testRunners.typeCheckCommand` | Command for type verification gate | `npx tsc --noEmit` |
+| `fileScope.editable` | Glob patterns for files the agent can modify | `src/**`, `test/**` |
+| `fileScope.forbidden` | Glob patterns for files the agent must not touch | `*.lock`, `package.json`, etc. |
+| `claudeCode.maxTurns` | Maximum Claude Code turns per attempt | 20 |
+| `claudeCode.timeoutMinutes` | Timeout for Claude Code invocation | 8 |
+| `linear.enabled` | Whether to update Linear tickets | false |
+| `maxAttempts` | Maximum debug attempts per issue | 5 |
 
 ---
 
@@ -57,56 +71,25 @@ GitHub Actions Workflow
 | Code | Meaning | Workflow Action |
 |------|---------|-----------------|
 | 0 | Success — agent ran, changes verified | Commit & push, update Linear |
-| 1 | Agent failed — tsc gate failed or no patches | Skip commit, fail job |
+| 1 | Agent failed — type-check gate failed or no patches | Skip commit, fail job |
 | 2 | Environmental failure — missing keys, network | Skip agent, escalate to human |
 
 ---
 
 ## Safety Constraints
 
-- **Tool-restricted Claude environment**: Read + Edit + tsc only
-- **File scope**: Only `backend/src/` and `backend/test/`
+- **Tool-restricted Claude environment**: Read + Edit + type-check only
+- **File scope**: Configurable via `.agentic-debugger.json`
 - **No destructive edits**: Never truncate >15% of file, never delete functions
-- **Forbidden**: schema.prisma, CI workflows, package.json, frontend code
-- **TypeScript gate**: Must pass `tsc --noEmit` before any commit
-- **Max 5 attempts** per Linear ticket
+- **Type-check gate**: Must pass configured command before any commit
+- **Max attempts**: Configurable (default 5)
 
 ---
 
-## Configuration
+## Key Dependencies
 
-### Workflow Inputs (manual dispatch)
-| Input | Description |
-|-------|-------------|
-| `linear_ticket_id` | Linear issue ID for tracking |
-| `test_failure_log` | Failure excerpt (max 4000 chars) |
-| `attempt_number` | 0-indexed counter (0-4) |
-| `commit_sha` | The develop commit that failed |
-
-### Environment Variables (set in workflow)
-| Variable | Value |
-|----------|-------|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `NODE_ENV` | `test` |
-| `BETTER_AUTH_SECRET` | Test-only secret |
-| `PORT` | 3000 |
-
----
-
-## Known Limitations
-
-1. Manual trigger only — no auto-detection of CI failures
-2. Glassy-specific regex and file scope patterns
-3. Backend-only (no frontend/UI test support)
-4. Linear-coupled (no standalone mode)
-5. Single-repo (no cross-package monorepo awareness)
-
----
-
-## Related Documentation
-
-- Source: `glassy-app-production` (`scripts/` + `.github/workflows/`)
-- Adoption guide: See `README.md` in this package
+- `@anthropic-ai/claude-code` — Claude Code CLI (peer dependency, installed at runtime in workflow)
+- Secrets: `ANTHROPIC_API_KEY` (required), `LINEAR_API_KEY` (optional)
 
 ---
 

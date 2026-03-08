@@ -2,9 +2,11 @@
 
 **DAG-based multi-agent task orchestration system** — spawns teams of specialized AI agents that execute interdependent tasks in parallel with file scope isolation and real-time WebSocket status updates.
 
-> **Status:** Reference Copy | **Source:** `glassy-app-production` (`backend/src/modules/agent-swarm/`)
+> **Status:** Standalone Package (canonical for GBS) | **Install:** `npm install @gbs/agent-swarm`
 
-This is a **reference copy** extracted from the Glassy PAI production monorepo. The canonical source of truth remains in `glassy-app-production`. This copy exists for discoverability and cross-team reference within the `gbs-tools-and-resources` monorepo.
+This is a **standalone NestJS library module**, forked from Glassy PAI's embedded agent-swarm module and decoupled from all Glassy dependencies. It can be used independently with its own Prisma schema or hosted inside any NestJS application via `AgentSwarmModule.forRoot()`.
+
+> **Relationship to Glassy:** The agent-swarm module within `glassy-app-production` remains canonical for Glassy PAI and continues to evolve independently within that codebase. This standalone package is a separate resource maintained by GBS for use outside of Glassy.
 
 ---
 
@@ -15,8 +17,33 @@ This is a **reference copy** extracted from the Glassy PAI production monorepo. 
 | Runtime | NestJS 11 + TypeScript |
 | Real-time | Socket.io (WebSocket gateway) |
 | Database | Prisma ORM (PostgreSQL) |
-| Auth | BetterAuth session tokens |
+| Auth | Pluggable — standalone token or host-provided auth |
 | Validation | class-validator + class-transformer |
+
+---
+
+## Installation
+
+### Standalone Mode
+
+```bash
+npm install @gbs/agent-swarm
+cp .env.example .env  # Configure DATABASE_URL
+npx prisma generate
+npx prisma migrate dev
+```
+
+### Hosted Mode (e.g. inside Glassy)
+
+```typescript
+import { AgentSwarmModule } from '@gbs/agent-swarm';
+import { GlassyPrismaService } from './prisma/prisma.service.js';
+
+@Module({
+  imports: [AgentSwarmModule.forRoot({ prismaService: GlassyPrismaService })],
+})
+export class AppModule {}
+```
 
 ---
 
@@ -122,20 +149,29 @@ High-level orchestration and progress aggregation:
 
 ```
 packages/agent-swarm/
+├── package.json                             # @gbs/agent-swarm
+├── tsconfig.json
+├── .env.example
+├── prisma/
+│   └── schema.prisma                        # Standalone schema (AgentTask + AgentExecution)
 ├── src/
-│   ├── agent-swarm.module.ts          # NestJS module definition
-│   ├── agent-swarm.types.ts           # Shared type definitions
-│   ├── agent-coordinator.service.ts   # Agent spawning & assignment
-│   ├── task-manager.service.ts        # Task CRUD & DAG validation
-│   ├── swarm.service.ts               # Orchestration & progress
-│   ├── swarm.controller.ts            # REST API endpoints
-│   ├── swarm.gateway.ts               # WebSocket gateway
-│   ├── swarm.e2e-spec.ts              # E2E integration tests
+│   ├── index.ts                             # Barrel export
+│   ├── prisma.service.ts                    # Standalone PrismaService
+│   ├── agent-swarm.module.ts                # NestJS module (with forRoot())
+│   ├── agent-swarm.types.ts                 # Shared type definitions
+│   ├── agent-coordinator.service.ts         # Agent spawning & assignment
+│   ├── task-manager.service.ts              # Task CRUD & DAG validation
+│   ├── swarm.service.ts                     # Orchestration & progress
+│   ├── swarm.controller.ts                  # REST API endpoints
+│   ├── swarm.gateway.ts                     # WebSocket gateway (pluggable auth)
+│   ├── swarm.e2e-spec.ts                    # E2E integration tests
 │   ├── agent-coordinator.service.spec.ts
 │   ├── swarm.service.spec.ts
 │   ├── task-manager.service.spec.ts
+│   ├── decorators/
+│   │   └── current-user.decorator.ts        # Local @CurrentUser() decorator
 │   └── dto/
-│       └── swarm.dto.ts               # Request validation DTOs
+│       └── swarm.dto.ts                     # Request validation DTOs
 ├── README.md
 └── CLAUDE.md
 ```

@@ -1,14 +1,14 @@
 # @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+#
+# Agentic Debugger — Project-Agnostic Workflow Template
+# Copy to .github/workflows/agentic-debugger.yml in your repo.
+# Configure .agentic-debugger.json in your repo root for project-specific settings.
 
 name: Agentic Debugger
 
 on:
   workflow_dispatch:
     inputs:
-      linear_ticket_id:
-        description: "Linear ticket ID to update with attempt progress"
-        required: true
-        type: string
       test_failure_log:
         description: "Test failure output excerpt (max 4000 chars)"
         required: true
@@ -18,13 +18,17 @@ on:
         required: true
         type: string
       commit_sha:
-        description: "The develop commit SHA that triggered the CI failure"
+        description: "The commit SHA that triggered the CI failure"
         required: true
         type: string
+      linear_ticket_id:
+        description: "Linear ticket ID to update with progress (optional)"
+        required: false
+        type: string
+        default: ""
 
 env:
   NODE_VERSION: "20"
-  PNPM_VERSION: "9"
 
 jobs:
   debug:
@@ -34,82 +38,44 @@ jobs:
     permissions:
       contents: write
 
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16   # postgres:16 + pgvector — required by schema migrations
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: glassy_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      DATABASE_URL: postgresql://test:test@localhost:5432/glassy_test?schema=public
-      NODE_ENV: test
-      BETTER_AUTH_SECRET: test-secret-for-ci-only-not-real
-      BETTER_AUTH_URL: http://localhost:3000
-      PORT: 3000
-
     steps:
-      - name: Checkout develop branch
+      - name: Checkout branch
         uses: actions/checkout@v4
         with:
-          ref: develop
           token: ${{ github.token }}
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Generate Prisma client
-        run: pnpm --filter backend exec prisma generate
-
-      - name: Run Prisma migrations
-        run: pnpm --filter backend exec prisma migrate deploy
+      - name: Install project dependencies
+        run: |
+          if [ -f "pnpm-lock.yaml" ]; then
+            npm install -g pnpm
+            pnpm install --frozen-lockfile
+          elif [ -f "yarn.lock" ]; then
+            yarn install --frozen-lockfile
+          elif [ -f "package-lock.json" ]; then
+            npm ci
+          fi
 
       - name: Re-run tests to capture fresh failure output
         continue-on-error: true
         run: |
           set +e
           touch current-failures.txt
-
-          pnpm --filter backend test 2>&1 | tee -a current-failures.txt
-
-          (cd backend && NODE_OPTIONS='--experimental-vm-modules' npx jest \
-            --config test/jest-e2e.json --no-coverage --runInBand 2>&1) | tee -a current-failures.txt
-
-          pnpm --filter frontend test 2>&1 | tee -a current-failures.txt
-
-          # Always exit 0 — we want fresh output regardless of pass/fail
+          npm test 2>&1 | tee -a current-failures.txt || true
           exit 0
 
       - name: Install Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code
 
-      - name: Run debug agent v2.0 (Claude Code CLI)
+      - name: Run debug agent
         id: debug_agent
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ATTEMPT_NUMBER: ${{ inputs.attempt_number }}
-        # exit 0: success — proceed to commit
-        # exit 1: agent failed — skip commit, update ticket as failed
-        # exit 2: environmental failure — skip commit, escalate ticket immediately
         continue-on-error: true
         run: |
           CURRENT_FAILURES_FILE="$(pwd)/current-failures.txt"
@@ -121,15 +87,14 @@ jobs:
           echo "exit_code=${AGENT_EXIT}" >> $GITHUB_OUTPUT
           exit $AGENT_EXIT
 
-      - name: Escalate ticket on environmental failure
-        if: steps.debug_agent.outputs.exit_code == '2'
+      - name: Escalate on environmental failure (exit 2)
+        if: steps.debug_agent.outputs.exit_code == '2' && inputs.linear_ticket_id != ''
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: |
           TICKET_ID="${{ inputs.linear_ticket_id }}"
-          if [ -z "$TICKET_ID" ] || [ "$TICKET_ID" = "null" ]; then exit 0; fi
+          if [ -z "$TICKET_ID" ] || [ "$TICKET_ID" = "null" ] || [ -z "$LINEAR_API_KEY" ]; then exit 0; fi
 
-          # Mark title as human-required
           UPDATE_BODY=$(jq -n --arg id "$TICKET_ID" '{
             query: "mutation UpdateIssue($id: String!) { issueUpdate(id: $id, input: { title: \"🚨 HUMAN REQUIRED — environmental CI failure\" }) { success } }",
             variables: { id: $id }
@@ -140,13 +105,12 @@ jobs:
             -d "$UPDATE_BODY"
 
           COMMENT_BODY=$(jq -n --arg issueId "$TICKET_ID" \
-            --arg body "🤖 **Debug agent skipped:** Environmental failure detected (missing API key, network error, or live service required). The agent cannot fix this class of failure. **Manual investigation required.** [Workflow logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
+            --arg body "🤖 **Debug agent skipped:** Environmental failure detected. **Manual investigation required.** [Workflow logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
             '{ query: "mutation AddComment($issueId: String!, $body: String!) { commentCreate(input: { issueId: $issueId, body: $body }) { success } }", variables: { issueId: $issueId, body: $body } }')
           curl -sf -X POST https://api.linear.app/graphql \
             -H "Authorization: ${LINEAR_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$COMMENT_BODY"
-          exit 0
 
       - name: Fail job if agent errored (exit 1)
         if: steps.debug_agent.outputs.exit_code == '1'
@@ -166,6 +130,7 @@ jobs:
         run: |
           ATTEMPT="${{ inputs.attempt_number }}"
           NEXT_ATTEMPT=$((ATTEMPT + 1))
+          BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
           git add -A
           if git diff --staged --quiet; then
@@ -177,23 +142,20 @@ jobs:
           git commit -m "$(cat <<EOF
           fix(ci): agentic debug attempt ${NEXT_ATTEMPT}
 
-          Automated fix attempt ${NEXT_ATTEMPT}/5 for Linear ticket: ${{ inputs.linear_ticket_id }}
-          Triggered by CI failure on develop at ${{ inputs.commit_sha }}
+          Automated fix attempt ${NEXT_ATTEMPT}/5 for commit ${{ inputs.commit_sha }}
 
           Co-Authored-By: GBS Agentic Debugger <agentic-debugger@glassboxsolutions.com>
           EOF
           )"
 
-          # Rebase onto any commits that arrived while Claude was running,
-          # then push. Abort and exit 1 if rebase conflicts — human required.
-          git fetch origin develop
-          git rebase origin/develop
-          git push origin develop
+          git fetch origin "$BRANCH"
+          git rebase "origin/$BRANCH"
+          git push origin "$BRANCH"
           echo "committed=true" >> $GITHUB_OUTPUT
           echo "new_sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Update Linear ticket with attempt result
-        if: always()
+      - name: Update Linear ticket (if configured)
+        if: always() && inputs.linear_ticket_id != ''
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: |
@@ -203,44 +165,17 @@ jobs:
           COMMITTED="${{ steps.push.outputs.committed }}"
           NEW_SHA="${{ steps.push.outputs.new_sha }}"
 
-          if [ -z "$TICKET_ID" ] || [ "$TICKET_ID" = "null" ]; then
-            echo "No ticket ID — skipping Linear update"
+          if [ -z "$TICKET_ID" ] || [ "$TICKET_ID" = "null" ] || [ -z "$LINEAR_API_KEY" ]; then
+            echo "No ticket ID or Linear API key — skipping"
             exit 0
           fi
 
           if [ "$COMMITTED" = "true" ]; then
-            COMMENT="🤖 **Debug attempt ${NEXT_ATTEMPT}/5 complete:** Fix pushed to \`develop\` at \`${NEW_SHA:0:7}\`. CI pipeline restarted — waiting for results."
+            COMMENT="🤖 **Debug attempt ${NEXT_ATTEMPT}/5 complete:** Fix pushed at \`${NEW_SHA:0:7}\`. CI pipeline restarted."
           else
-            COMMENT="🤖 **Debug attempt ${NEXT_ATTEMPT}/5:** Debug agent produced no code changes. Manual investigation required. Check [workflow logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            COMMENT="🤖 **Debug attempt ${NEXT_ATTEMPT}/5:** No code changes. Manual investigation required. [Workflow logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})."
           fi
 
-          # Fetch current description to increment debug_attempts counter
-          QUERY_BODY=$(jq -n --arg id "$TICKET_ID" '{
-            query: "query GetIssue($id: String!) { issue(id: $id) { description } }",
-            variables: { id: $id }
-          }')
-          CURRENT_DESC=$(curl -sf -X POST https://api.linear.app/graphql \
-            -H "Authorization: ${LINEAR_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "$QUERY_BODY" | jq -r '.data.issue.description // ""')
-
-          # Increment the attempt counter in the hidden metadata
-          UPDATED_DESC=$(echo "$CURRENT_DESC" | \
-            sed "s/<!-- debug_attempts: ${ATTEMPT} -->/<!-- debug_attempts: ${NEXT_ATTEMPT} -->/")
-
-          UPDATE_BODY=$(jq -n \
-            --arg id "$TICKET_ID" \
-            --arg desc "$UPDATED_DESC" \
-            '{
-              query: "mutation UpdateIssue($id: String!, $desc: String!) { issueUpdate(id: $id, input: { description: $desc }) { success } }",
-              variables: { id: $id, desc: $desc }
-            }')
-          curl -sf -X POST https://api.linear.app/graphql \
-            -H "Authorization: ${LINEAR_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "$UPDATE_BODY"
-
-          # Post comment with attempt result
           COMMENT_BODY=$(jq -n \
             --arg issueId "$TICKET_ID" \
             --arg body "$COMMENT" \

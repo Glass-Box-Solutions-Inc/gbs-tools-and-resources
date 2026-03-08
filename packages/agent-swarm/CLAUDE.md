@@ -1,6 +1,6 @@
 # Agent Swarm
 
-**DAG-based multi-agent task orchestration — reference copy from Glassy PAI.**
+**DAG-based multi-agent task orchestration — standalone NestJS library module.**
 
 ---
 
@@ -8,12 +8,14 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Reference Copy |
-| Source | `glassy-app-production` → `backend/src/modules/agent-swarm/` |
+| Status | Standalone Package (canonical for GBS) |
+| Package | `@gbs/agent-swarm` |
 | Stack | NestJS 11, TypeScript, Socket.io, Prisma |
-| Auth | BetterAuth session tokens |
+| Auth | Pluggable — standalone token or host-provided (e.g. BetterAuth) |
 
-> **This is NOT a standalone deployable package.** It is a reference copy of the agent-swarm module from the Glassy PAI production monorepo, extracted here for discoverability and cross-team reference. The canonical source remains `glassy-app-production`.
+> This is a **standalone installable NestJS library module**, forked from Glassy PAI and decoupled from all Glassy dependencies. It includes its own Prisma schema, PrismaService, and auth decorator. Host applications can inject their own PrismaService via `AgentSwarmModule.forRoot({ prismaService })`.
+>
+> **Note:** The agent-swarm module within `glassy-app-production` remains canonical for Glassy PAI. This standalone package is a separate GBS resource.
 
 ---
 
@@ -34,21 +36,20 @@ SwarmController (/api/swarm)
 - **Greedy assignment**: IDLE agents claim available tasks in priority order
 - **File scope isolation**: Each agent role has restricted file patterns
 - **In-memory agent registry**: Fast state access, lost on restart
+- **Pluggable auth**: Standalone mode uses token-as-userId; hosted mode injects custom auth handler
 
 ---
 
-## Dependencies (NestJS)
+## Dependencies
 
 ```typescript
-// Required NestJS modules
+// Peer dependencies (host app provides)
 @nestjs/common, @nestjs/websockets, @nestjs/platform-socket.io
-// Required Prisma models
-AgentTask, AgentExecution, Session, User
-// Required packages
-class-validator, class-transformer, socket.io
+// Bundled dependencies
+@prisma/client, class-validator, class-transformer, socket.io
 ```
 
-### Prisma Models Required
+### Prisma Models (standalone schema)
 
 ```prisma
 model AgentTask {
@@ -85,14 +86,18 @@ model AgentExecution {
 
 | File | Purpose |
 |------|---------|
-| `src/agent-swarm.module.ts` | NestJS module definition |
+| `src/index.ts` | Barrel export for all public APIs |
+| `src/prisma.service.ts` | Standalone PrismaService (extends PrismaClient) |
+| `src/agent-swarm.module.ts` | NestJS module with `forRoot()` for hosted mode |
 | `src/agent-swarm.types.ts` | Shared enums (AgentRole, TaskStatus) and interfaces |
 | `src/task-manager.service.ts` | Task CRUD, dependency management, DAG validation |
 | `src/agent-coordinator.service.ts` | Agent spawning, assignment, file conflict detection |
 | `src/swarm.service.ts` | High-level orchestration and progress |
 | `src/swarm.controller.ts` | REST API endpoints under `/api/swarm` |
-| `src/swarm.gateway.ts` | WebSocket gateway (namespace: `/swarm`) |
+| `src/swarm.gateway.ts` | WebSocket gateway with pluggable auth |
 | `src/dto/swarm.dto.ts` | Request DTOs with class-validator |
+| `src/decorators/current-user.decorator.ts` | Local `@CurrentUser()` param decorator |
+| `prisma/schema.prisma` | Standalone Prisma schema (AgentTask + AgentExecution) |
 
 ---
 
@@ -123,7 +128,6 @@ model AgentExecution {
 
 ## Related Documentation
 
-- Source repo: `glassy-app-production` (`backend/src/modules/agent-swarm/`)
 - Glassy PAI docs: `adjudica-documentation/projects/glassy-pai/features/agent-swarm.md`
 - Glassy architecture: `adjudica-documentation/projects/glassy/ARCHITECTURE_OVERVIEW.md`
 

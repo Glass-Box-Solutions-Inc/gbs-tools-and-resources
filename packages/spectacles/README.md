@@ -253,7 +253,7 @@ All actions are logged for compliance:
 
 ## Deployment
 
-> **Canonical deploy source:** [`Glass-Box-Solutions-Inc/Spectacles`](https://github.com/Glass-Box-Solutions-Inc/Spectacles) (standalone repo) via Cloud Build trigger → Cloud Run. The deploy files below are reference copies — production deployments are triggered from the standalone repo, not this monorepo. See [`DEPLOYMENT_MODEL.md`](../../DEPLOYMENT_MODEL.md) for details.
+> **Canonical source: this monorepo** (`gbs-tools-and-resources`). Cloud Build trigger deploys from `packages/spectacles/` → Cloud Run. The standalone `Glass-Box-Solutions-Inc/Spectacles` repo is archived. See [`DEPLOYMENT_MODEL.md`](../../DEPLOYMENT_MODEL.md) for details.
 
 ### Docker
 

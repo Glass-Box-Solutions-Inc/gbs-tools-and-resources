@@ -22,8 +22,8 @@ This monorepo consolidates 11 Glass Box packages into a single discoverable loca
 |---------|-------|---------|--------|
 | [`packages/spectacles/`](packages/spectacles/) | Python 3.12, FastAPI, Playwright, Gemini | Browser automation + documentation intelligence curator | Cloud Run: `glassbox-spectacles` |
 | [`packages/merus-expert/`](packages/merus-expert/) | Python 3.12, FastAPI, Claude, Gemini | MerusCase domain agent — 13 tools, SSE streaming | Cloud Run: `merus-expert` |
-| [`packages/agent-swarm/`](packages/agent-swarm/) | NestJS 11, TypeScript, Socket.io | DAG-based multi-agent task orchestration | Reference copy (not standalone) |
-| [`packages/agentic-debugger/`](packages/agentic-debugger/) | Node.js, Claude Code, GitHub Actions | Automated CI test failure debugging agent | Template for adoption |
+| [`packages/agent-swarm/`](packages/agent-swarm/) | NestJS 11, TypeScript, Socket.io | DAG-based multi-agent task orchestration | Standalone NestJS library (canonical) |
+| [`packages/agentic-debugger/`](packages/agentic-debugger/) | Node.js, Claude Code, GitHub Actions | Automated CI test failure debugging agent | Standalone CI debugging agent (canonical) |
 
 ### Utilities & Libraries
 
@@ -99,8 +99,8 @@ gbs-tools-and-resources/
 └── packages/
     ├── spectacles/                   # Browser automation + curator (Python/FastAPI)
     ├── merus-expert/                 # MerusCase agent (Python/FastAPI)
-    ├── agent-swarm/                  # Multi-agent orchestration (NestJS) — reference copy
-    ├── agentic-debugger/             # CI debugging agent (Claude Code) — template
+    ├── agent-swarm/                  # Multi-agent orchestration (NestJS) — standalone library
+    ├── agentic-debugger/             # CI debugging agent (Claude Code) — standalone
     ├── hindsight/                    # Agent memory system (Python/FastAPI + Next.js + Rust)
     ├── mcp-servers/                  # MCP server collection (Python + Node.js)
     │   └── servers/
@@ -126,8 +126,8 @@ gbs-tools-and-resources/
 | hindsight | 4600–4699 | FastAPI: 4601, Next.js: 4600 |
 | mcp-servers | 4900–4999 | Varies by server |
 | yevrah_terminal | 5200–5299 | CLI tool, no persistent server |
-| agent-swarm | — | Library (runs within Glassy 3800–3899) |
-| agentic-debugger | — | GitHub Actions only |
+| agent-swarm | — | Standalone NestJS library (installable via npm) |
+| agentic-debugger | — | GitHub Actions only (standalone, config-driven) |
 
 ---
 
@@ -155,6 +155,7 @@ See each package's own `.env.example` or `CLAUDE.md` for required environment va
 | 2026-03-01 | Consolidated 7 standalone repos into this monorepo |
 | 2026-03-01 | All source repos archived on GitHub with redirect notices |
 | 2026-03-08 | Added 4 agent packages: spectacles, merus-expert, agent-swarm, agentic-debugger |
+| 2026-03-08 | Made all 4 agent packages canonical standalone — monorepo is deployment source |
 
 ---
 

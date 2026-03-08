@@ -1,17 +1,13 @@
 // @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 
-// Prevent ESM import.meta issues in Jest
-jest.mock('../../../generated/prisma/client', () => ({
+// Mock the Prisma client
+jest.mock('@prisma/client', () => ({
   PrismaClient: jest.fn(),
-}));
-
-jest.mock('@prisma/adapter-pg', () => ({
-  PrismaPg: jest.fn(),
 }));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { SwarmService } from './swarm.service.js';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { PrismaService } from './prisma.service.js';
 import { TaskManagerService } from './task-manager.service.js';
 import { AgentCoordinatorService } from './agent-coordinator.service.js';
 import { AgentRole } from './dto/swarm.dto.js';

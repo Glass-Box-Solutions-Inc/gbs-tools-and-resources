@@ -1,7 +1,7 @@
 // @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { PrismaService } from './prisma.service.js';
 import { TaskManagerService } from './task-manager.service.js';
 import { AgentCoordinatorService } from './agent-coordinator.service.js';
 import { AgentRole } from './dto/swarm.dto.js';

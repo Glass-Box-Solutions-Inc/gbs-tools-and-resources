@@ -5,7 +5,7 @@ import { TaskManagerService } from './task-manager.service.js';
 import { SwarmService } from './swarm.service.js';
 import { AgentCoordinatorService } from './agent-coordinator.service.js';
 import { CreateTaskDto, UpdateTaskDto, SpawnSwarmDto, CompleteAgentTaskDto, FailAgentTaskDto } from './dto/swarm.dto.js';
-import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
+import { CurrentUser } from './decorators/current-user.decorator.js';
 
 @Controller('swarm')
 export class SwarmController {

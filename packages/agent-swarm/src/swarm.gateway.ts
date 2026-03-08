@@ -11,17 +11,17 @@ import {
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { Logger, Optional, Inject } from '@nestjs/common';
 
 /**
- * Extract the better-auth session token from a raw Cookie header string.
- * Falls back to null if the cookie is absent.
+ * Token for injecting a custom auth handler into the SwarmGateway.
+ *
+ * Hosted mode (e.g. Glassy): provide an AUTH_HANDLER that validates BetterAuth sessions.
+ * Standalone mode: accepts `socket.handshake.auth.token` as the userId directly.
  */
-function parseSessionCookie(cookieHeader: string): string | null {
-  const match = cookieHeader.match(/better-auth\.session_token=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
+export const SWARM_AUTH_HANDLER = 'SWARM_AUTH_HANDLER';
+
+export type SwarmAuthHandler = (socket: Socket) => Promise<{ userId: string } | null>;
 
 // H-01: Restrict WebSocket origins to configured allow-list (not wildcard)
 const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
@@ -34,8 +34,8 @@ const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
  * Security:
  * - afterInit() installs session auth middleware.
  * - CORS is enforced at the decorator level via CORS_ORIGINS env var (H-01).
- * - Auth accepts either `socket.handshake.auth.token` (E2E / server clients) or the
- *   `better-auth.session_token` cookie (browser clients using withCredentials: true).
+ * - Standalone mode: accepts `socket.handshake.auth.token` as userId directly.
+ * - Hosted mode: inject SWARM_AUTH_HANDLER to validate sessions (e.g. BetterAuth).
  */
 @WebSocketGateway({
   cors: { origin: CORS_ORIGINS, credentials: true },
@@ -47,40 +47,34 @@ export class SwarmGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
 
   private readonly logger = new Logger(SwarmGateway.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Optional() @Inject(SWARM_AUTH_HANDLER) private readonly authHandler?: SwarmAuthHandler,
+  ) {}
 
   /**
    * Install per-connection middleware:
-   * - Session authentication — requires a valid better-auth session.
-   * - CORS origin restriction is enforced at the decorator level via CORS_ORIGINS (H-01).
-   *
-   * Runs before `handleConnection`, so rejected clients never reach the room logic.
+   * - Hosted mode: delegates to injected auth handler (e.g. BetterAuth session lookup).
+   * - Standalone mode: accepts `socket.handshake.auth.token` as userId directly.
    */
   afterInit(server: Server) {
-    // Require a valid session — prefer auth.token (server clients), fallback to cookie (browsers)
     server.use(async (socket, next) => {
-      const cookieHeader = socket.handshake.headers.cookie ?? '';
-      const rawToken =
-        (socket.handshake.auth?.token as string | undefined) ??
-        parseSessionCookie(cookieHeader);
-      // BetterAuth cookie format: "{tokenId}.{hmacSignature}" — only the tokenId is stored
-      const token = rawToken ? rawToken.split('.')[0] : null;
+      if (this.authHandler) {
+        // Hosted mode — delegate to injected auth handler
+        const result = await this.authHandler(socket);
+        if (!result) {
+          return next(new Error('UNAUTHENTICATED'));
+        }
+        socket.data.userId = result.userId;
+        return next();
+      }
 
+      // Standalone mode — accept auth.token as userId directly
+      const token = socket.handshake.auth?.token as string | undefined;
       if (!token) {
         return next(new Error('UNAUTHENTICATED'));
       }
 
-      const session = await this.prisma.session.findFirst({
-        where: { token, expiresAt: { gt: new Date() } },
-        include: { user: true },
-      });
-
-      if (!session) {
-        return next(new Error('INVALID_TOKEN'));
-      }
-
-      socket.data.userId = session.userId;
-      socket.data.user = session.user;
+      socket.data.userId = token;
       next();
     });
   }
@@ -99,9 +93,6 @@ export class SwarmGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
     @MessageBody() data: { swarmId: string },
   ) {
     // H-02: Validate swarmId is non-empty with expected format before joining the room.
-    // swarmIds are generated as 'swarm-{timestamp}' by SwarmService.spawnSwarm.
-    // A full ownership check requires persisting swarmId→userId to the DB — tracked as a future
-    // enhancement. This guard at minimum prevents null/empty room joins and validates format.
     if (!data?.swarmId || !data.swarmId.startsWith('swarm-')) {
       client.emit('error', { message: 'Invalid or missing swarmId' });
       return;

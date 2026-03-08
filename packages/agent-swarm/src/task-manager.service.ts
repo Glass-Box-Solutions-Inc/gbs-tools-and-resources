@@ -1,7 +1,7 @@
 // @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 
 import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { PrismaService } from './prisma.service.js';
 
 /**
  * Task Manager Service — CRUD operations for agent tasks with dependency management.

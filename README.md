@@ -10,8 +10,8 @@
 |---------|-------|---------|--------|
 | [`packages/spectacles/`](packages/spectacles/) | Python 3.12, FastAPI, Playwright, Gemini | Browser automation + documentation intelligence curator | Production (Cloud Run) |
 | [`packages/merus-expert/`](packages/merus-expert/) | Python 3.12, FastAPI, Claude, Gemini | MerusCase domain agent — 13 tools, SSE streaming | Production (Cloud Run) |
-| [`packages/agent-swarm/`](packages/agent-swarm/) | NestJS 11, TypeScript, Socket.io | DAG-based multi-agent task orchestration | Reference copy from Glassy PAI |
-| [`packages/agentic-debugger/`](packages/agentic-debugger/) | Node.js, Claude Code, GitHub Actions | Automated CI test failure debugging agent | Template for adoption |
+| [`packages/agent-swarm/`](packages/agent-swarm/) | NestJS 11, TypeScript, Socket.io | DAG-based multi-agent task orchestration | Standalone NestJS library module |
+| [`packages/agentic-debugger/`](packages/agentic-debugger/) | Node.js, Claude Code, GitHub Actions | Automated CI test failure debugging agent | Standalone CI debugging agent |
 
 ## Utilities & Libraries
 
@@ -48,17 +48,17 @@
 
 ## Deployment
 
-> This monorepo is a **discoverability and reference hub**, not the deployment source for agent packages. See [`DEPLOYMENT_MODEL.md`](DEPLOYMENT_MODEL.md) for full details.
+> **All packages deploy from this monorepo** (canonical source). See [`DEPLOYMENT_MODEL.md`](DEPLOYMENT_MODEL.md) for full details.
 
-| Package | Canonical Deploy Source | Deploy Method |
-|---------|------------------------|---------------|
-| **spectacles** | [`Glass-Box-Solutions-Inc/Spectacles`](https://github.com/Glass-Box-Solutions-Inc/Spectacles) | Cloud Build → Cloud Run |
-| **merus-expert** | [`Glass-Box-Solutions-Inc/merus-expert`](https://github.com/Glass-Box-Solutions-Inc/merus-expert) | Manual `gcloud run deploy` |
-| **agent-swarm** | `glassy-app-production` (embedded module) | Part of Glassy NestJS build |
-| **agentic-debugger** | `glassy-app-production` (GitHub Actions) | Event-driven workflow |
-| **hindsight** | This monorepo (canonical) | Docker / local |
-| **mcp-servers** | This monorepo (canonical) | Per-server |
-| **phileas** | This monorepo (canonical) | Maven JAR |
+| Package | Deploy Method | Notes |
+|---------|--------------|-------|
+| **spectacles** | Cloud Build → Cloud Run | `packages/spectacles/cloudbuild.yaml` |
+| **merus-expert** | Cloud Build → Cloud Run | `packages/merus-expert/cloudbuild.yaml` |
+| **agent-swarm** | `npm install @gbs/agent-swarm` | Standalone NestJS library module |
+| **agentic-debugger** | Copy script + workflow into target repo | Config-driven via `.agentic-debugger.json` |
+| **hindsight** | Docker / local | — |
+| **mcp-servers** | Per-server (MCP protocol) | — |
+| **phileas** | Maven JAR | — |
 
 ---
 
@@ -87,6 +87,7 @@ See each package's own `README.md` for setup, install, and run instructions.
 |------|--------|
 | 2026-03-01 | Consolidated 7 standalone repos into this monorepo |
 | 2026-03-08 | Added 4 agent packages (spectacles, merus-expert, agent-swarm, agentic-debugger) |
+| 2026-03-08 | Made all 4 agent packages canonical standalone — monorepo is now the deployment source |
 
 **Archived source repos (2026-03-01):**
 
@@ -104,10 +105,10 @@ See each package's own `README.md` for setup, install, and run instructions.
 
 | Source | Now At | Type |
 |--------|--------|------|
-| `Glass-Box-Solutions-Inc/Spectacles` | `packages/spectacles/` | Full copy |
-| `Glass-Box-Solutions-Inc/merus-expert` | `packages/merus-expert/` | Full copy |
-| `glassy-app-production` `backend/src/modules/agent-swarm/` | `packages/agent-swarm/` | Reference copy |
-| `glassy-app-production` `scripts/debug-agent.mjs` | `packages/agentic-debugger/` | Template copy |
+| `Glass-Box-Solutions-Inc/Spectacles` | `packages/spectacles/` | Canonical (standalone repo archived) |
+| `Glass-Box-Solutions-Inc/merus-expert` | `packages/merus-expert/` | Canonical (standalone repo archived) |
+| `glassy-app-production` agent-swarm module | `packages/agent-swarm/` | Fork — standalone GBS resource (Glassy copy stays canonical for Glassy) |
+| `glassy-app-production` debug-agent script | `packages/agentic-debugger/` | Fork — standalone GBS resource (Glassy copy stays canonical for Glassy) |
 
 ---
 

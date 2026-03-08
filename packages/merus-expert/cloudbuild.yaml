@@ -1,0 +1,44 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/merus-expert:$BUILD_ID'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/merus-expert:latest'
+      - '.'
+
+  # Push to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/merus-expert'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'merus-expert'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/merus-expert:$BUILD_ID'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--memory'
+      - '2Gi'
+      - '--timeout'
+      - '300'
+      - '--port'
+      - '8000'
+      - '--set-env-vars'
+      - 'ENVIRONMENT=production,GCP_PROJECT_ID=$PROJECT_ID'
+      - '--set-secrets'
+      - 'MERUSCASE_CLIENT_ID=merus-expert-client-id:latest,MERUSCASE_CLIENT_SECRET=merus-expert-client-secret:latest,ANTHROPIC_API_KEY=merus-expert-anthropic-key:latest,GOOGLE_AI_API_KEY=merus-expert-google-ai-key:latest,API_KEY=merus-expert-api-key:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

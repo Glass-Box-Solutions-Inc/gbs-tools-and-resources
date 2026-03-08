@@ -1,0 +1,123 @@
+# @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+#
+# Agentic Debugger — Glassy PAI-specific workflow
+# This is the original Glassy-tuned variant with PostgreSQL+pgvector services,
+# pnpm workspace commands, and Prisma migrations.
+#
+# For the project-agnostic template, see: ../agentic-debugger.yml
+
+name: Agentic Debugger (Glassy)
+
+on:
+  workflow_dispatch:
+    inputs:
+      linear_ticket_id:
+        description: "Linear ticket ID to update with attempt progress"
+        required: true
+        type: string
+      test_failure_log:
+        description: "Test failure output excerpt (max 4000 chars)"
+        required: true
+        type: string
+      attempt_number:
+        description: "Current debug attempt number (0-indexed)"
+        required: true
+        type: string
+      commit_sha:
+        description: "The develop commit SHA that triggered the CI failure"
+        required: true
+        type: string
+
+env:
+  NODE_VERSION: "20"
+  PNPM_VERSION: "9"
+
+jobs:
+  debug:
+    name: "Agentic Debug — Attempt ${{ inputs.attempt_number }}"
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: glassy_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/glassy_test?schema=public
+      NODE_ENV: test
+      BETTER_AUTH_SECRET: test-secret-for-ci-only-not-real
+      BETTER_AUTH_URL: http://localhost:3000
+      PORT: 3000
+
+    steps:
+      - name: Checkout develop branch
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          token: ${{ github.token }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter backend exec prisma generate
+
+      - name: Run Prisma migrations
+        run: pnpm --filter backend exec prisma migrate deploy
+
+      - name: Re-run tests to capture fresh failure output
+        continue-on-error: true
+        run: |
+          set +e
+          touch current-failures.txt
+          pnpm --filter backend test 2>&1 | tee -a current-failures.txt
+          (cd backend && NODE_OPTIONS='--experimental-vm-modules' npx jest \
+            --config test/jest-e2e.json --no-coverage --runInBand 2>&1) | tee -a current-failures.txt
+          pnpm --filter frontend test 2>&1 | tee -a current-failures.txt
+          exit 0
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run debug agent
+        id: debug_agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ATTEMPT_NUMBER: ${{ inputs.attempt_number }}
+        continue-on-error: true
+        run: |
+          CURRENT_FAILURES_FILE="$(pwd)/current-failures.txt"
+          export CURRENT_FAILURES_FILE
+          set +e
+          node scripts/debug-agent.mjs
+          AGENT_EXIT=$?
+          set -e
+          echo "exit_code=${AGENT_EXIT}" >> $GITHUB_OUTPUT
+          exit $AGENT_EXIT
+
+      # Remaining steps identical to project-agnostic template
+      # (escalate, fail, configure git, commit, update Linear)

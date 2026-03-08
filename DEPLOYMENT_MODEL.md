@@ -1,54 +1,95 @@
 # Deployment Model
 
-> **This monorepo is a discoverability and reference hub, not a deployment source.** Each deployable package continues to deploy from its original standalone repository.
+> **This monorepo is the canonical source for all 4 agent packages.** Spectacles and merus-expert deploy to Cloud Run from this repo. Agent-swarm is an installable NestJS library. Agentic-debugger is adopted by copying its script and workflow into target repos.
 
 ---
 
-## Why This Matters
+## Per-Package Deployment
 
-When packages were consolidated into `gbs-tools-and-resources`, deploy files (Dockerfiles, `cloudbuild.yaml`, `docker-compose.yml`, workflow YAML) were copied faithfully to preserve context. However, **no Cloud Build triggers, GitHub Actions, or CI/CD pipelines point at this monorepo**. The deploy files here are inert snapshots — they document how each service is built and deployed, but deployment is triggered from the canonical source repos listed below.
+| Package | Deploy Method | Canonical Source |
+|---------|--------------|------------------|
+| **spectacles** | Cloud Build trigger → Cloud Run | This monorepo (`packages/spectacles/`) |
+| **merus-expert** | Cloud Build trigger → Cloud Run | This monorepo (`packages/merus-expert/`) |
+| **agent-swarm** | `npm install @gbs/agent-swarm` | This monorepo (`packages/agent-swarm/`) |
+| **agentic-debugger** | Copy script + workflow + config into target repo | This monorepo (`packages/agentic-debugger/`) |
+| **hindsight** | Docker / local | This monorepo (`packages/hindsight/`) |
+| **mcp-servers** | Per-server (MCP protocol) | This monorepo (`packages/mcp-servers/`) |
+| **phileas** | Maven JAR | This monorepo (`packages/phileas/`) |
+| **yevrah_terminal** | pip install (CLI) | This monorepo (`packages/yevrah_terminal/`) |
+| **merus-test-data-generator** | pip install (CLI) | This monorepo (`packages/merus-test-data-generator/`) |
 
 ---
 
-## Per-Package Deployment Sources
+## Cloud Run Services
 
-| Package | Deploys From | Deploy Method | Deploy Files in Monorepo |
-|---------|-------------|---------------|--------------------------|
-| **spectacles** | [`Glass-Box-Solutions-Inc/Spectacles`](https://github.com/Glass-Box-Solutions-Inc/Spectacles) (standalone repo) | Cloud Build trigger → Cloud Run | Dockerfile, cloudbuild.yaml, .env.example, .dockerignore |
-| **merus-expert** | [`Glass-Box-Solutions-Inc/merus-expert`](https://github.com/Glass-Box-Solutions-Inc/merus-expert) (standalone repo) | Manual `docker build` + `gcloud run deploy` | Dockerfile, docker-compose.yml, .env.example |
-| **agent-swarm** | [`glassy-app-production`](https://github.com/Glass-Box-Solutions-Inc/glassy) (`backend/src/modules/agent-swarm/`) | Part of Glassy NestJS build | Source code only (no deploy files) |
-| **agentic-debugger** | [`glassy-app-production`](https://github.com/Glass-Box-Solutions-Inc/glassy) (`.github/workflows/`) | GitHub Actions (triggered by CI failure) | debug-agent.mjs + workflow YAML |
-| **hindsight** | This monorepo (canonical) | Local / Docker | Dockerfile, docker-compose.yml |
-| **mcp-servers** | This monorepo (canonical) | Per-server (see individual READMEs) | Varies by server |
-| **phileas** | This monorepo (canonical) | Maven (library JAR) | pom.xml |
-| **yevrah_terminal** | This monorepo (canonical) | pip install (CLI tool) | pyproject.toml |
-| **merus-test-data-generator** | This monorepo (canonical) | pip install (CLI tool) | pyproject.toml |
+### spectacles
 
-**Note:** The Phase 1 utility packages (hindsight, mcp-servers, phileas, yevrah_terminal, merus-test-data-generator) were fully migrated — their standalone repos are archived and this monorepo is their canonical source. The Phase 2 agent packages (spectacles, merus-expert, agent-swarm, agentic-debugger) maintain their standalone repos as the deployment source.
+- **Service:** `glassbox-spectacles`
+- **Cloud Build trigger:** Points to `gbs-tools-and-resources` repo, `dir: packages/spectacles/`
+- **Build:** `packages/spectacles/cloudbuild.yaml` (Docker → Artifact Registry → Cloud Run)
+- **Secrets:** GCP Secret Manager (`spectacles-*` secrets)
+
+### merus-expert
+
+- **Service:** `merus-expert`
+- **Cloud Build trigger:** Points to `gbs-tools-and-resources` repo, `dir: packages/merus-expert/`
+- **Build:** `packages/merus-expert/cloudbuild.yaml` (Docker → Artifact Registry → Cloud Run)
+- **Port:** 8000
+- **Secrets:** GCP Secret Manager (`merus-expert-*` secrets)
+
+---
+
+## NestJS Library: agent-swarm
+
+Agent-swarm is a standalone NestJS library module, not a deployed service. Host applications install it and import the module:
+
+```typescript
+// Standalone mode — uses built-in PrismaService
+import { AgentSwarmModule } from '@gbs/agent-swarm';
+
+// Hosted mode — inject host app's PrismaService
+AgentSwarmModule.forRoot({ prismaService: HostPrismaService })
+```
+
+**Relationship to Glassy:** The agent-swarm module embedded in `glassy-app-production` remains canonical for Glassy PAI and continues to evolve independently. This standalone package is a separate GBS resource, forked from Glassy and decoupled from all Glassy dependencies (BetterAuth, Glassy Prisma schema, etc.).
+
+---
+
+## CI Debugging Agent: agentic-debugger
+
+Agentic-debugger is adopted by copying files into the target repo:
+
+```bash
+cp packages/agentic-debugger/workflows/agentic-debugger.yml .github/workflows/
+cp packages/agentic-debugger/scripts/debug-agent.mjs scripts/
+cp packages/agentic-debugger/.agentic-debugger.json .
+```
+
+Configuration is project-specific via `.agentic-debugger.json`. A Glassy-specific workflow example is at `packages/agentic-debugger/workflows/examples/agentic-debugger.glassy.yml`.
+
+**Relationship to Glassy:** The debug-agent script and workflow in `glassy-app-production` remain canonical for Glassy PAI. This standalone package is a generalized GBS resource for use in any repo.
 
 ---
 
 ## Scheduled Jobs / Cron
 
-| Job | Package | Where It's Configured | Schedule |
-|-----|---------|----------------------|----------|
-| Daily curator run | spectacles | APScheduler inside the Spectacles app code | Daily 7am UTC |
-| CLAUDE.md audit | spectacles | APScheduler inside the app code | Weekly (Sunday 7am UTC) |
-| Doc quality audit | spectacles | APScheduler inside the app code | Monthly (1st, 7am UTC) |
-| CI failure debug | agentic-debugger | GitHub Actions in `glassy-app-production` | Event-driven (on CI failure) |
-
-The scheduler code (APScheduler) was copied into this monorepo as part of the Spectacles source. However, **the running instance** uses the code deployed from the standalone Spectacles repo. Changes to scheduler config here will NOT affect production until the standalone repo is updated.
+| Job | Package | Where Configured | Schedule |
+|-----|---------|-----------------|----------|
+| Daily curator run | spectacles | APScheduler in deployed app | Daily 7am UTC |
+| CLAUDE.md audit | spectacles | APScheduler in deployed app | Weekly (Sunday 7am UTC) |
+| Doc quality audit | spectacles | APScheduler in deployed app | Monthly (1st, 7am UTC) |
+| CI failure debug | agentic-debugger | GitHub Actions in target repo | Event-driven |
 
 ---
 
 ## Secrets & Environment Variables
 
-| Package | Secrets Location | Affected by Monorepo Copy? |
-|---------|-----------------|---------------------------|
-| **spectacles** | GCP Secret Manager (`glassbox-spectacles` project) | No — secrets are in GCP, not in repo |
-| **merus-expert** | `.env` file (local) / GCP Secret Manager (prod) | No — `.env` is gitignored, never copied |
-| **agent-swarm** | Inherits from Glassy's env | N/A — reference copy |
-| **agentic-debugger** | GitHub Secrets in Glassy repo | N/A — template copy |
+| Package | Secrets Location |
+|---------|-----------------|
+| **spectacles** | GCP Secret Manager (`glassbox-spectacles` project) |
+| **merus-expert** | GCP Secret Manager (production) / `.env` (local, gitignored) |
+| **agent-swarm** | Host app provides (standalone: own `.env`) |
+| **agentic-debugger** | GitHub Secrets in target repo (`ANTHROPIC_API_KEY`, optionally `LINEAR_API_KEY`) |
 
 Each package includes a `.env.example` file documenting required variables. Actual secrets are managed through:
 
@@ -56,21 +97,17 @@ Each package includes a `.env.example` file documenting required variables. Actu
 - **GitHub Secrets** — CI/CD workflow credentials
 - **Local `.env` files** — Development credentials (gitignored, never committed)
 
-**No secrets were copied into this monorepo.** The `.env.example` files are safe to commit — they contain placeholder values only.
+**No secrets are committed to this monorepo.**
 
 ---
 
-## Deploying from This Monorepo (Future Consideration)
+## GCP Infrastructure Notes
 
-If the decision is made to deploy agent packages from this monorepo instead of standalone repos:
+After the Phase 3 canonical transfer (2026-03-08):
 
-1. **Cloud Build triggers** would need to be created pointing at `packages/spectacles/` and `packages/merus-expert/` paths in this repo
-2. **Build context** paths in `cloudbuild.yaml` would need updating to account for monorepo nesting
-3. **The standalone repos** would become read-only archives (like the Phase 1 utility repos)
-4. **GitHub Actions** for agentic-debugger would need to reference this repo's workflow path
-5. **Spectacles' APScheduler** config would be live from this repo's copy
-
-This is not currently planned. The standalone repos remain the deployment sources.
+1. **Spectacles Cloud Build trigger** → updated to point at `gbs-tools-and-resources` repo, `dir: packages/spectacles/`
+2. **Merus-expert Cloud Build trigger** → created, pointing at `gbs-tools-and-resources` repo, `dir: packages/merus-expert/`
+3. **Standalone repos** (`Glass-Box-Solutions-Inc/Spectacles`, `Glass-Box-Solutions-Inc/merus-expert`) → archived on GitHub
 
 ---
 

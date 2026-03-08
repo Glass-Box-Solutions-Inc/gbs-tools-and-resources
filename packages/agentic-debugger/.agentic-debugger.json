@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "_comment": "Default configuration for @gbs/agentic-debugger. Place in your repo root to customize.",
+
+  "testRunners": {
+    "failurePatterns": [
+      "^FAIL\\s+(?:.*/)?(src/\\S+\\.(?:spec|test)\\.(?:ts|tsx|js|jsx))$",
+      "^\\s*FAIL\\s+(\\S+\\.(?:spec|test)\\.(?:ts|tsx|js|jsx))$",
+      "^\\s*✕\\s+.*\\((\\S+\\.(?:spec|test)\\.(?:ts|tsx|js|jsx)):\\d+:\\d+\\)$"
+    ],
+    "typeCheckCommand": "npx tsc --noEmit",
+    "typeCheckTimeout": 90000
+  },
+
+  "fileScope": {
+    "editable": ["src/**", "test/**", "tests/**"],
+    "forbidden": ["*.lock", "package.json", "package-lock.json", "pnpm-lock.yaml", "*.yml", "*.yaml", "prisma/schema.prisma"]
+  },
+
+  "claudeCode": {
+    "maxTurns": 20,
+    "timeoutMinutes": 8,
+    "allowedTools": ["Read", "Edit"]
+  },
+
+  "linear": {
+    "enabled": false
+  },
+
+  "maxAttempts": 5,
+  "branch": "develop"
+}
