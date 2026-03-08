@@ -1,0 +1,2652 @@
+{
+  "billing_codes": {
+    "107105": {
+      "id": 107105,
+      "task_code": "None",
+      "activity_code": null,
+      "expense_code": null,
+      "alternate_billing_code": null,
+      "ledger_disposition": "BILLABLE",
+      "description": "Test billing code",
+      "priority": 100,
+      "source_key": null
+    }
+  },
+  "billing_rates": {
+    "56171871": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171872": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171873": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171875": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171876": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171877": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171878": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171879": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171881": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171882": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171883": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171884": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171885": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171886": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171888": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171889": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171890": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171891": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171893": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171894": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171895": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171896": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171897": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171898": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171899": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171900": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171901": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171902": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171903": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171904": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171905": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171906": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171907": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171909": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171910": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171911": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171912": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171913": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171914": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171915": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "56171916": [
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      [
+        0,
+        null
+      ],
+      null,
+      16571,
+      null,
+      [
+        "0.00",
+        "0.00"
+      ],
+      {
+        "client_id": null,
+        "client_matter_id": null,
+        "law_firm_id": null,
+        "law_firm_matter_id": null,
+        "timekeeper_id": null
+      },
+      null,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "activity_types": {
+    "1": {
+      "0": "Hidden",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "2": {
+      "0": "Automatic",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "3": {
+      "0": "Form Created",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "4": {
+      "0": "Form Edited",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "5": {
+      "0": "Form Completed",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "6": {
+      "0": "Status Changed",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "7": {
+      "0": "Form Cloned",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "9": {
+      "0": "Document",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "10": {
+      "0": "Photo/Graphic",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "11": {
+      "0": "Message",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "12": {
+      "0": "Event Created",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "13": {
+      "0": "Case Created",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "14": {
+      "0": "Case Consolidated",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "15": {
+      "0": "Message (Sending in Progress)",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "16": {
+      "0": "Event Updated",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "17": {
+      "0": "Event Deleted",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "18": {
+      "0": "Template Merged",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "19": {
+      "0": "Document Opened",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "20": {
+      "0": "Task Created",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "21": {
+      "0": "Task Completed",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "22": {
+      "0": "Task Updated",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "23": {
+      "0": "Cancelled",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "24": {
+      "0": "Subpoena Request",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "25": {
+      "0": "Subpoenaed Document",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "26": {
+      "0": "Task Deleted",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "30": {
+      "0": "DWC Parcel Deleted",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "31": {
+      "0": "DWC Parcel Created",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "32": {
+      "0": "DWC Parcel Updated",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "33": {
+      "0": "DWC Parcel Submitted",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "34": {
+      "0": "DWC Parcel Attachments Log",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "35": {
+      "0": "DWC Parcel eFile Submission Confirmation",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "36": {
+      "0": "DWC Parcel eFile Submission Completed",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "37": {
+      "0": "DWC Parcel eFile Submission Failed",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "39": {
+      "0": "Form Completed (Import)",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "40": {
+      "0": "Filing Date Recorded",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "50": {
+      "0": "Statute Set",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "53": {
+      "0": "Voc Rehab Referral",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "54": {
+      "0": "Proposal Approved",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "55": {
+      "0": "Case Status Message",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 0
+    },
+    "100": {
+      "0": "Manual Entry",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "101": {
+      "0": "Note",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "102": {
+      "0": "Letter Sent",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "103": {
+      "0": "Fax Sent",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "104": {
+      "0": "Email Sent",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "105": {
+      "0": "Letter Received",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "106": {
+      "0": "Fax Received",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "107": {
+      "0": "Email Received",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "108": {
+      "0": "Proof Sent",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "109": {
+      "0": "Fee",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "110": {
+      "0": "Payment",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "111": {
+      "0": "Telephone Call",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "112": {
+      "0": "Copy Service Request",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "113": {
+      "0": "Reviewed",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "114": {
+      "0": "Electronic Signature",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "115": {
+      "0": "Court Rules",
+      "is_firm_specific": 0,
+      "is_deletable": 0,
+      "is_viewable": 1
+    },
+    "99047": {
+      "0": "Indexable",
+      "is_firm_specific": 1,
+      "is_deletable": 1,
+      "is_viewable": 1
+    }
+  },
+  "fetched_at": "2026-01-20"
+}

@@ -1,0 +1,392 @@
+[
+  {
+    "endpoint": "/caseFiles/index",
+    "method": "GET",
+    "description": "List cases",
+    "status": 200,
+    "ok": true,
+    "count": "65",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/caseTypes/index",
+    "method": "GET",
+    "description": "Case types",
+    "status": 200,
+    "ok": true,
+    "count": "29",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/caseStatuses/index",
+    "method": "GET",
+    "description": "Case statuses",
+    "status": 200,
+    "ok": true,
+    "count": "12",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/activities/index/56171871",
+    "method": "GET",
+    "description": "Activities for case",
+    "status": 200,
+    "ok": true,
+    "count": "243",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/activityTypes/index",
+    "method": "GET",
+    "description": "Activity types",
+    "status": 200,
+    "ok": true,
+    "count": "56",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/billingCodes/index",
+    "method": "GET",
+    "description": "Billing codes",
+    "status": 200,
+    "ok": true,
+    "count": "1",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/caseLedgersOpen/index",
+    "method": "GET",
+    "description": "Open ledgers",
+    "status": 200,
+    "ok": true,
+    "count": "7",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/caseLedgersReviewed/index",
+    "method": "GET",
+    "description": "Reviewed ledgers",
+    "status": 200,
+    "ok": true,
+    "count": "0",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/caseLedgers/index",
+    "method": "GET",
+    "description": "All ledgers",
+    "status": 200,
+    "ok": true,
+    "count": "7",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/partyGroups/index",
+    "method": "GET",
+    "description": "Party groups",
+    "status": 200,
+    "ok": true,
+    "count": "0",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/parties/view/56171871",
+    "method": "GET",
+    "description": "Parties for case",
+    "status": 200,
+    "ok": true,
+    "count": "1",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/parties/index",
+    "method": "GET",
+    "description": "Parties index (filtered)",
+    "status": 200,
+    "ok": true,
+    "count": "0",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/tasks/index",
+    "method": "GET",
+    "description": "Tasks",
+    "status": 200,
+    "ok": true,
+    "count": "0",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/events/index",
+    "method": "GET",
+    "description": "Events",
+    "status": 200,
+    "ok": true,
+    "count": "0",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/eventTypes/index",
+    "method": "GET",
+    "description": "Event types",
+    "status": 200,
+    "ok": true,
+    "count": "3",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/statutes/index",
+    "method": "GET",
+    "description": "Statutes",
+    "status": 200,
+    "ok": true,
+    "count": "1",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/paymentMethods/index",
+    "method": "GET",
+    "description": "Payment methods",
+    "status": 200,
+    "ok": true,
+    "count": "6",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/users/index",
+    "method": "GET",
+    "description": "Firm users",
+    "status": 200,
+    "ok": true,
+    "count": "5",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/receivables/index",
+    "method": "GET",
+    "description": "Receivables",
+    "status": 200,
+    "ok": true,
+    "count": "0",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/uploads/index",
+    "method": "GET",
+    "description": "All uploads",
+    "status": 200,
+    "ok": true,
+    "count": "334",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/uploads/index",
+    "method": "GET",
+    "description": "Uploads for case",
+    "status": 200,
+    "ok": true,
+    "count": "334",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/documents/index",
+    "method": "GET",
+    "description": "Documents list",
+    "status": 200,
+    "ok": true,
+    "count": "0",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/contacts/index",
+    "method": "GET",
+    "description": "Contacts list",
+    "status": 200,
+    "ok": true,
+    "count": "153",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/peopleTypes/index",
+    "method": "GET",
+    "description": "People types",
+    "status": 200,
+    "ok": true,
+    "count": "102",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/companies/index",
+    "method": "GET",
+    "description": "Companies",
+    "status": 200,
+    "ok": true,
+    "count": "39",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/injuries/view/1",
+    "method": "GET",
+    "description": "Injuries view (case 1)",
+    "status": 200,
+    "ok": true,
+    "count": "0",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/courts/index",
+    "method": "GET",
+    "description": "Courts",
+    "status": 200,
+    "ok": true,
+    "count": "3418",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/invoices/index",
+    "method": "GET",
+    "description": "Invoices",
+    "status": 200,
+    "ok": true,
+    "count": "2",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/billingRates/index",
+    "method": "GET",
+    "description": "Billing rates",
+    "status": 200,
+    "ok": true,
+    "count": "65",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/trustAccounts/index",
+    "method": "GET",
+    "description": "Trust accounts",
+    "status": 0,
+    "ok": false,
+    "count": "0",
+    "meta_error": "",
+    "error": "Expecting value: line 1 column 1 (char 0)"
+  },
+  {
+    "endpoint": "/messages/index",
+    "method": "GET",
+    "description": "Messages",
+    "status": 200,
+    "ok": true,
+    "count": "0",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/reports/index",
+    "method": "GET",
+    "description": "Reports",
+    "status": 200,
+    "ok": true,
+    "count": "55",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/workflows/index",
+    "method": "GET",
+    "description": "Workflows",
+    "status": 200,
+    "ok": true,
+    "count": "0",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/oauthApps/index",
+    "method": "GET",
+    "description": "OAuth apps",
+    "status": 200,
+    "ok": true,
+    "count": "49",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/help",
+    "method": "GET",
+    "description": "Help",
+    "status": 200,
+    "ok": true,
+    "count": "120",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/caseFiles/view/56171871",
+    "method": "GET",
+    "description": "Case file view",
+    "status": 200,
+    "ok": true,
+    "count": "0",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/activities/index/56171905",
+    "method": "GET",
+    "description": "Activities case 56171905",
+    "status": 0,
+    "ok": false,
+    "count": "0",
+    "meta_error": "",
+    "error": "Expecting value: line 1 column 1 (char 0)"
+  },
+  {
+    "endpoint": "/case_files",
+    "method": "GET",
+    "description": "snake_case alias",
+    "status": 200,
+    "ok": true,
+    "count": "65",
+    "meta_error": "",
+    "error": ""
+  },
+  {
+    "endpoint": "/CaseFiles",
+    "method": "GET",
+    "description": "PascalCase alias",
+    "status": 200,
+    "ok": true,
+    "count": "65",
+    "meta_error": "",
+    "error": ""
+  }
+]

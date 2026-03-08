@@ -1,0 +1,362 @@
+"""
+Element Handler - Smart element location and interaction
+"""
+
+import logging
+from typing import Optional, List, Dict, Any
+from playwright.async_api import Page, Locator, TimeoutError as PlaywrightTimeout
+
+logger = logging.getLogger(__name__)
+
+
+class ElementHandler:
+    """
+    Intelligent element finding with multiple fallback strategies.
+
+    Tries multiple methods to locate elements:
+    1. CSS selector
+    2. XPath
+    3. Text content matching
+    4. Label association
+    5. Placeholder text
+    """
+
+    def __init__(self, page: Page):
+        """
+        Initialize element handler.
+
+        Args:
+            page: Playwright page object
+        """
+        self.page = page
+
+    async def find_input(
+        self,
+        field_name: Optional[str] = None,
+        label: Optional[str] = None,
+        placeholder: Optional[str] = None,
+        css_selector: Optional[str] = None,
+        xpath: Optional[str] = None,
+        timeout: int = 5000
+    ) -> Optional[Locator]:
+        """
+        Find input field using multiple strategies.
+
+        Args:
+            field_name: Input name attribute
+            label: Associated label text
+            placeholder: Placeholder text
+            css_selector: CSS selector
+            xpath: XPath selector
+            timeout: Timeout in milliseconds
+
+        Returns:
+            Locator object or None if not found
+        """
+        strategies = []
+
+        # Strategy 1: CSS selector
+        if css_selector:
+            strategies.append(("CSS selector", lambda: self.page.locator(css_selector)))
+
+        # Strategy 2: XPath
+        if xpath:
+            strategies.append(("XPath", lambda: self.page.locator(f"xpath={xpath}")))
+
+        # Strategy 3: Name attribute
+        if field_name:
+            strategies.append((
+                f"name={field_name}",
+                lambda: self.page.locator(f"input[name='{field_name}'], textarea[name='{field_name}'], select[name='{field_name}']")
+            ))
+
+        # Strategy 4: Label association
+        if label:
+            strategies.append((
+                f"label={label}",
+                lambda: self.page.get_by_label(label, exact=False)
+            ))
+
+        # Strategy 5: Placeholder
+        if placeholder:
+            strategies.append((
+                f"placeholder={placeholder}",
+                lambda: self.page.get_by_placeholder(placeholder, exact=False)
+            ))
+
+        # Try each strategy
+        for strategy_name, locator_func in strategies:
+            try:
+                locator = locator_func()
+                await locator.wait_for(state="visible", timeout=timeout)
+                logger.info(f"Found input using {strategy_name}")
+                return locator
+            except PlaywrightTimeout:
+                logger.debug(f"Strategy {strategy_name} failed")
+                continue
+            except Exception as e:
+                logger.debug(f"Strategy {strategy_name} error: {e}")
+                continue
+
+        logger.warning(f"Could not find input field (name={field_name}, label={label})")
+        return None
+
+    async def find_button(
+        self,
+        text: Optional[str] = None,
+        css_selector: Optional[str] = None,
+        role: str = "button",
+        timeout: int = 5000
+    ) -> Optional[Locator]:
+        """
+        Find button by text or selector.
+
+        Args:
+            text: Button text content
+            css_selector: CSS selector
+            role: ARIA role (default: button)
+            timeout: Timeout in milliseconds
+
+        Returns:
+            Locator object or None
+        """
+        strategies = []
+
+        # Strategy 1: CSS selector
+        if css_selector:
+            strategies.append(("CSS selector", lambda: self.page.locator(css_selector)))
+
+        # Strategy 2: Role + text
+        if text:
+            strategies.append((
+                f"role={role}, text={text}",
+                lambda: self.page.get_by_role(role, name=text, exact=False)
+            ))
+
+        # Strategy 3: Button tag with text
+        if text:
+            strategies.append((
+                f"button:has-text('{text}')",
+                lambda: self.page.locator(f"button:has-text('{text}'), input[type='submit'][value*='{text}']")
+            ))
+
+        # Try each strategy
+        for strategy_name, locator_func in strategies:
+            try:
+                locator = locator_func()
+                await locator.wait_for(state="visible", timeout=timeout)
+                logger.info(f"Found button using {strategy_name}")
+                return locator
+            except PlaywrightTimeout:
+                logger.debug(f"Strategy {strategy_name} failed")
+                continue
+            except Exception as e:
+                logger.debug(f"Strategy {strategy_name} error: {e}")
+                continue
+
+        logger.warning(f"Could not find button (text={text}, selector={css_selector})")
+        return None
+
+    async def find_dropdown(
+        self,
+        field_name: Optional[str] = None,
+        label: Optional[str] = None,
+        css_selector: Optional[str] = None,
+        timeout: int = 5000
+    ) -> Optional[Locator]:
+        """
+        Find dropdown/select element.
+
+        Args:
+            field_name: Select name attribute
+            label: Associated label text
+            css_selector: CSS selector
+            timeout: Timeout in milliseconds
+
+        Returns:
+            Locator object or None
+        """
+        strategies = []
+
+        # Strategy 1: CSS selector
+        if css_selector:
+            strategies.append(("CSS selector", lambda: self.page.locator(css_selector)))
+
+        # Strategy 2: Name attribute
+        if field_name:
+            strategies.append((
+                f"name={field_name}",
+                lambda: self.page.locator(f"select[name='{field_name}']")
+            ))
+
+        # Strategy 3: Label association
+        if label:
+            strategies.append((
+                f"label={label}",
+                lambda: self.page.get_by_label(label, exact=False)
+            ))
+
+        # Try each strategy
+        for strategy_name, locator_func in strategies:
+            try:
+                locator = locator_func()
+                await locator.wait_for(state="visible", timeout=timeout)
+
+                # Verify it's a select element
+                tag_name = await locator.evaluate("el => el.tagName")
+                if tag_name.lower() == "select":
+                    logger.info(f"Found dropdown using {strategy_name}")
+                    return locator
+                else:
+                    logger.debug(f"Found element but not a select tag: {tag_name}")
+                    continue
+
+            except PlaywrightTimeout:
+                logger.debug(f"Strategy {strategy_name} failed")
+                continue
+            except Exception as e:
+                logger.debug(f"Strategy {strategy_name} error: {e}")
+                continue
+
+        logger.warning(f"Could not find dropdown (name={field_name}, label={label})")
+        return None
+
+    async def find_link(
+        self,
+        text: Optional[str] = None,
+        href: Optional[str] = None,
+        css_selector: Optional[str] = None,
+        timeout: int = 5000
+    ) -> Optional[Locator]:
+        """
+        Find link by text or href.
+
+        Args:
+            text: Link text
+            href: Href attribute (partial match)
+            css_selector: CSS selector
+            timeout: Timeout in milliseconds
+
+        Returns:
+            Locator object or None
+        """
+        strategies = []
+
+        # Strategy 1: CSS selector
+        if css_selector:
+            strategies.append(("CSS selector", lambda: self.page.locator(css_selector)))
+
+        # Strategy 2: Role + text
+        if text:
+            strategies.append((
+                f"link text={text}",
+                lambda: self.page.get_by_role("link", name=text, exact=False)
+            ))
+
+        # Strategy 3: Href partial match
+        if href:
+            strategies.append((
+                f"href contains {href}",
+                lambda: self.page.locator(f"a[href*='{href}']")
+            ))
+
+        # Try each strategy
+        for strategy_name, locator_func in strategies:
+            try:
+                locator = locator_func()
+                await locator.wait_for(state="visible", timeout=timeout)
+                logger.info(f"Found link using {strategy_name}")
+                return locator
+            except PlaywrightTimeout:
+                logger.debug(f"Strategy {strategy_name} failed")
+                continue
+            except Exception as e:
+                logger.debug(f"Strategy {strategy_name} error: {e}")
+                continue
+
+        logger.warning(f"Could not find link (text={text}, href={href})")
+        return None
+
+    async def wait_for_element(
+        self,
+        css_selector: str,
+        state: str = "visible",
+        timeout: int = 10000
+    ) -> bool:
+        """
+        Wait for element to reach specified state.
+
+        Args:
+            css_selector: CSS selector
+            state: Element state (visible, attached, hidden, detached)
+            timeout: Timeout in milliseconds
+
+        Returns:
+            True if element reached state, False otherwise
+        """
+        try:
+            locator = self.page.locator(css_selector)
+            await locator.wait_for(state=state, timeout=timeout)
+            logger.info(f"Element {css_selector} reached state: {state}")
+            return True
+        except PlaywrightTimeout:
+            logger.warning(f"Timeout waiting for {css_selector} to be {state}")
+            return False
+        except Exception as e:
+            logger.error(f"Error waiting for element: {e}")
+            return False
+
+    async def is_element_visible(self, css_selector: str) -> bool:
+        """
+        Check if element is visible.
+
+        Args:
+            css_selector: CSS selector
+
+        Returns:
+            True if visible, False otherwise
+        """
+        try:
+            locator = self.page.locator(css_selector)
+            return await locator.is_visible()
+        except Exception:
+            return False
+
+    async def get_element_text(self, css_selector: str) -> Optional[str]:
+        """
+        Get text content of element.
+
+        Args:
+            css_selector: CSS selector
+
+        Returns:
+            Text content or None
+        """
+        try:
+            locator = self.page.locator(css_selector)
+            return await locator.text_content()
+        except Exception as e:
+            logger.debug(f"Could not get text for {css_selector}: {e}")
+            return None
+
+    async def get_element_attribute(
+        self,
+        css_selector: str,
+        attribute: str
+    ) -> Optional[str]:
+        """
+        Get attribute value of element.
+
+        Args:
+            css_selector: CSS selector
+            attribute: Attribute name
+
+        Returns:
+            Attribute value or None
+        """
+        try:
+            locator = self.page.locator(css_selector)
+            return await locator.get_attribute(attribute)
+        except Exception as e:
+            logger.debug(f"Could not get attribute {attribute} for {css_selector}: {e}")
+            return None

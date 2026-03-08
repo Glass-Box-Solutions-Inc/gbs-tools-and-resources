@@ -1,0 +1,43 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/spectacles:$BUILD_ID'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/spectacles:latest'
+      - '.'
+
+  # Push to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/spectacles'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'spectacles'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/spectacles:$BUILD_ID'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '2Gi'
+      - '--timeout'
+      - '300'
+      - '--set-env-vars'
+      - 'ENVIRONMENT=production,USE_LOCAL_BROWSER=false,GCP_PROJECT_ID=$PROJECT_ID'
+      - '--set-secrets'
+      - 'SECRET_KEY=spectacles-secret-key:latest,BROWSERLESS_API_TOKEN=spectacles-browserless-token:latest,SLACK_APP_TOKEN=spectacles-slack-app-token:latest,SLACK_BOT_TOKEN=spectacles-slack-bot-token:latest,GOOGLE_AI_API_KEY=spectacles-google-ai-api-key:latest,SLACK_SIGNING_SECRET=spectacles-slack-signing-secret:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

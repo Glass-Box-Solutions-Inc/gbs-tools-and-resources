@@ -1,43 +1,46 @@
 # gbs-tools-and-resources
 
-**Unified tools & resources monorepo — agent memory, PII redaction, legal research, MCP servers, dev utilities, security wordlists, and skills catalogs.**
+**Unified tools, agents, and resources monorepo — agent services, MCP servers, utilities, reference libraries, and security wordlists.**
 
 ---
 
 ## Project Overview
 
-This monorepo consolidates 7 previously standalone Glass Box utility/research repositories into a single discoverable location. Each package retains its own structure, language, and build tooling — there is no unified build system at the monorepo root.
+This monorepo consolidates 11 Glass Box packages into a single discoverable location. Each package retains its own structure, language, and build tooling — there is no unified build system at the monorepo root.
 
-**Consolidated from individual repos on:** 2026-03-01
+**Initial consolidation:** 2026-03-01 (7 utility/research repos)
+**Agent consolidation:** 2026-03-08 (4 agent packages added)
 **Pattern follows:** `internal-tools` (absorbed command-center, glass-box-board, glass-box-hub, Squeegee on 2026-03-01)
 
 ---
 
 ## Packages
 
-| Package | Language/Stack | Purpose | Former Repo |
-|---------|---------------|---------|-------------|
-| [`packages/hindsight/`](packages/hindsight/) | Python, Next.js, Rust | Agent memory system — retain, recall, reflect. Top performer on LongMemEval benchmark. | `Glass-Box-Solutions-Inc/hindsight` |
-| [`packages/yevrah_terminal/`](packages/yevrah_terminal/) | Python, Groq, Cohere | Terminal legal research tool — CourtListener API with dual search (keyword + semantic) | `Glass-Box-Solutions-Inc/yevrah_terminal` |
-| [`packages/phileas/`](packages/phileas/) | Java, Maven | PII/PHI redaction library — 30+ entity types, conditional redaction, encryption | `Glass-Box-Solutions-Inc/phileas` |
-| [`packages/awesome-agent-skills/`](packages/awesome-agent-skills/) | Documentation | Curated catalog of 180+ Agent Skills for AI coding assistants | `Glass-Box-Solutions-Inc/awesome-agent-skills` |
-| [`packages/mcp-servers/`](packages/mcp-servers/) | Python, Node.js | Unified MCP server collection — configs, custom servers, templates | `Glass-Box-Solutions-Inc/mcp-servers` |
-| [`packages/merus-test-data-generator/`](packages/merus-test-data-generator/) | Python 3.12, reportlab, Faker, Click | Generates 20 realistic WC test cases with ~700 templated PDFs, populates in MerusCase | `Glass-Box-Solutions-Inc/merus-test-data-generator` |
-| [`packages/SecLists-GBS-Branch/`](packages/SecLists-GBS-Branch/) | Security wordlists | Fork of danielmiessler/SecLists (placeholder — repo too large to include directly) | `Glass-Box-Solutions-Inc/SecLists-GBS-Branch` |
+### Agent Services
 
----
+| Package | Stack | Purpose | Deploy |
+|---------|-------|---------|--------|
+| [`packages/spectacles/`](packages/spectacles/) | Python 3.12, FastAPI, Playwright, Gemini | Browser automation + documentation intelligence curator | Cloud Run: `glassbox-spectacles` |
+| [`packages/merus-expert/`](packages/merus-expert/) | Python 3.12, FastAPI, Claude, Gemini | MerusCase domain agent — 13 tools, SSE streaming | Cloud Run: `merus-expert` |
+| [`packages/agent-swarm/`](packages/agent-swarm/) | NestJS 11, TypeScript, Socket.io | DAG-based multi-agent task orchestration | Reference copy (not standalone) |
+| [`packages/agentic-debugger/`](packages/agentic-debugger/) | Node.js, Claude Code, GitHub Actions | Automated CI test failure debugging agent | Template for adoption |
 
-## Tech Stack
+### Utilities & Libraries
 
-| Package | Stack |
-|---------|-------|
-| **hindsight** | Python/FastAPI, Next.js, PostgreSQL/pgvector, Rust |
-| **yevrah_terminal** | Python 3.x, Groq API, Cohere API, CourtListener API |
-| **phileas** | Java 11+, Maven, JUnit |
-| **awesome-agent-skills** | Markdown (no build) |
-| **mcp-servers** | Python, Node.js/TypeScript, MCP SDK |
-| **merus-test-data-generator** | Python 3.12, reportlab, Faker, Click, SQLite |
-| **SecLists-GBS-Branch** | Text files (security wordlists) |
+| Package | Stack | Purpose |
+|---------|-------|---------|
+| [`packages/hindsight/`](packages/hindsight/) | Python/FastAPI, Next.js, pgvector, Rust | Agent memory system (retain/recall/reflect) |
+| [`packages/mcp-servers/`](packages/mcp-servers/) | Python, Node.js, MCP SDK | MCP server collection (kb-api, kb-db, wc-paralegal, social-media) |
+| [`packages/phileas/`](packages/phileas/) | Java 11+, Maven | PII/PHI redaction library (30+ entity types) |
+| [`packages/yevrah_terminal/`](packages/yevrah_terminal/) | Python 3.x, Groq, Cohere | Terminal legal research (keyword + semantic search) |
+| [`packages/merus-test-data-generator/`](packages/merus-test-data-generator/) | Python 3.12, reportlab, Faker | WC test case generator (~700 templated PDFs) |
+
+### Reference
+
+| Package | Purpose |
+|---------|---------|
+| [`packages/awesome-agent-skills/`](packages/awesome-agent-skills/) | Curated catalog of 180+ AI agent skills |
+| [`packages/SecLists-GBS-Branch/`](packages/SecLists-GBS-Branch/) | Security testing wordlists (placeholder) |
 
 ---
 
@@ -48,17 +51,29 @@ Each package builds independently. See each package's own README.md or CLAUDE.md
 ### Quick navigation
 
 ```bash
-# Jump to a package
+# Agent services
+cd packages/spectacles/
+cd packages/merus-expert/
+cd packages/agent-swarm/
+cd packages/agentic-debugger/
+
+# Utilities
 cd packages/hindsight/
-cd packages/yevrah_terminal/
-cd packages/phileas/
 cd packages/mcp-servers/
+cd packages/phileas/
+cd packages/yevrah_terminal/
 cd packages/merus-test-data-generator/
 ```
 
 ### Package-specific tests
 
 ```bash
+# spectacles (Python)
+cd packages/spectacles && pytest
+
+# merus-expert (Python)
+cd packages/merus-expert && pytest
+
 # hindsight (Python + Next.js)
 cd packages/hindsight && pytest
 
@@ -80,22 +95,24 @@ cd packages/mcp-servers/servers/[server-name] && npm test
 gbs-tools-and-resources/
 ├── CLAUDE.md                         # This file
 ├── README.md                         # Human-facing overview
-├── .gitignore                        # Root gitignore (node_modules, __pycache__, target/, etc.)
+├── .gitignore
 └── packages/
+    ├── spectacles/                   # Browser automation + curator (Python/FastAPI)
+    ├── merus-expert/                 # MerusCase agent (Python/FastAPI)
+    ├── agent-swarm/                  # Multi-agent orchestration (NestJS) — reference copy
+    ├── agentic-debugger/             # CI debugging agent (Claude Code) — template
     ├── hindsight/                    # Agent memory system (Python/FastAPI + Next.js + Rust)
-    ├── yevrah_terminal/              # Terminal legal research tool (Python)
-    ├── phileas/                      # PII/PHI redaction library (Java/Maven)
-    ├── awesome-agent-skills/         # Agent skills catalog (Markdown docs)
     ├── mcp-servers/                  # MCP server collection (Python + Node.js)
-    │   ├── servers/
-    │   │   ├── kb-api-mcp/          # Knowledge base API MCP server
-    │   │   ├── kb-db-mcp/           # Knowledge base DB MCP server
-    │   │   ├── social-media-mcp/    # Social media MCP server
-    │   │   └── wc-paralegal-mcp/    # WC paralegal MCP server
-    │   ├── configs/                  # MCP client configurations
-    │   └── scripts/                  # Setup/utility scripts
-    ├── merus-test-data-generator/    # WC test case PDF generator (Python 3.12)
-    └── SecLists-GBS-Branch/          # Security wordlists reference (placeholder)
+    │   └── servers/
+    │       ├── kb-api-mcp/
+    │       ├── kb-db-mcp/
+    │       ├── social-media-mcp/
+    │       └── wc-paralegal-mcp/
+    ├── phileas/                      # PII/PHI redaction library (Java/Maven)
+    ├── yevrah_terminal/              # Terminal legal research (Python)
+    ├── merus-test-data-generator/    # WC test case PDF generator (Python)
+    ├── awesome-agent-skills/         # Agent skills catalog (Markdown)
+    └── SecLists-GBS-Branch/          # Security wordlists (placeholder)
 ```
 
 ---
@@ -104,9 +121,13 @@ gbs-tools-and-resources/
 
 | Package | Port Range | Notes |
 |---------|-----------|-------|
-| hindsight | 4600–4699 | FastAPI backend: 4600, Next.js frontend: 4601 |
-| yevrah_terminal | 5200–5299 | Terminal app, no persistent server |
-| mcp-servers | Varies by server | See mcp-servers/configs/ |
+| spectacles | 3700–3799 | FastAPI: 3700 |
+| merus-expert | 4300–4399 | FastAPI: 4300 |
+| hindsight | 4600–4699 | FastAPI: 4601, Next.js: 4600 |
+| mcp-servers | 4900–4999 | Varies by server |
+| yevrah_terminal | 5200–5299 | CLI tool, no persistent server |
+| agent-swarm | — | Library (runs within Glassy 3800–3899) |
+| agentic-debugger | — | GitHub Actions only |
 
 ---
 
@@ -118,7 +139,12 @@ See each package's own `.env.example` or `CLAUDE.md` for required environment va
 
 ## Deployment
 
-These packages are research tools, dev utilities, and internal infrastructure — not deployed as production Cloud Run services. See individual package READMEs for deployment notes.
+| Package | Platform | URL |
+|---------|----------|-----|
+| spectacles | Cloud Run (`glassbox-spectacles`) | `spectacles-gc2qovgs7q-uc.a.run.app` |
+| merus-expert | Cloud Run | _(service deployment)_ |
+| mcp-servers | Local / MCP protocol | _(no public URL)_ |
+| All others | Local / CI | _(no public URL)_ |
 
 ---
 
@@ -128,15 +154,7 @@ These packages are research tools, dev utilities, and internal infrastructure �
 |------|--------|
 | 2026-03-01 | Consolidated 7 standalone repos into this monorepo |
 | 2026-03-01 | All source repos archived on GitHub with redirect notices |
-
-**Archived source repos:**
-- `Glass-Box-Solutions-Inc/hindsight` → `packages/hindsight/`
-- `Glass-Box-Solutions-Inc/yevrah_terminal` → `packages/yevrah_terminal/`
-- `Glass-Box-Solutions-Inc/phileas` → `packages/phileas/`
-- `Glass-Box-Solutions-Inc/awesome-agent-skills` → `packages/awesome-agent-skills/`
-- `Glass-Box-Solutions-Inc/mcp-servers` → `packages/mcp-servers/`
-- `Glass-Box-Solutions-Inc/merus-test-data-generator` → `packages/merus-test-data-generator/`
-- `Glass-Box-Solutions-Inc/SecLists-GBS-Branch` → `packages/SecLists-GBS-Branch/` (placeholder only)
+| 2026-03-08 | Added 4 agent packages: spectacles, merus-expert, agent-swarm, agentic-debugger |
 
 ---
 

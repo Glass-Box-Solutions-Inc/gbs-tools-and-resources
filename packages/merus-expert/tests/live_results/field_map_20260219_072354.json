@@ -1,0 +1,203 @@
+{
+  "activity": {
+    "status": 200,
+    "body": {
+      "id": "931874402"
+    },
+    "err": null,
+    "created_id": "931874402",
+    "fields_sent": [
+      "case_file_id",
+      "activity_type_id",
+      "subject",
+      "description",
+      "date",
+      "duration",
+      "billable",
+      "billing_code_id",
+      "user_id",
+      "document_author",
+      "date_received",
+      "date_of_service",
+      "document_date"
+    ]
+  },
+  "activity_phone": {
+    "status": 200,
+    "body": {
+      "id": "931874403"
+    }
+  },
+  "party": {
+    "status": 200,
+    "body": {
+      "partiesId": "33018010",
+      "parties": {
+        "data": {
+          "32690995": {
+            "0": 1906148,
+            "1": "DENNIS",
+            "2": "ANDREWS",
+            "3": "",
+            "4": 0,
+            "5": 29232639,
+            "middle_name": "",
+            "has_address": 0,
+            "parent_company_name": "",
+            "is_hidden": 0,
+            "notes": "",
+            "testimony": "",
+            "people_type_detail": "",
+            "insurance_policy_number": "",
+            "insurance_claim_number": "",
+            "insurance_claim_status": "",
+            "insurance_policy_notes": "",
+            "alternate_insurance_policy_number": "",
+            "alternate_insurance_claim_number": "",
+            "alternate_insurance_claim_status": "",
+            "alternate_insurance_policy_notes": "",
+            "party_groups": [],
+            "is_primary": true,
+            "is_archived": false
+          }
+        }
+      },
+      "msg": "Party has been added successfully.",
+      "contact": false
+    },
+    "err": null,
+    "fields_sent": [
+      "case_file_id",
+      "party_type",
+      "first_name",
+      "last_name",
+      "company_name",
+      "email",
+      "phone",
+      "address",
+      "city",
+      "state",
+      "zip",
+      "middle_name",
+      "notes",
+      "testimony",
+      "people_type_detail",
+      "insurance_policy_number",
+      "insurance_claim_number",
+      "insurance_claim_status",
+      "insurance_policy_notes",
+      "alternate_insurance_policy_number",
+      "alternate_insurance_claim_number",
+      "alternate_insurance_claim_status",
+      "alternate_insurance_policy_notes"
+    ]
+  },
+  "ledger_fee": {
+    "status": 200,
+    "body": {
+      "success": 1,
+      "data": {
+        "CaseLedger": {
+          "id": 112349369,
+          "user_id": 1973975,
+          "firm_id": 30298,
+          "case_file_id": 56171871,
+          "account_id": 1,
+          "ledger_type_id": 1,
+          "status_id": 1,
+          "date": "1771488000",
+          "description": "ZTEST_LEDGER_DESC_20260219_072354",
+          "hours": 0.5,
+          "item_qty": null,
+          "hourly_rate": 200,
+          "unit_cost": null,
+          "amount": -100,
+          "amount_received": 0,
+          "payee": "ZTEST_PAYEE_20260219_072354",
+          "billto_contact_id": 0,
+          "invoice_id": null,
+          "bill_id": null,
+          "settlement_id": null,
+          "payto": "ZTEST_PAYTO_20260219_072354",
+          "payto_contact_id": null,
+          "task_code": "ZTEST",
+          "activity_code": "ZTEST",
+          "expense_code": null,
+          "alternate_billing_code": "ZTEST",
+          "source_key": null,
+          "created_by": 1973975,
+          "activity_id": null,
+          "export_upload_id": null,
+          "is_rejected": false,
+          "is_reviewed": false,
+          "deleted": false,
+          "created": "2026-02-18 23:23:55",
+          "modified": "2026-02-18 23:23:55"
+        }
+      }
+    },
+    "err": null,
+    "fields_sent": [
+      "case_file_id",
+      "amount",
+      "description",
+      "date",
+      "ledger_type_id",
+      "hours",
+      "hourly_rate",
+      "payee",
+      "payto",
+      "task_code",
+      "activity_code",
+      "expense_code",
+      "alternate_billing_code",
+      "billing_code_id",
+      "user_id"
+    ]
+  },
+  "ledger_cost": {
+    "status": 200,
+    "body": {
+      "success": 1,
+      "data": {
+        "CaseLedger": {
+          "id": 112349370,
+          "user_id": 1973975,
+          "firm_id": 30298,
+          "case_file_id": 56171871,
+          "account_id": 1,
+          "ledger_type_id": 2,
+          "status_id": 1,
+          "date": "1771488000",
+          "description": "ZTEST_COST_WCAB_FILING_20260219_072354",
+          "hours": null,
+          "item_qty": null,
+          "hourly_rate": null,
+          "unit_cost": null,
+          "amount": -25,
+          "amount_received": 0,
+          "payee": "ZTEST_COST_PAYEE",
+          "billto_contact_id": 0,
+          "invoice_id": null,
+          "bill_id": null,
+          "settlement_id": null,
+          "payto": "ZTEST_COST_PAYTO",
+          "payto_contact_id": null,
+          "task_code": null,
+          "activity_code": null,
+          "expense_code": null,
+          "alternate_billing_code": null,
+          "source_key": null,
+          "created_by": 1973975,
+          "activity_id": null,
+          "export_upload_id": null,
+          "is_rejected": false,
+          "is_reviewed": false,
+          "deleted": false,
+          "created": "2026-02-18 23:23:55",
+          "modified": "2026-02-18 23:23:55"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,1893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spectacles - Complete Guide</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 3rem 2rem;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        header .tagline {
+            font-size: 1.3rem;
+            opacity: 0.9;
+        }
+
+        .service-info {
+            background: rgba(255,255,255,0.1);
+            padding: 1rem;
+            margin-top: 1rem;
+            border-radius: 8px;
+            font-size: 0.9rem;
+        }
+
+        nav {
+            background: #2d3748;
+            color: white;
+            padding: 1rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav ul {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.5rem;
+        }
+
+        nav a {
+            color: white;
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        nav a:hover {
+            color: #667eea;
+        }
+
+        .content {
+            padding: 2rem;
+        }
+
+        section {
+            margin-bottom: 3rem;
+        }
+
+        h2 {
+            color: #667eea;
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 3px solid #667eea;
+        }
+
+        h3 {
+            color: #764ba2;
+            font-size: 1.5rem;
+            margin: 1.5rem 0 1rem;
+        }
+
+        h4 {
+            color: #555;
+            font-size: 1.2rem;
+            margin: 1rem 0 0.5rem;
+        }
+
+        p {
+            margin-bottom: 1rem;
+        }
+
+        .mode-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .mode-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 1.5rem;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .mode-card h3 {
+            color: #667eea;
+            margin-top: 0;
+        }
+
+        .mode-card.mode-2 {
+            border-left-color: #764ba2;
+            background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+        }
+
+        .mode-card.mode-2 h3 {
+            color: #764ba2;
+        }
+
+        .mode-card.ai-engine {
+            border-left-color: #48bb78;
+            background: linear-gradient(135deg, #d4fc79 0%, #96e6a1 100%);
+        }
+
+        .mode-card.ai-engine h3 {
+            color: #22543d;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        th {
+            background: #667eea;
+            color: white;
+            padding: 1rem;
+            text-align: left;
+        }
+
+        td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        tr:nth-child(even) {
+            background: #f7fafc;
+        }
+
+        pre {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 1rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+
+        code {
+            background: #edf2f7;
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .alert {
+            padding: 1rem;
+            border-radius: 4px;
+            margin: 1rem 0;
+        }
+
+        .alert-info {
+            background: #e6fffa;
+            border-left: 4px solid #38b2ac;
+            color: #234e52;
+        }
+
+        .alert-warning {
+            background: #fffaf0;
+            border-left: 4px solid #ed8936;
+            color: #744210;
+        }
+
+        .alert-success {
+            background: #f0fff4;
+            border-left: 4px solid #48bb78;
+            color: #22543d;
+        }
+
+        .alert-error {
+            background: #fff5f5;
+            border-left: 4px solid #f56565;
+            color: #742a2a;
+        }
+
+        .feature-list {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .feature-list li {
+            padding: 0.5rem 0;
+            padding-left: 1.5rem;
+            position: relative;
+        }
+
+        .feature-list li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #48bb78;
+            font-weight: bold;
+        }
+
+        .step-list {
+            counter-reset: step-counter;
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .step-list li {
+            counter-increment: step-counter;
+            padding: 1rem;
+            margin: 1rem 0;
+            background: #f7fafc;
+            border-left: 4px solid #667eea;
+            position: relative;
+            padding-left: 3rem;
+        }
+
+        .step-list li:before {
+            content: counter(step-counter);
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #667eea;
+            color: white;
+            width: 1.5rem;
+            height: 1.5rem;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        .command-box {
+            background: #2d3748;
+            color: #68d391;
+            padding: 1rem;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            margin: 1rem 0;
+            border-left: 4px solid #68d391;
+        }
+
+        .emoji {
+            font-style: normal;
+            font-size: 1.2em;
+        }
+
+        .architecture-diagram {
+            background: #f7fafc;
+            padding: 2rem;
+            border-radius: 8px;
+            text-align: center;
+            margin: 2rem 0;
+            font-family: monospace;
+            white-space: pre;
+            overflow-x: auto;
+        }
+
+        footer {
+            background: #2d3748;
+            color: white;
+            padding: 2rem;
+            text-align: center;
+            margin-top: 3rem;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: bold;
+            margin: 0 0.25rem;
+        }
+
+        .badge-level1 {
+            background: #48bb78;
+            color: white;
+        }
+
+        .badge-level2 {
+            background: #ed8936;
+            color: white;
+        }
+
+        .badge-admin {
+            background: #f56565;
+            color: white;
+        }
+
+        .toc {
+            background: #f7fafc;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin: 2rem 0;
+        }
+
+        .toc h3 {
+            margin-top: 0;
+        }
+
+        .toc ul {
+            list-style: none;
+            padding-left: 1rem;
+        }
+
+        .toc a {
+            color: #667eea;
+            text-decoration: none;
+            display: block;
+            padding: 0.25rem 0;
+        }
+
+        .toc a:hover {
+            text-decoration: underline;
+        }
+
+        .performance-comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+
+        .performance-box {
+            padding: 1.5rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .performance-box.before {
+            background: #fff5f5;
+            border: 2px solid #f56565;
+        }
+
+        .performance-box.after {
+            background: #f0fff4;
+            border: 2px solid #48bb78;
+        }
+
+        .performance-metric {
+            font-size: 2rem;
+            font-weight: bold;
+            margin: 0.5rem 0;
+        }
+
+        .performance-box.before .performance-metric {
+            color: #c53030;
+        }
+
+        .performance-box.after .performance-metric {
+            color: #22543d;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><span class="emoji">👓</span> Spectacles</h1>
+            <p class="tagline">Your AI's Eyes - Browser Automation with AI Reasoning</p>
+            <div class="service-info">
+                <strong>Service URL:</strong> https://spectacles-378330630438.us-central1.run.app<br>
+                <strong>Status:</strong> Production (Live) | <strong>Version:</strong> 2.0.0 (with AI Reasoning Engine)
+            </div>
+        </header>
+
+        <nav>
+            <ul>
+                <li><a href="#overview">Overview</a></li>
+                <li><a href="#ai-engine">AI Reasoning</a></li>
+                <li><a href="#modes">Modes</a></li>
+                <li><a href="#slack">Slack Integration</a></li>
+                <li><a href="#claude-code">Claude Code</a></li>
+                <li><a href="#access">Get Access</a></li>
+                <li><a href="#usage">Usage</a></li>
+                <li><a href="#use-cases">Use Cases</a></li>
+                <li><a href="#security">Security</a></li>
+                <li><a href="#api">API</a></li>
+                <li><a href="#support">Support</a></li>
+            </ul>
+        </nav>
+
+        <div class="content">
+            <!-- OVERVIEW SECTION -->
+            <section id="overview">
+                <h2>What is Spectacles?</h2>
+
+                <p><strong>Spectacles is a cloud-deployed AI agent that provides visual and interactive capabilities that traditional AI systems lack.</strong> Think of it as "your AI's eyes" - it can see webpages, navigate sites, test interfaces, and coordinate development work across machines.</p>
+
+                <div class="alert alert-success">
+                    <strong>🚀 NEW: AI Reasoning Engine</strong><br>
+                    Spectacles now learns from experience! After executing a task once, it remembers the successful pattern and can repeat it 5-10x faster with 80-95% cost reduction. See <a href="#ai-engine" style="color: #22543d; font-weight: bold;">AI Reasoning Engine section</a> below.
+                </div>
+
+                <p>Spectacles serves two complementary roles, both centered on providing <strong>visual and interactive capabilities</strong>:</p>
+
+                <div class="mode-cards">
+                    <div class="mode-card">
+                        <h3><span class="emoji">🌐</span> Mode 1: Direct Browser Automation</h3>
+                        <p><strong>"I need to see or interact with a webpage"</strong></p>
+                        <ul class="feature-list">
+                            <li>Screenshots and visual verification</li>
+                            <li>Testing user flows (login, checkout)</li>
+                            <li>Verifying responsive layouts</li>
+                            <li>Managing web-based credentials</li>
+                            <li>Navigating complex OAuth flows</li>
+                        </ul>
+                    </div>
+
+                    <div class="mode-card mode-2">
+                        <h3><span class="emoji">💻</span> Mode 2: Claude Code Coordination</h3>
+                        <p><strong>"I need to write code AND verify it visually"</strong></p>
+                        <ul class="feature-list">
+                            <li>Code generation with visual verification</li>
+                            <li>Remote control of development machines</li>
+                            <li>Long-running development tasks</li>
+                            <li>Multiple file modifications</li>
+                            <li>Coordinated work across projects</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <h3>Key Capabilities</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Capability</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Visual Perception</strong></td>
+                            <td>See webpages as humans do, understand layouts, find elements</td>
+                        </tr>
+                        <tr>
+                            <td><strong>AI Reasoning</strong></td>
+                            <td>Learn from successful tasks, remember patterns, optimize future executions</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Browser Automation</strong></td>
+                            <td>Navigate sites, click buttons, fill forms, handle OAuth</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Testing</strong></td>
+                            <td>Test login flows, checkout processes, responsive layouts</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Credential Management</strong></td>
+                            <td>Handle authentication flows that can't be accessed via API</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Development Coordination</strong></td>
+                            <td>Remote control Claude Code instances with visual verification</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Human-in-the-Loop</strong></td>
+                            <td>Slack integration for approvals and oversight</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Decision Rule</h3>
+                <div class="alert alert-info">
+                    <strong>When to use which mode:</strong><br>
+                    <strong>Mode 2 (Claude Code)</strong> if the task involves writing or modifying code.<br>
+                    <strong>Mode 1 (Browser)</strong> for everything else (screenshots, testing, navigation).
+                </div>
+            </section>
+
+            <!-- AI REASONING ENGINE SECTION -->
+            <section id="ai-engine">
+                <h2>AI Reasoning Engine</h2>
+
+                <p><strong>Spectacles 2.0 introduces an intelligent learning system that transforms browser automation from a one-off task into a continuously improving capability.</strong></p>
+
+                <h3>What It Does</h3>
+                <div class="mode-cards">
+                    <div class="mode-card ai-engine">
+                        <h3><span class="emoji">🧠</span> Pattern Learning</h3>
+                        <p>After successfully completing a task once, Spectacles automatically:</p>
+                        <ul class="feature-list">
+                            <li>Classifies the task type (LOGIN_FLOW, FORM_STRUCTURE, NAVIGATION, EXTRACTION)</li>
+                            <li>Extracts element selectors and action sequences</li>
+                            <li>Stores the pattern with semantic embeddings in Qdrant</li>
+                            <li>Calculates initial confidence based on task success</li>
+                        </ul>
+                    </div>
+
+                    <div class="mode-card ai-engine">
+                        <h3><span class="emoji">⚡</span> Intelligent Execution</h3>
+                        <p>When a similar task arrives, Spectacles:</p>
+                        <ul class="feature-list">
+                            <li>Searches for matching patterns via semantic similarity</li>
+                            <li>Evaluates pattern confidence (threshold: 0.7)</li>
+                            <li>Uses pattern directly if confident (0 VLM calls)</li>
+                            <li>Falls back to VLM discovery if no match or low confidence</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <h3>Performance Improvements</h3>
+                <div class="performance-comparison">
+                    <div class="performance-box before">
+                        <div><strong>First Execution (Discovery)</strong></div>
+                        <div class="performance-metric">20-30s</div>
+                        <div>5-8 VLM calls</div>
+                        <div>$0.05-0.08 cost</div>
+                    </div>
+                    <div class="performance-box after">
+                        <div><strong>Subsequent Executions (Pattern)</strong></div>
+                        <div class="performance-metric">3-5s</div>
+                        <div>0 VLM calls</div>
+                        <div>$0.00-0.01 cost</div>
+                    </div>
+                </div>
+
+                <div class="alert alert-success">
+                    <strong>Results:</strong> 5-10x faster execution, 80-95% cost reduction, higher reliability through proven patterns.
+                </div>
+
+                <h3>Pattern Types</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Pattern Type</th>
+                            <th>Description</th>
+                            <th>Examples</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>LOGIN_FLOW</strong></td>
+                            <td>Authentication sequences with email/password or OAuth</td>
+                            <td>Gmail login, GitHub OAuth, SSO flows</td>
+                        </tr>
+                        <tr>
+                            <td><strong>FORM_STRUCTURE</strong></td>
+                            <td>Multi-field forms with validation</td>
+                            <td>Contact forms, checkout forms, registration</td>
+                        </tr>
+                        <tr>
+                            <td><strong>NAVIGATION</strong></td>
+                            <td>Multi-step navigation through site sections</td>
+                            <td>Dashboard → Settings → Profile</td>
+                        </tr>
+                        <tr>
+                            <td><strong>EXTRACTION</strong></td>
+                            <td>Data extraction from structured pages</td>
+                            <td>Table scraping, list extraction, content parsing</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Confidence Tracking</h3>
+                <p>Pattern confidence is calculated using a sophisticated formula that considers:</p>
+                <ul>
+                    <li><strong>Success Rate:</strong> Proportion of successful executions</li>
+                    <li><strong>Sample Size:</strong> Patterns need 10+ uses for maximum confidence</li>
+                    <li><strong>Recency:</strong> Patterns older than 30 days receive a staleness penalty</li>
+                </ul>
+
+                <pre><code>confidence = base - sample_penalty - staleness_penalty
+
+base = success_count / (success_count + failure_count)
+sample_penalty = 0.1 × (1 - total/10) if total < 10
+staleness_penalty = min(0.3, 0.01 × (days - 30)) if days > 30</code></pre>
+
+                <h4>Confidence Examples:</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Scenario</th>
+                            <th>Stats</th>
+                            <th>Confidence</th>
+                            <th>Verdict</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>New pattern</td>
+                            <td>3 successes, 0 failures, 1 day old</td>
+                            <td>0.93</td>
+                            <td>✅ Good but unproven</td>
+                        </tr>
+                        <tr>
+                            <td>Mature pattern</td>
+                            <td>20 successes, 0 failures, 5 days old</td>
+                            <td>1.0</td>
+                            <td>✅ Perfect</td>
+                        </tr>
+                        <tr>
+                            <td>Occasional failures</td>
+                            <td>40 successes, 10 failures, 10 days old</td>
+                            <td>0.8</td>
+                            <td>✅ Reliable</td>
+                        </tr>
+                        <tr>
+                            <td>Stale pattern</td>
+                            <td>10 successes, 0 failures, 90 days old</td>
+                            <td>0.7</td>
+                            <td>⚠️ Needs revalidation</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Technical Stack</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Component</th>
+                            <th>Technology</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Vector Store</strong></td>
+                            <td>Qdrant (embedded mode)</td>
+                            <td>Semantic pattern search</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Embeddings</strong></td>
+                            <td>sentence-transformers</td>
+                            <td>384-dim semantic vectors</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Reasoner</strong></td>
+                            <td>AIReasoner class</td>
+                            <td>Pattern vs discovery decisions</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Extractor</strong></td>
+                            <td>PatternExtractor class</td>
+                            <td>Pattern classification and extraction</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Vision AI</strong></td>
+                            <td>Gemini 2.0 Flash</td>
+                            <td>Discovery mode when no pattern exists</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Learning Workflow</h3>
+                <div class="architecture-diagram">
+┌───────────────────────────────────────────────────┐
+│              USER REQUEST                         │
+└─────────────────┬─────────────────────────────────┘
+                  ▼
+          ┌───────────────┐
+          │  AI Reasoner  │
+          │  Query store  │
+          └───────┬───────┘
+                  │
+         ┌────────┴────────┐
+         ▼                 ▼
+  Pattern Found?      No Pattern
+  (confidence>0.7)         │
+         │                 ▼
+         ▼          VLM Discovery Mode
+  Pattern Mode      (5-8 calls, 20-30s)
+  (0 calls, 3-5s)          │
+         │                 ▼
+         │          Task Completes ✅
+         │                 │
+         │                 ▼
+         │         ┌──────────────┐
+         │         │  Extractor   │
+         │         │  Classify    │
+         │         │  Extract     │
+         │         └──────┬───────┘
+         │                │
+         │                ▼
+         │         ┌──────────────┐
+         │         │ Pattern Store│
+         │         │ Save pattern │
+         │         └──────┬───────┘
+         │                │
+         └────────────────┴─────────────────────────┐
+                                                     ▼
+                                            Future Requests
+                                            Use Learned Pattern!
+                </div>
+            </section>
+
+            <!-- MODES SECTION -->
+            <section id="modes">
+                <h2>Operating Modes Explained</h2>
+
+                <h3><span class="emoji">🌐</span> Mode 1: Direct Browser Automation</h3>
+                <p><strong>Use when:</strong> You need to see or interact with a webpage without modifying code.</p>
+
+                <h4>What Can It Do?</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Task Type</th>
+                            <th>Example</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Screenshots</strong></td>
+                            <td>"Take a screenshot of the dashboard at mobile width"</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Testing Flows</strong></td>
+                            <td>"Test the login flow with valid credentials"</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Form Filling</strong></td>
+                            <td>"Fill out the contact form on example.com"</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Navigation</strong></td>
+                            <td>"Navigate to settings and verify the profile page loads"</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Visual Verification</strong></td>
+                            <td>"Check if the homepage renders correctly at 1920px width"</td>
+                        </tr>
+                        <tr>
+                            <td><strong>OAuth Handling</strong></td>
+                            <td>"Log in via Google OAuth and access the admin panel"</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4>How to Use Mode 1</h4>
+
+                <p><strong>Via Slack (Natural Language):</strong></p>
+                <div class="command-box">
+"Take a screenshot of https://example.com"<br>
+"Test the checkout flow at https://store.com/checkout"<br>
+"Verify the mobile layout at 375px width"
+                </div>
+
+                <p><strong>Via API:</strong></p>
+                <pre><code>curl -X POST https://spectacles-378330630438.us-central1.run.app/api/tasks/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "goal": "Take a screenshot of the homepage",
+    "start_url": "https://example.com"
+  }'</code></pre>
+
+                <h4>Human-in-the-Loop (HITL)</h4>
+                <p>For sensitive actions, Spectacles can request approval:</p>
+                <pre><code>{
+  "goal": "Log in and download the monthly report",
+  "start_url": "https://example.com/login",
+  "credentials_key": "example-login",
+  "require_approval": true
+}</code></pre>
+
+                <p>You'll receive a Slack notification with:</p>
+                <ul class="feature-list">
+                    <li>Screenshot of current page</li>
+                    <li>Description of planned action</li>
+                    <li><strong>Approve</strong> or <strong>Reject</strong> buttons</li>
+                    <li><strong>Take Control</strong> button for browser takeover</li>
+                </ul>
+
+                <hr style="margin: 2rem 0; border: none; border-top: 2px solid #e2e8f0;">
+
+                <h3><span class="emoji">💻</span> Mode 2: Claude Code Coordination</h3>
+                <p><strong>Use when:</strong> You need to write or modify code with visual verification.</p>
+
+                <h4>What Can It Do?</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Capability</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Remote Execution</strong></td>
+                            <td>Run Claude Code on dev-workstation from anywhere</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Visual Verification</strong></td>
+                            <td>Automatically screenshot UI changes</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Session Management</strong></td>
+                            <td>Track active sessions, kill stuck processes</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Progress Updates</strong></td>
+                            <td>Real-time status (<span class="emoji">📋</span> Planning → <span class="emoji">🔨</span> Working → <span class="emoji">✅</span> Complete)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Multi-Project</strong></td>
+                            <td>Coordinate work across different projects</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4>Integration: Mode 2 → Mode 1</h4>
+                <p>Claude Code (Mode 2) can automatically call Mode 1 for visual tasks:</p>
+
+                <div class="alert alert-info">
+                    <strong>Example workflow:</strong><br>
+                    You: <code>/spectacles ask glassy "add login button and show screenshot"</code><br><br>
+
+                    <strong>Claude Code (Mode 2):</strong>
+                    <ol style="margin: 0.5rem 0; padding-left: 1.5rem;">
+                        <li>Analyzes codebase</li>
+                        <li>Implements login button component</li>
+                        <li>Calls Spectacles Mode 1 via MCP: "Screenshot homepage with new button"</li>
+                        <li>Receives screenshot</li>
+                        <li>Reports back with code changes + visual proof</li>
+                    </ol>
+                </div>
+            </section>
+
+            <!-- SLACK INTEGRATION SECTION -->
+            <section id="slack">
+                <h2>Slack Integration</h2>
+
+                <p><strong>Spectacles integrates deeply with Slack for human-in-the-loop workflows, approvals, and interactive control.</strong></p>
+
+                <h3>Integration Types</h3>
+
+                <div class="mode-cards">
+                    <div class="mode-card">
+                        <h3><span class="emoji">📤</span> Webhooks (One-Way)</h3>
+                        <p><strong>For notifications and approvals</strong></p>
+                        <ul class="feature-list">
+                            <li>Send task notifications to channels</li>
+                            <li>Request approvals with screenshots</li>
+                            <li>Progress updates during task execution</li>
+                            <li>Error notifications and completion reports</li>
+                        </ul>
+                        <p><strong>Configuration:</strong> Already set up in GCP Secret Manager</p>
+                    </div>
+
+                    <div class="mode-card mode-2">
+                        <h3><span class="emoji">💬</span> Socket Mode (Bidirectional)</h3>
+                        <p><strong>For commands and Q&A</strong></p>
+                        <ul class="feature-list">
+                            <li>Ask questions about tasks and projects</li>
+                            <li>Control tasks via commands (pause, cancel, list)</li>
+                            <li>AI-powered answers with automatic escalation</li>
+                            <li>Project-specific channels for organized automation</li>
+                        </ul>
+                        <p><strong>Configuration:</strong> Requires Socket Mode setup (see below)</p>
+                    </div>
+                </div>
+
+                <h3>Available Slash Commands</h3>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Command</th>
+                            <th>Description</th>
+                            <th>Access Level</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>/spectacles ask &lt;project&gt; "&lt;task&gt;"</code></td>
+                            <td>Submit a code task to Claude Code</td>
+                            <td><span class="badge badge-admin">Admin</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>/spectacles sessions</code></td>
+                            <td>List all active Claude Code sessions</td>
+                            <td><span class="badge badge-level1">Everyone</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>/spectacles status &lt;session-id&gt;</code></td>
+                            <td>Check status of a specific session</td>
+                            <td><span class="badge badge-level1">Everyone</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>/spectacles kill &lt;session-id&gt;</code></td>
+                            <td>Cancel a running session</td>
+                            <td><span class="badge badge-admin">Admin</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>/spectacles respond &lt;session-id&gt; "&lt;input&gt;"</code></td>
+                            <td>Provide input when Claude asks a question</td>
+                            <td><span class="badge badge-level1">Everyone</span></td>
+                        </tr>
+                        <tr>
+                            <td><code>create channel for &lt;project&gt;</code></td>
+                            <td>Create a project-specific channel (via DM)</td>
+                            <td><span class="badge badge-admin">Admin</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Using Spectacles in Slack</h3>
+
+                <h4>1. Direct Messages (DMs)</h4>
+                <p>Send commands or questions via DM to the Spectacles bot:</p>
+
+                <div class="command-box">
+help
+status task-123
+list tasks
+"What is task-456 doing?"
+                </div>
+
+                <h4>2. Project Channels</h4>
+                <p>In project channels, the bot provides project-aware context:</p>
+
+                <div class="command-box">
+@Spectacles what tasks are running for this project?
+@Spectacles show me the status of recent tasks
+                </div>
+
+                <p><strong>AI answers with project context:</strong></p>
+                <ul class="feature-list">
+                    <li>Active tasks for the project</li>
+                    <li>Recent task history</li>
+                    <li>Project-specific information</li>
+                </ul>
+
+                <h4>3. Thread Replies</h4>
+                <p>When the bot sends a notification in a thread, you can reply in that thread:</p>
+
+                <div class="command-box">
+Bot: Task task-123 requires approval to click "Submit Payment"
+You: approved
+                </div>
+
+                <h3>AI Q&A Features</h3>
+
+                <h4>Automatic Answers</h4>
+                <p>The bot uses Gemini 2.0 Flash to answer questions about:</p>
+                <ul>
+                    <li>Task status and progress</li>
+                    <li>Project context and history</li>
+                    <li>System capabilities</li>
+                    <li>Recent activity</li>
+                </ul>
+
+                <h4>Escalation to Humans</h4>
+                <p>Questions are escalated to humans when:</p>
+                <ul>
+                    <li>AI confidence is below 60%</li>
+                    <li>Question is about billing, pricing, or account management</li>
+                    <li>User explicitly asks to "talk to a human" or "escalate"</li>
+                    <li>Response timeout (>10 seconds)</li>
+                </ul>
+
+                <h3>Creating Project Channels</h3>
+
+                <p>As an admin user, send a DM to the Spectacles bot:</p>
+                <div class="command-box">
+create channel for glassy-v2
+create channel for ousd-campaign
+create channel for legal-research
+                </div>
+
+                <p><strong>What happens:</strong></p>
+                <ol class="step-list">
+                    <li>Bot validates project name</li>
+                    <li>Creates Slack channel with name <code>spectacles-&lt;project-name&gt;</code></li>
+                    <li>Sets channel description</li>
+                    <li>Invites all admin users to the channel</li>
+                    <li>Registers channel mapping for context awareness</li>
+                </ol>
+
+                <h3>Webhook vs Interactive Buttons</h3>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Feature</th>
+                            <th>Webhooks</th>
+                            <th>Socket Mode</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Setup Complexity</strong></td>
+                            <td>Simple (webhook URL only)</td>
+                            <td>Complex (OAuth, event subscriptions)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Direction</strong></td>
+                            <td>One-way (bot → Slack)</td>
+                            <td>Bidirectional (bot ⟷ Slack)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>User Responses</strong></td>
+                            <td>Emoji reactions or thread replies</td>
+                            <td>Interactive buttons, slash commands</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Use Cases</strong></td>
+                            <td>Notifications, approvals, status updates</td>
+                            <td>Commands, Q&A, channel management</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Current Status</strong></td>
+                            <td>✅ Configured and active</td>
+                            <td>⚠️ Available but requires admin setup</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- CLAUDE CODE SECTION -->
+            <section id="claude-code">
+                <h2>Using with Claude Code</h2>
+
+                <p><strong>Spectacles assists Claude Code sessions by providing visual verification, browser automation, and remote control capabilities.</strong></p>
+
+                <h3>Common Workflows</h3>
+
+                <div class="mode-cards">
+                    <div class="mode-card">
+                        <h3>Verify Deploys</h3>
+                        <p><strong>Workflow:</strong> Deploy code → Spectacles screenshots live site → Confirms UI</p>
+                        <div class="command-box">
+/spectacles ask glassy "deploy latest changes and show screenshot of production homepage"
+                        </div>
+                    </div>
+
+                    <div class="mode-card">
+                        <h3>Test Features</h3>
+                        <p><strong>Workflow:</strong> Implement feature → Spectacles tests user flow → Provides feedback</p>
+                        <div class="command-box">
+/spectacles ask glassy "implement search feature and test it with a sample query"
+                        </div>
+                    </div>
+
+                    <div class="mode-card">
+                        <h3>Debug UI</h3>
+                        <p><strong>Workflow:</strong> Report bug → Spectacles reproduces → Claude fixes → Spectacles verifies</p>
+                        <div class="command-box">
+/spectacles ask glassy "fix responsive layout issue on mobile and show before/after screenshots"
+                        </div>
+                    </div>
+                </div>
+
+                <h3>MCP Integration from Other Agents</h3>
+
+                <p>Other AI agents can call Spectacles via MCP tools:</p>
+
+                <pre><code># Simple screenshot
+spectacles_execute_task(
+    goal="Take full-page screenshot of the dashboard",
+    start_url="https://your-app.com/dashboard"
+)
+
+# Complex flow with approval
+spectacles_execute_task(
+    goal="Log in and verify the settings page renders correctly",
+    start_url="https://your-app.com/login",
+    credentials_key="app_admin",
+    require_approval=True
+)</code></pre>
+
+                <h3>Progress Indicators</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Emoji</th>
+                            <th>Status</th>
+                            <th>Meaning</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="emoji">📋</span></td>
+                            <td>Planning</td>
+                            <td>Analyzing task, reading codebase</td>
+                        </tr>
+                        <tr>
+                            <td><span class="emoji">🔨</span></td>
+                            <td>Working</td>
+                            <td>Writing code, making changes</td>
+                        </tr>
+                        <tr>
+                            <td><span class="emoji">🧪</span></td>
+                            <td>Testing</td>
+                            <td>Running tests, verification</td>
+                        </tr>
+                        <tr>
+                            <td><span class="emoji">❓</span></td>
+                            <td>Input Needed</td>
+                            <td>Waiting for your decision</td>
+                        </tr>
+                        <tr>
+                            <td><span class="emoji">✅</span></td>
+                            <td>Complete</td>
+                            <td>Task finished successfully</td>
+                        </tr>
+                        <tr>
+                            <td><span class="emoji">❌</span></td>
+                            <td>Error</td>
+                            <td>Task failed, details provided</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- ACCESS SECTION -->
+            <section id="access">
+                <h2>How to Get Access</h2>
+
+                <h3>Access Levels</h3>
+
+                <div class="mode-cards">
+                    <div class="mode-card">
+                        <h3><span class="badge badge-level1">Level 1</span> Browser Automation (Everyone)</h3>
+                        <div class="alert alert-success">
+                            <strong>✓ You already have access!</strong><br>
+                            If you're in the Adjudica Slack workspace, you can use Mode 1.
+                        </div>
+                        <p><strong>What you can do:</strong></p>
+                        <ul>
+                            <li>Take screenshots of any URL</li>
+                            <li>Test login flows and user journeys</li>
+                            <li>Verify responsive layouts</li>
+                            <li>Navigate websites and extract data</li>
+                        </ul>
+                        <p><strong>How to use:</strong></p>
+                        <div class="command-box">
+Just send a message in Slack:<br>
+"Take a screenshot of https://example.com"
+                        </div>
+                        <p><strong>No setup required</strong> - works immediately.</p>
+                    </div>
+
+                    <div class="mode-card mode-2">
+                        <h3><span class="badge badge-level2">Level 2</span> Claude Code Control (Admin Only)</h3>
+                        <div class="alert alert-warning">
+                            <strong>⚠ Requires administrator approval</strong>
+                        </div>
+                        <p><strong>What you can do:</strong></p>
+                        <ul>
+                            <li>Remote control Claude Code development sessions</li>
+                            <li>Execute code tasks with visual verification</li>
+                            <li>Coordinate multi-file development work</li>
+                            <li>Monitor and manage active sessions</li>
+                        </ul>
+                        <p><strong>How to use:</strong></p>
+                        <div class="command-box">
+Slack slash commands:<br>
+/spectacles ask glassy "implement search feature"<br>
+/spectacles sessions
+                        </div>
+                    </div>
+                </div>
+
+                <h3>Requesting Admin Access (Level 2)</h3>
+
+                <ol class="step-list">
+                    <li>
+                        <strong>Find Your Slack User ID</strong><br>
+                        Click your profile picture in Slack → Click "Profile" → Click "More" (three dots) → Click "Copy member ID"<br>
+                        Your ID looks like: <code>U12345ABCDE</code>
+                    </li>
+
+                    <li>
+                        <strong>Request Access</strong><br>
+                        Send to administrator (Alex):<br>
+                        <div class="command-box" style="margin-top: 0.5rem;">
+Hi, I'd like admin access to Spectacles Mode 2.<br><br>
+My Slack User ID: U12345ABCDE<br>
+Use case: [Brief description of why you need Claude Code control]
+                        </div>
+                    </li>
+
+                    <li>
+                        <strong>Wait for Confirmation</strong><br>
+                        Administrator will:
+                        <ul style="margin-top: 0.5rem;">
+                            <li>Add your User ID to <code>CLAUDE_CODE_ADMIN_USERS</code></li>
+                            <li>Redeploy Spectacles service</li>
+                            <li>Confirm access granted</li>
+                        </ul>
+                        <strong>Typical turnaround:</strong> Same day
+                    </li>
+
+                    <li>
+                        <strong>Test Your Access</strong><br>
+                        <div class="command-box" style="margin-top: 0.5rem;">
+/spectacles sessions
+                        </div>
+                        <div class="alert alert-success" style="margin-top: 0.5rem;">
+                            ✅ If you see session list → Access granted!
+                        </div>
+                        <div class="alert alert-error" style="margin-top: 0.5rem;">
+                            ❌ If you see "Permission denied" → Not yet added (ping admin)
+                        </div>
+                    </li>
+                </ol>
+            </section>
+
+            <!-- USAGE SECTION -->
+            <section id="usage">
+                <h2>Usage Guide</h2>
+
+                <h3>Quick Start Examples</h3>
+
+                <h4>Mode 1: Browser Automation</h4>
+
+                <p><strong>Screenshot a page:</strong></p>
+                <div class="command-box">
+"Take a screenshot of https://example.com"
+                </div>
+
+                <p><strong>Test a flow:</strong></p>
+                <div class="command-box">
+"Test the login flow at https://app.com/login"
+                </div>
+
+                <p><strong>Verify responsive:</strong></p>
+                <div class="command-box">
+"Screenshot https://app.com at mobile width (375px)"
+                </div>
+
+                <h4>Mode 2: Claude Code Control</h4>
+
+                <p><strong>Submit code task:</strong></p>
+                <div class="command-box">
+/spectacles ask glassy "help me understand the auth module"
+                </div>
+
+                <p><strong>Check active sessions:</strong></p>
+                <div class="command-box">
+/spectacles sessions
+                </div>
+
+                <p><strong>Kill stuck session:</strong></p>
+                <div class="command-box">
+/spectacles kill session-abc123
+                </div>
+
+                <h3>Best Practices</h3>
+
+                <h4>Mode 1: Browser Automation</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 20%;">Do ✅</th>
+                            <th style="width: 80%;">Best Practice</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>✅ Be Specific</td>
+                            <td>Specify viewport sizes ("at mobile width", "at 1920px")</td>
+                        </tr>
+                        <tr>
+                            <td>✅ Request Approval</td>
+                            <td>Use <code>"require_approval": true</code> for sensitive actions</td>
+                        </tr>
+                        <tr>
+                            <td>✅ Provide Credentials</td>
+                            <td>Use <code>credentials_key</code> for authenticated flows</td>
+                        </tr>
+                        <tr>
+                            <td>✅ Quick Tasks</td>
+                            <td>Use for quick visual verification tasks</td>
+                        </tr>
+                        <tr>
+                            <td>✅ Let It Learn</td>
+                            <td>Repeated tasks will automatically optimize via pattern learning</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 20%;">Don't ❌</th>
+                            <th style="width: 80%;">Avoid</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>❌ Code Changes</td>
+                            <td>Don't ask for code changes (use Mode 2 instead)</td>
+                        </tr>
+                        <tr>
+                            <td>❌ Long Tasks</td>
+                            <td>Don't submit tasks requiring >5 minutes (use Mode 2)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- USE CASES SECTION -->
+            <section id="use-cases">
+                <h2>Common Use Cases</h2>
+
+                <div class="mode-cards">
+                    <div class="mode-card">
+                        <h3>Use Case 1: Verify Deployment</h3>
+                        <p><strong>Scenario:</strong> You just deployed a new feature to production. Does it look right?</p>
+                        <p><strong>Mode 1 Solution:</strong></p>
+                        <div class="command-box">
+"Take a full-page screenshot of https://app.example.com/dashboard"
+                        </div>
+                        <p><strong>Result:</strong> Screenshot uploaded to Slack in 3-5 seconds (if pattern learned) or 10-20 seconds (first time).</p>
+                    </div>
+
+                    <div class="mode-card">
+                        <h3>Use Case 2: Test Auth Flow</h3>
+                        <p><strong>Scenario:</strong> Verify the Google OAuth login works end-to-end.</p>
+                        <p><strong>Mode 1 Solution:</strong></p>
+                        <pre><code>{
+  "goal": "Test the Google login flow and verify dashboard loads",
+  "start_url": "https://app.example.com/login",
+  "credentials_key": "google_oauth",
+  "require_approval": true
+}</code></pre>
+                        <p><strong>Result:</strong> Spectacles walks through OAuth, requests approval before sensitive actions, confirms dashboard loads. After first success, pattern is learned for 5-10x faster future executions.</p>
+                    </div>
+                </div>
+
+                <div class="mode-cards">
+                    <div class="mode-card mode-2">
+                        <h3>Use Case 3: Implement + Verify Feature</h3>
+                        <p><strong>Scenario:</strong> Add a search feature to the app and verify it renders correctly.</p>
+                        <p><strong>Mode 2 Solution:</strong></p>
+                        <div class="command-box">
+/spectacles ask glassy "implement search bar in header and show screenshot"
+                        </div>
+                        <p><strong>Result:</strong></p>
+                        <ol>
+                            <li>Code generated for search component</li>
+                            <li>Search bar added to header</li>
+                            <li>Screenshot taken automatically</li>
+                            <li>Code + screenshot sent to Slack</li>
+                        </ol>
+                    </div>
+
+                    <div class="mode-card mode-2">
+                        <h3>Use Case 4: Fix Responsive Layout</h3>
+                        <p><strong>Scenario:</strong> Mobile layout is broken, need to fix and verify across viewports.</p>
+                        <p><strong>Mode 2 Solution:</strong></p>
+                        <div class="command-box">
+/spectacles ask glassy "fix mobile responsive layout for homepage"
+                        </div>
+                        <p><strong>Claude Code workflow:</strong></p>
+                        <ol>
+                            <li>Analyzes CSS/responsive code</li>
+                            <li>Fixes layout issues</li>
+                            <li>Calls Mode 1: "Screenshot at 375px, 768px, 1920px"</li>
+                            <li>Validates layout at all breakpoints</li>
+                            <li>Reports back with fixes + screenshots</li>
+                        </ol>
+                    </div>
+                </div>
+
+                <div class="mode-cards">
+                    <div class="mode-card ai-engine">
+                        <h3>Use Case 5: Repeated Testing (AI Learning)</h3>
+                        <p><strong>Scenario:</strong> You test the same login flow daily for regression testing.</p>
+                        <p><strong>First Time (Discovery Mode):</strong></p>
+                        <ul>
+                            <li>5-8 VLM calls to understand page structure</li>
+                            <li>20-30 seconds execution time</li>
+                            <li>$0.05-0.08 cost</li>
+                            <li>Pattern extracted and stored</li>
+                        </ul>
+                        <p><strong>Subsequent Times (Pattern Mode):</strong></p>
+                        <ul>
+                            <li>0 VLM calls (uses learned pattern)</li>
+                            <li>3-5 seconds execution time</li>
+                            <li>$0.00-0.01 cost</li>
+                            <li>Confidence increases with each success</li>
+                        </ul>
+                        <p><strong>Total Savings:</strong> 5-10x faster, 80-95% cheaper, more reliable over time!</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SECURITY SECTION -->
+            <section id="security">
+                <h2>Security & Privacy</h2>
+
+                <h3>Credentials Management</h3>
+                <p><strong>How it works:</strong></p>
+                <ul class="feature-list">
+                    <li>Credentials stored in <strong>GCP Secret Manager</strong> (encrypted at rest)</li>
+                    <li>Referenced by <code>credentials_key</code> (e.g., "google_oauth")</li>
+                    <li><strong>NEVER in LLM context</strong> - injected at execution time only</li>
+                    <li>Encrypted browser session storage</li>
+                </ul>
+
+                <p><strong>Example:</strong></p>
+                <pre><code>{
+  "goal": "Log in and check dashboard",
+  "credentials_key": "app_admin"
+}</code></pre>
+
+                <div class="alert alert-info">
+                    Spectacles retrieves credentials from Secret Manager, uses them for login, never exposes them to AI.
+                </div>
+
+                <h3>PII Protection</h3>
+                <p><strong>Screenshots are processed before Slack:</strong></p>
+                <ul class="feature-list">
+                    <li>Credit card numbers → blurred</li>
+                    <li>SSN patterns → blurred</li>
+                    <li>Phone numbers → blurred</li>
+                    <li>Email addresses → optionally blurred</li>
+                </ul>
+
+                <div class="alert alert-info">
+                    <strong>Example:</strong> If Spectacles screenshots a payment form, card numbers are automatically detected and obscured before sending to Slack.
+                </div>
+
+                <h3>Audit Logging</h3>
+                <p><strong>All actions are logged:</strong></p>
+                <ul class="feature-list">
+                    <li>Task submissions (who, what, when)</li>
+                    <li>Browser actions (navigation, clicks, form fills)</li>
+                    <li>HITL interactions (approvals, rejections)</li>
+                    <li>Security events (failed authentication, permission denied)</li>
+                    <li>Pattern learning events (patterns learned, confidence updates)</li>
+                </ul>
+
+                <p><strong>Logs stored in:</strong> GCP Cloud Logging (90-day retention)</p>
+
+                <h3>Access Control</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Action</th>
+                            <th>Who Can Do It</th>
+                            <th>How Enforced</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Mode 1 browser tasks</td>
+                            <td>All team members</td>
+                            <td>Slack workspace membership</td>
+                        </tr>
+                        <tr>
+                            <td>Mode 2 <code>/spectacles ask</code></td>
+                            <td><span class="badge badge-admin">Admin only</span></td>
+                            <td><code>CLAUDE_CODE_ADMIN_USERS</code> check</td>
+                        </tr>
+                        <tr>
+                            <td>Mode 2 <code>/spectacles sessions</code></td>
+                            <td>All team members</td>
+                            <td>Public endpoint</td>
+                        </tr>
+                        <tr>
+                            <td>Mode 2 <code>/spectacles kill</code></td>
+                            <td><span class="badge badge-admin">Admin only</span></td>
+                            <td><code>CLAUDE_CODE_ADMIN_USERS</code> check</td>
+                        </tr>
+                        <tr>
+                            <td>API access</td>
+                            <td>API key holders</td>
+                            <td>Authentication middleware</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- API SECTION -->
+            <section id="api">
+                <h2>API Reference</h2>
+
+                <h3>Core Task API</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Path</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>GET</td>
+                            <td><code>/</code></td>
+                            <td>Service info</td>
+                        </tr>
+                        <tr>
+                            <td>GET</td>
+                            <td><code>/health</code></td>
+                            <td>Health check</td>
+                        </tr>
+                        <tr>
+                            <td>GET</td>
+                            <td><code>/docs</code></td>
+                            <td>OpenAPI documentation</td>
+                        </tr>
+                        <tr>
+                            <td>POST</td>
+                            <td><code>/api/tasks/</code></td>
+                            <td>Submit automation task</td>
+                        </tr>
+                        <tr>
+                            <td>GET</td>
+                            <td><code>/api/tasks/{id}</code></td>
+                            <td>Get task status</td>
+                        </tr>
+                        <tr>
+                            <td>POST</td>
+                            <td><code>/api/tasks/{id}/resume</code></td>
+                            <td>Resume after HITL</td>
+                        </tr>
+                        <tr>
+                            <td>POST</td>
+                            <td><code>/api/tasks/{id}/cancel</code></td>
+                            <td>Cancel task</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>AI Reasoning Engine API</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Path</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>GET</td>
+                            <td><code>/api/patterns/</code></td>
+                            <td>List all learned patterns</td>
+                        </tr>
+                        <tr>
+                            <td>GET</td>
+                            <td><code>/api/patterns/{id}</code></td>
+                            <td>Get pattern details</td>
+                        </tr>
+                        <tr>
+                            <td>POST</td>
+                            <td><code>/api/patterns/{id}/confidence</code></td>
+                            <td>Update pattern confidence manually</td>
+                        </tr>
+                        <tr>
+                            <td>DELETE</td>
+                            <td><code>/api/patterns/{id}</code></td>
+                            <td>Delete a pattern</td>
+                        </tr>
+                        <tr>
+                            <td>POST</td>
+                            <td><code>/api/patterns/search</code></td>
+                            <td>Search patterns by semantic similarity</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Mode 2: Claude Code API</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>Path</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>POST</td>
+                            <td><code>/api/claude-code/command</code></td>
+                            <td>Submit code task to dev-workstation</td>
+                        </tr>
+                        <tr>
+                            <td>GET</td>
+                            <td><code>/api/claude-code/sessions</code></td>
+                            <td>List active Claude Code sessions</td>
+                        </tr>
+                        <tr>
+                            <td>POST</td>
+                            <td><code>/api/claude-code/tunnel/event</code></td>
+                            <td>Receive progress events</td>
+                        </tr>
+                        <tr>
+                            <td>POST</td>
+                            <td><code>/api/claude-code/tunnel/heartbeat</code></td>
+                            <td>Agent polls for commands</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>MCP Tools (For AI Agents)</h3>
+                <p>Other agents can call Spectacles via MCP:</p>
+
+                <pre><code># Simple screenshot
+spectacles_execute_task(
+    goal="Take full-page screenshot of the dashboard",
+    start_url="https://your-app.com/dashboard"
+)
+
+# Complex flow with approval
+spectacles_execute_task(
+    goal="Log in and verify the settings page renders correctly",
+    start_url="https://your-app.com/login",
+    credentials_key="app_admin",
+    require_approval=True
+)
+
+# Get task status
+spectacles_get_status(task_id="task-123")
+
+# Resume paused task
+spectacles_resume_task(task_id="task-456", human_input="approved")</code></pre>
+
+                <h3>Health Check</h3>
+                <p><strong>Check if Spectacles is running:</strong></p>
+                <pre><code>curl https://spectacles-378330630438.us-central1.run.app/health</code></pre>
+
+                <p><strong>Expected response:</strong></p>
+                <pre><code>{
+  "status": "healthy",
+  "version": "2.0.0",
+  "browserless": "connected",
+  "slack": "connected",
+  "ai_reasoning": "enabled",
+  "pattern_count": 42
+}</code></pre>
+            </section>
+
+            <!-- SUPPORT SECTION -->
+            <section id="support">
+                <h2>Support & Troubleshooting</h2>
+
+                <h3>Common Issues</h3>
+
+                <h4>Issue 1: "Permission denied" (Mode 2)</h4>
+                <p><strong>Problem:</strong> You ran <code>/spectacles ask</code> and got "Permission denied"</p>
+                <p><strong>Solution:</strong></p>
+                <ol class="step-list">
+                    <li>Request admin access (see "How to Get Access" section)</li>
+                    <li>Verify your Slack User ID is in <code>CLAUDE_CODE_ADMIN_USERS</code></li>
+                    <li>Wait for admin to redeploy Spectacles</li>
+                </ol>
+
+                <h4>Issue 2: Browser timeout</h4>
+                <p><strong>Problem:</strong> Task stuck in "Navigating" state for >5 minutes</p>
+                <p><strong>Solution:</strong></p>
+                <ol class="step-list">
+                    <li>Check if URL is accessible (try loading in your browser)</li>
+                    <li>Verify <code>credentials_key</code> is correct (if using authentication)</li>
+                    <li>Cancel task and retry with simpler goal</li>
+                    <li>Contact admin if issue persists</li>
+                </ol>
+
+                <h4>Issue 3: Pattern not being used</h4>
+                <p><strong>Problem:</strong> Task is still using VLM discovery mode even though you've run it before</p>
+                <p><strong>Solution:</strong></p>
+                <ol class="step-list">
+                    <li>Check pattern confidence via API: <code>GET /api/patterns/</code></li>
+                    <li>Confidence may be below 0.7 threshold (needs more successful runs)</li>
+                    <li>Pattern may be too old (staleness penalty applied)</li>
+                    <li>Task may be different enough that semantic matching didn't find it</li>
+                </ol>
+
+                <h4>Issue 4: Screenshot blank</h4>
+                <p><strong>Problem:</strong> Mode 1 returns blank screenshot</p>
+                <p><strong>Solution:</strong></p>
+                <ol class="step-list">
+                    <li>Verify URL loads in browser (might be behind login)</li>
+                    <li>Add <code>credentials_key</code> if authentication required</li>
+                    <li>Try with <code>"wait_until": "domcontentloaded"</code> (faster but less complete)</li>
+                    <li>Check if page has anti-bot protection</li>
+                </ol>
+
+                <h3>Getting Help</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Question Type</th>
+                            <th>Where to Ask</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>How do I...</strong></td>
+                            <td>Slack #spectacles channel</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Bug report</strong></td>
+                            <td>Slack #spectacles or GitHub issues</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Feature request</strong></td>
+                            <td>Slack #spectacles</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Access request</strong></td>
+                            <td>Direct message to admin</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Security concern</strong></td>
+                            <td>Direct message to admin (private)</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Service Information</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Property</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Service URL</strong></td>
+                            <td><a href="https://spectacles-378330630438.us-central1.run.app">https://spectacles-378330630438.us-central1.run.app</a></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Health Check</strong></td>
+                            <td><a href="https://spectacles-378330630438.us-central1.run.app/health">/health</a></td>
+                        </tr>
+                        <tr>
+                            <td><strong>API Docs</strong></td>
+                            <td><a href="https://spectacles-378330630438.us-central1.run.app/docs">/docs</a></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Slack Workspace</strong></td>
+                            <td>Adjudica</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Primary Admin</strong></td>
+                            <td>Alex (@alex)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Support Channel</strong></td>
+                            <td>#spectacles (Slack)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- ARCHITECTURE SECTION -->
+            <section id="architecture">
+                <h2>Technical Architecture</h2>
+
+                <h3>System Architecture</h3>
+                <div class="architecture-diagram">
+┌─────────────────────────────────────────────────────┐
+│                  SPECTACLES 2.0                     │
+│              "Your AI's Eyes + Brain"               │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  MODE 1: Browser         MODE 2: Claude Code       │
+│  ┌──────────────┐        ┌──────────────┐          │
+│  │ Direct Tasks │        │ Code Tasks   │          │
+│  └──────┬───────┘        └──────┬───────┘          │
+│         │                       │                  │
+│         ▼                       ▼                  │
+│  ┌─────────────────────────────────────────────┐  │
+│  │          AI REASONER (NEW!)                 │  │
+│  │  Query Pattern Store → Confidence Check     │  │
+│  │  Pattern Mode | Discovery Mode              │  │
+│  └────────────┬────────────────────────────────┘  │
+│               │                                    │
+│      ┌────────┴────────┐                          │
+│      ▼                 ▼                          │
+│  Pattern Store    Browserless                     │
+│  Qdrant + SQLite  Chrome Browser                  │
+│      │                 │                          │
+│      │                 │                          │
+│      ▼                 ▼                          │
+│  Extractor      Screenshots & Results             │
+│  Learn Patterns                                    │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+                </div>
+
+                <h3>State Machine (Mode 1)</h3>
+                <p>The browser automation agent operates through these states:</p>
+                <ol>
+                    <li><strong>PLANNING</strong> - Analyzes goal, queries pattern store, creates action plan</li>
+                    <li><strong>NAVIGATING</strong> - Navigates to target URL</li>
+                    <li><strong>OBSERVING</strong> - Perceives page state (DOM or Vision)</li>
+                    <li><strong>ACTING</strong> - Executes browser action</li>
+                    <li><strong>EVALUATING</strong> - Checks if goal achieved</li>
+                    <li><strong>AWAITING_HUMAN</strong> - Paused for Slack response</li>
+                    <li><strong>ERROR_RECOVERY</strong> - Handling failures</li>
+                    <li><strong>LEARNING</strong> - Extracting patterns (NEW!)</li>
+                    <li><strong>COMPLETED</strong> - Task finished, pattern stored</li>
+                </ol>
+
+                <h3>Technology Stack</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Component</th>
+                            <th>Technology</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Backend</strong></td>
+                            <td>Python 3.12, FastAPI</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Browser Automation</strong></td>
+                            <td>Playwright, Browserless.io</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Vision AI</strong></td>
+                            <td>Gemini 2.0 Flash</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Vector Store</strong></td>
+                            <td>Qdrant (embedded mode)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Embeddings</strong></td>
+                            <td>sentence-transformers (384-dim)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Communication</strong></td>
+                            <td>Slack Webhooks, Slack Bolt</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Secrets</strong></td>
+                            <td>GCP Secret Manager</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Deployment</strong></td>
+                            <td>GCP Cloud Run</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Storage</strong></td>
+                            <td>SQLite (local) / PostgreSQL (production)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+        </div>
+
+        <footer>
+            <p><strong>Spectacles - Your AI's Eyes + Brain</strong></p>
+            <p>Version 2.0.0 (with AI Reasoning Engine) | Last Updated: 2026-01-20</p>
+            <p>@Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology</p>
+        </footer>
+    </div>
+</body>
+</html>

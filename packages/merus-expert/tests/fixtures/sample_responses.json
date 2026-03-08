@@ -1,0 +1,66 @@
+{
+  "list_cases_dict": {
+    "data": {
+      "56171871": {
+        "id": "56171871",
+        "file_number": "WC-2024-001",
+        "primary_party_name": "John Smith",
+        "case_status": "Active",
+        "case_type": "Workers Compensation"
+      },
+      "56171872": {
+        "id": "56171872",
+        "file_number": "WC-2024-002",
+        "primary_party_name": "Jane Doe",
+        "case_status": "Active",
+        "case_type": "Workers Compensation"
+      }
+    }
+  },
+  "list_cases_list": {
+    "data": [
+      {
+        "id": "56171871",
+        "file_number": "WC-2024-001",
+        "primary_party_name": "John Smith",
+        "case_status": "Active"
+      },
+      {
+        "id": "56171872",
+        "file_number": "WC-2024-002",
+        "primary_party_name": "Jane Doe",
+        "case_status": "Active"
+      }
+    ]
+  },
+  "bill_time_success": {
+    "success": 1,
+    "data": {
+      "Activity": {
+        "id": "918183874",
+        "case_file_id": "56171871",
+        "subject": "Review records",
+        "duration": "12"
+      }
+    }
+  },
+  "add_cost_success": {
+    "success": 1,
+    "data": {
+      "CaseLedger": {
+        "id": 110681047,
+        "case_file_id": "56171871",
+        "amount": "25.00",
+        "description": "WCAB Filing Fee"
+      }
+    }
+  },
+  "errors_in_200": {
+    "errors": [
+      {
+        "errorType": "validation_error",
+        "errorMessage": "Required field missing"
+      }
+    ]
+  }
+}

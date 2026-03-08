@@ -1,0 +1,56 @@
+# @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "merus-expert"
+version = "2.0.0"
+description = "Production MerusCase integration: REST API client, browser automation, Claude AI agent"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Proprietary"}
+dependencies = [
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "httpx>=0.28.1",
+    "python-dotenv>=1.0.1",
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-multipart>=0.0.6",
+    "anthropic>=0.40.0",
+    "playwright>=1.48.0",
+    "structlog>=24.4.0",
+    "click>=8.1.8",
+    "cryptography>=44.0.0",
+    "google-cloud-secret-manager>=2.21.1",
+    "sse-starlette>=2.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.24.0",
+    "pytest-mock>=3.14.0",
+    "httpx>=0.28.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "live: requires live MerusCase credentials (deselect with '-m not live')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+ignore_missing_imports = true

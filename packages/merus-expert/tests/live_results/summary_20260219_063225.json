@@ -1,0 +1,50 @@
+{
+  "timestamp": "20260219_063225",
+  "case_file_id": 56171871,
+  "sentinels": {
+    "activity_subject": "ZTEST_SUBJECT_20260219_063225",
+    "activity_description": "ZTEST_DESCRIPTION_20260219_063225",
+    "activity_filename": "ZTEST_FILENAME_20260219_063225",
+    "activity_doc_author": "ZTEST_DOC_AUTHOR_20260219_063225",
+    "party_notes": "ZTEST_PARTY_NOTES_20260219_063225",
+    "party_testimony": "ZTEST_TESTIMONY_20260219_063225",
+    "party_people_type_detail": "ZTEST_PEOPLE_TYPE_DETAIL_20260219_063225",
+    "party_insurance_policy_number": "ZTEST_INS_POLICY_NUM_20260219_063225",
+    "party_insurance_claim_number": "ZTEST_INS_CLAIM_NUM_20260219_063225",
+    "party_insurance_claim_status": "ZTEST_INS_CLAIM_STATUS_20260219_063225",
+    "party_insurance_policy_notes": "ZTEST_INS_POLICY_NOTES_20260219_063225",
+    "party_alt_policy_number": "ZTEST_ALT_POLICY_NUM_20260219_063225",
+    "party_alt_claim_number": "ZTEST_ALT_CLAIM_NUM_20260219_063225",
+    "party_alt_claim_status": "ZTEST_ALT_CLAIM_STATUS_20260219_063225",
+    "party_alt_policy_notes": "ZTEST_ALT_POLICY_NOTES_20260219_063225",
+    "ledger_description": "ZTEST_LEDGER_DESC_20260219_063225",
+    "ledger_payee": "ZTEST_PAYEE_20260219_063225",
+    "ledger_payto": "ZTEST_PAYTO_20260219_063225",
+    "ledger_task_code": "ZTEST_TASK_CODE",
+    "ledger_activity_code": "ZTEST_ACTIVITY_CODE",
+    "ledger_expense_code": "ZTEST_EXPENSE_CODE"
+  },
+  "field_results": {
+    "activity": {
+      "status": 200,
+      "err": null
+    },
+    "activity_phone": {
+      "status": 200,
+      "err": null
+    },
+    "party": {
+      "status": 200,
+      "err": null
+    },
+    "ledger_fee": {
+      "status": 200,
+      "err": null
+    },
+    "ledger_cost": {
+      "status": 200,
+      "err": null
+    }
+  },
+  "screenshots_dir": "/home/vncuser/Desktop/merus-expert-repo/tests/live_results"
+}
