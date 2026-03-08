@@ -253,6 +253,8 @@ All actions are logged for compliance:
 
 ## Deployment
 
+> **Canonical deploy source:** [`Glass-Box-Solutions-Inc/Spectacles`](https://github.com/Glass-Box-Solutions-Inc/Spectacles) (standalone repo) via Cloud Build trigger → Cloud Run. The deploy files below are reference copies — production deployments are triggered from the standalone repo, not this monorepo. See [`DEPLOYMENT_MODEL.md`](../../DEPLOYMENT_MODEL.md) for details.
+
 ### Docker
 
 ```bash

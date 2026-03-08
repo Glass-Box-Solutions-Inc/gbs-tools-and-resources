@@ -46,6 +46,22 @@
 
 ---
 
+## Deployment
+
+> This monorepo is a **discoverability and reference hub**, not the deployment source for agent packages. See [`DEPLOYMENT_MODEL.md`](DEPLOYMENT_MODEL.md) for full details.
+
+| Package | Canonical Deploy Source | Deploy Method |
+|---------|------------------------|---------------|
+| **spectacles** | [`Glass-Box-Solutions-Inc/Spectacles`](https://github.com/Glass-Box-Solutions-Inc/Spectacles) | Cloud Build → Cloud Run |
+| **merus-expert** | [`Glass-Box-Solutions-Inc/merus-expert`](https://github.com/Glass-Box-Solutions-Inc/merus-expert) | Manual `gcloud run deploy` |
+| **agent-swarm** | `glassy-app-production` (embedded module) | Part of Glassy NestJS build |
+| **agentic-debugger** | `glassy-app-production` (GitHub Actions) | Event-driven workflow |
+| **hindsight** | This monorepo (canonical) | Docker / local |
+| **mcp-servers** | This monorepo (canonical) | Per-server |
+| **phileas** | This monorepo (canonical) | Maven JAR |
+
+---
+
 ## Getting Started
 
 Each package is independent — no monorepo-level build tool is required.

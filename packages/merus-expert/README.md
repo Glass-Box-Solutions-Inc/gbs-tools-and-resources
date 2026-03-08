@@ -222,6 +222,8 @@ merus-expert/
 
 ## Docker & Deployment
 
+> **Canonical deploy source:** [`Glass-Box-Solutions-Inc/merus-expert`](https://github.com/Glass-Box-Solutions-Inc/merus-expert) (standalone repo) via manual `docker build` + `gcloud run deploy`. The deploy files below are reference copies — production deployments are triggered from the standalone repo, not this monorepo. See [`DEPLOYMENT_MODEL.md`](../../DEPLOYMENT_MODEL.md) for details.
+
 ### Build & Run
 
 ```bash
