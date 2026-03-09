@@ -1,0 +1,21 @@
+{
+  "name": "obsidian-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Obsidian vault integration — read/write/search the GBS knowledge vault via Local REST API plugin",
+  "type": "module",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0",
+    "vitest": "^3.0.0"
+  }
+}

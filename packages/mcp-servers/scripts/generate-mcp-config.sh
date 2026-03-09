@@ -25,7 +25,7 @@ sed -i "s|\${SPECTACLES_DIR}|$SPECTACLES_DIR|g" "$OUTPUT"
 # Replace known env vars
 for var in PENPOT_TOKEN N8N_API_KEY BROWSERLESS_API_TOKEN GOOGLE_AI_API_KEY \
            LINKEDIN_ACCESS_TOKEN TWITTER_BEARER_TOKEN MASTODON_ACCESS_TOKEN MASTODON_INSTANCE_URL \
-           KB_DATABASE_URL; do
+           KB_DATABASE_URL OBSIDIAN_API_KEY; do
     value="${!var}"
     if [ -n "$value" ]; then
         sed -i "s|\${$var}|$value|g" "$OUTPUT"

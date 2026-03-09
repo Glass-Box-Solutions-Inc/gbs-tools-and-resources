@@ -54,6 +54,17 @@
       "description": "[GBS] Social Media MCP - Post to LinkedIn, Twitter/X, and Mastodon with AI-powered content generation. Requires platform API tokens."
     },
 
+    "obsidian": {
+      "command": "node",
+      "args": ["${MCP_SERVERS_DIR}/servers/obsidian-mcp/build/index.js"],
+      "env": {
+        "OBSIDIAN_API_KEY": "${OBSIDIAN_API_KEY}",
+        "OBSIDIAN_HOST": "127.0.0.1",
+        "OBSIDIAN_PORT": "27123"
+      },
+      "description": "[GBS] Obsidian MCP - Read/write/search the GBS knowledge vault. Requires Obsidian + Local REST API plugin running."
+    },
+
     "_section_third_party": "=== Third-Party MCP Servers ===",
 
     "n8n-mcp": {
