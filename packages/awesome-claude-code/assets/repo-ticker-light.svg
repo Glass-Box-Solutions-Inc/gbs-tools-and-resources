@@ -1,0 +1,268 @@
+<svg width="900" height="150" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Gradient for ticker background -->
+    <linearGradient id="tickerBg" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#fff8f0;stop-opacity:0.98"/>
+      <stop offset="50%" style="stop-color:#fff5eb;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#fff8f0;stop-opacity:0.98"/>
+    </linearGradient>
+
+    <!-- Gradient for border lines -->
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#FF6B35;stop-opacity:0.85">
+        <animate attributeName="stop-opacity" values="0.85;1;0.85" dur="2s" repeatCount="indefinite"/>
+      </stop>
+      <stop offset="33%" style="stop-color:#9C4EFF;stop-opacity:0.9">
+        <animate attributeName="stop-opacity" values="0.9;1;0.9" dur="2.2s" repeatCount="indefinite"/>
+      </stop>
+      <stop offset="66%" style="stop-color:#FFD700;stop-opacity:0.85">
+        <animate attributeName="stop-opacity" values="0.85;1;0.85" dur="1.8s" repeatCount="indefinite"/>
+      </stop>
+      <stop offset="100%" style="stop-color:#FF6B35;stop-opacity:0.85">
+        <animate attributeName="stop-opacity" values="0.85;1;0.85" dur="2s" repeatCount="indefinite"/>
+      </stop>
+    </linearGradient>
+
+    <!-- Text glow effect -->
+    <filter id="textGlow">
+      <feGaussianBlur stdDeviation="0.15" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Strong glow for metrics -->
+    <filter id="metricGlow">
+      <feGaussianBlur stdDeviation="0.2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+  <!-- Edge fade effects -->
+  <linearGradient id="leftFade" x1="0%" y1="0%" x2="100%" y2="0%">
+    <stop offset="0%" style="stop-color:#fff8f0;stop-opacity:1"/>
+    <stop offset="100%" style="stop-color:#fff8f0;stop-opacity:0"/>
+  </linearGradient>
+  <linearGradient id="rightFade" x1="0%" y1="0%" x2="100%" y2="0%">
+    <stop offset="0%" style="stop-color:#fff8f0;stop-opacity:0"/>
+    <stop offset="100%" style="stop-color:#fff8f0;stop-opacity:1"/>
+  </linearGradient>
+  </defs>
+
+  <!-- Background panel -->
+  <rect width="900" height="150" fill="url(#tickerBg)" rx="8"/>
+
+  <!-- Top border -->
+  <rect x="0" y="2" width="900" height="2" fill="url(#borderGrad)" rx="1"/>
+
+  <!-- Bottom border -->
+  <rect x="0" y="146" width="900" height="2" fill="url(#borderGrad)" rx="1"/>
+
+  <!-- Midline for grouping reference -->
+  <line x1="0" y1="75" x2="900" y2="75" stroke="#9C4EFF" stroke-width="2" stroke-dasharray="8 6" opacity="0.6"/>
+
+  <!-- Ticker label on left -->
+  <rect x="0" y="0" width="120" height="150" fill="#fff0e6" opacity="0.95" rx="8"/>
+  <text x="60" y="46" font-family="'Courier New', monospace" font-size="18" font-weight="bold"
+        fill="#FF6B35" text-anchor="middle" filter="url(#textGlow)">
+    CLAUDE CODE
+  </text>
+  <text x="60" y="68" font-family="'Courier New', monospace" font-size="18" font-weight="bold"
+        fill="#9C4EFF" text-anchor="middle" filter="url(#textGlow)">
+    REPOS LIVE
+  </text>
+  <text x="60" y="92" font-family="'Courier New', monospace" font-size="14" font-weight="bold"
+        fill="#00aa00" text-anchor="middle">
+    DAILY Δ
+  </text>
+
+  <!-- Animated pulse indicator -->
+  <circle cx="60" cy="118" r="5" fill="#FF6B35" filter="url(#metricGlow)">
+    <animate attributeName="r" values="4;6;4" dur="1.5s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.6;1;0.6" dur="1.5s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Divider line after label -->
+  <rect x="122" y="18" width="2" height="114" fill="url(#borderGrad)" rx="1"/>
+
+  <!-- Scrolling ticker content area -->
+  <clipPath id="tickerClip">
+    <rect x="130" y="0" width="770" height="150"/>
+  </clipPath>
+
+  <g clip-path="url(#tickerClip)">
+    <!-- Single ticker strip with seamless loop (10 repos + first 4 repeated) -->
+    <g id="tickerItems">
+      <animateTransform
+        attributeName="transform"
+        attributeType="XML"
+        type="translate"
+        from="0 0"
+        to="-3000 0"
+        dur="54s"
+        repeatCount="indefinite"/>
+
+      <!-- Repo: 1rgs/claude-code-proxy -->
+      <g transform="translate(0, 0)">
+        <!-- Repo name -->
+        <text x="140" y="32" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">claude-code-proxy</text>
+        <!-- Owner name -->
+        <text x="140" y="64" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">1rgs</text>
+        <text x="210" y="64" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 3.2K ⭐ +18</text>
+      </g>
+      <!-- Repo: qwibitai/nanoclaw -->
+      <g transform="translate(300, 0)">
+        <!-- Owner name -->
+        <text x="140" y="102" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">qwibitai</text>
+        <text x="258" y="102" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 19.8K ⭐ +415</text>
+        <!-- Repo name -->
+        <text x="140" y="132" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">nanoclaw</text>
+      </g>
+      <!-- Repo: zebbern/claude-code-guide -->
+      <g transform="translate(600, 0)">
+        <!-- Repo name -->
+        <text x="140" y="32" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">claude-code-guide</text>
+        <!-- Owner name -->
+        <text x="140" y="64" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">zebbern</text>
+        <text x="246" y="64" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 3.5K ⭐ +8</text>
+      </g>
+      <!-- Repo: daymade/claude-code-skills -->
+      <g transform="translate(900, 0)">
+        <!-- Owner name -->
+        <text x="140" y="102" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">daymade</text>
+        <text x="246" y="102" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 623 ⭐ +2</text>
+        <!-- Repo name -->
+        <text x="140" y="132" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">claude-code-skills</text>
+      </g>
+      <!-- Repo: eyaltoledano/claude-task-master -->
+      <g transform="translate(1200, 0)">
+        <!-- Repo name -->
+        <text x="140" y="32" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">claude-task-master</text>
+        <!-- Owner name -->
+        <text x="140" y="64" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">eyaltoledano</text>
+        <text x="306" y="64" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 25.8K ⭐ +16</text>
+      </g>
+      <!-- Repo: anthropics/claude-code-action -->
+      <g transform="translate(1500, 0)">
+        <!-- Owner name -->
+        <text x="140" y="102" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">anthropics</text>
+        <text x="282" y="102" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 6.1K ⭐ +21</text>
+        <!-- Repo name -->
+        <text x="140" y="132" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">claude-code-action</text>
+      </g>
+      <!-- Repo: obra/superpowers -->
+      <g transform="translate(1800, 0)">
+        <!-- Repo name -->
+        <text x="140" y="32" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">superpowers</text>
+        <!-- Owner name -->
+        <text x="140" y="64" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">obra</text>
+        <text x="210" y="64" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 72.9K ⭐ +817</text>
+      </g>
+      <!-- Repo: disler/claude-code-hooks-multi-agent-observability -->
+      <g transform="translate(2100, 0)">
+        <!-- Owner name -->
+        <text x="140" y="102" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">disler</text>
+        <text x="234" y="102" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 1.2K ⭐ +1</text>
+        <!-- Repo name -->
+        <text x="140" y="132" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">claude-code-hooks-multi-...</text>
+      </g>
+      <!-- Repo: sugyan/claude-code-webui -->
+      <g transform="translate(2400, 0)">
+        <!-- Repo name -->
+        <text x="140" y="32" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">claude-code-webui</text>
+        <!-- Owner name -->
+        <text x="140" y="64" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">sugyan</text>
+        <text x="234" y="64" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 946 ⭐ +1</text>
+      </g>
+      <!-- Repo: cixingguangming55555/wechat-bot -->
+      <g transform="translate(2700, 0)">
+        <!-- Owner name -->
+        <text x="140" y="102" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">cixingguangming55555</text>
+        <text x="402" y="102" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 2.5K ⭐</text>
+        <!-- Repo name -->
+        <text x="140" y="132" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">wechat-bot</text>
+      </g>
+      <!-- Repo: 1rgs/claude-code-proxy -->
+      <g transform="translate(3000, 0)">
+        <!-- Repo name -->
+        <text x="140" y="32" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">claude-code-proxy</text>
+        <!-- Owner name -->
+        <text x="140" y="64" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">1rgs</text>
+        <text x="210" y="64" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 3.2K ⭐ +18</text>
+      </g>
+      <!-- Repo: qwibitai/nanoclaw -->
+      <g transform="translate(3300, 0)">
+        <!-- Owner name -->
+        <text x="140" y="102" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">qwibitai</text>
+        <text x="258" y="102" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 19.8K ⭐ +415</text>
+        <!-- Repo name -->
+        <text x="140" y="132" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">nanoclaw</text>
+      </g>
+      <!-- Repo: zebbern/claude-code-guide -->
+      <g transform="translate(3600, 0)">
+        <!-- Repo name -->
+        <text x="140" y="32" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">claude-code-guide</text>
+        <!-- Owner name -->
+        <text x="140" y="64" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">zebbern</text>
+        <text x="246" y="64" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 3.5K ⭐ +8</text>
+      </g>
+      <!-- Repo: daymade/claude-code-skills -->
+      <g transform="translate(3900, 0)">
+        <!-- Owner name -->
+        <text x="140" y="102" font-family="'Courier New', monospace" font-size="24" font-weight="normal"
+              fill="#2d2d2d" opacity="1.0">daymade</text>
+        <text x="246" y="102" font-family="'Courier New', monospace" font-size="16" font-weight="bold"
+              fill="#9C4EFF"> | 623 ⭐ +2</text>
+        <!-- Repo name -->
+        <text x="140" y="132" font-family="'Courier New', monospace" font-size="34" font-weight="bold"
+              fill="#2d2d2d">claude-code-skills</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Edge fade effects -->
+  <rect x="130" y="0" width="50" height="100" fill="url(#leftFade)"/>
+  <rect x="850" y="0" width="50" height="100" fill="url(#rightFade)"/>
+</svg>

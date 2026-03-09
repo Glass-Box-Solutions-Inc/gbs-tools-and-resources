@@ -1,6 +1,6 @@
 # gbs-tools-and-resources
 
-> **Unified tools, agents, and resources monorepo** for Glass Box Solutions. Consolidates 14 packages — agent services, operations audit tools, MCP servers, utilities, and reference libraries.
+> **Unified tools, agents, and resources monorepo** for Glass Box Solutions. Consolidates 16 packages — agent services, operations audit tools, MCP servers, utilities, and reference libraries.
 
 ---
 
@@ -36,6 +36,8 @@
 | Package | Purpose |
 |---------|---------|
 | [`packages/awesome-agent-skills/`](packages/awesome-agent-skills/) | Curated catalog of 180+ AI agent skills |
+| [`packages/awesome-claude-code/`](packages/awesome-claude-code/) | Curated list of skills, hooks, slash-commands, agents, and plugins for Claude Code |
+| [`packages/ui-ux-pro-max-skill/`](packages/ui-ux-pro-max-skill/) | AI design intelligence skill for professional UI/UX across platforms |
 | [`packages/SecLists-GBS-Branch/`](packages/SecLists-GBS-Branch/) | Security testing wordlists (placeholder) |
 
 ---
@@ -103,6 +105,7 @@ See each package's own `README.md` for setup, install, and run instructions.
 | 2026-03-08 | Added 4 agent packages (spectacles, merus-expert, agent-swarm, agentic-debugger) |
 | 2026-03-08 | Made all 4 agent packages canonical standalone — monorepo is now the deployment source |
 | 2026-03-09 | Added 3 operations audit packages (compliance-auditor, gbs-integration-validator, invoice-reconciliation-tester) |
+| 2026-03-09 | Added 2 reference packages (awesome-claude-code, ui-ux-pro-max-skill) from personal repos |
 
 **Archived source repos (2026-03-01):**
 

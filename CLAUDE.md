@@ -6,7 +6,7 @@
 
 ## Project Overview
 
-This monorepo consolidates 14 Glass Box packages into a single discoverable location. Each package retains its own structure, language, and build tooling — there is no unified build system at the monorepo root.
+This monorepo consolidates 16 Glass Box packages into a single discoverable location. Each package retains its own structure, language, and build tooling — there is no unified build system at the monorepo root.
 
 **Initial consolidation:** 2026-03-01 (7 utility/research repos)
 **Agent consolidation:** 2026-03-08 (4 agent packages added)
@@ -48,6 +48,8 @@ This monorepo consolidates 14 Glass Box packages into a single discoverable loca
 | Package | Purpose |
 |---------|---------|
 | [`packages/awesome-agent-skills/`](packages/awesome-agent-skills/) | Curated catalog of 180+ AI agent skills |
+| [`packages/awesome-claude-code/`](packages/awesome-claude-code/) | Curated list of skills, hooks, slash-commands, agents, and plugins for Claude Code |
+| [`packages/ui-ux-pro-max-skill/`](packages/ui-ux-pro-max-skill/) | AI design intelligence skill for professional UI/UX across platforms |
 | [`packages/SecLists-GBS-Branch/`](packages/SecLists-GBS-Branch/) | Security testing wordlists (placeholder) |
 
 ---
@@ -123,6 +125,8 @@ gbs-tools-and-resources/
     ├── yevrah_terminal/              # Terminal legal research (Python)
     ├── merus-test-data-generator/    # WC test case PDF generator (Python)
     ├── awesome-agent-skills/         # Agent skills catalog (Markdown)
+    ├── awesome-claude-code/          # Claude Code ecosystem resource list
+    ├── ui-ux-pro-max-skill/          # AI design intelligence skill
     └── SecLists-GBS-Branch/          # Security wordlists (placeholder)
 ```
 
@@ -174,6 +178,7 @@ See each package's own `.env.example` or `CLAUDE.md` for required environment va
 | 2026-03-08 | Added 4 agent packages: spectacles, merus-expert, agent-swarm, agentic-debugger |
 | 2026-03-08 | Made all 4 agent packages canonical standalone — monorepo is deployment source |
 | 2026-03-09 | Added 3 operations audit packages (compliance-auditor, gbs-integration-validator, invoice-reconciliation-tester) |
+| 2026-03-09 | Added 2 reference packages (awesome-claude-code, ui-ux-pro-max-skill) |
 
 ---
 
