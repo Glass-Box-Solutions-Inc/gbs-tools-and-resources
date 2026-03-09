@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="mb-8">
+  <h1 class="text-3xl font-bold text-white">Engineering Dashboard</h1>
+  <p class="mt-1 text-gray-400">Glass Box Solutions organization overview</p>
+</div>
+
+<!-- Stat Cards -->
+<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Total Projects</div>
+    <div class="text-2xl font-bold text-white">{{ total_projects }}</div>
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Active</div>
+    <div class="text-2xl font-bold text-green-400">{{ total_active }}</div>
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Deployed</div>
+    <div class="text-2xl font-bold text-cyan-400">{{ total_deployed }}</div>
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Commits (30d)</div>
+    <div class="text-2xl font-bold text-blue-400">{{ total_commits_30d }}</div>
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Contributors</div>
+    <div class="text-2xl font-bold text-purple-400">{{ total_contributors }}</div>
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Avg Health</div>
+    <div class="text-2xl font-bold {{ avg_health | health_color }}">{{ avg_health }}%</div>
+  </div>
+</div>
+
+<!-- Projects by Category -->
+<div class="mb-8">
+  <h2 class="text-xl font-semibold text-white mb-4">Projects by Category</h2>
+  {% for category, category_projects in projects_by_category %}
+  <div class="mb-6">
+    <div class="flex items-center gap-2 mb-3">
+      <div class="w-3 h-3 rounded-full" style="background-color: {{ category | category_color }}"></div>
+      <h3 class="text-lg font-medium text-gray-200">{{ category | category_name }}</h3>
+      <span class="text-xs text-gray-500">({{ category_projects | length }})</span>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {% for project in category_projects %}
+      <a href="project/{{ project.name }}.html" class="block bg-gray-900/50 border border-gray-800 rounded-xl p-4 hover:border-gray-600 transition-colors group">
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="font-semibold text-white group-hover:text-blue-400 transition-colors truncate">{{ project.name }}</h4>
+          {{ project.status | status_badge }}
+        </div>
+        <div class="flex items-center justify-between text-sm">
+          <span class="{{ project.health_score | health_color }} font-medium">{{ project.health_score }}% health</span>
+          <span class="text-gray-500">{{ project.commit_count_30d or 0 }} commits</span>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Activity Feed & Sprint Progress -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+  <!-- Activity Feed -->
+  <div class="lg:col-span-2">
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-5">
+      <h2 class="text-lg font-semibold text-white mb-4">Recent Activity</h2>
+      {% if activity_feed and activity_feed | length > 0 %}
+      <div class="space-y-3 max-h-96 overflow-y-auto">
+        {% for event in activity_feed | batch(15) | first %}
+        <div class="flex items-start gap-3 py-2 border-b border-gray-800/50 last:border-0">
+          <div class="mt-0.5">
+            {% if event.type == 'commit' %}
+            <span class="inline-block w-6 h-6 rounded-full bg-green-400/10 text-green-400 text-xs flex items-center justify-center">C</span>
+            {% elif event.type == 'pr' %}
+            <span class="inline-block w-6 h-6 rounded-full bg-purple-400/10 text-purple-400 text-xs flex items-center justify-center">PR</span>
+            {% elif event.type == 'issue' %}
+            <span class="inline-block w-6 h-6 rounded-full bg-yellow-400/10 text-yellow-400 text-xs flex items-center justify-center">I</span>
+            {% elif event.type == 'deploy' %}
+            <span class="inline-block w-6 h-6 rounded-full bg-cyan-400/10 text-cyan-400 text-xs flex items-center justify-center">D</span>
+            {% else %}
+            <span class="inline-block w-6 h-6 rounded-full bg-gray-400/10 text-gray-400 text-xs flex items-center justify-center">E</span>
+            {% endif %}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm text-gray-200 truncate">{{ event.title | truncate_message(80) }}</div>
+            <div class="text-xs text-gray-500 mt-0.5">
+              <span class="text-gray-400">{{ event.author }}</span>
+              {% if event.repo_name %} in <span class="text-blue-400">{{ event.repo_name }}</span>{% endif %}
+              &middot; {{ event.timestamp | timeago }}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-gray-500 text-sm">No recent activity to display.</p>
+      {% endif %}
+      <div class="mt-4 text-center">
+        <a href="activity.html" class="text-sm text-blue-400 hover:text-blue-300 transition-colors">View all activity &rarr;</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sprint Progress -->
+  <div>
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-5">
+      <h2 class="text-lg font-semibold text-white mb-4">Sprint Progress</h2>
+      {% if sprints and sprints | length > 0 %}
+      <div class="space-y-4">
+        {% for sprint_name, sprint in sprints %}
+        <div>
+          <div class="flex items-center justify-between text-sm mb-1">
+            <span class="text-gray-300 truncate">{{ sprint_name }}</span>
+            <span class="text-gray-500">{{ sprint.completed or 0 }}/{{ sprint.total or 0 }}</span>
+          </div>
+          <div class="w-full bg-gray-800 rounded-full h-2">
+            {% set pct = ((sprint.completed or 0) / (sprint.total or 1) * 100) | round %}
+            <div class="bg-blue-500 h-2 rounded-full transition-all" style="width: {{ pct }}%"></div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-gray-500 text-sm">No active sprints.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

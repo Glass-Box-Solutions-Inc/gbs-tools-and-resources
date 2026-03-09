@@ -1,0 +1,72 @@
+name: Squeegee Self-Curation
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/.planning/STATE.md'
+      - '/tmp/**'
+      - '.squeegee-state.json'
+  schedule:
+    - cron: '0 6 * * *'  # Daily 6am UTC fallback
+  workflow_dispatch:
+
+jobs:
+  curate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install --production
+
+      - name: Run Squeegee pipeline on self
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: node scripts/squeegee-manager.js full
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if [[ -n $(git status --porcelain) ]]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Push changes to branch
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          BRANCH="squeegee/auto-curate-$(date +%Y%m%d-%H%M%S)"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "chore(squeegee): auto-curate documentation"
+          git push origin "$BRANCH"
+
+      - name: Create PR (best-effort)
+        if: steps.check_changes.outputs.has_changes == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --title "chore(squeegee): auto-curate documentation" \
+            --body "Automated documentation self-curation by Squeegee. Safe to merge without review."

@@ -1,0 +1,225 @@
+{
+  "portal": {
+    "enabled": true,
+    "output_dir": "/tmp/portal-output"
+  },
+  "repos": [
+    {
+      "name": "adjudica-ai-app",
+      "category": "adjudica-platform",
+      "priority": 1,
+      "description": "Main Adjudica application — legal form processing, case management, AI-powered workflows",
+      "stack": ["React Router 7", "Fastify", "Prisma", "PostgreSQL", "Temporal"],
+      "status": "active",
+      "url": null,
+      "dev_port": 3000,
+      "api_port": 3001
+    },
+    {
+      "name": "adjudica-file-review",
+      "category": "adjudica-platform",
+      "priority": 2,
+      "description": "Credit-based document classification and aggregation for CA Workers' Comp attorneys",
+      "stack": ["React Router 7", "Fastify", "Prisma", "BetterAuth", "Gemini 2.5 Flash", "Stripe"],
+      "status": "active",
+      "url": "file-review.adjudica.ai",
+      "dev_port": 3100,
+      "api_port": 3101
+    },
+    {
+      "name": "adjudica-file-review-trainer",
+      "category": "adjudica-platform",
+      "priority": 3,
+      "description": "Training data tool for adjudica-file-review document classification model",
+      "stack": ["React Router 7", "Prisma", "SQLite"],
+      "status": "active",
+      "dev_port": 3200,
+      "api_port": 3201
+    },
+    {
+      "name": "adjudica-documentation",
+      "category": "adjudica-platform",
+      "priority": 1,
+      "description": "Centralized documentation — legal, marketing, product, technical",
+      "stack": ["Markdown"],
+      "status": "active"
+    },
+    {
+      "name": "attorney-dashboard",
+      "category": "adjudica-platform",
+      "priority": 2,
+      "description": "WC defense dashboard — chat-based updates, multi-tenant, audit trails",
+      "stack": ["React Router 7", "NestJS", "Prisma", "BetterAuth"],
+      "status": "deployed",
+      "url": "api.defense.glassboxsolutions.com",
+      "dev_port": 3300,
+      "api_port": 3301
+    },
+    {
+      "name": "pd-calculator",
+      "category": "adjudica-platform",
+      "priority": 3,
+      "description": "CA Workers' Comp Permanent Disability Rating Calculator",
+      "stack": ["Static React", "Vercel Serverless", "Supabase"],
+      "status": "deployed",
+      "url": "calculator.adjudica.ai",
+      "dev_port": 4200
+    },
+    {
+      "name": "wc-knowledge-base",
+      "category": "legal-research",
+      "priority": 2,
+      "description": "Consolidated legal research system — 2,589 cases, 18,410+ principles, 83 REST endpoints",
+      "stack": ["NestJS", "React 18", "Prisma", "PostgreSQL", "n8n Cloud"],
+      "status": "deployed",
+      "url": "wc-kb-frontend-rs3cfj56xa-uc.a.run.app",
+      "dev_port": 4100,
+      "api_port": 4101
+    },
+    {
+      "name": "Spectacles",
+      "category": "platform-services",
+      "priority": 2,
+      "description": "AI-powered browser automation platform — Playwright + Gemini vision + Slack HITL",
+      "stack": ["Python 3.12", "FastAPI", "Playwright", "Browserless"],
+      "status": "deployed",
+      "url": "spectacles-gc2qovgs7q-uc.a.run.app",
+      "dev_port": 3700
+    },
+    {
+      "name": "4850-intake-engine",
+      "category": "platform-services",
+      "priority": 4,
+      "description": "AI voice investigation for WC intake (Twilio + Deepgram + ElevenLabs)",
+      "stack": ["Twilio", "Deepgram", "ElevenLabs"],
+      "status": "planning",
+      "dev_port": 4700
+    },
+    {
+      "name": "ops",
+      "category": "infrastructure",
+      "priority": 1,
+      "description": "Infrastructure as Code — Pulumi TypeScript for all GCP resources",
+      "stack": ["TypeScript", "Pulumi", "GCP"],
+      "status": "active"
+    },
+    {
+      "name": "Squeegee",
+      "category": "infrastructure",
+      "priority": 2,
+      "description": "Documentation intelligence and portal generation system",
+      "stack": ["Node.js", "Fastify", "Nunjucks", "Gemini"],
+      "status": "active",
+      "dev_port": 4800
+    },
+    {
+      "name": "glass-box-hub",
+      "category": "internal-tools",
+      "priority": 2,
+      "description": "Internal developer portal — real-time project visibility, auto-updated docs",
+      "stack": ["Python", "FastAPI", "Tailwind CSS", "Mermaid.js"],
+      "status": "active",
+      "url": "internal.glassboxsolutions.com",
+      "dev_port": 3501
+    },
+    {
+      "name": "glass-box-board",
+      "category": "internal-tools",
+      "priority": 2,
+      "description": "Internal HITL dashboard — Notion bidirectional sync, AI dispatch",
+      "stack": ["React Router 7", "Fastify", "Prisma", "PostgreSQL", "BetterAuth"],
+      "status": "active",
+      "url": "board.glassboxsolutions.com",
+      "dev_port": 3400,
+      "api_port": 3401
+    },
+    {
+      "name": "command-center",
+      "category": "internal-tools",
+      "priority": 3,
+      "description": "AI coding agent orchestration platform — manages Claude Code and Cursor CLI sessions",
+      "stack": ["React Router 7", "Fastify", "node-pty", "xterm.js"],
+      "status": "deployed",
+      "url": "cc.glassboxsolutions.com",
+      "dev_port": 3600,
+      "api_port": 3601
+    },
+    {
+      "name": "gbs-tools-and-resources",
+      "category": "research-oss",
+      "priority": 3,
+      "description": "Unified tools & resources monorepo — hindsight, phileas, yevrah_terminal, mcp-servers",
+      "stack": ["Python", "Next.js", "Rust", "Java/Maven", "Node.js/TypeScript"],
+      "status": "active"
+    }
+  ],
+  "ai": {
+    "diagram_model": "gemini-2.0-flash",
+    "explanation_model": "gemini-2.0-flash",
+    "temperature": 0.3,
+    "max_output_tokens": 4096
+  },
+  "gcs": {
+    "bucket": "glassbox-portal-static",
+    "prefix": "",
+    "dry_run": true
+  },
+  "schedules": {
+    "full_generation": {
+      "cron": "0 7 * * *",
+      "description": "Daily full portal regeneration at 7am UTC"
+    }
+  },
+  "navigation": {
+    "sections": [
+      {
+        "title": "Overview",
+        "items": [{"name": "Dashboard", "href": "index.html"}]
+      },
+      {
+        "title": "Projects",
+        "items": [
+          {"name": "All Projects", "href": "projects.html"},
+          {"name": "Health Report", "href": "health.html"}
+        ]
+      },
+      {
+        "title": "Team",
+        "items": [
+          {"name": "Heatmap", "href": "team.html"},
+          {"name": "Search", "href": "search.html"},
+          {"name": "Activity", "href": "activity.html"}
+        ]
+      },
+      {
+        "title": "Architecture",
+        "items": [
+          {"name": "Diagrams", "href": "diagrams.html"},
+          {"name": "Dependencies", "href": "dependencies.html"},
+          {"name": "Tech Stack", "href": "stack.html"}
+        ]
+      },
+      {
+        "title": "Intelligence",
+        "items": [
+          {"name": "Daily Briefing", "href": "intelligence.html"},
+          {"name": "Audit Reports", "href": "audits.html"},
+          {"name": "Trends", "href": "trends.html"}
+        ]
+      },
+      {
+        "title": "Docs",
+        "items": [
+          {"name": "Browser", "href": "docs.html"},
+          {"name": "Agents & Tools", "href": "agents.html"}
+        ]
+      },
+      {
+        "title": "Admin",
+        "items": [
+          {"name": "Settings", "href": "admin.html"}
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "intelligence": {
+    "enabled": true,
+    "repos": [
+      "adjudica-ai-app",
+      "glassy-personal-ai",
+      "command-center",
+      "glass-box-hub",
+      "knowledge-base",
+      "adjudica-file-review",
+      "Squeegee",
+      "Spectacles",
+      "merus-expert",
+      "adjudica-documentation",
+      "attorney-dashboard",
+      "wc-paralegal-backend",
+      "pd-calculator",
+      "advocacy-prep",
+      "glass-box-board",
+      "gbs-tools-and-resources",
+      "mcp-servers",
+      "adjudica-logo-3d",
+      "adjudica-logo",
+      "brightdock-slater-apc",
+      "brightdock-slater-apc-ai",
+      "brightdock-slater-apc-demo",
+      "brightdock-slater-apc-docs",
+      "brightdock-slater-apc-mobile",
+      "brightdock-slater-apc-web",
+      "brightdock-slater-apc-backend",
+      "brightdock-slater-apc-infra"
+    ],
+    "gcp_projects": [
+      "glassbox-squeegee",
+      "glassbox-spectacles",
+      "adjudica-internal",
+      "glassy-personal-ai",
+      "command-center-gbs",
+      "glass-box-hub"
+    ],
+    "docs_repo": "Glass-Box-Solutions-Inc/adjudica-documentation",
+    "gemini": {
+      "model": "gemini-2.5-flash",
+      "temperature": 0.3,
+      "max_output_tokens": 8192,
+      "api_key_secret": "gemini-api-key"
+    },
+    "claude_md_audit": {
+      "enabled": true,
+      "threshold": 10,
+      "reopen_delay_days": 30,
+      "auto_pr_enabled": true,
+      "pr_label": "documentation"
+    },
+    "doc_quality_audit": {
+      "enabled": true,
+      "threshold": 5,
+      "auto_pr_enabled": true,
+      "excluded_paths": [
+        "Brightdock/",
+        "scripts/",
+        "node_modules/",
+        ".git/"
+      ],
+      "registry_path": "engineering/registry/DOC_QUALITY_REGISTRY.md"
+    },
+    "web_research": {
+      "enabled": true,
+      "quarterly_topics": [
+        "AI-readable documentation best practices",
+        "CLAUDE.md patterns",
+        "Technical writing standards 2026",
+        "RAG optimization for codebases",
+        "Docs-as-code tooling and automation"
+      ],
+      "output_path": "logs/research"
+    },
+    "schedules": {
+      "daily": {
+        "stages": ["14-collect", "15-synthesize", "16-write", "20-notify"]
+      },
+      "weekly": {
+        "day": "sunday",
+        "stages": ["17-audit-claude"]
+      },
+      "monthly": {
+        "day": 1,
+        "stages": ["18-audit-quality"]
+      },
+      "quarterly": {
+        "months": [1, 4, 7, 10],
+        "day": 1,
+        "stages": ["19-research"]
+      },
+      "portal": {
+        "cron": "30 7 * * *",
+        "stages": ["21-portal-collect", "22-portal-ai", "23-portal-render"],
+        "description": "Daily portal regeneration 30min after intelligence run"
+      }
+    },
+    "rate_limits": {
+      "github": {
+        "requests_per_hour": 5000,
+        "pause_threshold": 100,
+        "pause_duration_ms": 60000
+      },
+      "gemini": {
+        "requests_per_minute": 60,
+        "retry_delay_ms": 2000
+      }
+    },
+    "dry_run": false
+  },
+  "notifications": {
+    "slack": {
+      "enabled": true,
+      "webhook_url_secret": "slack-webhook-url",
+      "channel": "#main",
+      "mention_on_failure": false
+    },
+    "hub": {
+      "enabled": true,
+      "webhook_url_secret": "hub-webhook-url",
+      "webhook_secret_name": "hub-webhook-secret",
+      "timeout_ms": 5000
+    }
+  },
+  "storage": {
+    "gcs_bucket": "glassbox-dev-activity",
+    "gcs_prefix": "station/"
+  }
+}

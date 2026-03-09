@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}Doc Browser{% endblock %}
+
+{% block content %}
+{% set breadcrumbs = [
+  { name: 'Dashboard', href: 'index.html' },
+  { name: 'Docs', href: null },
+  { name: 'Browser', href: null }
+] %}
+
+<!-- Breadcrumbs -->
+<nav class="flex items-center text-sm text-gray-500 mb-6">
+  {% for crumb in breadcrumbs %}
+    {% if not loop.last %}
+      {% if crumb.href %}
+      <a href="{{ crumb.href }}" class="hover:text-gray-300 transition-colors">{{ crumb.name }}</a>
+      {% else %}
+      <span>{{ crumb.name }}</span>
+      {% endif %}
+      <svg class="w-4 h-4 mx-2 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% else %}
+      <span class="text-gray-300">{{ crumb.name }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+
+<!-- Page Header -->
+<div class="mb-6">
+  <h1 class="text-3xl font-bold text-white">Documentation Browser</h1>
+  <p class="mt-1 text-gray-400">Search and browse documentation across all projects</p>
+</div>
+
+<!-- Search -->
+<div class="mb-6">
+  <div class="relative max-w-xl">
+    <input type="text" id="doc-search" placeholder="Search documentation..."
+           class="w-full bg-gray-900/50 border border-gray-800 rounded-xl px-4 py-3 pl-11 text-sm text-gray-300 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+           oninput="filterDocs()">
+    <svg class="absolute left-4 top-3.5 w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+  </div>
+</div>
+
+<!-- Doc Index -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <!-- Documentation by Project -->
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+    <h2 class="text-lg font-semibold text-white mb-4">By Project</h2>
+    <div id="doc-project-list" class="space-y-3">
+      {% for project in projects %}
+      <div class="doc-item border-b border-gray-800/50 pb-3 last:border-0 last:pb-0" data-name="{{ project.name | lower }}">
+        <div class="flex items-center justify-between mb-1">
+          <a href="project/{{ project.name }}.html" class="text-sm font-medium text-white hover:text-blue-400 transition-colors">{{ project.name }}</a>
+          {{ project.status | status_badge }}
+        </div>
+        <div class="flex flex-wrap gap-1.5 mt-1">
+          <span class="px-2 py-0.5 text-xs rounded bg-gray-800 text-gray-500 border border-gray-700">CLAUDE.md</span>
+          <span class="px-2 py-0.5 text-xs rounded bg-gray-800 text-gray-500 border border-gray-700">README.md</span>
+          {% if project.has_state_md %}
+          <span class="px-2 py-0.5 text-xs rounded bg-gray-800 text-gray-500 border border-gray-700">STATE.md</span>
+          {% endif %}
+          {% if project.has_practices %}
+          <span class="px-2 py-0.5 text-xs rounded bg-gray-800 text-gray-500 border border-gray-700">PRACTICES.md</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Documentation Types -->
+  <div class="space-y-6">
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+      <h2 class="text-lg font-semibold text-white mb-4">Documentation Types</h2>
+      <div class="space-y-3">
+        <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+          <div class="flex items-center gap-2">
+            <span class="text-blue-400 text-sm">&#9733;</span>
+            <span class="text-sm text-gray-300">CLAUDE.md</span>
+          </div>
+          <span class="text-xs text-gray-500">Project intelligence files</span>
+        </div>
+        <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+          <div class="flex items-center gap-2">
+            <span class="text-green-400 text-sm">&#9632;</span>
+            <span class="text-sm text-gray-300">STATE.md</span>
+          </div>
+          <span class="text-xs text-gray-500">Session state & context</span>
+        </div>
+        <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+          <div class="flex items-center gap-2">
+            <span class="text-purple-400 text-sm">&#9650;</span>
+            <span class="text-sm text-gray-300">PROGRAMMING_PRACTICES.md</span>
+          </div>
+          <span class="text-xs text-gray-500">Code conventions & standards</span>
+        </div>
+        <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+          <div class="flex items-center gap-2">
+            <span class="text-yellow-400 text-sm">&#9679;</span>
+            <span class="text-sm text-gray-300">PLANS_APPROVED.md</span>
+          </div>
+          <span class="text-xs text-gray-500">Approved project plans</span>
+        </div>
+        <div class="flex items-center justify-between py-2">
+          <div class="flex items-center gap-2">
+            <span class="text-cyan-400 text-sm">&#9673;</span>
+            <span class="text-sm text-gray-300">CHANGELOG.md</span>
+          </div>
+          <span class="text-xs text-gray-500">Per-project changelogs</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+      <h2 class="text-lg font-semibold text-white mb-4">Centralized Docs</h2>
+      <div class="space-y-2">
+        <div class="flex items-center gap-2 text-sm text-gray-400">
+          <span class="text-yellow-400">&#9889;</span>
+          <span>Adjudica Documentation Hub</span>
+        </div>
+        <div class="flex items-center gap-2 text-sm text-gray-400">
+          <span class="text-blue-400">&#9899;</span>
+          <span>GBS Master CLAUDE.md</span>
+        </div>
+        <div class="flex items-center gap-2 text-sm text-gray-400">
+          <span class="text-green-400">&#9632;</span>
+          <span>Adjudica Index</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterDocs() {
+  const query = document.getElementById('doc-search').value.toLowerCase().trim();
+  const items = document.querySelectorAll('.doc-item');
+  items.forEach(item => {
+    const name = item.dataset.name || '';
+    item.style.display = (!query || name.includes(query)) ? '' : 'none';
+  });
+}
+</script>
+{% endblock %}

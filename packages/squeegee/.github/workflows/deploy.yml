@@ -1,0 +1,148 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'intelligence/**'
+      - 'config/**'
+      - 'Dockerfile'
+      - 'package.json'
+      - 'squeegee.config.json'
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: glassbox-squeegee
+  REGION: us-central1
+  SERVICE: squeegee
+  IMAGE: us-central1-docker.pkg.dev/glassbox-squeegee/squeegee/squeegee
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for Workload Identity Federation
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (Workload Identity)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Save previous revision for rollback
+        id: previous_revision
+        run: |
+          PREV=$(gcloud run revisions list \
+            --service=${{ env.SERVICE }} \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --sort-by=~creationTimestamp \
+            --limit=1 \
+            --format="value(name)" 2>/dev/null || echo "")
+          echo "revision=$PREV" >> $GITHUB_OUTPUT
+
+      - name: Build container image
+        # Build locally on the Actions runner — avoids Cloud Build log-streaming IAM issues
+        run: |
+          docker build \
+            -t "${{ env.IMAGE }}:${{ github.sha }}" \
+            -t "${{ env.IMAGE }}:latest" \
+            .
+
+      - name: Scan container for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.IMAGE }}:${{ github.sha }}'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL'
+          ignore-unfixed: true
+          trivyignores: '.trivyignore'
+
+      - name: Push container image
+        run: |
+          docker push "${{ env.IMAGE }}:${{ github.sha }}"
+          docker push "${{ env.IMAGE }}:latest"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE }} \
+            --image="${{ env.IMAGE }}:${{ github.sha }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.REGION }}" \
+            --service-account="squeegee-runner@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --memory=1Gi \
+            --cpu=1 \
+            --min-instances=0 \
+            --max-instances=1 \
+            --no-cpu-throttling \
+            --timeout=900 \
+            --update-secrets="/secrets/github-pat-glassbox=github-pat-glassbox:latest" \
+            --set-env-vars="GITHUB_ORG=Glass-Box-Solutions-Inc" \
+            --no-allow-unauthenticated
+
+      - name: Verify deployment revision is serving
+        id: health_check
+        run: |
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE }} \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.REGION }}" \
+            --format="value(status.url)")
+          echo "url=$SERVICE_URL" >> $GITHUB_OUTPUT
+
+          # Verify the new revision is receiving traffic
+          LATEST_READY=$(gcloud run revisions list \
+            --service=${{ env.SERVICE }} \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --sort-by=~creationTimestamp \
+            --limit=1 \
+            --format="value(status.conditions[0].status)" 2>/dev/null || echo "Unknown")
+
+          if [ "$LATEST_READY" = "True" ]; then
+            echo "New revision is ready and serving traffic"
+          else
+            echo "::warning::New revision status: $LATEST_READY — may still be starting"
+          fi
+
+          echo "Service URL: $SERVICE_URL"
+
+      - name: Rollback on deploy failure
+        if: failure() && steps.previous_revision.outputs.revision != ''
+        run: |
+          echo "Rolling back to previous revision: ${{ steps.previous_revision.outputs.revision }}"
+          gcloud run services update-traffic ${{ env.SERVICE }} \
+            --project="${{ env.PROJECT_ID }}" \
+            --region="${{ env.REGION }}" \
+            --to-revisions="${{ steps.previous_revision.outputs.revision }}=100"

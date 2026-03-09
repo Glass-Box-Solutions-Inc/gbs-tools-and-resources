@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block title %}Expertise Search{% endblock %}
+
+{% block content %}
+{% set breadcrumbs = [
+  { name: 'Dashboard', href: 'index.html' },
+  { name: 'Team', href: 'team.html' },
+  { name: 'Search', href: null }
+] %}
+
+<!-- Breadcrumbs -->
+<nav class="flex items-center text-sm text-gray-500 mb-6">
+  {% for crumb in breadcrumbs %}
+    {% if not loop.last %}
+      <a href="{{ crumb.href }}" class="hover:text-gray-300 transition-colors">{{ crumb.name }}</a>
+      <svg class="w-4 h-4 mx-2 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% else %}
+      <span class="text-gray-300">{{ crumb.name }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+
+<!-- Page Header -->
+<div class="mb-6">
+  <h1 class="text-3xl font-bold text-white">Expertise Search</h1>
+  <p class="mt-1 text-gray-400">Find developers and projects by technology or skill</p>
+</div>
+
+<!-- Search Input -->
+<div class="mb-6">
+  <div class="relative max-w-xl">
+    <input type="text" id="expertise-search" placeholder="Search by name, technology, or project..."
+           class="w-full bg-gray-900/50 border border-gray-800 rounded-xl px-4 py-3 pl-11 text-sm text-gray-300 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+           oninput="filterSearch()">
+    <svg class="absolute left-4 top-3.5 w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+  </div>
+</div>
+
+<!-- Quick Filters -->
+<div class="flex flex-wrap gap-2 mb-6">
+  <span class="text-xs text-gray-500 self-center mr-1">Quick filters:</span>
+  <button class="quick-filter px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600 transition-colors" onclick="setQuickFilter('React')">React</button>
+  <button class="quick-filter px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600 transition-colors" onclick="setQuickFilter('Python')">Python</button>
+  <button class="quick-filter px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600 transition-colors" onclick="setQuickFilter('NestJS')">NestJS</button>
+  <button class="quick-filter px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600 transition-colors" onclick="setQuickFilter('FastAPI')">FastAPI</button>
+  <button class="quick-filter px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600 transition-colors" onclick="setQuickFilter('Prisma')">Prisma</button>
+  <button class="quick-filter px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600 transition-colors" onclick="setQuickFilter('Deployed')">Deployed</button>
+  <button class="quick-filter px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600 transition-colors" onclick="setQuickFilter('Active')">Active</button>
+</div>
+
+<!-- Results Count -->
+<div id="results-count" class="mb-4 text-sm text-gray-500"></div>
+
+<!-- Search Results -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <!-- Developers -->
+  <div>
+    <h2 class="text-lg font-semibold text-white mb-4">Developers</h2>
+    <div id="developer-results" class="space-y-3">
+      {% for dev in developers %}
+      <div class="search-item developer-item bg-gray-900/50 border border-gray-800 rounded-xl p-4 hover:border-gray-600 transition-colors"
+           data-name="{{ dev.name | lower }}"
+           data-projects="{% for p in dev.projects %}{{ p | lower }} {% endfor %}"
+           data-tech="{% if dev.tech_stack %}{% for t in dev.tech_stack %}{{ t | lower }} {% endfor %}{% endif %}">
+        <div class="flex items-center gap-3 mb-2">
+          <div class="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-xs text-gray-300 font-semibold">{{ dev.name[:2] | upper }}</div>
+          <div>
+            <div class="font-medium text-white text-sm">{{ dev.name }}</div>
+            {% if dev.projects %}
+            <div class="text-xs text-gray-500">{{ dev.projects | length }} project{{ 's' if dev.projects | length != 1 }}</div>
+            {% endif %}
+          </div>
+        </div>
+        {% if dev.projects %}
+        <div class="flex flex-wrap gap-1 mt-2">
+          {% for p in dev.projects %}
+          <span class="px-2 py-0.5 text-xs rounded bg-gray-800 text-gray-400 border border-gray-700">{{ p }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% if dev.tech_stack %}
+        <div class="flex flex-wrap gap-1 mt-2">
+          {% for t in dev.tech_stack %}
+          <span class="px-2 py-0.5 text-xs rounded bg-blue-900/30 text-blue-400 border border-blue-800/30">{{ t }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Projects -->
+  <div>
+    <h2 class="text-lg font-semibold text-white mb-4">Projects</h2>
+    <div id="project-results" class="space-y-3">
+      {% for project in projects %}
+      <div class="search-item project-item bg-gray-900/50 border border-gray-800 rounded-xl p-4 hover:border-gray-600 transition-colors"
+           data-name="{{ project.name | lower }}"
+           data-projects="{{ project.name | lower }}"
+           data-tech="{% if project.tech_stack %}{% for t in project.tech_stack %}{{ t | lower }} {% endfor %}{% endif %} {{ project.status | lower }}">
+        <div class="flex items-center justify-between mb-2">
+          <a href="project/{{ project.name }}.html" class="font-medium text-white text-sm hover:text-blue-400 transition-colors">{{ project.name }}</a>
+          {{ project.status | status_badge }}
+        </div>
+        {% if project.description %}
+        <p class="text-xs text-gray-400 mb-2">{{ project.description | truncate_message(100) }}</p>
+        {% endif %}
+        {% if project.tech_stack %}
+        <div class="flex flex-wrap gap-1">
+          {% for t in project.tech_stack %}
+          <span class="px-2 py-0.5 text-xs rounded bg-gray-800 text-gray-400 border border-gray-700">{{ t }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterSearch() {
+  const query = document.getElementById('expertise-search').value.toLowerCase().trim();
+  const items = document.querySelectorAll('.search-item');
+  let visible = 0;
+
+  items.forEach(item => {
+    const name = item.dataset.name || '';
+    const projects = item.dataset.projects || '';
+    const tech = item.dataset.tech || '';
+    const searchText = name + ' ' + projects + ' ' + tech;
+
+    if (!query || searchText.includes(query)) {
+      item.style.display = '';
+      visible++;
+    } else {
+      item.style.display = 'none';
+    }
+  });
+
+  document.getElementById('results-count').textContent = query ? visible + ' result' + (visible !== 1 ? 's' : '') + ' found' : '';
+}
+
+function setQuickFilter(term) {
+  const input = document.getElementById('expertise-search');
+  input.value = term;
+  filterSearch();
+
+  // Highlight active button
+  document.querySelectorAll('.quick-filter').forEach(btn => {
+    btn.classList.remove('bg-blue-500/10', 'text-blue-400', 'border-blue-400/30');
+    btn.classList.add('bg-gray-800', 'text-gray-400', 'border-gray-700');
+  });
+  const activeBtn = event.target;
+  activeBtn.classList.add('bg-blue-500/10', 'text-blue-400', 'border-blue-400/30');
+  activeBtn.classList.remove('bg-gray-800', 'text-gray-400', 'border-gray-700');
+}
+</script>
+{% endblock %}

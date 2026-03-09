@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Dependencies{% endblock %}
+
+{% block content %}
+{% set breadcrumbs = [
+  { name: 'Dashboard', href: 'index.html' },
+  { name: 'Architecture', href: null },
+  { name: 'Dependencies', href: null }
+] %}
+
+<!-- Breadcrumbs -->
+<nav class="flex items-center text-sm text-gray-500 mb-6">
+  {% for crumb in breadcrumbs %}
+    {% if not loop.last %}
+      {% if crumb.href %}
+      <a href="{{ crumb.href }}" class="hover:text-gray-300 transition-colors">{{ crumb.name }}</a>
+      {% else %}
+      <span>{{ crumb.name }}</span>
+      {% endif %}
+      <svg class="w-4 h-4 mx-2 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% else %}
+      <span class="text-gray-300">{{ crumb.name }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+
+<!-- Page Header -->
+<div class="mb-6">
+  <h1 class="text-3xl font-bold text-white">Cross-Project Dependencies</h1>
+  <p class="mt-1 text-gray-400">How projects depend on and interact with each other</p>
+</div>
+
+<!-- Dependency Graph -->
+<div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6 mb-6">
+  <h2 class="text-lg font-semibold text-white mb-4">Dependency Graph</h2>
+  <div class="diagram-container cursor-pointer overflow-x-auto" onclick="openDiagramModal(this)">
+    <pre class="mermaid">
+graph LR
+{% for project in projects %}
+  {{ project.name | replace("-", "_") }}["{{ project.name }}"]
+{% endfor %}
+
+{% for project in projects %}
+{% if project.dependencies %}
+{% for dep in project.dependencies %}
+  {{ project.name | replace("-", "_") }} --> {{ dep | replace("-", "_") }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+
+classDef default fill:#1e293b,stroke:#3b82f6,color:#e2e8f0
+    </pre>
+  </div>
+</div>
+
+<!-- Dependencies Table -->
+<div class="bg-gray-900/50 border border-gray-800 rounded-xl overflow-hidden">
+  <div class="px-5 py-4 border-b border-gray-800">
+    <h2 class="text-lg font-semibold text-white">Dependency Details</h2>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-800 bg-gray-900/80">
+          <th class="text-left px-5 py-3 text-xs text-gray-500 uppercase tracking-wider font-medium">Project</th>
+          <th class="text-left px-5 py-3 text-xs text-gray-500 uppercase tracking-wider font-medium">Status</th>
+          <th class="text-left px-5 py-3 text-xs text-gray-500 uppercase tracking-wider font-medium">Dependencies</th>
+          <th class="text-left px-5 py-3 text-xs text-gray-500 uppercase tracking-wider font-medium">Dependents</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800/50">
+        {% for project in projects %}
+        <tr class="hover:bg-gray-800/30 transition-colors">
+          <td class="px-5 py-3">
+            <a href="project/{{ project.name }}.html" class="text-white hover:text-blue-400 transition-colors font-medium">{{ project.name }}</a>
+          </td>
+          <td class="px-5 py-3">{{ project.status | status_badge }}</td>
+          <td class="px-5 py-3">
+            {% if project.dependencies and project.dependencies | length > 0 %}
+            <div class="flex flex-wrap gap-1">
+              {% for dep in project.dependencies %}
+              <a href="project/{{ dep }}.html" class="px-2 py-0.5 text-xs rounded bg-blue-900/30 text-blue-400 border border-blue-800/30 hover:bg-blue-900/50 transition-colors">{{ dep }}</a>
+              {% endfor %}
+            </div>
+            {% else %}
+            <span class="text-gray-600 text-xs">None</span>
+            {% endif %}
+          </td>
+          <td class="px-5 py-3">
+            {% if project.dependents and project.dependents | length > 0 %}
+            <div class="flex flex-wrap gap-1">
+              {% for dep in project.dependents %}
+              <a href="project/{{ dep }}.html" class="px-2 py-0.5 text-xs rounded bg-green-900/30 text-green-400 border border-green-800/30 hover:bg-green-900/50 transition-colors">{{ dep }}</a>
+              {% endfor %}
+            </div>
+            {% else %}
+            <span class="text-gray-600 text-xs">None</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  mermaid.run();
+});
+</script>
+{% endblock %}

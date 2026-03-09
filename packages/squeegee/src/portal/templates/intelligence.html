@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Daily Briefing{% endblock %}
+
+{% block content %}
+{% set breadcrumbs = [
+  { name: 'Dashboard', href: 'index.html' },
+  { name: 'Intelligence', href: null },
+  { name: 'Daily Briefing', href: null }
+] %}
+
+<!-- Breadcrumbs -->
+<nav class="flex items-center text-sm text-gray-500 mb-6">
+  {% for crumb in breadcrumbs %}
+    {% if not loop.last %}
+      {% if crumb.href %}
+      <a href="{{ crumb.href }}" class="hover:text-gray-300 transition-colors">{{ crumb.name }}</a>
+      {% else %}
+      <span>{{ crumb.name }}</span>
+      {% endif %}
+      <svg class="w-4 h-4 mx-2 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% else %}
+      <span class="text-gray-300">{{ crumb.name }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+
+<!-- Page Header -->
+<div class="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
+  <div>
+    <h1 class="text-3xl font-bold text-white">Daily Briefing</h1>
+    <p class="mt-1 text-gray-400">AI-generated intelligence summary from pipeline stages 14-20</p>
+  </div>
+  <div class="mt-4 md:mt-0">
+    <span class="text-xs text-gray-500">Last generated: {{ generated_at | timeago }}</span>
+  </div>
+</div>
+
+<!-- Summary Stats -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Projects Tracked</div>
+    <div class="text-2xl font-bold text-white">{{ total_projects }}</div>
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Commits (30d)</div>
+    <div class="text-2xl font-bold text-blue-400">{{ total_commits_30d }}</div>
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Active Contributors</div>
+    <div class="text-2xl font-bold text-purple-400">{{ total_contributors }}</div>
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Avg Health</div>
+    <div class="text-2xl font-bold {{ avg_health | health_color }}">{{ avg_health }}%</div>
+  </div>
+</div>
+
+<!-- Briefing Content -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+  <!-- Main Briefing -->
+  <div class="lg:col-span-2">
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+      <div class="flex items-center gap-2 mb-4">
+        <span class="text-yellow-400 text-lg">&#9889;</span>
+        <h2 class="text-lg font-semibold text-white">Intelligence Briefing</h2>
+      </div>
+      <div id="briefing-content" class="prose prose-invert prose-sm max-w-none text-gray-300">
+        <div class="bg-gray-800/50 border border-gray-700 rounded-lg p-8 text-center">
+          <p class="text-gray-500 mb-2">No briefing data available yet.</p>
+          <p class="text-gray-600 text-xs">Briefings are generated daily at 6am UTC by the intelligence pipeline (stages 14-20).</p>
+          <p class="text-gray-600 text-xs mt-1">Trigger manually via <code class="text-blue-400">POST /api/intelligence/run</code></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="space-y-6">
+    <!-- Pipeline Status -->
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-5">
+      <h3 class="text-sm font-semibold text-white mb-3">Pipeline Stages</h3>
+      <div class="space-y-2 text-xs">
+        <div class="flex items-center justify-between py-1.5 border-b border-gray-800/50">
+          <span class="text-gray-400">14. Data Collection</span>
+          <span class="text-gray-600">Daily</span>
+        </div>
+        <div class="flex items-center justify-between py-1.5 border-b border-gray-800/50">
+          <span class="text-gray-400">15. Gemini Synthesis</span>
+          <span class="text-gray-600">Daily</span>
+        </div>
+        <div class="flex items-center justify-between py-1.5 border-b border-gray-800/50">
+          <span class="text-gray-400">16. Log Writing</span>
+          <span class="text-gray-600">Daily</span>
+        </div>
+        <div class="flex items-center justify-between py-1.5 border-b border-gray-800/50">
+          <span class="text-gray-400">17. CLAUDE.md Audit</span>
+          <span class="text-gray-600">Weekly (Sun)</span>
+        </div>
+        <div class="flex items-center justify-between py-1.5 border-b border-gray-800/50">
+          <span class="text-gray-400">18. Doc Quality Audit</span>
+          <span class="text-gray-600">Monthly (1st)</span>
+        </div>
+        <div class="flex items-center justify-between py-1.5 border-b border-gray-800/50">
+          <span class="text-gray-400">19. Web Research</span>
+          <span class="text-gray-600">Quarterly</span>
+        </div>
+        <div class="flex items-center justify-between py-1.5">
+          <span class="text-gray-400">20. Slack Notify</span>
+          <span class="text-gray-600">Daily</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Links -->
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-5">
+      <h3 class="text-sm font-semibold text-white mb-3">Related</h3>
+      <div class="space-y-2">
+        <a href="audits.html" class="block text-sm text-blue-400 hover:text-blue-300 transition-colors">Audit Reports &rarr;</a>
+        <a href="trends.html" class="block text-sm text-blue-400 hover:text-blue-300 transition-colors">Trends &rarr;</a>
+        <a href="health.html" class="block text-sm text-blue-400 hover:text-blue-300 transition-colors">Health Report &rarr;</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

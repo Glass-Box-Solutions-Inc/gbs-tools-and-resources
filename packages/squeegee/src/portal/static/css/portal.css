@@ -1,0 +1,286 @@
+/* Glass Box Hub Portal - Custom Styles */
+
+/* Glass morphism cards */
+.glass-card {
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 0.75rem;
+}
+
+.glass-card:hover {
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+/* Heatmap cells */
+.heatmap-cell {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+  position: relative;
+}
+
+.heatmap-cell:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 8px rgba(0, 255, 135, 0.3);
+  z-index: 10;
+}
+
+.heatmap-cell .activity-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22d3ee;
+}
+
+/* Vertical text for heatmap column headers */
+.vertical-text {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  white-space: nowrap;
+  font-size: 0.75rem;
+  max-height: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Commit drawer */
+#commit-drawer {
+  scrollbar-width: thin;
+  scrollbar-color: #374151 transparent;
+}
+
+/* Diagram containers */
+.diagram-container {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+  overflow: auto;
+  position: relative;
+}
+
+.diagram-container:hover {
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.diagram-container .zoom-hint {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  font-size: 0.75rem;
+  color: rgba(148, 163, 184, 0.5);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.diagram-container:hover .zoom-hint {
+  opacity: 1;
+}
+
+/* Diagram modal zoom/pan */
+#diagram-modal-content {
+  cursor: grab;
+}
+
+#diagram-modal-content:active {
+  cursor: grabbing;
+}
+
+#diagram-modal-content svg {
+  max-width: none;
+  max-height: none;
+}
+
+/* Tab system */
+.tab-btn {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  border-bottom: 2px solid transparent;
+  color: #9ca3af;
+  transition: all 0.15s;
+}
+
+.tab-btn:hover {
+  color: #e5e7eb;
+}
+
+.tab-btn.active {
+  color: #60a5fa;
+  border-bottom-color: #3b82f6;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* Accordion */
+.accordion-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.accordion-header .accordion-icon {
+  transition: transform 0.2s;
+}
+
+.accordion-header.open .accordion-icon {
+  transform: rotate(180deg);
+}
+
+.accordion-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease-out;
+}
+
+.accordion-body.open {
+  max-height: none;
+}
+
+/* Health bars */
+.health-bar {
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.health-bar-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.5s ease-out;
+}
+
+/* Skeleton loading */
+.skeleton {
+  background: linear-gradient(90deg, rgba(30, 41, 59, 0.5) 25%, rgba(51, 65, 85, 0.5) 50%, rgba(30, 41, 59, 0.5) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s infinite;
+  border-radius: 0.25rem;
+}
+
+@keyframes skeleton-loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.5);
+}
+
+/* Responsive tables */
+.table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Stat cards */
+.stat-card {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+}
+
+.stat-card .stat-value {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.stat-card .stat-label {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 0.25rem;
+}
+
+/* Filter buttons */
+.filter-btn {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 9999px;
+  color: #9ca3af;
+  transition: all 0.15s;
+}
+
+.filter-btn:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+  color: #e5e7eb;
+}
+
+.filter-btn.active {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(59, 130, 246, 0.5);
+  color: #60a5fa;
+}
+
+/* Badge styles */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 9999px;
+  border: 1px solid;
+}
+
+/* Nav section toggle animation */
+.nav-section-items {
+  overflow: hidden;
+  transition: max-height 0.2s ease-out;
+}
+
+.nav-section-items.collapsed {
+  max-height: 0 !important;
+}
+
+/* Mermaid override for dark theme */
+.mermaid {
+  display: flex;
+  justify-content: center;
+}
+
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Print styles */
+@media print {
+  aside, #mobile-menu-btn, #sidebar-overlay {
+    display: none !important;
+  }
+  main {
+    margin-left: 0 !important;
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "version": "2.0.0",
+  "projects": [
+    {
+      "name": "my-project",
+      "path": ".",
+      "techStack": [],
+      "description": ""
+    }
+  ],
+  "patternLibrary": {
+    "enabled": false
+  },
+  "docTypes": {
+    "CLAUDE.md": {
+      "required": true,
+      "minLines": 40,
+      "requiredSections": ["Project Overview", "Commands", "Tech Stack"]
+    },
+    "STATE.md": {
+      "required": false,
+      "location": ".planning/STATE.md"
+    }
+  },
+  "gitAnalysis": {
+    "maxCommits": 100
+  },
+  "documentationHub": {
+    "repo": "Glass-Box-Solutions-Inc/adjudica-documentation",
+    "reference": "https://github.com/Glass-Box-Solutions-Inc/adjudica-documentation"
+  }
+}

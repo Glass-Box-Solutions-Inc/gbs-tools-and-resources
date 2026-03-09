@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Tech Stack{% endblock %}
+
+{% block content %}
+{% set breadcrumbs = [
+  { name: 'Dashboard', href: 'index.html' },
+  { name: 'Architecture', href: null },
+  { name: 'Tech Stack', href: null }
+] %}
+
+<!-- Breadcrumbs -->
+<nav class="flex items-center text-sm text-gray-500 mb-6">
+  {% for crumb in breadcrumbs %}
+    {% if not loop.last %}
+      {% if crumb.href %}
+      <a href="{{ crumb.href }}" class="hover:text-gray-300 transition-colors">{{ crumb.name }}</a>
+      {% else %}
+      <span>{{ crumb.name }}</span>
+      {% endif %}
+      <svg class="w-4 h-4 mx-2 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% else %}
+      <span class="text-gray-300">{{ crumb.name }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+
+<!-- Page Header -->
+<div class="mb-6">
+  <h1 class="text-3xl font-bold text-white">Tech Stack Matrix</h1>
+  <p class="mt-1 text-gray-400">Technologies used across all projects</p>
+</div>
+
+<!-- Build tech index from projects -->
+{% set tech_index = {} %}
+{% set tech_counts = {} %}
+{% for project in projects %}
+  {% if project.tech_stack %}
+    {% for tech in project.tech_stack %}
+      {% if tech not in tech_index %}
+        {% set _ = tech_index.__setitem__(tech, []) %}
+        {% set _ = tech_counts.__setitem__(tech, 0) %}
+      {% endif %}
+      {% set _ = tech_index[tech].append(project.name) %}
+      {% set _ = tech_counts.__setitem__(tech, tech_counts[tech] + 1) %}
+    {% endfor %}
+  {% endif %}
+{% endfor %}
+
+<!-- Summary Cards -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-5">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-2">Total Technologies</div>
+    <div class="text-2xl font-bold text-white">{{ tech_index | length }}</div>
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-5">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-2">Most Used</div>
+    {% set most_used_tech = '' %}
+    {% set most_used_count = 0 %}
+    {% for tech, projs in tech_index %}
+      {% if projs | length > most_used_count %}
+        {% set most_used_tech = tech %}
+        {% set most_used_count = projs | length %}
+      {% endif %}
+    {% endfor %}
+    <div class="text-lg font-bold text-blue-400">{{ most_used_tech or 'N/A' }}</div>
+    {% if most_used_count > 0 %}
+    <div class="text-xs text-gray-500 mt-1">Used in {{ most_used_count }} project{{ 's' if most_used_count != 1 }}</div>
+    {% endif %}
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-5">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-2">Unique Technologies</div>
+    {% set unique_count = 0 %}
+    {% for tech, projs in tech_index %}
+      {% if projs | length == 1 %}{% set unique_count = unique_count + 1 %}{% endif %}
+    {% endfor %}
+    <div class="text-2xl font-bold text-cyan-400">{{ unique_count }}</div>
+    <div class="text-xs text-gray-500 mt-1">Used in only one project</div>
+  </div>
+</div>
+
+<!-- Matrix Table -->
+<div class="bg-gray-900/50 border border-gray-800 rounded-xl overflow-hidden">
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-800 bg-gray-900/80">
+          <th class="sticky left-0 z-10 bg-gray-900 text-left px-5 py-3 text-xs text-gray-500 uppercase tracking-wider font-medium min-w-[160px]">Technology</th>
+          <th class="text-center px-3 py-3 text-xs text-gray-500 uppercase tracking-wider font-medium">Count</th>
+          {% for project in projects %}
+          <th class="px-2 py-3 text-center min-w-[40px]">
+            <div class="transform -rotate-45 origin-center whitespace-nowrap text-xs text-gray-500 font-medium" style="writing-mode: vertical-lr; transform: rotate(180deg); height: 80px; display: flex; align-items: flex-end; justify-content: flex-start;">
+              <a href="project/{{ project.name }}.html" class="hover:text-blue-400 transition-colors">{{ project.name }}</a>
+            </div>
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800/50">
+        {% for tech, projs in tech_index %}
+        <tr class="hover:bg-gray-800/30 transition-colors">
+          <td class="sticky left-0 z-10 bg-gray-900 px-5 py-2.5 text-gray-200 font-medium whitespace-nowrap">
+            <span class="px-2 py-0.5 text-xs rounded bg-blue-900/30 text-blue-400 border border-blue-800/30">{{ tech }}</span>
+          </td>
+          <td class="px-3 py-2.5 text-center text-gray-400 font-medium">{{ projs | length }}</td>
+          {% for project in projects %}
+          <td class="px-2 py-2.5 text-center">
+            {% if project.name in projs %}
+            <span class="text-green-400 text-sm" title="{{ tech }} used in {{ project.name }}">&#10003;</span>
+            {% else %}
+            <span class="text-gray-800">&mdash;</span>
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

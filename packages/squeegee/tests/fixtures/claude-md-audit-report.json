@@ -1,0 +1,43 @@
+{
+  "date": "2026-03-16",
+  "repos_audited": 27,
+  "summary": {
+    "average_score": 11.2,
+    "excellent": 15,
+    "good": 8,
+    "needs_work": 3,
+    "critical": 1
+  },
+  "details": [
+    {
+      "repo": "adjudica-ai-app",
+      "score": 14,
+      "status": "excellent",
+      "has_claude_md": true,
+      "project_overview": true,
+      "quick_start": true,
+      "architecture": true,
+      "tech_stack": true,
+      "env_vars": true,
+      "deployment": true,
+      "testing": true,
+      "api_docs": true,
+      "development_guide": true,
+      "contribution_guide": false,
+      "changelog": true,
+      "troubleshooting": true,
+      "related_projects": true,
+      "contact_info": true,
+      "license": true,
+      "needs_pr": false
+    },
+    {
+      "repo": "brightdock-slater-apc-mobile",
+      "score": 3,
+      "status": "critical",
+      "has_claude_md": false,
+      "needs_pr": true,
+      "suggested_content": "Mobile app for Brightdock Slater APC client portal"
+    }
+  ]
+}

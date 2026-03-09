@@ -1,0 +1,48 @@
+{
+  "deployments": [
+    {
+      "service": "glassy-personal-ai",
+      "revision": "glassy-00042-abc",
+      "timestamp": "2026-03-13T10:35:00Z",
+      "status": "success",
+      "duration_seconds": 127
+    },
+    {
+      "service": "command-center",
+      "revision": "command-center-00018-def",
+      "timestamp": "2026-03-13T15:20:00Z",
+      "status": "success",
+      "duration_seconds": 98
+    },
+    {
+      "service": "squeegee",
+      "revision": "squeegee-00005-ghi",
+      "timestamp": "2026-03-13T16:45:00Z",
+      "status": "failed",
+      "duration_seconds": 45,
+      "error": "Health check timeout"
+    }
+  ],
+  "errors": [
+    {
+      "service": "glassy-personal-ai",
+      "severity": "ERROR",
+      "message": "Rate limit exceeded for Anthropic API",
+      "timestamp": "2026-03-13T12:15:00Z",
+      "trace": "projects/glassy-personal-ai/traces/abc123"
+    },
+    {
+      "service": "squeegee",
+      "severity": "ERROR",
+      "message": "Health check timeout",
+      "timestamp": "2026-03-13T16:45:00Z",
+      "trace": "projects/glassbox-squeegee/traces/def456"
+    }
+  ],
+  "summary": {
+    "total_deployments": 3,
+    "successful_deployments": 2,
+    "failed_deployments": 1,
+    "total_errors": 2
+  }
+}

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}All Projects{% endblock %}
+
+{% block content %}
+{% set breadcrumbs = [
+  { name: 'Dashboard', href: 'index.html' },
+  { name: 'Projects', href: null }
+] %}
+
+<!-- Breadcrumbs -->
+<nav class="flex items-center text-sm text-gray-500 mb-6">
+  {% for crumb in breadcrumbs %}
+    {% if not loop.last %}
+      <a href="{{ crumb.href }}" class="hover:text-gray-300 transition-colors">{{ crumb.name }}</a>
+      <svg class="w-4 h-4 mx-2 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% else %}
+      <span class="text-gray-300">{{ crumb.name }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+
+<!-- Page Header -->
+<div class="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
+  <div>
+    <h1 class="text-3xl font-bold text-white">All Projects</h1>
+    <p class="mt-1 text-gray-400">{{ total_projects }} projects across the organization</p>
+  </div>
+  <div class="mt-4 md:mt-0 flex items-center gap-2">
+    <label class="text-sm text-gray-500 mr-2">Sort:</label>
+    <button class="sort-btn px-3 py-1.5 text-xs rounded-lg bg-blue-500/10 text-blue-400 border border-blue-400/30" data-sort="name" onclick="sortProjects('name')">Name</button>
+    <button class="sort-btn px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700" data-sort="health" onclick="sortProjects('health')">Health</button>
+    <button class="sort-btn px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700" data-sort="activity" onclick="sortProjects('activity')">Activity</button>
+  </div>
+</div>
+
+<!-- Filters -->
+<div class="mb-6 space-y-3">
+  <!-- Category Filters -->
+  <div class="flex flex-wrap gap-2">
+    <span class="text-xs text-gray-500 self-center mr-1">Category:</span>
+    <button class="filter-btn active px-3 py-1.5 text-xs rounded-lg bg-blue-500/10 text-blue-400 border border-blue-400/30" data-category="all" onclick="filterProjects('category', 'all')">All</button>
+    {% for cat_key, cat_val in category_display %}
+    <button class="filter-btn px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600" data-category="{{ cat_key }}" onclick="filterProjects('category', '{{ cat_key }}')">{{ cat_val.name }}</button>
+    {% endfor %}
+  </div>
+  <!-- Status Filters -->
+  <div class="flex flex-wrap gap-2">
+    <span class="text-xs text-gray-500 self-center mr-1">Status:</span>
+    <button class="filter-btn active px-3 py-1.5 text-xs rounded-lg bg-blue-500/10 text-blue-400 border border-blue-400/30" data-status="all" onclick="filterProjects('status', 'all')">All</button>
+    {% for st_key, st_val in status_display %}
+    <button class="filter-btn px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600" data-status="{{ st_key }}" onclick="filterProjects('status', '{{ st_key }}')">{{ st_val.label }}</button>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Project Grid -->
+<div id="projects-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+  {% for project in projects %}
+  <div class="project-card bg-gray-900/50 border border-gray-800 rounded-xl p-5 hover:border-gray-600 transition-colors"
+       data-name="{{ project.name }}"
+       data-category="{{ project.category or 'research-oss' }}"
+       data-status="{{ project.status or 'active' }}"
+       data-health="{{ project.health_score or 0 }}"
+       data-commits="{{ project.commit_count_30d or 0 }}">
+    <div class="flex items-start justify-between mb-3">
+      <a href="project/{{ project.name }}.html" class="font-semibold text-white hover:text-blue-400 transition-colors truncate">{{ project.name }}</a>
+      {{ project.status | status_badge }}
+    </div>
+    {% if project.description %}
+    <p class="text-sm text-gray-400 mb-3 line-clamp-2">{{ project.description }}</p>
+    {% endif %}
+    <div class="flex items-center justify-between text-sm mb-3">
+      <span class="{{ project.health_score | health_color }} font-medium">{{ project.health_score or 0 }}% health</span>
+      <span class="text-gray-500">{{ project.commit_count_30d or 0 }} commits (30d)</span>
+    </div>
+    {% if project.tech_stack and project.tech_stack | length > 0 %}
+    <div class="flex flex-wrap gap-1.5">
+      {% for tech in project.tech_stack %}
+      <span class="px-2 py-0.5 text-xs rounded bg-gray-800 text-gray-400 border border-gray-700">{{ tech }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterProjects(type, value) {
+  const cards = document.querySelectorAll('.project-card');
+  const btns = document.querySelectorAll(`.filter-btn[data-${type}]`);
+  btns.forEach(b => {
+    b.classList.remove('bg-blue-500/10', 'text-blue-400', 'border-blue-400/30', 'active');
+    b.classList.add('bg-gray-800', 'text-gray-400', 'border-gray-700');
+  });
+  const activeBtn = document.querySelector(`.filter-btn[data-${type}="${value}"]`);
+  if (activeBtn) {
+    activeBtn.classList.add('bg-blue-500/10', 'text-blue-400', 'border-blue-400/30', 'active');
+    activeBtn.classList.remove('bg-gray-800', 'text-gray-400', 'border-gray-700');
+  }
+
+  cards.forEach(card => {
+    const catFilter = document.querySelector('.filter-btn[data-category].active');
+    const stFilter = document.querySelector('.filter-btn[data-status].active');
+    const catVal = catFilter ? catFilter.dataset.category : 'all';
+    const stVal = stFilter ? stFilter.dataset.status : 'all';
+    const catMatch = catVal === 'all' || card.dataset.category === catVal;
+    const stMatch = stVal === 'all' || card.dataset.status === stVal;
+    card.style.display = (catMatch && stMatch) ? '' : 'none';
+  });
+}
+
+function sortProjects(by) {
+  const grid = document.getElementById('projects-grid');
+  const cards = Array.from(grid.querySelectorAll('.project-card'));
+  const sortBtns = document.querySelectorAll('.sort-btn');
+  sortBtns.forEach(b => {
+    b.classList.remove('bg-blue-500/10', 'text-blue-400', 'border-blue-400/30');
+    b.classList.add('bg-gray-800', 'text-gray-400', 'border-gray-700');
+  });
+  const activeBtn = document.querySelector(`.sort-btn[data-sort="${by}"]`);
+  if (activeBtn) {
+    activeBtn.classList.add('bg-blue-500/10', 'text-blue-400', 'border-blue-400/30');
+    activeBtn.classList.remove('bg-gray-800', 'text-gray-400', 'border-gray-700');
+  }
+
+  cards.sort((a, b) => {
+    if (by === 'name') return a.dataset.name.localeCompare(b.dataset.name);
+    if (by === 'health') return parseInt(b.dataset.health) - parseInt(a.dataset.health);
+    if (by === 'activity') return parseInt(b.dataset.commits) - parseInt(a.dataset.commits);
+    return 0;
+  });
+  cards.forEach(c => grid.appendChild(c));
+}
+</script>
+{% endblock %}

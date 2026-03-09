@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }}{% endblock %}
+
+{% block content %}
+<!-- Breadcrumbs -->
+{% if breadcrumbs %}
+<nav class="flex items-center text-sm text-gray-500 mb-6">
+  {% for crumb in breadcrumbs %}
+    {% if not loop.last %}
+      <a href="{{ crumb.href }}" class="hover:text-gray-300 transition-colors">{{ crumb.name }}</a>
+      <svg class="w-4 h-4 mx-2 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% else %}
+      <span class="text-gray-300">{{ crumb.name }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+{% endif %}
+
+<div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+  <!-- Main Content (3 cols) -->
+  <div class="lg:col-span-3 space-y-6">
+    <!-- Header -->
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <div class="flex items-center gap-3 mb-2">
+            <h1 class="text-2xl font-bold text-white">{{ project.name }}</h1>
+            {{ project.status | status_badge }}
+          </div>
+          {% if project.description %}
+          <p class="text-gray-400">{{ project.description }}</p>
+          {% endif %}
+        </div>
+        <div class="flex flex-wrap gap-2">
+          {% if project.production_url %}
+          <a href="{{ project.production_url }}" target="_blank" class="px-3 py-1.5 text-xs rounded-lg bg-green-400/10 text-green-400 border border-green-400/30 hover:bg-green-400/20 transition-colors">Production</a>
+          {% endif %}
+          {% if project.staging_url %}
+          <a href="{{ project.staging_url }}" target="_blank" class="px-3 py-1.5 text-xs rounded-lg bg-yellow-400/10 text-yellow-400 border border-yellow-400/30 hover:bg-yellow-400/20 transition-colors">Staging</a>
+          {% endif %}
+          {% if project.docs_url %}
+          <a href="{{ project.docs_url }}" target="_blank" class="px-3 py-1.5 text-xs rounded-lg bg-blue-400/10 text-blue-400 border border-blue-400/30 hover:bg-blue-400/20 transition-colors">Docs</a>
+          {% endif %}
+          {% if project.github_url %}
+          <a href="{{ project.github_url }}" target="_blank" class="px-3 py-1.5 text-xs rounded-lg bg-gray-400/10 text-gray-400 border border-gray-400/30 hover:bg-gray-400/20 transition-colors">GitHub</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Metric Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center">
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Health</div>
+        <div class="text-2xl font-bold {{ project.health_score | health_color }}">{{ project.health_score or 0 }}%</div>
+        <div class="text-xs {{ project.health_score | health_color }} mt-1">{{ project.health_score | health_label }}</div>
+      </div>
+      <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center">
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Commits (30d)</div>
+        <div class="text-2xl font-bold text-blue-400">{{ project.commit_count_30d or 0 }}</div>
+      </div>
+      <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center">
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Contributors</div>
+        <div class="text-2xl font-bold text-purple-400">{{ (project.contributors or []) | length }}</div>
+      </div>
+      <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center">
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Tech Stack</div>
+        <div class="text-2xl font-bold text-cyan-400">{{ (project.tech_stack or []) | length }}</div>
+      </div>
+    </div>
+
+    <!-- Explanation Tabs -->
+    {% if project_explanation %}
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+      <h2 class="text-lg font-semibold text-white mb-4">What Does This Project Do?</h2>
+      <div class="flex gap-2 mb-4">
+        <button class="explanation-tab px-4 py-2 text-sm rounded-lg bg-blue-500/10 text-blue-400 border border-blue-400/30" data-tab="technical" onclick="switchExplanationTab('technical')">Technical</button>
+        <button class="explanation-tab px-4 py-2 text-sm rounded-lg bg-gray-800 text-gray-400 border border-gray-700" data-tab="plain" onclick="switchExplanationTab('plain')">Plain English</button>
+      </div>
+      <div id="explanation-technical" class="explanation-content">
+        <div class="prose prose-invert prose-sm max-w-none text-gray-300">{{ project_explanation.technical | safe }}</div>
+      </div>
+      <div id="explanation-plain" class="explanation-content hidden">
+        <div class="prose prose-invert prose-sm max-w-none text-gray-300">{{ project_explanation.non_technical | safe }}</div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- User Journey -->
+    {% if user_journey %}
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+      <h2 class="text-lg font-semibold text-white mb-4">User Journey</h2>
+      <div class="prose prose-invert prose-sm max-w-none text-gray-300">{{ user_journey | safe }}</div>
+    </div>
+    {% endif %}
+
+    <!-- Diagrams -->
+    {% if project_diagram %}
+    <div class="space-y-6">
+      <!-- Architecture Diagram -->
+      {% if project_diagram.mermaid_code %}
+      <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+        <h2 class="text-lg font-semibold text-white mb-4">Architecture Diagram</h2>
+        <div class="diagram-container cursor-pointer overflow-x-auto" onclick="openDiagramModal(this)">
+          <pre class="mermaid">{{ project_diagram.mermaid_code }}</pre>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Data Flow Diagram -->
+      {% if project_diagram.data_flow and project_diagram.data_flow.mermaid_code %}
+      <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+        <h2 class="text-lg font-semibold text-white mb-4">Data Flow</h2>
+        <div class="diagram-container cursor-pointer overflow-x-auto" onclick="openDiagramModal(this)">
+          <pre class="mermaid">{{ project_diagram.data_flow.mermaid_code }}</pre>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- System Interaction Diagram -->
+      {% if project_diagram.sequence and project_diagram.sequence.mermaid_code %}
+      <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+        <h2 class="text-lg font-semibold text-white mb-4">System Interaction</h2>
+        <div class="diagram-container cursor-pointer overflow-x-auto" onclick="openDiagramModal(this)">
+          <pre class="mermaid">{{ project_diagram.sequence.mermaid_code }}</pre>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Recent Commits -->
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+      <h2 class="text-lg font-semibold text-white mb-4">Recent Commits</h2>
+      {% if project_commits and project_commits | length > 0 %}
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-gray-800 text-left">
+              <th class="pb-2 text-xs text-gray-500 uppercase tracking-wider font-medium">SHA</th>
+              <th class="pb-2 text-xs text-gray-500 uppercase tracking-wider font-medium">Message</th>
+              <th class="pb-2 text-xs text-gray-500 uppercase tracking-wider font-medium">Author</th>
+              <th class="pb-2 text-xs text-gray-500 uppercase tracking-wider font-medium">Date</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800/50">
+            {% for commit in project_commits %}
+            <tr class="hover:bg-gray-800/30">
+              <td class="py-2 pr-3">
+                {% if commit.url %}
+                <a href="{{ commit.url }}" target="_blank" class="font-mono text-xs text-blue-400 hover:text-blue-300">{{ commit.sha[:7] if commit.sha else '---' }}</a>
+                {% else %}
+                <span class="font-mono text-xs text-gray-500">{{ commit.sha[:7] if commit.sha else '---' }}</span>
+                {% endif %}
+              </td>
+              <td class="py-2 pr-3 text-gray-300 truncate max-w-xs">{{ commit.message | truncate_message(60) }}</td>
+              <td class="py-2 pr-3 text-gray-400">{{ commit.author }}</td>
+              <td class="py-2 text-gray-500 whitespace-nowrap">{{ commit.timestamp | timeago }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-gray-500 text-sm">No recent commits found.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Sidebar (1 col) -->
+  <div class="space-y-6">
+    <!-- Team -->
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-5">
+      <h3 class="text-sm font-semibold text-white mb-3">Contributors</h3>
+      {% if project.contributors and project.contributors | length > 0 %}
+      <div class="space-y-2">
+        {% for contributor in project.contributors %}
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center text-xs text-gray-300 font-medium">{{ contributor[:2] | upper }}</div>
+          <span class="text-sm text-gray-300 truncate">{{ contributor }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-gray-500 text-sm">No contributors found.</p>
+      {% endif %}
+    </div>
+
+    <!-- Tech Stack -->
+    {% if project.tech_stack and project.tech_stack | length > 0 %}
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-5">
+      <h3 class="text-sm font-semibold text-white mb-3">Tech Stack</h3>
+      <div class="flex flex-wrap gap-1.5">
+        {% for tech in project.tech_stack %}
+        <span class="px-2 py-0.5 text-xs rounded bg-gray-800 text-gray-400 border border-gray-700">{{ tech }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Category -->
+    <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-5">
+      <h3 class="text-sm font-semibold text-white mb-3">Category</h3>
+      <div class="flex items-center gap-2">
+        <div class="w-3 h-3 rounded-full" style="background-color: {{ project.category | category_color }}"></div>
+        <span class="text-sm text-gray-300">{{ project.category | category_name }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function switchExplanationTab(tab) {
+  document.querySelectorAll('.explanation-content').forEach(el => el.classList.add('hidden'));
+  document.querySelectorAll('.explanation-tab').forEach(btn => {
+    btn.classList.remove('bg-blue-500/10', 'text-blue-400', 'border-blue-400/30');
+    btn.classList.add('bg-gray-800', 'text-gray-400', 'border-gray-700');
+  });
+  document.getElementById('explanation-' + tab).classList.remove('hidden');
+  const activeBtn = document.querySelector('.explanation-tab[data-tab="' + tab + '"]');
+  if (activeBtn) {
+    activeBtn.classList.add('bg-blue-500/10', 'text-blue-400', 'border-blue-400/30');
+    activeBtn.classList.remove('bg-gray-800', 'text-gray-400', 'border-gray-700');
+  }
+}
+
+// Initialize mermaid diagrams on this page
+document.addEventListener('DOMContentLoaded', function() {
+  mermaid.run();
+});
+</script>
+{% endblock %}

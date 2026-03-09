@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+{% set breadcrumbs = [
+  { name: 'Dashboard', href: 'index.html' },
+  { name: 'Admin', href: null },
+  { name: 'Settings', href: null }
+] %}
+
+<!-- Breadcrumbs -->
+<nav class="flex items-center text-sm text-gray-500 mb-6">
+  {% for crumb in breadcrumbs %}
+    {% if not loop.last %}
+      {% if crumb.href %}
+      <a href="{{ crumb.href }}" class="hover:text-gray-300 transition-colors">{{ crumb.name }}</a>
+      {% else %}
+      <span>{{ crumb.name }}</span>
+      {% endif %}
+      <svg class="w-4 h-4 mx-2 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% else %}
+      <span class="text-gray-300">{{ crumb.name }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+
+<!-- Page Header -->
+<div class="mb-6">
+  <h1 class="text-3xl font-bold text-white">Settings</h1>
+  <p class="mt-1 text-gray-400">Portal administration and pipeline control</p>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <!-- Portal Generation -->
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+    <h2 class="text-lg font-semibold text-white mb-4">Portal Generation</h2>
+    <p class="text-sm text-gray-400 mb-4">Trigger a full portal regeneration. This will re-render all templates with the latest pipeline data.</p>
+
+    <button id="generate-btn" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900" onclick="triggerGeneration()">
+      Generate Portal
+    </button>
+
+    <div id="generate-status" class="mt-4 hidden">
+      <div class="flex items-center gap-2 text-sm">
+        <div class="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+        <span class="text-gray-400">Generating...</span>
+      </div>
+    </div>
+
+    <div id="generate-result" class="mt-4 hidden">
+      <div class="bg-green-900/20 border border-green-800/30 rounded-lg p-3">
+        <p class="text-sm text-green-400">Portal generated successfully.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pipeline Status -->
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+    <h2 class="text-lg font-semibold text-white mb-4">Pipeline Status</h2>
+    <div class="space-y-3">
+      <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+        <span class="text-sm text-gray-300">Total Projects</span>
+        <span class="text-sm font-medium text-white">{{ total_projects }}</span>
+      </div>
+      <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+        <span class="text-sm text-gray-300">Last Generated</span>
+        <span class="text-sm text-gray-400">{{ generated_at | timeago }}</span>
+      </div>
+      <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+        <span class="text-sm text-gray-300">Average Health</span>
+        <span class="text-sm font-medium {{ avg_health | health_color }}">{{ avg_health }}%</span>
+      </div>
+      <div class="flex items-center justify-between py-2">
+        <span class="text-sm text-gray-300">Contributors</span>
+        <span class="text-sm font-medium text-white">{{ total_contributors }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- API Endpoints -->
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+    <h2 class="text-lg font-semibold text-white mb-4">API Endpoints</h2>
+    <div class="space-y-2 text-sm">
+      <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+        <div>
+          <span class="text-green-400 font-mono text-xs mr-2">GET</span>
+          <span class="text-gray-300">/health</span>
+        </div>
+        <span class="text-gray-500">Liveness probe</span>
+      </div>
+      <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+        <div>
+          <span class="text-green-400 font-mono text-xs mr-2">GET</span>
+          <span class="text-gray-300">/api/status</span>
+        </div>
+        <span class="text-gray-500">Run summaries</span>
+      </div>
+      <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+        <div>
+          <span class="text-yellow-400 font-mono text-xs mr-2">POST</span>
+          <span class="text-gray-300">/api/run</span>
+        </div>
+        <span class="text-gray-500">Full pipeline</span>
+      </div>
+      <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+        <div>
+          <span class="text-yellow-400 font-mono text-xs mr-2">POST</span>
+          <span class="text-gray-300">/api/webhook</span>
+        </div>
+        <span class="text-gray-500">GitHub webhook</span>
+      </div>
+      <div class="flex items-center justify-between py-2">
+        <div>
+          <span class="text-yellow-400 font-mono text-xs mr-2">POST</span>
+          <span class="text-gray-300">/api/intelligence/run</span>
+        </div>
+        <span class="text-gray-500">Intelligence run</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Environment -->
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+    <h2 class="text-lg font-semibold text-white mb-4">Environment</h2>
+    <div class="space-y-2 text-sm">
+      <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+        <span class="text-gray-300">GCP Project</span>
+        <span class="text-gray-400 font-mono text-xs">glassbox-squeegee</span>
+      </div>
+      <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+        <span class="text-gray-300">Region</span>
+        <span class="text-gray-400 font-mono text-xs">us-central1</span>
+      </div>
+      <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+        <span class="text-gray-300">Service</span>
+        <span class="text-gray-400 font-mono text-xs">squeegee</span>
+      </div>
+      <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+        <span class="text-gray-300">Memory</span>
+        <span class="text-gray-400 font-mono text-xs">512Mi</span>
+      </div>
+      <div class="flex items-center justify-between py-2 border-b border-gray-800/50">
+        <span class="text-gray-300">Timeout</span>
+        <span class="text-gray-400 font-mono text-xs">900s</span>
+      </div>
+      <div class="flex items-center justify-between py-2">
+        <span class="text-gray-300">Scheduler</span>
+        <span class="text-gray-400 font-mono text-xs">0 6 * * * UTC</span>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function triggerGeneration() {
+  const btn = document.getElementById('generate-btn');
+  const status = document.getElementById('generate-status');
+  const result = document.getElementById('generate-result');
+
+  btn.disabled = true;
+  btn.classList.add('opacity-50', 'cursor-not-allowed');
+  status.classList.remove('hidden');
+  result.classList.add('hidden');
+
+  // Simulate generation (in production this would call the API)
+  setTimeout(function() {
+    status.classList.add('hidden');
+    result.classList.remove('hidden');
+    btn.disabled = false;
+    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+  }, 2000);
+}
+</script>
+{% endblock %}

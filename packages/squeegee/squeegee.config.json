@@ -1,0 +1,312 @@
+{
+  "version": "2.0.0",
+  "description": "Squeegee Documentation System Configuration",
+
+  "exclude": [
+    "**/node_modules/**",
+    "**/venv/**",
+    "**/.venv/**",
+    "**/.git/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/__pycache__/**",
+    "**/coverage/**",
+    "**/*.min.js",
+    "**/vendor/**",
+    "**/.next/**",
+    "**/.svelte-kit/**",
+    "**/.vercel/**",
+    "**/.turbo/**",
+    "**/.nuxt/**",
+    "**/.output/**",
+    "**/out/**",
+    "**/.pytest_cache/**",
+    "**/htmlcov/**",
+    "**/.mypy_cache/**",
+    "**/.tox/**",
+    "**/eggs/**",
+    "**/*.egg-info/**",
+    "**/.cache/**",
+    "**/temp/**",
+    "**/tmp/**"
+  ],
+
+  "include": [
+    "projects/**",
+    "glassy-*/**",
+    "wc-paralegal-backend/**",
+    "scripts/**",
+    "docs-portal/**"
+  ],
+
+  "docTypes": {
+    "CLAUDE.md": {
+      "required": true,
+      "level": 1,
+      "minLines": 80,
+      "maxLines": 150,
+      "requiredSections": ["Project Overview", "Commands", "Tech Stack", "Architecture", "Linked Resources Are Directives", "GBS Core Principles", "Context Window & Checkpoint Protocol", "Centralized Documentation & Planning", "Security & Secrets"]
+    },
+    "STATE.md": {
+      "required": false,
+      "level": 1,
+      "minLines": 40,
+      "maxLines": 200,
+      "location": ".planning/STATE.md",
+      "requiredSections": ["Current Focus", "Progress", "Blockers", "Key Decisions"],
+      "note": "GSD session state for tracking current work"
+    },
+    "ROADMAP.md": {
+      "required": false,
+      "level": 1,
+      "minLines": 30,
+      "maxLines": 300,
+      "location": ".planning/ROADMAP.md",
+      "requiredSections": ["Vision", "Phases", "Success Metrics"]
+    },
+    "PLAN.md": {
+      "required": false,
+      "level": 2,
+      "minLines": 50,
+      "maxLines": 500,
+      "location": ".planning/phases/*/PLAN.md",
+      "requiredSections": ["Objective", "Tasks", "Success Criteria"]
+    },
+    "SUMMARY.md": {
+      "required": false,
+      "level": 2,
+      "minLines": 30,
+      "maxLines": 300,
+      "location": ".planning/phases/*/SUMMARY.md",
+      "requiredSections": ["Outcome", "What Worked", "What Didn't", "Learned Heuristics"]
+    },
+    "ISSUES.md": {
+      "required": false,
+      "level": 1,
+      "minLines": 20,
+      "maxLines": 200,
+      "location": ".planning/ISSUES.md",
+      "requiredSections": ["Deferred Items", "Known Issues"]
+    },
+    "README.md": {
+      "required": false,
+      "level": 1,
+      "minLines": 20
+    },
+    "GUIDE": {
+      "required": false,
+      "level": 2,
+      "minLines": 50,
+      "requiresTOC": true
+    }
+  },
+
+  "gsd": {
+    "enabled": true,
+    "planningDir": ".planning",
+    "phasesDir": ".planning/phases",
+    "planQuality": {
+      "maxTaskCount": 3,
+      "targetContextPercent": 50,
+      "checkpointFrequency": "everyThreeTasks",
+      "deviationTracking": true
+    },
+    "summaryPatterns": {
+      "extractLearnings": true,
+      "minOccurrencesForPattern": 2,
+      "categories": ["succeeded", "failed", "heuristics"]
+    },
+    "issueTracking": {
+      "mergeWithDeferredWork": true,
+      "autoDetectFromPlan": true,
+      "staleDays": 30
+    }
+  },
+
+  "planQuality": {
+    "thresholds": {
+      "taskDensity": {
+        "sparse": 5,
+        "balanced": 10,
+        "dense": 20
+      },
+      "checkpointRatio": {
+        "poor": 0.1,
+        "acceptable": 0.25,
+        "good": 0.4
+      },
+      "completionRate": {
+        "poor": 0.5,
+        "acceptable": 0.75,
+        "excellent": 0.95
+      }
+    },
+    "weights": {
+      "taskClarity": 0.25,
+      "checkpointCoverage": 0.20,
+      "deviationFrequency": 0.20,
+      "completionRate": 0.35
+    }
+  },
+
+  "quality": {
+    "thresholds": {
+      "minimum": 0.60,
+      "acceptable": 0.75,
+      "good": 0.85,
+      "excellent": 0.95
+    },
+    "weights": {
+      "completeness": 0.30,
+      "structure": 0.25,
+      "freshness": 0.15,
+      "consistency": 0.15,
+      "crossRefs": 0.15
+    },
+    "freshness": {
+      "excellent": 7,
+      "good": 30,
+      "fair": 90,
+      "poor": 180
+    }
+  },
+
+  "automation": {
+    "autoTimestamp": true,
+    "timestampFormat": "YYYY-MM-DD",
+    "tocMinLines": 100,
+    "minCrossRefs": 3
+  },
+
+  "triggerTables": {
+    "enabled": true,
+    "maxKeywordsPerProject": 10,
+    "global": {
+      "deployment": ["DEPLOYMENT*.md", "projects/glassy/infra/CLAUDE.md"],
+      "docker": ["projects/glassy/infra/docs/subsystems/DOCKER_COMPOSE_GUIDE.md"],
+      "api": ["**/API*.md", "projects/glassy/infra/docs/subsystems/BACKEND_GUIDE.md"],
+      "authentication": ["**/SECURITY*.md", "**/AUTH*.md"],
+      "testing": ["**/TESTING*.md", "**/RUN_TESTS.md"],
+      "n8n": ["projects/legal-research/CLAUDE.md", "**/N8N*.md"],
+      "supabase": ["projects/ousd-campaign-platform/CLAUDE.md"],
+      "expo": ["projects/glassy/mobile/CLAUDE.md"],
+      "react-native": ["projects/glassy/mobile/CLAUDE.md"],
+      "fastapi": ["projects/glassy/infra/docs/subsystems/BACKEND_GUIDE.md", "projects/wc-paralegal-agent/CLAUDE.md"],
+      "nestjs": ["wc-paralegal-backend/CLAUDE.md"],
+      "prisma": ["wc-paralegal-backend/CLAUDE.md"],
+      "betterauth": ["wc-paralegal-backend/CLAUDE.md"],
+      "google-drive": ["projects/wc-paralegal-agent/CLAUDE.md", "wc-paralegal-backend/CLAUDE.md"],
+      "document-ai": ["projects/wc-paralegal-agent/CLAUDE.md", "wc-paralegal-backend/CLAUDE.md"],
+      "oauth": ["**/AUTH*.md", "**/SECURITY*.md"],
+      "workers-comp": ["projects/wc-paralegal-agent/CLAUDE.md", "projects/legal-research/CLAUDE.md", "wc-paralegal-backend/CLAUDE.md"],
+      "hipaa": ["wc-paralegal-backend/CLAUDE.md", "projects/adjudica-documentation/legal/compliance/regulations/HIPAA_COMPLETE.md"],
+      "adjudica": ["projects/adjudica-documentation/CLAUDE.md"],
+      "eula": ["projects/adjudica-documentation/legal/final-documents/product/END_USER_LICENSE_AGREEMENT.md"],
+      "terms-of-service": ["projects/adjudica-documentation/legal/final-documents/product/TERMS_OF_SERVICE.md"],
+      "privacy-policy": ["projects/adjudica-documentation/legal/final-documents/corporate/PRIVACY_POLICY.md"],
+      "baa": ["projects/adjudica-documentation/legal/final-documents/product/BAA_AI_ADDENDUM.md"],
+      "ccpa": ["projects/adjudica-documentation/legal/compliance/regulations/CCPA_CPRA.md"],
+      "branding": ["projects/adjudica-documentation/marketing/brand-strategy/PROJECT.md"],
+      "marketing-strategy": ["projects/adjudica-documentation/marketing/brand-strategy/PROJECT.md"]
+    },
+    "projectSpecific": {
+      "ousd-campaign-platform": {
+        "campaign": ["docs/subsystems/CAMPAIGN_LOGIC_GUIDE.md"],
+        "gemini": ["docs/subsystems/AI_SERVICES_GUIDE.md"]
+      }
+    }
+  },
+
+  "sessionTracking": {
+    "enabled": true,
+    "timelineMaxEntries": 50,
+    "sessionTimeoutMinutes": 480,
+    "autoSessionStart": true
+  },
+
+  "patternLibrary": {
+    "enabled": true,
+    "outputPath": "docs-portal/PATTERN_LIBRARY.md",
+    "minProjectsForPattern": 2,
+    "categories": ["Authentication", "State Management", "API Design", "Testing", "Deployment", "Database", "UI/UX"]
+  },
+
+  "rootClaudeMd": {
+    "enabled": true,
+    "path": "CLAUDE.md",
+    "requiredSections": [
+      "PRIME DIRECTIVE",
+      "Agents & Subagents",
+      "Core Principles",
+      "Projects Index",
+      "Available Resources",
+      "Quick Commands",
+      "Standard Tech Stack",
+      "Working Preferences",
+      "Quick Navigation"
+    ],
+    "sectionModuleMap": {
+      "Agents & Subagents": ["agents-subagents"],
+      "Core Principles": ["core-principles"],
+      "Projects Index": ["projects-index"],
+      "Standard Tech Stack": ["tech-stack"],
+      "Working Preferences": ["tech-stack"],
+      "Tech Stack": ["tech-stack"],
+      "Risk": ["risk-autonomy"],
+      "Multi-Machine": ["multi-machine-git"],
+      "Git Authentication": ["git-authentication"],
+      "Context Isolation": ["context-isolation"],
+      "Testing": ["testing-visual"],
+      "Checkpoints": ["checkpoints"]
+    },
+    "projectCategories": {
+      "active": "Active Projects",
+      "glassy": "Glassy Platform",
+      "tools": "Internal Tools",
+      "archived": "Archived/Complete"
+    },
+    "autoSync": {
+      "projectsIndex": true,
+      "crossReferences": true,
+      "triggerTables": true
+    }
+  },
+
+  "instructions": {
+    "projectsIndex": {
+      "path": ".claude/instructions/projects-index.md",
+      "markers": {
+        "start": "<!-- SQUEEGEE:AUTO-UPDATE:START -->",
+        "end": "<!-- SQUEEGEE:AUTO-UPDATE:END -->"
+      },
+      "updateOn": ["scan", "full"],
+      "content": "projectTables"
+    }
+  },
+
+  "preCommitHook": {
+    "enabled": true,
+    "triggerOn": "docs-only",
+    "autoFix": true,
+    "reportChanges": true,
+    "docPatterns": ["**/*.md", "squeegee.config.json", "**/CLAUDE.md"]
+  },
+
+  "orgDiscovery": {
+    "enabled": true,
+    "org": "Glass-Box-Solutions-Inc",
+    "excludeForks": true,
+    "excludeArchived": true,
+    "workspaceBase": "/tmp/squeegee-workspace",
+    "stateFile": "/tmp/squeegee-state.json",
+    "maxRunHistory": 10
+  },
+
+  "projects": [
+    {
+      "name": "Squeegee",
+      "path": ".",
+      "stack": ["Node.js", "Fastify", "GCP Cloud Run"]
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Audit Reports{% endblock %}
+
+{% block content %}
+{% set breadcrumbs = [
+  { name: 'Dashboard', href: 'index.html' },
+  { name: 'Intelligence', href: 'intelligence.html' },
+  { name: 'Audit Reports', href: null }
+] %}
+
+<!-- Breadcrumbs -->
+<nav class="flex items-center text-sm text-gray-500 mb-6">
+  {% for crumb in breadcrumbs %}
+    {% if not loop.last %}
+      <a href="{{ crumb.href }}" class="hover:text-gray-300 transition-colors">{{ crumb.name }}</a>
+      <svg class="w-4 h-4 mx-2 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% else %}
+      <span class="text-gray-300">{{ crumb.name }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+
+<!-- Page Header -->
+<div class="mb-6">
+  <h1 class="text-3xl font-bold text-white">Audit Reports</h1>
+  <p class="mt-1 text-gray-400">CLAUDE.md compliance and documentation quality audits</p>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <!-- CLAUDE.md Compliance -->
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+    <div class="flex items-center gap-2 mb-4">
+      <span class="text-blue-400 text-lg">&#9899;</span>
+      <h2 class="text-lg font-semibold text-white">CLAUDE.md Compliance</h2>
+    </div>
+    <p class="text-xs text-gray-500 mb-4">Stage 17 &mdash; Runs weekly on Sundays</p>
+
+    <div id="claude-audit-content">
+      <div class="bg-gray-800/50 border border-gray-700 rounded-lg p-8 text-center">
+        <div class="text-4xl text-gray-600 mb-3">&#9899;</div>
+        <p class="text-gray-500 mb-2">No CLAUDE.md audit data available yet.</p>
+        <p class="text-gray-600 text-xs">Compliance audits run every Sunday and score each repo's CLAUDE.md against the GBS standard.</p>
+        <p class="text-gray-600 text-xs mt-1">Trigger manually via <code class="text-blue-400">POST /api/intelligence/audit-claude-md</code></p>
+      </div>
+    </div>
+
+    <div class="mt-4 border-t border-gray-800 pt-4">
+      <h3 class="text-sm font-medium text-gray-400 mb-2">What Gets Audited</h3>
+      <ul class="text-xs text-gray-500 space-y-1">
+        <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Required sections present (overview, commands, architecture)</li>
+        <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Auto-generated blocks intact</li>
+        <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> GBS core principles included</li>
+        <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Security section present</li>
+        <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Linked resources directive block</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Doc Quality -->
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+    <div class="flex items-center gap-2 mb-4">
+      <span class="text-purple-400 text-lg">&#9733;</span>
+      <h2 class="text-lg font-semibold text-white">Documentation Quality</h2>
+    </div>
+    <p class="text-xs text-gray-500 mb-4">Stage 18 &mdash; Runs monthly on the 1st</p>
+
+    <div id="doc-quality-content">
+      <div class="bg-gray-800/50 border border-gray-700 rounded-lg p-8 text-center">
+        <div class="text-4xl text-gray-600 mb-3">&#9733;</div>
+        <p class="text-gray-500 mb-2">No documentation quality audit data available yet.</p>
+        <p class="text-gray-600 text-xs">Quality audits run on the 1st of each month and score documentation completeness, accuracy, and freshness.</p>
+        <p class="text-gray-600 text-xs mt-1">Trigger manually via <code class="text-blue-400">POST /api/intelligence/audit-doc-quality</code></p>
+      </div>
+    </div>
+
+    <div class="mt-4 border-t border-gray-800 pt-4">
+      <h3 class="text-sm font-medium text-gray-400 mb-2">Quality Rubric</h3>
+      <ul class="text-xs text-gray-500 space-y-1">
+        <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> README completeness and accuracy</li>
+        <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> API documentation coverage</li>
+        <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Code comment quality</li>
+        <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Documentation freshness (staleness detection)</li>
+        <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Cross-reference accuracy</li>
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}Trends{% endblock %}
+
+{% block content %}
+{% set breadcrumbs = [
+  { name: 'Dashboard', href: 'index.html' },
+  { name: 'Intelligence', href: 'intelligence.html' },
+  { name: 'Trends', href: null }
+] %}
+
+<!-- Breadcrumbs -->
+<nav class="flex items-center text-sm text-gray-500 mb-6">
+  {% for crumb in breadcrumbs %}
+    {% if not loop.last %}
+      <a href="{{ crumb.href }}" class="hover:text-gray-300 transition-colors">{{ crumb.name }}</a>
+      <svg class="w-4 h-4 mx-2 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% else %}
+      <span class="text-gray-300">{{ crumb.name }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+
+<!-- Page Header -->
+<div class="mb-6">
+  <h1 class="text-3xl font-bold text-white">Trends</h1>
+  <p class="mt-1 text-gray-400">Velocity and health trends over time</p>
+</div>
+
+<!-- Current Snapshot -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Avg Health</div>
+    <div class="text-2xl font-bold {{ avg_health | health_color }}">{{ avg_health }}%</div>
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Commit Velocity (30d)</div>
+    <div class="text-2xl font-bold text-blue-400">{{ total_commits_30d }}</div>
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Active Projects</div>
+    <div class="text-2xl font-bold text-green-400">{{ total_active }}</div>
+  </div>
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center">
+    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Deployed</div>
+    <div class="text-2xl font-bold text-cyan-400">{{ total_deployed }}</div>
+  </div>
+</div>
+
+<!-- Trend Charts Placeholder -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <!-- Velocity Trend -->
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+    <h2 class="text-lg font-semibold text-white mb-4">Commit Velocity Trend</h2>
+    <div class="bg-gray-800/50 border border-gray-700 rounded-lg p-12 text-center">
+      <div class="text-4xl text-gray-600 mb-3">&#8599;</div>
+      <p class="text-gray-500 text-sm">Velocity trend chart will be populated when historical data is available.</p>
+      <p class="text-gray-600 text-xs mt-2">Data is collected daily by stage 14 (intelligence collection).</p>
+    </div>
+  </div>
+
+  <!-- Health Trend -->
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+    <h2 class="text-lg font-semibold text-white mb-4">Health Score Trend</h2>
+    <div class="bg-gray-800/50 border border-gray-700 rounded-lg p-12 text-center">
+      <div class="text-4xl text-gray-600 mb-3">&#9650;</div>
+      <p class="text-gray-500 text-sm">Health trend chart will be populated when historical data is available.</p>
+      <p class="text-gray-600 text-xs mt-2">Health scores are computed in stage 8 (health report).</p>
+    </div>
+  </div>
+
+  <!-- Contributor Trend -->
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+    <h2 class="text-lg font-semibold text-white mb-4">Contributor Activity</h2>
+    <div class="bg-gray-800/50 border border-gray-700 rounded-lg p-12 text-center">
+      <div class="text-4xl text-gray-600 mb-3">&#9673;</div>
+      <p class="text-gray-500 text-sm">Contributor activity trends will be shown here.</p>
+      <p class="text-gray-600 text-xs mt-2">Current active contributors: {{ total_contributors }}</p>
+    </div>
+  </div>
+
+  <!-- Category Distribution -->
+  <div class="bg-gray-900/50 border border-gray-800 rounded-xl p-6">
+    <h2 class="text-lg font-semibold text-white mb-4">Category Distribution</h2>
+    <div class="space-y-3">
+      {% for cat, stats in category_stats %}
+      <div>
+        <div class="flex items-center justify-between text-sm mb-1">
+          <div class="flex items-center gap-2">
+            <div class="w-3 h-3 rounded-full" style="background-color: {{ cat | category_color }}"></div>
+            <span class="text-gray-300">{{ cat | category_name }}</span>
+          </div>
+          <span class="text-gray-500">{{ stats.count }} project{{ 's' if stats.count != 1 }}</span>
+        </div>
+        <div class="w-full bg-gray-800 rounded-full h-2">
+          {% set pct = (stats.count / total_projects * 100) if total_projects > 0 else 0 %}
+          <div class="h-2 rounded-full" style="width: {{ pct }}%; background-color: {{ cat | category_color }}"></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

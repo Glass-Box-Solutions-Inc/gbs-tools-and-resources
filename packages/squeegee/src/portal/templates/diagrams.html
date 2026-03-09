@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block title %}Architecture Diagrams{% endblock %}
+
+{% block content %}
+{% set breadcrumbs = [
+  { name: 'Dashboard', href: 'index.html' },
+  { name: 'Architecture', href: null },
+  { name: 'Diagrams', href: null }
+] %}
+
+<!-- Breadcrumbs -->
+<nav class="flex items-center text-sm text-gray-500 mb-6">
+  {% for crumb in breadcrumbs %}
+    {% if not loop.last %}
+      {% if crumb.href %}
+      <a href="{{ crumb.href }}" class="hover:text-gray-300 transition-colors">{{ crumb.name }}</a>
+      {% else %}
+      <span>{{ crumb.name }}</span>
+      {% endif %}
+      <svg class="w-4 h-4 mx-2 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% else %}
+      <span class="text-gray-300">{{ crumb.name }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+
+<!-- Page Header -->
+<div class="mb-6">
+  <h1 class="text-3xl font-bold text-white">Architecture Diagrams</h1>
+  <p class="mt-1 text-gray-400">Visual architecture, data flow, and system interaction diagrams for all projects</p>
+</div>
+
+<!-- Diagram Accordion -->
+<div class="space-y-4">
+  {% for project_name, diagram in diagrams %}
+  {% if diagram %}
+  <div class="diagram-accordion bg-gray-900/50 border border-gray-800 rounded-xl overflow-hidden" data-project="{{ project_name }}">
+    <!-- Accordion Header -->
+    <button class="accordion-toggle w-full flex items-center justify-between px-5 py-4 text-left hover:bg-gray-800/30 transition-colors" onclick="toggleAccordion(this)">
+      <div class="flex items-center gap-3">
+        <h3 class="font-semibold text-white">{{ project_name }}</h3>
+        <span class="text-xs text-gray-500">
+          {% set diagram_count = 0 %}
+          {% if diagram.mermaid_code %}{% set diagram_count = diagram_count + 1 %}{% endif %}
+          {% if diagram.data_flow and diagram.data_flow.mermaid_code %}{% set diagram_count = diagram_count + 1 %}{% endif %}
+          {% if diagram.sequence and diagram.sequence.mermaid_code %}{% set diagram_count = diagram_count + 1 %}{% endif %}
+          {{ diagram_count }} diagram{{ 's' if diagram_count != 1 }}
+        </span>
+      </div>
+      <svg class="accordion-chevron w-5 h-5 text-gray-500 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+    </button>
+
+    <!-- Accordion Content -->
+    <div class="accordion-content hidden border-t border-gray-800">
+      <!-- Diagram Tabs -->
+      <div class="flex gap-2 px-5 pt-4">
+        {% if diagram.mermaid_code %}
+        <button class="diagram-tab px-3 py-1.5 text-xs rounded-lg bg-blue-500/10 text-blue-400 border border-blue-400/30" data-tab="arch-{{ project_name }}" onclick="switchDiagramTab('{{ project_name }}', 'arch')">Architecture</button>
+        {% endif %}
+        {% if diagram.data_flow and diagram.data_flow.mermaid_code %}
+        <button class="diagram-tab px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700" data-tab="dataflow-{{ project_name }}" onclick="switchDiagramTab('{{ project_name }}', 'dataflow')">Data Flow</button>
+        {% endif %}
+        {% if diagram.sequence and diagram.sequence.mermaid_code %}
+        <button class="diagram-tab px-3 py-1.5 text-xs rounded-lg bg-gray-800 text-gray-400 border border-gray-700" data-tab="sequence-{{ project_name }}" onclick="switchDiagramTab('{{ project_name }}', 'sequence')">System Interaction</button>
+        {% endif %}
+      </div>
+
+      <div class="p-5">
+        <!-- Architecture Diagram -->
+        {% if diagram.mermaid_code %}
+        <div class="diagram-panel" id="panel-arch-{{ project_name }}">
+          <div class="diagram-container cursor-pointer overflow-x-auto mb-4" onclick="openDiagramModal(this)">
+            <pre class="mermaid">{{ diagram.mermaid_code }}</pre>
+          </div>
+          {% if diagram.technical or diagram.non_technical %}
+          <div class="flex gap-2 mb-3">
+            <button class="desc-tab px-3 py-1 text-xs rounded bg-gray-800 text-gray-400 border border-gray-700 bg-blue-500/10 text-blue-400 border-blue-400/30" data-desc="tech-arch-{{ project_name }}" onclick="switchDescTab('{{ project_name }}', 'arch', 'tech')">Technical</button>
+            <button class="desc-tab px-3 py-1 text-xs rounded bg-gray-800 text-gray-400 border border-gray-700" data-desc="plain-arch-{{ project_name }}" onclick="switchDescTab('{{ project_name }}', 'arch', 'plain')">Non-Technical</button>
+          </div>
+          <div class="desc-content" id="desc-tech-arch-{{ project_name }}">
+            <p class="text-sm text-gray-400">{{ diagram.technical | safe }}</p>
+          </div>
+          <div class="desc-content hidden" id="desc-plain-arch-{{ project_name }}">
+            <p class="text-sm text-gray-400">{{ diagram.non_technical | safe }}</p>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Data Flow Diagram -->
+        {% if diagram.data_flow and diagram.data_flow.mermaid_code %}
+        <div class="diagram-panel hidden" id="panel-dataflow-{{ project_name }}">
+          <div class="diagram-container cursor-pointer overflow-x-auto mb-4" onclick="openDiagramModal(this)">
+            <pre class="mermaid">{{ diagram.data_flow.mermaid_code }}</pre>
+          </div>
+          {% if diagram.data_flow.technical or diagram.data_flow.non_technical %}
+          <div class="flex gap-2 mb-3">
+            <button class="desc-tab px-3 py-1 text-xs rounded bg-blue-500/10 text-blue-400 border border-blue-400/30" data-desc="tech-dataflow-{{ project_name }}" onclick="switchDescTab('{{ project_name }}', 'dataflow', 'tech')">Technical</button>
+            <button class="desc-tab px-3 py-1 text-xs rounded bg-gray-800 text-gray-400 border border-gray-700" data-desc="plain-dataflow-{{ project_name }}" onclick="switchDescTab('{{ project_name }}', 'dataflow', 'plain')">Non-Technical</button>
+          </div>
+          <div class="desc-content" id="desc-tech-dataflow-{{ project_name }}">
+            <p class="text-sm text-gray-400">{{ diagram.data_flow.technical | safe }}</p>
+          </div>
+          <div class="desc-content hidden" id="desc-plain-dataflow-{{ project_name }}">
+            <p class="text-sm text-gray-400">{{ diagram.data_flow.non_technical | safe }}</p>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Sequence Diagram -->
+        {% if diagram.sequence and diagram.sequence.mermaid_code %}
+        <div class="diagram-panel hidden" id="panel-sequence-{{ project_name }}">
+          <div class="diagram-container cursor-pointer overflow-x-auto mb-4" onclick="openDiagramModal(this)">
+            <pre class="mermaid">{{ diagram.sequence.mermaid_code }}</pre>
+          </div>
+          {% if diagram.sequence.technical or diagram.sequence.non_technical %}
+          <div class="flex gap-2 mb-3">
+            <button class="desc-tab px-3 py-1 text-xs rounded bg-blue-500/10 text-blue-400 border border-blue-400/30" data-desc="tech-sequence-{{ project_name }}" onclick="switchDescTab('{{ project_name }}', 'sequence', 'tech')">Technical</button>
+            <button class="desc-tab px-3 py-1 text-xs rounded bg-gray-800 text-gray-400 border border-gray-700" data-desc="plain-sequence-{{ project_name }}" onclick="switchDescTab('{{ project_name }}', 'sequence', 'plain')">Non-Technical</button>
+          </div>
+          <div class="desc-content" id="desc-tech-sequence-{{ project_name }}">
+            <p class="text-sm text-gray-400">{{ diagram.sequence.technical | safe }}</p>
+          </div>
+          <div class="desc-content hidden" id="desc-plain-sequence-{{ project_name }}">
+            <p class="text-sm text-gray-400">{{ diagram.sequence.non_technical | safe }}</p>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+  {% endfor %}
+</div>
+
+{% if not diagrams or diagrams | length == 0 %}
+<div class="bg-gray-900/50 border border-gray-800 rounded-xl p-12 text-center">
+  <p class="text-gray-500">No architecture diagrams available yet.</p>
+  <p class="text-gray-600 text-sm mt-1">Diagrams are generated during the pipeline run.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleAccordion(btn) {
+  const accordion = btn.closest('.diagram-accordion');
+  const content = accordion.querySelector('.accordion-content');
+  const chevron = accordion.querySelector('.accordion-chevron');
+
+  if (content.classList.contains('hidden')) {
+    content.classList.remove('hidden');
+    chevron.classList.add('rotate-180');
+    // Lazy init mermaid diagrams when accordion opens
+    const mermaids = content.querySelectorAll('pre.mermaid:not([data-processed])');
+    if (mermaids.length > 0) {
+      mermaid.run({ nodes: mermaids });
+    }
+  } else {
+    content.classList.add('hidden');
+    chevron.classList.remove('rotate-180');
+  }
+}
+
+function switchDiagramTab(project, tab) {
+  const accordion = document.querySelector('.diagram-accordion[data-project="' + project + '"]');
+  if (!accordion) return;
+
+  // Hide all panels
+  accordion.querySelectorAll('.diagram-panel').forEach(p => p.classList.add('hidden'));
+  // Show target panel
+  const panel = document.getElementById('panel-' + tab + '-' + project);
+  if (panel) panel.classList.remove('hidden');
+
+  // Update tab buttons
+  accordion.querySelectorAll('.diagram-tab').forEach(b => {
+    b.classList.remove('bg-blue-500/10', 'text-blue-400', 'border-blue-400/30');
+    b.classList.add('bg-gray-800', 'text-gray-400', 'border-gray-700');
+  });
+  const activeBtn = accordion.querySelector('.diagram-tab[data-tab="' + tab + '-' + project + '"]');
+  if (activeBtn) {
+    activeBtn.classList.add('bg-blue-500/10', 'text-blue-400', 'border-blue-400/30');
+    activeBtn.classList.remove('bg-gray-800', 'text-gray-400', 'border-gray-700');
+  }
+}
+
+function switchDescTab(project, diagramType, descType) {
+  const panel = document.getElementById('panel-' + diagramType + '-' + project);
+  if (!panel) return;
+
+  panel.querySelectorAll('.desc-content').forEach(el => el.classList.add('hidden'));
+  const target = document.getElementById('desc-' + descType + '-' + diagramType + '-' + project);
+  if (target) target.classList.remove('hidden');
+
+  panel.querySelectorAll('.desc-tab').forEach(b => {
+    b.classList.remove('bg-blue-500/10', 'text-blue-400', 'border-blue-400/30');
+    b.classList.add('bg-gray-800', 'text-gray-400', 'border-gray-700');
+  });
+  const activeBtn = panel.querySelector('.desc-tab[data-desc="' + descType + '-' + diagramType + '-' + project + '"]');
+  if (activeBtn) {
+    activeBtn.classList.add('bg-blue-500/10', 'text-blue-400', 'border-blue-400/30');
+    activeBtn.classList.remove('bg-gray-800', 'text-gray-400', 'border-gray-700');
+  }
+}
+</script>
+{% endblock %}
