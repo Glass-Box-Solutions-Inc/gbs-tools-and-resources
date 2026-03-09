@@ -6,7 +6,7 @@
 
 ## Project Overview
 
-This monorepo consolidates 11 Glass Box packages into a single discoverable location. Each package retains its own structure, language, and build tooling — there is no unified build system at the monorepo root.
+This monorepo consolidates 14 Glass Box packages into a single discoverable location. Each package retains its own structure, language, and build tooling — there is no unified build system at the monorepo root.
 
 **Initial consolidation:** 2026-03-01 (7 utility/research repos)
 **Agent consolidation:** 2026-03-08 (4 agent packages added)
@@ -24,6 +24,14 @@ This monorepo consolidates 11 Glass Box packages into a single discoverable loca
 | [`packages/merus-expert/`](packages/merus-expert/) | Python 3.12, FastAPI, Claude, Gemini | MerusCase domain agent — 13 tools, SSE streaming | Cloud Run: `merus-expert` |
 | [`packages/agent-swarm/`](packages/agent-swarm/) | NestJS 11, TypeScript, Socket.io | DAG-based multi-agent task orchestration | Standalone NestJS library (canonical) |
 | [`packages/agentic-debugger/`](packages/agentic-debugger/) | Node.js, Claude Code, GitHub Actions | Automated CI test failure debugging agent | Standalone CI debugging agent (canonical) |
+
+### Operations & Audit
+
+| Package | Stack | Purpose | Deploy |
+|---------|-------|---------|--------|
+| [`packages/compliance-auditor/`](packages/compliance-auditor/) | Node.js 20, Fastify 5, Prisma, Zod | SOC2 + HIPAA compliance code scanning | Cloud Run |
+| [`packages/gbs-integration-validator/`](packages/gbs-integration-validator/) | Node.js 20, Fastify 5, Zod | API integration validation (7 platforms) | Cloud Run |
+| [`packages/invoice-reconciliation-tester/`](packages/invoice-reconciliation-tester/) | Node.js 20, Fastify 5, Prisma, Faker | Invoice reconciliation algorithm testing | Cloud Run |
 
 ### Utilities & Libraries
 
@@ -101,6 +109,9 @@ gbs-tools-and-resources/
     ├── merus-expert/                 # MerusCase agent (Python/FastAPI)
     ├── agent-swarm/                  # Multi-agent orchestration (NestJS) — standalone library
     ├── agentic-debugger/             # CI debugging agent (Claude Code) — standalone
+    ├── compliance-auditor/           # SOC2/HIPAA compliance scanner (Fastify)
+    ├── gbs-integration-validator/    # API integration validator (Fastify)
+    ├── invoice-reconciliation-tester/ # Invoice reconciliation tester (Fastify)
     ├── hindsight/                    # Agent memory system (Python/FastAPI + Next.js + Rust)
     ├── mcp-servers/                  # MCP server collection (Python + Node.js)
     │   └── servers/
@@ -128,6 +139,9 @@ gbs-tools-and-resources/
 | yevrah_terminal | 5200–5299 | CLI tool, no persistent server |
 | agent-swarm | — | Standalone NestJS library (installable via npm) |
 | agentic-debugger | — | GitHub Actions only (standalone, config-driven) |
+| gbs-integration-validator | 5500–5599 | Fastify: 5510 |
+| invoice-reconciliation-tester | 5500–5599 | Fastify: 5520 |
+| compliance-auditor | 5500–5599 | Fastify: 5530 |
 
 ---
 
@@ -143,6 +157,9 @@ See each package's own `.env.example` or `CLAUDE.md` for required environment va
 |---------|----------|-----|
 | spectacles | Cloud Run (`glassbox-spectacles`) | `spectacles-gc2qovgs7q-uc.a.run.app` |
 | merus-expert | Cloud Run | _(service deployment)_ |
+| compliance-auditor | Cloud Run | _(service deployment)_ |
+| gbs-integration-validator | Cloud Run | _(service deployment)_ |
+| invoice-reconciliation-tester | Cloud Run | _(service deployment)_ |
 | mcp-servers | Local / MCP protocol | _(no public URL)_ |
 | All others | Local / CI | _(no public URL)_ |
 
@@ -156,6 +173,7 @@ See each package's own `.env.example` or `CLAUDE.md` for required environment va
 | 2026-03-01 | All source repos archived on GitHub with redirect notices |
 | 2026-03-08 | Added 4 agent packages: spectacles, merus-expert, agent-swarm, agentic-debugger |
 | 2026-03-08 | Made all 4 agent packages canonical standalone — monorepo is deployment source |
+| 2026-03-09 | Added 3 operations audit packages (compliance-auditor, gbs-integration-validator, invoice-reconciliation-tester) |
 
 ---
 

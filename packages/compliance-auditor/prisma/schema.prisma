@@ -1,0 +1,42 @@
+// @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model ComplianceScan {
+  id          String              @id @default(uuid())
+  startedAt   DateTime            @default(now())
+  completedAt DateTime?
+  status      String              @default("running") // running, completed, failed
+  framework   String              @default("both") // soc2, hipaa, both
+  repos       Json                @default("[]") // list of repo names scanned
+  summary     Json?
+  findings    ComplianceFinding[]
+
+  @@map("compliance_scans")
+}
+
+model ComplianceFinding {
+  id          String         @id @default(uuid())
+  scanId      String
+  scan        ComplianceScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  analyzer    String         // e.g. "parameterized-query", "phi-leakage"
+  severity    String         // CRITICAL, HIGH, MEDIUM, LOW, INFO
+  framework   String         // soc2, hipaa
+  repo        String
+  filePath    String
+  lineNumber  Int?
+  title       String
+  description String
+  snippet     String?        // code snippet around the finding
+  remediation String?        // suggested fix
+  createdAt   DateTime       @default(now())
+
+  @@map("compliance_findings")
+}

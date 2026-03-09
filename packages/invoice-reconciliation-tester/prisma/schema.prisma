@@ -1,0 +1,37 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model TestRun {
+  id          String       @id @default(uuid())
+  startedAt   DateTime     @default(now())
+  completedAt DateTime?
+  status      String       @default("running") // running, completed, failed
+  config      Json         @default("{}")
+  summary     Json?
+  results     TestResult[]
+
+  @@map("test_runs")
+}
+
+model TestResult {
+  id         String   @id @default(uuid())
+  runId      String
+  run        TestRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  suiteName  String
+  testName   String
+  passed     Boolean
+  expected   Json?
+  actual     Json?
+  metrics    Json? // { precision, recall, f1, confidence }
+  errorMsg   String?
+  durationMs Int
+  createdAt  DateTime @default(now())
+
+  @@map("test_results")
+}

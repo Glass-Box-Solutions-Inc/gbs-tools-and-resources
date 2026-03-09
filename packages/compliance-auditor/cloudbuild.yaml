@@ -1,0 +1,49 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/compliance-auditor:$BUILD_ID'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/compliance-auditor:latest'
+      - '.'
+
+  # Push to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/compliance-auditor'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'compliance-auditor'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/compliance-auditor:$BUILD_ID'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--no-allow-unauthenticated'
+      - '--memory'
+      - '1Gi'
+      - '--timeout'
+      - '900'
+      - '--min-instances'
+      - '0'
+      - '--max-instances'
+      - '1'
+      - '--port'
+      - '5530'
+      - '--set-env-vars'
+      - 'NODE_ENV=production,GITHUB_ORG=Glass-Box-Solutions-Inc'
+      - '--set-secrets'
+      - 'DATABASE_URL=ca-database-url:latest,GITHUB_TOKEN=github-pat-glassbox:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

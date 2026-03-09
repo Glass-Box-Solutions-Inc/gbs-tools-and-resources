@@ -1,0 +1,47 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-images/gbs-integration-validator:$BUILD_ID'
+      - '-t'
+      - 'us-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-images/gbs-integration-validator:latest'
+      - '.'
+
+  # Push to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'us-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-images/gbs-integration-validator'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'gbs-integration-validator'
+      - '--image'
+      - 'us-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-images/gbs-integration-validator:$BUILD_ID'
+      - '--region'
+      - 'us-west1'
+      - '--platform'
+      - 'managed'
+      - '--no-allow-unauthenticated'
+      - '--memory'
+      - '512Mi'
+      - '--timeout'
+      - '300'
+      - '--min-instances'
+      - '0'
+      - '--max-instances'
+      - '1'
+      - '--set-env-vars'
+      - 'NODE_ENV=production,GCP_PROJECT_ID=$PROJECT_ID'
+      - '--set-secrets'
+      - 'GITHUB_TOKEN=github-token-integration-validator:latest,LINEAR_API_KEY=linear-api-key-integration-validator:latest,N8N_API_URL=n8n-api-url-integration-validator:latest,N8N_API_KEY=n8n-api-key-integration-validator:latest,STRIPE_SECRET_KEY=stripe-secret-key-integration-validator:latest,KB_API_URL=kb-api-url-integration-validator:latest,KB_API_KEY=kb-api-key-integration-validator:latest,SLACK_BOT_TOKEN=slack-bot-token-integration-validator:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
