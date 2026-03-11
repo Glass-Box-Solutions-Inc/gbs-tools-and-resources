@@ -96,3 +96,15 @@ Never push directly to `main`. Always:
 2. Commit changes
 3. Push branch: `git push -u origin <branch>`
 4. Create PR: `gh pr create`
+
+---
+
+## Root Standards Reference
+
+For company-wide development standards, see the main CLAUDE.md at `~/Desktop/CLAUDE.md`.
+
+For centralized business, legal, marketing, and product documentation, see the [Adjudica Documentation Hub](~/Desktop/adjudica-documentation/CLAUDE.md) and the [Quick Index](~/Desktop/adjudica-documentation/ADJUDICA_INDEX.md).
+
+---
+
+@Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
