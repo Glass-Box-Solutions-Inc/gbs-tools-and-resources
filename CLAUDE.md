@@ -4,9 +4,19 @@
 
 ---
 
+## ⚠️ CRITICAL GUARDRAILS (READ FIRST)
+
+1. **NEVER push without permission** — Even small fixes require express user permission. No exceptions.
+2. **NEVER expose secrets** — No API keys, tokens, credentials in git, logs, or conversation.
+3. **NEVER force push or skip tests** — 100% passing tests required.
+4. **ALWAYS read parent CLAUDE.md** — `~/CLAUDE.md` for org-wide standards.
+5. **ALWAYS use Definition of Ready** — 100% clear requirements before implementation.
+
+---
+
 ## Project Overview
 
-This monorepo consolidates 16 Glass Box packages into a single discoverable location. Each package retains its own structure, language, and build tooling — there is no unified build system at the monorepo root.
+This monorepo consolidates 17 Glass Box packages into a single discoverable location. Each package retains its own structure, language, and build tooling — there is no unified build system at the monorepo root.
 
 **Initial consolidation:** 2026-03-01 (7 utility/research repos)
 **Agent consolidation:** 2026-03-08 (4 agent packages added)
@@ -49,6 +59,7 @@ This monorepo consolidates 16 Glass Box packages into a single discoverable loca
 |---------|---------|
 | [`packages/awesome-agent-skills/`](packages/awesome-agent-skills/) | Curated catalog of 180+ AI agent skills |
 | [`packages/awesome-claude-code/`](packages/awesome-claude-code/) | Curated list of skills, hooks, slash-commands, agents, and plugins for Claude Code |
+| [`packages/cli-anything/`](packages/cli-anything/) | Claude Code plugin — transform GUI apps into agent-native CLIs (GIMP, Blender, etc.) |
 | [`packages/ui-ux-pro-max-skill/`](packages/ui-ux-pro-max-skill/) | AI design intelligence skill for professional UI/UX across platforms |
 | [`packages/SecLists-GBS-Branch/`](packages/SecLists-GBS-Branch/) | Security testing wordlists (placeholder) |
 
@@ -126,6 +137,7 @@ gbs-tools-and-resources/
     ├── merus-test-data-generator/    # WC test case PDF generator (Python)
     ├── awesome-agent-skills/         # Agent skills catalog (Markdown)
     ├── awesome-claude-code/          # Claude Code ecosystem resource list
+    ├── cli-anything/                 # Claude Code plugin — GUI-to-CLI harness (Python/Click)
     ├── ui-ux-pro-max-skill/          # AI design intelligence skill
     └── SecLists-GBS-Branch/          # Security wordlists (placeholder)
 ```
@@ -186,7 +198,18 @@ See each package's own `.env.example` or `CLAUDE.md` for required environment va
 
 For centralized business, legal, marketing, and product documentation, see the [Adjudica Documentation Hub](~/Desktop/adjudica-documentation/CLAUDE.md) and the [Quick Index](~/Desktop/adjudica-documentation/ADJUDICA_INDEX.md).
 
-For company-wide development standards, see the main CLAUDE.md at `~/Desktop/CLAUDE.md`.
+For company-wide development standards, see the [Root CLAUDE.md](https://github.com/Glass-Box-Solutions-Inc/adjudica-documentation/blob/main/engineering/ROOT_CLAUDE.md).
+
+---
+
+## ⚠️ GUARDRAILS REMINDER
+
+Before ANY action, verify:
+
+- [ ] **Push permission?** — Required for every push, no exceptions
+- [ ] **Definition of Ready?** — Requirements 100% clear
+- [ ] **Tests passing?** — 100% required, no workarounds
+- [ ] **Root cause understood?** — For fixes, understand WHY first
 
 ---
 

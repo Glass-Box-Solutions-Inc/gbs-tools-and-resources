@@ -60,7 +60,7 @@
       "env": {
         "OBSIDIAN_API_KEY": "${OBSIDIAN_API_KEY}",
         "OBSIDIAN_HOST": "127.0.0.1",
-        "OBSIDIAN_PORT": "27123"
+        "OBSIDIAN_PORT": "27124"
       },
       "description": "[GBS] Obsidian MCP - Read/write/search the GBS knowledge vault. Requires Obsidian + Local REST API plugin running."
     },
