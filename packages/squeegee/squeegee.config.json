@@ -302,6 +302,17 @@
     "maxRunHistory": 10
   },
 
+  "docsRepo": {
+    "enabled": true,
+    "repoName": "adjudica-documentation",
+    "cloneUrl": "https://github.com/Glass-Box-Solutions-Inc/adjudica-documentation.git",
+    "defaultBranch": "main",
+    "outputPath": null,
+    "commitMessage": "chore(squeegee): sync project documentation",
+    "autoPush": true,
+    "description": "Write all documentation to adjudica-documentation/projects/{repo}/ instead of back to source repos. CLAUDE.md is skipped (stays in source repos)."
+  },
+
   "projects": [
     {
       "name": "Squeegee",

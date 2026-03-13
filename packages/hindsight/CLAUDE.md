@@ -1,6 +1,18 @@
-# CLAUDE.md
+# Hindsight
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+**Agent memory system with biomimetic data structures — retain, recall, reflect.**
+
+---
+
+## ⚠️ CRITICAL GUARDRAILS (READ FIRST)
+
+1. **NEVER push without permission** — Even small fixes require express user permission. No exceptions.
+2. **NEVER expose secrets** — No API keys, tokens, credentials in git, logs, or conversation.
+3. **NEVER force push or skip tests** — 100% passing tests required.
+4. **ALWAYS read parent CLAUDE.md** — `~/CLAUDE.md` for org-wide standards.
+5. **ALWAYS use Definition of Ready** — 100% clear requirements before implementation.
+
+---
 
 ## Project Overview
 
@@ -283,7 +295,7 @@ Optional (uses local models by default):
 
 ---
 
-For company-wide development standards, see the main CLAUDE.md at ~/Desktop/CLAUDE.md.
+For company-wide development standards, see the [Root CLAUDE.md](https://github.com/Glass-Box-Solutions-Inc/adjudica-documentation/blob/main/engineering/ROOT_CLAUDE.md).
 
 For centralized business, legal, marketing, and product documentation, see the [Adjudica Documentation Hub](~/Desktop/adjudica-documentation/CLAUDE.md) and the [Quick Index](~/Desktop/adjudica-documentation/ADJUDICA_INDEX.md).
 
@@ -299,6 +311,25 @@ For centralized business, legal, marketing, and product documentation, see the [
 
 > Port block: 4600–4699 (reserved exclusively for this project)
 > Full registry: `adjudica-documentation/engineering/GBS_PORT_AND_URL_REGISTRY.md`
+
+---
+
+## Root Standards Reference
+
+For company-wide development standards, see the [Root CLAUDE.md](https://github.com/Glass-Box-Solutions-Inc/adjudica-documentation/blob/main/engineering/ROOT_CLAUDE.md).
+
+For centralized business, legal, marketing, and product documentation, see the [Adjudica Documentation Hub](~/Desktop/adjudica-documentation/CLAUDE.md) and the [Quick Index](~/Desktop/adjudica-documentation/ADJUDICA_INDEX.md).
+
+---
+
+## ⚠️ GUARDRAILS REMINDER
+
+Before ANY action, verify:
+
+- [ ] **Push permission?** — Required for every push, no exceptions
+- [ ] **Definition of Ready?** — Requirements 100% clear
+- [ ] **Tests passing?** — 100% required
+- [ ] **Root cause understood?** — For fixes, understand WHY first
 
 ---
 

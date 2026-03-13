@@ -1,10 +1,34 @@
 # Squeegee
 
-Documentation curation and intelligence pipeline as a first-class Cloud Run service — scans all Glass-Box-Solutions-Inc GitHub repos, runs the 20-stage pipeline on each, and opens PRs with auto-curated docs.
+**Documentation curation and intelligence pipeline — scans all Glass-Box-Solutions-Inc GitHub repos, runs the 20-stage pipeline on each, and writes curated docs to `adjudica-documentation`.**
+
+---
+
+## ⚠️ CRITICAL GUARDRAILS (READ FIRST)
+
+1. **NEVER push without permission** — Even small fixes require express user permission. No exceptions.
+2. **NEVER expose secrets** — No API keys, tokens, credentials in git, logs, or conversation.
+3. **NEVER force push or skip tests** — 100% passing tests required.
+4. **ALWAYS read parent CLAUDE.md** — `~/CLAUDE.md` for org-wide standards.
+5. **ALWAYS use Definition of Ready** — 100% clear requirements before implementation.
+
+---
 
 ## Project Overview
 
-Squeegee is Glass Box's documentation curation and intelligence engine. It runs a 20-stage pipeline that discovers projects, analyzes git history, curates STATE.md, PROGRAMMING_PRACTICES.md, PLANS_APPROVED.md, changelogs, pattern libraries, health reports, and CLAUDE.md files. Stages 14-20 form the intelligence pipeline: collecting GitHub/GCP activity data, synthesizing daily briefings via Gemini, writing structured logs to adjudica-documentation, auditing CLAUDE.md compliance (weekly), auditing doc quality (monthly), conducting web research on best practices (quarterly), and sending Slack notifications. As a Cloud Run service it curates every repo in the GitHub org automatically — triggered by Cloud Scheduler (daily 6am UTC), GitHub push webhooks, or manual HTTP calls.
+Squeegee is Glass Box's documentation curation and intelligence engine. It runs a 20-stage pipeline that discovers projects, analyzes git history, curates STATE.md, PROGRAMMING_PRACTICES.md, PLANS_APPROVED.md, changelogs, pattern libraries, and health reports.
+
+**Key Architecture (docsRepo mode):**
+- **Source repos are read-only** — Squeegee clones each repo, analyzes it, but writes nothing back
+- **All output goes to `adjudica-documentation/projects/{repo}/`** — centralized documentation
+- **CLAUDE.md stays in source repos** — not written to docs repo (agent-facing, lives where agents work)
+- **Single commit/push to adjudica-documentation** — no PRs, direct push to main
+
+**Pipeline Stages:**
+- **Stages 1-13:** Curation — STATE.md, PROGRAMMING_PRACTICES.md, PLANS_APPROVED.md, CHANGELOG.md, health reports
+- **Stages 14-20:** Intelligence — GitHub/GCP data collection, Gemini briefing synthesis, CLAUDE.md compliance audits, Slack notifications
+
+Triggered by Cloud Scheduler (daily 6am UTC), GitHub push webhooks, or manual HTTP calls.
 
 ## Tech Stack
 
@@ -36,7 +60,7 @@ Squeegee/
 │   ├── api/
 │   │   └── intelligence.js    # Intelligence REST API (8 endpoints)
 │   ├── github/
-│   │   └── org-discovery.js   # GitHub API fetch → clone → pipeline → PR
+│   │   └── org-discovery.js   # GitHub API fetch → clone → pipeline → write to docs repo
 │   └── pipeline/              # 20-stage curation + intelligence engine
 │       ├── index.js            # runPipeline(command, workspace, prebuiltConfig?)
 │       ├── config.js           # squeegee.config.json loader
@@ -199,18 +223,51 @@ curl -X POST "${URL}/api/run" \
 | 19 | `research` | Quarterly web research on best practices |
 | 20 | `notify` | Send briefing summary to Slack |
 
+## docsRepo Mode (Default)
+
+Squeegee operates in **docsRepo mode** by default — all documentation output is written to `adjudica-documentation` instead of back to source repos.
+
+**Flow:**
+```
+1. Clone adjudica-documentation (write target)
+2. For each source repo:
+   ├── Clone (read-only)
+   ├── Run pipeline (analyze + generate docs)
+   ├── Write to adjudica-documentation/projects/{repo}/
+   └── Clean up source repo clone
+3. Commit all changes to adjudica-documentation
+4. Push to main
+```
+
+**Output structure:**
+```
+adjudica-documentation/projects/
+├── spectacles/
+│   ├── .planning/STATE.md
+│   ├── PROGRAMMING_PRACTICES.md
+│   ├── PLANS_APPROVED.md
+│   └── CHANGELOG.md
+├── merus-expert/
+│   └── ...
+└── [27+ repos...]
+```
+
+**Note:** CLAUDE.md is NOT written to docs repo — it stays in source repos (agent-facing).
+
+**Configuration:** See `squeegee.config.json` → `docsRepo` section.
+
 ## Dev Notes
 
 - **Dependencies** — Fastify for the HTTP server, Octokit for GitHub API, Google Cloud libraries for GCP metrics/storage, and `@google/generative-ai` for Gemini synthesis. Curation pipeline stages (1-13) still use only Node.js stdlib.
 - **PAT security** — PAT is never logged. Git clone uses `stdio: 'pipe'`. Push uses spawn with piped stdio. Error messages have PAT redacted before logging.
-- **Idempotent** — running the pipeline multiple times on the same repo produces the same output. PRs are only created when there are actual file changes.
+- **Idempotent** — running the pipeline multiple times produces the same output. Single commit to docs repo at end.
 - **Scale to zero** — Cloud Run min-instances=0 keeps cost near zero. Scheduler cold start is acceptable (15min timeout gives plenty of room).
 - **Self-curation** — this repo curates itself via `.github/workflows/self-curation.yml` on every push to main.
 - **Intelligence scheduling** — Daily: collect + synthesize + write + notify. Weekly (Sunday): CLAUDE.md audit. Monthly (1st): doc quality audit. Quarterly (Jan/Apr/Jul/Oct 1st): web research. All schedules configurable via `config/intelligence.config.json`.
 
 ---
 
-For company-wide development standards, see the main CLAUDE.md at `~/Desktop/CLAUDE.md`.
+For company-wide development standards, see the [Root CLAUDE.md](https://github.com/Glass-Box-Solutions-Inc/adjudica-documentation/blob/main/engineering/ROOT_CLAUDE.md).
 
 For centralized business, legal, marketing, and product documentation, see the [Adjudica Documentation Hub](~/Desktop/adjudica-documentation/CLAUDE.md) and the [Quick Index](~/Desktop/adjudica-documentation/ADJUDICA_INDEX.md).
 
@@ -227,7 +284,7 @@ For centralized business, legal, marketing, and product documentation, see the [
 
 Every Claude agent working in this repo MUST read and follow:
 
-1. **Parent CLAUDE.md** (`~/Desktop/CLAUDE.md`) — the master configuration for all GBS projects. Its instructions override any project-level defaults.
+1. **[Root CLAUDE.md](https://github.com/Glass-Box-Solutions-Inc/adjudica-documentation/blob/main/engineering/ROOT_CLAUDE.md)** — the master configuration for all GBS projects. Its instructions override any project-level defaults.
 2. **Adjudica Documentation Hub** (`~/Desktop/adjudica-documentation/CLAUDE.md`) — centralized business, legal, marketing, and product documentation. Consult before making decisions that touch these domains.
 3. **Engineering Standards** (`PROGRAMMING_PRACTICES.md`) — project-specific code conventions and stack decisions.
 
@@ -322,3 +379,14 @@ GBS maintains centralized documentation that all agents must consult:
 - For Cloud Run services: secrets are volume-mounted or set as env vars via Secret Manager
 - Report any suspected secret exposure immediately
 <!-- SQUEEGEE:AUTO:END security-secrets -->
+
+---
+
+## ⚠️ GUARDRAILS REMINDER
+
+Before ANY action, verify:
+
+- [ ] **Push permission?** — Required for every push, no exceptions
+- [ ] **Definition of Ready?** — Requirements 100% clear
+- [ ] **Tests passing?** — 100% required
+- [ ] **Root cause understood?** — For fixes, understand WHY first

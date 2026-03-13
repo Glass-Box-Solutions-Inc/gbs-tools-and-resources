@@ -50,6 +50,12 @@ async function run(config, discovery) {
     const intel = await gatherProjectIntel(projectPath, project, config);
 
     for (const docType of missing) {
+      // Skip CLAUDE.md generation in docsRepo mode — CLAUDE.md stays in source repos
+      if (config.docsRepo?.enabled && docType === 'CLAUDE.md') {
+        log(`Skipping CLAUDE.md for ${project.name} (docsRepo mode)`, 'info');
+        continue;
+      }
+
       try {
         await generateDoc(docType, projectPath, project, intel, config);
         results.created.push(`${project.name}/${docType}`);

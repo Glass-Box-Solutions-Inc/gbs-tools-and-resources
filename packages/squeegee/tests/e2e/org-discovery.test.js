@@ -2,7 +2,7 @@
  * Org Discovery E2E Tests
  *
  * Tests the GitHub org pipeline flow: repo fetching, config building,
- * clone → pipeline → PR creation, and security (PAT redaction).
+ * clone → pipeline → write to docs repo (docsRepo mode).
  *
  * All external calls (GitHub API, git clone/push) are mocked.
  *
@@ -261,29 +261,24 @@ describe('Org Discovery E2E', () => {
     });
   });
 
-  // ─── Full Org Flow (mocked) ───────────────────────────────────────────
+  // ─── Full Org Flow (docsRepo mode) ────────────────────────────────────
 
   describe('Full Org Flow', () => {
-    test('clones repo, runs pipeline, detects changes, creates PR', async () => {
+    test('clones docs repo, processes source repos, commits and pushes', async () => {
       global.fetch = jest.fn()
         // First call: fetch repos
         .mockResolvedValueOnce({
           ok: true,
           json: async () => [createMockRepo('changed-repo')],
           headers: { get: () => '' },
-        })
-        // Second call: create PR
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ html_url: 'https://github.com/org/changed-repo/pull/42' }),
         });
 
-      // Mock clone success
+      // Mock clone success (docs repo first, then source repo)
       childProcess.spawnSync.mockReturnValue({ status: 0, stderr: Buffer.from('') });
 
-      // Mock: git status shows changes, git config/checkout/add/commit succeed
+      // Mock: git status shows changes in docs repo, git config/add/commit succeed
       childProcess.execSync.mockImplementation((cmd) => {
-        if (cmd.includes('git status --porcelain')) return 'M CLAUDE.md\n';
+        if (cmd.includes('git status --porcelain')) return 'M projects/changed-repo/STATE.md\n';
         return '';
       });
 
@@ -294,12 +289,13 @@ describe('Org Discovery E2E', () => {
 
       const result = await orgMod.runOrgPipeline({ command: 'full' });
 
-      expect(result.prsCreated).toBe(1);
-      expect(result.results[0].status).toBe('pr_created');
-      expect(result.results[0].prUrl).toBe('https://github.com/org/changed-repo/pull/42');
+      expect(result.pushed).toBe(true);
+      expect(result.succeeded).toBe(1);
+      expect(result.results[0].status).toBe('processed');
+      expect(result.mode).toBe('docsRepo');
     });
 
-    test('no-changes scenario: skips PR creation', async () => {
+    test('no-changes scenario: skips push to docs repo', async () => {
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         json: async () => [createMockRepo('unchanged-repo')],
@@ -308,7 +304,7 @@ describe('Org Discovery E2E', () => {
 
       childProcess.spawnSync.mockReturnValue({ status: 0, stderr: Buffer.from('') });
       childProcess.execSync.mockImplementation((cmd) => {
-        if (cmd.includes('git status --porcelain')) return ''; // no changes
+        if (cmd.includes('git status --porcelain')) return ''; // no changes in docs repo
         return '';
       });
 
@@ -319,12 +315,12 @@ describe('Org Discovery E2E', () => {
 
       const result = await orgMod.runOrgPipeline({ command: 'full' });
 
-      expect(result.prsCreated).toBe(0);
-      expect(result.noChanges).toBe(1);
-      expect(result.results[0].status).toBe('no_changes');
+      expect(result.pushed).toBe(false);
+      expect(result.succeeded).toBe(1);
+      expect(result.results[0].status).toBe('processed');
     });
 
-    test('clone failure does not crash the run', async () => {
+    test('source repo clone failure does not crash the run', async () => {
       global.fetch = jest.fn().mockResolvedValueOnce({
         ok: true,
         json: async () => [
@@ -334,14 +330,18 @@ describe('Org Discovery E2E', () => {
         headers: { get: () => '' },
       });
 
-      let callCount = 0;
+      let cloneCount = 0;
       childProcess.spawnSync.mockImplementation((cmd, args) => {
-        callCount++;
-        if (callCount === 1) {
-          // First clone fails
+        cloneCount++;
+        // First clone is docs repo (succeeds)
+        if (cloneCount === 1) {
+          return { status: 0, stderr: Buffer.from('') };
+        }
+        // Second clone is fail-repo (fails)
+        if (cloneCount === 2) {
           return { status: 1, stderr: Buffer.from('fatal: repository not found') };
         }
-        // Second clone succeeds
+        // Third clone is ok-repo (succeeds), fourth is push (succeeds)
         return { status: 0, stderr: Buffer.from('') };
       });
 
@@ -359,9 +359,11 @@ describe('Org Discovery E2E', () => {
 
       expect(result.errors).toBe(1);
       expect(result.total).toBe(2);
-      // First repo errored, second should have completed
+      expect(result.succeeded).toBe(1);
+      expect(result.failed).toBe(1);
+      // First repo errored, second should have processed
       expect(result.results[0].status).toBe('error');
-      expect(result.results[1].status).toBe('no_changes');
+      expect(result.results[1].status).toBe('processed');
     });
 
     test('records run summary to state file', async () => {
@@ -404,10 +406,23 @@ describe('Org Discovery E2E', () => {
         headers: { get: () => '' },
       });
 
-      // Clone fails with PAT in the error message
-      childProcess.spawnSync.mockReturnValue({
-        status: 1,
-        stderr: Buffer.from(`fatal: could not read from https://x-access-token:${pat}@github.com/org/repo.git`),
+      let cloneCount = 0;
+      childProcess.spawnSync.mockImplementation((cmd, args) => {
+        cloneCount++;
+        // First clone is docs repo (succeeds)
+        if (cloneCount === 1) {
+          return { status: 0, stderr: Buffer.from('') };
+        }
+        // Second clone is source repo (fails with PAT in error message)
+        return {
+          status: 1,
+          stderr: Buffer.from(`fatal: could not read from https://x-access-token:${pat}@github.com/org/repo.git`),
+        };
+      });
+
+      childProcess.execSync.mockImplementation((cmd) => {
+        if (cmd.includes('git status --porcelain')) return '';
+        return '';
       });
 
       let orgMod;

@@ -79,6 +79,18 @@ const SCRIPT_DESCRIPTIONS = {
 // ─── Entry point ────────────────────────────────────────────────────────────
 
 async function run(config, _discovery) {
+  // Skip CLAUDE.md curation in docsRepo mode — CLAUDE.md stays in source repos
+  if (config.docsRepo && config.docsRepo.enabled) {
+    log('Stage 13: Skipping — CLAUDE.md stays in source repos (docsRepo mode)', 'info');
+    return {
+      analyzed: 0,
+      updated: [],
+      suggestions: {},
+      skipped: true,
+      reason: 'docsRepo mode enabled — CLAUDE.md stays in source repos',
+    };
+  }
+
   log('Stage 13: Curating project CLAUDE.md files...', 'info');
 
   const results = {

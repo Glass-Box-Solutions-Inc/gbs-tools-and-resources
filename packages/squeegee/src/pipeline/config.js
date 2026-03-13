@@ -4,6 +4,9 @@
  * Single source of truth: reads squeegee.config.json.
  * No hardcoded project lists — everything comes from config.
  *
+ * docsRepo mode: When enabled, all documentation output is redirected
+ * to adjudica-documentation/projects/{repo}/ instead of back to source repos.
+ *
  * @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
  */
 
@@ -12,6 +15,16 @@ const { readJsonSafe } = require('./utils');
 
 let _config = null;
 let _workspace = null;
+
+/** Default docsRepo configuration */
+const DOCS_REPO_DEFAULTS = {
+  enabled: false,
+  repoName: 'adjudica-documentation',
+  cloneUrl: 'https://github.com/Glass-Box-Solutions-Inc/adjudica-documentation.git',
+  outputPath: null, // Set at runtime after cloning
+  commitMessage: 'chore(squeegee): sync project documentation',
+  autoPush: true,
+};
 
 /**
  * Load config from squeegee.config.json.
@@ -86,6 +99,15 @@ async function loadConfig(workspace) {
       retentionDays: 90,
       ...(raw.changelog || {}),
     },
+
+    // Docs repo mode — write to adjudica-documentation instead of source repos
+    docsRepo: {
+      ...DOCS_REPO_DEFAULTS,
+      ...(raw.docsRepo || {}),
+    },
+
+    // Current project name (set by org-discovery for each repo)
+    currentProject: null,
   };
 
   return _config;
@@ -100,13 +122,44 @@ function getProjectPaths(config) {
 
 /**
  * Resolve a project path to absolute.
+ *
+ * When docsRepo mode is enabled, redirects output to:
+ *   adjudica-documentation/projects/{projectName}/
+ *
+ * This allows Squeegee to read from source repos but write to docs repo only.
  */
 function resolveProjectPath(config, projectRelPath) {
+  // docsRepo mode: redirect output to docs repo
+  if (config.docsRepo && config.docsRepo.enabled && config.docsRepo.outputPath) {
+    const projectName = config.currentProject || path.basename(projectRelPath) || 'unknown';
+    return path.join(config.docsRepo.outputPath, 'projects', projectName);
+  }
+
+  // Default: write to source repo (original behavior)
   return path.join(config.workspace, projectRelPath);
+}
+
+/**
+ * Set the current project name for docsRepo path resolution.
+ * Called by org-discovery before running pipeline on each repo.
+ */
+function setCurrentProject(config, projectName) {
+  config.currentProject = projectName;
+}
+
+/**
+ * Set the docsRepo output path at runtime (after cloning docs repo).
+ */
+function setDocsRepoOutputPath(config, outputPath) {
+  if (config.docsRepo) {
+    config.docsRepo.outputPath = outputPath;
+  }
 }
 
 module.exports = {
   loadConfig,
   getProjectPaths,
   resolveProjectPath,
+  setCurrentProject,
+  setDocsRepoOutputPath,
 };

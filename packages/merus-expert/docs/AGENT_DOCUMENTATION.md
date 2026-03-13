@@ -1342,7 +1342,7 @@ All source files in the MerusExpert agent system, organized by layer.
 
 ---
 
-*For company-wide development standards, see the main CLAUDE.md at `~/Desktop/CLAUDE.md`.*
+*For company-wide development standards, see the [Root CLAUDE.md](https://github.com/Glass-Box-Solutions-Inc/adjudica-documentation/blob/main/engineering/ROOT_CLAUDE.md).*
 
 *For the MerusExpert browser automation framework documentation, see `CLAUDE.md` and `README.md` at the project root.*
 

@@ -500,4 +500,4 @@ With the backend running, the auto-generated OpenAPI docs are at:
 
 *For the full technical reference including SSE event format, tool schemas, and error handling, see [`docs/AGENT_DOCUMENTATION.md`](AGENT_DOCUMENTATION.md).*
 
-*For company-wide development standards, see the main CLAUDE.md at `~/Desktop/CLAUDE.md`.*
+*For company-wide development standards, see the [Root CLAUDE.md](https://github.com/Glass-Box-Solutions-Inc/adjudica-documentation/blob/main/engineering/ROOT_CLAUDE.md).*

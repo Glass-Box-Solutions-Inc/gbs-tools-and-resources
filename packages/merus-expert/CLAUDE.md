@@ -5,6 +5,16 @@ Full-stack MerusCase integration: natural language AI agent (Claude), REST API c
 
 ---
 
+## ⚠️ CRITICAL GUARDRAILS (READ FIRST)
+
+1. **NEVER push without permission** — Even small fixes require express user permission. No exceptions.
+2. **NEVER expose secrets** — No API keys, tokens, credentials in git, logs, or conversation.
+3. **NEVER force push or skip tests** — 100% passing tests required.
+4. **ALWAYS read parent CLAUDE.md** — `~/CLAUDE.md` for org-wide standards.
+5. **ALWAYS use Definition of Ready** — 100% clear requirements before implementation.
+
+---
+
 ## Quick Reference
 
 | Item | Value |
@@ -335,4 +345,15 @@ When working in this project, these keywords load additional context:
 
 ---
 
-For company-wide development standards, see the main CLAUDE.md at ~/Desktop/CLAUDE.md.
+For company-wide development standards, see the [Root CLAUDE.md](https://github.com/Glass-Box-Solutions-Inc/adjudica-documentation/blob/main/engineering/ROOT_CLAUDE.md).
+
+---
+
+## ⚠️ GUARDRAILS REMINDER
+
+Before ANY action, verify:
+
+- [ ] **Push permission?** — Required for every push, no exceptions
+- [ ] **Definition of Ready?** — Requirements 100% clear
+- [ ] **Tests passing?** — 100% required
+- [ ] **Root cause understood?** — For fixes, understand WHY first

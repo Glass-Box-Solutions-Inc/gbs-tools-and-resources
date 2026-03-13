@@ -4,15 +4,20 @@
  * Orchestrates the documentation curation pipeline across all repos
  * in the Glass-Box-Solutions-Inc GitHub org.
  *
- * Flow:
- *   1. Fetch all non-fork, non-archived repos from the org via GitHub API
- *   2. Filter by `filterRepo` if provided (single-repo mode)
- *   3. Shallow clone each repo to /tmp/squeegee-workspace/{name}
- *   4. Run the Squeegee pipeline with a pre-built config pointing at the clone
- *   5. Detect changes via `git status --porcelain`
- *   6. If changes: branch → commit → push → open PR
- *   7. Clean up clone after each repo to keep /tmp lean
- *   8. Write run summary to /tmp/squeegee-state.json (last 10 runs)
+ * NEW ARCHITECTURE (docsRepo mode):
+ *   1. Clone adjudica-documentation (write target)
+ *   2. Fetch all non-fork, non-archived repos from the org via GitHub API
+ *   3. For each source repo:
+ *      - Shallow clone (read-only)
+ *      - Run pipeline (analyze + generate docs)
+ *      - Write output to adjudica-documentation/projects/{repo}/
+ *      - Clean up source repo clone
+ *   4. Commit all changes to adjudica-documentation
+ *   5. Push to main
+ *   6. Clean up docs repo clone
+ *
+ * LEGACY MODE (docsRepo.enabled: false):
+ *   Original behavior — clone each repo, run pipeline, commit back, open PR.
  *
  * Security: GITHUB_PAT is sourced exclusively from env — never logged.
  * Git clone uses stdio: 'pipe' to prevent PAT leaking to stdout/stderr.
@@ -26,6 +31,7 @@ const { execSync, spawnSync } = require('child_process');
 const fs = require('fs').promises;
 const path = require('path');
 const { runPipeline } = require('../pipeline/index');
+const { setCurrentProject, setDocsRepoOutputPath } = require('../pipeline/config');
 
 const ORG = process.env.GITHUB_ORG || 'Glass-Box-Solutions-Inc';
 
@@ -38,9 +44,17 @@ function getPAT() {
     return process.env.GITHUB_PAT || null;
   }
 }
+
 const WORKSPACE_BASE = '/tmp/squeegee-workspace';
 const STATE_FILE = '/tmp/squeegee-state.json';
 const MAX_HISTORY = 10;
+
+// Default docs repo configuration
+const DOCS_REPO_CONFIG = {
+  repoName: 'adjudica-documentation',
+  cloneUrl: 'https://github.com/Glass-Box-Solutions-Inc/adjudica-documentation.git',
+  defaultBranch: 'main',
+};
 
 /**
  * Fetch all repos for the org with pagination.
@@ -79,9 +93,9 @@ async function fetchOrgRepos() {
     page++;
   }
 
-  // Exclude forks and archived repos — they don't need curation
+  // Exclude forks, archived repos, and the docs repo itself (we write to it)
   return repos
-    .filter(r => !r.fork && !r.archived)
+    .filter(r => !r.fork && !r.archived && r.name !== DOCS_REPO_CONFIG.repoName)
     .map(r => ({
       name: r.name,
       cloneUrl: r.clone_url,
@@ -91,10 +105,10 @@ async function fetchOrgRepos() {
 
 /**
  * Build a squeegee.config.json object targeting a cloned repo workspace.
- * Keeps the same exclude patterns; projects list is set to the repo root.
+ * In docsRepo mode, output is redirected to docs repo via config.docsRepo.outputPath.
  */
-function buildRepoConfig(workspace, repoName) {
-  return {
+function buildRepoConfig(workspace, repoName, docsRepoOutputPath = null) {
+  const config = {
     workspace,
     version: '2.0.0',
     projects: [{ name: repoName, path: '.', stack: [] }],
@@ -131,20 +145,64 @@ function buildRepoConfig(workspace, repoName) {
     },
     gitAnalysis: { maxCommits: 500, sinceDefault: '6 months ago' },
     changelog: { retentionDays: 90 },
+    currentProject: repoName,
   };
+
+  // Enable docsRepo mode if output path is provided
+  if (docsRepoOutputPath) {
+    config.docsRepo = {
+      enabled: true,
+      repoName: DOCS_REPO_CONFIG.repoName,
+      outputPath: docsRepoOutputPath,
+      autoPush: true,
+    };
+  }
+
+  return config;
 }
 
 /**
- * Shallow clone a repo into WORKSPACE_BASE/{name}.
- * PAT is embedded in the URL but stdio is piped to prevent logging.
+ * Clone the docs repo (adjudica-documentation) as write target.
+ * Returns the cloned directory path.
  */
-function cloneRepo(repo) {
+function cloneDocsRepo() {
+  const dest = path.join(WORKSPACE_BASE, DOCS_REPO_CONFIG.repoName);
+  const pat = getPAT();
+  const authUrl = DOCS_REPO_CONFIG.cloneUrl.replace('https://', `https://x-access-token:${pat}@`);
+
+  const CLONE_TIMEOUT_MS = 5 * 60 * 1000;
+
+  console.log(`📚 Cloning docs repo: ${DOCS_REPO_CONFIG.repoName}`);
+
+  const result = spawnSync('git', [
+    'clone',
+    '--depth=1',
+    '--branch', DOCS_REPO_CONFIG.defaultBranch,
+    authUrl,
+    dest,
+  ], { stdio: 'pipe', timeout: CLONE_TIMEOUT_MS });
+
+  if (result.signal === 'SIGTERM') {
+    throw new Error(`Docs repo clone timed out after ${CLONE_TIMEOUT_MS / 1000}s`);
+  }
+
+  if (result.status !== 0) {
+    const errMsg = result.stderr?.toString() || 'unknown error';
+    throw new Error(`Docs repo clone failed: ${errMsg.replace(pat, '[REDACTED]')}`);
+  }
+
+  return dest;
+}
+
+/**
+ * Shallow clone a source repo (read-only) into WORKSPACE_BASE/{name}.
+ */
+function cloneSourceRepo(repo) {
   const dest = path.join(WORKSPACE_BASE, repo.name);
   const pat = getPAT();
-  // Build authenticated URL without exposing PAT in process args
   const authUrl = repo.cloneUrl.replace('https://', `https://x-access-token:${pat}@`);
 
-  const CLONE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes max per clone
+  const CLONE_TIMEOUT_MS = 5 * 60 * 1000;
 
   const result = spawnSync('git', [
     'clone',
@@ -152,7 +210,7 @@ function cloneRepo(repo) {
     '--branch', repo.defaultBranch,
     authUrl,
     dest,
-  ], { stdio: 'pipe', timeout: CLONE_TIMEOUT_MS }); // pipe prevents PAT appearing in logs
+  ], { stdio: 'pipe', timeout: CLONE_TIMEOUT_MS });
 
   if (result.signal === 'SIGTERM') {
     throw new Error(`Clone timed out for ${repo.name} after ${CLONE_TIMEOUT_MS / 1000}s`);
@@ -160,7 +218,6 @@ function cloneRepo(repo) {
 
   if (result.status !== 0) {
     const errMsg = result.stderr?.toString() || 'unknown error';
-    // Redact PAT from error message before throwing
     throw new Error(`Clone failed for ${repo.name}: ${errMsg.replace(pat, '[REDACTED]')}`);
   }
 
@@ -168,7 +225,7 @@ function cloneRepo(repo) {
 }
 
 /**
- * Detect if the pipeline produced any file changes.
+ * Detect if the docs repo has any changes.
  */
 function hasChanges(workdir) {
   try {
@@ -180,55 +237,46 @@ function hasChanges(workdir) {
 }
 
 /**
- * Create branch, commit all changes, push, and open a PR via GitHub API.
+ * Commit all changes in the docs repo.
  */
-async function publishChanges(workdir, repo) {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const branch = `squeegee/auto-curate-${timestamp}`;
+function commitToDocsRepo(docsRepoPath, repoCount) {
+  const timestamp = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
-  // Configure git identity for the commit
-  execSync('git config user.email "squeegee-bot@glassboxsolutions.com"', { cwd: workdir, stdio: 'pipe' });
-  execSync('git config user.name "Squeegee Bot"', { cwd: workdir, stdio: 'pipe' });
+  execSync('git config user.email "squeegee-bot@glassboxsolutions.com"', { cwd: docsRepoPath, stdio: 'pipe' });
+  execSync('git config user.name "Squeegee Bot"', { cwd: docsRepoPath, stdio: 'pipe' });
 
-  execSync(`git checkout -b "${branch}"`, { cwd: workdir, stdio: 'pipe' });
-  execSync('git add -A', { cwd: workdir, stdio: 'pipe' });
-  execSync('git commit -m "chore(squeegee): auto-curate documentation"', { cwd: workdir, stdio: 'pipe' });
+  execSync('git add -A', { cwd: docsRepoPath, stdio: 'pipe' });
 
-  // Push with PAT auth — stdio pipe prevents credential logging
+  const message = `chore(squeegee): sync project documentation
+
+Automated documentation sync for ${repoCount} repositories.
+Generated: ${timestamp}`;
+
+  execSync(`git commit -m "${message}"`, { cwd: docsRepoPath, stdio: 'pipe' });
+
+  console.log(`✅ Committed changes to docs repo`);
+}
+
+/**
+ * Push the docs repo to main.
+ */
+function pushDocsRepo(docsRepoPath) {
   const pat = getPAT();
-  const authUrl = `https://x-access-token:${pat}@github.com/${ORG}/${repo.name}.git`;
-  const pushResult = spawnSync('git', ['push', authUrl, branch], { cwd: workdir, stdio: 'pipe' });
+  const authUrl = `https://x-access-token:${pat}@github.com/${ORG}/${DOCS_REPO_CONFIG.repoName}.git`;
+
+  console.log(`🚀 Pushing to ${DOCS_REPO_CONFIG.repoName} main...`);
+
+  const pushResult = spawnSync('git', ['push', authUrl, DOCS_REPO_CONFIG.defaultBranch], {
+    cwd: docsRepoPath,
+    stdio: 'pipe',
+  });
 
   if (pushResult.status !== 0) {
     const errMsg = pushResult.stderr?.toString() || 'unknown';
-    throw new Error(`Push failed: ${errMsg.replace(pat, '[REDACTED]')}`);
+    throw new Error(`Push to docs repo failed: ${errMsg.replace(pat, '[REDACTED]')}`);
   }
 
-  // Create PR via GitHub API
-  const prResponse = await fetch(`https://api.github.com/repos/${ORG}/${repo.name}/pulls`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${pat}`,
-      Accept: 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
-    body: JSON.stringify({
-      title: 'chore(squeegee): auto-curate documentation',
-      body: 'Automated documentation curation by [Squeegee](https://github.com/Glass-Box-Solutions-Inc/Squeegee). Safe to merge without review.',
-      head: branch,
-      base: repo.defaultBranch,
-    }),
-  });
-
-  if (!prResponse.ok) {
-    // PR creation is best-effort — log but don't fail the run
-    console.warn(`PR creation failed for ${repo.name}: ${prResponse.status}`);
-    return null;
-  }
-
-  const pr = await prResponse.json();
-  return pr.html_url;
+  console.log(`✅ Pushed to ${DOCS_REPO_CONFIG.repoName} main`);
 }
 
 /**
@@ -244,7 +292,6 @@ async function cleanupWorkspace(workdir) {
 
 /**
  * Append a run record to the state file.
- * Keeps the last MAX_HISTORY runs.
  */
 async function recordRun(record) {
   let state = { runs: [] };
@@ -263,7 +310,13 @@ async function recordRun(record) {
 }
 
 /**
- * Main entrypoint — runs the full org pipeline or a single repo/stage.
+ * Main entrypoint — runs the org pipeline in docsRepo mode.
+ *
+ * NEW FLOW:
+ *   1. Clone docs repo (adjudica-documentation)
+ *   2. For each source repo: clone → pipeline → cleanup
+ *   3. Commit all changes to docs repo
+ *   4. Push to main
  *
  * @param {object} options
  * @param {string|null} options.filterRepo  - If set, only curate this repo name
@@ -273,16 +326,29 @@ async function runOrgPipeline({ filterRepo = null, command = 'full' } = {}) {
   const startedAt = new Date().toISOString();
   const results = [];
 
-  console.log(`\n🧽 Squeegee Org Pipeline — org: ${ORG}  command: ${command}${filterRepo ? `  repo: ${filterRepo}` : ''}\n`);
+  console.log(`\n🧽 Squeegee Org Pipeline (docsRepo mode)`);
+  console.log(`   org: ${ORG}  command: ${command}${filterRepo ? `  repo: ${filterRepo}` : ''}\n`);
 
   // Ensure workspace base exists
   await fs.mkdir(WORKSPACE_BASE, { recursive: true });
 
+  // Step 1: Clone docs repo
+  let docsRepoPath;
+  try {
+    docsRepoPath = cloneDocsRepo();
+  } catch (err) {
+    console.error(`Failed to clone docs repo: ${err.message}`);
+    await recordRun({ startedAt, status: 'error', error: err.message, results: [] });
+    throw err;
+  }
+
+  // Step 2: Fetch all source repos
   let repos;
   try {
     repos = await fetchOrgRepos();
   } catch (err) {
     console.error(`Failed to fetch org repos: ${err.message}`);
+    await cleanupWorkspace(docsRepoPath);
     await recordRun({ startedAt, status: 'error', error: err.message, results: [] });
     throw err;
   }
@@ -299,57 +365,70 @@ async function runOrgPipeline({ filterRepo = null, command = 'full' } = {}) {
   let succeeded = 0;
   let failed = 0;
 
+  // Step 3: Process each source repo (read-only)
   for (let i = 0; i < repos.length; i++) {
     const repo = repos[i];
     const progress = `[${i + 1}/${repos.length}]`;
-    const repoResult = { repo: repo.name, status: 'pending', prUrl: null, error: null };
-    let workdir = null;
+    const repoResult = { repo: repo.name, status: 'pending', error: null };
+    let sourceWorkdir = null;
 
     try {
-      // Log to stderr (unbuffered) so this line survives OOM/timeout kills
       console.error(`${progress} [${repo.name}] Starting clone at ${new Date().toISOString()}`);
-      workdir = cloneRepo(repo);
+      sourceWorkdir = cloneSourceRepo(repo);
 
-      const prebuiltConfig = buildRepoConfig(workdir, repo.name);
+      // Build config with docsRepo output path
+      const prebuiltConfig = buildRepoConfig(sourceWorkdir, repo.name, docsRepoPath);
 
       console.log(`${progress} [${repo.name}] Running pipeline stage: ${command}`);
-      await runPipeline(command, workdir, prebuiltConfig);
+      await runPipeline(command, sourceWorkdir, prebuiltConfig);
 
-      if (hasChanges(workdir)) {
-        console.log(`${progress} [${repo.name}] Changes detected — creating PR`);
-        const prUrl = await publishChanges(workdir, repo);
-        repoResult.prUrl = prUrl;
-        repoResult.status = 'pr_created';
-        console.log(`${progress} [${repo.name}] PR: ${prUrl || 'created (URL unavailable)'}`);
-      } else {
-        repoResult.status = 'no_changes';
-        console.log(`${progress} [${repo.name}] No changes`);
-      }
+      repoResult.status = 'processed';
+      console.log(`${progress} [${repo.name}] ✓ Documentation generated`);
       succeeded++;
     } catch (err) {
       repoResult.status = 'error';
       repoResult.error = err.message;
       failed++;
-      console.error(`${progress} [${repo.name}] Error — skipping repo: ${err.message}`);
+      console.error(`${progress} [${repo.name}] Error — skipping: ${err.message}`);
     } finally {
-      if (workdir) {
-        await cleanupWorkspace(workdir);
+      // Clean up source repo clone immediately (read-only, no longer needed)
+      if (sourceWorkdir) {
+        await cleanupWorkspace(sourceWorkdir);
       }
     }
 
     results.push(repoResult);
   }
 
+  // Step 4: Commit and push docs repo if there are changes
+  let pushed = false;
+  try {
+    if (hasChanges(docsRepoPath)) {
+      console.log(`\n📝 Committing changes to docs repo...`);
+      commitToDocsRepo(docsRepoPath, succeeded);
+      pushDocsRepo(docsRepoPath);
+      pushed = true;
+    } else {
+      console.log(`\n📭 No changes to commit to docs repo`);
+    }
+  } catch (err) {
+    console.error(`Failed to commit/push docs repo: ${err.message}`);
+    // Record the error but don't fail the whole run
+  }
+
+  // Step 5: Clean up docs repo
+  await cleanupWorkspace(docsRepoPath);
+
   const summary = {
     startedAt,
     completedAt: new Date().toISOString(),
     command,
     filterRepo,
+    mode: 'docsRepo',
     total: results.length,
     succeeded,
     failed,
-    prsCreated: results.filter(r => r.status === 'pr_created').length,
-    noChanges: results.filter(r => r.status === 'no_changes').length,
+    pushed,
     errors: results.filter(r => r.status === 'error').length,
     status: 'completed',
     results,
@@ -358,10 +437,10 @@ async function runOrgPipeline({ filterRepo = null, command = 'full' } = {}) {
   await recordRun(summary);
 
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`  SQUEEGEE ORG PIPELINE COMPLETE`);
+  console.log(`  SQUEEGEE ORG PIPELINE COMPLETE (docsRepo mode)`);
   console.log(`${'='.repeat(60)}`);
   console.log(`  Repos: ${summary.total}  |  Succeeded: ${succeeded}  |  Failed: ${failed}`);
-  console.log(`  PRs: ${summary.prsCreated}  |  No changes: ${summary.noChanges}  |  Errors: ${summary.errors}`);
+  console.log(`  Pushed to ${DOCS_REPO_CONFIG.repoName}: ${pushed ? 'Yes' : 'No'}`);
   if (failed > 0) {
     const failedRepos = results.filter(r => r.status === 'error').map(r => r.repo);
     console.error(`  Failed repos: ${failedRepos.join(', ')}`);
