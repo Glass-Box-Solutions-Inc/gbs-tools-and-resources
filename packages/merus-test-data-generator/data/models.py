@@ -13,6 +13,9 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+# Import canonical taxonomy — 188 subtypes, 12 types
+from data.taxonomy import DocumentSubtype, DocumentType  # noqa: F401
+
 
 class LitigationStage(str, Enum):
     INTAKE = "intake"
@@ -27,43 +30,6 @@ class InjuryType(str, Enum):
     SPECIFIC = "specific"
     CUMULATIVE_TRAUMA = "cumulative_trauma"
     DEATH = "death"
-
-
-class DocumentSubtype(str, Enum):
-    # Medical
-    TREATING_PHYSICIAN_REPORT = "TREATING_PHYSICIAN_REPORT"
-    DIAGNOSTIC_REPORT = "DIAGNOSTIC_REPORT"
-    OPERATIVE_HOSPITAL_RECORDS = "OPERATIVE_HOSPITAL_RECORDS"
-    QME_AME_REPORT = "QME_AME_REPORT"
-    UTILIZATION_REVIEW = "UTILIZATION_REVIEW"
-    PHARMACY_RECORDS = "PHARMACY_RECORDS"
-    BILLING_UB04_HCFA_SUPERBILLS = "BILLING_UB04_HCFA_SUPERBILLS"
-    # Legal
-    APPLICATION_FOR_ADJUDICATION = "APPLICATION_FOR_ADJUDICATION"
-    DECLARATION_OF_READINESS = "DECLARATION_OF_READINESS"
-    MINUTES_ORDERS_FINDINGS = "MINUTES_ORDERS_FINDINGS"
-    STIPULATIONS = "STIPULATIONS"
-    COMPROMISE_AND_RELEASE = "COMPROMISE_AND_RELEASE"
-    # Correspondence
-    ADJUSTER_LETTER = "ADJUSTER_LETTER"
-    DEFENSE_COUNSEL_LETTER = "DEFENSE_COUNSEL_LETTER"
-    COURT_NOTICE = "COURT_NOTICE"
-    CLIENT_INTAKE_CORRESPONDENCE = "CLIENT_INTAKE_CORRESPONDENCE"
-    # Discovery
-    SUBPOENA_SDT_ISSUED = "SUBPOENA_SDT_ISSUED"
-    DEPOSITION_NOTICE = "DEPOSITION_NOTICE"
-    DEPOSITION_TRANSCRIPT = "DEPOSITION_TRANSCRIPT"
-    SUBPOENAED_RECORDS = "SUBPOENAED_RECORDS"
-    # Employment
-    WAGE_STATEMENTS = "WAGE_STATEMENTS"
-    JOB_DESCRIPTION = "JOB_DESCRIPTION"
-    PERSONNEL_FILE = "PERSONNEL_FILE"
-    # Claim forms
-    CLAIM_FORM = "CLAIM_FORM"
-    EMPLOYER_REPORT = "EMPLOYER_REPORT"
-    # Summaries
-    MEDICAL_CHRONOLOGY = "MEDICAL_CHRONOLOGY"
-    SETTLEMENT_MEMO = "SETTLEMENT_MEMO"
 
 
 class GeneratedApplicant(BaseModel):
@@ -141,12 +107,19 @@ class GeneratedCaseTimeline(BaseModel):
     date_of_injury: date
     date_claim_filed: date
     date_first_treatment: date
+    date_claim_response: Optional[date] = None
     date_application_filed: Optional[date] = None
     date_discovery_start: Optional[date] = None
     date_qme_evaluation: Optional[date] = None
+    date_ame_evaluation: Optional[date] = None
     date_deposition: Optional[date] = None
     date_dor_filed: Optional[date] = None
     date_settlement_conference: Optional[date] = None
+    date_lien_filed: Optional[date] = None
+    date_lien_conference: Optional[date] = None
+    date_ur_dispute: Optional[date] = None
+    date_imr_decision: Optional[date] = None
+    date_trial: Optional[date] = None
     date_resolved: Optional[date] = None
 
 
@@ -174,6 +147,8 @@ class GeneratedCase(BaseModel):
     judge_name: str
     case_title: str = ""
     document_specs: list[DocumentSpec] = Field(default_factory=list)
+    # New: lifecycle parameters that produced this case
+    case_parameters: Optional[Any] = None
 
     def model_post_init(self, __context: Any) -> None:
         if not self.case_title:

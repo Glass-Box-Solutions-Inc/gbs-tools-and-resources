@@ -5,6 +5,8 @@ Main orchestration pipeline — 4-step flow:
   3. Create cases in MerusCase (browser automation)
   4. Upload documents to MerusCase (API)
 
+v2.0: Supports dynamic case count via lifecycle engine + CaseParameters.
+
 @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 """
 
@@ -13,13 +15,15 @@ from __future__ import annotations
 import importlib
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import structlog
 
 from config import OUTPUT_DIR, RANDOM_SEED
 from data.case_profiles import CASE_PROFILES
+from data.case_profile_generator import CaseConstraints, CaseProfileGenerator
 from data.fake_data_generator import FakeDataGenerator
+from data.lifecycle_engine import CaseParameters
 from data.models import GeneratedCase
 from orchestration.audit import PipelineAuditLogger
 from orchestration.progress_tracker import ProgressTracker
@@ -58,6 +62,10 @@ TEMPLATE_REGISTRY: dict[str, str] = {
 
 def _load_template_class(class_name: str):
     """Dynamically import and return a template class."""
+    if class_name == "GenericDocumentTemplate":
+        from pdf_templates.generic_template import GenericDocumentTemplate
+        return GenericDocumentTemplate
+
     module_path = TEMPLATE_REGISTRY.get(class_name)
     if not module_path:
         raise ValueError(f"Unknown template class: {class_name}")
@@ -86,60 +94,114 @@ class Pipeline:
 
     # --- Step 1: Generate case data ---
 
-    def generate_data(self) -> list[GeneratedCase]:
-        """Generate all case data objects."""
+    def generate_data(
+        self,
+        count: int | None = None,
+        seed: int | None = None,
+        stage_distribution: dict[str, float] | None = None,
+        constraints: CaseConstraints | None = None,
+        progress_callback: Any = None,
+    ) -> list[GeneratedCase]:
+        """Generate all case data objects.
+
+        Args:
+            count: Number of cases to generate. None = use legacy 20 profiles.
+            seed: Random seed for reproducibility.
+            stage_distribution: Dict mapping stage names to proportions.
+            constraints: CaseConstraints for dynamic generation.
+            progress_callback: Optional callable(event, data) for SSE progress.
+        """
+        effective_seed = seed if seed is not None else RANDOM_SEED
+        self.generator = FakeDataGenerator(seed=effective_seed)
+
+        # Determine profiles
+        if count is not None:
+            # Dynamic generation via lifecycle engine
+            profiles = CaseProfileGenerator.generate_profiles(
+                count=count,
+                seed=effective_seed,
+                stage_distribution=stage_distribution,
+                constraints=constraints,
+            )
+            use_lifecycle = True
+        else:
+            # Legacy: use hardcoded 20 profiles
+            profiles = None
+            use_lifecycle = False
+
+        total = count if count is not None else len(CASE_PROFILES)
+
         run = self.tracker.get_current_run()
         if not run:
-            run_id = self.tracker.start_run(total_cases=len(CASE_PROFILES))
+            run_id = self.tracker.start_run(total_cases=total)
         else:
             run_id = run["id"]
 
-        logger.info("generating_data", total_profiles=len(CASE_PROFILES))
+        logger.info("generating_data", total_profiles=total, mode="lifecycle" if use_lifecycle else "legacy")
 
         self.cases = []
-        for profile in CASE_PROFILES:
-            case = self.generator.generate_case(profile)
-            self.cases.append(case)
 
-            self.tracker.register_case(
-                run_id=run_id,
-                internal_id=case.internal_id,
-                case_number=case.case_number,
-                stage=case.litigation_stage.value,
-                applicant_name=case.applicant.full_name,
-                employer_name=case.employer.company_name,
-                total_docs=len(case.document_specs),
-            )
-            self.tracker.mark_case_data_generated(case.internal_id)
+        if use_lifecycle:
+            for i, params in enumerate(profiles):
+                case = self.generator.generate_case_from_params(i + 1, params)
+                self.cases.append(case)
+                self._register_case(run_id, case)
 
-            # Register each document
-            for i, doc_spec in enumerate(case.document_specs):
-                filename = _sanitize_filename(
-                    f"{case.internal_id}_{i+1:03d}_{doc_spec.subtype.value}_{doc_spec.doc_date}"
-                )
-                self.tracker.register_document(
-                    case_internal_id=case.internal_id,
-                    filename=filename,
-                    subtype=doc_spec.subtype.value,
-                    title=doc_spec.title,
-                    doc_date=doc_spec.doc_date.isoformat(),
-                )
-
-            logger.info(
-                "case_data_generated",
-                case_id=case.internal_id,
-                applicant=case.applicant.full_name,
-                stage=case.litigation_stage.value,
-                doc_count=len(case.document_specs),
-            )
+                if progress_callback:
+                    progress_callback("case_complete", {
+                        "case_number": i + 1,
+                        "total": total,
+                        "applicant": case.applicant.full_name,
+                        "stage": case.litigation_stage.value,
+                        "docs": len(case.document_specs),
+                    })
+        else:
+            for profile in CASE_PROFILES:
+                case = self.generator.generate_case(profile)
+                self.cases.append(case)
+                self._register_case(run_id, case)
 
         total_docs = sum(len(c.document_specs) for c in self.cases)
         logger.info("data_generation_complete", cases=len(self.cases), total_docs=total_docs)
         return self.cases
 
+    def _register_case(self, run_id: int, case: GeneratedCase) -> None:
+        """Register a case and its documents in the progress tracker."""
+        self.tracker.register_case(
+            run_id=run_id,
+            internal_id=case.internal_id,
+            case_number=case.case_number,
+            stage=case.litigation_stage.value,
+            applicant_name=case.applicant.full_name,
+            employer_name=case.employer.company_name,
+            total_docs=len(case.document_specs),
+        )
+        self.tracker.mark_case_data_generated(case.internal_id)
+
+        # Register each document
+        for i, doc_spec in enumerate(case.document_specs):
+            filename = _sanitize_filename(
+                f"{case.internal_id}_{i+1:03d}_{doc_spec.subtype.value}_{doc_spec.doc_date}"
+            )
+            self.tracker.register_document(
+                case_internal_id=case.internal_id,
+                filename=filename,
+                subtype=doc_spec.subtype.value,
+                title=doc_spec.title,
+                doc_date=doc_spec.doc_date.isoformat(),
+            )
+
+        logger.info(
+            "case_data_generated",
+            case_id=case.internal_id,
+            applicant=case.applicant.full_name,
+            stage=case.litigation_stage.value,
+            doc_count=len(case.document_specs),
+        )
+
     # --- Step 2: Generate PDFs ---
 
-    def generate_pdfs(self) -> dict[str, int]:
+    def generate_pdfs(self, progress_callback: Any = None) -> dict[str, int]:
         """Generate PDF files for all cases."""
         if not self.cases:
             logger.warning("no_cases_loaded", hint="Run generate_data first")
@@ -187,6 +249,14 @@ class Pipeline:
                         case.internal_id, filename, str(output_path)
                     )
                     generated += 1
+
+                    if progress_callback:
+                        progress_callback("pdf_complete", {
+                            "case_id": case.internal_id,
+                            "filename": filename,
+                            "generated": generated,
+                            "total": sum(len(c.document_specs) for c in self.cases),
+                        })
 
                 except Exception as e:
                     logger.error(
@@ -250,7 +320,7 @@ class Pipeline:
         run = self.tracker.get_current_run()
         run_id = run["id"] if run else 0
         if self.audit:
-            self.audit.log_pipeline_start(run_id, len(CASE_PROFILES))
+            self.audit.log_pipeline_start(run_id, len(self.cases) or len(CASE_PROFILES))
 
         # Step 1
         logger.info("pipeline_step", step=1, name="Generate Data")

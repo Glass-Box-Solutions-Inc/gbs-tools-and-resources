@@ -120,6 +120,19 @@ if not MERUSCASE_ACCESS_TOKEN:
 # Generation settings
 RANDOM_SEED = 42
 TOTAL_CASES = 20
+DEFAULT_CASE_COUNT = 20
+MIN_CASE_COUNT = 1
+MAX_CASE_COUNT = 500
+
+# Default stage distribution (proportions, will be normalized)
+DEFAULT_STAGE_DISTRIBUTION = {
+    "intake": 0.15,
+    "active_treatment": 0.25,
+    "discovery": 0.20,
+    "medical_legal": 0.15,
+    "settlement": 0.15,
+    "resolved": 0.10,
+}
 
 # Upload settings
 UPLOAD_DELAY_SECONDS = 0.5

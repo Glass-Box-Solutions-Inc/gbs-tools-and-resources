@@ -2,12 +2,16 @@
 CLI entry point for MerusCase WC Test Data Generator.
 
 Usage:
-    python main.py generate    # Generate data + PDFs
-    python main.py create      # Create cases in MerusCase
-    python main.py upload      # Upload documents
-    python main.py run-all     # Full pipeline
-    python main.py status      # Show progress
-    python main.py verify      # Verify cases in MerusCase
+    python main.py generate                    # Generate data + PDFs (legacy 20 cases)
+    python main.py generate --count 50         # Dynamic 50 cases via lifecycle engine
+    python main.py generate --count 50 --seed 123
+    python main.py generate --count 100 --stages balanced
+    python main.py create                      # Create cases in MerusCase
+    python main.py upload                      # Upload documents
+    python main.py run-all                     # Full pipeline
+    python main.py status                      # Show progress
+    python main.py verify                      # Verify cases in MerusCase
+    python main.py serve                       # Start FastAPI server (Phase 3)
 
 @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 """
@@ -15,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -24,7 +29,8 @@ import structlog
 # Ensure project root is on path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import AUDIT_DB_PATH, AUDIT_HMAC_KEY, DB_PATH, OUTPUT_DIR
+from config import AUDIT_DB_PATH, AUDIT_HMAC_KEY, DB_PATH, OUTPUT_DIR, DEFAULT_CASE_COUNT, MIN_CASE_COUNT, MAX_CASE_COUNT
+from data.case_profile_generator import CaseConstraints, PRESETS
 from orchestration.audit import PipelineAuditLogger
 from orchestration.pipeline import Pipeline
 from orchestration.progress_tracker import ProgressTracker
@@ -70,13 +76,77 @@ def cli():
 
 
 @cli.command()
-def generate():
-    """Step 1+2: Generate case data and PDF documents."""
+@click.option("--count", "-n", type=int, default=None,
+              help=f"Number of cases to generate ({MIN_CASE_COUNT}-{MAX_CASE_COUNT}). "
+                   f"Omit for legacy 20 hardcoded profiles.")
+@click.option("--seed", "-s", type=int, default=None,
+              help="Random seed for reproducible generation (default: 42)")
+@click.option("--stages", type=str, default=None,
+              help="Stage distribution preset: balanced, early_stage, settlement_heavy, complex_litigation. "
+                   "Or JSON dict e.g. '{\"intake\": 0.3, \"resolved\": 0.7}'")
+@click.option("--constraints", type=str, default=None,
+              help="JSON constraints e.g. '{\"min_surgery_cases\": 5, \"attorney_rate\": 0.8}'")
+def generate(count: int | None, seed: int | None, stages: str | None, constraints: str | None):
+    """Step 1+2: Generate case data and PDF documents.
+
+    Without --count, generates the legacy 20 hardcoded case profiles.
+    With --count N, uses the lifecycle engine for dynamic generation.
+    """
     pipeline, tracker = _get_pipeline()
+
+    # Parse stage distribution
+    stage_dist = None
+    if stages:
+        if stages in PRESETS:
+            stage_dist = PRESETS[stages]
+            click.echo(f"Using preset: {stages}")
+        else:
+            try:
+                stage_dist = json.loads(stages)
+            except json.JSONDecodeError:
+                click.echo(f"ERROR: Invalid --stages value. Use a preset name or valid JSON.", err=True)
+                sys.exit(1)
+
+    # Parse constraints
+    case_constraints = None
+    if constraints:
+        try:
+            case_constraints = CaseConstraints(**json.loads(constraints))
+        except (json.JSONDecodeError, Exception) as e:
+            click.echo(f"ERROR: Invalid --constraints JSON: {e}", err=True)
+            sys.exit(1)
+
+    # Validate count
+    if count is not None:
+        if count < MIN_CASE_COUNT or count > MAX_CASE_COUNT:
+            click.echo(f"ERROR: --count must be between {MIN_CASE_COUNT} and {MAX_CASE_COUNT}", err=True)
+            sys.exit(1)
+
     try:
-        click.echo("Step 1: Generating case data...")
-        cases = pipeline.generate_data()
+        mode = "lifecycle engine" if count is not None else "legacy profiles"
+        case_count = count if count is not None else 20
+        click.echo(f"Step 1: Generating {case_count} cases via {mode}...")
+
+        cases = pipeline.generate_data(
+            count=count,
+            seed=seed,
+            stage_distribution=stage_dist,
+            constraints=case_constraints,
+        )
         click.echo(f"  Generated {len(cases)} cases with {sum(len(c.document_specs) for c in cases)} document specs")
+
+        # Show stage breakdown
+        stage_counts: dict[str, int] = {}
+        for c in cases:
+            stage_counts[c.litigation_stage.value] = stage_counts.get(c.litigation_stage.value, 0) + 1
+        click.echo(f"  Stages: {dict(sorted(stage_counts.items()))}")
+
+        # Show subtype count
+        subtypes_used = set()
+        for c in cases:
+            for doc in c.document_specs:
+                subtypes_used.add(doc.subtype.value)
+        click.echo(f"  Distinct subtypes: {len(subtypes_used)}/188")
 
         click.echo("\nStep 2: Generating PDFs...")
         result = pipeline.generate_pdfs()
@@ -321,6 +391,24 @@ def audit(action: str | None, recent_count: int):
                 click.echo(f"  {category}: {count}")
         integrity = "VALID" if result["valid"] else f"INVALID ({len(result['errors'])} errors)"
         click.echo(f"  Chain integrity: {integrity}")
+
+
+@cli.command()
+@click.option("--port", type=int, default=5520, help="Port for FastAPI server (default: 5520)")
+@click.option("--host", type=str, default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
+def serve(port: int, host: str):
+    """Start the FastAPI REST API server (Phase 3)."""
+    try:
+        import uvicorn
+        from service.app import create_app
+    except ImportError as e:
+        click.echo(f"ERROR: FastAPI dependencies not installed. Run: pip install fastapi uvicorn sse-starlette")
+        click.echo(f"  Missing: {e}")
+        sys.exit(1)
+
+    click.echo(f"Starting FastAPI server on {host}:{port}...")
+    app = create_app()
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":

@@ -303,6 +303,80 @@ WPI_RATINGS = {
     "psyche": (5, 30),
 }
 
+# UR Decision templates
+UR_DECISION_TYPES = ["Approved", "Modified", "Denied", "Deferred"]
+
+# IMR Outcome templates
+IMR_OUTCOMES = ["Upheld", "Modified", "Overturned"]
+
+# Lien amount ranges by type
+LIEN_AMOUNT_RANGES = {
+    "medical_provider": (2500, 75000),
+    "hospital": (10000, 250000),
+    "pharmacy": (500, 15000),
+    "attorney_costs": (1000, 25000),
+    "ambulance": (1500, 8000),
+    "self_procurement": (200, 5000),
+    "edd_overpayment": (1000, 30000),
+}
+
+# PD Rating ranges (percentage) by body part
+PD_RATING_RANGES = {
+    "cervical spine": (5, 35),
+    "lumbar spine": (5, 40),
+    "thoracic spine": (3, 20),
+    "shoulder": (5, 30),
+    "knee": (5, 25),
+    "wrist": (3, 18),
+    "hand": (2, 15),
+    "hip": (5, 30),
+    "ankle": (3, 18),
+    "elbow": (3, 15),
+    "psyche": (10, 50),
+    "head": (10, 60),
+    "internal": (5, 40),
+}
+
+# TD Payment rate calculation constants
+TD_RATE_MINIMUM = 242.86  # 2024 CA minimum TD rate (weekly)
+TD_RATE_MAXIMUM = 1619.15  # 2024 CA maximum TD rate (weekly)
+
+# PD Payment rate schedule
+PD_RATE_MINIMUM = 160.00
+PD_RATE_MAXIMUM = 290.00
+
+# Settlement ranges by resolution type
+SETTLEMENT_RANGES = {
+    "stipulations": (15000, 150000),
+    "c_and_r": (20000, 500000),
+    "trial": (25000, 750000),
+}
+
+# Medicare Set-Aside ranges
+MSA_RANGES = (5000, 100000)
+
+# SJDB Voucher amounts by PD percentage
+SJDB_VOUCHER_AMOUNTS = {
+    (15, 24): 6000,
+    (25, 49): 8000,
+    (50, 99): 10000,
+}
+
+# Offer of work types
+OFFER_OF_WORK_TYPES = ["regular", "modified", "alternative"]
+
+# QME Panel specialties
+QME_PANEL_SPECIALTIES = [
+    "Orthopedic Surgery",
+    "Pain Management",
+    "Neurology",
+    "Physical Medicine & Rehabilitation",
+    "Psychiatry",
+    "Internal Medicine",
+    "Chiropractic",
+    "Neurosurgery",
+]
+
 # California cities for addresses
 CA_CITIES = [
     ("Los Angeles", "90001"), ("San Diego", "92101"), ("San Francisco", "94102"),

@@ -1,0 +1,44 @@
+# Docker Compose for local development
+# FastAPI (5520) + Next.js (3000) with hot reload
+#
+# @Developed & Documented by Glass Box Solutions, Inc.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: python3 main.py serve --port 5520 --host 0.0.0.0
+    ports:
+      - "5520:5520"
+    volumes:
+      - ./data:/app/data
+      - ./orchestration:/app/orchestration
+      - ./pdf_templates:/app/pdf_templates
+      - ./service:/app/service
+      - ./output:/app/output
+      - ./main.py:/app/main.py
+      - ./config.py:/app/config.py
+    environment:
+      - OUTPUT_DIR=/app/output
+      - LOG_DIR=/app/logs
+    env_file:
+      - .env
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:5520
+    depends_on:
+      - backend
+
+volumes:
+  frontend_node_modules:
