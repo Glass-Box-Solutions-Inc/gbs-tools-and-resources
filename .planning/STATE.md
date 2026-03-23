@@ -40,7 +40,7 @@
 ## Recent Activity
 
 <!-- SQUEEGEE:AUTO:START recent-activity -->
-- `2026-03-21` v2.0 lifecycle-aware case simulation engine
+- `2026-03-23` Merge pull request #4 from Glass-Box-Solutions-Inc/squeegee/auto-curate-2026-03-23T10-21-37
 <!-- SQUEEGEE:AUTO:END recent-activity -->
 
 ---
