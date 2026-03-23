@@ -10,6 +10,17 @@
           "grade": "B"
         }
       }
+    },
+    {
+      "date": "2026-03-23",
+      "timestamp": "2026-03-23T11:10:45.668Z",
+      "average": 85,
+      "projects": {
+        "gbs-tools-and-resources": {
+          "overall": 85,
+          "grade": "B"
+        }
+      }
     }
   ]
 }

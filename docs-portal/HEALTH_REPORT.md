@@ -27,7 +27,13 @@ F: ░ (0)
 
 ## Trends
 
-*No previous runs available. Trends will appear after the next pipeline run.*
+**Compared to last run:** 2026-03-23
+
+**Overall Average:** 85% (unchanged)
+
+| Project | Current | Previous | Change |
+|---------|---------|----------|--------|
+| gbs-tools-and-resources | 85% | 85% | unchanged |
 
 ---
 

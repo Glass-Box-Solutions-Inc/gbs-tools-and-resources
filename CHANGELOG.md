@@ -8,6 +8,11 @@ All notable changes to this project are documented here. Entries are auto-genera
 ---
 
 <!-- SQUEEGEE:AUTO:START changelog-entries -->
+### 2026-03-23
+
+**Other:**
+- Merge pull request #4 from Glass-Box-Solutions-Inc/squeegee/auto-curate-2026-03-23T10-21-37 (`c27392a`)
+
 ### 2026-03-21
 
 **Added:**
