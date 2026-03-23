@@ -1,0 +1,15 @@
+{
+  "runs": [
+    {
+      "date": "2026-03-23",
+      "timestamp": "2026-03-23T10:21:37.183Z",
+      "average": 85,
+      "projects": {
+        "gbs-tools-and-resources": {
+          "overall": 85,
+          "grade": "B"
+        }
+      }
+    }
+  ]
+}
