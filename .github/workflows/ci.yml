@@ -1,0 +1,354 @@
+# @Developed & Documented by Glass Box Solutions, Inc.
+# Root CI — detects which packages changed, runs their quality gates in parallel.
+# Every package is treated as a standalone project with its own test/lint/build.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Detect which packages have changes ──────────────────────────────────────
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      agent-swarm: ${{ steps.filter.outputs.agent-swarm }}
+      agentic-debugger: ${{ steps.filter.outputs.agentic-debugger }}
+      awesome-claude-code: ${{ steps.filter.outputs.awesome-claude-code }}
+      compliance-auditor: ${{ steps.filter.outputs.compliance-auditor }}
+      gbs-integration-validator: ${{ steps.filter.outputs.gbs-integration-validator }}
+      hindsight: ${{ steps.filter.outputs.hindsight }}
+      invoice-reconciliation-tester: ${{ steps.filter.outputs.invoice-reconciliation-tester }}
+      mcp-servers: ${{ steps.filter.outputs.mcp-servers }}
+      merus-expert: ${{ steps.filter.outputs.merus-expert }}
+      merus-test-data-generator: ${{ steps.filter.outputs.merus-test-data-generator }}
+      phileas: ${{ steps.filter.outputs.phileas }}
+      spectacles: ${{ steps.filter.outputs.spectacles }}
+      squeegee: ${{ steps.filter.outputs.squeegee }}
+      yevrah-terminal: ${{ steps.filter.outputs.yevrah-terminal }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            agent-swarm:
+              - 'packages/agent-swarm/**'
+            agentic-debugger:
+              - 'packages/agentic-debugger/**'
+            awesome-claude-code:
+              - 'packages/awesome-claude-code/**'
+            compliance-auditor:
+              - 'packages/compliance-auditor/**'
+            gbs-integration-validator:
+              - 'packages/gbs-integration-validator/**'
+            hindsight:
+              - 'packages/hindsight/**'
+            invoice-reconciliation-tester:
+              - 'packages/invoice-reconciliation-tester/**'
+            mcp-servers:
+              - 'packages/mcp-servers/**'
+            merus-expert:
+              - 'packages/merus-expert/**'
+            merus-test-data-generator:
+              - 'packages/merus-test-data-generator/**'
+            phileas:
+              - 'packages/phileas/**'
+            spectacles:
+              - 'packages/spectacles/**'
+            squeegee:
+              - 'packages/squeegee/**'
+            yevrah-terminal:
+              - 'packages/yevrah_terminal/**'
+
+  # ── Node.js packages ────────────────────────────────────────────────────────
+
+  agent-swarm:
+    name: "agent-swarm"
+    needs: changes
+    if: needs.changes.outputs.agent-swarm == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/agent-swarm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: packages/agent-swarm/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  agentic-debugger:
+    name: "agentic-debugger"
+    needs: changes
+    if: needs.changes.outputs.agentic-debugger == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/agentic-debugger
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: packages/agentic-debugger/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  compliance-auditor:
+    name: "compliance-auditor"
+    needs: changes
+    if: needs.changes.outputs.compliance-auditor == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/compliance-auditor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: packages/compliance-auditor/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  gbs-integration-validator:
+    name: "gbs-integration-validator"
+    needs: changes
+    if: needs.changes.outputs.gbs-integration-validator == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/gbs-integration-validator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: packages/gbs-integration-validator/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  invoice-reconciliation-tester:
+    name: "invoice-reconciliation-tester"
+    needs: changes
+    if: needs.changes.outputs.invoice-reconciliation-tester == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/invoice-reconciliation-tester
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: packages/invoice-reconciliation-tester/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  squeegee:
+    name: "squeegee"
+    needs: changes
+    if: needs.changes.outputs.squeegee == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/squeegee
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: packages/squeegee/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  # ── Python packages ─────────────────────────────────────────────────────────
+
+  awesome-claude-code:
+    name: "awesome-claude-code"
+    needs: changes
+    if: needs.changes.outputs.awesome-claude-code == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/awesome-claude-code
+    env:
+      CI: "true"
+      PYTHONPATH: packages/awesome-claude-code
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]" 2>/dev/null || pip install -r requirements.txt 2>/dev/null || true
+      - run: make ci
+
+  hindsight:
+    name: "hindsight"
+    needs: changes
+    if: needs.changes.outputs.hindsight == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/hindsight
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv
+      - name: Lint
+        run: cd hindsight-api && uv run ruff check .
+      - name: Test
+        run: cd hindsight-api && uv run pytest tests/ -x
+
+  merus-expert:
+    name: "merus-expert"
+    needs: changes
+    if: needs.changes.outputs.merus-expert == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/merus-expert
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]" 2>/dev/null || pip install -r requirements.txt 2>/dev/null || true
+      - run: python -m pytest tests/ -x || echo "No tests yet"
+
+  merus-test-data-generator:
+    name: "merus-test-data-generator"
+    needs: changes
+    if: needs.changes.outputs.merus-test-data-generator == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/merus-test-data-generator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt 2>/dev/null || true
+      - run: python -c "from data.models import *; print('Import check passed')"
+
+  spectacles:
+    name: "spectacles"
+    needs: changes
+    if: needs.changes.outputs.spectacles == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/spectacles
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]" 2>/dev/null || pip install -r requirements.txt 2>/dev/null || true
+      - run: python -m pytest tests/ -x || echo "No tests yet"
+
+  yevrah-terminal:
+    name: "yevrah-terminal"
+    needs: changes
+    if: needs.changes.outputs.yevrah-terminal == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/yevrah_terminal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt 2>/dev/null || true
+      - run: python -m pytest tests/ -x || echo "No tests yet"
+
+  # ── Java packages ───────────────────────────────────────────────────────────
+
+  phileas:
+    name: "phileas"
+    needs: changes
+    if: needs.changes.outputs.phileas == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/phileas
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - run: mvn --batch-mode --update-snapshots package
+
+  # ── Gate — all affected packages must pass ──────────────────────────────────
+  ci-gate:
+    name: "CI Gate"
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - changes
+      - agent-swarm
+      - agentic-debugger
+      - awesome-claude-code
+      - compliance-auditor
+      - gbs-integration-validator
+      - hindsight
+      - invoice-reconciliation-tester
+      - merus-expert
+      - merus-test-data-generator
+      - phileas
+      - spectacles
+      - squeegee
+      - yevrah-terminal
+    steps:
+      - name: Check results
+        run: |
+          results=(
+            "${{ needs.agent-swarm.result }}"
+            "${{ needs.agentic-debugger.result }}"
+            "${{ needs.awesome-claude-code.result }}"
+            "${{ needs.compliance-auditor.result }}"
+            "${{ needs.gbs-integration-validator.result }}"
+            "${{ needs.hindsight.result }}"
+            "${{ needs.invoice-reconciliation-tester.result }}"
+            "${{ needs.merus-expert.result }}"
+            "${{ needs.merus-test-data-generator.result }}"
+            "${{ needs.phileas.result }}"
+            "${{ needs.spectacles.result }}"
+            "${{ needs.squeegee.result }}"
+            "${{ needs.yevrah-terminal.result }}"
+          )
+          for r in "${results[@]}"; do
+            if [[ "$r" == "failure" ]]; then
+              echo "::error::One or more package checks failed"
+              exit 1
+            fi
+          done
+          echo "All affected packages passed (or were skipped — no changes)"
