@@ -137,6 +137,9 @@ class CaseParameters(BaseModel):
     has_liens: bool = Field(default=False)
     num_body_parts: int = Field(default=1, ge=1, le=5)
 
+    # Complexity scaling — "standard" or "complex" (Salerno-style mega-cases)
+    complexity: str = Field(default="standard", description="standard / complex")
+
     # Target stage — how far the case has progressed
     target_stage: str = Field(
         default="resolved",
@@ -328,9 +331,9 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
     "discovery": [
         NodeDocumentRule("SUBPOENA_SDT_ISSUED", (1, 3), 1.0, date_anchor="doi", date_offset_days=(180, 545)),
         NodeDocumentRule("SUBPOENA_SDT_RECEIVED", (0, 1), 0.3, date_anchor="doi", date_offset_days=(200, 545)),
-        NodeDocumentRule("SUBPOENAED_RECORDS_MEDICAL", (1, 2), 0.9, date_anchor="doi", date_offset_days=(210, 600)),
+        NodeDocumentRule("SUBPOENAED_RECORDS_MEDICAL", (2, 5), 0.9, date_anchor="doi", date_offset_days=(210, 600)),
         NodeDocumentRule("SUBPOENAED_RECORDS_EMPLOYMENT", (0, 1), 0.5, date_anchor="doi", date_offset_days=(210, 600)),
-        NodeDocumentRule("SUBPOENAED_RECORDS_OTHER", (0, 1), 0.2, date_anchor="doi", date_offset_days=(240, 630)),
+        NodeDocumentRule("SUBPOENAED_RECORDS_OTHER", (0, 1), 0.35, date_anchor="doi", date_offset_days=(240, 630)),
         NodeDocumentRule("DEPOSITION_NOTICE_APPLICANT", (1, 1), 0.8, date_anchor="doi", date_offset_days=(270, 600)),
         NodeDocumentRule("DEPOSITION_NOTICE_DEFENDANT", (0, 1), 0.4, date_anchor="doi", date_offset_days=(270, 600)),
         NodeDocumentRule("DEPOSITION_NOTICE_MEDICAL_WITNESS", (0, 1), 0.3, date_anchor="doi", date_offset_days=(300, 630)),
@@ -551,6 +554,7 @@ def collect_documents_for_case(
     """
     stages = walk_lifecycle(params)
     documents: list[tuple[str, NodeDocumentRule]] = []
+    is_complex = params.complexity == "complex"
 
     for stage in stages:
         rules = LIFECYCLE_DOCUMENT_RULES.get(stage.value, [])
@@ -559,12 +563,23 @@ def collect_documents_for_case(
             if not evaluate_condition(rule.condition, params):
                 continue
 
+            # For complex cases: boost probability so more optional docs appear
+            effective_prob = rule.probability
+            if is_complex and effective_prob < 1.0:
+                effective_prob = min(1.0, effective_prob * 2.5)
+
             # Check probability
-            if rule.probability < 1.0 and rng.random() > rule.probability:
+            if effective_prob < 1.0 and rng.random() > effective_prob:
                 continue
 
-            # Determine count
-            count = rng.randint(rule.count[0], rule.count[1])
+            # Determine count — complex cases get 3-5x documents
+            if is_complex:
+                scaled_min = rule.count[0] * 3
+                scaled_max = rule.count[1] * 5
+                count = rng.randint(max(scaled_min, 1), max(scaled_max, scaled_min + 1))
+            else:
+                count = rng.randint(rule.count[0], rule.count[1])
+
             for _ in range(count):
                 documents.append((rule.subtype, rule))
 

@@ -329,6 +329,12 @@ class FakeDataGenerator:
         if params.eval_type in ("qme", "ame"):
             qme = self._generate_physician("qme", params.body_part_category)
 
+        # Generate prior providers for cases with prior medical history
+        prior_providers = self._generate_prior_providers(
+            stage, params.body_part_category, treating,
+            complexity=getattr(params, 'complexity', 'standard'),
+        )
+
         doi = injuries[0].date_of_injury
         timeline = self._generate_timeline_from_params(stage, doi, params)
         venue = random.choice(WCAB_VENUES)
@@ -344,6 +350,7 @@ class FakeDataGenerator:
             injuries=injuries,
             treating_physician=treating,
             qme_physician=qme,
+            prior_providers=prior_providers,
             timeline=timeline,
             venue=venue,
             judge_name=judge,
@@ -367,6 +374,8 @@ class FakeDataGenerator:
 
         docs: list[DocumentSpec] = []
         seq_counters: dict[str, int] = {}
+        # Track subpoenaed medical record index for round-robin provider assignment
+        subpoenaed_medical_idx = 0
 
         for subtype_str, rule in doc_rules:
             # Track sequence per subtype
@@ -387,12 +396,19 @@ class FakeDataGenerator:
                 subtype_str, case, seq, doc_date
             )
 
+            # Build context — wire provider_index for subpoenaed medical records
+            context: dict = {}
+            if subtype_str == "SUBPOENAED_RECORDS_MEDICAL" and case.prior_providers:
+                context["provider_index"] = subpoenaed_medical_idx % len(case.prior_providers)
+                subpoenaed_medical_idx += 1
+
             docs.append(DocumentSpec(
                 subtype=subtype_enum,
                 title=title,
                 doc_date=doc_date,
                 template_class=template_class,
                 sequence_number=seq,
+                context=context,
             ))
 
         docs.sort(key=lambda d: d.doc_date)
@@ -592,6 +608,71 @@ class FakeDataGenerator:
     # -----------------------------------------------------------------
     # Shared helpers (used by both v1 and v2)
     # -----------------------------------------------------------------
+
+    def _generate_prior_providers(
+        self,
+        stage: LitigationStage,
+        body_part_category: str,
+        treating_physician: GeneratedPhysician,
+        complexity: str = "standard",
+    ) -> list[GeneratedPhysician]:
+        """Generate prior providers depending on litigation stage and complexity."""
+        is_complex = complexity == "complex"
+        if stage in (LitigationStage.DISCOVERY, LitigationStage.MEDICAL_LEGAL,
+                     LitigationStage.SETTLEMENT, LitigationStage.RESOLVED):
+            count = random.randint(5, 8) if is_complex else random.randint(2, 5)
+        elif stage in (LitigationStage.INTAKE, LitigationStage.ACTIVE_TREATMENT):
+            count = random.randint(2, 4) if is_complex else random.randint(0, 2)
+        else:
+            count = 0
+
+        if count == 0:
+            return []
+
+        prior_specialty_pool = [
+            "Internal Medicine", "Orthopedic Surgery", "Chiropractic",
+            "Physical Therapy", "Pain Management",
+            "Physical Medicine & Rehabilitation (PM&R)", "Neurology",
+        ]
+        # Avoid same specialty as treating physician
+        available_specialties = [
+            s for s in prior_specialty_pool if s != treating_physician.specialty
+        ]
+        if not available_specialties:
+            available_specialties = prior_specialty_pool
+
+        # Avoid same facility as treating physician
+        available_facilities = [
+            f for f in MEDICAL_FACILITIES if f != treating_physician.facility
+        ]
+        if len(available_facilities) < count:
+            available_facilities = list(MEDICAL_FACILITIES)
+
+        used_facilities = set()
+        providers = []
+        for _ in range(count):
+            specialty = random.choice(available_specialties)
+            # Pick a unique facility
+            remaining = [f for f in available_facilities if f not in used_facilities]
+            if not remaining:
+                remaining = available_facilities
+            facility = random.choice(remaining)
+            used_facilities.add(facility)
+
+            first = self.fake.first_name()
+            last = self.fake.last_name()
+            city, zipcode = random.choice(CA_CITIES)
+            providers.append(GeneratedPhysician(
+                first_name=first,
+                last_name=last,
+                specialty=specialty,
+                facility=facility,
+                address=f"{self.fake.street_address()}, {city}, CA {zipcode}",
+                phone=self.fake.numerify("(###) ###-####"),
+                license_number=self.fake.numerify("A######"),
+                npi=self.fake.numerify("##########"),
+            ))
+        return providers
 
     def _generate_applicant(self) -> GeneratedApplicant:
         first = self.fake.first_name()

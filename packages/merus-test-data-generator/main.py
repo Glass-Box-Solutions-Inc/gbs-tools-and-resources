@@ -82,11 +82,13 @@ def cli():
 @click.option("--seed", "-s", type=int, default=None,
               help="Random seed for reproducible generation (default: 42)")
 @click.option("--stages", type=str, default=None,
-              help="Stage distribution preset: balanced, early_stage, settlement_heavy, complex_litigation. "
+              help="Stage distribution preset: balanced, early_stage, settlement_heavy, complex_litigation, salerno_complex. "
                    "Or JSON dict e.g. '{\"intake\": 0.3, \"resolved\": 0.7}'")
 @click.option("--constraints", type=str, default=None,
               help="JSON constraints e.g. '{\"min_surgery_cases\": 5, \"attorney_rate\": 0.8}'")
-def generate(count: int | None, seed: int | None, stages: str | None, constraints: str | None):
+@click.option("--complexity", type=click.Choice(["standard", "complex"]), default="standard",
+              help="Case complexity: standard or complex (Salerno-style mega-cases)")
+def generate(count: int | None, seed: int | None, stages: str | None, constraints: str | None, complexity: str):
     """Step 1+2: Generate case data and PDF documents.
 
     Without --count, generates the legacy 20 hardcoded case profiles.
@@ -132,6 +134,7 @@ def generate(count: int | None, seed: int | None, stages: str | None, constraint
             seed=seed,
             stage_distribution=stage_dist,
             constraints=case_constraints,
+            complexity=complexity,
         )
         click.echo(f"  Generated {len(cases)} cases with {sum(len(c.document_specs) for c in cases)} document specs")
 

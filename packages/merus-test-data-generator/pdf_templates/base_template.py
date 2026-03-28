@@ -211,6 +211,19 @@ class BaseTemplate:
         return HRFlowable(width="100%", thickness=0.5, color=colors.grey)
 
     def _add_footer(self, canvas, doc) -> None:
+        # --- Watermark (top of page, OCR-resistant) ---
+        canvas.saveState()
+        canvas.setFillAlpha(0.07)  # 7% opacity — below OCR binarization threshold
+        canvas.setFillColor(colors.HexColor("#888888"))
+        canvas.setFont("Helvetica-Bold", 16)
+        text = "GBS Generated"
+        text_width = canvas.stringWidth(text, "Helvetica-Bold", 16)
+        x = (letter[0] - text_width) / 2  # Centered horizontally
+        y = letter[1] - 0.45 * inch       # Top margin area
+        canvas.drawString(x, y, text)
+        canvas.restoreState()
+
+        # --- Footer ---
         canvas.saveState()
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(colors.HexColor("#999999"))
@@ -247,6 +260,49 @@ class BaseTemplate:
             "Sensory examination reveals diminished light touch in the affected dermatome.",
             "Patient demonstrates functional limitations consistent with objective findings.",
             "No evidence of malingering or symptom magnification on Waddell's testing.",
+            # Expanded pool — general clinical sentences
+            "Motor strength is graded 4+/5 in the affected muscle group, a slight decrease from prior examination.",
+            "Inspection reveals no erythema, ecchymosis, or open wounds in the affected area.",
+            "Joint stability testing reveals no instability; ligamentous structures appear intact.",
+            "The patient demonstrates appropriate effort during examination; no inconsistencies noted.",
+            "Palpation of the paravertebral musculature reveals bilateral muscle spasm, left greater than right.",
+            "Peripheral pulses are intact and symmetric in the upper and lower extremities.",
+            "Skin examination reveals no trophic changes, suggesting adequate vascular supply.",
+            "The patient reports difficulty with prolonged sitting beyond 30 minutes due to increased symptoms.",
+            "Coordination testing is within normal limits; no dysmetria or tremor observed.",
+            "Active range of motion produces pain at end range; passive motion exceeds active by approximately 10 degrees.",
+            "The patient's subjective complaints are consistent with the objective examination findings.",
+            "No atrophy is noted on visual inspection or circumferential measurements of the extremities.",
+            "Reflexes are brisk at 3+ at the patella bilaterally but without clonus.",
+            "The patient demonstrates a slow, deliberate gait pattern with slightly shortened stride length.",
+            "Cervical spine examination reveals restricted rotation to the right with reproduction of concordant symptoms.",
+            "Upper extremity motor examination is 5/5 throughout; grip strength is symmetric bilaterally.",
+            "Lower extremity sensation is intact to light touch, pinprick, and vibration in all dermatomes tested.",
+            "The patient's body habitus is noted; BMI is in the overweight range which may be a contributing factor.",
+            "No lymphadenopathy or thyromegaly is appreciated on cervical examination.",
+            "Cardiovascular examination reveals regular rate and rhythm without murmurs, rubs, or gallops.",
+            "Respiratory examination reveals clear lung fields bilaterally with no adventitious sounds.",
+            "Abdominal examination is benign; no tenderness, guarding, or masses appreciated.",
+            "The patient was examined in both seated and supine positions to assess for positional variance.",
+            "Provocative maneuvers are consistently positive, supporting the clinical diagnosis.",
+            "The examiner notes that findings are reproducible across repeated testing during this examination.",
+            "Functional capacity is estimated at the sedentary to light physical demand level based on clinical assessment.",
+            "Patient demonstrates difficulty transitioning from seated to standing position, requiring use of armrests.",
+            "Bilateral hand grip strength is reduced compared to age-matched normative values.",
+            "Examination of the contralateral extremity reveals normal findings, serving as an internal control.",
+            "No signs of complex regional pain syndrome (CRPS) are observed; no allodynia, color changes, or temperature asymmetry.",
+            "The patient's effort during manual muscle testing is assessed as appropriate and consistent.",
+            "Tandem gait is performed without difficulty; Romberg test is negative.",
+            "The patient is able to remove shoes and socks independently but reports difficulty with sock application.",
+            "Observation of spontaneous movements during the interview reveals occasional guarding with position changes.",
+            "Vital signs are within normal limits: blood pressure, heart rate, and respiratory rate are unremarkable.",
+            "The patient's pain behaviors during examination are proportionate to the reported complaint.",
+            "No surgical scars are observed in the region of complaint.",
+            "The patient maintains good eye contact and appears to provide a reliable history.",
+            "Cognitive function appears grossly intact during the clinical interview.",
+            "Manual muscle testing of the core stabilizers reveals mild weakness on the affected side.",
+            "The neurovascular status of the affected extremity is intact distally.",
+            "Skin turgor and capillary refill are normal in the affected extremity.",
         ]
         return " ".join(random.sample(pool, min(sentences, len(pool))))
 
@@ -267,6 +323,39 @@ class BaseTemplate:
             "The employer had knowledge of the injury and timely reported same to the carrier.",
             "All statutory notices have been provided to the applicant as required by law.",
             "The matter is set for hearing before the Workers' Compensation Appeals Board.",
+            # Expanded pool — legal sentences
+            "Pursuant to Labor Code section 4660.1, permanent disability shall be determined using the AMA Guides, Fifth Edition.",
+            "The applicant's average weekly earnings at the time of injury establish the applicable indemnity rate.",
+            "Defendant disputes the nature and extent of permanent disability as alleged by applicant.",
+            "The treating physician's opinion on causation and apportionment is substantial medical evidence per LC §4061.",
+            "Applicant contends that the industrial injury is a contributing cause of the need for medical treatment.",
+            "The parties stipulate to the date of injury, employer-employee relationship, and jurisdiction of the WCAB.",
+            "Defendant reserves the right to present evidence of apportionment under LC §4663 and §4664.",
+            "The matter has been designated as a priority conference per 8 CCR §10205.10.",
+            "Applicant has complied with all discovery requests and statutory reporting requirements.",
+            "The defense medical evaluator's opinions are controverted by the treating physician's findings.",
+            "Penalties and interest may be applicable if benefits are not timely provided per LC §5814.",
+            "The applicant's claim for self-procured medical treatment is supported by documentation of the carrier's failure to provide timely care.",
+            "Defendant has issued a Notice of Offer of Modified or Alternative Work per DWC Form AD 10118.",
+            "Applicant seeks reimbursement of reasonable litigation costs and expenses per 8 CCR §10451.",
+            "The matter is ripe for adjudication of all disputed issues.",
+            "Pursuant to LC §4062.2, the QME panel was properly requested and the evaluator selected.",
+            "Applicant's vocational expert has determined diminished future earning capacity attributable to the industrial injury.",
+            "The utilization review process has been exhausted and the matter is appropriate for IMR per LC §4610.5.",
+            "Defendant contends that the applicant has reached maximum medical improvement with no ratable permanent disability.",
+            "The applicant's entitlement to supplemental job displacement benefit (SJDB) voucher is established per LC §4658.7.",
+            "Applicant has been temporarily totally disabled and unable to return to any employment since the date of injury.",
+            "The employer failed to offer regular, modified, or alternative work within 60 days of the P&S date per LC §4658.6.",
+            "Applicant's claim for future medical treatment is supported by the QME's recommendation for ongoing care.",
+            "The parties are engaged in good faith settlement negotiations pursuant to the mandatory settlement conference.",
+            "Discovery cut-off is approaching; all outstanding discovery must be completed prior to the trial date.",
+            "The applicant's testimony at trial will establish the mechanism of injury and resulting disability.",
+            "Medical evidence establishes that the industrial injury is the predominant cause of the applicant's psychiatric condition per LC §3208.3.",
+            "The defense has not timely responded to applicant's discovery requests, and sanctions may be sought.",
+            "The applicant is entitled to reasonable attorney's fees pursuant to LC §4903.1.",
+            "Settlement discussions have been ongoing; a mandatory settlement conference is scheduled.",
+            "The case involves multiple body parts with potential combined impairment exceeding 50% whole person.",
+            "Applicant's case-in-chief will include testimony, medical records, and expert medical opinions.",
         ]
         return " ".join(random.sample(pool, min(sentences, len(pool))))
 
@@ -283,5 +372,115 @@ class BaseTemplate:
             "Enclosed please find copies of all relevant documentation for your records.",
             "Thank you for your prompt attention to this matter.",
             "We respectfully request a response within thirty (30) days of the date of this letter.",
+            # Expanded pool — correspondence sentences
+            "As discussed during our telephone conference, the following issues remain outstanding.",
+            "We are in receipt of your letter dated the above date and respond as follows.",
+            "Please be advised that our client's position on this matter remains unchanged.",
+            "This office represents the applicant in the above-referenced workers' compensation matter.",
+            "We have been retained by the carrier to defend the employer in this claim.",
+            "Pursuant to your request, we are providing the following updated medical records.",
+            "We wish to bring to your attention the recent QME report which supports our client's position.",
+            "Please confirm receipt of the enclosed documents and advise of any additional information needed.",
+            "We note that the statutory deadline for response is approaching and request your timely reply.",
+            "The applicant has authorized the release of medical records for the purpose of this claim.",
+            "We are scheduling a mandatory settlement conference and request available dates from all parties.",
+            "This correspondence is without prejudice to any rights, claims, or defenses of the parties.",
+            "Please direct all future correspondence regarding this matter to the undersigned.",
+            "We have reviewed the utilization review determination and intend to file an IMR request.",
+            "The enclosed medical report should be reviewed in conjunction with the previously submitted records.",
+            "We request that you authorize the recommended treatment as outlined in the attached Request for Authorization.",
+            "The applicant continues to experience symptoms and requires ongoing medical treatment.",
+            "We acknowledge receipt of the Notice of Offer of Work and will respond within the statutory timeframe.",
+            "Please provide updated benefit payment records for our review and reconciliation.",
+            "We request a copy of the complete claims file for our records.",
+            "The enclosed invoice represents costs incurred in connection with the applicant's medical treatment.",
+            "We anticipate that this matter can be resolved through informal negotiation.",
+            "Your cooperation in facilitating the applicant's return to work is appreciated.",
+            "We are providing this status update as required under our reporting obligations.",
+            "The applicant's current work status and restrictions are detailed in the attached physician report.",
         ]
         return " ".join(random.sample(pool, min(sentences, len(pool))))
+
+    # --- Specialty-aware content helpers ---
+
+    def specialty_exam_findings(self, count: int = 8) -> str:
+        """Get specialty-specific exam findings based on physician specialty."""
+        from data.content_pools import get_exam_findings
+        specialty = (
+            getattr(self.case, 'qme_physician', None) and self.case.qme_physician.specialty
+        ) or self.case.treating_physician.specialty
+        body_parts = self.case.injuries[0].body_parts if self.case.injuries else []
+        return get_exam_findings(specialty, body_parts, count)
+
+    def rom_findings_table(self) -> Table:
+        """Generate a ROM measured-vs-normal table for case body parts."""
+        from data.content_pools import get_rom_table
+        body_parts = self.case.injuries[0].body_parts if self.case.injuries else []
+        rom_data = get_rom_table(body_parts)
+        if not rom_data:
+            return Spacer(1, 0)  # No ROM data available
+
+        table_data = [["Body Part", "Movement", "Normal", "Measured", "Deficit"]]
+        for row in rom_data:
+            table_data.append([
+                row["body_part"].title(),
+                row["movement"],
+                row["normal"],
+                row["measured"],
+                row["deficit"],
+            ])
+
+        t = Table(table_data, colWidths=[1.3 * inch, 1.5 * inch, 0.8 * inch, 0.9 * inch, 0.7 * inch])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 8),
+            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 1), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            *[("BACKGROUND", (0, i), (-1, i), colors.HexColor("#f8f9fa"))
+              for i in range(2, len(table_data), 2)],
+        ]))
+        return t
+
+    def impairment_rating_section(self) -> list:
+        """Generate full AMA Guides impairment narrative as reportlab elements."""
+        from data.ama_guides_content import generate_impairment_narrative
+        body_parts = self.case.injuries[0].body_parts if self.case.injuries else []
+        specialty = (
+            getattr(self.case, 'qme_physician', None) and self.case.qme_physician.specialty
+        ) or self.case.treating_physician.specialty
+        apportionment_pct = random.choice([0, 0, 0, 10, 15, 20, 25])
+        narrative, total_wpi, ratings = generate_impairment_narrative(
+            body_parts, specialty, apportionment_pct
+        )
+        elements = [
+            Paragraph("<b>IMPAIRMENT RATING — AMA GUIDES 5TH EDITION</b>", self.styles["SectionHeader"]),
+            Spacer(1, 0.1 * inch),
+        ]
+        for para in narrative.split("\n"):
+            if para.strip():
+                elements.append(Paragraph(para, self.styles["BodyText14"]))
+        elements.append(Spacer(1, 0.15 * inch))
+        return elements
+
+    def medical_record_review_list(self, doc_date) -> str:
+        """Generate a detailed list of reviewed medical records."""
+        from data.content_pools import get_record_review_items
+        body_parts = self.case.injuries[0].body_parts if self.case.injuries else []
+        position = self.case.employer.position
+        items = get_record_review_items(body_parts, position, count=random.randint(12, 20))
+        return "\n".join([f"• {item}" for item in items])
+
+    def mtus_rationale(self, decision_type: str, count: int = 4) -> str:
+        """Generate MTUS-citation-rich clinical rationale."""
+        from data.content_pools import get_clinical_rationale, get_mtus_citations
+        body_parts = self.case.injuries[0].body_parts if self.case.injuries else []
+        rationale = get_clinical_rationale(decision_type, body_parts, count)
+        citations = get_mtus_citations(body_parts, count=3)
+        citations_str = "\n".join([f"• {c}" for c in citations])
+        return f"{rationale}\n\n<b>Applicable Guidelines:</b>\n{citations_str}"

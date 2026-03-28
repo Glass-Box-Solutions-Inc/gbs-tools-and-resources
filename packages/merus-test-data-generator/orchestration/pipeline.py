@@ -101,6 +101,7 @@ class Pipeline:
         stage_distribution: dict[str, float] | None = None,
         constraints: CaseConstraints | None = None,
         progress_callback: Any = None,
+        complexity: str = "standard",
     ) -> list[GeneratedCase]:
         """Generate all case data objects.
 
@@ -110,6 +111,7 @@ class Pipeline:
             stage_distribution: Dict mapping stage names to proportions.
             constraints: CaseConstraints for dynamic generation.
             progress_callback: Optional callable(event, data) for SSE progress.
+            complexity: "standard" or "complex" (Salerno-style mega-cases).
         """
         effective_seed = seed if seed is not None else RANDOM_SEED
         self.generator = FakeDataGenerator(seed=effective_seed)
@@ -122,6 +124,7 @@ class Pipeline:
                 seed=effective_seed,
                 stage_distribution=stage_distribution,
                 constraints=constraints,
+                complexity=complexity,
             )
             use_lifecycle = True
         else:

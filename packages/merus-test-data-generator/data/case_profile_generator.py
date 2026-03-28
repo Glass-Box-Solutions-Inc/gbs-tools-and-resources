@@ -83,6 +83,14 @@ PRESETS: dict[str, dict[str, float]] = {
         "settlement": 0.20,
         "resolved": 0.15,
     },
+    "salerno_complex": {
+        "intake": 0.0,
+        "active_treatment": 0.0,
+        "discovery": 0.10,
+        "medical_legal": 0.10,
+        "settlement": 0.40,
+        "resolved": 0.40,
+    },
 }
 
 
@@ -113,6 +121,7 @@ class CaseProfileGenerator:
         seed: int = 42,
         stage_distribution: dict[str, float] | None = None,
         constraints: CaseConstraints | None = None,
+        complexity: str = "standard",
     ) -> list[CaseParameters]:
         """Generate `count` case profiles with the given distribution and constraints.
 
@@ -121,6 +130,7 @@ class CaseProfileGenerator:
             seed: Random seed for reproducibility
             stage_distribution: Dict mapping stage names to proportions (must sum to ~1.0)
             constraints: Minimum counts and rate targets
+            complexity: "standard" or "complex" (Salerno-style mega-cases)
 
         Returns:
             List of CaseParameters, one per case to generate
@@ -128,6 +138,7 @@ class CaseProfileGenerator:
         rng = random.Random(seed)
         constraints = constraints or CaseConstraints()
         dist = stage_distribution or DEFAULT_STAGE_DISTRIBUTION
+        is_complex = complexity == "complex"
 
         # Normalize distribution
         total = sum(dist.values())
@@ -142,16 +153,31 @@ class CaseProfileGenerator:
         # Build base profiles
         profiles: list[CaseParameters] = []
         for i, stage in enumerate(stage_assignments):
-            profile = CaseParameters(
-                target_stage=stage,
-                has_attorney=rng.random() < constraints.attorney_rate,
-                has_surgery=rng.random() < constraints.surgery_rate,
-                has_psych_component=rng.random() < constraints.psych_rate,
-                has_ur_dispute=rng.random() < constraints.ur_dispute_rate,
-                has_liens=rng.random() < constraints.lien_rate,
-                imr_filed=rng.random() < constraints.imr_rate,
-                num_body_parts=rng.choices([1, 2, 3], weights=[0.55, 0.30, 0.15])[0],
-            )
+            if is_complex:
+                # Salerno-style: everything enabled, max body parts
+                profile = CaseParameters(
+                    target_stage=stage,
+                    complexity="complex",
+                    has_attorney=True,
+                    has_surgery=True,
+                    has_psych_component=True,
+                    has_ur_dispute=True,
+                    has_liens=rng.random() < 0.70,
+                    imr_filed=rng.random() < 0.60,
+                    num_body_parts=rng.choices([3, 4, 5], weights=[0.25, 0.45, 0.30])[0],
+                    injury_type=rng.choice(["cumulative_trauma", "specific"]),
+                )
+            else:
+                profile = CaseParameters(
+                    target_stage=stage,
+                    has_attorney=rng.random() < constraints.attorney_rate,
+                    has_surgery=rng.random() < constraints.surgery_rate,
+                    has_psych_component=rng.random() < constraints.psych_rate,
+                    has_ur_dispute=rng.random() < constraints.ur_dispute_rate,
+                    has_liens=rng.random() < constraints.lien_rate,
+                    imr_filed=rng.random() < constraints.imr_rate,
+                    num_body_parts=rng.choices([1, 2, 3], weights=[0.55, 0.30, 0.15])[0],
+                )
             # Resolve random fields
             profile = profile.resolve_random(rng)
             profiles.append(profile)

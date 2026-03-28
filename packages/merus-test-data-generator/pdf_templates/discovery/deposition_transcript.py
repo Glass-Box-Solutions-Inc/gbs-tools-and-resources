@@ -1,288 +1,255 @@
 """
 Deposition Transcript template for Workers' Compensation discovery.
 
+Uses topic-organized Q&A pools from data/deposition_exchanges.py to generate
+80-150 exchange depositions (10-30 pages) with objections, exhibits, and time markers.
+
 @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 """
 
-from pdf_templates.base_template import BaseTemplate
-from reportlab.platypus import Paragraph, Spacer, PageBreak
-from reportlab.lib.units import inch
-from datetime import timedelta
 import random
+
+from reportlab.lib.units import inch
+from reportlab.platypus import PageBreak, Paragraph, Spacer
+
+from data.deposition_exchanges import (
+    generate_deposition_exchanges,
+    generate_exhibit_reference,
+    generate_objection,
+    generate_time_marker,
+)
+from pdf_templates.base_template import BaseTemplate
 
 
 class DepositionTranscript(BaseTemplate):
-    """Generates a deposition transcript in Q&A format."""
+    """Generates a deposition transcript in Q&A format with realistic length."""
 
     def build_story(self, doc_spec):
-        """Build the deposition transcript story."""
+        """Build deposition transcript — 10-30 pages."""
         story = []
 
-        # Cover page
-        story.append(Spacer(1, 1.5 * inch))
-        story.append(Paragraph("DEPOSITION OF", self.styles["CenterBold"]))
-        story.append(Spacer(1, 0.2 * inch))
-        story.append(Paragraph(self.case.applicant.full_name.upper(), self.styles["CenterBold"]))
-        story.append(Spacer(1, 0.5 * inch))
-
-        case_info = f"""
-        Case: {self.case.applicant.full_name} v. {self.case.employer.company_name}<br/>
-        ADJ No.: {self.case.injuries[0].adj_number}<br/>
-        <br/>
-        Date: {doc_spec.doc_date.strftime('%B %d, %Y')}<br/>
-        Time: 10:00 A.M.<br/>
-        Location: {self.case.insurance.defense_firm}
-        """
-        story.append(Paragraph(case_info, self.styles["CenterBold"]))
-        story.append(Spacer(1, 0.5 * inch))
-
-        # Reporter info
+        # Reporter info (used across cover, cert, and final cert)
         reporter_names = [
-            "Jennifer Martinez",
-            "Robert Chen",
-            "Sarah Williams",
-            "Michael Johnson",
-            "Lisa Thompson"
+            "Jennifer Martinez", "Robert Chen", "Sarah Williams",
+            "Michael Johnson", "Lisa Thompson", "Patricia Nguyen",
+            "David Morales", "Karen O'Brien",
         ]
         reporter_name = random.choice(reporter_names)
         reporter_number = random.randint(5000, 15000)
 
-        reporter_info = f"""
-        Reported by:<br/>
-        {reporter_name}<br/>
-        Certified Shorthand Reporter No. {reporter_number}
-        """
-        story.append(Paragraph(reporter_info, self.styles["CenterBold"]))
-        story.append(PageBreak())
+        # --- Cover page ---
+        story.extend(self._build_cover_page(doc_spec, reporter_name, reporter_number))
 
-        # Certification page
-        cert_text = f"""
-        <b>CERTIFICATION</b><br/>
-        <br/>
-        I, {reporter_name}, a Certified Shorthand Reporter for the State of California,
-        do hereby certify:<br/>
-        <br/>
-        That prior to being examined, the witness named in the foregoing deposition was by me
-        duly sworn to testify to the truth, the whole truth, and nothing but the truth;<br/>
-        <br/>
-        That said deposition is a true record of the testimony given by said witness;<br/>
-        <br/>
-        That I am neither counsel for, nor related to, any party to said action, nor in any way
-        interested in the outcome thereof.<br/>
-        <br/>
-        IN WITNESS WHEREOF, I have hereunto set my hand this {doc_spec.doc_date.strftime('%d day of %B, %Y')}.<br/>
-        <br/>
-        <br/>
-        _______________________________<br/>
-        {reporter_name}<br/>
-        CSR No. {reporter_number}
-        """
-        story.append(Paragraph(cert_text, self.styles["BodyText14"]))
-        story.append(PageBreak())
+        # --- Certification page ---
+        story.extend(self._build_certification(doc_spec, reporter_name, reporter_number))
 
-        # Appearances
-        story.append(Paragraph("<b>APPEARANCES</b>", self.styles["SectionHeader"]))
-        story.append(Spacer(1, 0.2 * inch))
+        # --- Appearances ---
+        story.extend(self._build_appearances())
 
-        appearances = f"""
-        For Defendant:<br/>
-        {self.case.insurance.defense_attorney}<br/>
-        {self.case.insurance.defense_firm}<br/>
-        <br/>
-        For Applicant:<br/>
-        {self.case.applicant.full_name}<br/>
-        Appearing in Pro Per
-        """
-        story.append(Paragraph(appearances, self.styles["BodyText14"]))
-        story.append(Spacer(1, 0.3 * inch))
-
-        # Examination header
+        # --- Examination header ---
         story.append(self.make_hr())
         story.append(Spacer(1, 0.2 * inch))
         story.append(Paragraph(
             f"<b>EXAMINATION BY {self.case.insurance.defense_attorney}</b>",
-            self.styles["SectionHeader"]
+            self.styles["SectionHeader"],
         ))
         story.append(Spacer(1, 0.2 * inch))
 
-        # Generate Q&A exchanges
+        # --- Generate Q&A exchanges ---
+        # More exchanges = more pages. Target 10-30 pages requires 100-200+ exchanges
+        # at ~8-10 exchanges per page in Courier 10pt
+        exchanges = generate_deposition_exchanges(self.case, min_exchanges=100, max_exchanges=180)
+
+        # Determine objection and exhibit insertion points
+        total = len(exchanges)
+        objection_count = random.randint(5, 10)
+        exhibit_count = random.randint(3, 5)
+        time_marker_count = random.randint(2, 4)
+
+        objection_indices = set(random.sample(range(10, total - 5), min(objection_count, total - 15)))
+        exhibit_indices = set(random.sample(range(15, total - 10), min(exhibit_count, total - 25)))
+        # Time markers at roughly evenly-spaced points
+        time_marker_positions = set()
+        if total > 30:
+            segment = total // (time_marker_count + 1)
+            for i in range(1, time_marker_count + 1):
+                time_marker_positions.add(segment * i + random.randint(-3, 3))
+
         line_num = 1
-        exchanges = []
+        exhibit_num = 1
 
-        # Background questions
-        exchanges.append((
-            f"Q. Good morning. Could you please state your full name for the record?",
-            f"A. {self.case.applicant.full_name}."
-        ))
+        for idx, (q, a) in enumerate(exchanges):
+            # Insert time marker before this exchange
+            if idx in time_marker_positions:
+                marker = generate_time_marker()
+                story.append(Spacer(1, 0.15 * inch))
+                story.append(Paragraph(
+                    f"<i>{marker}</i>", self.styles["SmallItalic"],
+                ))
+                story.append(Spacer(1, 0.15 * inch))
 
-        exchanges.append((
-            f"Q. And what is your date of birth?",
-            f"A. {self.case.applicant.date_of_birth.strftime('%B %d, %Y')}."
-        ))
+            # Insert exhibit reference before this exchange
+            if idx in exhibit_indices:
+                exhibit_text = generate_exhibit_reference(exhibit_num, self.case)
+                story.append(Spacer(1, 0.1 * inch))
+                story.append(Paragraph(
+                    f"{line_num:>3}  Q. {exhibit_text}", self.styles["Transcript"],
+                ))
+                line_num += 1
+                story.append(Paragraph(
+                    f"{line_num:>3}  A. {random.choice(['Yes, I recognize that', 'I believe so', 'Yes, that looks familiar', 'Let me take a look. Yes, I recognize it'])}.",
+                    self.styles["Transcript"],
+                ))
+                line_num += 1
+                story.append(Spacer(1, 0.1 * inch))
+                exhibit_num += 1
 
-        exchanges.append((
-            f"Q. What is your current address?",
-            f"A. {self.case.applicant.address_street}, {self.case.applicant.address_city}, California, {self.case.applicant.address_zip}."
-        ))
-
-        # Employment questions
-        exchanges.append((
-            f"Q. When did you begin working for {self.case.employer.company_name}?",
-            f"A. I started on {self.case.employer.hire_date.strftime('%B %d, %Y')}."
-        ))
-
-        exchanges.append((
-            f"Q. What was your position?",
-            f"A. I was a {self.case.employer.position}."
-        ))
-
-        exchanges.append((
-            f"Q. Can you describe your typical job duties?",
-            f"A. I would {random.choice(['handle materials', 'operate machinery', 'work at a desk', 'serve customers', 'manage inventory'])} "
-            f"and {random.choice(['lift boxes', 'stand for long periods', 'use computers', 'drive vehicles', 'assist coworkers'])}. "
-            f"It was pretty physical work."
-        ))
-
-        # Injury questions
-        injury_parts = ", ".join(self.case.injuries[0].body_parts[:2]) if len(self.case.injuries[0].body_parts) > 1 else self.case.injuries[0].body_parts[0]
-
-        exchanges.append((
-            f"Q. Can you describe the incident that occurred on {self.case.injuries[0].date_of_injury.strftime('%B %d, %Y')}?",
-            f"A. {self.case.injuries[0].description} I immediately felt pain in my {injury_parts}."
-        ))
-
-        exchanges.append((
-            f"Q. Did you report the injury to your supervisor?",
-            f"A. Yes, I reported it {random.choice(['right away', 'the same day', 'within an hour', 'immediately'])}. "
-            f"I told {random.choice(['my supervisor', 'the manager', 'HR'])} what happened."
-        ))
-
-        exchanges.append((
-            f"Q. What symptoms did you experience immediately after the injury?",
-            f"A. I had {random.choice(['sharp', 'severe', 'intense', 'stabbing'])} pain in my {injury_parts}. "
-            f"I also had {random.choice(['difficulty moving', 'numbness', 'tingling', 'weakness', 'swelling'])}."
-        ))
-
-        # Medical treatment questions
-        exchanges.append((
-            f"Q. Did you seek medical treatment?",
-            f"A. Yes, I saw Dr. {self.case.treating_physician.full_name} at {self.case.treating_physician.facility}."
-        ))
-
-        exchanges.append((
-            f"Q. What treatment did Dr. {self.case.treating_physician.full_name.split()[-1]} provide?",
-            f"A. {random.choice(['Physical therapy', 'Medication', 'Injections', 'Surgery was discussed', 'Conservative treatment'])}. "
-            f"I've been going to appointments {random.choice(['weekly', 'twice a week', 'every two weeks', 'monthly'])}."
-        ))
-
-        exchanges.append((
-            f"Q. Are you currently taking any medications for your injury?",
-            f"A. Yes, I take {random.choice(['ibuprofen', 'naproxen', 'prescription pain medication', 'muscle relaxers'])} "
-            f"as needed for the pain."
-        ))
-
-        exchanges.append((
-            f"Q. Have you undergone any surgical procedures?",
-            f"A. {random.choice(['No, not yet', 'No, Dr. ' + self.case.treating_physician.full_name.split()[-1] + ' wants to try conservative treatment first', 'Yes, I had surgery', 'It has been recommended but not scheduled yet'])}."
-        ))
-
-        # Current condition questions
-        exchanges.append((
-            f"Q. How would you describe your pain level today?",
-            f"A. On a scale of one to ten, it's usually around {random.randint(5, 8)}. "
-            f"Some days are better than others."
-        ))
-
-        exchanges.append((
-            f"Q. What activities are you unable to do because of this injury?",
-            f"A. I can't {random.choice(['lift heavy objects', 'stand for long periods', 'sit comfortably', 'reach overhead', 'bend down easily'])}. "
-            f"Even {random.choice(['sleeping', 'driving', 'household chores', 'exercising'])} is difficult."
-        ))
-
-        exchanges.append((
-            f"Q. Has your doctor placed any work restrictions on you?",
-            f"A. Yes, I'm restricted to {random.choice(['light duty', 'no lifting over 10 pounds', 'sedentary work', 'modified duty'])}."
-        ))
-
-        exchanges.append((
-            f"Q. Are you currently working?",
-            f"A. {random.choice(['No, I have been off work since the injury', 'Yes, but on modified duty', 'No, I was laid off', 'I tried to return but could not perform my duties'])}."
-        ))
-
-        # Prior injuries
-        exchanges.append((
-            f"Q. Did you have any injuries to your {injury_parts} prior to this incident?",
-            f"A. {random.choice(['No, never', 'No, this was the first time', 'I had minor soreness from time to time, but nothing like this', 'No previous injuries'])}."
-        ))
-
-        exchanges.append((
-            f"Q. Have you ever filed a workers' compensation claim before?",
-            f"A. {random.choice(['No, this is my first claim', 'No', 'Never before this incident'])}."
-        ))
-
-        # Impact questions
-        exchanges.append((
-            f"Q. How has this injury affected your daily life?",
-            f"A. It's been very difficult. I can't do things I used to do. "
-            f"{random.choice(['My family has to help me', 'I need assistance with basic tasks', 'I cannot participate in activities I enjoyed', 'I struggle with everyday activities'])}."
-        ))
-
-        exchanges.append((
-            f"Q. What is your goal for treatment?",
-            f"A. I just want to {random.choice(['get back to work', 'reduce my pain', 'return to my normal activities', 'be able to function without pain'])}. "
-            f"I want to get better."
-        ))
-
-        # Closing
-        exchanges.append((
-            f"Q. Is there anything else you think I should know about this injury?",
-            f"A. {random.choice(['Just that it has changed my life significantly', 'I wish this had never happened', 'I am doing my best to recover', 'I am following all of my treatment recommendations'])}."
-        ))
-
-        # Format Q&A with line numbers
-        for q, a in exchanges:
-            # Question with line numbers
-            q_lines = [f"{line_num:>3}  {q}"]
+            # Question
+            story.append(Paragraph(f"{line_num:>3}  {q}", self.styles["Transcript"]))
             line_num += 1
-            story.append(Paragraph("<br/>".join(q_lines), self.styles["Transcript"]))
             story.append(Spacer(1, 0.1 * inch))
 
-            # Answer with line numbers
-            a_lines = [f"{line_num:>3}  {a}"]
+            # Insert objection after question, before answer
+            if idx in objection_indices:
+                objection = generate_objection()
+                story.append(Paragraph(
+                    f"{line_num:>3}  MR./MS. ATTORNEY: {objection}",
+                    self.styles["Transcript"],
+                ))
+                line_num += 1
+                story.append(Paragraph(
+                    f"{line_num:>3}  THE WITNESS: {random.choice(['Can I still answer?', ''])}",
+                    self.styles["Transcript"],
+                ))
+                line_num += 1
+                story.append(Paragraph(
+                    f"{line_num:>3}  BY {self.case.insurance.defense_attorney}: You may answer.",
+                    self.styles["Transcript"],
+                ))
+                line_num += 1
+                story.append(Spacer(1, 0.05 * inch))
+
+            # Answer
+            story.append(Paragraph(f"{line_num:>3}  {a}", self.styles["Transcript"]))
             line_num += 1
-            story.append(Paragraph("<br/>".join(a_lines), self.styles["Transcript"]))
             story.append(Spacer(1, 0.15 * inch))
 
-        # End of examination
+        # --- End of examination ---
         story.append(Spacer(1, 0.3 * inch))
+        end_hour = random.randint(11, 14)
+        end_min = random.randint(10, 50)
+        ampm = "A.M." if end_hour < 12 else "P.M."
         story.append(Paragraph(
-            f"{line_num:>3}  (Deposition concluded at 11:{random.randint(15, 45)} A.M.)",
-            self.styles["Transcript"]
+            f"{line_num:>3}  (Deposition concluded at {end_hour}:{end_min:02d} {ampm})",
+            self.styles["Transcript"],
         ))
         story.append(PageBreak())
 
-        # Final certification
-        final_cert = f"""
-        <b>CERTIFICATE OF REPORTER</b><br/>
-        <br/>
-        I, {reporter_name}, Certified Shorthand Reporter, hereby certify that the witness in the
-        foregoing deposition was by me duly sworn to testify the truth, the whole truth, and nothing
-        but the truth; that said deposition was taken down in shorthand by me at the time and place
-        therein stated and was thereafter reduced to typewriting under my direction; that the
-        foregoing is a true and correct transcript of my shorthand notes so taken.<br/>
-        <br/>
-        I further certify that I am not of counsel or attorney for either or any of the parties to
-        said deposition nor in any way interested in the outcome of the cause named in said caption.<br/>
-        <br/>
-        IN WITNESS WHEREOF, I have hereunto set my hand this {doc_spec.doc_date.strftime('%d day of %B, %Y')}.<br/>
-        <br/>
-        <br/>
-        <br/>
-        _______________________________<br/>
-        {reporter_name}<br/>
-        Certified Shorthand Reporter No. {reporter_number}<br/>
-        State of California
-        """
-        story.append(Paragraph(final_cert, self.styles["BodyText14"]))
+        # --- Final certification ---
+        story.extend(self._build_final_certification(doc_spec, reporter_name, reporter_number))
 
         return story
+
+    def _build_cover_page(self, doc_spec, reporter_name, reporter_number):
+        """Build the deposition cover page."""
+        elements = []
+        elements.append(Spacer(1, 1.5 * inch))
+        elements.append(Paragraph("DEPOSITION OF", self.styles["CenterBold"]))
+        elements.append(Spacer(1, 0.2 * inch))
+        elements.append(Paragraph(
+            self.case.applicant.full_name.upper(), self.styles["CenterBold"],
+        ))
+        elements.append(Spacer(1, 0.5 * inch))
+
+        case_info = (
+            f"Case: {self.case.applicant.full_name} v. {self.case.employer.company_name}<br/>"
+            f"ADJ No.: {self.case.injuries[0].adj_number}<br/>"
+            f"<br/>"
+            f"Date: {doc_spec.doc_date.strftime('%B %d, %Y')}<br/>"
+            f"Time: 10:00 A.M.<br/>"
+            f"Location: {self.case.insurance.defense_firm}"
+        )
+        elements.append(Paragraph(case_info, self.styles["CenterBold"]))
+        elements.append(Spacer(1, 0.5 * inch))
+
+        reporter_info = (
+            f"Reported by:<br/>"
+            f"{reporter_name}<br/>"
+            f"Certified Shorthand Reporter No. {reporter_number}"
+        )
+        elements.append(Paragraph(reporter_info, self.styles["CenterBold"]))
+        elements.append(PageBreak())
+        return elements
+
+    def _build_certification(self, doc_spec, reporter_name, reporter_number):
+        """Build the initial certification page."""
+        elements = []
+        cert_text = (
+            f"<b>CERTIFICATION</b><br/>"
+            f"<br/>"
+            f"I, {reporter_name}, a Certified Shorthand Reporter for the State of California, "
+            f"do hereby certify:<br/>"
+            f"<br/>"
+            f"That prior to being examined, the witness named in the foregoing deposition was by me "
+            f"duly sworn to testify to the truth, the whole truth, and nothing but the truth;<br/>"
+            f"<br/>"
+            f"That said deposition is a true record of the testimony given by said witness;<br/>"
+            f"<br/>"
+            f"That I am neither counsel for, nor related to, any party to said action, nor in any way "
+            f"interested in the outcome thereof.<br/>"
+            f"<br/>"
+            f"IN WITNESS WHEREOF, I have hereunto set my hand this "
+            f"{doc_spec.doc_date.strftime('%d day of %B, %Y')}.<br/>"
+            f"<br/><br/>"
+            f"_______________________________<br/>"
+            f"{reporter_name}<br/>"
+            f"CSR No. {reporter_number}"
+        )
+        elements.append(Paragraph(cert_text, self.styles["BodyText14"]))
+        elements.append(PageBreak())
+        return elements
+
+    def _build_appearances(self):
+        """Build the appearances section."""
+        elements = []
+        elements.append(Paragraph("<b>APPEARANCES</b>", self.styles["SectionHeader"]))
+        elements.append(Spacer(1, 0.2 * inch))
+
+        appearances = (
+            f"For Defendant:<br/>"
+            f"{self.case.insurance.defense_attorney}<br/>"
+            f"{self.case.insurance.defense_firm}<br/>"
+            f"<br/>"
+            f"For Applicant:<br/>"
+            f"{self.case.applicant.full_name}<br/>"
+            f"Appearing in Pro Per"
+        )
+        elements.append(Paragraph(appearances, self.styles["BodyText14"]))
+        elements.append(Spacer(1, 0.3 * inch))
+        return elements
+
+    def _build_final_certification(self, doc_spec, reporter_name, reporter_number):
+        """Build the final reporter certification."""
+        elements = []
+        final_cert = (
+            f"<b>CERTIFICATE OF REPORTER</b><br/>"
+            f"<br/>"
+            f"I, {reporter_name}, Certified Shorthand Reporter, hereby certify that the witness in the "
+            f"foregoing deposition was by me duly sworn to testify the truth, the whole truth, and nothing "
+            f"but the truth; that said deposition was taken down in shorthand by me at the time and place "
+            f"therein stated and was thereafter reduced to typewriting under my direction; that the "
+            f"foregoing is a true and correct transcript of my shorthand notes so taken.<br/>"
+            f"<br/>"
+            f"I further certify that I am not of counsel or attorney for either or any of the parties to "
+            f"said deposition nor in any way interested in the outcome of the cause named in said caption.<br/>"
+            f"<br/>"
+            f"IN WITNESS WHEREOF, I have hereunto set my hand this "
+            f"{doc_spec.doc_date.strftime('%d day of %B, %Y')}.<br/>"
+            f"<br/><br/><br/>"
+            f"_______________________________<br/>"
+            f"{reporter_name}<br/>"
+            f"Certified Shorthand Reporter No. {reporter_number}<br/>"
+            f"State of California"
+        )
+        elements.append(Paragraph(final_cert, self.styles["BodyText14"]))
+        return elements

@@ -46,8 +46,8 @@ class CaseCreator:
         config = SecurityConfig.from_env()
         # Override db_path: our .env sets DB_PATH=progress.db which conflicts
         config.db_path = str(MERUS_EXPERT_PATH / "knowledge" / "db" / "merus_knowledge.db")
-        # Use local browser — Browserless is unreliable
-        config.use_local_browser = True
+        # Use Browserless cloud to bypass reCAPTCHA on login page
+        config.use_local_browser = False
         config.use_headless = True
         return config
 

@@ -142,6 +142,7 @@ class GeneratedCase(BaseModel):
     injuries: list[GeneratedInjury]
     treating_physician: GeneratedPhysician
     qme_physician: Optional[GeneratedPhysician] = None
+    prior_providers: list[GeneratedPhysician] = Field(default_factory=list)
     timeline: GeneratedCaseTimeline
     venue: str
     judge_name: str

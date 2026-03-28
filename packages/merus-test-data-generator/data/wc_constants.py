@@ -365,6 +365,132 @@ SJDB_VOUCHER_AMOUNTS = {
 # Offer of work types
 OFFER_OF_WORK_TYPES = ["regular", "modified", "alternative"]
 
+# Medications by specialty
+MEDICATIONS_BY_SPECIALTY = {
+    "psychiatric": [
+        ("Sertraline (Zoloft)", "50mg", "QD"),
+        ("Escitalopram (Lexapro)", "10mg", "QD"),
+        ("Fluoxetine (Prozac)", "20mg", "QD"),
+        ("Venlafaxine (Effexor XR)", "75mg", "QD"),
+        ("Duloxetine (Cymbalta)", "60mg", "QD"),
+        ("Bupropion (Wellbutrin XL)", "150mg", "QD"),
+        ("Trazodone", "50mg", "QHS"),
+        ("Hydroxyzine (Vistaril)", "25mg", "TID PRN"),
+        ("Alprazolam (Xanax)", "0.5mg", "BID PRN"),
+        ("Lorazepam (Ativan)", "1mg", "BID PRN"),
+        ("Mirtazapine (Remeron)", "15mg", "QHS"),
+        ("Prazosin", "2mg", "QHS"),
+        ("Quetiapine (Seroquel)", "25mg", "QHS"),
+    ],
+    "pain_management": [
+        ("Gabapentin", "600mg", "TID"),
+        ("Pregabalin (Lyrica)", "75mg", "BID"),
+        ("Duloxetine (Cymbalta)", "60mg", "QD"),
+        ("Tramadol", "50mg", "Q6H PRN"),
+        ("Hydrocodone/APAP", "5/325mg", "Q6H PRN"),
+        ("Oxycodone", "5mg", "Q6H PRN"),
+        ("Buprenorphine patch", "10mcg/hr", "Q7D"),
+        ("Meloxicam", "15mg", "QD"),
+        ("Diclofenac gel", "1%", "QID topical"),
+        ("Lidocaine patch", "5%", "12h on/12h off"),
+        ("Capsaicin cream", "0.075%", "TID topical"),
+        ("Baclofen", "10mg", "TID"),
+        ("Tizanidine", "4mg", "TID"),
+        ("Methocarbamol", "750mg", "QID"),
+    ],
+    "orthopedic": [
+        ("Ibuprofen", "800mg", "TID"),
+        ("Naproxen", "500mg", "BID"),
+        ("Meloxicam", "15mg", "QD"),
+        ("Celecoxib (Celebrex)", "200mg", "QD"),
+        ("Cyclobenzaprine", "10mg", "TID"),
+        ("Acetaminophen", "1000mg", "Q6H"),
+        ("Diclofenac gel", "1%", "QID topical"),
+        ("Omeprazole", "20mg", "QD"),
+    ],
+    "neurology": [
+        ("Gabapentin", "300mg", "TID"),
+        ("Pregabalin (Lyrica)", "75mg", "BID"),
+        ("Carbamazepine", "200mg", "BID"),
+        ("Amitriptyline", "25mg", "QHS"),
+        ("Nortriptyline", "25mg", "QHS"),
+        ("Topiramate", "50mg", "BID"),
+        ("Sumatriptan", "50mg", "PRN"),
+    ],
+}
+
+# Special tests by body part
+SPECIAL_TESTS_BY_BODY_PART = {
+    "cervical spine": [
+        ("Spurling's Test", "positive — reproduces radicular symptoms", "negative — no radicular symptoms"),
+        ("Cervical Distraction Test", "positive — symptoms relieved with distraction", "negative"),
+        ("Lhermitte's Sign", "positive — electric shock sensation with flexion", "negative"),
+        ("Upper Limb Tension Test (ULTT)", "positive — reproduces symptoms", "negative"),
+        ("Jackson's Compression Test", "positive — reproduces neck/arm pain", "negative"),
+    ],
+    "lumbar spine": [
+        ("Straight Leg Raise (SLR)", "positive at {degrees}° — reproduces radicular symptoms", "negative to 80°"),
+        ("Crossed SLR", "positive — highly specific for disc herniation", "negative"),
+        ("Slump Test", "positive — reproduces concordant symptoms", "negative"),
+        ("Prone Instability Test", "positive — suggests segmental instability", "negative"),
+        ("Femoral Nerve Stretch", "positive — reproduces anterior thigh symptoms", "negative"),
+        ("Waddell's Signs", "{count}/5 — {interpretation}", "0/5 — no symptom magnification"),
+    ],
+    "shoulder": [
+        ("Neer's Impingement Sign", "positive — reproduces anterior shoulder pain", "negative"),
+        ("Hawkins-Kennedy Test", "positive — suggests subacromial impingement", "negative"),
+        ("Empty Can (Jobe's) Test", "positive — supraspinatus weakness/pain", "negative"),
+        ("Speed's Test", "positive — biceps tendon pathology", "negative"),
+        ("O'Brien's Test", "positive — possible labral tear", "negative"),
+        ("Drop Arm Test", "positive — significant rotator cuff tear", "negative"),
+        ("Lift-Off Test", "positive — subscapularis weakness", "negative"),
+    ],
+    "knee": [
+        ("Lachman's Test", "positive — grade {grade} ACL laxity", "negative — firm endpoint"),
+        ("McMurray's Test", "positive — medial/lateral meniscal pathology", "negative"),
+        ("Anterior Drawer", "positive — ACL laxity", "negative"),
+        ("Valgus Stress Test", "positive — MCL laxity", "negative — MCL intact"),
+        ("Varus Stress Test", "positive — LCL laxity", "negative — LCL intact"),
+        ("Patellar Grind (Clarke's)", "positive — chondromalacia/PFJ pathology", "negative"),
+        ("Thessaly Test", "positive at 20° — meniscal pathology", "negative"),
+    ],
+    "wrist": [
+        ("Phalen's Test", "positive at {seconds}s — CTS", "negative after 60s"),
+        ("Tinel's Sign", "positive — tingling in median distribution", "negative"),
+        ("Finkelstein's Test", "positive — de Quervain's tenosynovitis", "negative"),
+        ("Durkan's Compression", "positive — CTS", "negative"),
+    ],
+    "elbow": [
+        ("Cozen's Test", "positive — lateral epicondylitis", "negative"),
+        ("Mill's Test", "positive — lateral epicondylitis", "negative"),
+        ("Tinel's Sign (Cubital Tunnel)", "positive — ulnar neuropathy", "negative"),
+    ],
+    "ankle": [
+        ("Anterior Drawer", "positive — ATFL laxity", "negative"),
+        ("Talar Tilt", "positive — CFL laxity", "negative"),
+        ("Thompson's Test", "positive — Achilles tendon rupture", "negative — intact"),
+    ],
+}
+
+# Physical exam vitals (typical ranges for WC patients)
+PHYSICAL_EXAM_VITALS = {
+    "blood_pressure": [
+        ("120/78", "normal"), ("132/84", "pre-hypertensive"), ("128/82", "normal"),
+        ("140/90", "stage 1 hypertension"), ("118/76", "normal"), ("136/86", "pre-hypertensive"),
+    ],
+    "heart_rate": [
+        ("72", "regular"), ("80", "regular"), ("68", "regular"), ("88", "regular, mildly elevated"),
+        ("76", "regular"), ("84", "regular"),
+    ],
+    "respiratory_rate": [("16", "unlabored"), ("18", "unlabored"), ("14", "unlabored")],
+    "temperature": [("98.6°F", "afebrile"), ("98.2°F", "afebrile"), ("98.8°F", "afebrile")],
+    "height_weight": [
+        ("5'10\", 185 lbs", "BMI 26.5"), ("5'8\", 195 lbs", "BMI 29.7"),
+        ("5'6\", 160 lbs", "BMI 25.8"), ("6'0\", 210 lbs", "BMI 28.5"),
+        ("5'4\", 150 lbs", "BMI 25.7"), ("5'11\", 200 lbs", "BMI 27.9"),
+    ],
+}
+
 # QME Panel specialties
 QME_PANEL_SPECIALTIES = [
     "Orthopedic Surgery",
