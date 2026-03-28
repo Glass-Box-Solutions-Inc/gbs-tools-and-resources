@@ -51,7 +51,7 @@ This monorepo consolidates 17 Glass Box packages into a single discoverable loca
 | [`packages/mcp-servers/`](packages/mcp-servers/) | Python, Node.js, MCP SDK | MCP server collection (kb-api, kb-db, wc-paralegal, social-media) |
 | [`packages/phileas/`](packages/phileas/) | Java 11+, Maven | PII/PHI redaction library (30+ entity types) |
 | [`packages/yevrah_terminal/`](packages/yevrah_terminal/) | Python 3.x, Groq, Cohere | Terminal legal research (keyword + semantic search) |
-| [`packages/merus-test-data-generator/`](packages/merus-test-data-generator/) | Python 3.12, reportlab, Faker | WC test case generator (~700 templated PDFs) |
+| [`packages/merus-test-data-generator/`](packages/merus-test-data-generator/) | Python 3.12, reportlab, Faker | WC test case generator (10,000+ templated PDFs across 97+ subtypes; AMA Guides 5th Ed. impairment content, 30 edge case scenarios, Browserless MerusCase batch integration) |
 
 ### Reference
 

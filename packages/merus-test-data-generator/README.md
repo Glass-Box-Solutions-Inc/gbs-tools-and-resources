@@ -1,10 +1,20 @@
-# MerusCase WC Test Data Generator v2.0
+# MerusCase WC Test Data Generator v2.1
 
 **Lifecycle-aware Workers' Compensation case simulation engine** — generates 1-500 realistic CA WC cases with the Adjudica Classifier's 188-subtype document taxonomy, templated PDFs, and optional MerusCase population.
 
 Built for the Merus-to-Adjudica import pipeline testing workflow.
 
 ---
+
+## What's New in v2.1
+
+- **AMA Guides 5th Edition Content** — DRE spine, upper/lower extremity, psychiatric GAF, cardiovascular, and pulmonary impairment ratings embedded in QME/AME and treating physician templates
+- **Clinical Exam Pools** — 200+ specialty-specific orthopedic and psychiatric examination findings
+- **Deposition Exchange Templates** — 13 topic categories covering 600+ exchanges (causation, apportionment, treatment necessity, permanent disability, vocational rehab, and more)
+- **Batch Case Creation Scripts** — `batch_create_cases.py` for efficient single-session Browserless MerusCase population; `batch2_edge_cases.py` for 30 custom WC edge case scenarios
+- **30 Edge Case Scenarios** — death claims, PTD with VR experts, Kite (CVC rebuttal), split carriers (LC 5500.5), pro per applicants, LC 4553 S&W, LC 5814 penalties, complex liens, UR/IMR chains, Almaraz/Guzman rebuttal, firefighter presumptions (LC 3212), sexual assault workplace claims
+- **Enhanced Templates** — QME/AME reports with AMA Guides impairment ratings, treating physician reports with specialty dispatch, utilization review, depositions, subpoenaed records, medical chronology, and settlement memo
+- **Scale** — 10,000+ documents generated across 97+ of 188 subtypes
 
 ## What's New in v2.0
 
@@ -73,6 +83,8 @@ docker-compose up
 | `python main.py verify [--visual]` | Verify cases in MerusCase |
 | `python main.py audit [--verify-chain]` | SOC2 audit log management |
 | `python main.py serve [--port 5520]` | Start FastAPI REST API |
+| `python batch_create_cases.py` | Efficient single-session Browserless case creation |
+| `python batch2_edge_cases.py` | Create 30 custom WC edge case scenarios |
 
 ## Lifecycle Engine
 
@@ -127,6 +139,28 @@ Each node emits documents with configurable probability, count ranges, and date 
 | Tier 3 | Generic template with hint-driven structure | ~63 | Acceptable — correct structure |
 
 **Total: 188 subtypes covered** (100% of Adjudica Classifier taxonomy)
+
+### Enhanced Template Capabilities (v2.1)
+
+| Template | Enhancement |
+|----------|-------------|
+| QME/AME Report | AMA Guides 5th Ed. impairment ratings (DRE spine, upper/lower extremity, psychiatric GAF, cardiovascular, pulmonary) |
+| Treating Physician Report | Specialty dispatch to orthopedic, psychiatric, and general clinical exam pools (200+ findings) |
+| Deposition Transcript | 13 topic categories, 600+ exchange variants (causation, apportionment, PD, VR, treatment necessity) |
+| Utilization Review | UR/IMR chain modeling with realistic reviewer language |
+| Subpoenaed Records | Records custodian certification and chain-of-custody formatting |
+| Medical Chronology | Chronological narrative with AMA Guides cross-references |
+| Settlement Memo | Almaraz/Guzman rebuttal language, apportionment analysis, LC 5814 penalty flags |
+
+### Edge Case Coverage (v2.1)
+
+The `batch2_edge_cases.py` script generates 30 scenarios that stress-test the Adjudica Classifier against atypical but valid CA WC case patterns:
+
+- Death claims (LC 4700–4706) and PTD with vocational rehabilitation experts
+- Kite (CVC §1871.7 rebuttal) and split carrier liability (LC 5500.5)
+- Pro per applicants, LC 4553 serious and willful misconduct, LC 5814 unreasonable delay penalties
+- Complex lien stacks, multi-carrier UR/IMR chains, Almaraz/Guzman impairment rebuttal
+- Firefighter presumptions (LC 3212/3212.1) and sexual assault workplace claims
 
 ## Dependencies
 

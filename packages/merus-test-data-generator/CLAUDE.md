@@ -1,6 +1,6 @@
 # MerusCase WC Test Data Generator v2.0
 
-**Lifecycle-aware Workers' Compensation test case simulation engine with 188-subtype taxonomy, dynamic generation, FastAPI backend, and Next.js web UI.**
+**Lifecycle-aware Workers' Compensation test case simulation engine with 188-subtype taxonomy, AMA Guides 5th Edition content, specialty-specific clinical pools, deposition exchange templates, dynamic generation, FastAPI backend, and Next.js web UI.**
 
 ---
 
@@ -16,7 +16,7 @@
 
 ## Purpose
 
-Generates 1-500 realistic Workers' Compensation test cases with lifecycle-aware document generation using the canonical 188-subtype Adjudica Classifier taxonomy. Produces templated PDFs and optionally populates cases in MerusCase via browser automation + API upload.
+Generates 1-500+ realistic Workers' Compensation test cases with lifecycle-aware document generation using the canonical 188-subtype Adjudica Classifier taxonomy. Produces 10,000+ templated PDFs across 97+ of 188 subtypes and optionally populates cases in MerusCase via Browserless cloud browser automation + API upload. Supports both standard case generation and hand-crafted edge case scenarios covering complex CA WC legal and procedural patterns.
 
 ## Tech Stack
 
@@ -28,6 +28,15 @@ Generates 1-500 realistic Workers' Compensation test cases with lifecycle-aware 
 - **FastAPI** — REST API with SSE progress streaming
 - **Next.js 16** — App Router web UI with shadcn/ui
 - **SQLite** — Progress tracking & audit logging
+- **Browserless** — Cloud browser for MerusCase reCAPTCHA bypass
+
+## Scale
+
+| Batch | Cases | Documents | Subtypes |
+|-------|-------|-----------|----------|
+| Batch 1 (standard, 30 complex cases) | 30 | ~7,750 | 97+ |
+| Batch 2 (edge cases, 30 custom profiles) | 30 | ~2,554 | varies |
+| **Total** | **60** | **10,000+** | **97+** |
 
 ## Architecture
 
@@ -37,29 +46,35 @@ main.py (CLI)
   ├── create / upload / run-all / status / verify / audit
   └── serve (FastAPI on port 5520)
 
+batch_create_cases.py        # Single-session Browserless case creation (bypasses reCAPTCHA)
+batch2_edge_cases.py         # 30 hand-crafted edge case scenarios
+
 data/
-  ├── taxonomy.py           # 188 subtypes + 12 types (from Adjudica-classifier)
-  ├── taxonomy_compat.py    # Old 27→new 188 mapping
-  ├── lifecycle_engine.py   # DAG state machine with probabilistic branching
-  ├── case_profile_generator.py  # Dynamic 1-500 case generation
-  ├── fake_data_generator.py     # Faker engine (v2: lifecycle-aware)
-  ├── case_profiles.py      # Legacy 20 hardcoded profiles
-  ├── models.py             # Pydantic models (GeneratedCase, DocumentSpec, etc.)
-  ├── wc_constants.py       # CA WC reference data
-  └── template_hints.py     # Structure hints for generic template
+  ├── taxonomy.py                  # 188 subtypes + 12 types (from Adjudica-classifier)
+  ├── taxonomy_compat.py           # Old 27→new 188 mapping
+  ├── lifecycle_engine.py          # DAG state machine with probabilistic branching
+  ├── case_profile_generator.py    # Dynamic 1-500 case generation
+  ├── fake_data_generator.py       # Faker engine (v2: lifecycle-aware)
+  ├── case_profiles.py             # Legacy 20 hardcoded profiles
+  ├── models.py                    # Pydantic models (GeneratedCase, DocumentSpec, etc.)
+  ├── wc_constants.py              # CA WC reference data
+  ├── template_hints.py            # Structure hints for generic template
+  ├── ama_guides_content.py        # AMA Guides 5th Edition impairment tables (NEW)
+  ├── content_pools.py             # Specialty-specific clinical exam findings (NEW)
+  └── deposition_exchanges.py      # Deposition Q&A templates (NEW)
 
 orchestration/
   ├── pipeline.py           # 4-step pipeline with progress callbacks
   ├── progress_tracker.py   # SQLite resumability
   ├── audit.py              # SOC2 HMAC audit logging
-  ├── case_creator.py       # MerusCase browser automation
+  ├── case_creator.py       # MerusCase browser automation (Browserless cloud)
   └── document_uploader.py  # MerusCase API upload
 
 pdf_templates/
-  ├── base_template.py      # reportlab base class
+  ├── base_template.py      # reportlab base class (utility methods added)
   ├── registry.py           # Centralized subtype→template mapping (188 entries)
-  ├── generic_template.py   # Tier 3 fallback template
-  ├── medical/ (7)          # TPR, diagnostic, operative, QME, UR, pharmacy, billing
+  ├── generic_template.py   # Tier 3 fallback template (enhanced)
+  ├── medical/ (7)          # TPR, diagnostic, operative, QME/AME, UR, pharmacy, billing
   ├── legal/ (5)            # Application, DOR, minutes, stipulations, C&R
   ├── correspondence/ (4)   # Adjuster, defense, court notice, client intake
   ├── discovery/ (4)        # Subpoena, deposition notice/transcript, records
@@ -90,6 +105,10 @@ python main.py generate --count 50              # Dynamic 50 cases via lifecycle
 python main.py generate --count 100 --seed 123  # Reproducible
 python main.py generate --count 50 --stages settlement_heavy
 python main.py generate --count 50 --constraints '{"min_surgery_cases": 10}'
+
+# Batch Scripts
+python batch_create_cases.py     # Single-session Browserless: create all cases (bypasses reCAPTCHA)
+python batch2_edge_cases.py      # 30 hand-crafted edge case scenarios
 
 # CLI — MerusCase Integration
 python main.py create [--dry-run]    # Create cases in MerusCase
@@ -155,6 +174,55 @@ INJURY → CLAIM_FILED → CLAIM_RESPONSE
 
 Each node emits documents with configurable probability, count ranges, and date anchors.
 
+## AMA Guides 5th Edition Content
+
+`data/ama_guides_content.py` provides structured impairment rating content used by QME/AME reports and medical templates:
+
+- **DRE Spine Categories** — Cervical, thoracic, and lumbar DRE category I–V with WPI ranges, criteria, and clinical findings
+- **Upper Extremity ROM** — Shoulder, elbow, wrist, and hand ROM measurements with diagnosis-based ratings
+- **Lower Extremity ROM** — Hip, knee, and ankle ROM measurements with diagnosis-based ratings
+- **Psychiatric GAF Scoring** — GAF score ranges mapped to functional impairment levels for psychiatric WPI calculations
+- **Cardiovascular & Pulmonary** — METs-based cardiac impairment tables and pulmonary function classification
+- **Apportionment Templates** — Pre-existing condition language templates for apportionment analysis
+- **Combined Values Chart** — Programmatic combined values for multi-region WPI calculations
+
+## Clinical Content Pools
+
+`data/content_pools.py` provides 200+ specialty-specific clinical findings consumed by medical PDF templates:
+
+- **Orthopedic findings** organized by body region (cervical, lumbar, shoulder, elbow, wrist/hand, hip, knee, ankle/foot)
+- **Psychiatric exam findings** (MSE elements, functional descriptors, GAF narrative language)
+- **Treatment narratives** (physical therapy, chiropractic, pain management, surgical)
+- **Functional capacity descriptions** (work restriction language, ADL impact, vocational overlays)
+
+## Deposition Exchange Templates
+
+`data/deposition_exchanges.py` provides realistic Q&A content used by deposition transcript templates:
+
+- **13 topic categories** — Background, injury mechanism, medical history, treatment, symptoms, daily activities, return to work, prior injuries, vocational, expert qualification, medical opinion, legal procedure, and closing
+- **600+ realistic exchanges** — Attorney-witness dialogues with realistic WC terminology
+- **Objections** — Foundation, relevance, calls for speculation, hearsay, asked-and-answered, compound, assumes facts
+- **Procedural elements** — Opening statements, stipulations, exhibit marking, recess language
+
+## Edge Case Scenarios (batch2_edge_cases.py)
+
+30 hand-crafted profiles covering complex CA WC legal and procedural patterns:
+
+| Category | Scenarios |
+|----------|-----------|
+| CT + Special Circumstances | Multiple specific injuries, sexual assault, firefighter presumption (LC 3212 et seq.) |
+| Death Claims | Dubious AOE/COE, disabled minor child dependent, lien-heavy estate |
+| Permanent Total Disability | 100% PTD with strong VR expert, 100% PTD with weak VR rebuttal |
+| Kite Cases | CVC rebuttal, ADL synergy analysis per Vigil v. County of Kern |
+| Multiple Injuries Same Extremity | LC 4664(c) apportionment, overlapping impairment |
+| Pro Per Applicants | Self-represented claimant, fired attorney mid-case scenario |
+| Split Carrier CT | LC 5500.5 multi-employer exposure period allocation |
+| Serious & Willful | LC 4553 misconduct, penalty enhancement |
+| Unreasonable Delay Penalties | LC 5814 delay chains, penalty calculation |
+| Complex Liens | $280K+ multi-provider lien scenarios, lien conference posture |
+| UR/IMR Dispute Chains | Multi-level denial, IMR appeal, independent medical review |
+| Almaraz/Guzman Rebuttal | DRE vs ROM methodology dispute, whole-person impairment rebuttal |
+
 ## Port Registry
 
 | Service | Port |
@@ -166,7 +234,7 @@ Each node emits documents with configurable probability, count ranges, and date 
 
 - `packages/merus-expert/` — MatterBuilder (browser automation), MerusCaseAPIClient (API)
 - `~/Desktop/Adjudica-classifier/` — Taxonomy source (types.ts, subtypes.ts, mapping.ts)
-- Browserless API token for case creation
+- Browserless API token for case creation (cloud browser, bypasses MerusCase reCAPTCHA on login)
 
 ## Environment Variables
 
