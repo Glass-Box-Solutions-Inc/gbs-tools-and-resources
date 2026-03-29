@@ -10,7 +10,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const { log, fileExists, ensureDir } = require('../utils');
-const { resolveProjectPath } = require('../config');
+const { resolveProjectPath, resolveSourcePath } = require('../config');
 const { detectStack } = require('../analyzers/stack-detector');
 const { updateSections, hasSection } = require('../formatters/sections');
 const { timestamp } = require('../formatters/markdown');
@@ -21,11 +21,16 @@ async function run(config, _discovery) {
   const results = { created: [], updated: [], skipped: [] };
 
   for (const project of config.projects) {
-    const projectPath = resolveProjectPath(config, project.path);
-    if (!(await fileExists(projectPath))) continue;
+    const outputPath = resolveProjectPath(config, project.path);
+    const sourcePath = resolveSourcePath(config, project.path);
+    if (!(await fileExists(outputPath))) {
+      await ensureDir(outputPath);
+    }
 
-    const practicesPath = path.join(projectPath, 'PROGRAMMING_PRACTICES.md');
-    const stack = await detectStack(projectPath);
+    const practicesPath = path.join(outputPath, 'PROGRAMMING_PRACTICES.md');
+    // Detect stack from SOURCE repo (has package.json, code files),
+    // not the docs output directory (only has markdown)
+    const stack = await detectStack(sourcePath);
 
     if (await fileExists(practicesPath)) {
       const updated = await updatePractices(practicesPath, project, stack);

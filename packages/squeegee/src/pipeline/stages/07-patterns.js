@@ -10,7 +10,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const { log, fileExists, ensureDir, readFileSafe } = require('../utils');
-const { resolveProjectPath } = require('../config');
+const { resolveProjectPath, resolveSourcePath } = require('../config');
 const { detectStack } = require('../analyzers/stack-detector');
 const { timestamp } = require('../formatters/markdown');
 
@@ -26,10 +26,11 @@ async function run(config, discovery) {
 
   for (const project of config.projects) {
     const projectPath = resolveProjectPath(config, project.path);
-    if (!(await fileExists(projectPath))) continue;
+    const sourcePath = resolveSourcePath(config, project.path);
+    if (!(await fileExists(sourcePath))) continue;
 
-    const stack = await detectStack(projectPath);
-    const codePatterns = await detectCodePatterns(projectPath);
+    const stack = await detectStack(sourcePath);
+    const codePatterns = await detectCodePatterns(sourcePath);
 
     projectAnalyses[project.name] = {
       stack,

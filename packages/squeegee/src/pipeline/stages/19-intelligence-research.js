@@ -9,6 +9,7 @@
  * @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
  */
 
+const webResearcher = require('../../../intelligence/web-researcher');
 const { log } = require('../utils');
 
 /**
@@ -36,18 +37,6 @@ async function run(config, context = {}) {
   log('Stage 19: Conducting quarterly research...', 'info');
 
   try {
-    // TODO: Implement when web-researcher.js is ready
-    // For now, return a placeholder result
-    log('Web researcher not yet implemented - skipping', 'warn');
-
-    return {
-      status: 'skipped',
-      summary: 'Web researcher not yet implemented',
-      note: 'Will be enabled once intelligence/web-researcher.js is complete'
-    };
-
-    /* Future implementation:
-    const webResearcher = require('../../../intelligence/web-researcher');
     const logWriter = require('../../../intelligence/log-writer');
 
     // Research topics
@@ -78,7 +67,6 @@ async function run(config, context = {}) {
       topics_researched: topics,
       reports_generated: reports.length
     };
-    */
   } catch (error) {
     log(`Research failed: ${error.message}`, 'error');
     return {

@@ -15,19 +15,23 @@ const Fastify = require('fastify');
 // Mock intelligence modules before requiring them
 jest.mock('../../intelligence/github-collector');
 jest.mock('../../intelligence/gcp-collector');
-jest.mock('../../intelligence/station-monitor');
+jest.mock('../../intelligence/station-collector');
 jest.mock('../../intelligence/log-writer');
 jest.mock('../../intelligence/gemini-synthesizer');
 jest.mock('../../intelligence/claude-md-auditor');
 jest.mock('../../intelligence/slack-notifier');
+jest.mock('../../intelligence/doc-quality-auditor');
+jest.mock('../../intelligence/web-researcher');
 
 const githubCollector = require('../../intelligence/github-collector');
 const gcpCollector = require('../../intelligence/gcp-collector');
-const stationMonitor = require('../../intelligence/station-monitor');
+const stationCollector = require('../../intelligence/station-collector');
 const logWriter = require('../../intelligence/log-writer');
 const geminiSynthesizer = require('../../intelligence/gemini-synthesizer');
 const claudeMdAuditor = require('../../intelligence/claude-md-auditor');
 const slackNotifier = require('../../intelligence/slack-notifier');
+const docQualityAuditor = require('../../intelligence/doc-quality-auditor');
+const webResearcher = require('../../intelligence/web-researcher');
 
 const intelligenceRoutes = require('../../src/api/intelligence');
 
@@ -113,7 +117,7 @@ describe('Intelligence API Integration', () => {
     beforeEach(() => {
       githubCollector.collect.mockResolvedValue(fixtureGithub);
       gcpCollector.collect.mockResolvedValue(fixtureGcp);
-      stationMonitor.collect.mockResolvedValue(fixtureStation);
+      stationCollector.collect.mockResolvedValue(fixtureStation);
       geminiSynthesizer.synthesize.mockResolvedValue(fixtureBriefing);
       logWriter.writeAll.mockResolvedValue();
       claudeMdAuditor.auditAll.mockResolvedValue([
@@ -219,7 +223,7 @@ describe('Intelligence API Integration', () => {
     beforeEach(() => {
       githubCollector.collect.mockResolvedValue(fixtureGithub);
       gcpCollector.collect.mockResolvedValue(fixtureGcp);
-      stationMonitor.collect.mockResolvedValue(fixtureStation);
+      stationCollector.collect.mockResolvedValue(fixtureStation);
     });
 
     it('should collect data from all sources', async () => {
@@ -322,18 +326,37 @@ describe('Intelligence API Integration', () => {
     });
   });
 
-  describe('Unimplemented endpoints', () => {
-    it('should return 501 for doc quality audit', async () => {
+  describe('Doc quality audit & research endpoints', () => {
+    it('should return 200 with audit results for doc quality audit', async () => {
+      docQualityAuditor.audit.mockResolvedValue({
+        repos_audited: 10,
+        summary: {
+          average_score: 82.5,
+          needs_work: 2,
+          critical: 1
+        }
+      });
+
       const response = await app.inject({
         method: 'POST',
         url: '/api/intelligence/audit-doc-quality',
         headers: { authorization: 'Bearer test-token' }
       });
 
-      expect(response.statusCode).toBe(501);
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.status).toBe('success');
+      expect(body.report).toBeDefined();
+      expect(docQualityAuditor.audit).toHaveBeenCalled();
     });
 
-    it('should return 501 for research', async () => {
+    it('should return 200 with research results', async () => {
+      webResearcher.research.mockResolvedValue({
+        topic: 'test-topic',
+        findings: ['Finding 1'],
+        recommendations: ['Rec 1']
+      });
+
       const response = await app.inject({
         method: 'POST',
         url: '/api/intelligence/research',
@@ -341,7 +364,11 @@ describe('Intelligence API Integration', () => {
         payload: { topic: 'test-topic' }
       });
 
-      expect(response.statusCode).toBe(501);
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.status).toBe('success');
+      expect(body.report).toBeDefined();
+      expect(webResearcher.research).toHaveBeenCalled();
     });
 
     it('should send Slack notification via notify endpoint', async () => {

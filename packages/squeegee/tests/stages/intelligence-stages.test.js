@@ -16,19 +16,23 @@
 // Mock all intelligence modules before requiring stages
 jest.mock('../../intelligence/github-collector');
 jest.mock('../../intelligence/gcp-collector');
-jest.mock('../../intelligence/station-monitor');
+jest.mock('../../intelligence/station-collector');
 jest.mock('../../intelligence/gemini-synthesizer');
 jest.mock('../../intelligence/log-writer');
 jest.mock('../../intelligence/claude-md-auditor');
 jest.mock('../../intelligence/slack-notifier');
+jest.mock('../../intelligence/doc-quality-auditor');
+jest.mock('../../intelligence/web-researcher');
 
 const githubCollector = require('../../intelligence/github-collector');
 const gcpCollector = require('../../intelligence/gcp-collector');
-const stationMonitor = require('../../intelligence/station-monitor');
+const stationCollector = require('../../intelligence/station-collector');
 const geminiSynthesizer = require('../../intelligence/gemini-synthesizer');
 const logWriter = require('../../intelligence/log-writer');
 const claudeMdAuditor = require('../../intelligence/claude-md-auditor');
 const slackNotifier = require('../../intelligence/slack-notifier');
+const docQualityAuditor = require('../../intelligence/doc-quality-auditor');
+const webResearcher = require('../../intelligence/web-researcher');
 
 const stage14 = require('../../src/pipeline/stages/14-intelligence-collect');
 const stage15 = require('../../src/pipeline/stages/15-intelligence-synthesize');
@@ -82,7 +86,7 @@ describe('Intelligence Pipeline Stages', () => {
     beforeEach(() => {
       githubCollector.collect.mockResolvedValue(mockGitHubData);
       gcpCollector.collect.mockResolvedValue(mockGCPData);
-      stationMonitor.collect.mockResolvedValue(mockStationData);
+      stationCollector.collect.mockResolvedValue(mockStationData);
     });
 
     test('should collect data from all sources in parallel', async () => {
@@ -92,7 +96,7 @@ describe('Intelligence Pipeline Stages', () => {
       expect(result.status).toBe('success');
       expect(githubCollector.collect).toHaveBeenCalledWith(mockDate, mockConfig);
       expect(gcpCollector.collect).toHaveBeenCalledWith(mockDate, mockConfig);
-      expect(stationMonitor.collect).toHaveBeenCalledWith(mockDate, mockConfig);
+      expect(stationCollector.collect).toHaveBeenCalledWith(mockDate, mockConfig);
     });
 
     test('should store collected data in context', async () => {
@@ -405,6 +409,20 @@ describe('Intelligence Pipeline Stages', () => {
   // ========================================================================
 
   describe('Stage 18: Documentation Quality Audit', () => {
+    const mockAuditReport = {
+      repos_audited: 10,
+      summary: {
+        average_score: 82.5,
+        needs_work: 2,
+        critical: 1
+      }
+    };
+
+    beforeEach(() => {
+      docQualityAuditor.audit.mockResolvedValue(mockAuditReport);
+      logWriter.write.mockResolvedValue({ success: true, file_path: 'logs/doc-quality-audit.md' });
+    });
+
     test('should skip on non-1st days of month', async () => {
       const notFirst = new Date('2026-03-15T10:00:00Z');
       const context = { date: notFirst };
@@ -415,26 +433,26 @@ describe('Intelligence Pipeline Stages', () => {
       expect(result.next_run).toBeDefined();
     });
 
-    test('should skip on 1st of month (not yet implemented)', async () => {
+    test('should run audit on 1st of month', async () => {
       const firstOfMonth = new Date('2026-03-01T10:00:00Z');
       const context = { date: firstOfMonth };
 
       const result = await stage18.run(mockConfig, context);
 
-      // Currently returns skipped because module not implemented
-      expect(result.status).toBe('skipped');
-      expect(result.summary).toContain('not yet implemented');
+      expect(result.status).toBe('success');
+      expect(docQualityAuditor.audit).toHaveBeenCalledWith(firstOfMonth, mockConfig);
+      expect(result.repos_audited).toBe(10);
+      expect(result.average_score).toBe(82.5);
     });
 
-    test('should skip when explicitly forced (not yet implemented)', async () => {
+    test('should run when explicitly forced', async () => {
       const notFirst = new Date('2026-03-15T10:00:00Z');
       const context = { date: notFirst, forceDocQualityAudit: true };
 
       const result = await stage18.run(mockConfig, context);
 
-      // Currently returns skipped because module not implemented
-      expect(result.status).toBe('skipped');
-      expect(result.summary).toContain('not yet implemented');
+      expect(result.status).toBe('success');
+      expect(docQualityAuditor.audit).toHaveBeenCalledWith(notFirst, mockConfig);
     });
 
     test('should calculate next run date correctly', async () => {
@@ -445,6 +463,27 @@ describe('Intelligence Pipeline Stages', () => {
 
       expect(result.next_run).toBe('2026-04-01');
     });
+
+    test('should store audit report in context', async () => {
+      const firstOfMonth = new Date('2026-03-01T10:00:00Z');
+      const context = { date: firstOfMonth };
+
+      await stage18.run(mockConfig, context);
+
+      expect(context.docQualityAudit).toEqual(mockAuditReport);
+    });
+
+    test('should handle audit errors', async () => {
+      docQualityAuditor.audit.mockRejectedValue(new Error('Audit failed'));
+
+      const firstOfMonth = new Date('2026-03-01T10:00:00Z');
+      const context = { date: firstOfMonth };
+
+      const result = await stage18.run(mockConfig, context);
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toContain('Audit failed');
+    });
   });
 
   // ========================================================================
@@ -452,6 +491,17 @@ describe('Intelligence Pipeline Stages', () => {
   // ========================================================================
 
   describe('Stage 19: Intelligence Research', () => {
+    const mockResearchReport = {
+      topic: 'documentation-standards',
+      findings: ['Finding 1', 'Finding 2'],
+      recommendations: ['Rec 1']
+    };
+
+    beforeEach(() => {
+      webResearcher.research.mockResolvedValue(mockResearchReport);
+      logWriter.write.mockResolvedValue({ success: true, file_path: 'logs/research.md' });
+    });
+
     test('should skip on non-quarter-start dates', async () => {
       const notQuarterStart = new Date('2026-03-15T10:00:00Z');
       const context = { date: notQuarterStart };
@@ -462,26 +512,26 @@ describe('Intelligence Pipeline Stages', () => {
       expect(result.next_run).toBeDefined();
     });
 
-    test('should skip on quarter start (not yet implemented)', async () => {
+    test('should run research on quarter start', async () => {
       const quarterStart = new Date('2026-04-01T10:00:00Z'); // Apr 1
       const context = { date: quarterStart };
 
       const result = await stage19.run(mockConfig, context);
 
-      // Currently returns skipped because module not implemented
-      expect(result.status).toBe('skipped');
-      expect(result.summary).toContain('not yet implemented');
+      expect(result.status).toBe('success');
+      expect(webResearcher.research).toHaveBeenCalled();
+      expect(result.reports_generated).toBe(4);
+      expect(result.topics_researched).toHaveLength(4);
     });
 
-    test('should skip when explicitly forced (not yet implemented)', async () => {
+    test('should run when explicitly forced', async () => {
       const notQuarterStart = new Date('2026-03-15T10:00:00Z');
       const context = { date: notQuarterStart, forceResearch: true };
 
       const result = await stage19.run(mockConfig, context);
 
-      // Currently returns skipped because module not implemented
-      expect(result.status).toBe('skipped');
-      expect(result.summary).toContain('not yet implemented');
+      expect(result.status).toBe('success');
+      expect(webResearcher.research).toHaveBeenCalled();
     });
 
     test('should calculate next quarter correctly', async () => {
@@ -500,6 +550,28 @@ describe('Intelligence Pipeline Stages', () => {
       const result = await stage19.run(mockConfig, context);
 
       expect(result.next_run).toBe('2027-01-01');
+    });
+
+    test('should store research reports in context', async () => {
+      const quarterStart = new Date('2026-04-01T10:00:00Z');
+      const context = { date: quarterStart };
+
+      await stage19.run(mockConfig, context);
+
+      expect(context.researchReports).toBeDefined();
+      expect(context.researchReports).toHaveLength(4);
+    });
+
+    test('should handle research errors', async () => {
+      webResearcher.research.mockRejectedValue(new Error('Research failed'));
+
+      const quarterStart = new Date('2026-04-01T10:00:00Z');
+      const context = { date: quarterStart };
+
+      const result = await stage19.run(mockConfig, context);
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toContain('Research failed');
     });
   });
 
@@ -585,7 +657,7 @@ describe('Intelligence Pipeline Stages', () => {
 
       githubCollector.collect.mockResolvedValue(mockGitHubData);
       gcpCollector.collect.mockResolvedValue(mockGCPData);
-      stationMonitor.collect.mockResolvedValue(mockStationData);
+      stationCollector.collect.mockResolvedValue(mockStationData);
       geminiSynthesizer.synthesize.mockResolvedValue(mockBriefing);
       logWriter.write.mockResolvedValue({ success: true, file_path: 'logs/test.md' });
 

@@ -71,11 +71,10 @@ describe('Core Pipeline E2E (Stages 1-13)', () => {
       expect(mdPaths.some(p => p.includes('README.md'))).toBe(true);
     });
 
-    test('discovers code files', () => {
-      expect(discoveryResult.code.length).toBeGreaterThanOrEqual(1);
-      const projectACode = discoveryResult.code.find(c => c.project === 'project-a');
-      expect(projectACode).toBeDefined();
-      expect(projectACode.files.length).toBeGreaterThanOrEqual(1);
+    test('discovers projects', () => {
+      expect(discoveryResult.projects.length).toBeGreaterThanOrEqual(1);
+      const projectA = discoveryResult.projects.find(p => p.name === 'project-a');
+      expect(projectA).toBeDefined();
     });
   });
 

@@ -2,7 +2,7 @@
 # Squeegee hourly cron wrapper
 # Prevents system sleep during execution
 
-cd /home/vncuser/Desktop/Squeegee
+cd /home/vncuser/gbs-tools-and-resources/packages/squeegee
 
 # Use systemd-inhibit to prevent sleep during execution
 /usr/bin/systemd-inhibit --what=sleep:idle --who="Squeegee" --why="Running documentation curation" \

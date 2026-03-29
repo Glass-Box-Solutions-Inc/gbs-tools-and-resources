@@ -11,7 +11,6 @@ const path = require('path');
 const { log, fileExists, findFiles, readFileSafe } = require('../utils');
 const { getProjectPaths, resolveProjectPath } = require('../config');
 const { analyzeMarkdown } = require('../analyzers/markdown-analyzer');
-const { analyzeCode } = require('../analyzers/code-analyzer');
 
 async function run(config) {
   log('Stage 1: Discovering projects and documentation...', 'info');
@@ -19,7 +18,6 @@ async function run(config) {
   const results = {
     projects: [],
     markdown: [],
-    code: [],
   };
 
   for (const project of config.projects) {
@@ -52,15 +50,9 @@ async function run(config) {
       }
     }
 
-    // Scan code files
-    const codeAnalysis = await analyzeCode(projectPath);
-    results.code.push({
-      project: project.name,
-      ...codeAnalysis,
-    });
   }
 
-  log(`Discovered ${results.projects.length} projects, ${results.markdown.length} docs, ${results.code.reduce((s, c) => s + c.files.length, 0)} code files`, 'success');
+  log(`Discovered ${results.projects.length} projects, ${results.markdown.length} docs`, 'success');
 
   return results;
 }

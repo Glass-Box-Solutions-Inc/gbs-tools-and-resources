@@ -97,7 +97,7 @@ function getGlobalGitInfo(config) {
 function getCommits(workspace, projectPath, sinceArg, maxCommits) {
   try {
     const raw = execSync(
-      `git log --format="%H|%aI|%an|%s" ${sinceArg} --max-count=${maxCommits}`,
+      `git log --format="%H|%aI|%an|%s" ${sinceArg} --max-count=${maxCommits} -- .`,
       { cwd: path.join(workspace, projectPath), encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, stdio: ['pipe', 'pipe', 'ignore'] }
     ).trim();
 
@@ -131,7 +131,7 @@ function getCommits(workspace, projectPath, sinceArg, maxCommits) {
 function getFileChanges(workspace, projectPath, sinceHash) {
   try {
     const raw = execSync(
-      `git diff --name-status ${sinceHash}..HEAD`,
+      `git diff --name-status ${sinceHash}..HEAD -- .`,
       { cwd: path.join(workspace, projectPath), encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, stdio: ['pipe', 'pipe', 'ignore'] }
     ).trim();
 

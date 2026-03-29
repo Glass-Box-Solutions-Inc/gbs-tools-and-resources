@@ -15,7 +15,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { execSync } = require('child_process');
 const { log, fileExists, ensureDir, readJsonSafe, readFileSafe, listDirs } = require('../utils');
-const { resolveProjectPath } = require('../config');
+const { resolveProjectPath, resolveSourcePath } = require('../config');
 const { detectStack } = require('../analyzers/stack-detector');
 const { heading, table, bulletList, codeBlock, divider, timestamp, bold, link } = require('../formatters/markdown');
 
@@ -33,11 +33,13 @@ async function run(config, discovery) {
 
   for (const project of config.projects) {
     const projectPath = resolveProjectPath(config, project.path);
+    const sourcePath = resolveSourcePath(config, project.path);
 
-    if (!(await fileExists(projectPath))) {
-      results.skipped.push(`${project.name} (path not found)`);
+    if (!(await fileExists(sourcePath))) {
+      results.skipped.push(`${project.name} (source path not found)`);
       continue;
     }
+    await ensureDir(projectPath);
 
     const missing = await detectMissingDocs(projectPath);
 
@@ -103,11 +105,13 @@ async function detectMissingDocs(projectPath) {
  * Reads package.json, detects stack, scans directories, pulls git history.
  */
 async function gatherProjectIntel(projectPath, project, config) {
+  // Use source path for reading code/config, output path for writing docs
+  const sourcePath = resolveSourcePath(config, project.path);
   const intel = {
     name: project.name,
     description: '',
     commands: [],
-    stack: await detectStack(projectPath),
+    stack: await detectStack(sourcePath),
     directories: [],
     envVars: [],
     recentCommits: [],
@@ -115,7 +119,7 @@ async function gatherProjectIntel(projectPath, project, config) {
   };
 
   // -- package.json analysis --
-  const pkg = await readJsonSafe(path.join(projectPath, 'package.json'));
+  const pkg = await readJsonSafe(path.join(sourcePath, 'package.json'));
   if (pkg) {
     intel.description = pkg.description || '';
 
@@ -153,7 +157,7 @@ async function gatherProjectIntel(projectPath, project, config) {
   }
 
   // -- Python project analysis --
-  const hasReqs = await fileExists(path.join(projectPath, 'requirements.txt'));
+  const hasReqs = await fileExists(path.join(sourcePath, 'requirements.txt'));
   if (hasReqs && intel.commands.length === 0) {
     intel.commands.push(
       { cmd: 'pip install -r requirements.txt', desc: 'Install dependencies', raw: '' },
@@ -193,7 +197,7 @@ async function gatherProjectIntel(projectPath, project, config) {
     'forms': 'Form definitions / schemas',
   };
 
-  const allDirs = await listDirs(projectPath);
+  const allDirs = await listDirs(sourcePath);
   const visibleDirs = allDirs.filter(d => !d.startsWith('.') && d !== 'node_modules' && d !== 'dist' && d !== 'build' && d !== 'coverage');
 
   for (const dir of visibleDirs) {
@@ -206,7 +210,7 @@ async function gatherProjectIntel(projectPath, project, config) {
   intel.structureTree = visibleDirs.slice(0, 12).map(d => `├── ${d}/`).join('\n');
 
   // -- .env.example --
-  const envExample = await readFileSafe(path.join(projectPath, '.env.example'));
+  const envExample = await readFileSafe(path.join(sourcePath, '.env.example'));
   if (envExample) {
     intel.envVars = envExample.split('\n')
       .filter(l => l && !l.startsWith('#') && l.includes('='))

@@ -11,19 +11,23 @@ const path = require('path');
 // Mock intelligence modules
 jest.mock('../../intelligence/github-collector');
 jest.mock('../../intelligence/gcp-collector');
-jest.mock('../../intelligence/station-monitor');
+jest.mock('../../intelligence/station-collector');
 jest.mock('../../intelligence/log-writer');
 jest.mock('../../intelligence/gemini-synthesizer');
 jest.mock('../../intelligence/claude-md-auditor');
 jest.mock('../../intelligence/slack-notifier');
+jest.mock('../../intelligence/doc-quality-auditor');
+jest.mock('../../intelligence/web-researcher');
 
 const githubCollector = require('../../intelligence/github-collector');
 const gcpCollector = require('../../intelligence/gcp-collector');
-const stationMonitor = require('../../intelligence/station-monitor');
+const stationCollector = require('../../intelligence/station-collector');
 const logWriter = require('../../intelligence/log-writer');
 const geminiSynthesizer = require('../../intelligence/gemini-synthesizer');
 const claudeMdAuditor = require('../../intelligence/claude-md-auditor');
 const slackNotifier = require('../../intelligence/slack-notifier');
+const docQualityAuditor = require('../../intelligence/doc-quality-auditor');
+const webResearcher = require('../../intelligence/web-researcher');
 
 const intelligenceRoutes = require('../../src/api/intelligence');
 
@@ -122,7 +126,7 @@ describe('Intelligence API - POST /api/intelligence/run', () => {
       }
     });
 
-    stationMonitor.collect.mockResolvedValue({
+    stationCollector.collect.mockResolvedValue({
       claude_code_sessions: [],
       cursor_active: false,
       squeegee_state: {}
@@ -192,7 +196,7 @@ describe('Intelligence API - POST /api/intelligence/run', () => {
     // Verify collectors were called
     expect(githubCollector.collect).toHaveBeenCalled();
     expect(gcpCollector.collect).toHaveBeenCalled();
-    expect(stationMonitor.collect).toHaveBeenCalled();
+    expect(stationCollector.collect).toHaveBeenCalled();
     expect(geminiSynthesizer.synthesize).toHaveBeenCalled();
     expect(logWriter.writeAll).toHaveBeenCalled();
   });
@@ -396,7 +400,7 @@ describe('Intelligence API - POST /api/intelligence/collect', () => {
       summary: { total_deployments: 1, total_errors: 0, projects_monitored: 1 }
     });
 
-    stationMonitor.collect.mockResolvedValue({
+    stationCollector.collect.mockResolvedValue({
       claude_code_sessions: [{ project_name: 'test-project', memory_files_count: 5, estimated_tokens: 20000 }],
       cursor_active: true,
       squeegee_state: { last_run: '2026-03-13T06:00:00Z', repos_processed: 27 }
@@ -640,39 +644,70 @@ describe('Intelligence API - GET /api/intelligence/status', () => {
   });
 });
 
-describe('Intelligence API - Unimplemented Endpoints', () => {
+describe('Intelligence API - Implemented Endpoints', () => {
   let app;
 
   beforeEach(async () => {
     app = fastify({ logger: false });
     await app.register(intelligenceRoutes, { prefix: '/api/intelligence' });
+
+    jest.clearAllMocks();
+    setupFsReadFileMock();
+
+    docQualityAuditor.audit.mockResolvedValue({
+      repos_audited: 10,
+      summary: {
+        average_score: 82.5,
+        needs_work: 2,
+        critical: 1
+      }
+    });
+
+    webResearcher.research.mockResolvedValue({
+      topic: 'test-topic',
+      findings: ['Finding 1'],
+      recommendations: ['Rec 1']
+    });
+
+    slackNotifier.notify.mockResolvedValue({
+      success: true,
+      skipped: false,
+      channel: '#main',
+      timestamp: '2026-03-13T10:00:00Z',
+      message_ts: '1234567890.123456',
+      error: null
+    });
   });
 
   afterEach(async () => {
     await app.close();
   });
 
-  it('should return 501 for doc quality audit', async () => {
+  it('should return 200 with audit results for doc quality audit', async () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/intelligence/audit-doc-quality'
     });
 
-    expect(response.statusCode).toBe(501);
+    expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.body);
-    expect(body.status).toBe('not_implemented');
+    expect(body.status).toBe('success');
+    expect(body.report).toBeDefined();
+    expect(docQualityAuditor.audit).toHaveBeenCalled();
   });
 
-  it('should return 501 for research', async () => {
+  it('should return 200 with research results for research', async () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/intelligence/research',
       payload: { topic: 'test-topic' }
     });
 
-    expect(response.statusCode).toBe(501);
+    expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.body);
-    expect(body.status).toBe('not_implemented');
+    expect(body.status).toBe('success');
+    expect(body.report).toBeDefined();
+    expect(webResearcher.research).toHaveBeenCalled();
   });
 
   it('should send Slack notification via notify endpoint', async () => {

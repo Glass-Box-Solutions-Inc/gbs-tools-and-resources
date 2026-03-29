@@ -23,10 +23,12 @@ const stage19 = require('../../src/pipeline/stages/19-intelligence-research');
 // Import intelligence modules
 const githubCollector = require('../../intelligence/github-collector');
 const gcpCollector = require('../../intelligence/gcp-collector');
-const stationMonitor = require('../../intelligence/station-monitor');
+const stationCollector = require('../../intelligence/station-collector');
 const geminiSynthesizer = require('../../intelligence/gemini-synthesizer');
 const logWriter = require('../../intelligence/log-writer');
 const claudeMdAuditor = require('../../intelligence/claude-md-auditor');
+const docQualityAuditor = require('../../intelligence/doc-quality-auditor');
+const webResearcher = require('../../intelligence/web-researcher');
 
 // ─── Load Test Fixtures ────────────────────────────────────────────────────
 
@@ -81,10 +83,12 @@ const mockConfig = {
 const originalFunctions = {
   githubCollect: githubCollector.collect,
   gcpCollect: gcpCollector.collect,
-  stationCollect: stationMonitor.collect,
+  stationCollect: stationCollector.collect,
   geminiSynthesize: geminiSynthesizer.synthesize,
   logWrite: logWriter.write,
-  claudeMdAudit: claudeMdAuditor.audit
+  claudeMdAudit: claudeMdAuditor.audit,
+  docQualityAudit: docQualityAuditor.audit,
+  webResearch: webResearcher.research
 };
 
 function mockGithubCollector(returnValue) {
@@ -96,7 +100,7 @@ function mockGcpCollector(returnValue) {
 }
 
 function mockStationMonitor(returnValue) {
-  stationMonitor.collect = jest.fn().mockResolvedValue(returnValue);
+  stationCollector.collect = jest.fn().mockResolvedValue(returnValue);
 }
 
 function mockGeminiSynthesizer(returnValue) {
@@ -111,13 +115,23 @@ function mockClaudeMdAuditor(returnValue) {
   claudeMdAuditor.audit = jest.fn().mockResolvedValue(returnValue);
 }
 
+function mockDocQualityAuditor(returnValue) {
+  docQualityAuditor.audit = jest.fn().mockResolvedValue(returnValue);
+}
+
+function mockWebResearcher(returnValue) {
+  webResearcher.research = jest.fn().mockResolvedValue(returnValue);
+}
+
 function restoreMocks() {
   githubCollector.collect = originalFunctions.githubCollect;
   gcpCollector.collect = originalFunctions.gcpCollect;
-  stationMonitor.collect = originalFunctions.stationCollect;
+  stationCollector.collect = originalFunctions.stationCollect;
   geminiSynthesizer.synthesize = originalFunctions.geminiSynthesize;
   logWriter.write = originalFunctions.logWrite;
   claudeMdAuditor.audit = originalFunctions.claudeMdAudit;
+  docQualityAuditor.audit = originalFunctions.docQualityAudit;
+  webResearcher.research = originalFunctions.webResearch;
 }
 
 // ─── Test Suites ───────────────────────────────────────────────────────────
@@ -339,15 +353,28 @@ describe('Intelligence Pipeline Integration Tests', () => {
 
   describe('Monthly Doc Quality Audit (Stage 18)', () => {
 
+    const mockDocQualityReport = {
+      repos_audited: 10,
+      summary: {
+        average_score: 82.5,
+        needs_work: 2,
+        critical: 1
+      }
+    };
+
     test('should run audit on 1st of month', async () => {
+      mockDocQualityAuditor(mockDocQualityReport);
+      mockLogWriter({ success: true, file_path: 'logs/doc-quality-audit.md' });
+
       const firstOfMonth = new Date('2026-03-01');
       const context = { date: firstOfMonth, config: mockConfig };
 
       const result = await stage18.run(mockConfig, context);
 
-      // Currently returns 'skipped' because auditor not implemented
-      assert.strictEqual(result.status, 'skipped');
-      assert.ok(result.summary.includes('not yet implemented'));
+      assert.strictEqual(result.status, 'success');
+      assert.strictEqual(result.repos_audited, 10);
+      assert.strictEqual(result.average_score, 82.5);
+      assert.strictEqual(docQualityAuditor.audit.mock.calls.length, 1);
     });
 
     test('should skip audit on 2nd of month', async () => {
@@ -362,6 +389,9 @@ describe('Intelligence Pipeline Integration Tests', () => {
     });
 
     test('should run audit when forced on non-1st day', async () => {
+      mockDocQualityAuditor(mockDocQualityReport);
+      mockLogWriter({ success: true, file_path: 'logs/doc-quality-audit.md' });
+
       const fifteenth = new Date('2026-03-15');
       const context = {
         date: fifteenth,
@@ -371,8 +401,8 @@ describe('Intelligence Pipeline Integration Tests', () => {
 
       const result = await stage18.run(mockConfig, context);
 
-      // Currently returns 'skipped' because auditor not implemented
-      assert.strictEqual(result.status, 'skipped');
+      assert.strictEqual(result.status, 'success');
+      assert.strictEqual(docQualityAuditor.audit.mock.calls.length, 1);
     });
 
     test('should calculate correct next run across year boundary', async () => {
@@ -390,15 +420,24 @@ describe('Intelligence Pipeline Integration Tests', () => {
 
   describe('Quarterly Research (Stage 19)', () => {
 
+    const mockResearchReport = {
+      topic: 'documentation-standards',
+      findings: ['Finding 1', 'Finding 2'],
+      recommendations: ['Rec 1']
+    };
+
     test('should run research on Jan 1', async () => {
+      mockWebResearcher(mockResearchReport);
+      mockLogWriter({ success: true, file_path: 'logs/research.md' });
+
       const jan1 = new Date('2026-01-01');
       const context = { date: jan1, config: mockConfig };
 
       const result = await stage19.run(mockConfig, context);
 
-      // Currently returns 'skipped' because researcher not implemented
-      assert.strictEqual(result.status, 'skipped');
-      assert.ok(result.summary.includes('not yet implemented'));
+      assert.strictEqual(result.status, 'success');
+      assert.strictEqual(result.reports_generated, 4);
+      assert.ok(webResearcher.research.mock.calls.length >= 4);
     });
 
     test('should skip research on Feb 1', async () => {
@@ -413,6 +452,9 @@ describe('Intelligence Pipeline Integration Tests', () => {
     });
 
     test('should run research when forced', async () => {
+      mockWebResearcher(mockResearchReport);
+      mockLogWriter({ success: true, file_path: 'logs/research.md' });
+
       const mar15 = new Date('2026-03-15');
       const context = {
         date: mar15,
@@ -422,8 +464,8 @@ describe('Intelligence Pipeline Integration Tests', () => {
 
       const result = await stage19.run(mockConfig, context);
 
-      // Currently returns 'skipped' because researcher not implemented
-      assert.strictEqual(result.status, 'skipped');
+      assert.strictEqual(result.status, 'success');
+      assert.ok(webResearcher.research.mock.calls.length >= 4);
     });
 
     test('should handle year rollover correctly (Dec → Jan)', async () => {
@@ -492,7 +534,7 @@ describe('Intelligence Pipeline Integration Tests', () => {
     test('should fail stage 14 when all collectors fail', async () => {
       githubCollector.collect = jest.fn().mockRejectedValue(new Error('GitHub API unavailable'));
       gcpCollector.collect = jest.fn().mockRejectedValue(new Error('GCP logging unavailable'));
-      stationMonitor.collect = jest.fn().mockRejectedValue(new Error('Station data unavailable'));
+      stationCollector.collect = jest.fn().mockRejectedValue(new Error('Station data unavailable'));
 
       const context = { date: new Date('2026-03-13'), config: mockConfig };
       const result = await stage14.run(mockConfig, context);

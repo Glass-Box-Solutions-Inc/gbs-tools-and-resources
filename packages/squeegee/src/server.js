@@ -16,6 +16,7 @@
 
 'use strict';
 
+const crypto = require('crypto');
 const Fastify = require('fastify');
 const fs = require('fs').promises;
 const path = require('path');
@@ -25,6 +26,14 @@ const PORT = parseInt(process.env.PORT || '8080', 10);
 const STATE_FILE = '/tmp/squeegee-state.json';
 
 const app = Fastify({ logger: true });
+
+// ─── Raw body capture for webhook signature verification ─────────────────────
+
+app.addHook('preHandler', async (request) => {
+  if (request.url === '/api/webhook') {
+    request.rawBody = JSON.stringify(request.body);
+  }
+});
 
 // ─── Health ──────────────────────────────────────────────────────────────────
 
@@ -108,6 +117,18 @@ const webhookDebounce = new Map();
 const DEBOUNCE_MS = 5 * 60 * 1000; // 5 minutes
 
 app.post('/api/webhook', async (req, reply) => {
+  // Verify webhook signature (HMAC-SHA256)
+  const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET || '';
+  if (webhookSecret) {
+    const signature = req.headers['x-hub-signature-256'] || '';
+    const expected = 'sha256=' + crypto.createHmac('sha256', webhookSecret).update(req.rawBody || '').digest('hex');
+    if (!signature || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+      return reply.code(401).send({ error: 'Invalid webhook signature' });
+    }
+  } else {
+    app.log.warn('GITHUB_WEBHOOK_SECRET is not set — skipping webhook signature verification');
+  }
+
   const event = req.headers['x-github-event'];
 
   // Only process push events

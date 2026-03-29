@@ -177,7 +177,7 @@ function reconstructFromGit(workspace, projectPath) {
 
   try {
     const gitLog = execSync(
-      `git log --oneline --since="2025-01-01" --all`,
+      `git log --format="%H %aI %s" --since="2025-01-01" --all -- .`,
       { cwd: projectPath, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, stdio: ['pipe', 'pipe', 'ignore'] }
     ).trim();
 
@@ -187,16 +187,9 @@ function reconstructFromGit(workspace, projectPath) {
     const commitsByDate = {};
 
     for (const commit of commits) {
-      const [hash, ...msgParts] = commit.split(' ');
+      const [hash, isoDate, ...msgParts] = commit.split(' ');
       const msg = msgParts.join(' ');
-
-      let dateStr;
-      try {
-        dateStr = execSync(
-          `git show -s --format=%ci ${hash}`,
-          { cwd: projectPath, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] }
-        ).trim().split(' ')[0];
-      } catch { continue; }
+      const dateStr = isoDate ? isoDate.split('T')[0] : null;
 
       if (!dateStr) continue;
       if (!commitsByDate[dateStr]) commitsByDate[dateStr] = [];

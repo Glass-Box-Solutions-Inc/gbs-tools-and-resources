@@ -9,6 +9,7 @@
  * @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
  */
 
+const docQualityAuditor = require('../../../intelligence/doc-quality-auditor');
 const { log } = require('../utils');
 
 /**
@@ -36,18 +37,6 @@ async function run(config, context = {}) {
   log('Stage 18: Auditing documentation quality...', 'info');
 
   try {
-    // TODO: Implement when doc-quality-auditor.js is ready
-    // For now, return a placeholder result
-    log('Documentation quality auditor not yet implemented - skipping', 'warn');
-
-    return {
-      status: 'skipped',
-      summary: 'Documentation quality auditor not yet implemented',
-      note: 'Will be enabled once intelligence/doc-quality-auditor.js is complete'
-    };
-
-    /* Future implementation:
-    const docQualityAuditor = require('../../../intelligence/doc-quality-auditor');
     const logWriter = require('../../../intelligence/log-writer');
 
     const report = await docQualityAuditor.audit(date, config);
@@ -71,7 +60,6 @@ async function run(config, context = {}) {
       average_score: avgScore,
       needs_work: needsWork
     };
-    */
   } catch (error) {
     log(`Documentation quality audit failed: ${error.message}`, 'error');
     return {

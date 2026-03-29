@@ -290,8 +290,7 @@ async function runFull(config) {
   console.log('='.repeat(60) + '\n');
 
   if (failed > 0) {
-    log(`Pipeline finished with ${failed} failed stage(s)`, 'error');
-    process.exit(1);
+    throw new Error(`Pipeline finished with ${failed} failed stage(s)`);
   } else {
     log('Pipeline complete!', 'success');
   }

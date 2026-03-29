@@ -20,12 +20,12 @@ const fs = require('fs').promises;
 // Import intelligence modules
 const githubCollector = require('../../intelligence/github-collector');
 const gcpCollector = require('../../intelligence/gcp-collector');
-const stationMonitor = require('../../intelligence/station-monitor');
+const stationCollector = require('../../intelligence/station-collector');
 const logWriter = require('../../intelligence/log-writer');
 const geminiSynthesizer = require('../../intelligence/gemini-synthesizer');
 const claudeMdAuditor = require('../../intelligence/claude-md-auditor');
-// const docQualityAuditor = require('../../intelligence/doc-quality-auditor'); // TODO: Implement
-// const webResearcher = require('../../intelligence/web-researcher'); // TODO: Implement
+const docQualityAuditor = require('../../intelligence/doc-quality-auditor');
+const webResearcher = require('../../intelligence/web-researcher');
 const slackNotifier = require('../../intelligence/slack-notifier');
 
 // Import utilities
@@ -220,7 +220,7 @@ async function routes(fastify, options) {
       stages.push(await runStage('14-intelligence-collect', async () => {
         const github = await githubCollector.collect(dateStr, config);
         const gcp = await gcpCollector.collect(dateStr, config);
-        const station = await stationMonitor.collect(config);
+        const station = await stationCollector.collect(dateStr, config);
         const checkpoints = []; // TODO: Load from checkpoint queue
 
         context.intelligence = { github, gcp, station, checkpoints };
@@ -293,12 +293,15 @@ async function routes(fastify, options) {
 
       // Stage 18: Doc Quality Audit (1st of month or forced)
       if (isFirstOfMonth() || context.forceDocQualityAudit) {
-        stages.push({
-          stage: 18,
-          name: 'intelligence-audit-quality',
-          status: 'skipped',
-          summary: 'Not implemented yet'
-        });
+        stages.push(await runStage('18-intelligence-audit-quality', async () => {
+          const report = await docQualityAuditor.audit(date, config);
+          const needsWork = (report.summary?.needs_work || 0) + (report.summary?.critical || 0);
+
+          return {
+            status: 'success',
+            summary: `Audited ${report.repos_audited} repos, avg score: ${report.summary?.average_score || 0}, ${needsWork} need work`
+          };
+        }));
       } else {
         stages.push({
           stage: 18,
@@ -310,12 +313,22 @@ async function routes(fastify, options) {
 
       // Stage 19: Web Research (quarterly or forced)
       if (isFirstOfQuarter() || context.forceResearch) {
-        stages.push({
-          stage: 19,
-          name: 'intelligence-research',
-          status: 'skipped',
-          summary: 'Not implemented yet'
-        });
+        stages.push(await runStage('19-intelligence-research', async () => {
+          const topics = ['documentation-standards', 'engineering-practices', 'glass-box-stack', 'compliance-standards'];
+          const reports = [];
+
+          for (const topic of topics) {
+            const report = await webResearcher.research(topic, date, config);
+            reports.push(report);
+          }
+
+          return {
+            status: 'success',
+            summary: `Completed ${reports.length} research topics`,
+            topics_researched: topics,
+            reports_generated: reports.length
+          };
+        }));
       } else {
         stages.push({
           stage: 19,
@@ -375,7 +388,7 @@ async function routes(fastify, options) {
 
       const github = await githubCollector.collect(dateStr, config);
       const gcp = await gcpCollector.collect(dateStr, config);
-      const station = await stationMonitor.collect(config);
+      const station = await stationCollector.collect(dateStr, config);
       const checkpoints = []; // TODO: Load from checkpoint queue
 
       const metrics = {
@@ -499,10 +512,24 @@ async function routes(fastify, options) {
    *     -H "Authorization: Bearer $(gcloud auth print-identity-token)"
    */
   fastify.post('/audit-doc-quality', async (request, reply) => {
-    return reply.code(501).send({
-      status: 'not_implemented',
-      message: 'Doc quality auditor not yet implemented'
-    });
+    try {
+      const config = await loadIntelligenceConfig();
+      const date = parseDateParam(request.body?.date);
+
+      const report = await docQualityAuditor.audit(date, config);
+
+      return reply.send({
+        status: 'success',
+        report
+      });
+
+    } catch (error) {
+      fastify.log.error({ error: error.message }, 'Doc quality audit failed');
+      return reply.code(500).send({
+        status: 'failed',
+        error: error.message
+      });
+    }
   });
 
   // ─── POST /api/intelligence/research ──────────────────────────────────────
@@ -527,10 +554,25 @@ async function routes(fastify, options) {
       }
     }
   }, async (request, reply) => {
-    return reply.code(501).send({
-      status: 'not_implemented',
-      message: 'Web researcher not yet implemented'
-    });
+    try {
+      const config = await loadIntelligenceConfig();
+      const date = parseDateParam(request.body?.date);
+      const { topic } = request.body;
+
+      const report = await webResearcher.research(topic, date, config);
+
+      return reply.send({
+        status: 'success',
+        report
+      });
+
+    } catch (error) {
+      fastify.log.error({ error: error.message }, 'Web research failed');
+      return reply.code(500).send({
+        status: 'failed',
+        error: error.message
+      });
+    }
   });
 
   // ─── POST /api/intelligence/notify ────────────────────────────────────────
@@ -607,12 +649,12 @@ async function routes(fastify, options) {
       const modules = {
         'github-collector': 'ok',
         'gcp-collector': 'ok',
-        'station-monitor': 'ok',
+        'station-collector': 'ok',
         'log-writer': 'ok',
         'gemini-synthesizer': config.intelligence.gemini?.apiKey ? 'ok' : 'missing_api_key',
         'claude-md-auditor': 'ok',
-        'doc-quality-auditor': 'not_implemented',
-        'web-researcher': 'not_implemented',
+        'doc-quality-auditor': 'ok',
+        'web-researcher': 'ok',
         'slack-notifier': 'ok'
       };
 

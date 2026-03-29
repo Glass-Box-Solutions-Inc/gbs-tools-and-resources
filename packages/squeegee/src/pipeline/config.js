@@ -156,10 +156,20 @@ function setDocsRepoOutputPath(config, outputPath) {
   }
 }
 
+/**
+ * Resolve the SOURCE path for a project (always the workspace clone).
+ * Use this for reading code, running git commands, detecting stack, etc.
+ * Use resolveProjectPath() for writing output files.
+ */
+function resolveSourcePath(config, projectRelPath) {
+  return path.join(config.workspace, projectRelPath);
+}
+
 module.exports = {
   loadConfig,
   getProjectPaths,
   resolveProjectPath,
+  resolveSourcePath,
   setCurrentProject,
   setDocsRepoOutputPath,
 };

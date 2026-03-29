@@ -34,6 +34,8 @@ const { runPipeline } = require('../pipeline/index');
 const { setCurrentProject, setDocsRepoOutputPath } = require('../pipeline/config');
 
 const ORG = process.env.GITHUB_ORG || 'Glass-Box-Solutions-Inc';
+const MEMORY_LIMIT_MB = parseInt(process.env.MEMORY_LIMIT_MB || '2048', 10);
+const MEMORY_THRESHOLD = 0.80;
 
 // Secret is volume-mounted at /secrets/github-pat-glassbox (auto-refreshed by Cloud Run).
 // Fall back to env var for local development.
@@ -44,6 +46,8 @@ function getPAT() {
     return process.env.GITHUB_PAT || null;
   }
 }
+
+let pipelineRunning = false;
 
 const WORKSPACE_BASE = '/tmp/squeegee-workspace';
 const STATE_FILE = '/tmp/squeegee-state.json';
@@ -206,7 +210,7 @@ function cloneSourceRepo(repo) {
 
   const result = spawnSync('git', [
     'clone',
-    '--depth=1',
+    '--shallow-since=6 months ago',
     '--branch', repo.defaultBranch,
     authUrl,
     dest,
@@ -247,12 +251,12 @@ function commitToDocsRepo(docsRepoPath, repoCount) {
 
   execSync('git add -A', { cwd: docsRepoPath, stdio: 'pipe' });
 
-  const message = `chore(squeegee): sync project documentation
+  const message = `chore(squeegee): sync project documentation [squeegee-auto]
 
 Automated documentation sync for ${repoCount} repositories.
 Generated: ${timestamp}`;
 
-  execSync(`git commit -m "${message}"`, { cwd: docsRepoPath, stdio: 'pipe' });
+  spawnSync('git', ['commit', '-m', message], { cwd: docsRepoPath, stdio: 'pipe' });
 
   console.log(`✅ Committed changes to docs repo`);
 }
@@ -323,6 +327,13 @@ async function recordRun(record) {
  * @param {string}      options.command     - Pipeline command (default: 'full')
  */
 async function runOrgPipeline({ filterRepo = null, command = 'full' } = {}) {
+  if (pipelineRunning) {
+    console.warn('⚠️  Pipeline run already in progress — skipping concurrent invocation');
+    return { status: 'skipped', reason: 'Another pipeline run is in progress' };
+  }
+
+  pipelineRunning = true;
+  try {
   const startedAt = new Date().toISOString();
   const results = [];
 
@@ -372,6 +383,24 @@ async function runOrgPipeline({ filterRepo = null, command = 'full' } = {}) {
     const repoResult = { repo: repo.name, status: 'pending', error: null };
     let sourceWorkdir = null;
 
+    // Memory observability — log heap and RSS before each repo
+    const mem = process.memoryUsage();
+    const heapMiB = (mem.heapUsed / 1024 / 1024).toFixed(0);
+    const rssMiB = (mem.rss / 1024 / 1024).toFixed(0);
+    console.log(`${progress} [${repo.name}] Memory: heap=${heapMiB}MiB rss=${rssMiB}MiB limit=${MEMORY_LIMIT_MB}MiB`);
+
+    // Memory threshold check — skip repo if RSS > 80% of limit to avoid OOM kill
+    const rssLimitMiB = MEMORY_LIMIT_MB * MEMORY_THRESHOLD;
+    if (mem.rss / 1024 / 1024 > rssLimitMiB) {
+      const msg = `RSS ${rssMiB}MiB exceeds ${Math.round(MEMORY_THRESHOLD * 100)}% of ${MEMORY_LIMIT_MB}MiB limit — skipping to avoid OOM`;
+      console.error(`${progress} [${repo.name}] ${msg}`);
+      repoResult.status = 'skipped';
+      repoResult.error = msg;
+      failed++;
+      results.push(repoResult);
+      continue;
+    }
+
     try {
       console.error(`${progress} [${repo.name}] Starting clone at ${new Date().toISOString()}`);
       sourceWorkdir = cloneSourceRepo(repo);
@@ -394,6 +423,13 @@ async function runOrgPipeline({ filterRepo = null, command = 'full' } = {}) {
       // Clean up source repo clone immediately (read-only, no longer needed)
       if (sourceWorkdir) {
         await cleanupWorkspace(sourceWorkdir);
+      }
+      // Release pipeline object references to help GC reclaim memory
+      sourceWorkdir = null;
+
+      // Best-effort GC between repos (requires --expose-gc flag)
+      if (typeof global.gc === 'function') {
+        global.gc();
       }
     }
 
@@ -448,6 +484,9 @@ async function runOrgPipeline({ filterRepo = null, command = 'full' } = {}) {
   console.log(`${'='.repeat(60)}\n`);
 
   return summary;
+  } finally {
+    pipelineRunning = false;
+  }
 }
 
 module.exports = { runOrgPipeline };

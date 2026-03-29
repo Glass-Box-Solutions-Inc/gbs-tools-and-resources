@@ -192,7 +192,7 @@ curl -X POST "${URL}/api/run" \
 | **Service account** | `squeegee-runner@glassbox-squeegee.iam.gserviceaccount.com` |
 | **Secret** | `github-pat-glassbox` (in `adjudica-internal`, cross-project access granted) |
 | **Scheduler job** | `squeegee-daily` — `0 6 * * *` UTC → `POST /api/run` |
-| **Memory** | 512Mi |
+| **Memory** | 2Gi |
 | **CPU** | 1 |
 | **Timeout** | 900s (15 min) |
 | **Min instances** | 0 (scale to zero) |

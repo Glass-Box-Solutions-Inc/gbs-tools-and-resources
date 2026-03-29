@@ -9,7 +9,7 @@
 
 const githubCollector = require('../../../intelligence/github-collector');
 const gcpCollector = require('../../../intelligence/gcp-collector');
-const stationMonitor = require('../../../intelligence/station-monitor');
+const stationCollector = require('../../../intelligence/station-collector');
 const { log } = require('../utils');
 
 /**
@@ -28,7 +28,7 @@ async function run(config, context = {}) {
     const [githubData, gcpData, stationData] = await Promise.all([
       githubCollector.collect(date, config),
       gcpCollector.collect(date, config),
-      stationMonitor.collect(date, config)
+      stationCollector.collect(date, config)
     ]);
 
     // Store in context for next stages

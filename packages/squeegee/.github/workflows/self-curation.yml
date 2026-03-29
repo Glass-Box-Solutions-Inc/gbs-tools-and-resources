@@ -47,26 +47,12 @@ jobs:
             echo "has_changes=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Push changes to branch
+      - name: Push changes directly to main
         if: steps.check_changes.outputs.has_changes == 'true'
         run: |
-          BRANCH="squeegee/auto-curate-$(date +%Y%m%d-%H%M%S)"
-          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          git config --local user.email "squeegee-bot@glassboxsolutions.com"
+          git config --local user.name "Squeegee Bot"
 
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-
-          git checkout -b "$BRANCH"
           git add -A
           git commit -m "chore(squeegee): auto-curate documentation"
-          git push origin "$BRANCH"
-
-      - name: Create PR (best-effort)
-        if: steps.check_changes.outputs.has_changes == 'true'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh pr create \
-            --title "chore(squeegee): auto-curate documentation" \
-            --body "Automated documentation self-curation by Squeegee. Safe to merge without review."
+          git push origin main

@@ -19,7 +19,7 @@ const stage17 = require('../../src/pipeline/stages/17-intelligence-audit-claude'
 // Import intelligence modules for mocking
 const githubCollector = require('../../intelligence/github-collector');
 const gcpCollector = require('../../intelligence/gcp-collector');
-const stationMonitor = require('../../intelligence/station-monitor');
+const stationCollector = require('../../intelligence/station-collector');
 const geminiSynthesizer = require('../../intelligence/gemini-synthesizer');
 const logWriter = require('../../intelligence/log-writer');
 const claudeMdAuditor = require('../../intelligence/claude-md-auditor');
@@ -64,7 +64,7 @@ const originals = {};
 function saveOriginals() {
   originals.githubCollect = githubCollector.collect;
   originals.gcpCollect = gcpCollector.collect;
-  originals.stationCollect = stationMonitor.collect;
+  originals.stationCollect = stationCollector.collect;
   originals.geminiSynthesize = geminiSynthesizer.synthesize;
   originals.logWrite = logWriter.write;
   originals.claudeMdAudit = claudeMdAuditor.audit;
@@ -73,7 +73,7 @@ function saveOriginals() {
 function restoreOriginals() {
   githubCollector.collect = originals.githubCollect;
   gcpCollector.collect = originals.gcpCollect;
-  stationMonitor.collect = originals.stationCollect;
+  stationCollector.collect = originals.stationCollect;
   geminiSynthesizer.synthesize = originals.geminiSynthesize;
   logWriter.write = originals.logWrite;
   claudeMdAuditor.audit = originals.claudeMdAudit;
@@ -82,7 +82,7 @@ function restoreOriginals() {
 function mockAllCollectors() {
   githubCollector.collect = jest.fn().mockResolvedValue(fixtureGithub);
   gcpCollector.collect = jest.fn().mockResolvedValue(fixtureGcp);
-  stationMonitor.collect = jest.fn().mockResolvedValue(fixtureStation);
+  stationCollector.collect = jest.fn().mockResolvedValue(fixtureStation);
 }
 
 function mockSynthesizer(returnValue) {
@@ -215,7 +215,7 @@ describe('Intelligence Pipeline E2E (Stages 14-20)', () => {
     test('single collector failure: partial success', async () => {
       githubCollector.collect = jest.fn().mockResolvedValue(fixtureGithub);
       gcpCollector.collect = jest.fn().mockRejectedValue(new Error('GCP unavailable'));
-      stationMonitor.collect = jest.fn().mockResolvedValue(fixtureStation);
+      stationCollector.collect = jest.fn().mockResolvedValue(fixtureStation);
 
       const context = { date: new Date('2026-03-13'), config: mockConfig };
       const r14 = await stage14.run(mockConfig, context);
@@ -265,7 +265,7 @@ describe('Intelligence Pipeline E2E (Stages 14-20)', () => {
     test('all collectors fail: stage 14 fails', async () => {
       githubCollector.collect = jest.fn().mockRejectedValue(new Error('GitHub down'));
       gcpCollector.collect = jest.fn().mockRejectedValue(new Error('GCP down'));
-      stationMonitor.collect = jest.fn().mockRejectedValue(new Error('Station down'));
+      stationCollector.collect = jest.fn().mockRejectedValue(new Error('Station down'));
 
       const context = { date: new Date('2026-03-13'), config: mockConfig };
       const r14 = await stage14.run(mockConfig, context);
