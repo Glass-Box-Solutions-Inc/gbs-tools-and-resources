@@ -84,8 +84,8 @@ Trigger full intelligence pipeline (stages 14-20).
     {
       "stage": 20,
       "name": "intelligence-notify",
-      "status": "skipped",
-      "summary": "Not implemented yet"
+      "status": "success",
+      "summary": "Sent briefing to #engineering-daily"
     }
   ],
   "duration_ms": 45000
@@ -247,7 +247,38 @@ curl -X POST \
 
 Run documentation quality audit (10-point rubric).
 
-**Status:** Not implemented (returns 501)
+**Request Body:**
+```json
+{
+  "date": "2026-03-13"  // optional, defaults to today
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "report": {
+    "date": "2026-03-13",
+    "repos_audited": 27,
+    "summary": {
+      "average_score": 8.4,
+      "excellent": 10,
+      "good": 12,
+      "needs_work": 4,
+      "critical": 1
+    },
+    "details": [
+      {
+        "repo": "adjudica-ai-app",
+        "score": 10,
+        "missing_points": [],
+        "needs_work": false
+      }
+    ]
+  }
+}
+```
 
 **Example:**
 ```bash
@@ -262,13 +293,27 @@ curl -X POST \
 
 Run best-practice web research using Gemini with search grounding.
 
-**Status:** Not implemented (returns 501)
-
 **Request Body:**
 ```json
 {
-  "topic": "documentation-standards",
-  "date": "2026-03-13"  // optional
+  "topic": "documentation-standards",  // required
+  "date": "2026-03-13"                  // optional
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "report": {
+    "topic": "documentation-standards",
+    "date": "2026-03-13",
+    "findings": "...",
+    "recommendations": ["...", "..."],
+    "sources": ["...", "..."],
+    "generated_at": "2026-03-13T10:00:00Z",
+    "model_used": "gemini-2.0-flash-exp"
+  }
 }
 ```
 
@@ -287,13 +332,29 @@ curl -X POST \
 
 Send briefing to Slack (manual trigger).
 
-**Status:** Not implemented (returns 501)
-
 **Request Body:**
 ```json
 {
   "briefing": { /* GeminiBriefing object */ },
   "date": "2026-03-13"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "channel": "#engineering-daily",
+  "message_ts": "1710324000.000000"
+}
+```
+
+If Slack notifications are disabled or no webhook is configured:
+```json
+{
+  "status": "skipped",
+  "channel": null,
+  "message": "Slack notifications disabled or no webhook configured"
 }
 ```
 
@@ -325,9 +386,9 @@ Get intelligence system status and health.
     "log-writer": "ok",
     "gemini-synthesizer": "ok",
     "claude-md-auditor": "ok",
-    "doc-quality-auditor": "not_implemented",
-    "web-researcher": "not_implemented",
-    "slack-notifier": "not_implemented"
+    "doc-quality-auditor": "ok",
+    "web-researcher": "ok",
+    "slack-notifier": "ok"
   },
   "last_run": {
     "date": "2026-03-13",
@@ -394,7 +455,7 @@ INTELLIGENCE_DRY_RUN=true
 | 400 | Bad Request (invalid input) |
 | 401 | Unauthorized (missing/invalid auth token) |
 | 500 | Internal Server Error |
-| 501 | Not Implemented (endpoint not yet available) |
+| 502 | Bad Gateway (upstream notification delivery failure) |
 | 503 | Service Unavailable (intelligence disabled) |
 
 ---
@@ -459,9 +520,9 @@ Manual triggers can be done via any of the endpoints above.
 | 15 - Synthesize | ✅ Complete | `POST /synthesize` |
 | 16 - Write | ✅ Complete | *(part of /run)* |
 | 17 - Audit CLAUDE.md | ✅ Complete | `POST /audit-claude-md` |
-| 18 - Audit Doc Quality | ⏳ In Progress | `POST /audit-doc-quality` |
-| 19 - Web Research | ⏳ In Progress | `POST /research` |
-| 20 - Notify | ⏳ In Progress | `POST /notify` |
+| 18 - Audit Doc Quality | ✅ Complete | `POST /audit-doc-quality` |
+| 19 - Web Research | ✅ Complete | `POST /research` |
+| 20 - Notify | ✅ Complete | `POST /notify` |
 
 ---
 

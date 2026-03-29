@@ -12,6 +12,7 @@ const path = require('path');
 jest.mock('../../intelligence/github-collector');
 jest.mock('../../intelligence/gcp-collector');
 jest.mock('../../intelligence/station-collector');
+jest.mock('../../intelligence/checkpoint-loader');
 jest.mock('../../intelligence/log-writer');
 jest.mock('../../intelligence/gemini-synthesizer');
 jest.mock('../../intelligence/claude-md-auditor');
@@ -22,6 +23,7 @@ jest.mock('../../intelligence/web-researcher');
 const githubCollector = require('../../intelligence/github-collector');
 const gcpCollector = require('../../intelligence/gcp-collector');
 const stationCollector = require('../../intelligence/station-collector');
+const checkpointLoader = require('../../intelligence/checkpoint-loader');
 const logWriter = require('../../intelligence/log-writer');
 const geminiSynthesizer = require('../../intelligence/gemini-synthesizer');
 const claudeMdAuditor = require('../../intelligence/claude-md-auditor');
@@ -131,6 +133,8 @@ describe('Intelligence API - POST /api/intelligence/run', () => {
       cursor_active: false,
       squeegee_state: {}
     });
+
+    checkpointLoader.load.mockResolvedValue([]);
 
     geminiSynthesizer.synthesize.mockResolvedValue({
       date: '2026-03-13',
@@ -405,6 +409,8 @@ describe('Intelligence API - POST /api/intelligence/collect', () => {
       cursor_active: true,
       squeegee_state: { last_run: '2026-03-13T06:00:00Z', repos_processed: 27 }
     });
+
+    checkpointLoader.load.mockResolvedValue([]);
   });
 
   afterEach(async () => {

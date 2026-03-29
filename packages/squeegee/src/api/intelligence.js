@@ -21,6 +21,7 @@ const fs = require('fs').promises;
 const githubCollector = require('../../intelligence/github-collector');
 const gcpCollector = require('../../intelligence/gcp-collector');
 const stationCollector = require('../../intelligence/station-collector');
+const checkpointLoader = require('../../intelligence/checkpoint-loader');
 const logWriter = require('../../intelligence/log-writer');
 const geminiSynthesizer = require('../../intelligence/gemini-synthesizer');
 const claudeMdAuditor = require('../../intelligence/claude-md-auditor');
@@ -221,7 +222,7 @@ async function routes(fastify, options) {
         const github = await githubCollector.collect(dateStr, config);
         const gcp = await gcpCollector.collect(dateStr, config);
         const station = await stationCollector.collect(dateStr, config);
-        const checkpoints = []; // TODO: Load from checkpoint queue
+        const checkpoints = await checkpointLoader.load(dateStr, config);
 
         context.intelligence = { github, gcp, station, checkpoints };
 
@@ -389,7 +390,7 @@ async function routes(fastify, options) {
       const github = await githubCollector.collect(dateStr, config);
       const gcp = await gcpCollector.collect(dateStr, config);
       const station = await stationCollector.collect(dateStr, config);
-      const checkpoints = []; // TODO: Load from checkpoint queue
+      const checkpoints = await checkpointLoader.load(dateStr, config);
 
       const metrics = {
         repos_active: Object.keys(github.repos).length,

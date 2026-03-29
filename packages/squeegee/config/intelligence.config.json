@@ -109,6 +109,11 @@
         "retry_delay_ms": 2000
       }
     },
+    "checkpoints": {
+      "enabled": true,
+      "queue_dir": "/tmp/squeegee-checkpoints",
+      "workspace_dir": "/home/vncuser"
+    },
     "dry_run": false
   },
   "notifications": {
