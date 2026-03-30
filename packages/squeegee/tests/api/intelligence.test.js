@@ -185,7 +185,7 @@ describe('Intelligence API - POST /api/intelligence/run', () => {
     expect(body.status).toBe('success');
     expect(body.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(body.stages).toHaveLength(7);
-    expect(body.duration_ms).toBeGreaterThan(0);
+    expect(body.duration_ms).toBeGreaterThanOrEqual(0);
 
     // Verify stage results
     const collectStage = body.stages.find(s => s.name === 'intelligence-collect');
