@@ -2,7 +2,7 @@
 Faker-based coherent case data generation. Produces internally-consistent
 GeneratedCase objects with document manifests appropriate to each litigation stage.
 
-v2.0: Uses lifecycle engine for document generation with 188-subtype taxonomy.
+v2.0: Uses lifecycle engine for document generation with 350-subtype taxonomy.
 Backward-compatible — legacy CaseProfile still works via adapter.
 
 @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
@@ -295,6 +295,55 @@ SUBTYPE_TO_TEMPLATE: dict[str, str] = {
     "SURVEILLANCE_VIDEO": "ClientIntake",
     "SOCIAL_MEDIA_EVIDENCE": "ClientIntake",
     "ACTIVITY_DIARY_SELF_REPORTED": "ClientIntake",
+
+    # --- Phase 2: 35 new subtypes ---
+
+    # Correspondence — client/carrier/admin
+    "RETAINER_FEE_AGREEMENT": "ClientIntake",
+    "CLIENT_REPORT_ANALYSIS_LETTER": "ClientIntake",
+    "CLIENT_CASE_VALUATION_LETTER": "ClientIntake",
+    "CLIENT_SETTLEMENT_RECOMMENDATION": "ClientIntake",
+    "CLIENT_HIPAA_AUTHORIZATION": "ClientIntake",
+    "CLIENT_DECLARATION": "ClientIntake",
+    "NOTICE_OF_REPRESENTATION": "DefenseCounselLetter",
+    "BENEFIT_PAYMENT_LEDGER": "WageStatement",
+    "CARRIER_POSITION_STATEMENT": "AdjusterLetter",
+    "RESERVATION_OF_RIGHTS_LETTER": "AdjusterLetter",
+    "EAMS_CASE_SUMMARY": "ClientIntake",
+
+    # Administrative Court
+    "PROOF_OF_SERVICE": "CourtNotice",
+    "ANSWER_TO_APPLICATION": "DefenseCounselLetter",
+    "REQUEST_FOR_CONTINUANCE": "ApplicationForAdjudication",
+    "PETITION_FOR_PENALTIES_LC_5814": "ApplicationForAdjudication",
+    "ATTORNEY_FEE_PETITION": "ApplicationForAdjudication",
+    "JOINT_PRETRIAL_CONFERENCE_STATEMENT": "SettlementMemo",
+    "EXHIBIT_LIST": "SettlementMemo",
+    "WITNESS_LIST": "SettlementMemo",
+
+    # Letters / Routine Correspondence
+    "OBJECTION_TO_QME_AME_REPORT": "DefenseCounselLetter",
+    "REQUEST_SUPPLEMENTAL_QME_AME_REPORT": "DefenseCounselLetter",
+    "QME_PANEL_STRIKE_LETTER": "ClientIntake",
+    "PTP_REFERRAL_LETTER": "TreatingPhysicianReport",
+
+    # Discovery
+    "INTERROGATORIES_SPECIAL": "Subpoena",
+    "INTERROGATORY_RESPONSES": "DepositionTranscript",
+    "REQUEST_FOR_PRODUCTION": "Subpoena",
+    "PRODUCTION_RESPONSES": "DepositionTranscript",
+    "DEPOSITION_TRANSCRIPT_QME_AME": "DepositionTranscript",
+
+    # Rating / RTW Aids
+    "TD_RATE_CALCULATION_NOTICE": "WageStatement",
+    "NOTICE_OF_TD_TERMINATION": "AdjusterLetter",
+    "RETURN_TO_WORK_REPORT": "JobDescription",
+    "MILEAGE_REIMBURSEMENT_REQUEST": "BillingRecords",
+    "INFORMAL_PD_RATING_PRINTOUT": "SettlementMemo",
+
+    # Summaries / Chronologies
+    "MSA_ALLOCATION_REPORT": "SettlementMemo",
+    "CMS_CONDITIONAL_PAYMENT_LETTER": "AdjusterLetter",
 }
 
 

@@ -52,6 +52,9 @@ Thumbs.db
 *.swo
 *~
 
+# Forked reference repos (local only, not tracked)
+packages/agent-auth-protocol/
+
 # Test coverage
 coverage/
 .nyc_output/

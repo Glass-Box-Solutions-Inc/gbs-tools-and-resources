@@ -92,7 +92,6 @@ TEMPLATE_REGISTRY: dict[str, TemplateEntry] = {
     "DECLARATION_OF_READINESS_EXPEDITED": TemplateEntry("DeclarationOfReadiness", "pdf_templates.legal.declaration_of_readiness", "expedited"),
     "DECLARATION_OF_READINESS_MSC": TemplateEntry("DeclarationOfReadiness", "pdf_templates.legal.declaration_of_readiness", "msc"),
     "DECLARATION_OF_READINESS": TemplateEntry("DeclarationOfReadiness", "pdf_templates.legal.declaration_of_readiness"),
-    "DOR_STATUS_MSC_EXPEDITED": TemplateEntry("DeclarationOfReadiness", "pdf_templates.legal.declaration_of_readiness", "status_package"),
 
     # Legal — Minutes/Orders
     "MINUTES_ORDERS_FINDINGS_AWARD": TemplateEntry("MinutesOrders", "pdf_templates.legal.minutes_orders"),
@@ -277,6 +276,247 @@ _TIER2_ADDITIONS: dict[str, TemplateEntry] = {
     "SURVEILLANCE_VIDEO": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "surveillance_log"),
     "SOCIAL_MEDIA_EVIDENCE": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "social_media"),
     "ACTIVITY_DIARY_SELF_REPORTED": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "activity_diary"),
+
+    # =========================================================================
+    # PHASE 2: 163 new subtypes from 350-subtype taxonomy migration
+    # =========================================================================
+
+    # --- MEDICAL_CLINICAL: new specialty records subtypes ---
+    "ALLERGY_IMMUNOLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "allergy_immunology"),
+    "CARDIOVASCULAR_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "cardiovascular"),
+    "DENTISTRY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "dentistry"),
+    "DERMATOLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "dermatology"),
+    "ENDOCRINOLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "endocrinology"),
+    "FAMILY_PRACTICE_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "family_practice"),
+    "GASTROENTEROLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "gastroenterology"),
+    "GENERAL_SURGERY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "general_surgery"),
+    "HAND_SURGERY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "hand_surgery"),
+    "HEMATOLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "hematology"),
+    "HOME_HEALTH_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "home_health"),
+    "INFECTIOUS_DISEASE_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "infectious_disease"),
+    "INTERNAL_MEDICINE_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "internal_medicine"),
+    "NEPHROLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "nephrology"),
+    "NEUROLOGICAL_SURGERY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "neurological_surgery"),
+    "NEUROLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "neurology"),
+    "NURSING_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "nursing"),
+    "OBSTETRICS_GYNECOLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "obstetrics_gynecology"),
+    "OCCUPATIONAL_MEDICINE_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "occupational_medicine"),
+    "ONCOLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "oncology"),
+    "OPTOMETRY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "optometry"),
+    "OTOLARYNGOLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "otolaryngology"),
+    "PHYSICAL_MEDICINE_REHAB_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "physical_medicine_rehab"),
+    "PODIATRY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "podiatry"),
+    "PREVENTIVE_MEDICINE_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "preventive_medicine"),
+    "PSYCHOLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "psychology"),
+    "PULMONARY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "pulmonary"),
+    "RHEUMATOLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "rheumatology"),
+    "SPINE_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "spine"),
+    "THORACIC_SURGERY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "thoracic_surgery"),
+    "TOXICOLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "toxicology"),
+    "UROLOGY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "urology"),
+    "VASCULAR_SURGERY_RECORDS": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "vascular_surgery"),
+    "FACE_SHEET": TemplateEntry("OperativeRecord", "pdf_templates.medical.operative_record", "face_sheet"),
+    "NEUROPSYCHOLOGICAL_EVALUATION": TemplateEntry("QmeAmeReport", "pdf_templates.medical.qme_ame_report", "neuropsych"),
+    "SLEEP_STUDY": TemplateEntry("DiagnosticReport", "pdf_templates.medical.diagnostic_report", "sleep_study"),
+    "EMG_NCV_STUDY": TemplateEntry("DiagnosticReport", "pdf_templates.medical.diagnostic_report", "emg_ncv"),
+    "DEATH_CERTIFICATE": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "death_certificate"),
+    "AUTOPSY_REPORT": TemplateEntry("QmeAmeReport", "pdf_templates.medical.qme_ame_report", "autopsy"),
+
+    # --- MEDICAL_LEGAL: new subtypes ---
+    "AME_COMPREHENSIVE_REPORT": TemplateEntry("QmeAmeReport", "pdf_templates.medical.qme_ame_report", "ame_comprehensive"),
+    "SUPPLEMENTAL_QME_AME_REPORT": TemplateEntry("QmeAmeReport", "pdf_templates.medical.qme_ame_report", "supplemental"),
+    "FCE_REPORT": TemplateEntry("QmeAmeReport", "pdf_templates.medical.qme_ame_report", "fce"),
+    "PEER_REVIEW_REPORT": TemplateEntry("QmeAmeReport", "pdf_templates.medical.qme_ame_report", "peer_review"),
+    "IMPAIRMENT_RATING_WORKSHEET": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "impairment_worksheet"),
+    "MEDICAL_RECORD_REVIEW_LIST": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "record_review_list"),
+    "PSYCHOLOGICAL_TESTING_PROTOCOL": TemplateEntry("QmeAmeReport", "pdf_templates.medical.qme_ame_report", "psych_testing"),
+    "LIFE_EXPECTANCY_REPORT": TemplateEntry("QmeAmeReport", "pdf_templates.medical.qme_ame_report", "life_expectancy"),
+    "QME_COMPREHENSIVE_REPORT": TemplateEntry("QmeAmeReport", "pdf_templates.medical.qme_ame_report", "qme_comprehensive"),
+
+    # --- UTILIZATION_MANAGEMENT: new subtypes ---
+    "UR_APPEAL_LETTER": TemplateEntry("UtilizationReview", "pdf_templates.medical.utilization_review", "appeal"),
+    "UR_PEER_TO_PEER_NOTES": TemplateEntry("UtilizationReview", "pdf_templates.medical.utilization_review", "peer_to_peer"),
+    "PHARMACY_AUTHORIZATION": TemplateEntry("UtilizationReview", "pdf_templates.medical.utilization_review", "pharmacy_auth"),
+    "DME_AUTHORIZATION": TemplateEntry("UtilizationReview", "pdf_templates.medical.utilization_review", "dme_auth"),
+
+    # --- PLEADINGS_FILINGS: new subtypes ---
+    "APPLICATION_FOR_ADJUDICATION_DEATH": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "death"),
+    "APPLICATION_ADDENDUM_EMPLOYER_ENTITY": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "addendum_employer"),
+    "ANSWER_TO_APPLICATION": TemplateEntry("DefenseCounselLetter", "pdf_templates.correspondence.defense_counsel_letter", "answer_application"),
+    "OBJECTION_TO_DOR": TemplateEntry("DefenseCounselLetter", "pdf_templates.correspondence.defense_counsel_letter", "objection_dor"),
+    "PETITION_132A_DISCRIMINATION": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "discrimination_132a"),
+    "PETITION_TO_DISMISS": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "dismiss"),
+    "PETITION_CHANGE_PTP": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "change_ptp"),
+    "PETITION_COMMUTATION": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "commutation"),
+    "PETITION_FOR_COSTS": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "costs"),
+    "PETITION_GUARDIAN_AD_LITEM": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "guardian_ad_litem"),
+    "PETITION_NEW_FURTHER_DISABILITY": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "new_further_disability"),
+    "PETITION_TERMINATE_TD": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "terminate_td"),
+    "PETITION_TO_BIFURCATE": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "bifurcate"),
+    "MOTION_FOR_JOINDER": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "motion_joinder"),
+    "MOTION_FOR_SANCTIONS": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "motion_sanctions"),
+    "MOTION_TO_COMPEL": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "motion_compel"),
+    "MOTION_TO_CONSOLIDATE": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "motion_consolidate"),
+    "MOTION_TO_QUASH_SUBPOENA": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "motion_quash"),
+    "PROOF_OF_SERVICE": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "proof_of_service"),
+    "SUBSTITUTION_OF_ATTORNEY": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "substitution_attorney"),
+    "ATTORNEY_FEE_DISCLOSURE": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "fee_disclosure"),
+    "ARBITRATION_SUBMITTAL": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "arbitration"),
+    "PRETRIAL_CONFERENCE_STATEMENT_LIEN": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "pretrial_lien"),
+
+    # --- ORDERS_DECISIONS: new subtypes ---
+    "FINDINGS_AND_AWARD": TemplateEntry("MinutesOrders", "pdf_templates.legal.minutes_orders", "findings_award"),
+    "AMENDED_FINDINGS_AWARD": TemplateEntry("MinutesOrders", "pdf_templates.legal.minutes_orders", "amended_findings"),
+    "OPINION_ON_DECISION": TemplateEntry("MinutesOrders", "pdf_templates.legal.minutes_orders", "opinion"),
+    "APPELLATE_COURT_DECISION": TemplateEntry("MinutesOrders", "pdf_templates.legal.minutes_orders", "appellate"),
+    "MINUTES_OF_HEARING": TemplateEntry("MinutesOrders", "pdf_templates.legal.minutes_orders", "hearing_minutes"),
+    "MINUTES_OF_HEARING_SUPPLEMENT": TemplateEntry("MinutesOrders", "pdf_templates.legal.minutes_orders", "hearing_supplement"),
+    "ORDER_APPROVING_SETTLEMENT": TemplateEntry("MinutesOrders", "pdf_templates.legal.minutes_orders", "approving_settlement"),
+    "ORDER_DISMISSING_CASE": TemplateEntry("MinutesOrders", "pdf_templates.legal.minutes_orders", "dismissing"),
+    "ORDER_TAKING_OFF_CALENDAR": TemplateEntry("MinutesOrders", "pdf_templates.legal.minutes_orders", "off_calendar"),
+
+    # --- SETTLEMENTS: new subtypes ---
+    "COMPROMISE_AND_RELEASE_PD_ONLY": TemplateEntry("CompromiseAndRelease", "pdf_templates.legal.compromise_and_release", "pd_only"),
+    "COMPROMISE_AND_RELEASE_DEPENDENCY": TemplateEntry("CompromiseAndRelease", "pdf_templates.legal.compromise_and_release", "dependency"),
+    "COMPROMISE_AND_RELEASE_THIRD_PARTY": TemplateEntry("CompromiseAndRelease", "pdf_templates.legal.compromise_and_release", "third_party"),
+    "STIPULATIONS_DEATH_CASE": TemplateEntry("Stipulations", "pdf_templates.legal.stipulations", "death"),
+    "ADDENDUM_TO_SETTLEMENT": TemplateEntry("CompromiseAndRelease", "pdf_templates.legal.compromise_and_release", "addendum"),
+    "MSA_SUBMISSION": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "msa_submission"),
+    "MSA_APPROVAL_LETTER": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "msa_approval"),
+    "STRUCTURED_SETTLEMENT_QUOTE": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "structured_quote"),
+
+    # --- REGULATORY_FORMS: new subtypes ---
+    "QME_REPLACEMENT_PANEL_REQUEST": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "qme_replacement_panel"),
+    "QME_ADDITIONAL_PANEL_REQUEST": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "qme_additional_panel"),
+    "QME_PANEL_COMMUNICATION_FORM": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "qme_panel_comm"),
+    "QME_EXAM_NOTICE_TO_WORKER": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "qme_exam_notice"),
+    "QME_UNAVAILABILITY_NOTICE": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "qme_unavailability"),
+    "QME_CONFLICT_OF_INTEREST": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "qme_conflict"),
+    "QME_DECLARATION_OF_SERVICE": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "qme_declaration"),
+    "QME_FACTUAL_CORRECTION_REQUEST": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "qme_factual_correction"),
+    "DEU_RATING_REQUEST_QME": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "deu_rating_qme"),
+    "DEU_RATING_REQUEST_PTP": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "deu_rating_ptp"),
+    "DEU_RATING_RECONSIDERATION": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "deu_reconsideration"),
+    "DEU_CONSULTATIVE_RATING_REQUEST": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "deu_consultative"),
+    "DEU_APPORTIONMENT_REQUEST": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "deu_apportionment"),
+    "DEU_NOTICE_OPTIONS_POST_RATING": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "deu_notice_options"),
+    "EMPLOYER_NOTICE_TO_EMPLOYEES": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "employer_notice"),
+    "NOTICE_OF_EMPLOYEE_DEATH": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "death_notice"),
+    "OFFER_OF_WORK_MODIFIED_ALTERNATIVE": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "offer_modified_alt"),
+    "PHYSICIAN_RTW_VOUCHER_REPORT": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "rtw_voucher"),
+    "PREDESIGNATION_PHYSICIAN": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "predesignation_physician"),
+    "PREDESIGNATION_CHIRO_ACUPUNCTURE": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "predesignation_chiro"),
+    "SJDB_JOB_DUTIES_DESCRIPTION": TemplateEntry("JobDescription", "pdf_templates.employment.job_description", "sjdb_duties"),
+    "EMPLOYEE_PD_QUESTIONNAIRE": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "pd_questionnaire"),
+    "MEDICAL_MILEAGE_EXPENSE": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "mileage"),
+    "SECTION_111_REPORT": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "section_111"),
+    "OSHA_FORM_300_LOG": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "osha_300"),
+
+    # --- CLAIMS_ADMINISTRATION: new subtypes ---
+    "CLAIMS_ADMINISTRATION_DOCUMENT": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "claims_admin"),
+    "CLAIMS_CLOSURE_SUMMARY": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "closure_summary"),
+    "CLAIMS_DIARY_NOTE": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "diary_note"),
+    "CLAIM_INVESTIGATION_REPORT": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "investigation_report"),
+    "COMPENSABILITY_DETERMINATION": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "compensability"),
+    "EXCESS_CARRIER_REPORT": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "excess_carrier"),
+    "LARGE_LOSS_REPORT": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "large_loss"),
+    "MEDICAL_MANAGEMENT_SUMMARY": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "medical_management"),
+    "NURSE_CASE_MANAGER_REPORT": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "nurse_case_manager"),
+    "RESERVE_CHANGE_NOTICE": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "reserve_change"),
+    "RESERVE_WORKSHEET": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "reserve_worksheet"),
+    "RETURN_TO_WORK_COORDINATION": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "rtw_coordination"),
+
+    # --- BILLING_FINANCIAL: new subtypes ---
+    "BENEFIT_CALCULATION_WORKSHEET": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "benefit_calc"),
+    "BENEFIT_PAYMENT_LEDGER": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "payment_ledger"),
+    "BILL_REVIEW_DECISION": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "bill_review"),
+    "CONDITIONAL_PAYMENT_NOTICE": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "conditional_payment"),
+    "IBR_APPLICATION": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "ibr_application"),
+    "IBR_DECISION": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "ibr_decision"),
+    "ML_FEE_BILLING": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "ml_fee"),
+    "PAYMENT_RECORD": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "payment"),
+    "PROVIDER_PAYMENT_SUMMARY": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "provider_summary"),
+    "SECOND_BILL_REVIEW_REQUEST": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "second_review"),
+    "SUBROGATION_DEMAND": TemplateEntry("DefenseCounselLetter", "pdf_templates.correspondence.defense_counsel_letter", "subrogation"),
+
+    # --- CORRESPONDENCE: new subtypes ---
+    "COVERAGE_OPINION_LETTER": TemplateEntry("DefenseCounselLetter", "pdf_templates.correspondence.defense_counsel_letter", "coverage_opinion"),
+    "EVALUATION_COVER_LETTER": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "eval_cover"),
+    "NOTICE_OF_REPRESENTATION": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "representation"),
+    "NOTICE_DISMISSAL_OF_ATTORNEY": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "dismissal_attorney"),
+
+    # --- DISCOVERY: new subtypes ---
+    "CUSTODIAN_OF_RECORDS_DECLARATION": TemplateEntry("SubpoenaedRecords", "pdf_templates.discovery.subpoenaed_records", "custodian"),
+
+    # --- EMPLOYMENT_RECORDS: new subtypes ---
+    "EMPLOYER_INCIDENT_INVESTIGATION": TemplateEntry("PersonnelFile", "pdf_templates.employment.personnel_file", "investigation"),
+    "ERGONOMIC_ASSESSMENT": TemplateEntry("JobDescription", "pdf_templates.employment.job_description", "ergonomic"),
+    "DEPENDENCY_DECLARATION": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "dependency"),
+
+    # --- LIENS: new subtypes ---
+    "LIEN_CLAIM": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "lien_general"),
+    "LIEN_STIPULATION_AGREEMENT": TemplateEntry("Stipulations", "pdf_templates.legal.stipulations", "lien_stipulation"),
+
+    # --- INVESTIGATION: new subtypes ---
+    "FRAUD_INVESTIGATION_REPORT": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "fraud_investigation"),
+    "INVESTIGATION_REPORT": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "investigation_general"),
+    "OSHA_CITATION": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "osha_citation"),
+    "OSHA_INSPECTION_REPORT": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "osha_inspection"),
+
+    # --- WORK_PRODUCT: new subtypes ---
+    "APPORTIONMENT_WORKSHEET": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "apportionment_worksheet"),
+    "DEFENSE_CASE_ANALYSIS": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "defense_analysis"),
+    "DEFENSE_MSC_STATEMENT": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "defense_msc"),
+    "DEFENSE_TRIAL_BRIEF": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "defense_trial_brief"),
+    "EARNINGS_CAPACITY_OPINION": TemplateEntry("QmeAmeReport", "pdf_templates.medical.qme_ame_report", "earnings_capacity"),
+    "LABOR_MARKET_SURVEY": TemplateEntry("QmeAmeReport", "pdf_templates.medical.qme_ame_report", "labor_market"),
+    "MSA_ALLOCATION_REPORT": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "msa_allocation"),
+    "TRANSFERABLE_SKILLS_ANALYSIS": TemplateEntry("QmeAmeReport", "pdf_templates.medical.qme_ame_report", "transferable_skills"),
+    "WORK_PRODUCT_DOCUMENT": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "work_product"),
+
+    # =========================================================================
+    # PHASE 2b: 30 new subtypes — correspondence, court, discovery, rating, summaries
+    # =========================================================================
+
+    # --- CORRESPONDENCE: new client/carrier/admin subtypes ---
+    "RETAINER_FEE_AGREEMENT": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "Retainer / Fee Agreement"),
+    "CLIENT_REPORT_ANALYSIS_LETTER": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "Client Report Analysis Letter"),
+    "CLIENT_CASE_VALUATION_LETTER": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "Client Case Valuation Letter"),
+    "CLIENT_SETTLEMENT_RECOMMENDATION": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "Client Settlement Recommendation"),
+    "CLIENT_HIPAA_AUTHORIZATION": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "Client HIPAA Authorization"),
+    "CLIENT_DECLARATION": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "Client Declaration"),
+    "CARRIER_POSITION_STATEMENT": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "Carrier Position Statement"),
+    "RESERVATION_OF_RIGHTS_LETTER": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "Reservation of Rights Letter"),
+    "EAMS_CASE_SUMMARY": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "EAMS Case Summary"),
+
+    # --- PLEADINGS_FILINGS: new filing subtypes ---
+    "REQUEST_FOR_CONTINUANCE": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "Request for Continuance"),
+    "PETITION_FOR_PENALTIES_LC_5814": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "Petition for Penalties (LC 5814)"),
+    "ATTORNEY_FEE_PETITION": TemplateEntry("ApplicationForAdjudication", "pdf_templates.legal.application_for_adjudication", "Attorney Fee Petition"),
+    "JOINT_PRETRIAL_CONFERENCE_STATEMENT": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "Joint Pre-Trial Conference Statement"),
+    "EXHIBIT_LIST": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "Exhibit List"),
+    "WITNESS_LIST": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "Witness List"),
+
+    # --- CORRESPONDENCE: QME/PTP letter subtypes ---
+    "OBJECTION_TO_QME_AME_REPORT": TemplateEntry("DefenseCounselLetter", "pdf_templates.correspondence.defense_counsel_letter", "Objection to QME/AME Report"),
+    "REQUEST_SUPPLEMENTAL_QME_AME_REPORT": TemplateEntry("DefenseCounselLetter", "pdf_templates.correspondence.defense_counsel_letter", "Request for Supplemental QME/AME Report"),
+    "QME_PANEL_STRIKE_LETTER": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "QME Panel Strike Letter"),
+    "PTP_REFERRAL_LETTER": TemplateEntry("TreatingPhysicianReport", "pdf_templates.medical.treating_physician_report", "PTP Referral Letter"),
+
+    # --- DISCOVERY: new subtypes ---
+    "INTERROGATORIES_SPECIAL": TemplateEntry("Subpoena", "pdf_templates.discovery.subpoena", "Special Interrogatories"),
+    "INTERROGATORY_RESPONSES": TemplateEntry("DepositionTranscript", "pdf_templates.discovery.deposition_transcript", "Interrogatory Responses"),
+    "REQUEST_FOR_PRODUCTION": TemplateEntry("Subpoena", "pdf_templates.discovery.subpoena", "Request for Production of Documents"),
+    "PRODUCTION_RESPONSES": TemplateEntry("DepositionTranscript", "pdf_templates.discovery.deposition_transcript", "Responses to Request for Production"),
+    "DEPOSITION_TRANSCRIPT_QME_AME": TemplateEntry("DepositionTranscript", "pdf_templates.discovery.deposition_transcript", "Deposition Transcript (QME/AME)"),
+
+    # --- BILLING/CLAIMS/EMPLOYMENT/WORK_PRODUCT: new subtypes ---
+    "TD_RATE_CALCULATION_NOTICE": TemplateEntry("WageStatement", "pdf_templates.employment.wage_statement", "TD Rate Calculation Notice"),
+    "NOTICE_OF_TD_TERMINATION": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "Notice of TD Termination"),
+    "RETURN_TO_WORK_REPORT": TemplateEntry("JobDescription", "pdf_templates.employment.job_description", "Return to Work Report"),
+    "MILEAGE_REIMBURSEMENT_REQUEST": TemplateEntry("BillingRecords", "pdf_templates.medical.billing_records", "Mileage Reimbursement Request"),
+    "INFORMAL_PD_RATING_PRINTOUT": TemplateEntry("SettlementMemo", "pdf_templates.summaries.settlement_memo", "Informal PD Rating Printout"),
+    "CMS_CONDITIONAL_PAYMENT_LETTER": TemplateEntry("AdjusterLetter", "pdf_templates.correspondence.adjuster_letter", "CMS Conditional Payment Letter"),
 }
 
 # Merge tier 2 into main registry (tier 1 takes precedence)

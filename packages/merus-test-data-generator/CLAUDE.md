@@ -1,6 +1,6 @@
 # MerusCase WC Test Data Generator v2.0
 
-**Lifecycle-aware Workers' Compensation test case simulation engine with 188-subtype taxonomy, AMA Guides 5th Edition content, specialty-specific clinical pools, deposition exchange templates, dynamic generation, FastAPI backend, and Next.js web UI.**
+**Lifecycle-aware Workers' Compensation test case simulation engine with 350-subtype taxonomy, AMA Guides 5th Edition content, specialty-specific clinical pools, deposition exchange templates, dynamic generation, FastAPI backend, and Next.js web UI.**
 
 ---
 
@@ -16,7 +16,7 @@
 
 ## Purpose
 
-Generates 1-500+ realistic Workers' Compensation test cases with lifecycle-aware document generation using the canonical 188-subtype Adjudica Classifier taxonomy. Produces 10,000+ templated PDFs across 97+ of 188 subtypes and optionally populates cases in MerusCase via Browserless cloud browser automation + API upload. Supports both standard case generation and hand-crafted edge case scenarios covering complex CA WC legal and procedural patterns.
+Generates 1-500+ realistic Workers' Compensation test cases with lifecycle-aware document generation using the canonical 350-subtype Adjudica Classifier taxonomy. Produces 10,000+ templated PDFs across 97+ of 350 subtypes and optionally populates cases in MerusCase via Browserless cloud browser automation + API upload. Supports both standard case generation and hand-crafted edge case scenarios covering complex CA WC legal and procedural patterns.
 
 ## Tech Stack
 
@@ -50,7 +50,7 @@ batch_create_cases.py        # Single-session Browserless case creation (bypasse
 batch2_edge_cases.py         # 30 hand-crafted edge case scenarios
 
 data/
-  ├── taxonomy.py                  # 188 subtypes + 12 types (from Adjudica-classifier)
+  ├── taxonomy.py                  # 350 subtypes + 15 types (from Adjudica-classifier)
   ├── taxonomy_compat.py           # Old 27→new 188 mapping
   ├── lifecycle_engine.py          # DAG state machine with probabilistic branching
   ├── case_profile_generator.py    # Dynamic 1-500 case generation
@@ -72,7 +72,7 @@ orchestration/
 
 pdf_templates/
   ├── base_template.py      # reportlab base class (utility methods added)
-  ├── registry.py           # Centralized subtype→template mapping (188 entries)
+  ├── registry.py           # Centralized subtype→template mapping (350 entries)
   ├── generic_template.py   # Tier 3 fallback template (enhanced)
   ├── medical/ (7)          # TPR, diagnostic, operative, QME/AME, UR, pharmacy, billing
   ├── legal/ (5)            # Application, DOR, minutes, stipulations, C&R
@@ -137,8 +137,8 @@ python scripts/sync_taxonomy.py --check  # Check for drift from classifier
 
 ```
 GET  /health
-GET  /api/taxonomy/types              # 12 parent types
-GET  /api/taxonomy/subtypes           # All 188 subtypes
+GET  /api/taxonomy/types              # 15 parent types
+GET  /api/taxonomy/subtypes           # All 350 subtypes
 GET  /api/taxonomy/subtypes/{type}    # Subtypes for one type
 POST /api/generate                    # Start generation (returns run_id)
 GET  /api/generate/{run_id}/status    # SSE progress stream

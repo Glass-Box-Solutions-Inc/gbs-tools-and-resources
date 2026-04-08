@@ -1,6 +1,6 @@
 # MerusCase WC Test Data Generator v2.1
 
-**Lifecycle-aware Workers' Compensation case simulation engine** — generates 1-500 realistic CA WC cases with the Adjudica Classifier's 188-subtype document taxonomy, templated PDFs, and optional MerusCase population.
+**Lifecycle-aware Workers' Compensation case simulation engine** — generates 1-500 realistic CA WC cases with the Adjudica Classifier's 350-subtype document taxonomy, templated PDFs, and optional MerusCase population.
 
 Built for the Merus-to-Adjudica import pipeline testing workflow.
 
@@ -14,16 +14,16 @@ Built for the Merus-to-Adjudica import pipeline testing workflow.
 - **Batch Case Creation Scripts** — `batch_create_cases.py` for efficient single-session Browserless MerusCase population; `batch2_edge_cases.py` for 30 custom WC edge case scenarios
 - **30 Edge Case Scenarios** — death claims, PTD with VR experts, Kite (CVC rebuttal), split carriers (LC 5500.5), pro per applicants, LC 4553 S&W, LC 5814 penalties, complex liens, UR/IMR chains, Almaraz/Guzman rebuttal, firefighter presumptions (LC 3212), sexual assault workplace claims
 - **Enhanced Templates** — QME/AME reports with AMA Guides impairment ratings, treating physician reports with specialty dispatch, utilization review, depositions, subpoenaed records, medical chronology, and settlement memo
-- **Scale** — 10,000+ documents generated across 97+ of 188 subtypes
+- **Scale** — 10,000+ documents generated across 97+ of 350 subtypes
 
 ## What's New in v2.0
 
-- **188-Subtype Taxonomy** — aligned with the Adjudica Classifier (was 27 subtypes)
+- **350-Subtype Taxonomy** — aligned with the Adjudica Classifier (was 27 subtypes)
 - **Lifecycle Engine** — probabilistic DAG models realistic CA WC case lifecycles
 - **Dynamic Generation** — 1-500 cases with configurable stage distribution and constraints
 - **FastAPI Backend** — REST API with SSE progress streaming on port 5520
 - **Next.js Web UI** — professional web interface for configuration, progress, and results
-- **Template Registry** — 188 subtype-to-template mappings (Tier 1, 2, and generic)
+- **Template Registry** — 350 subtype-to-template mappings (Tier 1, 2, and generic)
 
 ---
 
@@ -104,7 +104,7 @@ INJURY -> CLAIM_FILED -> CLAIM_RESPONSE
   -> POST_RESOLUTION
 ```
 
-Each node emits documents with configurable probability, count ranges, and date anchors using the 188-subtype taxonomy.
+Each node emits documents with configurable probability, count ranges, and date anchors using the 350-subtype taxonomy.
 
 ## Stage Distribution Presets
 
@@ -120,8 +120,8 @@ Each node emits documents with configurable probability, count ranges, and date 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | /health | Health check |
-| GET | /api/taxonomy/types | 12 parent types |
-| GET | /api/taxonomy/subtypes | All 188 subtypes |
+| GET | /api/taxonomy/types | 15 parent types |
+| GET | /api/taxonomy/subtypes | All 350 subtypes |
 | POST | /api/generate | Start generation run |
 | GET | /api/generate/{id}/status | SSE progress stream |
 | GET | /api/runs | List all runs |
@@ -138,7 +138,7 @@ Each node emits documents with configurable probability, count ranges, and date 
 | Tier 2 | Parameterized variants of Tier 1 | ~100 | Medium — variant parameter |
 | Tier 3 | Generic template with hint-driven structure | ~63 | Acceptable — correct structure |
 
-**Total: 188 subtypes covered** (100% of Adjudica Classifier taxonomy)
+**Total: 350 subtypes covered** (100% of Adjudica Classifier taxonomy)
 
 ### Enhanced Template Capabilities (v2.1)
 

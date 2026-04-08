@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-# Import canonical taxonomy — 188 subtypes, 12 types
+# Import canonical taxonomy — 350 subtypes, 15 types
 from data.taxonomy import DocumentSubtype, DocumentType  # noqa: F401
 
 
