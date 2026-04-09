@@ -224,6 +224,83 @@ class NodeDocumentRule:
 
 
 # ---------------------------------------------------------------------------
+# Complexity scaling caps
+# ---------------------------------------------------------------------------
+
+# Per-subtype max documents for complex cases
+COMPLEX_SUBTYPE_CAPS: dict[str, int] = {
+    "PROGRESS_REPORT": 8,
+    "PRESCRIPTION_ORDER": 6,
+    "PHYSICAL_THERAPY_NOTE": 6,
+    "BILLING_STATEMENT_MEDICAL": 8,
+    "BILLING_STATEMENT_LEGAL": 6,
+    "ADJUSTER_STATUS_LETTER": 6,
+    "DEFENSE_COUNSEL_CORRESPONDENCE": 6,
+    "LIEN_CLAIM_FILING": 5,
+    "UTILIZATION_REVIEW_DETERMINATION": 4,
+}
+COMPLEX_SUBTYPE_CAP_DEFAULT = 10  # For any subtype not listed
+
+# Per-stage max total documents for complex cases
+COMPLEX_STAGE_CAPS: dict[str, int] = {
+    "active_treatment": 25,
+    "ur_dispute": 10,
+    "discovery": 15,
+    "resolution_stipulations": 12,
+    "resolution_cr": 12,
+    "resolution_trial": 15,
+    "post_resolution": 10,
+}
+COMPLEX_STAGE_CAP_DEFAULT = 15
+
+# Global document cap for any single case
+COMPLEX_GLOBAL_CAP = 150
+STANDARD_GLOBAL_CAP = 80
+
+
+# ---------------------------------------------------------------------------
+# Stage minimum floor enforcement
+# ---------------------------------------------------------------------------
+
+STAGE_DOC_MINIMUMS: dict[str, int] = {
+    "injury": 1,
+    "claim_filed": 2,
+    "claim_response": 1,
+    "active_treatment": 3,
+    "investigation": 1,
+    "ur_dispute": 1,
+    "ur_decision": 1,
+    "qme_evaluation": 1,
+    "ame_evaluation": 1,
+    "discovery": 1,
+    "application_filed": 1,
+    "resolution_stipulations": 2,
+    "resolution_cr": 2,
+    "resolution_trial": 2,
+    "post_resolution": 1,
+}
+
+# Filler subtypes per stage — injected when a traversed stage falls below its minimum
+STAGE_FILLER_POOL: dict[str, str] = {
+    "injury": "FIRST_REPORT_OF_INJURY_PHYSICIAN",
+    "claim_filed": "CLAIM_FORM_DWC1",
+    "claim_response": "CLAIM_ACCEPTANCE_LETTER",
+    "active_treatment": "TREATING_PHYSICIAN_REPORT_PR4",
+    "investigation": "ADJUSTER_LETTER_INFORMATIONAL",
+    "ur_dispute": "UTILIZATION_REVIEW_DECISION",
+    "ur_decision": "UTILIZATION_REVIEW_DECISION",
+    "qme_evaluation": "MEDICAL_LEGAL_QME_AME_IME",
+    "ame_evaluation": "MEDICAL_LEGAL_QME_AME_IME",
+    "discovery": "DEPOSITION_NOTICE",
+    "application_filed": "APPLICATION_FOR_ADJUDICATION",
+    "resolution_stipulations": "STIPULATIONS_WITH_REQUEST_FOR_AWARD",
+    "resolution_cr": "COMPROMISE_AND_RELEASE",
+    "resolution_trial": "MINUTES_OF_HEARING",
+    "post_resolution": "BENEFIT_PAYMENT_LEDGER",
+}
+
+
+# ---------------------------------------------------------------------------
 # Lifecycle node definitions with document emission rules
 # ---------------------------------------------------------------------------
 
@@ -264,6 +341,10 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("CLAIMS_DIARY_NOTE", (1, 2), 0.5, date_anchor="claim_filed", date_offset_days=(7, 90)),
         NodeDocumentRule("RESERVE_WORKSHEET", (1, 1), 0.4, date_anchor="claim_filed", date_offset_days=(14, 60)),
         NodeDocumentRule("COMPENSABILITY_DETERMINATION", (1, 1), 0.35, date_anchor="claim_filed", date_offset_days=(30, 90)),
+        # Intake-stage medical documents — ensures intake cases get baseline medical docs
+        NodeDocumentRule("TREATING_PHYSICIAN_REPORT_PR2", (1, 1), 0.9, date_anchor="doi", date_offset_days=(3, 14)),
+        NodeDocumentRule("EMPLOYER_REPORT_INJURY", (0, 1), 0.7, date_anchor="doi", date_offset_days=(1, 7)),
+        NodeDocumentRule("QME_PANEL_REQUEST_FORM_105", (1, 1), 0.3, condition="has_attorney", date_anchor="doi", date_offset_days=(30, 60)),
     ],
 
     "investigation": [
@@ -291,7 +372,7 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("PAIN_MANAGEMENT_RECORDS", (0, 2), 0.35, date_anchor="doi", date_offset_days=(60, 365)),
         NodeDocumentRule("CHIROPRACTIC_RECORDS", (0, 2), 0.25, date_anchor="doi", date_offset_days=(14, 180)),
         NodeDocumentRule("PSYCHIATRIC_TREATMENT_RECORDS", (0, 2), 0.8, condition="has_psych_component", date_anchor="doi", date_offset_days=(30, 365)),
-        NodeDocumentRule("OPERATIVE_HOSPITAL_RECORDS", (1, 1), 1.0, condition="has_surgery", date_anchor="doi", date_offset_days=(30, 180)),
+        NodeDocumentRule("OPERATIVE_HOSPITAL_RECORDS", (1, 1), 1.0, condition="has_surgery AND injury_type != 'death' AND body_part_category != 'psyche'", date_anchor="doi", date_offset_days=(30, 180)),
         NodeDocumentRule("DISCHARGE_SUMMARY", (1, 1), 0.9, condition="has_surgery", date_anchor="doi", date_offset_days=(31, 185)),
         NodeDocumentRule("ACUTE_CARE_HOSPITAL_RECORDS", (0, 1), 0.4, condition="has_surgery", date_anchor="doi", date_offset_days=(30, 180)),
         NodeDocumentRule("ONGOING_TREATMENT_RECORDS", (1, 3), 0.6, date_anchor="doi", date_offset_days=(60, 365)),
@@ -620,6 +701,11 @@ def evaluate_condition(condition: str | None, params: CaseParameters) -> bool:
     # Simple condition evaluator — avoids eval()
     condition = condition.strip()
 
+    # Compound AND conditions — all parts must be true
+    if " AND " in condition:
+        parts = condition.split(" AND ")
+        return all(evaluate_condition(part.strip(), params) for part in parts)
+
     # Boolean flag conditions
     bool_flags = {
         "has_surgery": params.has_surgery,
@@ -642,6 +728,8 @@ def evaluate_condition(condition: str | None, params: CaseParameters) -> bool:
         "ur_decision": params.ur_decision,
         "imr_outcome": params.imr_outcome,
         "pd_percentage_range": params.pd_percentage_range,
+        "injury_type": params.injury_type,
+        "body_part_category": params.body_part_category,
     }
     for field_name, field_val in string_fields.items():
         if condition.startswith(field_name):
@@ -659,40 +747,96 @@ def evaluate_condition(condition: str | None, params: CaseParameters) -> bool:
 def collect_documents_for_case(
     params: CaseParameters,
     rng: random.Random,
-) -> list[tuple[str, NodeDocumentRule]]:
+) -> list[tuple[str, NodeDocumentRule, str]]:
     """Walk the lifecycle and collect all document rules that fire.
 
-    Returns list of (subtype_str, rule) tuples for documents to generate.
+    Returns list of (subtype_str, rule, stage_name) tuples for documents to generate.
     """
     stages = walk_lifecycle(params)
-    documents: list[tuple[str, NodeDocumentRule]] = []
+    documents: list[tuple[str, NodeDocumentRule, str]] = []
     is_complex = params.complexity == "complex"
 
+    # Track per-stage document counts for cap enforcement and minimum floors
+    stage_doc_counts: dict[str, int] = {}
+
     for stage in stages:
-        rules = LIFECYCLE_DOCUMENT_RULES.get(stage.value, [])
+        stage_name = stage.value
+        stage_docs: list[tuple[str, NodeDocumentRule, str]] = []
+        rules = LIFECYCLE_DOCUMENT_RULES.get(stage_name, [])
+
         for rule in rules:
             # Check condition
             if not evaluate_condition(rule.condition, params):
                 continue
 
-            # For complex cases: boost probability so more optional docs appear
+            # For complex cases: boost probability (1.5x, down from 2.5x)
             effective_prob = rule.probability
             if is_complex and effective_prob < 1.0:
-                effective_prob = min(1.0, effective_prob * 2.5)
+                effective_prob = min(1.0, effective_prob * 1.5)
 
             # Check probability
             if effective_prob < 1.0 and rng.random() > effective_prob:
                 continue
 
-            # Determine count — complex cases get 3-5x documents
+            # Determine count — complex cases get 2-3x documents (down from 3-5x)
             if is_complex:
-                scaled_min = rule.count[0] * 3
-                scaled_max = rule.count[1] * 5
+                scaled_min = rule.count[0] * 2
+                scaled_max = rule.count[1] * 3
                 count = rng.randint(max(scaled_min, 1), max(scaled_max, scaled_min + 1))
             else:
                 count = rng.randint(rule.count[0], rule.count[1])
 
             for _ in range(count):
-                documents.append((rule.subtype, rule))
+                stage_docs.append((rule.subtype, rule, stage_name))
+
+        # Enforce per-stage cap for complex cases
+        if is_complex:
+            stage_cap = COMPLEX_STAGE_CAPS.get(stage_name, COMPLEX_STAGE_CAP_DEFAULT)
+            if len(stage_docs) > stage_cap:
+                stage_docs = stage_docs[:stage_cap]
+
+        stage_doc_counts[stage_name] = len(stage_docs)
+        documents.extend(stage_docs)
+
+    # Enforce per-subtype caps for complex cases
+    if is_complex:
+        subtype_counts: dict[str, int] = {}
+        capped_documents: list[tuple[str, NodeDocumentRule, str]] = []
+        for doc_tuple in documents:
+            subtype_str = doc_tuple[0]
+            cap = COMPLEX_SUBTYPE_CAPS.get(subtype_str, COMPLEX_SUBTYPE_CAP_DEFAULT)
+            current = subtype_counts.get(subtype_str, 0)
+            if current < cap:
+                capped_documents.append(doc_tuple)
+                subtype_counts[subtype_str] = current + 1
+        documents = capped_documents
+
+    # Enforce global cap
+    global_cap = COMPLEX_GLOBAL_CAP if is_complex else STANDARD_GLOBAL_CAP
+    if len(documents) > global_cap:
+        documents = documents[:global_cap]
+
+    # Enforce stage minimum floors AFTER caps — fillers always survive
+    # Recount per-stage after cap enforcement
+    final_stage_counts: dict[str, int] = {}
+    for _, _, sn in documents:
+        final_stage_counts[sn] = final_stage_counts.get(sn, 0) + 1
+
+    for stage in stages:
+        stage_name = stage.value
+        minimum = STAGE_DOC_MINIMUMS.get(stage_name, 0)
+        current = final_stage_counts.get(stage_name, 0)
+        if current < minimum:
+            filler_subtype = STAGE_FILLER_POOL.get(stage_name)
+            if filler_subtype:
+                # Find a representative rule for date anchoring
+                stage_rules = LIFECYCLE_DOCUMENT_RULES.get(stage_name, [])
+                filler_rule = stage_rules[0] if stage_rules else NodeDocumentRule(
+                    subtype=filler_subtype,
+                    date_anchor="doi",
+                    date_offset_days=(0, 30),
+                )
+                for _ in range(minimum - current):
+                    documents.append((filler_subtype, filler_rule, stage_name))
 
     return documents

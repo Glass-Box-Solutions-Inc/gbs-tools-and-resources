@@ -19,6 +19,7 @@ from faker import Faker
 from data.case_profiles import CaseProfile
 from data.lifecycle_engine import (
     CaseParameters,
+    LIFECYCLE_ORDER,
     LifecycleStage,
     NodeDocumentRule,
     collect_documents_for_case,
@@ -418,15 +419,18 @@ class FakeDataGenerator:
         today = date.today()
         days_since_doi = (today - doi).days
 
-        # Collect documents from lifecycle walk
+        # Collect documents from lifecycle walk (now returns stage_name)
         doc_rules = collect_documents_for_case(params, self._rng)
+
+        # Build stage ordering index for chronological enforcement
+        stage_order = {stage.value: i for i, stage in enumerate(LIFECYCLE_ORDER)}
 
         docs: list[DocumentSpec] = []
         seq_counters: dict[str, int] = {}
         # Track subpoenaed medical record index for round-robin provider assignment
         subpoenaed_medical_idx = 0
 
-        for subtype_str, rule in doc_rules:
+        for subtype_str, rule, stage_name in doc_rules:
             # Track sequence per subtype
             seq_counters[subtype_str] = seq_counters.get(subtype_str, 0) + 1
             seq = seq_counters[subtype_str]
@@ -451,6 +455,9 @@ class FakeDataGenerator:
                 context["provider_index"] = subpoenaed_medical_idx % len(case.prior_providers)
                 subpoenaed_medical_idx += 1
 
+            # Store stage name for chronological enforcement
+            context["_stage_name"] = stage_name
+
             docs.append(DocumentSpec(
                 subtype=subtype_enum,
                 title=title,
@@ -460,7 +467,34 @@ class FakeDataGenerator:
                 context=context,
             ))
 
+        # Sort by date first, then enforce monotonic stage ordering
         docs.sort(key=lambda d: d.doc_date)
+
+        # Enforce: documents from later stages must not predate earlier stages
+        # Walk through sorted docs and bump dates where stage order is violated
+        if docs:
+            max_date_by_stage_order: dict[int, date] = {}
+            for doc in docs:
+                s_name = doc.context.get("_stage_name", "")
+                s_idx = stage_order.get(s_name, 0)
+
+                # Find the max date from any earlier stage
+                min_allowed = doi
+                for prev_idx, prev_date in max_date_by_stage_order.items():
+                    if prev_idx < s_idx and prev_date > min_allowed:
+                        min_allowed = prev_date
+
+                # Bump date if it predates an earlier stage's last document
+                if doc.doc_date < min_allowed:
+                    doc.doc_date = min_allowed
+
+                # Update the max date for this stage
+                if s_idx not in max_date_by_stage_order or doc.doc_date > max_date_by_stage_order[s_idx]:
+                    max_date_by_stage_order[s_idx] = doc.doc_date
+
+            # Re-sort after date bumping
+            docs.sort(key=lambda d: d.doc_date)
+
         return docs
 
     def _calculate_date_from_rule(

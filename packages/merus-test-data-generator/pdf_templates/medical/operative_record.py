@@ -11,6 +11,56 @@ from reportlab.lib.units import inch
 from data.wc_constants import CPT_CODES
 
 
+# Body-part-aware CPT category mapping
+BODY_PART_TO_SURGERY_CATEGORY: dict[str, list[str]] = {
+    "cervical spine": ["surgery_spine", "spine_injection"],
+    "lumbar spine": ["surgery_spine", "spine_injection"],
+    "thoracic spine": ["surgery_spine", "spine_injection"],
+    "spine": ["surgery_spine", "spine_injection"],
+    "shoulder": ["surgery_shoulder"],
+    "knee": ["surgery_knee"],
+    "wrist": ["surgery_shoulder"],  # upper extremity fallback
+    "hand": ["surgery_shoulder"],
+    "elbow": ["surgery_shoulder"],
+    "hip": ["surgery_knee"],  # lower extremity fallback
+    "ankle": ["surgery_knee"],
+    "foot": ["surgery_knee"],
+}
+
+
+def _select_surgical_cpts(body_parts: list[str]) -> list[tuple[str, str]]:
+    """Select CPT codes matching the case's injured body parts."""
+    # Try body-part-gated selection first
+    matched_categories: list[str] = []
+    for bp in body_parts:
+        bp_lower = bp.lower()
+        for key, cats in BODY_PART_TO_SURGERY_CATEGORY.items():
+            if key in bp_lower:
+                matched_categories.extend(cats)
+
+    if matched_categories:
+        surgical_cpts = []
+        for cat in set(matched_categories):
+            if cat in CPT_CODES:
+                surgical_cpts.extend(CPT_CODES[cat])
+        if surgical_cpts:
+            return surgical_cpts
+
+    # Fallback: all surgical CPT codes (original behavior)
+    surgical_cpts = []
+    for cat, code_list in CPT_CODES.items():
+        if any(word in cat for word in ['surgery', 'injection']):
+            surgical_cpts.extend(code_list)
+        else:
+            for code, desc in code_list:
+                if any(word in desc.lower() for word in ['surgery', 'repair', 'arthroscop', 'fusion', 'replacement', 'discectomy']):
+                    surgical_cpts.append((code, desc))
+    if not surgical_cpts:
+        all_cpts = [(code, desc) for cat_list in CPT_CODES.values() for code, desc in cat_list]
+        surgical_cpts = all_cpts[:5]
+    return surgical_cpts
+
+
 class OperativeRecord(BaseTemplate):
     """Surgical operative report"""
 
@@ -50,19 +100,9 @@ class OperativeRecord(BaseTemplate):
         anesthesiologist = f"Dr. {random.choice(['Lisa', 'John', 'Maria', 'Thomas'])} "
         anesthesiologist += random.choice(['Chang', 'Rodriguez', 'Kim', 'Anderson'])
 
-        # Select surgical procedure — flatten CPT_CODES and filter for surgical procedures
-        surgical_cpts = []
-        for cat, code_list in CPT_CODES.items():
-            if any(word in cat for word in ['surgery', 'injection']):
-                surgical_cpts.extend(code_list)
-            else:
-                for code, desc in code_list:
-                    if any(word in desc.lower() for word in ['surgery', 'repair', 'arthroscop', 'fusion', 'replacement', 'discectomy']):
-                        surgical_cpts.append((code, desc))
-        if not surgical_cpts:
-            all_cpts = [(code, desc) for cat_list in CPT_CODES.values() for code, desc in cat_list]
-            surgical_cpts = all_cpts[:5]
-
+        # Select surgical procedure — body-part-aware CPT selection
+        body_parts = injury.body_parts if injury else ["Spine"]
+        surgical_cpts = _select_surgical_cpts(body_parts)
         procedure_code, procedure_name = random.choice(surgical_cpts)
 
         story.append(Paragraph(f"<b>Date of Surgery:</b> {doc_spec.doc_date.strftime('%B %d, %Y')}", self.styles['BodyText14']))

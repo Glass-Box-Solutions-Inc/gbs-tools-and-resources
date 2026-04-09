@@ -83,17 +83,17 @@ def test_get_template_for_subtype_all() -> None:
 
 
 def test_registry_coverage_stats() -> None:
-    """get_registry_coverage() must report 350 total subtypes with full coverage.
+    """get_registry_coverage() must report 380 total subtypes with full coverage.
 
-    Phase 2: all 350 subtypes have explicit registry entries; 0 fall through to
+    Phase 2: all 380 subtypes have explicit registry entries; 0 fall through to
     GenericDocumentTemplate.
     """
     stats = get_registry_coverage()
-    assert stats["total_subtypes"] == 350, (
-        f"Expected total_subtypes=350, got {stats['total_subtypes']}"
+    assert stats["total_subtypes"] == 380, (
+        f"Expected total_subtypes=380, got {stats['total_subtypes']}"
     )
-    assert stats["registry_covered"] == 350, (
-        f"Expected registry_covered=350, got {stats['registry_covered']}"
+    assert stats["registry_covered"] == 380, (
+        f"Expected registry_covered=380, got {stats['registry_covered']}"
     )
     assert stats["generic_fallthrough"] == 0, (
         f"Expected generic_fallthrough=0 (Phase 2: full coverage), "
