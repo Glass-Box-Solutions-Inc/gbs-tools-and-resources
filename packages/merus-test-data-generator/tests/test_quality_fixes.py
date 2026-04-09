@@ -12,9 +12,11 @@ import random
 from data.lifecycle_engine import (
     COMPLEX_GLOBAL_CAP,
     COMPLEX_STAGE_CAPS,
+    COMPLEX_STAGE_CAP_DEFAULT,
     COMPLEX_SUBTYPE_CAPS,
     COMPLEX_SUBTYPE_CAP_DEFAULT,
     CaseParameters,
+    LIFECYCLE_DOCUMENT_RULES,
     LIFECYCLE_ORDER,
     NodeDocumentRule,
     STAGE_DOC_MINIMUMS,
@@ -25,6 +27,10 @@ from data.lifecycle_engine import (
     walk_lifecycle,
 )
 from data.taxonomy import DocumentSubtype
+from pdf_templates.medical.operative_record import (
+    BODY_PART_TO_SURGERY_CATEGORY,
+    _select_surgical_cpts,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -228,13 +234,12 @@ class TestRC3IntakeDocs:
         )
 
     def test_intake_stage_has_medical_report(self) -> None:
-        """Intake cases should include an INITIAL_MEDICAL_REPORT or PR-2."""
+        """Intake cases should include a physician report (PR-2 or first report)."""
         params = CaseParameters(target_stage="intake", has_attorney=True)
         docs = collect_documents_for_case(params, random.Random(42))
         subtypes = {d[0] for d in docs}
         has_medical = (
-            "INITIAL_MEDICAL_REPORT" in subtypes
-            or "FIRST_REPORT_OF_INJURY_PHYSICIAN" in subtypes
+            "FIRST_REPORT_OF_INJURY_PHYSICIAN" in subtypes
             or "TREATING_PHYSICIAN_REPORT_PR2" in subtypes
         )
         assert has_medical, (
@@ -242,17 +247,17 @@ class TestRC3IntakeDocs:
         )
 
     def test_intake_stage_has_employer_report(self) -> None:
-        """Intake cases should include an EMPLOYERS_FIRST_REPORT_OF_INJURY."""
+        """Intake cases should include an EMPLOYER_REPORT_INJURY."""
         params = CaseParameters(target_stage="intake", has_attorney=True)
-        # Run across multiple seeds — 0.95 probability means it should appear in most
+        # Run across multiple seeds — 0.7 probability means it should appear in most
         found_count = 0
         for seed in range(10):
             docs = collect_documents_for_case(params, random.Random(seed))
             subtypes = {d[0] for d in docs}
-            if "EMPLOYERS_FIRST_REPORT_OF_INJURY" in subtypes or "EMPLOYER_REPORT_INJURY" in subtypes:
+            if "EMPLOYER_REPORT_INJURY" in subtypes:
                 found_count += 1
-        assert found_count >= 7, (
-            f"EMPLOYERS_FIRST_REPORT only appeared in {found_count}/10 seeds"
+        assert found_count >= 5, (
+            f"EMPLOYER_REPORT_INJURY only appeared in {found_count}/10 seeds"
         )
 
     def test_intake_stage_reaches_claim_filed(self) -> None:
@@ -421,3 +426,138 @@ class TestRC5Chronology:
         valid_stages = {stage.value for stage in LIFECYCLE_ORDER}
         stage_names = {d[2] for d in docs}
         assert stage_names.issubset(valid_stages)
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: additional coverage from re-team review
+# ---------------------------------------------------------------------------
+
+
+class TestSelectSurgicalCPTs:
+    """Tests for body-part-aware CPT selection in operative_record.py."""
+
+    def test_spine_returns_spine_codes(self) -> None:
+        """Spine body parts should return spine surgery CPT codes."""
+        cpts = _select_surgical_cpts(["Lumbar Spine"])
+        codes = [c for c, _ in cpts]
+        # Should contain spine surgery codes, not shoulder/knee
+        assert any(c in codes for c in ["63030", "22551", "64483", "62323"])
+        assert "29827" not in codes  # no shoulder
+        assert "29881" not in codes  # no knee
+
+    def test_shoulder_returns_shoulder_codes(self) -> None:
+        """Shoulder body parts should return shoulder surgery CPT codes."""
+        cpts = _select_surgical_cpts(["Right Shoulder"])
+        codes = [c for c, _ in cpts]
+        assert any(c in codes for c in ["29827", "23412"])
+
+    def test_knee_returns_knee_codes(self) -> None:
+        """Knee body parts should return knee surgery CPT codes."""
+        cpts = _select_surgical_cpts(["Left Knee"])
+        codes = [c for c, _ in cpts]
+        assert any(c in codes for c in ["29881", "27447"])
+
+    def test_unknown_body_part_returns_fallback(self) -> None:
+        """Unknown body parts should fall back to all surgical CPT codes."""
+        cpts = _select_surgical_cpts(["finger"])
+        assert len(cpts) > 0
+
+    def test_empty_body_parts_returns_fallback(self) -> None:
+        """Empty body parts list should fall back to all surgical CPT codes."""
+        cpts = _select_surgical_cpts([])
+        assert len(cpts) > 0
+
+    def test_multiple_body_parts_unions_categories(self) -> None:
+        """Multiple body parts should union their CPT categories."""
+        cpts = _select_surgical_cpts(["Lumbar Spine", "Right Shoulder"])
+        codes = [c for c, _ in cpts]
+        # Should include both spine AND shoulder codes
+        has_spine = any(c in codes for c in ["63030", "22551"])
+        has_shoulder = any(c in codes for c in ["29827", "23412"])
+        assert has_spine and has_shoulder
+
+
+class TestComplexStageCaps:
+    """Tests for per-stage caps on complex cases."""
+
+    def test_active_treatment_stage_cap(self) -> None:
+        """Active treatment stage must not exceed its cap for complex cases."""
+        params = CaseParameters(
+            complexity="complex",
+            has_surgery=True,
+            has_psych_component=True,
+            num_body_parts=3,
+            has_attorney=True,
+        )
+        docs = collect_documents_for_case(params, random.Random(42))
+        at_count = sum(1 for _, _, s in docs if s == "active_treatment")
+        assert at_count <= COMPLEX_STAGE_CAPS["active_treatment"], (
+            f"active_treatment has {at_count} docs, exceeds stage cap of {COMPLEX_STAGE_CAPS['active_treatment']}"
+        )
+
+    def test_all_stages_under_caps(self) -> None:
+        """No stage should exceed its cap (or default) for complex cases."""
+        params = CaseParameters(
+            complexity="complex",
+            has_surgery=True,
+            has_liens=True,
+            has_ur_dispute=True,
+            has_attorney=True,
+            num_body_parts=3,
+        )
+        docs = collect_documents_for_case(params, random.Random(42))
+        stage_counts: dict[str, int] = {}
+        for _, _, s in docs:
+            stage_counts[s] = stage_counts.get(s, 0) + 1
+
+        for stage_name, count in stage_counts.items():
+            # Fillers may push 1-2 above cap, allow that
+            cap = COMPLEX_STAGE_CAPS.get(stage_name, COMPLEX_STAGE_CAP_DEFAULT)
+            minimum = STAGE_DOC_MINIMUMS.get(stage_name, 0)
+            allowed = max(cap, minimum)
+            assert count <= allowed + minimum, (
+                f"Stage {stage_name} has {count} docs, exceeds cap {cap} + filler {minimum}"
+            )
+
+    def test_subtype_caps_keys_match_rule_subtypes(self) -> None:
+        """All COMPLEX_SUBTYPE_CAPS keys should be subtypes actually emitted by rules."""
+        all_rule_subtypes = {
+            rule.subtype
+            for rules in LIFECYCLE_DOCUMENT_RULES.values()
+            for rule in rules
+        }
+        dead_caps = [k for k in COMPLEX_SUBTYPE_CAPS if k not in all_rule_subtypes]
+        assert not dead_caps, (
+            f"Subtype caps for subtypes never emitted by rules: {dead_caps}"
+        )
+
+
+class TestEvaluateConditionEdgeCases:
+    """Edge case tests for evaluate_condition()."""
+
+    def test_none_returns_true(self) -> None:
+        """None condition always evaluates to True."""
+        assert evaluate_condition(None, CaseParameters()) is True
+
+    def test_empty_string_returns_true(self) -> None:
+        """Empty string condition defaults to True (unknown condition fallback)."""
+        assert evaluate_condition("", CaseParameters()) is True
+
+    def test_unknown_flag_returns_true(self) -> None:
+        """Unknown condition names default to True for forward compatibility."""
+        assert evaluate_condition("nonexistent_flag_xyz", CaseParameters()) is True
+
+    def test_whitespace_stripped(self) -> None:
+        """Conditions with leading/trailing whitespace should still match."""
+        params = CaseParameters(has_surgery=True)
+        assert evaluate_condition("  has_surgery  ", params) is True
+
+    def test_three_part_and(self) -> None:
+        """Three-part AND condition with all true."""
+        params = CaseParameters(has_surgery=True, has_attorney=True, has_liens=True)
+        assert evaluate_condition("has_surgery AND has_attorney AND has_liens", params) is True
+
+    def test_three_part_and_one_false(self) -> None:
+        """Three-part AND condition with one false part."""
+        params = CaseParameters(has_surgery=True, has_attorney=False, has_liens=True)
+        assert evaluate_condition("has_surgery AND has_attorney AND has_liens", params) is False

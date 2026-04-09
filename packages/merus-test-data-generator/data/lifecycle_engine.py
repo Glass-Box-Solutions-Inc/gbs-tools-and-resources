@@ -227,17 +227,19 @@ class NodeDocumentRule:
 # Complexity scaling caps
 # ---------------------------------------------------------------------------
 
-# Per-subtype max documents for complex cases
+# Per-subtype max documents for complex cases (keyed to actual rule subtypes)
 COMPLEX_SUBTYPE_CAPS: dict[str, int] = {
-    "PROGRESS_REPORT": 8,
-    "PRESCRIPTION_ORDER": 6,
-    "PHYSICAL_THERAPY_NOTE": 6,
-    "BILLING_STATEMENT_MEDICAL": 8,
-    "BILLING_STATEMENT_LEGAL": 6,
-    "ADJUSTER_STATUS_LETTER": 6,
-    "DEFENSE_COUNSEL_CORRESPONDENCE": 6,
-    "LIEN_CLAIM_FILING": 5,
-    "UTILIZATION_REVIEW_DETERMINATION": 4,
+    "TREATING_PHYSICIAN_REPORT_PR4": 8,
+    "TREATING_PHYSICIAN_REPORT_PR2": 6,
+    "PROOF_OF_SERVICE": 8,
+    "SUBPOENAED_RECORDS_MEDICAL": 6,
+    "BILLING_CMS_1500": 6,
+    "ADJUSTER_LETTER_INFORMATIONAL": 6,
+    "ADJUSTER_LETTER_REQUEST": 6,
+    "DEFENSE_COUNSEL_LETTER_INFORMATIONAL": 5,
+    "PHYSICAL_THERAPY_RECORDS": 4,
+    "DIAGNOSTICS_IMAGING": 5,
+    "ONGOING_TREATMENT_RECORDS": 5,
 }
 COMPLEX_SUBTYPE_CAP_DEFAULT = 10  # For any subtype not listed
 

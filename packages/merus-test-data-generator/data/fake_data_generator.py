@@ -495,6 +495,10 @@ class FakeDataGenerator:
             # Re-sort after date bumping
             docs.sort(key=lambda d: d.doc_date)
 
+        # Clean up internal stage tracking from context before returning to templates
+        for doc in docs:
+            doc.context.pop("_stage_name", None)
+
         return docs
 
     def _calculate_date_from_rule(
