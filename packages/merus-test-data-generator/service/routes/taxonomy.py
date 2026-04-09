@@ -1,4 +1,4 @@
-"""Taxonomy API routes — 12 types + 188 subtypes."""
+"""Taxonomy API routes — 15 types + 350 subtypes."""
 
 from fastapi import APIRouter
 
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/taxonomy", tags=["taxonomy"])
 
 @router.get("/types", response_model=list[TaxonomyType])
 async def get_types():
-    """Return all 12 parent document types."""
+    """Return all 15 parent document types."""
     return [
         TaxonomyType(
             value=t.value,
@@ -30,7 +30,7 @@ async def get_types():
 
 @router.get("/subtypes", response_model=list[TaxonomySubtype])
 async def get_subtypes():
-    """Return all 188 document subtypes with labels and parent types."""
+    """Return all 350 document subtypes with labels and parent types."""
     from data.taxonomy import SUBTYPE_TO_TYPE
     return [
         TaxonomySubtype(

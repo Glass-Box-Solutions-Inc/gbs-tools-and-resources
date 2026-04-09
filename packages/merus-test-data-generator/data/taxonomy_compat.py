@@ -1,5 +1,5 @@
 """
-Backward-compatibility mapping from old 27-subtype enum to new 188-subtype taxonomy.
+Backward-compatibility mapping from old 27-subtype enum to new 350-subtype taxonomy.
 
 The original DocumentSubtype enum in models.py used simplified names. This module
 maps those names to the canonical classifier taxonomy names so that legacy code
@@ -55,6 +55,26 @@ LEGACY_TO_CANONICAL: dict[str, str] = {
     "SETTLEMENT_MEMO": "SETTLEMENT_VALUATION_MEMO",
 }
 
+# Subtypes that existed in the 188-subtype taxonomy but were removed in the 350-subtype migration.
+# Maps removed subtype name → closest canonical replacement in the new taxonomy.
+LEGACY_188_TO_CANONICAL: dict[str, str] = {
+    "DOR_STATUS_MSC_EXPEDITED": "DECLARATION_OF_READINESS",
+}
+
+# Maps old 12-type names to the new 15-type names they correspond to.
+# Useful for migrating documents that were tagged with the old type taxonomy.
+OLD_TYPE_TO_NEW_TYPES: dict[str, list[str]] = {
+    "ADMINISTRATIVE_COURT": ["PLEADINGS_FILINGS", "ORDERS_DECISIONS", "SETTLEMENTS"],
+    "OFFICIAL_FORMS": ["REGULATORY_FORMS"],
+    "MEDICAL": ["MEDICAL_CLINICAL", "MEDICAL_LEGAL", "UTILIZATION_MANAGEMENT"],
+    "EMPLOYMENT": ["EMPLOYMENT_RECORDS"],
+    "COURT_FORM_OUTPUTS": ["PLEADINGS_FILINGS"],
+    "LETTERS_ROUTINE_CORRESPONDENCE": ["CORRESPONDENCE"],
+    "SUMMARIES_CHRONOLOGIES": ["WORK_PRODUCT"],
+    "RATING_RTW_AIDS": ["BILLING_FINANCIAL", "WORK_PRODUCT"],
+    "SURVEILLANCE_INVESTIGATION": ["INVESTIGATION"],
+}
+
 # Reverse: canonical → legacy (for display compatibility)
 CANONICAL_TO_LEGACY: dict[str, str] = {v: k for k, v in LEGACY_TO_CANONICAL.items()}
 
@@ -62,7 +82,8 @@ CANONICAL_TO_LEGACY: dict[str, str] = {v: k for k, v in LEGACY_TO_CANONICAL.item
 def resolve_legacy_subtype(legacy_name: str) -> str:
     """Convert a legacy subtype name to its canonical equivalent.
 
-    If the name is already canonical (exists in the 188-taxonomy), returns it unchanged.
+    If the name is already canonical (exists in the 350-taxonomy), returns it unchanged.
+    Checks both the 27-entry legacy map and the 188-to-350 migration map.
     """
     from data.taxonomy import DocumentSubtype
 
@@ -73,7 +94,12 @@ def resolve_legacy_subtype(legacy_name: str) -> str:
     except ValueError:
         pass
 
-    # Try legacy mapping
+    # Try 188-to-350 migration map first (more specific)
+    canonical = LEGACY_188_TO_CANONICAL.get(legacy_name)
+    if canonical:
+        return canonical
+
+    # Try legacy 27-subtype mapping
     canonical = LEGACY_TO_CANONICAL.get(legacy_name)
     if canonical:
         return canonical

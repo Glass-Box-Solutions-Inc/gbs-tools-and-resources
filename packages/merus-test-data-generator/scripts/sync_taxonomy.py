@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 # Default location relative to monorepo layout
-DEFAULT_CLASSIFIER_PATH = Path.home() / "Desktop" / "Adjudica-classifier"
+DEFAULT_CLASSIFIER_PATH = Path("/home/vncuser/projects/Adjudica-classifier")
 
 
 def extract_const_object(ts_content: str, const_name: str) -> list[str]:

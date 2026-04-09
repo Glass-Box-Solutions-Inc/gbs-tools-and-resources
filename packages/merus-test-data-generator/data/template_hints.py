@@ -354,6 +354,267 @@ TEMPLATE_HINTS: dict[str, TemplateHint] = {
         page_count_range=(2, 4),
         content_style="medical",
     ),
+
+    # =========================================================================
+    # Phase 2b: 35 new subtypes — correspondence, court, discovery, rating, summaries
+    # =========================================================================
+
+    # --- Correspondence: client/carrier/admin ---
+    "RETAINER_FEE_AGREEMENT": TemplateHint(
+        format="Attorney-client agreement",
+        required_sections=["Attorney Information", "Fee Structure", "Scope of Representation", "Client Obligations", "Signatures"],
+        common_headings=["RETAINER AGREEMENT — WORKERS' COMPENSATION"],
+        page_count_range=(3, 6),
+        content_style="legal",
+    ),
+    "CLIENT_REPORT_ANALYSIS_LETTER": TemplateHint(
+        format="Attorney correspondence",
+        required_sections=["Report Summary", "Key Findings", "Impact on Case", "Recommendations"],
+        common_headings=["RE: ANALYSIS OF MEDICAL REPORT"],
+        page_count_range=(2, 4),
+        content_style="correspondence",
+    ),
+    "CLIENT_CASE_VALUATION_LETTER": TemplateHint(
+        format="Attorney correspondence",
+        required_sections=["Case Summary", "Injury Assessment", "Valuation Factors", "Estimated Range"],
+        common_headings=["RE: CASE VALUATION"],
+        page_count_range=(2, 4),
+        content_style="correspondence",
+    ),
+    "CLIENT_SETTLEMENT_RECOMMENDATION": TemplateHint(
+        format="Attorney correspondence",
+        required_sections=["Settlement Offer", "Analysis", "Recommendation", "Next Steps"],
+        common_headings=["RE: SETTLEMENT RECOMMENDATION"],
+        page_count_range=(2, 4),
+        content_style="correspondence",
+    ),
+    "CLIENT_HIPAA_AUTHORIZATION": TemplateHint(
+        format="Authorization form",
+        required_sections=["Patient Information", "Authorized Recipients", "Scope of Authorization", "Expiration", "Signature"],
+        common_headings=["HIPAA AUTHORIZATION FOR RELEASE OF MEDICAL INFORMATION"],
+        page_count_range=(1, 2),
+        content_style="legal",
+    ),
+    "CLIENT_DECLARATION": TemplateHint(
+        format="Sworn declaration",
+        required_sections=["Declarant Information", "Facts", "Declaration Under Penalty of Perjury", "Signature"],
+        common_headings=["DECLARATION OF"],
+        page_count_range=(2, 5),
+        content_style="legal",
+    ),
+    "NOTICE_OF_REPRESENTATION": TemplateHint(
+        format="Attorney notice",
+        required_sections=["Attorney Information", "Client Information", "Case Number", "Direction to Communicate"],
+        common_headings=["NOTICE OF REPRESENTATION"],
+        page_count_range=(1, 2),
+        content_style="correspondence",
+    ),
+    "BENEFIT_PAYMENT_LEDGER": TemplateHint(
+        format="Financial ledger",
+        required_sections=["Claimant", "Benefit Type", "Payment History", "Running Total"],
+        common_headings=["BENEFIT PAYMENT LEDGER"],
+        page_count_range=(2, 6),
+        content_style="formal",
+    ),
+    "CARRIER_POSITION_STATEMENT": TemplateHint(
+        format="Insurance position paper",
+        required_sections=["Claim Information", "Facts", "Position on Issues", "Supporting Evidence"],
+        common_headings=["CARRIER POSITION STATEMENT"],
+        page_count_range=(3, 8),
+        content_style="legal",
+    ),
+    "RESERVATION_OF_RIGHTS_LETTER": TemplateHint(
+        format="Insurance notice",
+        required_sections=["Claim Information", "Coverage Issues", "Reservation Language", "Ongoing Investigation"],
+        common_headings=["RESERVATION OF RIGHTS"],
+        page_count_range=(2, 4),
+        content_style="legal",
+    ),
+    "EAMS_CASE_SUMMARY": TemplateHint(
+        format="Administrative case summary",
+        required_sections=["Case Number", "Parties", "Case History", "Pending Issues", "Hearing Dates"],
+        common_headings=["EAMS CASE SUMMARY"],
+        page_count_range=(2, 4),
+        content_style="legal",
+    ),
+
+    # --- Administrative Court ---
+    "PROOF_OF_SERVICE": TemplateHint(
+        format="Legal proof of service",
+        required_sections=["Server Information", "Documents Served", "Method of Service", "Declaration"],
+        common_headings=["PROOF OF SERVICE"],
+        page_count_range=(1, 2),
+        content_style="legal",
+    ),
+    "ANSWER_TO_APPLICATION": TemplateHint(
+        format="Defense response filing",
+        required_sections=["Case Information", "Responses to Allegations", "Affirmative Defenses", "Verification"],
+        common_headings=["ANSWER TO APPLICATION FOR ADJUDICATION"],
+        page_count_range=(3, 6),
+        content_style="legal",
+    ),
+    "REQUEST_FOR_CONTINUANCE": TemplateHint(
+        format="Court motion",
+        required_sections=["Case Information", "Hearing Date", "Reason for Continuance", "Good Cause Showing"],
+        common_headings=["REQUEST FOR CONTINUANCE"],
+        page_count_range=(1, 3),
+        content_style="legal",
+    ),
+    "PETITION_FOR_PENALTIES_LC_5814": TemplateHint(
+        format="Petition for statutory penalties",
+        required_sections=["Case Information", "Benefits Owed", "Delay/Denial History", "Penalty Calculation", "Prayer"],
+        common_headings=["PETITION FOR PENALTIES PURSUANT TO LABOR CODE SECTION 5814"],
+        page_count_range=(3, 6),
+        content_style="legal",
+    ),
+    "ATTORNEY_FEE_PETITION": TemplateHint(
+        format="Attorney fee petition",
+        required_sections=["Case Information", "Fee Agreement", "Services Rendered", "Fee Calculation", "Prayer"],
+        common_headings=["PETITION FOR ATTORNEY'S FEES"],
+        page_count_range=(2, 5),
+        content_style="legal",
+    ),
+    "JOINT_PRETRIAL_CONFERENCE_STATEMENT": TemplateHint(
+        format="Joint conference statement",
+        required_sections=["Parties", "Issues in Dispute", "Stipulations", "Exhibits", "Witnesses", "Time Estimate"],
+        common_headings=["JOINT PRE-TRIAL CONFERENCE STATEMENT"],
+        page_count_range=(4, 10),
+        content_style="legal",
+    ),
+    "EXHIBIT_LIST": TemplateHint(
+        format="Court exhibit listing",
+        required_sections=["Case Information", "Exhibit Number", "Description", "Date", "Pages"],
+        common_headings=["EXHIBIT LIST"],
+        page_count_range=(1, 4),
+        content_style="legal",
+    ),
+    "WITNESS_LIST": TemplateHint(
+        format="Court witness listing",
+        required_sections=["Case Information", "Witness Name", "Topic", "Estimated Time"],
+        common_headings=["WITNESS LIST"],
+        page_count_range=(1, 2),
+        content_style="legal",
+    ),
+
+    # --- Letters / Routine Correspondence ---
+    "OBJECTION_TO_QME_AME_REPORT": TemplateHint(
+        format="Attorney objection letter",
+        required_sections=["Report Identification", "Specific Objections", "Supporting Authority", "Request for Correction"],
+        common_headings=["OBJECTION TO QME/AME REPORT"],
+        page_count_range=(2, 5),
+        content_style="legal",
+    ),
+    "REQUEST_SUPPLEMENTAL_QME_AME_REPORT": TemplateHint(
+        format="Attorney request letter",
+        required_sections=["Report Identification", "Additional Questions", "New Medical Records", "Request"],
+        common_headings=["REQUEST FOR SUPPLEMENTAL QME/AME REPORT"],
+        page_count_range=(2, 4),
+        content_style="correspondence",
+    ),
+    "QME_PANEL_STRIKE_LETTER": TemplateHint(
+        format="Panel strike notification",
+        required_sections=["Panel Information", "Strike Selection", "Remaining Physician", "Scheduling"],
+        common_headings=["QME PANEL STRIKE LETTER"],
+        page_count_range=(1, 2),
+        content_style="correspondence",
+    ),
+    "PTP_REFERRAL_LETTER": TemplateHint(
+        format="Physician referral letter",
+        required_sections=["Patient Information", "Injury History", "Current Treatment", "Referral Request"],
+        common_headings=["REFERRAL TO PRIMARY TREATING PHYSICIAN"],
+        page_count_range=(1, 3),
+        content_style="medical",
+    ),
+
+    # --- Discovery ---
+    "INTERROGATORIES_SPECIAL": TemplateHint(
+        format="Discovery interrogatories",
+        required_sections=["Propounding Party", "Responding Party", "Instructions", "Interrogatories"],
+        common_headings=["SPECIAL INTERROGATORIES"],
+        page_count_range=(3, 8),
+        content_style="legal",
+    ),
+    "INTERROGATORY_RESPONSES": TemplateHint(
+        format="Discovery responses",
+        required_sections=["Responding Party", "Verification", "Responses"],
+        common_headings=["RESPONSES TO SPECIAL INTERROGATORIES"],
+        page_count_range=(4, 12),
+        content_style="legal",
+    ),
+    "REQUEST_FOR_PRODUCTION": TemplateHint(
+        format="Discovery request",
+        required_sections=["Propounding Party", "Responding Party", "Instructions", "Document Requests"],
+        common_headings=["REQUEST FOR PRODUCTION OF DOCUMENTS"],
+        page_count_range=(3, 8),
+        content_style="legal",
+    ),
+    "PRODUCTION_RESPONSES": TemplateHint(
+        format="Discovery responses",
+        required_sections=["Responding Party", "Verification", "Responses", "Privilege Log"],
+        common_headings=["RESPONSES TO REQUEST FOR PRODUCTION OF DOCUMENTS"],
+        page_count_range=(3, 10),
+        content_style="legal",
+    ),
+    "DEPOSITION_TRANSCRIPT_QME_AME": TemplateHint(
+        format="Deposition transcript",
+        required_sections=["Examination"],
+        common_headings=["DEPOSITION OF"],
+        page_count_range=(15, 40),
+        content_style="legal",
+    ),
+
+    # --- Rating / RTW Aids ---
+    "TD_RATE_CALCULATION_NOTICE": TemplateHint(
+        format="Benefit calculation notice",
+        required_sections=["Claimant", "Earnings Data", "Rate Calculation", "Weekly TD Rate"],
+        common_headings=["TEMPORARY DISABILITY RATE CALCULATION"],
+        page_count_range=(1, 2),
+        content_style="formal",
+    ),
+    "NOTICE_OF_TD_TERMINATION": TemplateHint(
+        format="Claims administration notice",
+        required_sections=["Claimant", "TD Period", "Reason for Termination", "Appeal Rights"],
+        common_headings=["NOTICE OF TERMINATION OF TEMPORARY DISABILITY BENEFITS"],
+        page_count_range=(1, 2),
+        content_style="formal",
+    ),
+    "RETURN_TO_WORK_REPORT": TemplateHint(
+        format="Employment report",
+        required_sections=["Employee", "Return Date", "Work Capacity", "Restrictions", "Accommodations"],
+        common_headings=["RETURN TO WORK REPORT"],
+        page_count_range=(2, 4),
+        content_style="formal",
+    ),
+    "MILEAGE_REIMBURSEMENT_REQUEST": TemplateHint(
+        format="Reimbursement form",
+        required_sections=["Claimant", "Trip Details", "Mileage Calculation", "Total Amount"],
+        common_headings=["MILEAGE REIMBURSEMENT REQUEST"],
+        page_count_range=(1, 2),
+        content_style="formal",
+    ),
+    "INFORMAL_PD_RATING_PRINTOUT": TemplateHint(
+        format="Rating computation printout",
+        required_sections=["WPI", "Body Part", "FEC Adjustments", "Age/Occupation", "Final PD Percentage"],
+        common_headings=["INFORMAL PERMANENT DISABILITY RATING"],
+        page_count_range=(1, 3),
+        content_style="legal",
+    ),
+
+    # --- Summaries / Chronologies ---
+    "MSA_ALLOCATION_REPORT": TemplateHint(
+        format="Medicare Set-Aside allocation report",
+        required_sections=["Claimant Information", "Medical History", "Future Treatment Needs", "Cost Projections", "MSA Amount"],
+        common_headings=["MEDICARE SET-ASIDE ALLOCATION REPORT"],
+        page_count_range=(8, 20),
+        content_style="formal",
+    ),
+    "CMS_CONDITIONAL_PAYMENT_LETTER": TemplateHint(
+        format="CMS conditional payment notice",
+        required_sections=["Claimant", "Medicare Payments", "Conditional Payment Amount", "Reimbursement Demand"],
+        common_headings=["CMS CONDITIONAL PAYMENT LETTER"],
+        page_count_range=(2, 5),
+        content_style="formal",
+    ),
 }
 
 
