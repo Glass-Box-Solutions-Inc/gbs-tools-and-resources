@@ -116,6 +116,23 @@ class BaseTemplate:
         ))
 
     def generate(self, output_path: Path, doc_spec: Any) -> Path:
+        """Dispatch to the correct format generator based on doc_spec.output_format."""
+        fmt = getattr(doc_spec, "output_format", None)
+        fmt_val = fmt.value if fmt is not None else "pdf"
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if fmt_val == "eml":
+            return self._generate_eml(output_path, doc_spec)
+        elif fmt_val == "docx":
+            return self._generate_docx(output_path, doc_spec)
+        elif fmt_val == "scanned_pdf":
+            return self._generate_scanned_pdf(output_path, doc_spec)
+        else:
+            return self._generate_pdf(output_path, doc_spec)
+
+    def _generate_pdf(self, output_path: Path, doc_spec: Any) -> Path:
+        """Render a native vector PDF using reportlab."""
         buffer = BytesIO()
         doc = SimpleDocTemplate(
             buffer,
@@ -127,12 +144,254 @@ class BaseTemplate:
         )
         story = self.build_story(doc_spec)
         doc.build(story, onFirstPage=self._add_footer, onLaterPages=self._add_footer)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(buffer.getvalue())
+        return output_path
+
+    def _generate_eml(self, output_path: Path, doc_spec: Any) -> Path:
+        """Render an RFC 2822 .eml file from the document story."""
+        import email.message
+        from data.email_metadata import generate_email_headers
+
+        story = self.build_story(doc_spec)
+        body = self._story_to_plaintext(story)
+        headers = generate_email_headers(
+            subtype=doc_spec.subtype.value,
+            case=self.case,
+            doc_date=doc_spec.doc_date,
+            subject=doc_spec.title,
+        )
+
+        msg = email.message.Message()
+        for key, val in headers.items():
+            msg[key] = val
+        msg.set_payload(body, charset="utf-8")
+
+        output_path.write_text(str(msg), encoding="utf-8")
+        return output_path
+
+    def _generate_docx(self, output_path: Path, doc_spec: Any) -> Path:
+        """Render a Word .docx document from the document story."""
+        from docx import Document
+        from docx.shared import Pt, Inches
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from data.docx_styles import (
+            STYLE_MAP,
+            FIRM_LETTERHEAD,
+            MONOSPACE_STYLES,
+            DOUBLE_SPACED_STYLES,
+            CENTER_ALIGNED_STYLES,
+            RIGHT_ALIGNED_STYLES,
+        )
+
+        word_doc = Document()
+
+        # Set Times New Roman 12pt as the default body font
+        style = word_doc.styles["Normal"]
+        style.font.name = "Times New Roman"
+        style.font.size = Pt(12)
+
+        # Firm letterhead in the header section
+        section = word_doc.sections[0]
+        header = section.header
+        hdr_para = header.paragraphs[0]
+        hdr_para.text = FIRM_LETTERHEAD["name"]
+        hdr_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        hdr_para.runs[0].bold = True
+        hdr_para.runs[0].font.size = Pt(14)
+        header.add_paragraph(FIRM_LETTERHEAD["address"]).alignment = WD_ALIGN_PARAGRAPH.CENTER
+        header.add_paragraph(FIRM_LETTERHEAD["phone"]).alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # CONFIDENTIAL footer with page number field
+        footer = section.footer
+        footer_para = footer.paragraphs[0]
+        footer_para.text = "CONFIDENTIAL — Workers' Compensation Medical/Legal Record"
+        footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        footer_para.runs[0].font.size = Pt(8)
+
+        # Convert story flowables to Word elements
+        story = self.build_story(doc_spec)
+        self._story_to_docx(story, word_doc, STYLE_MAP, MONOSPACE_STYLES,
+                            DOUBLE_SPACED_STYLES, CENTER_ALIGNED_STYLES, RIGHT_ALIGNED_STYLES)
+
+        word_doc.save(str(output_path))
+        return output_path
+
+    def _generate_scanned_pdf(self, output_path: Path, doc_spec: Any) -> Path:
+        """Generate a native PDF then apply scan simulation artifacts."""
+        import random as _random
+        from pdf_templates.scan_simulator import simulate_scan
+
+        # Generate clean native PDF first
+        native_buf = BytesIO()
+        native_doc = SimpleDocTemplate(
+            native_buf,
+            pagesize=letter,
+            leftMargin=0.75 * inch,
+            rightMargin=0.75 * inch,
+            topMargin=0.75 * inch,
+            bottomMargin=0.75 * inch,
+        )
+        story = self.build_story(doc_spec)
+        native_doc.build(story, onFirstPage=self._add_footer, onLaterPages=self._add_footer)
+
+        # Apply scan simulation with a doc-specific seed derived from title hash
+        seed = hash(doc_spec.title + str(doc_spec.doc_date)) & 0xFFFFFFFF
+        rng = _random.Random(seed)
+        scanned_bytes = simulate_scan(native_buf.getvalue(), rng, doc_date=doc_spec.doc_date)
+
+        output_path.write_bytes(scanned_bytes)
         return output_path
 
     def build_story(self, doc_spec: Any) -> list:
         raise NotImplementedError
+
+    # --- Interdocument coherence helpers (Phase 6) ---
+
+    def _get_accumulator(self, doc_spec: Any) -> Any | None:
+        """Return the CaseContextAccumulator for this case, or None if not wired.
+
+        Templates should always call this rather than accessing doc_spec.context
+        directly. Returning None means the pipeline hasn't injected the accumulator
+        (e.g. unit tests or legacy pipeline code) — templates must degrade gracefully.
+        """
+        return doc_spec.context.get("_accumulator") if doc_spec.context else None
+
+    def _format_cross_references(self, doc_spec: Any, max_refs: int = 3) -> str:
+        """Return a formatted cross-reference sentence from the accumulator.
+
+        Returns an empty string if no accumulator is available or no prior
+        documents have been generated yet.
+        """
+        acc = self._get_accumulator(doc_spec)
+        if acc is None:
+            return ""
+        return acc.get_cross_reference(max_refs=max_refs)
+
+    # --- Format conversion helpers ---
+
+    def _story_to_plaintext(self, story: list) -> str:
+        """Extract readable plain text from a reportlab story.
+
+        Walks Paragraph, Table, Spacer, and HRFlowable flowables and converts
+        them to plain text suitable for an email body.
+        """
+        import re
+        from reportlab.platypus import Paragraph, Table, Spacer, HRFlowable
+
+        lines: list[str] = []
+        for flowable in story:
+            if isinstance(flowable, Paragraph):
+                # Strip all reportlab/HTML tags
+                text = re.sub(r"<[^>]+>", "", flowable.text or "")
+                text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+                lines.append(text.strip())
+            elif isinstance(flowable, Table):
+                # Format table rows as tab-separated text
+                for row in (flowable._cellvalues if hasattr(flowable, "_cellvalues") else []):
+                    cells = []
+                    for cell in row:
+                        if isinstance(cell, Paragraph):
+                            cell_text = re.sub(r"<[^>]+>", "", cell.text or "")
+                        else:
+                            cell_text = str(cell) if cell else ""
+                        cells.append(cell_text.strip())
+                    lines.append("\t".join(cells))
+            elif isinstance(flowable, Spacer):
+                lines.append("")
+            elif isinstance(flowable, HRFlowable):
+                lines.append("-" * 60)
+
+        return "\n".join(lines)
+
+    def _story_to_docx(
+        self,
+        story: list,
+        word_doc: Any,
+        style_map: dict,
+        monospace_styles: frozenset,
+        double_spaced_styles: frozenset,
+        center_styles: frozenset,
+        right_styles: frozenset,
+    ) -> None:
+        """Convert a reportlab story into python-docx paragraphs and tables.
+
+        Mutates word_doc in place by appending elements.
+        """
+        import re
+        from docx.shared import Pt
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+        from reportlab.platypus import Paragraph, Table, Spacer, HRFlowable
+
+        def strip_tags(text: str) -> str:
+            return re.sub(r"<[^>]+>", "", text or "").strip()
+
+        def is_bold(text: str) -> bool:
+            return bool(re.search(r"<b>", text or "", re.IGNORECASE))
+
+        def is_italic(text: str) -> bool:
+            return bool(re.search(r"<i>|<em>", text or "", re.IGNORECASE))
+
+        for flowable in story:
+            if isinstance(flowable, Paragraph):
+                style_name = flowable.style.name if hasattr(flowable, "style") else "Normal"
+                docx_style_name, force_bold, force_italic, font_pt = style_map.get(
+                    style_name, ("Normal", False, False, None)
+                )
+
+                para = word_doc.add_paragraph(style=docx_style_name)
+                raw_text = flowable.text or ""
+                run = para.add_run(strip_tags(raw_text))
+
+                if force_bold or is_bold(raw_text):
+                    run.bold = True
+                if force_italic or is_italic(raw_text):
+                    run.italic = True
+                if font_pt:
+                    run.font.size = Pt(font_pt)
+                if style_name in monospace_styles:
+                    run.font.name = "Courier New"
+                if style_name in center_styles:
+                    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                elif style_name in right_styles:
+                    para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                if style_name in double_spaced_styles:
+                    para.paragraph_format.line_spacing = Pt(24)
+
+            elif isinstance(flowable, Table):
+                cell_values = getattr(flowable, "_cellvalues", [])
+                if not cell_values:
+                    continue
+                rows = len(cell_values)
+                cols = max(len(r) for r in cell_values) if cell_values else 1
+                tbl = word_doc.add_table(rows=rows, cols=cols)
+                tbl.style = "Table Grid"
+                for r_idx, row in enumerate(cell_values):
+                    for c_idx, cell in enumerate(row):
+                        if c_idx >= cols:
+                            break
+                        if isinstance(cell, Paragraph):
+                            cell_text = strip_tags(cell.text)
+                        else:
+                            cell_text = str(cell) if cell else ""
+                        tbl.rows[r_idx].cells[c_idx].text = cell_text
+
+            elif isinstance(flowable, Spacer):
+                word_doc.add_paragraph("")
+
+            elif isinstance(flowable, HRFlowable):
+                # Add a paragraph with a bottom border to simulate a horizontal rule
+                para = word_doc.add_paragraph()
+                pPr = para._p.get_or_add_pPr()
+                pBdr = OxmlElement("w:pBdr")
+                bottom = OxmlElement("w:bottom")
+                bottom.set(qn("w:val"), "single")
+                bottom.set(qn("w:sz"), "6")
+                bottom.set(qn("w:space"), "1")
+                bottom.set(qn("w:color"), "333333")
+                pBdr.append(bottom)
+                pPr.append(pBdr)
 
     # --- Reusable components ---
 

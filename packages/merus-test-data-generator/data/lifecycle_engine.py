@@ -256,8 +256,8 @@ COMPLEX_STAGE_CAPS: dict[str, int] = {
 COMPLEX_STAGE_CAP_DEFAULT = 15
 
 # Global document cap for any single case
-COMPLEX_GLOBAL_CAP = 150
-STANDARD_GLOBAL_CAP = 80
+COMPLEX_GLOBAL_CAP = 200
+STANDARD_GLOBAL_CAP = 120
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +336,7 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("CLAIM_DELAY_NOTICE", (1, 1), 1.0, condition="claim_response == 'delayed'", date_anchor="claim_filed", date_offset_days=(14, 90)),
         NodeDocumentRule("ADJUSTER_LETTER_INFORMATIONAL", (1, 2), 1.0, date_anchor="claim_filed", date_offset_days=(7, 60)),
         NodeDocumentRule("TD_PAYMENT_RECORD_RETROACTIVE", (0, 1), 0.4, condition="claim_response == 'delayed'", date_anchor="claim_filed", date_offset_days=(45, 120)),
-        NodeDocumentRule("PROOF_OF_SERVICE", (1, 2), 0.9, date_anchor="claim_filed", date_offset_days=(7, 90)),
+        NodeDocumentRule("PROOF_OF_SERVICE", (1, 1), 0.9, date_anchor="claim_filed", date_offset_days=(7, 90)),
         NodeDocumentRule("TD_RATE_CALCULATION_NOTICE", (1, 1), 0.8, date_anchor="claim_filed", date_offset_days=(14, 60)),
         NodeDocumentRule("CARRIER_POSITION_STATEMENT", (0, 1), 0.4, date_anchor="claim_filed", date_offset_days=(30, 90)),
         NodeDocumentRule("RESERVATION_OF_RIGHTS_LETTER", (0, 1), 0.2, date_anchor="claim_filed", date_offset_days=(14, 60)),
@@ -347,6 +347,9 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("TREATING_PHYSICIAN_REPORT_PR2", (1, 1), 0.9, date_anchor="doi", date_offset_days=(3, 14)),
         NodeDocumentRule("EMPLOYER_REPORT_INJURY", (0, 1), 0.7, date_anchor="doi", date_offset_days=(1, 7)),
         NodeDocumentRule("QME_PANEL_REQUEST_FORM_105", (1, 1), 0.3, condition="has_attorney", date_anchor="doi", date_offset_days=(30, 60)),
+        # Administrative noise
+        NodeDocumentRule("FAX_COVER_SHEET", (0, 1), 0.15, date_anchor="claim_filed", date_offset_days=(7, 90)),
+        NodeDocumentRule("INTERNAL_FILE_NOTE", (0, 1), 0.10, date_anchor="claim_filed", date_offset_days=(7, 90)),
     ],
 
     "investigation": [
@@ -363,7 +366,7 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
     # --- ACTIVE TREATMENT ---
     "active_treatment": [
         NodeDocumentRule("TREATING_PHYSICIAN_REPORT_PR2", (1, 2), 1.0, date_anchor="doi", date_offset_days=(7, 30)),
-        NodeDocumentRule("TREATING_PHYSICIAN_REPORT_PR4", (2, 5), 1.0, date_anchor="doi", date_offset_days=(30, 365)),
+        NodeDocumentRule("TREATING_PHYSICIAN_REPORT_PR4", (1, 3), 1.0, date_anchor="doi", date_offset_days=(30, 365)),
         NodeDocumentRule("DIAGNOSTICS_IMAGING", (1, 3), 1.0, date_anchor="doi", date_offset_days=(3, 180)),
         NodeDocumentRule("DIAGNOSTICS_LAB_RESULTS", (0, 1), 0.3, date_anchor="doi", date_offset_days=(7, 90)),
         NodeDocumentRule("PHARMACY_RECORDS", (1, 2), 0.9, date_anchor="doi", date_offset_days=(7, 180)),
@@ -380,15 +383,15 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("ONGOING_TREATMENT_RECORDS", (1, 3), 0.6, date_anchor="doi", date_offset_days=(60, 365)),
         NodeDocumentRule("MEDICAL_TREATMENT_AUTHORIZATION_RFA", (1, 3), 0.7, date_anchor="doi", date_offset_days=(14, 180)),
         NodeDocumentRule("ADJUSTER_LETTER_INFORMATIONAL", (1, 2), 1.0, date_anchor="doi", date_offset_days=(30, 180)),
-        NodeDocumentRule("DEFENSE_COUNSEL_LETTER_INFORMATIONAL", (0, 1), 0.5, date_anchor="doi", date_offset_days=(60, 270)),
+        NodeDocumentRule("DEFENSE_COUNSEL_LETTER_INFORMATIONAL", (1, 3), 0.8, date_anchor="doi", date_offset_days=(60, 270)),
         NodeDocumentRule("WORK_RESTRICTIONS_POST_INJURY", (1, 2), 0.8, date_anchor="doi", date_offset_days=(7, 180)),
         NodeDocumentRule("TD_PAYMENT_RECORD_ONGOING", (1, 2), 0.7, date_anchor="doi", date_offset_days=(14, 180)),
-        NodeDocumentRule("CLIENT_STATUS_LETTERS", (0, 1), 0.4, date_anchor="doi", date_offset_days=(30, 180)),
+        NodeDocumentRule("CLIENT_STATUS_LETTERS", (1, 3), 0.8, date_anchor="doi", date_offset_days=(30, 180)),
         NodeDocumentRule("TREATING_PHYSICIAN_REPORT_FINAL", (1, 1), 0.7, date_anchor="doi", date_offset_days=(180, 545)),
         NodeDocumentRule("EXPLANATION_OF_REVIEW_EOR", (1, 2), 0.6, date_anchor="doi", date_offset_days=(30, 270)),
         NodeDocumentRule("OFFER_OF_WORK_MODIFIED_AD_10118", (0, 1), 0.25, date_anchor="doi", date_offset_days=(30, 180)),
         NodeDocumentRule("OFFER_OF_WORK_REGULAR_AD_10133_53", (0, 1), 0.2, date_anchor="doi", date_offset_days=(90, 365)),
-        NodeDocumentRule("CLIENT_CORRESPONDENCE_INFORMATIONAL", (1, 3), 0.7, date_anchor="doi", date_offset_days=(30, 365)),
+        NodeDocumentRule("CLIENT_CORRESPONDENCE_INFORMATIONAL", (2, 4), 0.9, date_anchor="doi", date_offset_days=(30, 365)),
         NodeDocumentRule("ACUPUNCTURE_RECORDS", (0, 1), 0.15, date_anchor="doi", date_offset_days=(60, 365)),
         NodeDocumentRule("FIRST_FILL_PHARMACY_FORM", (0, 1), 0.4, date_anchor="doi", date_offset_days=(7, 30)),
         NodeDocumentRule("MEDICAL_BILL_INITIAL", (0, 1), 0.6, date_anchor="doi", date_offset_days=(7, 60)),
@@ -396,9 +399,15 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("RETURN_TO_WORK_REPORT", (0, 1), 0.3, date_anchor="doi", date_offset_days=(60, 270)),
         NodeDocumentRule("MILEAGE_REIMBURSEMENT_REQUEST", (0, 2), 0.3, date_anchor="doi", date_offset_days=(30, 365)),
         NodeDocumentRule("PTP_REFERRAL_LETTER", (0, 1), 0.4, date_anchor="doi", date_offset_days=(30, 180)),
+        NodeDocumentRule("ADVOCACY_LETTERS_PTP", (1, 2), 0.5, condition="has_attorney", date_anchor="doi", date_offset_days=(60, 270)),
         NodeDocumentRule("NURSE_CASE_MANAGER_REPORT", (1, 2), 0.3, condition="has_surgery", date_anchor="doi", date_offset_days=(30, 365)),
         NodeDocumentRule("PHARMACY_AUTHORIZATION", (0, 1), 0.35, date_anchor="doi", date_offset_days=(14, 180)),
         NodeDocumentRule("DME_AUTHORIZATION", (0, 1), 0.2, condition="has_surgery", date_anchor="doi", date_offset_days=(30, 270)),
+        # Administrative noise — scattered through treatment period
+        NodeDocumentRule("FAX_COVER_SHEET", (0, 2), 0.18, date_anchor="doi", date_offset_days=(30, 270)),
+        NodeDocumentRule("INTERNAL_FILE_NOTE", (0, 2), 0.12, date_anchor="doi", date_offset_days=(30, 270)),
+        NodeDocumentRule("BLANK_SCANNED_PAGE", (0, 1), 0.05, date_anchor="doi", date_offset_days=(30, 365)),
+        NodeDocumentRule("COVER_LETTER_ENCLOSURE", (0, 1), 0.15, date_anchor="doi", date_offset_days=(60, 270)),
     ],
 
     # --- UR DISPUTE BRANCH ---
@@ -409,6 +418,9 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("DECLARATION_OF_READINESS_EXPEDITED", (0, 1), 0.4, date_anchor="doi", date_offset_days=(90, 270)),
         NodeDocumentRule("UR_APPEAL_LETTER", (1, 1), 0.7, date_anchor="doi", date_offset_days=(60, 270)),
         NodeDocumentRule("UR_PEER_TO_PEER_NOTES", (0, 1), 0.3, date_anchor="doi", date_offset_days=(60, 270)),
+        # Administrative noise
+        NodeDocumentRule("FAX_COVER_SHEET", (0, 1), 0.15, date_anchor="doi", date_offset_days=(60, 270)),
+        NodeDocumentRule("INTERNAL_FILE_NOTE", (0, 1), 0.12, date_anchor="doi", date_offset_days=(60, 270)),
     ],
 
     "ur_decision": [
@@ -428,11 +440,15 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("COURT_DISTRICT_NOTICE", (0, 1), 0.4, date_anchor="application_filed", date_offset_days=(14, 45)),
         NodeDocumentRule("NOTICE_OF_ORDER", (0, 1), 0.5, date_anchor="application_filed", date_offset_days=(30, 120)),
         NodeDocumentRule("ANSWER_TO_APPLICATION", (0, 1), 0.7, date_anchor="application_filed", date_offset_days=(14, 60)),
-        NodeDocumentRule("PROOF_OF_SERVICE", (1, 2), 0.8, date_anchor="application_filed", date_offset_days=(0, 30)),
+        NodeDocumentRule("PROOF_OF_SERVICE", (1, 1), 0.8, date_anchor="application_filed", date_offset_days=(0, 30)),
         NodeDocumentRule("APPLICATION_FOR_ADJUDICATION_AMENDED", (0, 1), 0.2, date_anchor="application_filed", date_offset_days=(30, 365)),
         NodeDocumentRule("NOTICE_OF_HEARING_PARTY_SERVED", (0, 1), 0.5, date_anchor="application_filed", date_offset_days=(14, 120)),
         NodeDocumentRule("REQUEST_FOR_CONTINUANCE", (0, 1), 0.2, date_anchor="application_filed", date_offset_days=(30, 180)),
         NodeDocumentRule("PETITION_FOR_PENALTIES_LC_5814", (0, 1), 0.1, date_anchor="application_filed", date_offset_days=(60, 365)),
+        # Administrative noise
+        NodeDocumentRule("FAX_COVER_SHEET", (0, 1), 0.15, date_anchor="application_filed", date_offset_days=(0, 30)),
+        NodeDocumentRule("COVER_LETTER_ENCLOSURE", (0, 1), 0.15, date_anchor="application_filed", date_offset_days=(0, 14)),
+        NodeDocumentRule("INTERNAL_FILE_NOTE", (0, 1), 0.10, date_anchor="application_filed", date_offset_days=(7, 60)),
     ],
 
     # --- MEDICAL-LEGAL EVALUATION ---
@@ -451,6 +467,10 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("QME_PANEL_STRIKE_LETTER", (0, 1), 0.6, date_anchor="doi", date_offset_days=(180, 365)),
         NodeDocumentRule("REQUEST_SUPPLEMENTAL_QME_AME_REPORT", (0, 1), 0.25, date_anchor="doi", date_offset_days=(300, 600)),
         NodeDocumentRule("DEPOSITION_TRANSCRIPT_QME_AME", (0, 1), 0.4, date_anchor="doi", date_offset_days=(365, 700)),
+        # Administrative noise
+        NodeDocumentRule("EVALUATION_COVER_LETTER", (0, 1), 0.20, date_anchor="doi", date_offset_days=(270, 545)),
+        NodeDocumentRule("FAX_COVER_SHEET", (0, 1), 0.15, date_anchor="doi", date_offset_days=(200, 545)),
+        NodeDocumentRule("INTERNAL_FILE_NOTE", (0, 1), 0.12, date_anchor="doi", date_offset_days=(270, 545)),
     ],
 
     "ame_evaluation": [
@@ -462,6 +482,10 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("OBJECTION_TO_QME_AME_REPORT", (0, 1), 0.3, date_anchor="doi", date_offset_days=(270, 545)),
         NodeDocumentRule("REQUEST_SUPPLEMENTAL_QME_AME_REPORT", (0, 1), 0.25, date_anchor="doi", date_offset_days=(300, 600)),
         NodeDocumentRule("DEPOSITION_TRANSCRIPT_QME_AME", (0, 1), 0.4, date_anchor="doi", date_offset_days=(365, 700)),
+        # Administrative noise
+        NodeDocumentRule("EVALUATION_COVER_LETTER", (0, 1), 0.20, date_anchor="doi", date_offset_days=(270, 545)),
+        NodeDocumentRule("FAX_COVER_SHEET", (0, 1), 0.15, date_anchor="doi", date_offset_days=(200, 545)),
+        NodeDocumentRule("INTERNAL_FILE_NOTE", (0, 1), 0.12, date_anchor="doi", date_offset_days=(270, 545)),
     ],
 
     # --- DISCOVERY ---
@@ -489,7 +513,7 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("WITNESS_STATEMENT", (0, 1), 0.25, date_anchor="doi", date_offset_days=(180, 545)),
         NodeDocumentRule("SURVEILLANCE_VIDEO", (0, 1), 0.1, date_anchor="doi", date_offset_days=(180, 545)),
         NodeDocumentRule("SOCIAL_MEDIA_EVIDENCE", (0, 1), 0.08, date_anchor="doi", date_offset_days=(180, 545)),
-        NodeDocumentRule("PROOF_OF_SERVICE", (1, 3), 0.8, date_anchor="doi", date_offset_days=(270, 600)),
+        NodeDocumentRule("PROOF_OF_SERVICE", (1, 1), 0.8, date_anchor="doi", date_offset_days=(270, 600)),
         NodeDocumentRule("WAGE_STATEMENTS_POST_INJURY", (0, 1), 0.4, date_anchor="doi", date_offset_days=(180, 500)),
         NodeDocumentRule("JOB_DESCRIPTIONS_ESSENTIAL_FUNCTIONS", (0, 1), 0.3, date_anchor="doi", date_offset_days=(180, 400)),
         NodeDocumentRule("DEMAND_LETTER_FORMAL", (0, 1), 0.3, date_anchor="doi", date_offset_days=(365, 700)),
@@ -499,6 +523,12 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("PRODUCTION_RESPONSES", (0, 1), 0.3, date_anchor="doi", date_offset_days=(300, 600)),
         NodeDocumentRule("CUSTODIAN_OF_RECORDS_DECLARATION", (0, 1), 0.3, date_anchor="doi", date_offset_days=(210, 600)),
         NodeDocumentRule("DEFENSE_CASE_ANALYSIS", (0, 1), 0.35, date_anchor="doi", date_offset_days=(270, 600)),
+        NodeDocumentRule("ADJUSTER_LETTER_INFORMATIONAL", (2, 3), 1.0, date_anchor="doi", date_offset_days=(180, 545)),
+        NodeDocumentRule("CLIENT_CASE_VALUATION_LETTER", (0, 1), 0.6, condition="has_attorney", date_anchor="doi", date_offset_days=(270, 600)),
+        # Administrative noise — discovery produces heavy fax/note volume
+        NodeDocumentRule("FAX_COVER_SHEET", (0, 2), 0.20, date_anchor="doi", date_offset_days=(180, 600)),
+        NodeDocumentRule("INTERNAL_FILE_NOTE", (0, 2), 0.12, date_anchor="doi", date_offset_days=(180, 600)),
+        NodeDocumentRule("BLANK_SCANNED_PAGE", (0, 1), 0.05, date_anchor="doi", date_offset_days=(210, 630)),
     ],
 
     # --- LIEN BRANCH ---
@@ -544,6 +574,9 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("ATTORNEY_FEE_PETITION", (0, 1), 0.8, date_anchor="doi", date_offset_days=(500, 900)),
         NodeDocumentRule("INFORMAL_PD_RATING_PRINTOUT", (0, 1), 0.5, date_anchor="doi", date_offset_days=(365, 700)),
         NodeDocumentRule("STRUCTURED_SETTLEMENT_QUOTE", (0, 1), 0.15, date_anchor="doi", date_offset_days=(550, 950)),
+        # Administrative noise
+        NodeDocumentRule("FAX_COVER_SHEET", (0, 1), 0.15, date_anchor="doi", date_offset_days=(500, 900)),
+        NodeDocumentRule("INTERNAL_FILE_NOTE", (0, 1), 0.10, date_anchor="doi", date_offset_days=(500, 900)),
     ],
 
     "resolution_cr": [
@@ -564,6 +597,9 @@ LIFECYCLE_DOCUMENT_RULES: dict[str, list[NodeDocumentRule]] = {
         NodeDocumentRule("MSA_SUBMISSION", (0, 1), 0.6, condition="is_medicare_eligible", date_anchor="doi", date_offset_days=(500, 900)),
         NodeDocumentRule("MSA_APPROVAL_LETTER", (0, 1), 0.4, condition="is_medicare_eligible", date_anchor="doi", date_offset_days=(600, 1000)),
         NodeDocumentRule("STRUCTURED_SETTLEMENT_QUOTE", (0, 1), 0.2, date_anchor="doi", date_offset_days=(550, 950)),
+        # Administrative noise
+        NodeDocumentRule("FAX_COVER_SHEET", (0, 1), 0.15, date_anchor="doi", date_offset_days=(500, 900)),
+        NodeDocumentRule("INTERNAL_FILE_NOTE", (0, 1), 0.10, date_anchor="doi", date_offset_days=(500, 900)),
     ],
 
     "resolution_trial": [

@@ -29,9 +29,10 @@ async def download_run(run_id: int):
             case_dir = OUTPUT_DIR / case_id
             if not case_dir.exists():
                 continue
-            for pdf_file in case_dir.glob("*.pdf"):
-                arcname = f"{case_id}/{pdf_file.name}"
-                zf.write(pdf_file, arcname)
+            for ext in ("*.pdf", "*.eml", "*.docx"):
+                for doc_file in case_dir.glob(ext):
+                    arcname = f"{case_id}/{doc_file.name}"
+                    zf.write(doc_file, arcname)
 
     buf.seek(0)
     return StreamingResponse(
@@ -54,8 +55,9 @@ async def download_case(run_id: int, case_id: str):
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for pdf_file in case_dir.glob("*.pdf"):
-            zf.write(pdf_file, pdf_file.name)
+        for ext in ("*.pdf", "*.eml", "*.docx"):
+            for doc_file in case_dir.glob(ext):
+                zf.write(doc_file, doc_file.name)
 
     buf.seek(0)
     return StreamingResponse(

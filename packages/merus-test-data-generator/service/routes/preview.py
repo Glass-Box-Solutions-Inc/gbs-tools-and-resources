@@ -70,19 +70,29 @@ async def get_case_detail(run_id: int, case_id: str):
     return CaseDetail(case=case_preview, documents=doc_previews)
 
 
+_MIME_TYPES: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".eml": "message/rfc822",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
 @router.get("/{run_id}/documents/{case_id}/{filename}")
-async def get_document_pdf(run_id: int, case_id: str, filename: str):
-    """Serve an individual PDF file."""
-    pdf_path = OUTPUT_DIR / case_id / filename
-    if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail=f"PDF not found: {filename}")
+async def get_document(run_id: int, case_id: str, filename: str):
+    """Serve a generated document (PDF, EML, or DOCX)."""
+    doc_path = OUTPUT_DIR / case_id / filename
+    if not doc_path.exists():
+        raise HTTPException(status_code=404, detail=f"Document not found: {filename}")
 
     # Security: verify path is within OUTPUT_DIR
-    if not pdf_path.resolve().is_relative_to(OUTPUT_DIR.resolve()):
+    if not doc_path.resolve().is_relative_to(OUTPUT_DIR.resolve()):
         raise HTTPException(status_code=403, detail="Access denied")
 
+    suffix = Path(filename).suffix.lower()
+    media_type = _MIME_TYPES.get(suffix, "application/octet-stream")
+
     return FileResponse(
-        path=str(pdf_path),
-        media_type="application/pdf",
+        path=str(doc_path),
+        media_type=media_type,
         filename=filename,
     )

@@ -59,6 +59,7 @@ class ProgressTracker:
                 subtype TEXT NOT NULL,
                 title TEXT NOT NULL,
                 doc_date TEXT NOT NULL,
+                output_format TEXT NOT NULL DEFAULT 'pdf',
                 pdf_path TEXT,
                 pdf_generated INTEGER DEFAULT 0,
                 uploaded INTEGER DEFAULT 0,
@@ -69,6 +70,15 @@ class ProgressTracker:
             );
         """)
         self.conn.commit()
+
+        # Migrate existing databases that predate the output_format column
+        try:
+            self.conn.execute(
+                "ALTER TABLE documents ADD COLUMN output_format TEXT NOT NULL DEFAULT 'pdf'"
+            )
+            self.conn.commit()
+        except Exception:
+            pass  # Column already exists — nothing to do
 
     # --- Run management ---
 
@@ -188,12 +198,13 @@ class ProgressTracker:
         subtype: str,
         title: str,
         doc_date: str,
+        output_format: str = "pdf",
     ) -> None:
         self.conn.execute(
             """INSERT OR IGNORE INTO documents
-               (case_internal_id, filename, subtype, title, doc_date)
-               VALUES (?, ?, ?, ?, ?)""",
-            (case_internal_id, filename, subtype, title, doc_date),
+               (case_internal_id, filename, subtype, title, doc_date, output_format)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (case_internal_id, filename, subtype, title, doc_date, output_format),
         )
         self.conn.commit()
 

@@ -257,8 +257,14 @@ SUBTYPE_TO_TEMPLATE: dict[str, str] = {
     "ADVOCACY_LETTERS_AME": "DefenseCounselLetter",
     "ADVOCACY_LETTERS_PTP_QME_AME": "DefenseCounselLetter",
     "EMAIL_CORRESPONDENCE": "ClientIntake",
-    "FAX_CORRESPONDENCE": "ClientIntake",
+    "FAX_CORRESPONDENCE": "FaxCoverSheet",
+    "FAX_COVER_SHEET": "FaxCoverSheet",
     "MAILED_CORRESPONDENCE": "ClientIntake",
+    # Administrative noise
+    "INTERNAL_FILE_NOTE": "FileNote",
+    "BLANK_SCANNED_PAGE": "BlankPage",
+    "COVER_LETTER_ENCLOSURE": "CoverLetterEnclosure",
+    "EVALUATION_COVER_LETTER": "CoverLetterEnclosure",
     "DEMAND_LETTER_FORMAL": "DefenseCounselLetter",
     "REQUEST_FOR_INFORMATION_FORMAL": "AdjusterLetter",
     "STATUS_UPDATE_INFORMATIONAL": "ClientIntake",
@@ -458,11 +464,16 @@ class FakeDataGenerator:
             # Store stage name for chronological enforcement
             context["_stage_name"] = stage_name
 
+            # Assign output format probabilistically based on subtype category
+            from data.format_assignment import assign_output_format
+            output_format = assign_output_format(subtype_str, self._rng)
+
             docs.append(DocumentSpec(
                 subtype=subtype_enum,
                 title=title,
                 doc_date=doc_date,
                 template_class=template_class,
+                output_format=output_format,
                 sequence_number=seq,
                 context=context,
             ))
@@ -666,6 +677,13 @@ class FakeDataGenerator:
             "COMPROMISE_AND_RELEASE_MSA": f"Compromise and Release (MSA) - {date_str}",
             "SETTLEMENT_VALUATION_MEMO": f"Settlement Analysis Memo - {name} - {date_str}",
             "MEDICAL_CHRONOLOGY_TIMELINE": f"Medical Chronology - {name} - {date_str}",
+            # Administrative noise
+            "FAX_COVER_SHEET": f"Fax Cover Sheet - {date_str}",
+            "FAX_CORRESPONDENCE": f"Fax Cover Sheet - {date_str}",
+            "INTERNAL_FILE_NOTE": f"File Note - {date_str}",
+            "BLANK_SCANNED_PAGE": f"Blank Page - {date_str}",
+            "COVER_LETTER_ENCLOSURE": f"Transmittal Letter - {name} - {date_str}",
+            "EVALUATION_COVER_LETTER": f"Evaluation Cover Letter - {date_str}",
         }
 
         title = special.get(subtype_str, f"{label} - {date_str}")

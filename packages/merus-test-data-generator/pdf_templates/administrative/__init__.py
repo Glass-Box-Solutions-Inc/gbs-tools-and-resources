@@ -1,0 +1,1 @@
+"""Administrative noise document templates."""

@@ -420,6 +420,14 @@ class DocumentSubtype(str, Enum):
     QME_PANEL_STRIKE_LETTER = "QME_PANEL_STRIKE_LETTER"
     PTP_REFERRAL_LETTER = "PTP_REFERRAL_LETTER"
 
+    # === ADMINISTRATIVE NOISE (4) ===
+    # Low-signal administrative artifacts present in real case files
+
+    INTERNAL_FILE_NOTE = "INTERNAL_FILE_NOTE"
+    BLANK_SCANNED_PAGE = "BLANK_SCANNED_PAGE"
+    FAX_COVER_SHEET = "FAX_COVER_SHEET"
+    COVER_LETTER_ENCLOSURE = "COVER_LETTER_ENCLOSURE"
+
 
     # === DISCOVERY (17) ===
 
@@ -843,6 +851,12 @@ DOCUMENT_SUBTYPE_LABELS: dict[str, str] = {
     "QME_PANEL_STRIKE_LETTER": "QME Panel Strike Letter",
     "PTP_REFERRAL_LETTER": "PTP Referral Letter",
 
+    # ADMINISTRATIVE NOISE
+    "INTERNAL_FILE_NOTE": "Internal File Note",
+    "BLANK_SCANNED_PAGE": "Blank Scanned Page",
+    "FAX_COVER_SHEET": "Fax Cover Sheet",
+    "COVER_LETTER_ENCLOSURE": "Cover Letter / Enclosure",
+
     # DISCOVERY
     "SUBPOENA_SDT_ISSUED": "Subpoena / SDT Issued (Outgoing)",
     "SUBPOENA_SDT_RECEIVED": "Subpoena / SDT Received (Incoming)",
@@ -1259,6 +1273,11 @@ DOCUMENT_TYPE_TO_SUBTYPES: dict[str, list[str]] = {
         "REQUEST_SUPPLEMENTAL_QME_AME_REPORT",
         "QME_PANEL_STRIKE_LETTER",
         "PTP_REFERRAL_LETTER",
+        # Administrative noise subtypes
+        "INTERNAL_FILE_NOTE",
+        "BLANK_SCANNED_PAGE",
+        "FAX_COVER_SHEET",
+        "COVER_LETTER_ENCLOSURE",
     ],
     "DISCOVERY": [
         "SUBPOENA_SDT_ISSUED",

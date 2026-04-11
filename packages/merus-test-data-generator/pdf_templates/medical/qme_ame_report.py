@@ -94,6 +94,22 @@ class QmeAmeReport(BaseTemplate):
         # --- 6. Impairment Rating (AMA Guides 5th Ed) ---
         story.extend(self.impairment_rating_section())
 
+        # Phase 6: Record WPI to accumulator so downstream memos can cite it
+        acc = self._get_accumulator(doc_spec)
+        if acc is not None:
+            from data.ama_guides_content import generate_impairment_narrative
+            _narrative, total_wpi, _ratings = generate_impairment_narrative(
+                body_parts, specialty, apportionment_pct=0
+            )
+            pd_pct = round(total_wpi * 1.4, 1)  # simplified WPI→PD conversion
+            acc.record_document(
+                title=doc_spec.title,
+                doc_date=doc_spec.doc_date,
+                subtype=doc_spec.subtype.value,
+                wpi_rating=total_wpi,
+                pd_percentage=pd_pct,
+            )
+
         # --- 7. Future Medical Treatment ---
         story.extend(self._build_future_medical(body_parts))
 

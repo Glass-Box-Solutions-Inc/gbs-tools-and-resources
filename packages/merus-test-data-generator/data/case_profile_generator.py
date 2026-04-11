@@ -99,12 +99,12 @@ PRESETS: dict[str, dict[str, float]] = {
 # ---------------------------------------------------------------------------
 
 STAGE_DOC_RANGES: dict[str, tuple[int, int]] = {
-    "intake": (18, 28),
-    "active_treatment": (25, 45),
-    "discovery": (30, 55),
-    "medical_legal": (30, 55),
-    "settlement": (35, 65),
-    "resolved": (45, 75),
+    "intake": (15, 25),
+    "active_treatment": (30, 55),
+    "discovery": (45, 80),
+    "medical_legal": (40, 70),
+    "settlement": (60, 110),
+    "resolved": (80, 180),
 }
 
 

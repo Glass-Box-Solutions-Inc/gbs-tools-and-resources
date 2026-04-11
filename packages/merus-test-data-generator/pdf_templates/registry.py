@@ -277,6 +277,14 @@ _TIER2_ADDITIONS: dict[str, TemplateEntry] = {
     "SOCIAL_MEDIA_EVIDENCE": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "social_media"),
     "ACTIVITY_DIARY_SELF_REPORTED": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "activity_diary"),
 
+    # Administrative noise documents
+    "FAX_COVER_SHEET": TemplateEntry("FaxCoverSheet", "pdf_templates.administrative.fax_cover_sheet"),
+    "FAX_CORRESPONDENCE": TemplateEntry("FaxCoverSheet", "pdf_templates.administrative.fax_cover_sheet"),
+    "INTERNAL_FILE_NOTE": TemplateEntry("FileNote", "pdf_templates.administrative.file_note"),
+    "BLANK_SCANNED_PAGE": TemplateEntry("BlankPage", "pdf_templates.administrative.blank_page"),
+    "COVER_LETTER_ENCLOSURE": TemplateEntry("CoverLetterEnclosure", "pdf_templates.administrative.cover_letter_enclosure"),
+    # EVALUATION_COVER_LETTER mapped below in the CORRESPONDENCE section
+
     # =========================================================================
     # PHASE 2: 163 new subtypes from 350-subtype taxonomy migration
     # =========================================================================
@@ -441,7 +449,7 @@ _TIER2_ADDITIONS: dict[str, TemplateEntry] = {
 
     # --- CORRESPONDENCE: new subtypes ---
     "COVERAGE_OPINION_LETTER": TemplateEntry("DefenseCounselLetter", "pdf_templates.correspondence.defense_counsel_letter", "coverage_opinion"),
-    "EVALUATION_COVER_LETTER": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "eval_cover"),
+    "EVALUATION_COVER_LETTER": TemplateEntry("CoverLetterEnclosure", "pdf_templates.administrative.cover_letter_enclosure"),
     "NOTICE_OF_REPRESENTATION": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "representation"),
     "NOTICE_DISMISSAL_OF_ATTORNEY": TemplateEntry("ClientIntake", "pdf_templates.correspondence.client_intake", "dismissal_attorney"),
 

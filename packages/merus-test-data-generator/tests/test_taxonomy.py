@@ -25,8 +25,8 @@ def test_document_type_count() -> None:
 
 
 def test_document_subtype_count() -> None:
-    """Taxonomy must have exactly 380 document subtypes."""
-    assert len(DocumentSubtype) == 380
+    """Taxonomy must have exactly 384 document subtypes (380 + 4 administrative noise)."""
+    assert len(DocumentSubtype) == 384
 
 
 # ---------------------------------------------------------------------------

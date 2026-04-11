@@ -60,6 +60,18 @@ class SettlementMemo(BaseTemplate):
         story.append(Spacer(1, 0.2 * inch))
         story.append(self.make_hr())
 
+        # Phase 6: Interdocument coherence — cite prior medical records if available
+        acc = self._get_accumulator(doc_spec)
+        if acc:
+            cross_refs = acc.get_cross_reference(max_refs=4)
+            if cross_refs:
+                story.extend(self.make_section(
+                    "RECORDS REVIEWED",
+                    f"This memorandum is based on a thorough review of {cross_refs}, "
+                    f"as well as the complete claims file and medical billing records.",
+                ))
+                story.append(Spacer(1, 0.15 * inch))
+
         # 1. Case Summary (2-3 paragraphs)
         story.extend(self.make_section("1. CASE SUMMARY", self._generate_case_summary()))
         story.append(Spacer(1, 0.15 * inch))

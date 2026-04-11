@@ -57,6 +57,11 @@ TEMPLATE_REGISTRY: dict[str, str] = {
     "PersonnelFile": "pdf_templates.employment.personnel_file",
     "MedicalChronology": "pdf_templates.summaries.medical_chronology",
     "SettlementMemo": "pdf_templates.summaries.settlement_memo",
+    # Administrative noise templates
+    "FaxCoverSheet": "pdf_templates.administrative.fax_cover_sheet",
+    "FileNote": "pdf_templates.administrative.file_note",
+    "BlankPage": "pdf_templates.administrative.blank_page",
+    "CoverLetterEnclosure": "pdf_templates.administrative.cover_letter_enclosure",
 }
 
 
@@ -73,16 +78,35 @@ def _load_template_class(class_name: str):
     return getattr(module, class_name)
 
 
-def _sanitize_filename(name: str) -> str:
-    """Make a safe filename from a document title. Prevents path traversal."""
+_FORMAT_EXT: dict[str, str] = {
+    "pdf": ".pdf",
+    "eml": ".eml",
+    "docx": ".docx",
+    "scanned_pdf": ".pdf",  # Scanned PDFs are still PDF files with image content
+}
+
+
+def _format_extension(output_format: Any) -> str:
+    """Return the file extension for a given OutputFormat value."""
+    val = output_format.value if hasattr(output_format, "value") else str(output_format)
+    return _FORMAT_EXT.get(val, ".pdf")
+
+
+def _sanitize_filename(name: str, ext: str = ".pdf") -> str:
+    """Make a safe filename from a document title. Prevents path traversal.
+
+    Args:
+        name: Raw filename stem (no extension required).
+        ext: File extension including dot, e.g. ".eml" or ".docx".
+    """
     name = re.sub(r'[<>:"/\\|?*]', '_', name)
     name = re.sub(r'\s+', '_', name)
     name = name.replace('..', '_')
     name = Path(name).name  # Extract filename component only
+    # Strip any existing extension before applying the canonical one
+    name = re.sub(r'\.(pdf|eml|docx)$', '', name, flags=re.IGNORECASE)
     name = name[:80]  # Limit length
-    if not name.endswith('.pdf'):
-        name += '.pdf'
-    return name
+    return name + ext
 
 
 class Pipeline:
@@ -183,8 +207,10 @@ class Pipeline:
 
         # Register each document
         for i, doc_spec in enumerate(case.document_specs):
+            ext = _format_extension(doc_spec.output_format)
             filename = _sanitize_filename(
-                f"{case.internal_id}_{i+1:03d}_{doc_spec.subtype.value}_{doc_spec.doc_date}"
+                f"{case.internal_id}_{i+1:03d}_{doc_spec.subtype.value}_{doc_spec.doc_date}",
+                ext=ext,
             )
             self.tracker.register_document(
                 case_internal_id=case.internal_id,
@@ -192,6 +218,7 @@ class Pipeline:
                 subtype=doc_spec.subtype.value,
                 title=doc_spec.title,
                 doc_date=doc_spec.doc_date.isoformat(),
+                output_format=doc_spec.output_format.value,
             )
 
         logger.info(
@@ -202,10 +229,16 @@ class Pipeline:
             doc_count=len(case.document_specs),
         )
 
-    # --- Step 2: Generate PDFs ---
+    # --- Step 2: Generate documents (PDF / EML / DOCX / scanned PDF) ---
 
-    def generate_pdfs(self, progress_callback: Any = None) -> dict[str, int]:
-        """Generate PDF files for all cases."""
+    def generate_documents(self, progress_callback: Any = None) -> dict[str, int]:
+        """Generate output files for all cases across all formats.
+
+        Dispatches each DocumentSpec to the appropriate generator based on
+        output_format.  Phases 2–4 replace the format-specific stubs below
+        with real EML / DOCX / scan-simulation logic; for now all non-PDF
+        formats fall through to the standard PDF generator (shim).
+        """
         if not self.cases:
             logger.warning("no_cases_loaded", hint="Run generate_data first")
             return {"generated": 0, "skipped": 0, "errors": 0}
@@ -221,9 +254,18 @@ class Pipeline:
             docs_in_tracker = self.tracker.get_docs_for_case(case.internal_id)
             doc_filenames = {d["filename"]: d for d in docs_in_tracker}
 
+            # Phase 6: Create a per-case accumulator for interdocument coherence
+            from data.case_context import CaseContextAccumulator
+            accumulator = CaseContextAccumulator()
+
             for i, doc_spec in enumerate(case.document_specs):
+                # Inject accumulator into doc context so templates can cross-reference
+                doc_spec.context["_accumulator"] = accumulator
+
+                ext = _format_extension(doc_spec.output_format)
                 filename = _sanitize_filename(
-                    f"{case.internal_id}_{i+1:03d}_{doc_spec.subtype.value}_{doc_spec.doc_date}"
+                    f"{case.internal_id}_{i+1:03d}_{doc_spec.subtype.value}_{doc_spec.doc_date}",
+                    ext=ext,
                 )
                 tracked_doc = doc_filenames.get(filename)
 
@@ -244,29 +286,39 @@ class Pipeline:
                     continue
 
                 try:
+                    fmt = doc_spec.output_format.value
                     template_cls = _load_template_class(doc_spec.template_class)
                     template = template_cls(case)
+                    # generate() dispatches internally by output_format
                     template.generate(output_path, doc_spec)
 
                     self.tracker.mark_pdf_generated(
                         case.internal_id, filename, str(output_path)
                     )
+                    # Record to accumulator so subsequent docs can cross-reference
+                    accumulator.record_document(
+                        title=doc_spec.title,
+                        doc_date=doc_spec.doc_date,
+                        subtype=doc_spec.subtype.value,
+                    )
                     generated += 1
 
                     if progress_callback:
-                        progress_callback("pdf_complete", {
+                        progress_callback("doc_complete", {
                             "case_id": case.internal_id,
                             "filename": filename,
+                            "format": doc_spec.output_format.value,
                             "generated": generated,
                             "total": sum(len(c.document_specs) for c in self.cases),
                         })
 
                 except Exception as e:
                     logger.error(
-                        "pdf_generation_error",
+                        "doc_generation_error",
                         case=case.internal_id,
                         filename=filename,
                         template=doc_spec.template_class,
+                        format=doc_spec.output_format.value,
                         error=str(e),
                     )
                     self.tracker.mark_doc_error(case.internal_id, filename, str(e))
@@ -279,18 +331,21 @@ class Pipeline:
             self.tracker.mark_case_pdfs_generated(case.internal_id, gen_count)
 
             logger.info(
-                "case_pdfs_complete",
+                "case_docs_complete",
                 case_id=case.internal_id,
                 generated_this_run=generated,
             )
 
         logger.info(
-            "pdf_generation_complete",
+            "doc_generation_complete",
             generated=generated,
             skipped=skipped,
             errors=errors,
         )
         return {"generated": generated, "skipped": skipped, "errors": errors}
+
+    # Backward-compatible alias
+    generate_pdfs = generate_documents
 
     # --- Step 3: Create cases in MerusCase ---
 

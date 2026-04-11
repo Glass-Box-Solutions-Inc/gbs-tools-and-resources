@@ -17,6 +17,14 @@ from pydantic import BaseModel, Field
 from data.taxonomy import DocumentSubtype, DocumentType  # noqa: F401
 
 
+class OutputFormat(str, Enum):
+    """Output format for a generated document."""
+    PDF = "pdf"            # Native vector PDF (reportlab)
+    EML = "eml"            # RFC 2822 email file
+    DOCX = "docx"          # Microsoft Word document
+    SCANNED_PDF = "scanned_pdf"  # Image-based PDF simulating a scanned original
+
+
 class LitigationStage(str, Enum):
     INTAKE = "intake"
     ACTIVE_TREATMENT = "active_treatment"
@@ -128,6 +136,7 @@ class DocumentSpec(BaseModel):
     title: str
     doc_date: date
     template_class: str
+    output_format: OutputFormat = OutputFormat.PDF
     context: dict[str, Any] = Field(default_factory=dict)
     sequence_number: int = 1
 
