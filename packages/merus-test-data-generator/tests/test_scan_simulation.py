@@ -96,6 +96,18 @@ class TestScanSimulator:
         result_b = simulate_scan(native_pdf_bytes, random.Random(999))
         assert result_a != result_b
 
+    def test_simulate_scan_raises_on_corrupt_input(self):
+        """Corrupt bytes should raise ValueError, not an opaque fitz error."""
+        from pdf_templates.scan_simulator import simulate_scan
+        with pytest.raises(ValueError, match="could not open PDF"):
+            simulate_scan(b"not a pdf at all", random.Random(42))
+
+    def test_simulate_scan_raises_on_empty_bytes(self):
+        """Empty bytes should raise ValueError."""
+        from pdf_templates.scan_simulator import simulate_scan
+        with pytest.raises(ValueError, match="could not open PDF"):
+            simulate_scan(b"", random.Random(42))
+
 
 # ---------------------------------------------------------------------------
 # End-to-end scanned PDF generation via base_template dispatch

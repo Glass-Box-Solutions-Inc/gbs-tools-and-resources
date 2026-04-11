@@ -854,8 +854,8 @@ def collect_documents_for_case(
     if len(documents) > global_cap:
         documents = documents[:global_cap]
 
-    # Enforce stage minimum floors AFTER caps — fillers always survive
-    # Recount per-stage after cap enforcement
+    # Enforce stage minimum floors AFTER caps — fillers ensure traversed stages
+    # have at least one document for realism.  Recount per-stage after cap enforcement.
     final_stage_counts: dict[str, int] = {}
     for _, _, sn in documents:
         final_stage_counts[sn] = final_stage_counts.get(sn, 0) + 1
@@ -876,5 +876,11 @@ def collect_documents_for_case(
                 )
                 for _ in range(minimum - current):
                     documents.append((filler_subtype, filler_rule, stage_name))
+
+    # Re-enforce global cap: fillers can push total slightly above the cap.
+    # We accept a 10% tolerance (filler docs are small and necessary for stage realism).
+    hard_cap = int(global_cap * 1.10)
+    if len(documents) > hard_cap:
+        documents = documents[:hard_cap]
 
     return documents

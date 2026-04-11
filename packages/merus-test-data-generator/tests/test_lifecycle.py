@@ -64,3 +64,70 @@ def test_all_lifecycle_stages_have_rules() -> None:
     assert not empty_stages, (
         f"These lifecycle stages have empty rule lists: {empty_stages}"
     )
+
+
+def test_standard_global_cap_enforced() -> None:
+    """collect_documents_for_case() must not return more than 110% of STANDARD_GLOBAL_CAP."""
+    import random
+    from data.lifecycle_engine import (
+        CaseParameters, collect_documents_for_case,
+        STANDARD_GLOBAL_CAP,
+    )
+
+    rng = random.Random(42)
+    # Worst-case standard case: all optional features enabled, resolved stage
+    params = CaseParameters(
+        claim_response="accepted",
+        has_attorney=True,
+        has_ur_dispute=True,
+        ur_decision="denied",
+        imr_filed=True,
+        imr_outcome="overturned",
+        eval_type="qme",
+        resolution_type="stipulations",
+        has_surgery=True,
+        has_psych_component=True,
+        has_liens=True,
+        target_stage="resolved",
+        complexity="standard",
+    ).resolve_random(rng)
+
+    docs = collect_documents_for_case(params, rng)
+    hard_cap = int(STANDARD_GLOBAL_CAP * 1.10)
+    assert len(docs) <= hard_cap, (
+        f"Standard case produced {len(docs)} documents, "
+        f"exceeding hard cap of {hard_cap} (110% of {STANDARD_GLOBAL_CAP})"
+    )
+
+
+def test_complex_global_cap_enforced() -> None:
+    """collect_documents_for_case() must not return more than 110% of COMPLEX_GLOBAL_CAP."""
+    import random
+    from data.lifecycle_engine import (
+        CaseParameters, collect_documents_for_case,
+        COMPLEX_GLOBAL_CAP,
+    )
+
+    rng = random.Random(99)
+    params = CaseParameters(
+        claim_response="accepted",
+        has_attorney=True,
+        has_ur_dispute=True,
+        ur_decision="denied",
+        imr_filed=True,
+        imr_outcome="overturned",
+        eval_type="qme",
+        resolution_type="c_and_r",
+        has_surgery=True,
+        has_psych_component=True,
+        has_liens=True,
+        target_stage="resolved",
+        complexity="complex",
+    ).resolve_random(rng)
+
+    docs = collect_documents_for_case(params, rng)
+    hard_cap = int(COMPLEX_GLOBAL_CAP * 1.10)
+    assert len(docs) <= hard_cap, (
+        f"Complex case produced {len(docs)} documents, "
+        f"exceeding hard cap of {hard_cap} (110% of {COMPLEX_GLOBAL_CAP})"
+    )

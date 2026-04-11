@@ -43,8 +43,16 @@ def simulate_scan(
     Returns:
         New PDF bytes where each page is a JPEG-compressed raster image.
     """
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as exc:
+        raise ValueError(f"scan_simulator: could not open PDF input: {exc}") from exc
+
     total_pages = doc.page_count
+    if total_pages == 0:
+        doc.close()
+        raise ValueError("scan_simulator: PDF has 0 pages — cannot simulate scan")
+
     add_fax_header = rng.random() < 0.15  # 15% of docs get a fax header
 
     page_images: list[tuple[Image.Image, int]] = []  # (image, jpeg_quality)
@@ -154,14 +162,18 @@ def _images_to_pdf(page_images: list[tuple[Image.Image, int]]) -> bytes:
         img.save(img_buf, format="JPEG", quality=quality, optimize=True)
         img_buf.seek(0)
 
-        # Wrap JPEG as a single-page PDF via fitz
+        # Wrap JPEG as a single-page PDF via fitz — use try/finally to guarantee close
         img_doc = fitz.open(stream=img_buf.getvalue(), filetype="jpeg")
-        pdfbytes = img_doc.convert_to_pdf()
-        img_doc.close()
+        try:
+            pdfbytes = img_doc.convert_to_pdf()
+        finally:
+            img_doc.close()
 
         img_pdf = fitz.open(stream=pdfbytes, filetype="pdf")
-        out_doc.insert_pdf(img_pdf)
-        img_pdf.close()
+        try:
+            out_doc.insert_pdf(img_pdf)
+        finally:
+            img_pdf.close()
 
     result = out_doc.tobytes()
     out_doc.close()

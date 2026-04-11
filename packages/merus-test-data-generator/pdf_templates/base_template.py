@@ -196,8 +196,9 @@ class BaseTemplate:
         hdr_para = header.paragraphs[0]
         hdr_para.text = FIRM_LETTERHEAD["name"]
         hdr_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        hdr_para.runs[0].bold = True
-        hdr_para.runs[0].font.size = Pt(14)
+        if hdr_para.runs:
+            hdr_para.runs[0].bold = True
+            hdr_para.runs[0].font.size = Pt(14)
         header.add_paragraph(FIRM_LETTERHEAD["address"]).alignment = WD_ALIGN_PARAGRAPH.CENTER
         header.add_paragraph(FIRM_LETTERHEAD["phone"]).alignment = WD_ALIGN_PARAGRAPH.CENTER
 
@@ -206,7 +207,8 @@ class BaseTemplate:
         footer_para = footer.paragraphs[0]
         footer_para.text = "CONFIDENTIAL — Workers' Compensation Medical/Legal Record"
         footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        footer_para.runs[0].font.size = Pt(8)
+        if footer_para.runs:
+            footer_para.runs[0].font.size = Pt(8)
 
         # Convert story flowables to Word elements
         story = self.build_story(doc_spec)
