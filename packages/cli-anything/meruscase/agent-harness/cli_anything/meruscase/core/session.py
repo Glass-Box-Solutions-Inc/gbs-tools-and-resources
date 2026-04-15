@@ -184,8 +184,9 @@ class MerusCaseSession:
             data["token"] = self._token
 
         session_path.write_text(json.dumps(data, indent=2))
+        session_path.chmod(0o600)
         self._modified = False
-        logger.debug("save: session written to %s", session_path)
+        logger.debug("save: session written to %s (mode 0o600)", session_path)
 
     def snapshot(self, description: str = "") -> None:
         """Push current state onto undo stack (max 50 levels).
