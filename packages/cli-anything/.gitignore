@@ -32,6 +32,7 @@
 !/anygen/
 !/zoom/
 !/drawio/
+!/meruscase/
 
 # Step 5: Inside each software dir, ignore everything (including dotfiles)
 /gimp/*
@@ -56,8 +57,10 @@
 /zoom/.*
 /drawio/*
 /drawio/.*
+/meruscase/*
+/meruscase/.*
 
-# Step 6: ...except agent-harness/
+# Step 6: ...except agent-harness/ and CAPABILITIES.html
 !/gimp/agent-harness/
 !/blender/agent-harness/
 !/inkscape/agent-harness/
@@ -69,6 +72,8 @@
 !/anygen/agent-harness/
 !/zoom/agent-harness/
 !/drawio/agent-harness/
+!/meruscase/agent-harness/
+!/meruscase/CAPABILITIES.html
 
 # Step 7: Ignore build artifacts within allowed dirs
 **/__pycache__/

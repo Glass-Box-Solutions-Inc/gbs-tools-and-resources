@@ -180,6 +180,82 @@ TOOLS = [
             "properties": {}
         }
     },
+    {
+        "name": "create_case",
+        "description": "Create a new Workers' Compensation case in MerusCase via browser automation. Use this when a new client needs a case opened. Returns the new case ID and URL. Requires Browserless credentials to be configured.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "party_name": {
+                    "type": "string",
+                    "description": "Primary party (applicant) name. Format: 'LASTNAME, FIRSTNAME' (e.g., 'SMITH, JOHN') or 'FIRSTNAME LASTNAME'."
+                },
+                "case_type": {
+                    "type": "string",
+                    "description": "Case type (default: 'Workers Compensation').",
+                    "default": "Workers Compensation"
+                },
+                "date_opened": {
+                    "type": "string",
+                    "description": "Date case opened / date of injury in MM/DD/YYYY format. Defaults to today if not provided."
+                }
+            },
+            "required": ["party_name"]
+        }
+    },
+    {
+        "name": "add_party",
+        "description": "Add a party (employer, insurance company, opposing party, witness, expert, etc.) to an existing case. Use this after case creation to associate employers, carriers, and other parties.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_search": {
+                    "type": "string",
+                    "description": "Case file number or party name to identify the case."
+                },
+                "party_type": {
+                    "type": "string",
+                    "description": "Type of party. Must be one of: 'Employer', 'Insurance Company', 'Opposing Party', 'Witness', 'Expert', 'Client', 'Other'."
+                },
+                "company_name": {
+                    "type": "string",
+                    "description": "Company or organization name. Required for Employer and Insurance Company party types."
+                },
+                "first_name": {
+                    "type": "string",
+                    "description": "Party first name (for individual parties)."
+                },
+                "last_name": {
+                    "type": "string",
+                    "description": "Party last name (for individual parties)."
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Optional notes about this party (e.g., claim number, adjuster name, address)."
+                }
+            },
+            "required": ["case_search", "party_type"]
+        }
+    },
+    {
+        "name": "list_documents",
+        "description": "List all documents attached to a case. Returns filenames, upload dates, descriptions, and download IDs. Use this to see what documents are already uploaded before uploading duplicates.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_search": {
+                    "type": "string",
+                    "description": "Case file number or party name to identify the case."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of documents to return (default: 100).",
+                    "default": 100
+                }
+            },
+            "required": ["case_search"]
+        }
+    },
 ]
 
 
@@ -265,6 +341,26 @@ async def dispatch_tool(agent: MerusAgent, tool_name: str, tool_input: Dict[str,
             return await agent.get_billing_codes()
         elif tool_name == "get_activity_types":
             return await agent.get_activity_types()
+        elif tool_name == "create_case":
+            return await agent.create_case(
+                party_name=tool_input["party_name"],
+                case_type=tool_input.get("case_type", "Workers Compensation"),
+                date_opened=tool_input.get("date_opened"),
+            )
+        elif tool_name == "add_party":
+            return await agent.add_party(
+                case_search=tool_input["case_search"],
+                party_type=tool_input["party_type"],
+                company_name=tool_input.get("company_name"),
+                first_name=tool_input.get("first_name"),
+                last_name=tool_input.get("last_name"),
+                notes=tool_input.get("notes"),
+            )
+        elif tool_name == "list_documents":
+            return await agent.list_documents(
+                case_search=tool_input["case_search"],
+                limit=tool_input.get("limit", 100),
+            )
         else:
             return {"error": f"Unknown tool: {tool_name}"}
     except Exception as e:
