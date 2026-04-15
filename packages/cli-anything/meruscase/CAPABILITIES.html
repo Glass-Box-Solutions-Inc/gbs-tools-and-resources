@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>cli-anything-meruscase — Capabilities</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3350;
+      --accent: #5b8dee;
+      --accent2: #38bdf8;
+      --green: #4ade80;
+      --yellow: #facc15;
+      --red: #f87171;
+      --purple: #c084fc;
+      --text: #e2e8f0;
+      --muted: #8892aa;
+      --code-bg: #141720;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      font-size: 15px;
+    }
+
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Layout ── */
+    .page { max-width: 1060px; margin: 0 auto; padding: 0 24px 80px; }
+
+    /* ── Hero ── */
+    .hero {
+      padding: 56px 0 40px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 48px;
+    }
+    .hero-badge {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      padding: 3px 10px;
+      border-radius: 20px;
+      margin-bottom: 16px;
+    }
+    .hero h1 {
+      font-size: 2.4rem;
+      font-weight: 800;
+      letter-spacing: -.02em;
+      line-height: 1.15;
+      margin-bottom: 14px;
+    }
+    .hero h1 span { color: var(--accent); }
+    .hero p {
+      font-size: 1.1rem;
+      color: var(--muted);
+      max-width: 680px;
+      margin-bottom: 28px;
+    }
+    .hero-pills { display: flex; flex-wrap: wrap; gap: 10px; }
+    .pill {
+      display: flex; align-items: center; gap: 7px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 5px 14px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .pill .dot {
+      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+    }
+    .dot-green { background: var(--green); }
+    .dot-blue  { background: var(--accent); }
+    .dot-purple { background: var(--purple); }
+    .dot-yellow { background: var(--yellow); }
+
+    /* ── Section ── */
+    .section { margin-bottom: 52px; }
+    .section-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 1.55rem;
+      font-weight: 700;
+      margin-bottom: 20px;
+      letter-spacing: -.01em;
+    }
+    h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    p { color: var(--muted); margin-bottom: 12px; }
+
+    /* ── Code ── */
+    pre, code {
+      font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+      font-size: 13px;
+    }
+    code {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 6px;
+      color: var(--accent2);
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin-bottom: 16px;
+      line-height: 1.7;
+    }
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      color: var(--text);
+      font-size: 13px;
+    }
+    .cmd { color: var(--accent2); }
+    .flag { color: var(--yellow); }
+    .arg  { color: var(--green); }
+    .comment { color: #4a5568; }
+    .out { color: #64748b; }
+
+    /* ── Command groups ── */
+    .groups-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .group-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      transition: border-color .2s;
+    }
+    .group-card:hover { border-color: var(--accent); }
+    .group-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+    }
+    .group-icon {
+      font-size: 18px;
+      width: 36px; height: 36px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--surface2);
+      border-radius: 8px;
+      flex-shrink: 0;
+    }
+    .group-name {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--accent2);
+    }
+    .group-desc { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+    .cmd-list { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+    .cmd-list li {
+      display: flex; align-items: flex-start; gap: 10px;
+      font-size: 13px;
+    }
+    .cmd-list .subcmd {
+      font-family: "JetBrains Mono", monospace;
+      color: var(--accent2);
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 7px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .cmd-list .subcmd-desc { color: var(--muted); line-height: 1.4; padding-top: 2px; }
+
+    /* ── Auth table ── */
+    .auth-tiers {
+      display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;
+    }
+    .auth-tier {
+      display: flex; align-items: flex-start; gap: 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+    }
+    .tier-num {
+      width: 26px; height: 26px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .tier-body { flex: 1; }
+    .tier-title { font-weight: 600; font-size: 14px; margin-bottom: 3px; }
+    .tier-desc { font-size: 13px; color: var(--muted); }
+
+    /* ── Feature grid ── */
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    .feature-card .icon { font-size: 20px; margin-bottom: 10px; }
+    .feature-card h4 { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+    .feature-card p  { font-size: 13px; color: var(--muted); margin: 0; }
+
+    /* ── Endpoint table ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+    thead th {
+      text-align: left;
+      padding: 10px 14px;
+      background: var(--surface2);
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 11px;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+    }
+    thead th:first-child { border-radius: var(--radius) 0 0 0; }
+    thead th:last-child  { border-radius: 0 var(--radius) 0 0; }
+    tbody td {
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--border);
+      color: var(--muted);
+      vertical-align: top;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: var(--surface); }
+    .method-get  { color: var(--green);  font-family: monospace; font-weight: 700; }
+    .method-post { color: var(--yellow); font-family: monospace; font-weight: 700; }
+    .endpoint    { font-family: monospace; color: var(--text); }
+
+    /* ── Callout ── */
+    .callout {
+      display: flex; gap: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .callout-icon { flex-shrink: 0; font-size: 16px; margin-top: 1px; }
+    .callout-warn  { border-left-color: var(--yellow); }
+    .callout-ok    { border-left-color: var(--green); }
+
+    /* ── Install block ── */
+    .install-steps {
+      display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;
+    }
+    .install-step {
+      display: flex; gap: 14px; align-items: flex-start;
+    }
+    .step-num {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--muted); font-size: 11px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; margin-top: 2px;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      border-top: 1px solid var(--border);
+      padding-top: 24px;
+      font-size: 12px;
+      color: #3a4060;
+      text-align: center;
+    }
+
+    /* ── Mode split ── */
+    .mode-split {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;
+    }
+    @media (max-width: 640px) { .mode-split { grid-template-columns: 1fr; } }
+    .mode-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+    }
+    .mode-card h4 { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+    .mode-card p  { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ── Hero ── -->
+  <div class="hero">
+    <div class="hero-badge">CLI-Anything</div>
+    <h1><span>cli-anything-meruscase</span><br>Agent-Native CLI for MerusCase</h1>
+    <p>
+      A production-ready command-line interface that gives AI agents and engineers
+      direct, structured access to MerusCase — the California Workers' Compensation
+      case management platform — via REST API and Browserless cloud automation.
+    </p>
+    <div class="hero-pills">
+      <div class="pill"><span class="dot dot-green"></span>29/29 tests passing</div>
+      <div class="pill"><span class="dot dot-blue"></span>7 command groups</div>
+      <div class="pill"><span class="dot dot-purple"></span>REPL + subcommand dual-mode</div>
+      <div class="pill"><span class="dot dot-yellow"></span>JSON output on every command</div>
+      <div class="pill"><span class="dot dot-green"></span>Browserless reCAPTCHA bypass</div>
+    </div>
+  </div>
+
+  <!-- ── What it does ── -->
+  <div class="section">
+    <div class="section-label">Overview</div>
+    <h2>What it does</h2>
+    <p>
+      MerusCase has no CLI and its web interface is inaccessible to AI agents.
+      <code>cli-anything-meruscase</code> bridges that gap: it wraps MerusCase's REST API
+      and browser-only workflows into a fully agent-native interface with structured JSON output,
+      stateful REPL sessions, and a 50-level undo/redo stack.
+    </p>
+
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="icon">📋</div>
+        <h4>Case Management</h4>
+        <p>List, search, and retrieve full case details. Create new cases via Browserless browser automation (bypasses reCAPTCHA).</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">💰</div>
+        <h4>Billing Operations</h4>
+        <p>Bill attorney time (hours → minutes conversion), add direct costs/fees/expenses, and pull billing summaries with totals.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">📝</div>
+        <h4>Activities &amp; Notes</h4>
+        <p>List all case activities. Add non-billable notes with subject, description, and activity type.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">📄</div>
+        <h4>Document Upload</h4>
+        <p>Upload any local file to a case with optional description and folder targeting. List all existing case documents.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">👥</div>
+        <h4>Parties</h4>
+        <p>List all parties on a case (Client, Employer, Insurance Company, Opposing Party, etc.) and add new parties.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🤖</div>
+        <h4>Agent-Native</h4>
+        <p>Every command outputs structured JSON. The REPL maintains session state across commands. Built for AI agent pipelines.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Install ── -->
+  <div class="section">
+    <div class="section-label">Getting Started</div>
+    <h2>Installation</h2>
+    <div class="install-steps">
+      <div class="install-step">
+        <div class="step-num">1</div>
+        <div>
+          <h3>Install the package</h3>
+          <pre><code><span class="cmd">pip install -e</span> <span class="arg">packages/cli-anything/meruscase/agent-harness</span></code></pre>
+        </div>
+      </div>
+      <div class="install-step">
+        <div class="step-num">2</div>
+        <div>
+          <h3>Install Playwright (for case creation only)</h3>
+          <pre><code><span class="cmd">playwright install chromium</span></code></pre>
+          <p style="font-size:13px;margin-top:4px;">Only needed for <code>case create</code>. All other commands use the REST API.</p>
+        </div>
+      </div>
+      <div class="install-step">
+        <div class="step-num">3</div>
+        <div>
+          <h3>Verify and authenticate</h3>
+          <pre><code><span class="cmd">cli-anything-meruscase</span> <span class="flag">--help</span>
+<span class="cmd">cli-anything-meruscase</span> auth login</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout-ok">
+      <span class="callout-icon">✓</span>
+      <div>Token is loaded automatically from GCP Secret Manager, then the <code>MERUSCASE_ACCESS_TOKEN</code> env var, then <code>~/.meruscase_token</code>. No manual setup required if GCP credentials are present.</div>
+    </div>
+  </div>
+
+  <!-- ── Auth ── -->
+  <div class="section">
+    <div class="section-label">Authentication</div>
+    <h2>3-Tier Token Loading</h2>
+    <p>
+      The CLI resolves your MerusCase OAuth Bearer token automatically in priority order.
+      No hard-coded credentials. Tokens are stored with <code>chmod 0o600</code>.
+    </p>
+    <div class="auth-tiers">
+      <div class="auth-tier">
+        <div class="tier-num">1</div>
+        <div class="tier-body">
+          <div class="tier-title">GCP Secret Manager</div>
+          <div class="tier-desc">Secret: <code>merus-expert-meruscase-token</code> — Project: <code>adjudica-internal</code></div>
+        </div>
+      </div>
+      <div class="auth-tier">
+        <div class="tier-num">2</div>
+        <div class="tier-body">
+          <div class="tier-title">Environment variable</div>
+          <div class="tier-desc"><code>MERUSCASE_ACCESS_TOKEN=your-token cli-anything-meruscase case list</code></div>
+        </div>
+      </div>
+      <div class="auth-tier">
+        <div class="tier-num">3</div>
+        <div class="tier-body">
+          <div class="tier-title">Local token file</div>
+          <div class="tier-desc"><code>~/.meruscase_token</code> — written by <code>cli-anything-meruscase auth login</code></div>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin-bottom:10px;">Auth commands</h3>
+    <pre><code><span class="cmd">cli-anything-meruscase</span> auth <span class="arg">login</span>       <span class="comment"># load or set token</span>
+<span class="cmd">cli-anything-meruscase</span> auth <span class="arg">status</span>      <span class="comment"># show token source + masked value</span>
+<span class="cmd">cli-anything-meruscase</span> auth <span class="arg">refresh</span>     <span class="comment"># force reload from GCP Secret Manager</span></code></pre>
+  </div>
+
+  <!-- ── Dual mode ── -->
+  <div class="section">
+    <div class="section-label">Interface</div>
+    <h2>Dual-Mode Interface</h2>
+    <div class="mode-split">
+      <div class="mode-card">
+        <h4>Interactive REPL (default)</h4>
+        <p>Start without a subcommand. Maintains session state, undo/redo history, and a persistent prompt across commands. Ideal for exploratory use and agent sessions.</p>
+        <pre><code><span class="cmd">cli-anything-meruscase</span>
+<span class="out">
+  ╔══════════════════════════════╗
+  ║   cli-anything-meruscase    ║
+  ║   MerusCase CLI  v1.0.0     ║
+  ╚══════════════════════════════╝
+
+meruscase&gt;</span> case list <span class="flag">--limit</span> <span class="arg">5</span>
+<span class="out">meruscase&gt;</span> billing summary <span class="flag">--case</span> <span class="arg">4703360</span>
+<span class="out">meruscase&gt;</span> quit</code></pre>
+      </div>
+      <div class="mode-card">
+        <h4>Subcommand Mode</h4>
+        <p>Pass a command directly. Returns immediately. Composable with shell pipelines, scripts, and AI agent tool calls. Combine with <code>--json</code> for structured output.</p>
+        <pre><code><span class="cmd">cli-anything-meruscase</span> case list <span class="flag">--limit</span> <span class="arg">5</span>
+
+<span class="cmd">cli-anything-meruscase</span> <span class="flag">--json</span> \
+  case find <span class="arg">"Smith"</span> \
+  | jq <span class="arg">'.id'</span>
+
+<span class="cmd">cli-anything-meruscase</span> <span class="flag">--json</span> \
+  billing summary <span class="flag">--case</span> <span class="arg">4703360</span></code></pre>
+      </div>
+    </div>
+
+    <div class="callout">
+      <span class="callout-icon">ℹ</span>
+      <div>
+        The <code>--json</code> flag is set at the root level and applies to every subcommand.
+        Every command — including errors — emits machine-parseable JSON when the flag is set.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Command reference ── -->
+  <div class="section">
+    <div class="section-label">Command Reference</div>
+    <h2>All Command Groups</h2>
+
+    <div class="groups-grid">
+
+      <div class="group-card">
+        <div class="group-header">
+          <div class="group-icon">📋</div>
+          <div class="group-name">case</div>
+        </div>
+        <div class="group-desc">Case lookup, retrieval, and creation.</div>
+        <ul class="cmd-list">
+          <li><span class="subcmd">list</span><span class="subcmd-desc">List all cases. Filter by <code>--status</code>, <code>--type</code>, <code>--limit</code>.</span></li>
+          <li><span class="subcmd">find</span><span class="subcmd-desc">Fuzzy search by file number or party name. Three-pass match: exact → substring → name.</span></li>
+          <li><span class="subcmd">get</span><span class="subcmd-desc">Fetch full case detail by numeric ID.</span></li>
+          <li><span class="subcmd">create</span><span class="subcmd-desc">Create new case via Browserless. Fills form, submits, returns new case ID.</span></li>
+        </ul>
+      </div>
+
+      <div class="group-card">
+        <div class="group-header">
+          <div class="group-icon">💰</div>
+          <div class="group-name">billing</div>
+        </div>
+        <div class="group-desc">Time billing, costs, and ledger summaries.</div>
+        <ul class="cmd-list">
+          <li><span class="subcmd">bill-time</span><span class="subcmd-desc">Bill attorney time. <code>--hours 0.5</code> → 30 min billable activity.</span></li>
+          <li><span class="subcmd">add-cost</span><span class="subcmd-desc">Add direct cost. Types: <code>fee</code>, <code>cost</code>, <code>expense</code>.</span></li>
+          <li><span class="subcmd">summary</span><span class="subcmd-desc">Ledger total with entry list. Optional date range filter.</span></li>
+          <li><span class="subcmd">codes</span><span class="subcmd-desc">List available billing codes (1-hour cached).</span></li>
+        </ul>
+      </div>
+
+      <div class="group-card">
+        <div class="group-header">
+          <div class="group-icon">📝</div>
+          <div class="group-name">activity</div>
+        </div>
+        <div class="group-desc">Case activities and non-billable notes.</div>
+        <ul class="cmd-list">
+          <li><span class="subcmd">list</span><span class="subcmd-desc">List all activities for a case. Supports <code>--limit</code>.</span></li>
+          <li><span class="subcmd">add-note</span><span class="subcmd-desc">Add a non-billable note with subject and optional description.</span></li>
+          <li><span class="subcmd">types</span><span class="subcmd-desc">List available activity types (1-hour cached).</span></li>
+        </ul>
+      </div>
+
+      <div class="group-card">
+        <div class="group-header">
+          <div class="group-icon">📄</div>
+          <div class="group-name">document</div>
+        </div>
+        <div class="group-desc">File uploads and document listing.</div>
+        <ul class="cmd-list">
+          <li><span class="subcmd">upload</span><span class="subcmd-desc">Upload a local file to a case. Validates file exists before API call.</span></li>
+          <li><span class="subcmd">list</span><span class="subcmd-desc">List all documents attached to a case.</span></li>
+        </ul>
+      </div>
+
+      <div class="group-card">
+        <div class="group-header">
+          <div class="group-icon">👥</div>
+          <div class="group-name">party</div>
+        </div>
+        <div class="group-desc">Parties associated with a case.</div>
+        <ul class="cmd-list">
+          <li><span class="subcmd">list</span><span class="subcmd-desc">List all parties: Client, Employer, Insurance Company, Opposing Party, etc.</span></li>
+          <li><span class="subcmd">add</span><span class="subcmd-desc">Add a new party by type, with optional company name and notes.</span></li>
+        </ul>
+      </div>
+
+      <div class="group-card">
+        <div class="group-header">
+          <div class="group-icon">🔑</div>
+          <div class="group-name">auth</div>
+        </div>
+        <div class="group-desc">Token management and authentication state.</div>
+        <ul class="cmd-list">
+          <li><span class="subcmd">login</span><span class="subcmd-desc">Load token from GCP/env or prompt to paste manually.</span></li>
+          <li><span class="subcmd">status</span><span class="subcmd-desc">Show current token source and masked value.</span></li>
+          <li><span class="subcmd">refresh</span><span class="subcmd-desc">Force reload from GCP Secret Manager, bust in-process cache.</span></li>
+        </ul>
+      </div>
+
+      <div class="group-card">
+        <div class="group-header">
+          <div class="group-icon">↩</div>
+          <div class="group-name">session</div>
+        </div>
+        <div class="group-desc">REPL session state and history.</div>
+        <ul class="cmd-list">
+          <li><span class="subcmd">undo</span><span class="subcmd-desc">Restore previous state (up to 50 levels deep).</span></li>
+          <li><span class="subcmd">redo</span><span class="subcmd-desc">Re-apply the most recently undone operation.</span></li>
+          <li><span class="subcmd">status</span><span class="subcmd-desc">Show token state, undo/redo stack depths, modified flag.</span></li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Usage examples ── -->
+  <div class="section">
+    <div class="section-label">Examples</div>
+    <h2>Common Workflows</h2>
+
+    <h3>Find a case and pull its billing summary</h3>
+    <pre><code><span class="comment"># Fuzzy find by name, pipe case ID into billing summary</span>
+CASE_ID=$(<span class="cmd">cli-anything-meruscase</span> <span class="flag">--json</span> case find <span class="arg">"Smith"</span> | jq <span class="arg">'.id'</span>)
+<span class="cmd">cli-anything-meruscase</span> <span class="flag">--json</span> billing summary <span class="flag">--case</span> <span class="arg">$CASE_ID</span></code></pre>
+
+    <h3>Bill time and add a note in one session</h3>
+    <pre><code><span class="cmd">cli-anything-meruscase</span>
+<span class="out">meruscase&gt;</span> billing bill-time <span class="flag">--case</span> <span class="arg">4703360</span> <span class="flag">--hours</span> <span class="arg">1.5</span> <span class="flag">--desc</span> <span class="arg">"Reviewed QME report, drafted response letter"</span>
+<span class="out">meruscase&gt;</span> activity add-note <span class="flag">--case</span> <span class="arg">4703360</span> <span class="flag">--subject</span> <span class="arg">"QME review complete"</span> <span class="flag">--desc</span> <span class="arg">"Sent letter to opposing counsel"</span>
+<span class="out">meruscase&gt;</span> session undo    <span class="comment"># ← changed your mind</span>
+<span class="out">meruscase&gt;</span> quit</code></pre>
+
+    <h3>Upload a document</h3>
+    <pre><code><span class="cmd">cli-anything-meruscase</span> document upload \
+  <span class="flag">--case</span> <span class="arg">4703360</span> \
+  <span class="flag">--file</span> <span class="arg">/path/to/QME_Report_Smith.pdf</span> \
+  <span class="flag">--desc</span> <span class="arg">"QME Report — Dr. Johnson — 2026-04-14"</span></code></pre>
+
+    <h3>Create a new case (Browserless)</h3>
+    <pre><code><span class="cmd">cli-anything-meruscase</span> <span class="flag">--json</span> case create \
+  <span class="flag">--name</span> <span class="arg">"GARCIA, MARIA"</span> \
+  <span class="flag">--type</span> <span class="arg">"Workers Compensation"</span> \
+  <span class="flag">--date</span> <span class="arg">"03/15/2025"</span>
+<span class="out">
+{
+  "meruscase_id": 4812041,
+  "url": "https://meruscase.com/cms#/caseFiles/4812041",
+  "party_name": "GARCIA, MARIA"
+}</span></code></pre>
+
+    <h3>Agent pipeline (JSON mode)</h3>
+    <pre><code><span class="comment"># All party names on active WC cases, formatted for an agent</span>
+<span class="cmd">cli-anything-meruscase</span> <span class="flag">--json</span> case list \
+  <span class="flag">--status</span> <span class="arg">Active</span> <span class="flag">--type</span> <span class="arg">"Workers Compensation"</span> \
+  | jq <span class="arg">'[.[] | {id, name: .primary_party_name}]'</span></code></pre>
+  </div>
+
+  <!-- ── API endpoints ── -->
+  <div class="section">
+    <div class="section-label">REST API</div>
+    <h2>MerusCase Endpoints Used</h2>
+    <p>All API calls go to <code>https://api.meruscase.com</code> with <code>Authorization: Bearer {token}</code>. Rate limiting is handled with exponential backoff (up to 3 retries).</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Method</th>
+          <th>Endpoint</th>
+          <th>Purpose</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="method-get">GET</td><td class="endpoint">/caseFiles/index</td><td>List all cases</td><td>Python-side filtering (API rejects query params)</td></tr>
+        <tr><td class="method-get">GET</td><td class="endpoint">/caseFiles/view/{id}</td><td>Get case details</td><td></td></tr>
+        <tr><td class="method-post">POST</td><td class="endpoint">/caseFiles/edit/{id}</td><td>Update case fields</td><td></td></tr>
+        <tr><td class="method-get">GET</td><td class="endpoint">/parties/index/{id}</td><td>List case parties</td><td>Case ID as path segment (not query param)</td></tr>
+        <tr><td class="method-post">POST</td><td class="endpoint">/parties/add</td><td>Add a party</td><td>Wrapped in <code>{"Party": data}</code></td></tr>
+        <tr><td class="method-get">GET</td><td class="endpoint">/activities/index</td><td>List activities</td><td>Python-side limit applied</td></tr>
+        <tr><td class="method-post">POST</td><td class="endpoint">/activities/add</td><td>Add activity/note</td><td>Wrapped in <code>{"Activity": data}</code></td></tr>
+        <tr><td class="method-get">GET</td><td class="endpoint">/activityTypes/index</td><td>Activity type reference</td><td>1-hour in-process cache</td></tr>
+        <tr><td class="method-get">GET</td><td class="endpoint">/billingCodes/index</td><td>Billing code reference</td><td>1-hour in-process cache</td></tr>
+        <tr><td class="method-get">GET</td><td class="endpoint">/caseLedgersOpen/index</td><td>Ledger entries</td><td>Doubly-nested envelope normalized</td></tr>
+        <tr><td class="method-post">POST</td><td class="endpoint">/caseLedgers/add</td><td>Add fee/cost/expense</td><td>Wrapped in <code>{"CaseLedger": data}</code></td></tr>
+        <tr><td class="method-post">POST</td><td class="endpoint">/uploads/add</td><td>Upload document</td><td>Multipart form-data</td></tr>
+        <tr><td class="method-get">GET</td><td class="endpoint">/uploads/index</td><td>List documents</td><td></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout callout-warn">
+      <span class="callout-icon">⚠</span>
+      <div>MerusCase returns HTTP 200 even for errors — the <code>errors</code> field in the response body is always checked and raised as <code>MerusCaseAPIError</code> when present.</div>
+    </div>
+  </div>
+
+  <!-- ── Browser automation ── -->
+  <div class="section">
+    <div class="section-label">Browser Automation</div>
+    <h2>Browserless Case Creation</h2>
+    <p>
+      New case creation has no REST API equivalent — it requires filling the MerusCase web form.
+      <code>cli-anything-meruscase</code> handles this via Browserless, a cloud browser service
+      that bypasses reCAPTCHA and works without a local display.
+    </p>
+
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="icon">☁</div>
+        <h4>Browserless Cloud</h4>
+        <p>Connects to <code>wss://production-sfo.browserless.io</code> via CDP. No local Chrome needed. Token from GCP Secret Manager.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🛡</div>
+        <h4>reCAPTCHA Bypass</h4>
+        <p>Browserless auto-solves MerusCase's <code>g-recaptcha-response</code> hidden field before the login form renders.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🔗</div>
+        <h4>Case ID Extraction</h4>
+        <p>After form submission, the new case ID is extracted from the redirect URL via <code>#/caseFiles/{ID}</code> regex.</p>
+      </div>
+    </div>
+
+    <h3>Credentials for browser operations</h3>
+    <p>Browser login uses email + password (separate from the API Bearer token):</p>
+    <div class="auth-tiers">
+      <div class="auth-tier">
+        <div class="tier-num">1</div>
+        <div class="tier-body">
+          <div class="tier-title">GCP Secret Manager</div>
+          <div class="tier-desc">Secrets: <code>meruscase-email</code> / <code>meruscase-password</code> — Project: <code>adjudica-internal</code></div>
+        </div>
+      </div>
+      <div class="auth-tier">
+        <div class="tier-num">2</div>
+        <div class="tier-body">
+          <div class="tier-title">Environment variables</div>
+          <div class="tier-desc"><code>MERUSCASE_EMAIL</code> and <code>MERUSCASE_PASSWORD</code></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Architecture ── -->
+  <div class="section">
+    <div class="section-label">Architecture</div>
+    <h2>How it's built</h2>
+
+    <pre><code>cli-anything-meruscase
+│
+├── meruscase_cli.py       Click CLI — 7 groups, REPL default, --json global flag
+│
+├── core/
+│   ├── session.py         Token lifecycle · undo/redo stack (50 levels) · state serialization
+│   ├── cases.py           list · find (3-pass fuzzy) · get · create (→ browser_backend)
+│   ├── billing.py         bill_time · add_cost · get_billing_summary · get_billing_codes
+│   ├── activities.py      get_activities · add_note · get_activity_types
+│   ├── documents.py       upload_document · list_documents
+│   └── parties.py         get_parties · add_party
+│
+└── utils/
+    ├── api_client.py      Async httpx · 13 endpoints · retry/backoff · TTL cache
+    ├── browser_backend.py Playwright + Browserless CDP · login · create_case
+    └── repl_skin.py       Branded REPL UI · prompt_toolkit · colored output</code></pre>
+
+    <div class="feature-grid" style="margin-top:16px;">
+      <div class="feature-card">
+        <div class="icon">⚡</div>
+        <h4>Async httpx</h4>
+        <p>All REST calls are async. Exponential backoff on 429 rate-limit responses (base 2.0, up to 3 retries).</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">💾</div>
+        <h4>50-Level Undo/Redo</h4>
+        <p>Deep-copy snapshots before every mutating operation. New operations clear the redo stack. Stack trimmed at 50.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🔒</div>
+        <h4>Credential Safety</h4>
+        <p>Token files written with <code>0o600</code>. Secrets never logged. PHI-safe: document IDs only, never content.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🧪</div>
+        <h4>29 Tests, 0 Failures</h4>
+        <p>18 unit tests (mocked async client) + 11 no-credential E2E tests. Integration tests confirmed against live MerusCase API.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Built by Glass Box Solutions, Inc. &mdash; cli-anything-meruscase v1.0.0 &mdash; 2026-04-14
+  </div>
+
+</div>
+</body>
+</html>

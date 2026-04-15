@@ -24,6 +24,7 @@ from merus_expert.api_client.models import (
     LedgerType,
     APIResponse,
     Party,
+    PartyType,
     Document,
 )
 
@@ -663,6 +664,204 @@ class MerusAgent:
             "filename": p.name,
             "data": response.data,
         }
+
+    async def create_case(
+        self,
+        party_name: str,
+        case_type: str = "Workers Compensation",
+        date_opened: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a new MerusCase case via Browserless browser automation.
+
+        Uses HybridMatterBuilder which handles browser login, form fill, and
+        submission via the Browserless cloud browser (bypasses reCAPTCHA).
+
+        Args:
+            party_name: Primary party name. Format: "LASTNAME, FIRSTNAME" or "FIRSTNAME LASTNAME".
+            case_type: Case type string (default: "Workers Compensation").
+            date_opened: Date opened in MM/DD/YYYY format. Defaults to today.
+
+        Returns:
+            dict: {success, meruscase_id, url, party_name, case_type}
+        """
+        try:
+            from merus_expert.automation.hybrid_matter_builder import HybridMatterBuilder
+            from merus_expert.models.matter import MatterDetails, CaseType
+            from merus_expert.security.config import SecurityConfig
+
+            # Default date_opened to today if not supplied
+            if not date_opened:
+                date_opened = datetime.now().strftime("%m/%d/%Y")
+
+            # Parse party name: "LASTNAME, FIRSTNAME" → "FIRSTNAME LASTNAME" for primary_party
+            # MatterDetails.primary_party stores as-is; keep original for return value
+            primary_party = party_name
+
+            # Map case_type string to CaseType enum (best-effort match)
+            _case_type_map = {
+                "workers compensation": CaseType.WORKERS_COMP,
+                "workers' compensation": CaseType.WORKERS_COMP,
+                "immigration": CaseType.IMMIGRATION,
+                "family law": CaseType.FAMILY_LAW,
+                "personal injury": CaseType.PERSONAL_INJURY,
+                "general": CaseType.GENERAL,
+            }
+            resolved_case_type = _case_type_map.get(case_type.lower(), CaseType.WORKERS_COMP)
+
+            matter = MatterDetails(
+                primary_party=primary_party,
+                case_type=resolved_case_type,
+                date_opened=date_opened,
+            )
+
+            config = SecurityConfig.from_env()
+            async with HybridMatterBuilder(config=config) as builder:
+                result = await builder.create_matter(matter)
+
+            if result.get("status") not in ("success", "dry_run_success"):
+                errors = result.get("errors", [])
+                return {"error": f"Case creation failed: {'; '.join(str(e) for e in errors)}"}
+
+            meruscase_url = result.get("meruscase_url") or result.get("browser_result", {}).get("meruscase_url")
+            meruscase_id = result.get("case_file_id") or result.get("matter_id")
+
+            logger.info(f"Created case for '{party_name}': id={meruscase_id} url={meruscase_url}")
+
+            return {
+                "success": True,
+                "meruscase_id": meruscase_id,
+                "url": meruscase_url,
+                "party_name": party_name,
+                "case_type": case_type,
+            }
+        except Exception as e:
+            logger.error(f"create_case failed: {e}")
+            return {"error": str(e)}
+
+    async def add_party(
+        self,
+        case_search: str,
+        party_type: str,
+        company_name: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Add a party (employer, insurance company, etc.) to an existing case.
+
+        Args:
+            case_search: Case file number or party name to find the case.
+            party_type: Type of party. One of: "Employer", "Insurance Company",
+                "Opposing Party", "Witness", "Expert", "Client", "Other".
+            company_name: Company or organization name (for Employer, Insurance Company).
+            first_name: Party first name (for individuals).
+            last_name: Party last name (for individuals).
+            notes: Optional notes about this party.
+
+        Returns:
+            dict: {success, case_id, case_name, party_type, party_id}
+        """
+        try:
+            # Find the case
+            case = await self.find_case(case_search)
+            case_id = int(case["id"])
+            case_name = case.get("primary_party_name")
+
+            # Map party_type string to PartyType enum (best-effort match)
+            _party_type_map = {
+                "employer": PartyType.EMPLOYER,
+                "insurance company": PartyType.INSURANCE,
+                "opposing party": PartyType.OPPOSING_PARTY,
+                "witness": PartyType.WITNESS,
+                "expert": PartyType.EXPERT,
+                "client": PartyType.CLIENT,
+                "other": PartyType.OTHER,
+            }
+            resolved_party_type = _party_type_map.get(party_type.lower(), PartyType.OTHER)
+
+            party = Party(
+                case_file_id=case_id,
+                party_type=resolved_party_type,
+                first_name=first_name,
+                last_name=last_name,
+                company_name=company_name,
+                notes=notes,
+            )
+
+            logger.info(f"Adding party '{party_type}' to case {case_id}")
+
+            response = await self.client.add_party(party)
+
+            if not response.success:
+                raise MerusAgentError(f"Failed to add party: {response.error}")
+
+            party_id = response.data.get("id") if response.data else None
+
+            return {
+                "success": True,
+                "case_id": case_id,
+                "case_name": case_name,
+                "party_type": party_type,
+                "party_id": party_id,
+            }
+        except Exception as e:
+            logger.error(f"add_party failed: {e}")
+            return {"error": str(e)}
+
+    async def list_documents(
+        self,
+        case_search: str,
+        limit: int = 100,
+    ) -> Dict[str, Any]:
+        """
+        List all documents attached to a case.
+
+        Args:
+            case_search: Case file number or party name to find the case.
+            limit: Maximum number of documents to return (default 100).
+
+        Returns:
+            dict: {case_id, case_name, documents: [...], count}
+        """
+        try:
+            # Find the case
+            case = await self.find_case(case_search)
+            case_id = int(case["id"])
+            case_name = case.get("primary_party_name")
+
+            response = await self.client.list_documents(case_file_id=case_id, limit=limit)
+
+            if not response.success:
+                raise MerusAgentError(f"Failed to list documents: {response.error}")
+
+            # Normalize document list — API may return dict or list
+            raw = response.data
+            if isinstance(raw, dict):
+                docs_raw = raw.get("data", raw)
+                if isinstance(docs_raw, dict):
+                    docs = list(docs_raw.values())
+                elif isinstance(docs_raw, list):
+                    docs = docs_raw
+                else:
+                    docs = []
+            elif isinstance(raw, list):
+                docs = raw
+            else:
+                docs = []
+
+            logger.info(f"Listed {len(docs)} documents for case {case_id}")
+
+            return {
+                "case_id": case_id,
+                "case_name": case_name,
+                "documents": docs,
+                "count": len(docs),
+            }
+        except Exception as e:
+            logger.error(f"list_documents failed: {e}")
+            return {"error": str(e)}
 
     # =========================================================================
     # BATCH OPERATIONS
