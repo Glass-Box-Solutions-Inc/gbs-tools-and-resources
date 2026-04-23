@@ -41,10 +41,10 @@ from claims_generator.models.profile import ClaimProfile
 
 # Typical WC medical service line items
 _SERVICE_LINES: list[dict[str, str]] = [
-    {"cpt": "99213", "desc": "Office/Outpatient Visit, Level 3", "mod": "WC", "qty": "1", "fee": "$160.51", "allowed": "$160.51"},
-    {"cpt": "97110", "desc": "Therapeutic Exercise, 15 min", "mod": "", "qty": "4", "fee": "$39.17", "allowed": "$39.17"},
-    {"cpt": "97014", "desc": "Electrical Stimulation (unattended)", "mod": "", "qty": "1", "fee": "$31.48", "allowed": "$31.48"},
-    {"cpt": "72148", "desc": "MRI Lumbar Spine w/o Contrast", "mod": "", "qty": "1", "fee": "$1,248.00", "allowed": "$786.50"},
+    {"cpt": "99213", "desc": "Office/Outpatient Visit, Level 3", "mod": "WC", "qty": "1", "fee": "$160.51", "allowed": "$160.51"},  # noqa: E501
+    {"cpt": "97110", "desc": "Therapeutic Exercise, 15 min", "mod": "", "qty": "4", "fee": "$39.17", "allowed": "$39.17"},  # noqa: E501
+    {"cpt": "97014", "desc": "Electrical Stimulation (unattended)", "mod": "", "qty": "1", "fee": "$31.48", "allowed": "$31.48"},  # noqa: E501
+    {"cpt": "72148", "desc": "MRI Lumbar Spine w/o Contrast", "mod": "", "qty": "1", "fee": "$1,248.00", "allowed": "$786.50"},  # noqa: E501
 ]
 
 
@@ -61,7 +61,7 @@ class BillingStatementGenerator(DocumentGenerator):
 
         ins = profile.insurer
         med = profile.medical
-        claimant = profile.claimant
+        claimant = profile.claimant  # noqa: F841
         treating = med.treating_physician
 
         story: list = []
@@ -102,7 +102,7 @@ class BillingStatementGenerator(DocumentGenerator):
         story.append(hline())
 
         # Select 2-3 lines based on event
-        seed_val = int(event.event_id.replace("-", "")[:8], 16) % len(_SERVICE_LINES) if event.event_id else 0
+        seed_val = int(event.event_id.replace("-", "")[:8], 16) % len(_SERVICE_LINES) if event.event_id else 0  # noqa: E501
         selected = _SERVICE_LINES[seed_val:seed_val + 3] or _SERVICE_LINES[:2]
 
         story.append(

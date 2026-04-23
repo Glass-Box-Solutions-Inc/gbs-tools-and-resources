@@ -14,12 +14,10 @@ import io
 from claims_generator.documents.base_document import DocumentGenerator
 from claims_generator.documents.letterhead import (
     carrier_header_block,
-    claimant_caption_block,
     confidentiality_footer,
     regulatory_citation_block,
 )
 from claims_generator.documents.pdf_primitives import (
-    STYLES,
     hline,
     para,
     spacer,
@@ -35,7 +33,7 @@ _BODY_TEMPLATES: dict[str, str] = {
         "Dear {first_name} {last_name},\n\n"
         "This letter confirms that {carrier_name} has received your Workers' Compensation "
         "claim (Claim No. {claim_number}) arising from the reported injury on {doi}. "
-        "Your claim has been assigned to the undersigned adjuster for investigation and handling.\n\n"
+        "Your claim has been assigned to the undersigned adjuster for investigation and handling.\n\n"  # noqa: E501
         "Pursuant to 10 CCR 2695.5(b), we are required to initiate contact with you within "
         "15 days of claim receipt. Please contact our office at {adjuster_phone} with any "
         "questions regarding your claim status, benefits, or the claims process.\n\n"

@@ -28,11 +28,9 @@ from reportlab.platypus import Paragraph, Table, TableStyle
 
 from claims_generator.documents.pdf_primitives import (
     COLOR_CA_BLUE,
-    COLOR_HEADER_BG,
     COLOR_MED_GRAY,
     CONTENT_WIDTH,
     STYLES,
-    para,
 )
 
 
@@ -70,7 +68,7 @@ def form_row(
     A single horizontal row of form fields.
     Each element: (label, value, width_in_inches).
     """
-    cells = [
+    cells = [  # noqa: F841
         [
             Paragraph(label, STYLES["label"]),
             Paragraph(str(value), STYLES["body"]),

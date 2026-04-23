@@ -134,7 +134,7 @@ class WCABFilingGenerator(DocumentGenerator):
                 para(
                     "The undersigned declares that the above-captioned case is ready to proceed "
                     "to hearing. All discovery has been completed, or the requesting party waives "
-                    "further discovery. The case is ready for a Mandatory Settlement Conference (MSC) "
+                    "further discovery. The case is ready for a Mandatory Settlement Conference (MSC) "  # noqa: E501
                     "and/or trial on the issues of permanent disability and medical treatment.\n\n"
                     "Pursuant to 8 CCR 10414, this Declaration of Readiness is filed to request "
                     "a hearing date at the earliest available calendar. All parties have been "

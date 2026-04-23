@@ -15,7 +15,6 @@ import io
 from abc import ABC, abstractmethod
 
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate
 
 from claims_generator.documents.pdf_primitives import (

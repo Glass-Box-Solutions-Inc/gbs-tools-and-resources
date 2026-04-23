@@ -20,7 +20,6 @@ from claims_generator.batch_builder import BatchJob, build_batch, build_batch_si
 from claims_generator.case_builder import build_case
 from claims_generator.exporter import export_batch_to_zip, export_case_to_zip
 from claims_generator.models.claim import ClaimCase
-from claims_generator.models.enums import DocumentType
 
 
 class TestCaseBuilderWithPDFs:
@@ -118,13 +117,8 @@ class TestExporter:
 
     def test_empty_case_raises_value_error(self) -> None:
         """export_case_to_zip must raise ValueError for a case with no events."""
+
         from claims_generator.models.claim import ClaimCase
-        from claims_generator.models.profile import ClaimProfile
-        from claims_generator.models.claimant import ClaimantProfile
-        from claims_generator.models.employer import EmployerProfile, InsurerProfile
-        from claims_generator.models.medical import MedicalProfile, BodyPart, PhysicianProfile
-        from claims_generator.models.financial import FinancialProfile
-        from datetime import date
 
         empty_case = ClaimCase(
             case_id="case-empty",

@@ -50,8 +50,6 @@ class AmeQmeReportGenerator(DocumentGenerator):
         doc = cls._build_doc(buf, title=event.title)
 
         med = profile.medical
-        ins = profile.insurer
-        claimant = profile.claimant
 
         slug = event.subtype_slug
         is_psych = "psych" in slug or "psychiatric" in slug
@@ -65,7 +63,10 @@ class AmeQmeReportGenerator(DocumentGenerator):
         elif med.qme_physician:
             physician = med.qme_physician
             eval_type = "QME"
-            form_label = "Psychiatric QME Report" if is_psych else "Qualified Medical Evaluator (QME) Report"
+            form_label = (
+                "Psychiatric QME Report" if is_psych
+                else "Qualified Medical Evaluator (QME) Report"
+            )
         else:
             physician = med.treating_physician
             eval_type = "QME"
@@ -151,15 +152,18 @@ class AmeQmeReportGenerator(DocumentGenerator):
                     "body",
                 )
             )
-            diag_rows = [["F43.23", "Adjustment Disorder w/ Mixed Anxiety & Depressed Mood", "Psychiatric"]]
+            diag_rows = [
+                ["F43.23", "Adjustment Disorder w/ Mixed Anxiety & Depressed Mood", "Psychiatric"]
+            ]
             for e in med.icd10_codes[:2]:
                 diag_rows.append([e.code, e.description, e.body_part])
         else:
+            body_part_str = med.body_parts[0].body_part if med.body_parts else "reported body part"
             story.append(
                 para(
                     f"PHYSICAL FINDINGS: Range of motion testing, orthopedic provocative tests, "
                     f"and neurological examination were performed. Findings are consistent with "
-                    f"the claimed industrial injury to the {med.body_parts[0].body_part if med.body_parts else 'reported body part'}. "
+                    f"the claimed industrial injury to the {body_part_str}. "
                     f"No evidence of malingering or symptom magnification was observed.",
                     "body",
                 )
@@ -182,8 +186,16 @@ class AmeQmeReportGenerator(DocumentGenerator):
             label_value_table([
                 ("WPI — Whole Person Impairment:", wpi),
                 ("Rating Method:", "AMA Guides to the Evaluation of Permanent Impairment, 5th Ed."),
-                ("Chapter Referenced:", "Chapter 15 (Spine)" if not is_psych else "Chapter 14 (Mental & Behavioral)"),
-                ("Apportionment (LC § 4663):", "Non-industrial factors: none identified" if not is_psych else "30% non-industrial per prior psychiatric history review"),
+                (
+                    "Chapter Referenced:",
+                    "Chapter 15 (Spine)" if not is_psych else "Chapter 14 (Mental & Behavioral)",
+                ),
+                (
+                    "Apportionment (LC § 4663):",
+                    "Non-industrial factors: none identified"
+                    if not is_psych
+                    else "30% non-industrial per prior psychiatric history review",
+                ),
                 ("MMI Status:", "Permanent and Stationary" if med.mmi_reached else "Not yet P&S"),
             ])
         )
@@ -198,7 +210,8 @@ class AmeQmeReportGenerator(DocumentGenerator):
                 ("Psychiatric treatment per MTUS Mental Health guidelines (8 CCR 9792.6)."
                  if is_psych else
                  "Physical therapy per MTUS guidelines for the rated conditions.") +
-                "<br/>2. Work restrictions: Permanent work restrictions as noted in the RFC form.<br/>"
+                "<br/>2. Work restrictions: Permanent work restrictions as noted in the RFC form."
+                "<br/>"
                 "3. Apportionment: As stated above per LC § 4663.<br/>"
                 "4. Further evaluation: None required.",
                 "body",

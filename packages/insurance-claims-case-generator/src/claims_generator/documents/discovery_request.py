@@ -79,7 +79,7 @@ class DiscoveryRequestGenerator(DocumentGenerator):
                     f"testing, or sampling of the following documents relating to:<br/><br/>"
                     f"<b>Patient / Claimant:</b> {claimant.first_name} {claimant.last_name}<br/>"
                     f"<b>Date of Birth:</b> {claimant.date_of_birth}<br/>"
-                    f"<b>Date(s) of Service:</b> All dates from DOI ({med.date_of_injury}) to present",
+                    f"<b>Date(s) of Service:</b> All dates from DOI ({med.date_of_injury}) to present",  # noqa: E501
                     "body",
                 )
             )
@@ -122,7 +122,7 @@ class DiscoveryRequestGenerator(DocumentGenerator):
                 ("Phone:", ins.adjuster_phone),
                 ("Claim No.:", ins.claim_number),
                 ("Date Issued:", str(event.event_date)),
-                ("Response Deadline:", "20 days from service (CCP § 1985.3)" if is_subpoena else "20 days"),
+                ("Response Deadline:", "20 days from service (CCP § 1985.3)" if is_subpoena else "20 days"),  # noqa: E501
             ])
         )
 

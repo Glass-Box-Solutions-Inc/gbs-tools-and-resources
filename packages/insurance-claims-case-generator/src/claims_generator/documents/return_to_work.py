@@ -57,7 +57,7 @@ class ReturnToWorkGenerator(DocumentGenerator):
         is_sjdb = "sjdb" in slug
 
         story: list = []
-        story.extend(carrier_header_block(profile, form_id="AD 10133.53 (SJDB)" if is_sjdb else "RTW Offer"))
+        story.extend(carrier_header_block(profile, form_id="AD 10133.53 (SJDB)" if is_sjdb else "RTW Offer"))  # noqa: E501
         story.append(spacer(4))
 
         if is_sjdb:
@@ -103,7 +103,7 @@ class ReturnToWorkGenerator(DocumentGenerator):
                     ("Voucher Type:", "Retraining and Skill Enhancement"),
                     ("Eligible Schools:", "BPPE-approved or accredited CA institutions"),
                     ("Expiration:", "2 years from date of issuance (LC § 4658.7(b)(1))"),
-                    ("Reason for SJDB:", "Employer unable to offer modified/alternative work within restrictions"),
+                    ("Reason for SJDB:", "Employer unable to offer modified/alternative work within restrictions"),  # noqa: E501
                 ])
             )
             story.append(spacer(6))
@@ -112,7 +112,7 @@ class ReturnToWorkGenerator(DocumentGenerator):
                     f"Pursuant to Labor Code § 4658.7, {claimant.first_name} {claimant.last_name} "
                     f"is entitled to a Supplemental Job Displacement Benefit voucher in the amount "
                     f"of ${voucher_value:,.2f} because {employer.company_name} has not made a "
-                    f"timely, valid offer of modified or alternative work consistent with the medical "
+                    f"timely, valid offer of modified or alternative work consistent with the medical "  # noqa: E501
                     f"restrictions from the treating physician.\n\n"
                     f"This voucher must be used for education-related retraining expenses at "
                     f"qualifying California institutions. The voucher is non-transferable and may "
@@ -132,11 +132,11 @@ class ReturnToWorkGenerator(DocumentGenerator):
             story.append(hline())
             story.append(
                 label_value_table([
-                    ("Job Title:", claimant.occupation_title + " (Modified)" if claimant.occupation_title else "Modified Duty Position"),
+                    ("Job Title:", claimant.occupation_title + " (Modified)" if claimant.occupation_title else "Modified Duty Position"),  # noqa: E501
                     ("Work Location:", f"{employer.address_city}, CA"),
                     ("Hours:", "Part-time as restricted"),
                     ("Duration:", "Temporary — per medical restrictions"),
-                    ("Wage:", f"${fin.average_weekly_wage / 40 * 8:,.2f}/day (regular wages maintained)"),
+                    ("Wage:", f"${fin.average_weekly_wage / 40 * 8:,.2f}/day (regular wages maintained)"),  # noqa: E501
                     ("Start Date:", str(event.event_date)),
                 ])
             )
@@ -155,9 +155,9 @@ class ReturnToWorkGenerator(DocumentGenerator):
             story.append(spacer(6))
             story.append(
                 para(
-                    f"This offer of modified work is made pursuant to LC § 4658.6. "
-                    f"Failure to accept a valid offer of modified work may result in "
-                    f"forfeiture of SJDB benefits under LC § 4658.7.",
+                    "This offer of modified work is made pursuant to LC § 4658.6. "
+                    "Failure to accept a valid offer of modified work may result in "
+                    "forfeiture of SJDB benefits under LC § 4658.7.",
                     "small",
                 )
             )

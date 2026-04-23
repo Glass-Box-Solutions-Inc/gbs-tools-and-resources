@@ -173,8 +173,9 @@ def batch(
     from claims_generator.batch_builder import build_batch_simple
     from claims_generator.exporter import export_batch_to_zip
 
+    seed_end = seed_start + count - 1
     click.echo(
-        f"Generating {count} cases (scenario={scenario}, seeds={seed_start}–{seed_start + count - 1})",
+        f"Generating {count} cases (scenario={scenario}, seeds={seed_start}–{seed_end})",
         err=True,
     )
 

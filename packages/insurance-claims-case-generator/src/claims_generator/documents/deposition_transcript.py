@@ -100,10 +100,10 @@ class DepositionTranscriptGenerator(DocumentGenerator):
             qa_lines = [
                 ("Q", "Please state your full name for the record."),
                 ("A", f"{claimant.first_name} {claimant.last_name}."),
-                ("Q", f"On {med.date_of_injury}, were you employed by {profile.employer.company_name}?"),
+                ("Q", f"On {med.date_of_injury}, were you employed by {profile.employer.company_name}?"),  # noqa: E501
                 ("A", "Yes, I was."),
                 ("Q", f"Can you describe the {med.injury_mechanism} incident?"),
-                ("A", f"I was performing my regular duties when the injury occurred to my {med.body_parts[0].body_part if med.body_parts else 'body'}."),
+                ("A", f"I was performing my regular duties when the injury occurred to my {med.body_parts[0].body_part if med.body_parts else 'body'}."),  # noqa: E501
                 ("Q", "Have you treated with any physicians following the injury?"),
                 ("A", f"Yes, I have been treating with Dr. {med.treating_physician.last_name}."),
                 ("Q", "Are you currently able to perform your regular work duties?"),
@@ -113,11 +113,11 @@ class DepositionTranscriptGenerator(DocumentGenerator):
             body_parts_str = ", ".join(bp.body_part for bp in med.body_parts)
             qa_lines = [
                 ("Q", "Please state your name and specialty."),
-                ("A", f"Dr. {med.treating_physician.first_name} {med.treating_physician.last_name}, {med.treating_physician.specialty}."),
-                ("Q", f"Are you familiar with the patient {claimant.first_name} {claimant.last_name}?"),
+                ("A", f"Dr. {med.treating_physician.first_name} {med.treating_physician.last_name}, {med.treating_physician.specialty}."),  # noqa: E501
+                ("Q", f"Are you familiar with the patient {claimant.first_name} {claimant.last_name}?"),  # noqa: E501
                 ("A", "Yes, I have been their treating physician."),
                 ("Q", f"What is your diagnosis regarding the {body_parts_str}?"),
-                ("A", f"My diagnosis includes {med.icd10_codes[0].description if med.icd10_codes else 'the conditions noted in my PR-2'}."),
+                ("A", f"My diagnosis includes {med.icd10_codes[0].description if med.icd10_codes else 'the conditions noted in my PR-2'}."),  # noqa: E501
                 ("Q", "Is the condition in your opinion industrially caused?"),
                 ("A", "Based on the mechanism of injury described and my clinical findings, yes."),
                 ("Q", "Has the patient reached MMI?"),

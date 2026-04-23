@@ -55,7 +55,7 @@ class InvestigationReportGenerator(DocumentGenerator):
         story.extend(carrier_header_block(profile))
         story.append(spacer(4))
         story.append(para("CLAIMS INVESTIGATION REPORT", "title"))
-        story.append(para(f"CONFIDENTIAL — WORK PRODUCT | {ins.carrier_name} SIU / Claims", "small"))
+        story.append(para(f"CONFIDENTIAL — WORK PRODUCT | {ins.carrier_name} SIU / Claims", "small"))  # noqa: E501
         story.append(thick_hline())
 
         story.extend(

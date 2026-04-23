@@ -11,8 +11,8 @@ Each test verifies:
 
 from __future__ import annotations
 
-from datetime import date
 import uuid
+from datetime import date
 
 import pytest
 
@@ -20,12 +20,12 @@ import pytest
 import claims_generator.documents.loader  # noqa: F401
 from claims_generator.documents.registry import DocumentRegistry
 from claims_generator.models.claim import DocumentEvent
-from claims_generator.models.enums import DocumentType
-from claims_generator.models.profile import ClaimProfile
 from claims_generator.models.claimant import ClaimantProfile
 from claims_generator.models.employer import EmployerProfile, InsurerProfile
-from claims_generator.models.medical import MedicalProfile, BodyPart, ICD10Entry, PhysicianProfile
+from claims_generator.models.enums import DocumentType
 from claims_generator.models.financial import FinancialProfile
+from claims_generator.models.medical import BodyPart, ICD10Entry, MedicalProfile, PhysicianProfile
+from claims_generator.models.profile import ClaimProfile
 
 
 @pytest.fixture(scope="module")
@@ -71,7 +71,7 @@ def sample_profile() -> ClaimProfile:
             ],
             icd10_codes=[
                 ICD10Entry(code="M54.5", description="Low back pain", body_part="lumbar spine"),
-                ICD10Entry(code="M23.91", description="Internal derangement of right knee", body_part="right knee"),
+                ICD10Entry(code="M23.91", description="Internal derangement of right knee", body_part="right knee"),  # noqa: E501
             ],
             treating_physician=PhysicianProfile(
                 role="treating_md",

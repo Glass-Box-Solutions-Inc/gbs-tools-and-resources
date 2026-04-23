@@ -53,7 +53,7 @@ class UtilizationReviewGenerator(DocumentGenerator):
 
         ins = profile.insurer
         med = profile.medical
-        claimant = profile.claimant
+        claimant = profile.claimant  # noqa: F841
         treating = med.treating_physician
 
         slug = event.subtype_slug
@@ -104,7 +104,7 @@ class UtilizationReviewGenerator(DocumentGenerator):
             if med.has_surgery and med.surgery_description:
                 treatment_requested = med.surgery_description
                 treatment_type = "Surgical — Prior Authorization Required"
-                cpt_codes = "CPT 63030 (Lumbar Discectomy)" if "spine" in primary_bp.lower() else "CPT to be determined"
+                cpt_codes = "CPT 63030 (Lumbar Discectomy)" if "spine" in primary_bp.lower() else "CPT to be determined"  # noqa: E501
             else:
                 treatment_requested = (
                     f"Physical therapy 2x per week x 8 weeks for {primary_bp} "
@@ -132,7 +132,7 @@ class UtilizationReviewGenerator(DocumentGenerator):
                 para(
                     "Pursuant to 8 CCR 9792.6, the claims administrator must issue a UR "
                     "decision within 5 working days of receipt of this RFA (2 working days if "
-                    "urgent). Failure to timely respond results in deemed approval under LC § 4610.",
+                    "urgent). Failure to timely respond results in deemed approval under LC § 4610.",  # noqa: E501
                     "small",
                 )
             )

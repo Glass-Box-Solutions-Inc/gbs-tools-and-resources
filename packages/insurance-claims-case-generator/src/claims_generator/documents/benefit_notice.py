@@ -22,7 +22,6 @@ from claims_generator.documents.letterhead import (
     regulatory_citation_block,
 )
 from claims_generator.documents.pdf_primitives import (
-    STYLES,
     hline,
     label_value_table,
     para,

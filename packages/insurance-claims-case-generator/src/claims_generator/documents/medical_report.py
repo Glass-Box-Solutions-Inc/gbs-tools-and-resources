@@ -58,8 +58,8 @@ class MedicalReportGenerator(DocumentGenerator):
         doc = cls._build_doc(buf, title=event.title)
 
         med = profile.medical
-        ins = profile.insurer
-        claimant = profile.claimant
+        ins = profile.insurer  # noqa: F841
+        claimant = profile.claimant  # noqa: F841
 
         treating = med.treating_physician
         body_parts_str = ", ".join(
@@ -138,7 +138,7 @@ class MedicalReportGenerator(DocumentGenerator):
                     ("P&S Status:", "PERMANENT AND STATIONARY (MMI REACHED)"),
                     ("Date P&S:", str(event.event_date)),
                     ("WPI (Whole Person Impairment):", wpi),
-                    ("Future Medical Care:", "None indicated" if not med.has_surgery else "Follow-up as needed"),
+                    ("Future Medical Care:", "None indicated" if not med.has_surgery else "Follow-up as needed"),  # noqa: E501
                     ("Work Restrictions:", "Modified duty per attached work restriction form"),
                     ("Apportionment:", "Subject to formal apportionment per LC § 4663"),
                     ("Rating Method:", "AMA Guides 5th Edition (LC § 4660)"),
@@ -159,11 +159,11 @@ class MedicalReportGenerator(DocumentGenerator):
             story.append(
                 label_value_table([
                     ("Current Status:", "Active Treatment — NOT Permanent & Stationary"),
-                    ("Work Status:", "Temporary Total Disability (TD)" if "pr2" in slug else "Modified Duty"),
+                    ("Work Status:", "Temporary Total Disability (TD)" if "pr2" in slug else "Modified Duty"),  # noqa: E501
                     ("Next Appointment:", "4 weeks"),
                     ("Treatment Plan:", "Per MTUS guidelines (8 CCR 9792.6)"),
                     ("Surgery:", "Recommended" if med.has_surgery else "Not indicated"),
-                    ("Referrals:", "Orthopedic specialist" if len(med.body_parts) > 1 else "None at this time"),
+                    ("Referrals:", "Orthopedic specialist" if len(med.body_parts) > 1 else "None at this time"),  # noqa: E501
                     ("MMI Expected:", "Not yet reached"),
                 ])
             )

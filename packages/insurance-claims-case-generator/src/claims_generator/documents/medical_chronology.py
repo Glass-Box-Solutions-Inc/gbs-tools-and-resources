@@ -57,10 +57,10 @@ class MedicalChronologyGenerator(DocumentGenerator):
 
         # Synthesize chronology entries from available data
         entries: list[list[str]] = [
-            [str(doi), "DWC-1 Claim Form Filed", "DWC-1", "Claim reported — mechanism: " + med.injury_mechanism],
-            [str(doi + timedelta(days=3)), "Initial Medical Evaluation", f"Dr. {treating.last_name}", f"Diagnosis: {med.icd10_codes[0].description if med.icd10_codes else 'See records'}"],
-            [str(doi + timedelta(days=7)), "PR-2 Report", f"Dr. {treating.last_name}", f"Work status: TD; Body parts: {body_parts_str}"],
-            [str(doi + timedelta(days=14)), "UR / RFA", ins.carrier_name, "RFA for treatment — submitted per 8 CCR 9792.6"],
+            [str(doi), "DWC-1 Claim Form Filed", "DWC-1", "Claim reported — mechanism: " + med.injury_mechanism],  # noqa: E501
+            [str(doi + timedelta(days=3)), "Initial Medical Evaluation", f"Dr. {treating.last_name}", f"Diagnosis: {med.icd10_codes[0].description if med.icd10_codes else 'See records'}"],  # noqa: E501
+            [str(doi + timedelta(days=7)), "PR-2 Report", f"Dr. {treating.last_name}", f"Work status: TD; Body parts: {body_parts_str}"],  # noqa: E501
+            [str(doi + timedelta(days=14)), "UR / RFA", ins.carrier_name, "RFA for treatment — submitted per 8 CCR 9792.6"],  # noqa: E501
             [str(doi + timedelta(days=21)), "UR Decision", ins.carrier_name, "Treatment APPROVED"],
         ]
 
@@ -109,10 +109,10 @@ class MedicalChronologyGenerator(DocumentGenerator):
                 ("Date of Injury (DOI):", str(doi)),
                 ("Claim No.:", ins.claim_number),
                 ("Body Parts:", body_parts_str),
-                ("Primary Diagnosis:", med.icd10_codes[0].description if med.icd10_codes else "See records"),
+                ("Primary Diagnosis:", med.icd10_codes[0].description if med.icd10_codes else "See records"),  # noqa: E501
                 ("WPI:", f"{med.wpi_percent:.1f}%" if med.wpi_percent else "Not yet rated"),
                 ("MMI Reached:", "Yes" if med.mmi_reached else "No"),
-                ("Treating Physician:", f"Dr. {treating.first_name} {treating.last_name}, {treating.specialty}"),
+                ("Treating Physician:", f"Dr. {treating.first_name} {treating.last_name}, {treating.specialty}"),  # noqa: E501
                 ("QME Physician:", (
                     f"Dr. {med.qme_physician.first_name} {med.qme_physician.last_name}"
                     if med.qme_physician else "Not assigned"

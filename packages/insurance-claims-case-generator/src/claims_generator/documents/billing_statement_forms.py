@@ -59,7 +59,6 @@ def generate_cms1500(event: DocumentEvent, profile: ClaimProfile) -> bytes:
     Generate CMS-1500 (02/12) professional billing form approximation.
     Used for physician / professional billing in WC context.
     """
-    from claims_generator.documents.base_document import DocumentGenerator
 
     buf = io.BytesIO()
     from reportlab.lib.pagesizes import letter
@@ -80,7 +79,7 @@ def generate_cms1500(event: DocumentEvent, profile: ClaimProfile) -> bytes:
 
     story: list = []
     story.append(para("<b>HEALTH INSURANCE CLAIM FORM</b>", "title"))
-    story.append(para("CMS-1500 (02/12) | APPROVED BY NATIONAL UNIFORM CLAIM COMMITTEE | Workers' Compensation", "small"))
+    story.append(para("CMS-1500 (02/12) | APPROVED BY NATIONAL UNIFORM CLAIM COMMITTEE | Workers' Compensation", "small"))  # noqa: E501
     story.append(thick_hline())
 
     # Box 1: Insurance type

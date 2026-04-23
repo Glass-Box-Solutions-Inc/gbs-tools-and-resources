@@ -23,7 +23,6 @@ from claims_generator.documents.letterhead import (
     wcab_caption,
 )
 from claims_generator.documents.pdf_primitives import (
-    COLOR_WARNING,
     hline,
     label_value_table,
     para,
@@ -91,7 +90,7 @@ class WorkProductGenerator(DocumentGenerator):
                 f"Claimant {claimant.first_name} {claimant.last_name} filed a workers' "
                 f"compensation claim arising from a reported {med.injury_mechanism} on "
                 f"{med.date_of_injury} while employed by {profile.employer.company_name}. "
-                f"The claimed body parts include {', '.join(bp.body_part for bp in med.body_parts)}.\n\n"
+                f"The claimed body parts include {', '.join(bp.body_part for bp in med.body_parts)}.\n\n"  # noqa: E501
                 f"This memorandum evaluates exposure and recommends a resolution strategy "
                 f"consistent with the evidence and applicable law.",
                 "body",
@@ -122,7 +121,7 @@ class WorkProductGenerator(DocumentGenerator):
                 ("PD Rate:", f"${pd_rate:,.2f}/week"),
                 ("PD Weeks:", f"{pd_weeks:.1f}"),
                 ("PD Value:", f"${pd_value:,.2f}"),
-                ("Settlement Range:", f"${settlement_range_low:,.2f} – ${settlement_range_high:,.2f}"),
+                ("Settlement Range:", f"${settlement_range_low:,.2f} – ${settlement_range_high:,.2f}"),  # noqa: E501
                 ("Life Pension:", "Yes" if fin.life_pension_eligible else "No"),
                 ("Future Medical Exposure:", "$25,000 – $50,000 (estimated)"),
                 ("Lien Exposure:", "TBD — see lien log"),

@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import io
 
-from reportlab.lib.units import inch
-
 from claims_generator.documents.base_document import DocumentGenerator
 from claims_generator.documents.form_renderer import (
     checkbox_field,
@@ -78,7 +76,7 @@ class DWC1ClaimFormGenerator(DocumentGenerator):
 
         # EMPLOYEE SECTION
         story.append(spacer(4))
-        story.append(form_section_header("SECTION 1 — EMPLOYEE: Fill out this section and give the form to your employer"))
+        story.append(form_section_header("SECTION 1 — EMPLOYEE: Fill out this section and give the form to your employer"))  # noqa: E501
         story.append(spacer(2))
 
         story.append(form_row([
@@ -92,7 +90,7 @@ class DWC1ClaimFormGenerator(DocumentGenerator):
         ]))
         story.append(spacer(1))
         story.append(form_row([
-            ("5. Address:", f"{c.address_city}, {c.address_county} County, CA {c.address_zip}", CONTENT_WIDTH),
+            ("5. Address:", f"{c.address_city}, {c.address_county} County, CA {c.address_zip}", CONTENT_WIDTH),  # noqa: E501
         ]))
         story.append(spacer(1))
         story.append(form_row([
@@ -102,7 +100,7 @@ class DWC1ClaimFormGenerator(DocumentGenerator):
         ]))
         story.append(spacer(1))
         story.append(form_row([
-            ("9. Describe the injury/illness and the part of the body affected:", body_parts_str, CONTENT_WIDTH),
+            ("9. Describe the injury/illness and the part of the body affected:", body_parts_str, CONTENT_WIDTH),  # noqa: E501
         ]))
         story.append(spacer(1))
         story.append(form_row([
@@ -110,19 +108,19 @@ class DWC1ClaimFormGenerator(DocumentGenerator):
         ]))
         story.append(spacer(1))
         story.append(form_row([
-            ("11. Describe the specific activity you were performing when injured:", c.occupation_title + " — regular work duties", CONTENT_WIDTH),
+            ("11. Describe the specific activity you were performing when injured:", c.occupation_title + " — regular work duties", CONTENT_WIDTH),  # noqa: E501
         ]))
         story.append(spacer(1))
         story.append(form_row([
-            ("12. Where did the accident or exposure occur?", f"{employer.address_city}, CA — employer's premises", CONTENT_WIDTH),
+            ("12. Where did the accident or exposure occur?", f"{employer.address_city}, CA — employer's premises", CONTENT_WIDTH),  # noqa: E501
         ]))
         story.append(spacer(2))
-        story.append(para("13. <b>Signature of employee:</b> ______________________________   <b>Date:</b> " + str(event.event_date), "body"))
+        story.append(para("13. <b>Signature of employee:</b> ______________________________   <b>Date:</b> " + str(event.event_date), "body"))  # noqa: E501
 
         story.append(spacer(8))
 
         # EMPLOYER SECTION
-        story.append(form_section_header("SECTION 2 — EMPLOYER: Complete and return this form within 1 working day (LC § 5401)"))
+        story.append(form_section_header("SECTION 2 — EMPLOYER: Complete and return this form within 1 working day (LC § 5401)"))  # noqa: E501
         story.append(spacer(2))
 
         story.append(form_row([
@@ -147,7 +145,7 @@ class DWC1ClaimFormGenerator(DocumentGenerator):
             ("21. If yes, date:", "N/A", col_half),
         ]))
         story.append(spacer(2))
-        story.append(para("22. <b>Signature of employer representative:</b> ______________________________   <b>Date:</b> " + str(event.event_date), "body"))
+        story.append(para("22. <b>Signature of employer representative:</b> ______________________________   <b>Date:</b> " + str(event.event_date), "body"))  # noqa: E501
 
         # Tear line and employee copy
         story.append(spacer(6))

@@ -93,7 +93,7 @@ class PharmacyRecordGenerator(DocumentGenerator):
         story.extend(carrier_header_block(profile))
         story.append(spacer(4))
         story.append(para("PHARMACY DISPENSING RECORD", "title"))
-        story.append(para(f"Date: {event.event_date} | OMFS Pharmaceutical Schedule (8 CCR 9789.70)", "small"))
+        story.append(para(f"Date: {event.event_date} | OMFS Pharmaceutical Schedule (8 CCR 9789.70)", "small"))  # noqa: E501
         story.append(thick_hline())
 
         story.extend(
@@ -126,7 +126,7 @@ class PharmacyRecordGenerator(DocumentGenerator):
         story.append(hline())
         story.append(
             section_table(
-                headers=["NDC", "Drug / Strength", "Qty", "Days Supply", "Formulary Status", "Cost"],
+                headers=["NDC", "Drug / Strength", "Qty", "Days Supply", "Formulary Status", "Cost"],  # noqa: E501
                 rows=[
                     [m["ndc"], m["drug"], m["qty"], m["days"], m["formulary"], m["cost"]]
                     for m in selected

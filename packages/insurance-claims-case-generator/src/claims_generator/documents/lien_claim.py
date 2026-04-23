@@ -71,7 +71,11 @@ class LienClaimGenerator(DocumentGenerator):
         story.append(hline())
         story.append(
             label_value_table([
-                ("Lien Claimant:", f"Dr. {treating.first_name} {treating.last_name} / {treating.address_city} Medical Group"),
+                (
+                    "Lien Claimant:",
+                    f"Dr. {treating.first_name} {treating.last_name}"
+                    f" / {treating.address_city} Medical Group",
+                ),
                 ("NPI:", treating.npi),
                 ("License No.:", treating.license_number),
                 ("Type of Lien:", "Medical Provider — LC § 4903(b)"),
@@ -123,13 +127,13 @@ class LienClaimGenerator(DocumentGenerator):
         story.append(hline())
         story.append(
             para(
-                f"Lien Claimant provided medical treatment to the injured worker for conditions "
-                f"arising out of and in the course of employment pursuant to LC § 3600. "
-                f"The employer and/or insurance carrier failed to pay for said treatment within "
-                f"the timeframes required by LC § 4603.2 and 8 CCR 9792.5.\n\n"
-                f"This lien is filed pursuant to LC § 4903(b) and 8 CCR 10770.1. "
-                f"Lien Claimant requests that the WCAB adjudicate this lien claim and order "
-                f"payment from the compensation award in this matter.",
+                "Lien Claimant provided medical treatment to the injured worker for conditions "
+                "arising out of and in the course of employment pursuant to LC § 3600. "
+                "The employer and/or insurance carrier failed to pay for said treatment within "
+                "the timeframes required by LC § 4603.2 and 8 CCR 9792.5.\n\n"
+                "This lien is filed pursuant to LC § 4903(b) and 8 CCR 10770.1. "
+                "Lien Claimant requests that the WCAB adjudicate this lien claim and order "
+                "payment from the compensation award in this matter.",
                 "body",
             )
         )

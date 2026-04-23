@@ -21,8 +21,6 @@ from __future__ import annotations
 
 import io
 
-from reportlab.lib.units import inch
-
 from claims_generator.documents.base_document import DocumentGenerator
 from claims_generator.documents.form_renderer import (
     checkbox_field,
@@ -30,14 +28,12 @@ from claims_generator.documents.form_renderer import (
     form_section_header,
 )
 from claims_generator.documents.letterhead import (
-    carrier_header_block,
     confidentiality_footer,
     regulatory_citation_block,
     wcab_caption,
 )
 from claims_generator.documents.pdf_primitives import (
     CONTENT_WIDTH,
-    hline,
     label_value_table,
     para,
     spacer,
@@ -81,9 +77,9 @@ class DWCOfficialFormGenerator(DocumentGenerator):
         body_parts_str = ", ".join(bp.body_part for bp in med.body_parts)
 
         story: list = []
-        story.append(para("<b>STATE OF CALIFORNIA — DEPARTMENT OF INDUSTRIAL RELATIONS</b>", "subtitle"))
+        story.append(para("<b>STATE OF CALIFORNIA — DEPARTMENT OF INDUSTRIAL RELATIONS</b>", "subtitle"))  # noqa: E501
         story.append(para("<b>DIVISION OF WORKERS' COMPENSATION — MEDICAL UNIT</b>", "subtitle"))
-        story.append(para("<b>DWC FORM 105 — REQUEST FOR QUALIFIED MEDICAL EVALUATOR (QME) PANEL</b>", "title"))
+        story.append(para("<b>DWC FORM 105 — REQUEST FOR QUALIFIED MEDICAL EVALUATOR (QME) PANEL</b>", "title"))  # noqa: E501
         story.append(para("8 CCR 31.1 | LC § 4062.2", "small"))
         story.append(thick_hline())
         story.extend(wcab_caption(profile))
@@ -122,11 +118,11 @@ class DWCOfficialFormGenerator(DocumentGenerator):
         story.append(spacer(1))
         story.append(para("Reason for QME Panel Request:", "heading2"))
         story.append(form_row([
-            ("Dispute Type:", "Medical-legal evaluation — AOE/COE / PD / Apportionment", CONTENT_WIDTH),
+            ("Dispute Type:", "Medical-legal evaluation — AOE/COE / PD / Apportionment", CONTENT_WIDTH),  # noqa: E501
         ]))
         story.append(spacer(1))
         story.append(para("Is applicant represented by an attorney?", "body"))
-        story.append(checkbox_field("Yes — Unrepresented applicant — random QME panel (LC § 4062.1)", False))
+        story.append(checkbox_field("Yes — Unrepresented applicant — random QME panel (LC § 4062.1)", False))  # noqa: E501
         story.append(checkbox_field("No — Attorney-represented — strike panel (LC § 4062.2)", True))
         story.append(spacer(2))
 
@@ -171,7 +167,7 @@ class DWCOfficialFormGenerator(DocumentGenerator):
         pd_value = pd_weeks * pd_rate
 
         story: list = []
-        story.append(para("<b>STATE OF CALIFORNIA — DEPARTMENT OF INDUSTRIAL RELATIONS</b>", "subtitle"))
+        story.append(para("<b>STATE OF CALIFORNIA — DEPARTMENT OF INDUSTRIAL RELATIONS</b>", "subtitle"))  # noqa: E501
         story.append(para("<b>DISABILITY EVALUATION UNIT (DEU) — FORMAL RATING</b>", "title"))
         story.append(para("8 CCR 10160 | LC § 4660 | AMA Guides 5th Edition", "small"))
         story.append(thick_hline())
@@ -211,7 +207,7 @@ class DWCOfficialFormGenerator(DocumentGenerator):
                 ("PD Weekly Rate (LC § 4658):", f"${pd_rate:,.2f}"),
                 ("PD Weeks:", f"{pd_weeks:.1f}"),
                 ("Total PD Value:", f"${pd_value:,.2f}"),
-                ("Life Pension:", "Yes" if fin.life_pension_eligible else "No — PD% below threshold"),
+                ("Life Pension:", "Yes" if fin.life_pension_eligible else "No — PD% below threshold"),  # noqa: E501
             ])
         )
         story.append(spacer(4))

@@ -124,7 +124,7 @@ class ImagingReportGenerator(DocumentGenerator):
         story.extend(carrier_header_block(profile))
         story.append(spacer(4))
         story.append(para(template["title"], "title"))
-        story.append(para(f"8 CCR 9789.12 (OMFS Radiology) | MTUS Imaging Guidelines | CPT: {template['cpt']}", "small"))
+        story.append(para(f"8 CCR 9789.12 (OMFS Radiology) | MTUS Imaging Guidelines | CPT: {template['cpt']}", "small"))  # noqa: E501
         story.append(thick_hline())
 
         story.extend(

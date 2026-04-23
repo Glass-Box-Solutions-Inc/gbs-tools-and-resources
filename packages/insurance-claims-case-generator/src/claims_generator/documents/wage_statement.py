@@ -46,7 +46,7 @@ class WageStatementGenerator(DocumentGenerator):
         buf = io.BytesIO()
         doc = cls._build_doc(buf, title=event.title)
 
-        ins = profile.insurer
+        ins = profile.insurer  # noqa: F841
         fin = profile.financial
         claimant = profile.claimant
         employer = profile.employer
@@ -94,7 +94,7 @@ class WageStatementGenerator(DocumentGenerator):
             section_table(
                 headers=["Earnings Component", "Weekly Amount", "Annual Amount"],
                 rows=[
-                    ["Base/Regular Wages", f"${aww - overtime:,.2f}", f"${(aww - overtime) * 52:,.2f}"],
+                    ["Base/Regular Wages", f"${aww - overtime:,.2f}", f"${(aww - overtime) * 52:,.2f}"],  # noqa: E501
                     ["Overtime", f"${overtime:,.2f}", f"${overtime * 52:,.2f}"],
                     ["TOTAL AWW", f"${aww:,.2f}", f"${aww * 52:,.2f}"],
                 ],

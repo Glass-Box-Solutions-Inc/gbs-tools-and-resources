@@ -19,13 +19,11 @@ import io
 from claims_generator.documents.base_document import DocumentGenerator
 from claims_generator.documents.letterhead import (
     carrier_header_block,
-    claimant_caption_block,
     confidentiality_footer,
     regulatory_citation_block,
     wcab_caption,
 )
 from claims_generator.documents.pdf_primitives import (
-    hline,
     para,
     spacer,
     thick_hline,

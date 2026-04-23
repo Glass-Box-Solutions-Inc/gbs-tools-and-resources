@@ -11,14 +11,11 @@ per the Glass Box realism standard.
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
 
-from reportlab.lib import colors
 from reportlab.lib.units import inch
 from reportlab.platypus import (
     Flowable,
     Paragraph,
-    Spacer,
     Table,
     TableStyle,
 )
@@ -27,7 +24,6 @@ from claims_generator.documents.pdf_primitives import (
     COLOR_CA_BLUE,
     COLOR_HEADER_BG,
     COLOR_MED_GRAY,
-    COLOR_WHITE,
     CONTENT_WIDTH,
     STYLES,
     hline,
@@ -35,9 +31,7 @@ from claims_generator.documents.pdf_primitives import (
     spacer,
     thick_hline,
 )
-from claims_generator.models.claim import DocumentEvent
 from claims_generator.models.profile import ClaimProfile
-
 
 # ── Carrier header block ───────────────────────────────────────────────────────
 
