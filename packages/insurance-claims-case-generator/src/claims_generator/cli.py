@@ -2,12 +2,14 @@
 CLI entry point — claims-gen command.
 
 Phase 2: generate outputs JSON + optional ZIP with PDFs; batch command added.
+Phase 4: seed command — seeds a generated ClaimCase into a running AdjudiCLAIMS instance.
 
 @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from datetime import date
@@ -215,6 +217,105 @@ def batch(
         for c in cases
     ]
     click.echo(json.dumps(summary, indent=2))
+
+
+@cli.command()
+@click.option(
+    "--scenario",
+    default="standard_claim",
+    show_default=True,
+    help="Scenario slug to generate and seed",
+)
+@click.option(
+    "--seed",
+    default=42,
+    show_default=True,
+    type=int,
+    help="Random seed for reproducibility",
+)
+@click.option(
+    "--env",
+    default="staging",
+    show_default=True,
+    type=click.Choice(["staging", "production"], case_sensitive=False),
+    help="Target environment",
+)
+@click.option(
+    "--url",
+    default=None,
+    envvar="ADJUDICLAIMS_URL",
+    help="AdjudiCLAIMS base URL (overrides ADJUDICLAIMS_URL env var)",
+)
+@click.option(
+    "--email",
+    default=None,
+    envvar="ADJUDICLAIMS_EMAIL",
+    help="Login email (overrides ADJUDICLAIMS_EMAIL env var)",
+)
+@click.option(
+    "--password",
+    default=None,
+    envvar="ADJUDICLAIMS_PASSWORD",
+    help="Login password (overrides ADJUDICLAIMS_PASSWORD env var)",
+)
+def seed(
+    scenario: str,
+    seed: int,
+    env: str,
+    url: str | None,
+    email: str | None,
+    password: str | None,
+) -> None:
+    """Generate a case and seed it into a running AdjudiCLAIMS instance.
+
+    Credentials are resolved from CLI flags → env vars → GCP Secret Manager.
+    """
+    from claims_generator.integrations.adjudiclaims_client import AdjudiClaimsClient
+    from claims_generator.integrations.gcp_secrets import (
+        get_adjudiclaims_email,
+        get_adjudiclaims_password,
+        get_adjudiclaims_url,
+    )
+
+    # Resolve credentials
+    try:
+        resolved_url = url or get_adjudiclaims_url()
+        resolved_email = email or get_adjudiclaims_email()
+        resolved_password = password or get_adjudiclaims_password()
+    except (ValueError, RuntimeError) as exc:
+        click.echo(f"Error resolving credentials: {exc}", err=True)
+        sys.exit(1)
+
+    # Generate the case (with PDFs so documents can be uploaded)
+    click.echo(f"Generating case: scenario={scenario} seed={seed}", err=True)
+    try:
+        case = build_case(scenario_slug=scenario, seed=seed, generate_pdfs=True)
+    except KeyError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    click.echo(
+        f"Generated {len(case.document_events)} documents — seeding to {env} ({resolved_url})",
+        err=True,
+    )
+
+    async def _run() -> None:
+        async with AdjudiClaimsClient(base_url=resolved_url) as client:
+            await client.login(email=resolved_email, password=resolved_password)
+            result = await client.seed_case(case=case, env=env)
+        click.echo(
+            json.dumps(
+                {
+                    "claim_id": result.claim_id,
+                    "claim_number": result.claim_number,
+                    "documents_uploaded": result.documents_uploaded,
+                    "document_ids": result.document_ids,
+                },
+                indent=2,
+            )
+        )
+
+    asyncio.run(_run())
 
 
 @cli.command()
