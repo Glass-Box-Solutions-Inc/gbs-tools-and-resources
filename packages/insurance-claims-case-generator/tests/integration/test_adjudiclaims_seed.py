@@ -15,31 +15,34 @@ Covered scenarios:
 
 from __future__ import annotations
 
+import json as _json
 import os
 import sys
 from datetime import date
 from typing import Any
-from unittest.mock import patch
 
+import httpx
 import pytest
 import respx
-import httpx
 
-# Ensure src/ is on the path
+# Ensure src/ is on the path — must precede local imports
 _SRC = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "src"
 )
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-from claims_generator.integrations.adjudiclaims_client import AdjudiClaimsClient, SeedResult
-from claims_generator.models.claim import ClaimCase, DocumentEvent
-from claims_generator.models.claimant import ClaimantProfile
-from claims_generator.models.employer import EmployerProfile, InsurerProfile
-from claims_generator.models.financial import FinancialProfile
-from claims_generator.models.medical import BodyPart, MedicalProfile, PhysicianProfile
-from claims_generator.models.profile import ClaimProfile
-from claims_generator.models.enums import DocumentType
+from claims_generator.integrations.adjudiclaims_client import (  # noqa: E402
+    AdjudiClaimsClient,
+    SeedResult,
+)
+from claims_generator.models.claim import ClaimCase, DocumentEvent  # noqa: E402
+from claims_generator.models.claimant import ClaimantProfile  # noqa: E402
+from claims_generator.models.employer import EmployerProfile, InsurerProfile  # noqa: E402
+from claims_generator.models.enums import DocumentType  # noqa: E402
+from claims_generator.models.financial import FinancialProfile  # noqa: E402
+from claims_generator.models.medical import BodyPart, MedicalProfile, PhysicianProfile  # noqa: E402
+from claims_generator.models.profile import ClaimProfile  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -135,7 +138,6 @@ def _make_case(scenario_slug: str = "standard_claim", include_docs: bool = True)
 async def test_seed_case_standard_claim_calls_all_endpoints() -> None:
     """seed_case() must call login, create claim, patch claim, and upload docs in order."""
     case = _make_case(scenario_slug="standard_claim")
-    call_log: list[str] = []
 
     with respx.mock(base_url=BASE_URL, assert_all_called=True) as mock:
         # Login
@@ -197,7 +199,6 @@ async def test_seed_case_litigated_qme_sets_flags() -> None:
         )
 
         def capture_patch(request: httpx.Request) -> httpx.Response:
-            import json as _json
             nonlocal patched_payload
             patched_payload = _json.loads(request.content)
             return httpx.Response(200, json={"id": "claim_lit"})
@@ -224,11 +225,16 @@ async def test_seed_case_denied_claim_sets_denied_status() -> None:
             return_value=httpx.Response(200, json={"ok": True})
         )
         mock.post("/api/claims").mock(
-            return_value=httpx.Response(201, json={"id": "claim_denied", "claimNumber": "SCIF-2026-00123"})
+            return_value=httpx.Response(
+                201,
+                json={
+                    "id": "claim_denied",
+                    "claimNumber": "SCIF-2026-00123",
+                },
+            )
         )
 
         def capture_patch(request: httpx.Request) -> httpx.Response:
-            import json as _json
             nonlocal patched_payload
             patched_payload = _json.loads(request.content)
             return httpx.Response(200, json={"id": "claim_denied"})
@@ -272,7 +278,10 @@ async def test_seed_case_multiple_documents_uploaded() -> None:
     with respx.mock(base_url=BASE_URL) as mock:
         mock.post("/api/auth/login").mock(return_value=httpx.Response(200, json={"ok": True}))
         mock.post("/api/claims").mock(
-            return_value=httpx.Response(201, json={"id": "claim_multi", "claimNumber": "SCIF-2026-00123"})
+            return_value=httpx.Response(
+                201,
+                json={"id": "claim_multi", "claimNumber": "SCIF-2026-00123"},
+            )
         )
         mock.patch("/api/claims/claim_multi").mock(
             return_value=httpx.Response(200, json={"id": "claim_multi"})
@@ -283,7 +292,11 @@ async def test_seed_case_multiple_documents_uploaded() -> None:
             upload_count += 1
             return httpx.Response(
                 201,
-                json={"id": f"doc_{upload_count}", "claimId": "claim_multi", "ocrStatus": "PENDING"},
+                json={
+                    "id": f"doc_{upload_count}",
+                    "claimId": "claim_multi",
+                    "ocrStatus": "PENDING",
+                },
             )
 
         mock.post("/api/claims/claim_multi/documents").mock(side_effect=upload_handler)
@@ -395,7 +408,6 @@ async def test_patch_claim_sends_only_provided_fields() -> None:
         mock.post("/api/auth/login").mock(return_value=httpx.Response(200, json={"ok": True}))
 
         def capture(request: httpx.Request) -> httpx.Response:
-            import json as _json
             captured.update(_json.loads(request.content))
             return httpx.Response(200, json={"id": "c1"})
 
@@ -463,7 +475,7 @@ async def test_client_raises_without_context_manager() -> None:
 
 def test_get_secret_returns_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
     """get_secret() must return the env var value without calling Secret Manager."""
-    from claims_generator.integrations.gcp_secrets import get_secret
+    from claims_generator.integrations.gcp_secrets import get_secret  # noqa: E402
 
     monkeypatch.setenv("ADJUDICLAIMS_EMAIL", "env_user@test.com")
     result = get_secret("adjudiclaims-seed-email", "ADJUDICLAIMS_EMAIL")
@@ -472,7 +484,7 @@ def test_get_secret_returns_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_get_secret_raises_without_env_or_project(monkeypatch: pytest.MonkeyPatch) -> None:
     """get_secret() must raise ValueError when no env var and no GCP_PROJECT."""
-    from claims_generator.integrations.gcp_secrets import get_secret
+    from claims_generator.integrations.gcp_secrets import get_secret  # noqa: E402
 
     monkeypatch.delenv("ADJUDICLAIMS_EMAIL", raising=False)
     monkeypatch.delenv("GCP_PROJECT", raising=False)
@@ -483,7 +495,7 @@ def test_get_secret_raises_without_env_or_project(monkeypatch: pytest.MonkeyPatc
 
 def test_get_adjudiclaims_url_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """get_adjudiclaims_url() must read from ADJUDICLAIMS_URL env var."""
-    from claims_generator.integrations.gcp_secrets import get_adjudiclaims_url
+    from claims_generator.integrations.gcp_secrets import get_adjudiclaims_url  # noqa: E402
 
     monkeypatch.setenv("ADJUDICLAIMS_URL", "https://staging.adjudiclaims.com")
     assert get_adjudiclaims_url() == "https://staging.adjudiclaims.com"
@@ -491,7 +503,7 @@ def test_get_adjudiclaims_url_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_get_adjudiclaims_email_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """get_adjudiclaims_email() must read from ADJUDICLAIMS_EMAIL env var."""
-    from claims_generator.integrations.gcp_secrets import get_adjudiclaims_email
+    from claims_generator.integrations.gcp_secrets import get_adjudiclaims_email  # noqa: E402
 
     monkeypatch.setenv("ADJUDICLAIMS_EMAIL", "test@adjudiclaims.com")
     assert get_adjudiclaims_email() == "test@adjudiclaims.com"
@@ -499,7 +511,7 @@ def test_get_adjudiclaims_email_from_env(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_get_adjudiclaims_password_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """get_adjudiclaims_password() must read from ADJUDICLAIMS_PASSWORD env var."""
-    from claims_generator.integrations.gcp_secrets import get_adjudiclaims_password
+    from claims_generator.integrations.gcp_secrets import get_adjudiclaims_password  # noqa: E402
 
     monkeypatch.setenv("ADJUDICLAIMS_PASSWORD", "super_secret_123")
     assert get_adjudiclaims_password() == "super_secret_123"
@@ -512,9 +524,9 @@ def test_get_adjudiclaims_password_from_env(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_cli_seed_command_exists() -> None:
     """The CLI must expose a 'seed' command."""
-    from click.testing import CliRunner
+    from click.testing import CliRunner  # noqa: E402
 
-    from claims_generator.cli import cli
+    from claims_generator.cli import cli  # noqa: E402
 
     runner = CliRunner()
     result = runner.invoke(cli, ["seed", "--help"])
@@ -525,17 +537,20 @@ def test_cli_seed_command_exists() -> None:
 
 def test_cli_seed_exits_when_credentials_missing() -> None:
     """seed command must exit 1 when no credentials are available."""
-    import os
+    from click.testing import CliRunner  # noqa: E402
 
-    from click.testing import CliRunner
-
-    from claims_generator.cli import cli
+    from claims_generator.cli import cli  # noqa: E402
 
     runner = CliRunner()
     env = {
         k: v
         for k, v in os.environ.items()
-        if k not in ("ADJUDICLAIMS_URL", "ADJUDICLAIMS_EMAIL", "ADJUDICLAIMS_PASSWORD", "GCP_PROJECT")
+        if k not in (
+            "ADJUDICLAIMS_URL",
+            "ADJUDICLAIMS_EMAIL",
+            "ADJUDICLAIMS_PASSWORD",
+            "GCP_PROJECT",
+        )
     }
     result = runner.invoke(cli, ["seed", "--scenario", "standard_claim"], env=env)
     assert result.exit_code == 1

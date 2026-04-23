@@ -83,10 +83,15 @@ def get_secret(
 # ---------------------------------------------------------------------------
 
 
+_EMAIL_SECRET = "adjudiclaims-seed-email"  # noqa: S105 — secret name, not a hardcoded value
+_PASSWORD_SECRET = "adjudiclaims-seed-password"  # noqa: S105 — secret name, not a hardcoded value
+_URL_SECRET = "adjudiclaims-staging-url"  # noqa: S105 — secret name, not a hardcoded value
+
+
 def get_adjudiclaims_email(project_id: Optional[str] = None) -> str:
     """Return the AdjudiCLAIMS seed account email."""
     return get_secret(
-        secret_name="adjudiclaims-seed-email",
+        secret_name=_EMAIL_SECRET,
         env_var="ADJUDICLAIMS_EMAIL",
         project_id=project_id,
     )
@@ -95,7 +100,7 @@ def get_adjudiclaims_email(project_id: Optional[str] = None) -> str:
 def get_adjudiclaims_password(project_id: Optional[str] = None) -> str:
     """Return the AdjudiCLAIMS seed account password."""
     return get_secret(
-        secret_name="adjudiclaims-seed-password",
+        secret_name=_PASSWORD_SECRET,
         env_var="ADJUDICLAIMS_PASSWORD",
         project_id=project_id,
     )
@@ -104,7 +109,7 @@ def get_adjudiclaims_password(project_id: Optional[str] = None) -> str:
 def get_adjudiclaims_url(project_id: Optional[str] = None) -> str:
     """Return the AdjudiCLAIMS base URL (e.g. https://staging.adjudiclaims.com)."""
     return get_secret(
-        secret_name="adjudiclaims-staging-url",
+        secret_name=_URL_SECRET,
         env_var="ADJUDICLAIMS_URL",
         project_id=project_id,
     )
