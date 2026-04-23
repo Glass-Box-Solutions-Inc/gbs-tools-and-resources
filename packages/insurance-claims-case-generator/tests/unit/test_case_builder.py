@@ -48,12 +48,22 @@ def test_case_serializes_to_valid_json(scenario_slug: str) -> None:
 
 
 @pytest.mark.parametrize("scenario_slug", ["standard_claim", "litigated_qme", "denied_claim"])
-def test_case_pdf_bytes_are_empty_phase1(scenario_slug: str) -> None:
-    """In Phase 1, all pdf_bytes must be empty (b'')."""
+def test_case_pdf_bytes_are_populated_phase2(scenario_slug: str) -> None:
+    """In Phase 2, all pdf_bytes must be non-empty (valid PDFs generated)."""
     case = build_case(scenario_slug=scenario_slug, seed=42)
     for event in case.document_events:
+        assert len(event.pdf_bytes) > 500, (
+            f"{scenario_slug}: event {event.subtype_slug} has only {len(event.pdf_bytes)} bytes"
+        )
+
+
+@pytest.mark.parametrize("scenario_slug", ["standard_claim", "litigated_qme", "denied_claim"])
+def test_case_pdf_bytes_are_empty_when_no_pdfs(scenario_slug: str) -> None:
+    """With generate_pdfs=False, all pdf_bytes must be empty (b'')."""
+    case = build_case(scenario_slug=scenario_slug, seed=42, generate_pdfs=False)
+    for event in case.document_events:
         assert event.pdf_bytes == b"", (
-            f"{scenario_slug}: event {event.subtype_slug} has non-empty pdf_bytes in Phase 1"
+            f"{scenario_slug}: event {event.subtype_slug} has non-empty pdf_bytes in no-pdfs mode"
         )
 
 
