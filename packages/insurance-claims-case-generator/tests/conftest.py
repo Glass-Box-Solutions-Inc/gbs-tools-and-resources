@@ -22,20 +22,20 @@ from claims_generator.models.claim import ClaimCase  # noqa: E402
 
 @pytest.fixture(scope="session")
 def standard_case() -> ClaimCase:
-    """A seeded standard_claim case."""
-    return build_case(scenario_slug="standard_claim", seed=42)
+    """A seeded standard_claim case (JSON-only, no PDFs for speed)."""
+    return build_case(scenario_slug="standard_claim", seed=42, generate_pdfs=False)
 
 
 @pytest.fixture(scope="session")
 def litigated_case() -> ClaimCase:
-    """A seeded litigated_qme case."""
-    return build_case(scenario_slug="litigated_qme", seed=42)
+    """A seeded litigated_qme case (JSON-only, no PDFs for speed)."""
+    return build_case(scenario_slug="litigated_qme", seed=42, generate_pdfs=False)
 
 
 @pytest.fixture(scope="session")
 def denied_case() -> ClaimCase:
-    """A seeded denied_claim case."""
-    return build_case(scenario_slug="denied_claim", seed=42)
+    """A seeded denied_claim case (JSON-only, no PDFs for speed)."""
+    return build_case(scenario_slug="denied_claim", seed=42, generate_pdfs=False)
 
 
 @pytest.fixture(scope="session")

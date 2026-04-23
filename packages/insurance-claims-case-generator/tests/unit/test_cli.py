@@ -90,7 +90,7 @@ def test_scenarios_command_lists_all(runner: CliRunner) -> None:
 
 
 def test_version_option(runner: CliRunner) -> None:
-    """--version must return version string."""
+    """--version must return a version string."""
     result = runner.invoke(cli, ["--version"])
     assert result.exit_code == 0
-    assert "0.1.0" in result.output
+    assert "0.2.0" in result.output
