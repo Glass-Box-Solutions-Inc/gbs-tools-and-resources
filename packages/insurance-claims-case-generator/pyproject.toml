@@ -10,6 +10,7 @@ description = "Lifecycle-aware CA Workers' Compensation synthetic claims case ge
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115,<1.0",
+    "uvicorn>=0.29,<1.0",
     "faker>=33.0,<35.0",
     "pydantic>=2.10,<3.0",
     "click>=8.1,<9.0",
@@ -21,6 +22,8 @@ dependencies = [
 dev = [
     "pytest>=8.0,<9.0",
     "pytest-cov>=5.0,<7.0",
+    "pytest-anyio>=0.0.0",
+    "anyio[trio]>=4.0,<5.0",
     "ruff>=0.4,<1.0",
     "mypy>=1.10,<2.0",
 ]
@@ -46,6 +49,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "B"]
+"src/claims_generator/api/routes/**" = ["B008"]  # FastAPI Depends() is standard DI pattern
 
 [tool.mypy]
 python_version = "3.12"
