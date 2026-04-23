@@ -26,6 +26,7 @@ jobs:
       compliance-auditor: ${{ steps.filter.outputs.compliance-auditor }}
       gbs-integration-validator: ${{ steps.filter.outputs.gbs-integration-validator }}
       hindsight: ${{ steps.filter.outputs.hindsight }}
+      insurance-claims-case-generator: ${{ steps.filter.outputs.insurance-claims-case-generator }}
       invoice-reconciliation-tester: ${{ steps.filter.outputs.invoice-reconciliation-tester }}
       mcp-servers: ${{ steps.filter.outputs.mcp-servers }}
       merus-expert: ${{ steps.filter.outputs.merus-expert }}
@@ -52,6 +53,8 @@ jobs:
               - 'packages/gbs-integration-validator/**'
             hindsight:
               - 'packages/hindsight/**'
+            insurance-claims-case-generator:
+              - 'packages/insurance-claims-case-generator/**'
             invoice-reconciliation-tester:
               - 'packages/invoice-reconciliation-tester/**'
             mcp-servers:
@@ -224,6 +227,28 @@ jobs:
       - name: Test
         run: cd hindsight-api && uv run pytest tests/ -x
 
+  insurance-claims-case-generator:
+    name: "insurance-claims-case-generator"
+    needs: changes
+    if: needs.changes.outputs.insurance-claims-case-generator == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/insurance-claims-case-generator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Lint (ruff)
+        run: python -m ruff check src/ tests/
+      - name: Type check (mypy)
+        run: python -m mypy src/ --ignore-missing-imports
+      - name: Test with coverage
+        run: python -m pytest tests/ -x --tb=short -q --cov=src/claims_generator --cov-report=term-missing --cov-fail-under=80
+
   merus-expert:
     name: "merus-expert"
     needs: changes
@@ -320,6 +345,7 @@ jobs:
       - compliance-auditor
       - gbs-integration-validator
       - hindsight
+      - insurance-claims-case-generator
       - invoice-reconciliation-tester
       - merus-expert
       - merus-test-data-generator
@@ -337,6 +363,7 @@ jobs:
             "${{ needs.compliance-auditor.result }}"
             "${{ needs.gbs-integration-validator.result }}"
             "${{ needs.hindsight.result }}"
+            "${{ needs.insurance-claims-case-generator.result }}"
             "${{ needs.invoice-reconciliation-tester.result }}"
             "${{ needs.merus-expert.result }}"
             "${{ needs.merus-test-data-generator.result }}"

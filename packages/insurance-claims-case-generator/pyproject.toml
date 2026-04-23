@@ -1,0 +1,62 @@
+# @Developed & Documented by Glass Box Solutions, Inc.
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "insurance-claims-case-generator"
+version = "0.1.0"
+description = "Lifecycle-aware CA Workers' Compensation synthetic claims case generator"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1.0",
+    "faker>=33.0,<35.0",
+    "pydantic>=2.10,<3.0",
+    "click>=8.1,<9.0",
+    "reportlab>=4.2,<5.0",
+    "httpx>=0.28,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+    "pytest-cov>=5.0,<7.0",
+    "ruff>=0.4,<1.0",
+    "mypy>=1.10,<2.0",
+]
+
+[project.scripts]
+claims-gen = "claims_generator.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "S", "B", "I"]
+ignore = [
+    "S101",  # assert statements are fine in tests
+    "S311",  # random is fine for synthetic data (not crypto)
+    "S603",  # subprocess calls are fine in CLI
+    "S607",  # partial executable paths fine in CLI
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+ignore_missing_imports = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short -q --cov=src/claims_generator --cov-report=term-missing --cov-fail-under=80"
+
+[tool.coverage.run]
+source = ["src/claims_generator"]
+omit = ["tests/*"]
