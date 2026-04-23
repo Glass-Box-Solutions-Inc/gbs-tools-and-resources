@@ -49,7 +49,22 @@ class ClaimState:
         return stage in self.stages_visited
 
     @classmethod
-    def from_scenario(cls, slug: str, seed: int, **flags: bool) -> "ClaimState":
+    def from_scenario(cls, slug: str, seed: int, **flags: bool) -> "ClaimState":  # noqa: ARG003
         """Create a ClaimState with flags from keyword arguments."""
-        state = cls(seed=seed, **flags)
-        return state
+        # mypy: unpack bool kwargs as ClaimState fields explicitly
+        return cls(
+            seed=seed,
+            litigated=flags.get("litigated", False),
+            attorney_represented=flags.get("attorney_represented", False),
+            ct=flags.get("ct", False),
+            denied_scenario=flags.get("denied_scenario", False),
+            death_claim=flags.get("death_claim", False),
+            ptd_claim=flags.get("ptd_claim", False),
+            psych_overlay=flags.get("psych_overlay", False),
+            multi_employer=flags.get("multi_employer", False),
+            split_carrier=flags.get("split_carrier", False),
+            high_liens=flags.get("high_liens", False),
+            sjdb_dispute=flags.get("sjdb_dispute", False),
+            expedited=flags.get("expedited", False),
+            investigation_active=flags.get("investigation_active", False),
+        )

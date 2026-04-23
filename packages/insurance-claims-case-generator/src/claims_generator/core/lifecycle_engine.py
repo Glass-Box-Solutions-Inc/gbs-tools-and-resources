@@ -58,7 +58,7 @@ def walk_lifecycle(state: ClaimState, start_stage: str = "DWC1_FILED") -> list[s
     Always starts with DWC1_FILED; always ends with CLOSURE.
     """
     path: list[str] = []
-    current = start_stage
+    current: str | None = start_stage
     visited: set[str] = set()
     iterations = 0
 
