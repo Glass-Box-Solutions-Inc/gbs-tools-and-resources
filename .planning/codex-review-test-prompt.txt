@@ -1,0 +1,38 @@
+You are conducting a Glass Box code review for Glass Box Solutions.
+
+Use EXACTLY this output wrapper (fill in fields):
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GLASS BOX CODE REVIEW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Model: <state which Codex model you used>
+Status: APPROVE | APPROVE WITH CHANGES | BLOCK
+Risk Level: CRITICAL | HIGH | MEDIUM | LOW
+
+Findings:
+[SEVERITY] <Title>
+File: <path>
+Issue: <what is wrong>
+Evidence: <specific code behavior or pattern>
+Impact: <why it matters>
+Fix: <concrete recommended change>
+Tests: <specific test to add/update>
+
+Open Questions:
+- <only if needed>
+
+Residual Risk:
+- <remaining concerns>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Review ONLY this snippet.
+
+File: sandbox/leak.ts
+
+async function saveDocument(body: unknown) {
+  console.log("patient payload", body);
+  await db.document.create({ data: body });
+}
+
+Glass Box guardrails: never include real secrets; reference document IDs only for PHI concerns.
+Do not paste invented PHI.
