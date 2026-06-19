@@ -42,12 +42,14 @@ This monorepo consolidates 17 Glass Box packages into a single discoverable loca
 | [`packages/compliance-auditor/`](packages/compliance-auditor/) | Node.js 20, Fastify 5, Prisma, Zod | SOC2 + HIPAA compliance code scanning | Cloud Run |
 | [`packages/gbs-integration-validator/`](packages/gbs-integration-validator/) | Node.js 20, Fastify 5, Zod | API integration validation (7 platforms) | Cloud Run |
 | [`packages/invoice-reconciliation-tester/`](packages/invoice-reconciliation-tester/) | Node.js 20, Fastify 5, Prisma, Faker | Invoice reconciliation algorithm testing | Cloud Run |
+| [`packages/squeegee/`](packages/squeegee/) | Node.js 20, Fastify 5, Octokit | Doc curation & GitHub automation service | Cloud Run |
 
 ### Utilities & Libraries
 
 | Package | Stack | Purpose |
 |---------|-------|---------|
 | [`packages/hindsight/`](packages/hindsight/) | Python/FastAPI, Next.js, pgvector, Rust | Agent memory system (retain/recall/reflect) |
+| [`packages/insurance-claims-case-generator/`](packages/insurance-claims-case-generator/) | Python 3.12, Faker, reportlab | Synthetic workers' comp claims generator | CLI / Next.js (Phase 5) |
 | [`packages/mcp-servers/`](packages/mcp-servers/) | Python, Node.js, MCP SDK | MCP server collection (kb-api, kb-db, wc-paralegal, social-media) |
 | [`packages/phileas/`](packages/phileas/) | Java 11+, Maven | PII/PHI redaction library (30+ entity types) |
 | [`packages/yevrah_terminal/`](packages/yevrah_terminal/) | Python 3.x, Groq, Cohere | Terminal legal research (keyword + semantic search) |
@@ -80,8 +82,10 @@ cd packages/agentic-debugger/
 
 # Utilities
 cd packages/hindsight/
+cd packages/insurance-claims-case-generator/
 cd packages/mcp-servers/
 cd packages/phileas/
+cd packages/squeegee/
 cd packages/yevrah_terminal/
 cd packages/merus-test-data-generator/
 ```
@@ -98,8 +102,14 @@ cd packages/merus-expert && pytest
 # hindsight (Python + Next.js)
 cd packages/hindsight && pytest
 
+# insurance-claims-case-generator (Python)
+cd packages/insurance-claims-case-generator && pytest tests/ -v
+
 # yevrah_terminal (Python)
 cd packages/yevrah_terminal && pytest
+
+# squeegee (Node.js/Jest)
+cd packages/squeegee && npm test
 
 # phileas (Java/Maven)
 cd packages/phileas && mvn test
@@ -119,6 +129,7 @@ gbs-tools-and-resources/
 ├── .gitignore
 └── packages/
     ├── spectacles/                   # Browser automation + curator (Python/FastAPI)
+    ├── squeegee/                     # Documentation curation pipeline (Node.js/Fastify)
     ├── merus-expert/                 # MerusCase agent (Python/FastAPI)
     ├── agent-swarm/                  # Multi-agent orchestration (NestJS) — standalone library
     ├── agentic-debugger/             # CI debugging agent (Claude Code) — standalone
@@ -126,6 +137,7 @@ gbs-tools-and-resources/
     ├── gbs-integration-validator/    # API integration validator (Fastify)
     ├── invoice-reconciliation-tester/ # Invoice reconciliation tester (Fastify)
     ├── hindsight/                    # Agent memory system (Python/FastAPI + Next.js + Rust)
+    ├── insurance-claims-case-generator/ # Synthetic claims generator (Python)
     ├── mcp-servers/                  # MCP server collection (Python + Node.js)
     │   └── servers/
     │       ├── kb-api-mcp/
@@ -158,6 +170,8 @@ gbs-tools-and-resources/
 | gbs-integration-validator | 5500–5599 | Fastify: 5510 |
 | invoice-reconciliation-tester | 5500–5599 | Fastify: 5520 |
 | compliance-auditor | 5500–5599 | Fastify: 5530 |
+| squeegee | 5500–5599 | Fastify: 5540 |
+| insurance-claims-case-generator | — | CLI tool, no persistent server in Phase 1 |
 
 ---
 
@@ -176,6 +190,7 @@ See each package's own `.env.example` or `CLAUDE.md` for required environment va
 | compliance-auditor | Cloud Run | _(service deployment)_ |
 | gbs-integration-validator | Cloud Run | _(service deployment)_ |
 | invoice-reconciliation-tester | Cloud Run | _(service deployment)_ |
+| squeegee | Cloud Run | _(service deployment)_ |
 | mcp-servers | Local / MCP protocol | _(no public URL)_ |
 | All others | Local / CI | _(no public URL)_ |
 
