@@ -15,6 +15,7 @@ Unified collection of MCP (Model Context Protocol) server configurations, custom
 | **BetterAuth** | Remote MCP | `@anthropic/mcp-remote` | Authentication flows |
 | **PostgreSQL** | Docker | `crystaldba/postgres-mcp` | Query optimization & health |
 | **Social Media** | Custom (Node.js) | `servers/social-media-mcp/` | LinkedIn, Twitter/X, Mastodon |
+| **gbs-voice** | Custom (TypeScript) | `servers/gbs-voice-mcp/` | Transcription, TTS, transcript cleanup, health via the VoiceProvider seam contract |
 | **Linear** | HTTP (OAuth) | `https://mcp.linear.app/mcp` | Project management & issue tracking |
 
 ## Quick Start

@@ -29,6 +29,7 @@ jobs:
       insurance-claims-case-generator: ${{ steps.filter.outputs.insurance-claims-case-generator }}
       invoice-reconciliation-tester: ${{ steps.filter.outputs.invoice-reconciliation-tester }}
       mcp-servers: ${{ steps.filter.outputs.mcp-servers }}
+      mcp-servers-gbs-voice: ${{ steps.filter.outputs.mcp-servers-gbs-voice }}
       merus-expert: ${{ steps.filter.outputs.merus-expert }}
       merus-test-data-generator: ${{ steps.filter.outputs.merus-test-data-generator }}
       phileas: ${{ steps.filter.outputs.phileas }}
@@ -59,6 +60,8 @@ jobs:
               - 'packages/invoice-reconciliation-tester/**'
             mcp-servers:
               - 'packages/mcp-servers/**'
+            mcp-servers-gbs-voice:
+              - 'packages/mcp-servers/servers/gbs-voice-mcp/**'
             merus-expert:
               - 'packages/merus-expert/**'
             merus-test-data-generator:
@@ -281,6 +284,26 @@ jobs:
       - run: pip install -r requirements.txt 2>/dev/null || true
       - run: python -c "from data.models import *; print('Import check passed')"
 
+  mcp-servers-gbs-voice:
+    name: "mcp-servers-gbs-voice"
+    needs: changes
+    if: needs.changes.outputs.mcp-servers-gbs-voice == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/mcp-servers/servers/gbs-voice-mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: packages/mcp-servers/servers/gbs-voice-mcp/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+
   spectacles:
     name: "spectacles"
     needs: changes
@@ -347,6 +370,7 @@ jobs:
       - hindsight
       - insurance-claims-case-generator
       - invoice-reconciliation-tester
+      - mcp-servers-gbs-voice
       - merus-expert
       - merus-test-data-generator
       - phileas
@@ -365,6 +389,7 @@ jobs:
             "${{ needs.hindsight.result }}"
             "${{ needs.insurance-claims-case-generator.result }}"
             "${{ needs.invoice-reconciliation-tester.result }}"
+            "${{ needs.mcp-servers-gbs-voice.result }}"
             "${{ needs.merus-expert.result }}"
             "${{ needs.merus-test-data-generator.result }}"
             "${{ needs.phileas.result }}"
