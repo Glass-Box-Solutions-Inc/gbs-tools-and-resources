@@ -27,7 +27,7 @@ import {
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig } from './config.js';
-import { TOOLS, executeTool } from './tools.js';
+import { TOOLS, executeTool, scrub } from './tools.js';
 
 const config = loadConfig();
 
@@ -54,8 +54,10 @@ server.setRequestHandler(
 );
 
 server.onerror = (error) => {
-  // Never interpolate config.apiKey into logs.
-  console.error('[gbs-voice-mcp] Server error:', error);
+  // Log only the scrubbed message (never the stack/detail, which could in
+  // theory carry the key), and redact the key value defensively.
+  const msg = error instanceof Error ? error.message : String(error);
+  console.error('[gbs-voice-mcp] Server error:', scrub(msg, config.apiKey));
 };
 
 process.on('SIGINT', async () => {

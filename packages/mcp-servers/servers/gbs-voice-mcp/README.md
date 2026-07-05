@@ -26,7 +26,7 @@ PHI). This server is stricter than the wire default:
 
 | Tool | Method + path | Input | Returns |
 |------|---------------|-------|---------|
-| `voice_transcribe` | `POST /v1/audio/transcriptions` (multipart) | `audioPath` **or** `audioBase64` (+ `filename`), `language?`, `cleanup?` (`none`\|`format`), `sessionId?` | `{ text, cleaned_text?, language, duration_s, provider, fallback }` |
+| `voice_transcribe` | `POST /v1/audio/transcriptions` (multipart) | `audioPath` (sandboxed, see below) **or** `audioBase64` (+ `filename`), `language?`, `cleanup?` (`none`\|`format`), `sessionId?` | `{ text, cleaned_text?, language, duration_s, provider, fallback }` |
 | `voice_speak` | `POST /v1/audio/speech` (JSON, `stream:false`) | `text` (req), `voice?`, `style?`, `speed?`, `responseFormat?` (`mp3`\|`wav`\|`pcm`), `phi?`, `returnBase64?`, `sessionId?` | `{ audioPath, bytes, contentType, provider, fallback, phi }` (file written to output dir), or `{ audioBase64, ... }` when `returnBase64:true` |
 | `voice_cleanup` | `POST /v1/text/cleanup` (JSON) | `text` (req), `mode?` (`dictation`\|`notes`\|`verbatim-punctuation`), `sessionId?` | `{ text, model, verbatim_guard }` (`pass`\|`fail`; on `fail` the raw text is returned unchanged) |
 | `voice_health` | `GET /health` | — | `{ status, providers: { selfhosted, azure-speech, … } }` |
@@ -43,6 +43,30 @@ see `src/tools.ts`).
 | `GBS_VOICE_API_KEY` | for authenticated tools | — (transcribe/speak/cleanup return `VOICE_UNAUTHENTICATED` / 401 without it) |
 | `GBS_VOICE_BASE_URL` | no | the live service URL above |
 | `GBS_VOICE_OUTPUT_DIR` | no | `<os.tmpdir()>/gbs-voice-mcp` (where `voice_speak` writes audio) |
+| `GBS_VOICE_INPUT_DIR` | no | `process.cwd()` — sandbox root for `voice_transcribe`'s `audioPath` (see below) |
+| `GBS_VOICE_MAX_AUDIO_BYTES` | no | `26214400` (25 MB) cap on any audio read or TTS response |
+
+### `audioPath` is sandboxed (arbitrary-file exfiltration guard)
+
+`voice_transcribe` uploads audio bytes to the remote service, so an unrestricted
+`audioPath` would let a caller read **any** file the process can (`~/.ssh/id_rsa`,
+`.env`, `/etc/passwd`) and exfiltrate it. This server therefore locks `audioPath`
+down before it ever reads a byte:
+
+1. **Sandbox root** — the path must resolve inside `GBS_VOICE_INPUT_DIR`
+   (default: cwd). `../` traversal is rejected lexically.
+2. **Symlink defense** — the file and the root are `realpath()`-resolved and the
+   containment check is re-run, so a symlink inside the root that points outside
+   is rejected.
+3. **Extension allowlist** — only `.wav/.mp3/.m4a/.ogg/.flac/.webm`.
+4. **Size cap** — files over `GBS_VOICE_MAX_AUDIO_BYTES` are rejected via
+   `stat()` before read.
+5. **Magic-byte sniff** — the content must actually match a known audio
+   container signature; a secret renamed `secret.wav` is rejected.
+
+Rejections throw a clear error and **never upload** — nothing leaves the box.
+Set `GBS_VOICE_INPUT_DIR` to the directory your audio actually lives in (or pass
+audio inline as `audioBase64`, which is size-capped and sniffed the same way).
 
 Per-consumer keys live in Key Vault `kv-gbs-platform` as
 `gbs-voice-key-<consumer>` (e.g. `gbs-voice-key-pai-pulse`). Retrieve at

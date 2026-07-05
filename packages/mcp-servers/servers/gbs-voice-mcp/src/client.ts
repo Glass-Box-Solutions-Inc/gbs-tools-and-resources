@@ -137,7 +137,23 @@ export async function speak(cfg: GbsVoiceConfig, p: SpeakParams): Promise<SpeakR
   });
   if (!res.ok) throw await toError(res);
 
+  // Cap the buffered audio to defend against an oversized / runaway response.
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > cfg.maxAudioBytes) {
+    throw new VoiceHttpError(
+      `VOICE_RESPONSE_TOO_LARGE (HTTP ${res.status})`,
+      res.status,
+      'VOICE_RESPONSE_TOO_LARGE',
+    );
+  }
   const audio = Buffer.from(await res.arrayBuffer());
+  if (audio.length > cfg.maxAudioBytes) {
+    throw new VoiceHttpError(
+      'VOICE_RESPONSE_TOO_LARGE',
+      undefined,
+      'VOICE_RESPONSE_TOO_LARGE',
+    );
+  }
   return {
     audio,
     contentType: res.headers.get('content-type') ?? 'audio/mpeg',

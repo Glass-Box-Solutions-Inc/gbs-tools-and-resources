@@ -15,6 +15,9 @@ import path from 'node:path';
 export const DEFAULT_BASE_URL =
   'https://gbs-voice.wittycliff-d624a17c.westus2.azurecontainerapps.io';
 
+/** Hard ceiling on audio bytes read from disk / base64 and on TTS responses. */
+export const DEFAULT_MAX_AUDIO_BYTES = 25 * 1024 * 1024; // 25 MB
+
 export interface GbsVoiceConfig {
   /** Base URL of the gbs-voice service, no trailing slash. */
   baseUrl: string;
@@ -22,6 +25,21 @@ export interface GbsVoiceConfig {
   apiKey: string;
   /** Directory where voice_speak writes synthesized audio files. */
   outputDir: string;
+  /**
+   * Sandbox root for voice_transcribe's `audioPath`. Any path that resolves
+   * (after symlink realpath) outside this directory is REJECTED — this is the
+   * guard against arbitrary-file exfiltration (e.g. ~/.ssh/id_rsa, .env).
+   * Defaults to the process working directory.
+   */
+  inputDir: string;
+  /** Max bytes for any audio read (audioPath / audioBase64) or TTS response. */
+  maxAudioBytes: number;
+}
+
+function positiveIntOr(fallback: number, raw: string | undefined): number {
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): GbsVoiceConfig {
@@ -29,5 +47,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GbsVoiceConfig
   const apiKey = env.GBS_VOICE_API_KEY ?? '';
   const outputDir =
     env.GBS_VOICE_OUTPUT_DIR || path.join(os.tmpdir(), 'gbs-voice-mcp');
-  return { baseUrl, apiKey, outputDir };
+  const inputDir = path.resolve(env.GBS_VOICE_INPUT_DIR || process.cwd());
+  const maxAudioBytes = positiveIntOr(
+    DEFAULT_MAX_AUDIO_BYTES,
+    env.GBS_VOICE_MAX_AUDIO_BYTES,
+  );
+  return { baseUrl, apiKey, outputDir, inputDir, maxAudioBytes };
 }

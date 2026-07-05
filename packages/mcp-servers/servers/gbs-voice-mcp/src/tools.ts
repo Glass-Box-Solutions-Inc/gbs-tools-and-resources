@@ -15,7 +15,7 @@
  * the key value from any string that leaves this module.
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { GbsVoiceConfig } from './config.js';
 import * as client from './client.js';
@@ -32,7 +32,11 @@ const EXT_TO_MIME: Record<string, string> = {
   '.ogg': 'audio/ogg',
   '.mp3': 'audio/mpeg',
   '.m4a': 'audio/mp4',
+  '.flac': 'audio/flac',
 };
+
+/** Only these extensions may be read from disk / accepted as base64 input. */
+const AUDIO_EXTENSIONS = new Set(Object.keys(EXT_TO_MIME));
 
 const FORMAT_TO_EXT: Record<string, string> = {
   mp3: 'mp3',
@@ -64,7 +68,8 @@ export const TOOLS = [
       properties: {
         audioPath: {
           type: 'string',
-          description: 'Local filesystem path to an audio file (wav/webm/ogg/mp3/m4a, <=25MB / <=60min).',
+          description:
+            'Path to an audio file (wav/mp3/m4a/ogg/flac/webm, <=25MB). MUST resolve inside GBS_VOICE_INPUT_DIR (default: cwd) — paths that escape the sandbox, symlinks pointing outside it, non-audio extensions, and non-audio content are rejected without upload.',
         },
         audioBase64: {
           type: 'string',
@@ -182,7 +187,7 @@ async function runTool(
 ): Promise<ToolResult> {
   switch (name) {
     case 'voice_transcribe': {
-      const audio = await resolveAudioInput(args);
+      const audio = await resolveAudioInput(args, cfg);
       const result = await client.transcribe(cfg, {
         audio,
         phi: true, // PHI-LOCKED (fail-closed)
@@ -314,21 +319,140 @@ function normalizeMode(
   return v === 'dictation' || v === 'notes' || v === 'verbatim-punctuation' ? v : undefined;
 }
 
+interface AudioInput {
+  data: Uint8Array;
+  filename: string;
+  mime: string;
+}
+
 async function resolveAudioInput(
   args: Record<string, unknown>,
-): Promise<{ data: Uint8Array; filename: string; mime: string }> {
+  cfg: GbsVoiceConfig,
+): Promise<AudioInput> {
   if (typeof args.audioPath === 'string' && args.audioPath.length > 0) {
-    const data = await readFile(args.audioPath);
-    const filename = path.basename(args.audioPath);
-    return { data: new Uint8Array(data), filename, mime: mimeFromFilename(filename) };
+    return readSandboxedAudioFile(args.audioPath, cfg);
   }
   if (typeof args.audioBase64 === 'string' && args.audioBase64.length > 0) {
     const data = Buffer.from(args.audioBase64, 'base64');
+    if (data.length === 0) {
+      throw new Error('voice_transcribe: audioBase64 decoded to zero bytes.');
+    }
+    assertWithinSize(data.length, cfg.maxAudioBytes);
     const filename =
       typeof args.filename === 'string' && args.filename.length > 0
-        ? args.filename
+        ? path.basename(args.filename)
         : 'audio.wav';
-    return { data: new Uint8Array(data), filename, mime: mimeFromFilename(filename) };
+    assertAudioExtension(filename);
+    const bytes = new Uint8Array(data);
+    assertLooksLikeAudio(bytes);
+    return { data: bytes, filename, mime: mimeFromFilename(filename) };
   }
   throw new Error('voice_transcribe requires either "audioPath" or "audioBase64".');
+}
+
+/**
+ * Read an audio file from disk, but ONLY from inside the configured sandbox
+ * root (cfg.inputDir). Defends against arbitrary-file exfiltration:
+ *   1. Lexical containment — reject `../` traversal (works even for a path
+ *      that doesn't exist, with a clear message).
+ *   2. Extension allowlist — reject anything that isn't a known audio type
+ *      (blocks .env, id_rsa, .pem, /etc/passwd, ...).
+ *   3. Symlink defense — realpath() both the file and the root and re-check
+ *      containment, so a symlink inside the root that points outside is caught.
+ *   4. Size cap — stat() before read, and re-check the read length.
+ *   5. Magic-byte sniff — the content must actually look like audio.
+ */
+async function readSandboxedAudioFile(
+  audioPath: string,
+  cfg: GbsVoiceConfig,
+): Promise<AudioInput> {
+  const root = path.resolve(cfg.inputDir);
+  const resolved = path.resolve(root, audioPath);
+
+  // (1) lexical containment
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new Error(
+      'voice_transcribe: audioPath escapes the allowed input directory (set GBS_VOICE_INPUT_DIR).',
+    );
+  }
+
+  // (2) extension allowlist — before touching the filesystem
+  assertAudioExtension(resolved);
+
+  // (3) symlink defense — realpath and re-check containment
+  const realRoot = await realpath(root).catch(() => root);
+  let real: string;
+  try {
+    real = await realpath(resolved);
+  } catch {
+    // ENOENT / EACCES — never echo the absolute path back to the caller
+    throw new Error('voice_transcribe: audioPath not found or not readable.');
+  }
+  if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
+    throw new Error(
+      'voice_transcribe: audioPath escapes the allowed input directory via a symlink (set GBS_VOICE_INPUT_DIR).',
+    );
+  }
+
+  // (4) size cap — stat before read
+  const info = await stat(real);
+  if (!info.isFile()) {
+    throw new Error('voice_transcribe: audioPath is not a regular file.');
+  }
+  assertWithinSize(info.size, cfg.maxAudioBytes);
+
+  const buf = await readFile(real);
+  assertWithinSize(buf.length, cfg.maxAudioBytes);
+
+  const bytes = new Uint8Array(buf);
+  // (5) magic-byte sniff
+  assertLooksLikeAudio(bytes);
+
+  const filename = path.basename(real);
+  return { data: bytes, filename, mime: mimeFromFilename(filename) };
+}
+
+function assertAudioExtension(nameOrPath: string): void {
+  const ext = path.extname(nameOrPath).toLowerCase();
+  if (!AUDIO_EXTENSIONS.has(ext)) {
+    throw new Error(
+      `voice_transcribe: unsupported audio extension "${ext || '(none)'}". Allowed: ${[
+        ...AUDIO_EXTENSIONS,
+      ].join(', ')}.`,
+    );
+  }
+}
+
+function assertWithinSize(bytes: number, max: number): void {
+  if (bytes > max) {
+    throw new Error(
+      `voice_transcribe: audio exceeds the ${Math.round(max / (1024 * 1024))}MB limit.`,
+    );
+  }
+}
+
+function assertLooksLikeAudio(buf: Uint8Array): void {
+  if (!looksLikeAudio(buf)) {
+    throw new Error(
+      'voice_transcribe: content is not a recognized audio format (wav/mp3/m4a/ogg/flac/webm).',
+    );
+  }
+}
+
+/** Sniff the leading bytes against known audio-container signatures. */
+export function looksLikeAudio(buf: Uint8Array): boolean {
+  if (buf.length < 4) return false;
+  const ascii = (off: number, s: string): boolean =>
+    off + s.length <= buf.length &&
+    [...s].every((ch, i) => buf[off + i] === ch.charCodeAt(0));
+
+  if (ascii(0, 'RIFF') && ascii(8, 'WAVE')) return true; // WAV
+  if (ascii(0, 'ID3')) return true; // MP3 with ID3 tag
+  if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return true; // MP3 frame sync
+  if (ascii(0, 'OggS')) return true; // OGG
+  if (ascii(0, 'fLaC')) return true; // FLAC
+  if (ascii(4, 'ftyp')) return true; // M4A / MP4 container
+  if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3)
+    return true; // WEBM / Matroska (EBML)
+  return false;
 }

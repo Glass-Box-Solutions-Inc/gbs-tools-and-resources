@@ -3,9 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { executeTool, TOOLS, scrub } from '../src/tools.js';
-import { loadConfig, DEFAULT_BASE_URL } from '../src/config.js';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { executeTool, TOOLS, scrub, looksLikeAudio } from '../src/tools.js';
+import { loadConfig, DEFAULT_BASE_URL, DEFAULT_MAX_AUDIO_BYTES } from '../src/config.js';
 import type { GbsVoiceConfig } from '../src/config.js';
 
 const API_KEY = 'sk-gbs-voice-SUPERSECRET-abc123';
@@ -13,9 +13,31 @@ const API_KEY = 'sk-gbs-voice-SUPERSECRET-abc123';
 let cfg: GbsVoiceConfig;
 let tmpDir: string;
 
+/** Minimal valid audio payloads (real container magic bytes). */
+function wavBytes(): Buffer {
+  // "RIFF" <size> "WAVE" + a little payload
+  return Buffer.concat([
+    Buffer.from('RIFF'),
+    Buffer.from([0x24, 0, 0, 0]),
+    Buffer.from('WAVE'),
+    Buffer.from('fmt payload'),
+  ]);
+}
+function mp3Bytes(): Buffer {
+  // ID3v2 header + a byte or two
+  return Buffer.concat([Buffer.from('ID3'), Buffer.from([0x03, 0, 0, 0, 0, 0, 0, 0x61])]);
+}
+const wavBase64 = () => wavBytes().toString('base64');
+
 beforeEach(async () => {
   tmpDir = await mkdtemp(path.join(os.tmpdir(), 'gbs-voice-mcp-test-'));
-  cfg = { baseUrl: 'https://voice.test', apiKey: API_KEY, outputDir: tmpDir };
+  cfg = {
+    baseUrl: 'https://voice.test',
+    apiKey: API_KEY,
+    outputDir: tmpDir,
+    inputDir: tmpDir,
+    maxAudioBytes: DEFAULT_MAX_AUDIO_BYTES,
+  };
 });
 
 afterEach(async () => {
@@ -77,7 +99,7 @@ describe('voice_transcribe', () => {
 
     const res = await executeTool(
       'voice_transcribe',
-      { audioBase64: Buffer.from('fake-audio').toString('base64'), filename: 'note.wav' },
+      { audioBase64: wavBase64(), filename: 'note.wav' },
       cfg,
     );
 
@@ -104,7 +126,7 @@ describe('voice_transcribe', () => {
     const fetchMock = stubFetch(jsonResponse({ text: 'x' }));
     await executeTool(
       'voice_transcribe',
-      { audioBase64: Buffer.from('a').toString('base64'), phi: false },
+      { audioBase64: wavBase64(), phi: false },
       cfg,
     );
     const form = lastCall(fetchMock).init.body as FormData;
@@ -113,7 +135,7 @@ describe('voice_transcribe', () => {
 
   it('reads audio from a local path and forwards cleanup=format', async () => {
     const audioPath = path.join(tmpDir, 'dictation.mp3');
-    await writeFile(audioPath, Buffer.from('bytes'));
+    await writeFile(audioPath, mp3Bytes());
     const fetchMock = stubFetch(jsonResponse({ text: 'raw', cleaned_text: 'Raw.' }));
 
     await executeTool('voice_transcribe', { audioPath, cleanup: 'format' }, cfg);
@@ -128,6 +150,106 @@ describe('voice_transcribe', () => {
     const res = await executeTool('voice_transcribe', {}, cfg);
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toMatch(/audioPath.*audioBase64/);
+  });
+});
+
+describe('voice_transcribe — audioPath sandbox (arbitrary-file exfiltration guard)', () => {
+  /** Fetch must NEVER be reached when a path is rejected — nothing exfiltrated. */
+  function assertNoUpload(fetchMock: ReturnType<typeof vi.fn>): void {
+    expect(fetchMock).not.toHaveBeenCalled();
+  }
+
+  it('rejects an absolute path outside the input dir (e.g. /etc/passwd)', async () => {
+    const fetchMock = stubFetch(jsonResponse({ text: 'leak' }));
+    const res = await executeTool('voice_transcribe', { audioPath: '/etc/passwd' }, cfg);
+    expect(res.isError).toBe(true);
+    assertNoUpload(fetchMock);
+  });
+
+  it('rejects a ../ traversal that escapes the input dir', async () => {
+    // A traversal with an audio extension so it clears the extension gate and
+    // must be stopped by the containment check.
+    const outside = path.join(os.tmpdir(), `escape-${Date.now()}.wav`);
+    await writeFile(outside, wavBytes());
+    const rel = path.relative(tmpDir, outside); // e.g. ../escape-...wav
+    const fetchMock = stubFetch(jsonResponse({ text: 'leak' }));
+    const res = await executeTool('voice_transcribe', { audioPath: rel }, cfg);
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/escapes the allowed input directory/);
+    assertNoUpload(fetchMock);
+    await rm(outside, { force: true });
+  });
+
+  it('rejects a symlink inside the input dir that points outside it', async () => {
+    const outsideDir = await mkdtemp(path.join(os.tmpdir(), 'gbs-voice-outside-'));
+    const secret = path.join(outsideDir, 'secret.wav');
+    await writeFile(secret, wavBytes()); // even valid audio must be blocked
+    const link = path.join(tmpDir, 'innocent.wav');
+    await symlink(secret, link);
+
+    const fetchMock = stubFetch(jsonResponse({ text: 'leak' }));
+    const res = await executeTool('voice_transcribe', { audioPath: link }, cfg);
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/symlink/);
+    assertNoUpload(fetchMock);
+    await rm(outsideDir, { recursive: true, force: true });
+  });
+
+  it('rejects a non-audio extension inside the input dir (e.g. .env)', async () => {
+    const secret = path.join(tmpDir, '.env');
+    await writeFile(secret, 'DATABASE_URL=postgres://user:pw@host/db');
+    const fetchMock = stubFetch(jsonResponse({ text: 'leak' }));
+    const res = await executeTool('voice_transcribe', { audioPath: secret }, cfg);
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/unsupported audio extension/);
+    assertNoUpload(fetchMock);
+  });
+
+  it('rejects a file with an audio extension whose bytes are not audio', async () => {
+    const disguised = path.join(tmpDir, 'secret.wav');
+    await writeFile(disguised, 'PRIVATE KEY-----not audio at all');
+    const fetchMock = stubFetch(jsonResponse({ text: 'leak' }));
+    const res = await executeTool('voice_transcribe', { audioPath: disguised }, cfg);
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/not a recognized audio format/);
+    assertNoUpload(fetchMock);
+  });
+
+  it('rejects an oversize file before upload', async () => {
+    const small = { ...cfg, maxAudioBytes: 8 };
+    const audioPath = path.join(tmpDir, 'big.wav');
+    await writeFile(audioPath, wavBytes()); // > 8 bytes
+    const fetchMock = stubFetch(jsonResponse({ text: 'leak' }));
+    const res = await executeTool('voice_transcribe', { audioPath }, small);
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/exceeds the .*MB limit/);
+    assertNoUpload(fetchMock);
+  });
+
+  it('rejects oversize audioBase64 before upload', async () => {
+    const small = { ...cfg, maxAudioBytes: 8 };
+    const fetchMock = stubFetch(jsonResponse({ text: 'leak' }));
+    const res = await executeTool('voice_transcribe', { audioBase64: wavBase64() }, small);
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/exceeds the .*MB limit/);
+    assertNoUpload(fetchMock);
+  });
+
+  it('accepts a valid audio file that lives inside the input dir', async () => {
+    const audioPath = path.join(tmpDir, 'ok.wav');
+    await writeFile(audioPath, wavBytes());
+    const fetchMock = stubFetch(jsonResponse({ text: 'clean transcript' }));
+    const res = await executeTool('voice_transcribe', { audioPath }, cfg);
+    expect(res.isError).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(res.content[0].text).toContain('clean transcript');
+  });
+
+  it('looksLikeAudio recognizes real signatures and rejects text', () => {
+    expect(looksLikeAudio(new Uint8Array(wavBytes()))).toBe(true);
+    expect(looksLikeAudio(new Uint8Array(mp3Bytes()))).toBe(true);
+    expect(looksLikeAudio(new Uint8Array(Buffer.from('OggS----')))).toBe(true);
+    expect(looksLikeAudio(new Uint8Array(Buffer.from('just some secret text')))).toBe(false);
   });
 });
 
@@ -187,6 +309,14 @@ describe('voice_speak', () => {
     stubFetch(audioResponse());
     const res = await executeTool('voice_speak', {}, cfg);
     expect(res.isError).toBe(true);
+  });
+
+  it('caps an oversized TTS response instead of buffering it unbounded', async () => {
+    const small = { ...cfg, maxAudioBytes: 8 };
+    stubFetch(audioResponse()); // 18-byte body > 8-byte cap
+    const res = await executeTool('voice_speak', { text: 'hi' }, small);
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain('VOICE_RESPONSE_TOO_LARGE');
   });
 });
 
@@ -254,7 +384,7 @@ describe('error mapping', () => {
     stubFetch(jsonResponse({ error: { code: 'VOICE_UNAUTHENTICATED' } }, { status: 401 }));
     const res = await executeTool(
       'voice_transcribe',
-      { audioBase64: Buffer.from('a').toString('base64') },
+      { audioBase64: wavBase64() },
       cfg,
     );
     expect(res.isError).toBe(true);
@@ -321,6 +451,26 @@ describe('config defaults', () => {
     const c = loadConfig({} as NodeJS.ProcessEnv);
     expect(c.baseUrl).toBe(DEFAULT_BASE_URL);
     expect(c.apiKey).toBe('');
+  });
+
+  it('defaults inputDir to cwd and maxAudioBytes to 25MB', () => {
+    const c = loadConfig({} as NodeJS.ProcessEnv);
+    expect(c.inputDir).toBe(path.resolve(process.cwd()));
+    expect(c.maxAudioBytes).toBe(DEFAULT_MAX_AUDIO_BYTES);
+  });
+
+  it('honors GBS_VOICE_INPUT_DIR and a valid GBS_VOICE_MAX_AUDIO_BYTES override', () => {
+    const c = loadConfig({
+      GBS_VOICE_INPUT_DIR: '/srv/audio',
+      GBS_VOICE_MAX_AUDIO_BYTES: '1048576',
+    } as NodeJS.ProcessEnv);
+    expect(c.inputDir).toBe(path.resolve('/srv/audio'));
+    expect(c.maxAudioBytes).toBe(1048576);
+  });
+
+  it('ignores a non-positive GBS_VOICE_MAX_AUDIO_BYTES and keeps the default', () => {
+    const c = loadConfig({ GBS_VOICE_MAX_AUDIO_BYTES: '-5' } as NodeJS.ProcessEnv);
+    expect(c.maxAudioBytes).toBe(DEFAULT_MAX_AUDIO_BYTES);
   });
 
   it('strips a trailing slash from a custom base URL', () => {
