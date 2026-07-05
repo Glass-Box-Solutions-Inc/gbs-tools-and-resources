@@ -137,29 +137,65 @@ export async function speak(cfg: GbsVoiceConfig, p: SpeakParams): Promise<SpeakR
   });
   if (!res.ok) throw await toError(res);
 
-  // Cap the buffered audio to defend against an oversized / runaway response.
+  // Fast reject on a declared oversize length (before reading any bytes).
   const declared = Number(res.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > cfg.maxAudioBytes) {
-    throw new VoiceHttpError(
-      `VOICE_RESPONSE_TOO_LARGE (HTTP ${res.status})`,
-      res.status,
-      'VOICE_RESPONSE_TOO_LARGE',
-    );
+    throw responseTooLarge(res.status);
   }
-  const audio = Buffer.from(await res.arrayBuffer());
-  if (audio.length > cfg.maxAudioBytes) {
-    throw new VoiceHttpError(
-      'VOICE_RESPONSE_TOO_LARGE',
-      undefined,
-      'VOICE_RESPONSE_TOO_LARGE',
-    );
-  }
+  // Stream the body with a running cap so a missing/false Content-Length can
+  // never make us buffer an unbounded response (memory-DoS guard).
+  const audio = await readBoundedBody(res, cfg.maxAudioBytes);
   return {
     audio,
     contentType: res.headers.get('content-type') ?? 'audio/mpeg',
     provider: res.headers.get('x-gbs-voice-provider') ?? undefined,
     fallback: res.headers.get('x-gbs-voice-fallback') === 'true',
   };
+}
+
+function responseTooLarge(status?: number): VoiceHttpError {
+  return new VoiceHttpError(
+    status ? `VOICE_RESPONSE_TOO_LARGE (HTTP ${status})` : 'VOICE_RESPONSE_TOO_LARGE',
+    status,
+    'VOICE_RESPONSE_TOO_LARGE',
+  );
+}
+
+/**
+ * Read a fetch Response body into a Buffer, aborting the stream the instant
+ * cumulative bytes exceed `max`. We never accumulate more than `max` (plus one
+ * final chunk) before rejecting, and we cancel the reader so the remote stops
+ * sending — no unbounded buffering regardless of Content-Length.
+ */
+async function readBoundedBody(res: Response, max: number): Promise<Buffer> {
+  const body = res.body;
+  if (!body) {
+    // No stream exposed (edge/mocked case): buffer, then post-check.
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > max) throw responseTooLarge();
+    return buf;
+  }
+
+  const reader = body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > max) {
+        // Stop the remote from sending the rest, then reject.
+        await reader.cancel('VOICE_RESPONSE_TOO_LARGE').catch(() => undefined);
+        throw responseTooLarge();
+      }
+      chunks.push(Buffer.from(value)); // copy — do not retain the stream's view
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total);
 }
 
 // ---------------------------------------------------------------------------

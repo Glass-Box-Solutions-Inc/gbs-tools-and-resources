@@ -311,12 +311,51 @@ describe('voice_speak', () => {
     expect(res.isError).toBe(true);
   });
 
-  it('caps an oversized TTS response instead of buffering it unbounded', async () => {
+  it('caps an oversized TTS response via a declared Content-Length', async () => {
     const small = { ...cfg, maxAudioBytes: 8 };
-    stubFetch(audioResponse()); // 18-byte body > 8-byte cap
+    stubFetch(audioResponse()); // 18-byte body (Content-Length: 18) > 8-byte cap
     const res = await executeTool('voice_speak', { text: 'hi' }, small);
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain('VOICE_RESPONSE_TOO_LARGE');
+  });
+
+  it('aborts a streaming TTS response with NO Content-Length before full buffering', async () => {
+    const small = { ...cfg, maxAudioBytes: 8 };
+
+    // Lazy stream: 100 four-byte chunks (400 bytes). With an 8-byte cap the
+    // reader must cancel after a few chunks — never pulling all 100.
+    const totalChunks = 100;
+    let emitted = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (emitted >= totalChunks) {
+          controller.close();
+          return;
+        }
+        emitted++;
+        controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    // No content-length header — the guard cannot rely on it.
+    const response = new Response(stream, {
+      status: 200,
+      headers: { 'content-type': 'audio/mpeg' },
+    });
+    expect(response.headers.get('content-length')).toBeNull();
+    stubFetch(response);
+
+    const res = await executeTool('voice_speak', { text: 'hi' }, small);
+
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain('VOICE_RESPONSE_TOO_LARGE');
+    // Proof of bounded reading: the stream was cancelled and we pulled only a
+    // handful of chunks — nowhere near the full 400-byte body (memory-DoS guard).
+    expect(cancelled).toBe(true);
+    expect(emitted).toBeLessThan(10);
   });
 });
 

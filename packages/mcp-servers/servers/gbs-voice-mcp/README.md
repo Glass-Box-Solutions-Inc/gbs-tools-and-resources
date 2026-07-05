@@ -44,7 +44,7 @@ see `src/tools.ts`).
 | `GBS_VOICE_BASE_URL` | no | the live service URL above |
 | `GBS_VOICE_OUTPUT_DIR` | no | `<os.tmpdir()>/gbs-voice-mcp` (where `voice_speak` writes audio) |
 | `GBS_VOICE_INPUT_DIR` | no | `process.cwd()` — sandbox root for `voice_transcribe`'s `audioPath` (see below) |
-| `GBS_VOICE_MAX_AUDIO_BYTES` | no | `26214400` (25 MB) cap on any audio read or TTS response |
+| `GBS_VOICE_MAX_AUDIO_BYTES` | no | `26214400` (25 MB) cap on any audio read or TTS response. The TTS response body is **streamed with a running cap** and aborted the instant it exceeds this limit, so a missing/false `Content-Length` cannot force unbounded buffering (memory-DoS guard). |
 
 ### `audioPath` is sandboxed (arbitrary-file exfiltration guard)
 
