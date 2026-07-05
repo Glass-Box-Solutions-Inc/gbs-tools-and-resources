@@ -1,0 +1,21 @@
+{
+  "name": "gbs-voice-mcp",
+  "version": "1.0.0",
+  "description": "MCP server wrapping the gbs-voice service (transcription, TTS, transcript cleanup, health) as MCP tools. PHI-safe: fail-closed phi defaults, server-side Bearer key, key never in output or logs.",
+  "type": "module",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node build/index.js",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  }
+}

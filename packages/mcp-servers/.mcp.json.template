@@ -54,6 +54,16 @@
       "description": "[GBS] Social Media MCP - Post to LinkedIn, Twitter/X, and Mastodon with AI-powered content generation. Requires platform API tokens."
     },
 
+    "gbs-voice": {
+      "command": "node",
+      "args": ["${MCP_SERVERS_DIR}/servers/gbs-voice-mcp/build/index.js"],
+      "env": {
+        "GBS_VOICE_API_KEY": "${GBS_VOICE_API_KEY}",
+        "GBS_VOICE_BASE_URL": "https://gbs-voice.wittycliff-d624a17c.westus2.azurecontainerapps.io"
+      },
+      "description": "[GBS] gbs-voice MCP - transcription, TTS, transcript cleanup, and health via the VoiceProvider seam contract. PHI-safe (fail-closed phi defaults); key server-side only, never logged."
+    },
+
     "obsidian": {
       "command": "node",
       "args": ["${MCP_SERVERS_DIR}/servers/obsidian-mcp/build/index.js"],
