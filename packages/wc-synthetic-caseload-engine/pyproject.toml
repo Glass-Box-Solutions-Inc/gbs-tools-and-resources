@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wc-synthetic-caseload-engine"
+version = "0.1.0"
+description = "Seed-driven generator of complete synthetic CA workers' compensation attorney case files"
+readme = "BUILD_NOTES.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "Glass Box Solutions, Inc." }]
+keywords = ["workers-compensation", "synthetic-data", "california", "adjudica"]
+classifiers = [
+  "Private :: Do Not Upload",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "pydantic>=2.10,<3.0",
+  "click>=8.1,<9.0",
+  "pyyaml>=6.0,<7.0",
+  "faker>=33.0,<35.0",
+  "reportlab>=4.2,<5.0",
+  "Pillow>=11.0,<12.0",
+  "python-docx>=1.1,<2.0",
+  "pymupdf>=1.24,<2.0",
+  "structlog>=24.4,<26.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9.0",
+  "ruff>=0.8,<1.0",
+]
+
+[project.scripts]
+wc-caseload = "wc_caseload_engine.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+wc_caseload_engine = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+  # Substrate bridge intentionally mutates sys.path and imports lazily.
+  "E402",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+  "substrate: requires the merus-test-data-generator substrate on disk",
+  "classifier: requires the Adjudica-classifier source tree on disk",
+]
