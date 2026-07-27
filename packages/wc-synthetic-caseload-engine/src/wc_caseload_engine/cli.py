@@ -1,10 +1,14 @@
 """``wc-caseload`` command line interface.
 
-Phase A implements the commands that need no lifecycle machinery:
-``seed --template`` and ``taxonomy-check`` are complete, ``validate --spec``
-fully validates a caseload, and ``generate`` parses, validates and resolves the
-whole caseload (including ``auto:`` derivation) before handing off to the
-Phase B renderer.
+Four commands:
+
+* ``generate --spec S --out D`` — the whole pipeline: resolve the caseload
+  (including ``auto:`` derivation), plan every case, render every document and
+  write the manifests.
+* ``seed --template`` — an annotated seed covering every controllable field.
+* ``validate --spec S`` / ``--out D`` — schema and control keys before
+  generation; taxonomy validity and checksums after it.
+* ``taxonomy-check`` — drift against the classifier source; nonzero on drift.
 
 @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 """
@@ -18,6 +22,12 @@ import click
 import structlog
 
 from wc_caseload_engine import __version__
+from wc_caseload_engine.determinism import ensure_stable_hashing
+from wc_caseload_engine.manifests import (
+    CASELOAD_MANIFEST_NAME,
+    generate_caseload,
+    validate_output_tree,
+)
 from wc_caseload_engine.seed_template import CASE_SEED_TEMPLATE, CASELOAD_SPEC_TEMPLATE
 from wc_caseload_engine.seeds import (
     CaseloadSpec,
@@ -35,11 +45,6 @@ from wc_caseload_engine.taxonomy import (
 )
 
 log = structlog.get_logger(__name__)
-
-PHASE_B_MESSAGE = (
-    "Phase B: lifecycle machines, the renderer bridge and manifest writing are "
-    "not implemented yet"
-)
 
 
 def _load_spec(spec_path: Path) -> CaseloadSpec:
@@ -122,7 +127,32 @@ def generate(
         click.echo("dry-run: spec is valid; no files written")
         return
 
-    raise NotImplementedError(PHASE_B_MESSAGE)
+    try:
+        results = generate_caseload(spec.caseload_id, seeds, out_dir)
+    except SubstrateUnavailableError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    total_documents = sum(result.document_count for result in results)
+    formats: dict[str, int] = {}
+    warnings = 0
+    for result in results:
+        warnings += len(result.plan.warnings)
+        for render in result.renders:
+            formats[render.doc_format] = formats.get(render.doc_format, 0) + 1
+
+    click.echo("")
+    click.echo(f"generated: {len(results)} cases, {total_documents} documents")
+    for name, count in sorted(formats.items()):
+        click.echo(f"  {name:<12} {count}")
+    for result in results:
+        click.echo(
+            f"  {result.case_id:<24} {result.document_count:>4} docs  "
+            f"liens={len(result.plan.lien_tracks)} "
+            f"recon={result.plan.recon.outcome or '-'}"
+        )
+    if warnings:
+        click.echo(f"warnings : {warnings} (see per-case manifest 'warnings')", err=True)
+    click.echo(f"manifest : {out_dir / CASELOAD_MANIFEST_NAME}")
 
 
 @cli.command("seed")
@@ -188,7 +218,13 @@ def validate(spec_path: Path | None, out_dir: Path | None) -> None:
         click.echo("controls : OK (all document control keys are valid taxonomy keys)")
 
     if out_dir is not None:
-        raise NotImplementedError(PHASE_B_MESSAGE)
+        try:
+            report = validate_output_tree(out_dir)
+        except SubstrateUnavailableError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(report.render())
+        if not report.ok:
+            sys.exit(1)
 
 
 def _validate_control_keys(seeds: list[CaseSeed]) -> list[str]:
@@ -251,7 +287,14 @@ def taxonomy_check(classifier_path: Path | None) -> None:
 
 
 def main() -> None:
-    """Console-script entry point."""
+    """Console-script entry point.
+
+    Pins ``PYTHONHASHSEED`` before anything else runs. The substrate's content
+    pools order strings through ``set``, so without a fixed hash seed the same
+    seed renders different documents in different processes. See
+    :mod:`wc_caseload_engine.determinism`.
+    """
+    ensure_stable_hashing()
     cli(prog_name="wc-caseload")
 
 

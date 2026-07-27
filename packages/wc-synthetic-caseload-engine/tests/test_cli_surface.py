@@ -192,30 +192,41 @@ def test_generate_seed_override_changes_derived_cases(
     assert default_run.output != overridden.output
 
 
-def test_generate_stops_at_the_phase_b_boundary(
+@requires_substrate
+def test_generate_writes_a_complete_case(
     runner: CliRunner, tmp_path: Path, minimal_caseload: dict[str, Any]
 ) -> None:
+    """``generate`` now runs end to end.
+
+    Replaces Phase A's ``test_generate_stops_at_the_phase_b_boundary``, which
+    asserted a ``NotImplementedError``. That boundary is gone by design: the
+    lifecycle machines, renderer and manifest writer landed in Phase B, so the
+    correct assertion is that the command produces a full case tree.
+    """
+    minimal_caseload["cases"][0]["documents"] = {"global_cap": 6}
     spec = _write_spec(tmp_path / "spec.yaml", minimal_caseload)
-    result = runner.invoke(
-        cli, ["generate", "--spec", str(spec), "--out", str(tmp_path / "out")]
-    )
-    assert result.exit_code != 0
-    assert isinstance(result.exception, NotImplementedError)
-    assert "Phase B" in str(result.exception)
+    out_dir = tmp_path / "out"
+    result = runner.invoke(cli, ["generate", "--spec", str(spec), "--out", str(out_dir)])
+
+    assert result.exit_code == 0, result.output
+    case_dir = out_dir / "probe-001"
+    assert (case_dir / "seed.yaml").is_file()
+    assert (case_dir / "manifest.json").is_file()
+    assert (out_dir / "caseload_manifest.json").is_file()
+    assert list((case_dir / "documents").iterdir())
 
 
-def test_generate_validates_the_spec_before_the_phase_b_boundary(
+def test_generate_validates_the_spec_before_writing_anything(
     runner: CliRunner, tmp_path: Path, minimal_caseload: dict[str, Any]
 ) -> None:
-    """Schema errors must surface now, not in Phase B."""
+    """Schema errors surface before any file is written."""
     minimal_caseload["cases"][0]["typo_field"] = True
     spec = _write_spec(tmp_path / "bad.yaml", minimal_caseload)
-    result = runner.invoke(
-        cli, ["generate", "--spec", str(spec), "--out", str(tmp_path / "out")]
-    )
+    out_dir = tmp_path / "out"
+    result = runner.invoke(cli, ["generate", "--spec", str(spec), "--out", str(out_dir)])
     assert result.exit_code != 0
-    assert not isinstance(result.exception, NotImplementedError)
     assert "typo_field" in result.output
+    assert not out_dir.exists()
 
 
 @requires_substrate

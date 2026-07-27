@@ -1,0 +1,314 @@
+"""The petition-for-reconsideration round trip.
+
+Reconsideration is the appellate move inside the WCAB, and it is the shape the
+substrate models least: a couple of low-probability documents dangling off
+``post_resolution``. It deserves a real machine, because "denied, petitioned,
+remanded, settled on remand" is an ordinary applicant-side file and no
+generator could previously produce one.
+
+The chain, with its statutory clock:
+
+    FINDINGS_AND_AWARD / ORDER_APPROVING_SETTLEMENT   (the award under attack)
+      -> PETITION_RECONSIDERATION_FILED               LC 5903: <= 25 days
+      -> PETITION_RECONSIDERATION_OPPOSITION
+      -> [PETITION_RECONSIDERATION_REPLY]             (seed-drawn)
+      -> ORDER_ON_RECONSIDERATION                     LC 5909: <= 60 days
+
+Then the seeded outcome decides what the file looks like afterwards:
+
+============================  ==========================================
+``outcome`` / ``post_recon``  Documents
+============================  ==========================================
+denied / affirmed_final       nothing — the award stands
+granted_remand /              DECLARATION_OF_READINESS,
+  further_litigation          NOTICE_OF_HEARING_COURT_ISSUED,
+                              MINUTES_OF_HEARING, AMENDED_FINDINGS_AWARD
+granted_remand / settled      C&R or Stips + ORDER_APPROVING_SETTLEMENT,
+                              all dated after the reconsideration order
+granted_reversed              AMENDED_FINDINGS_AWARD, plus whatever its
+                              ``post_recon`` path adds
+============================  ==========================================
+
+A petition with nothing to attack is a contradiction, so an unresolved case
+with ``reconsideration.enabled`` emits nothing and says so loudly.
+
+@Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+"""
+
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass
+from datetime import date, timedelta
+
+import structlog
+
+from wc_caseload_engine.doc_controls import TRACK_RECON
+from wc_caseload_engine.lifecycle_bridge import (
+    ROLE_APPLICANT_ATTORNEY,
+    ROLE_COURT,
+    ROLE_DEFENSE_ATTORNEY,
+    CaseTimeline,
+    DatedCandidate,
+)
+from wc_caseload_engine.seeds import CaseSeed
+
+log = structlog.get_logger(__name__)
+
+PETITION_WINDOW_DAYS = 25
+"""LC 5903 — 20 days from service, plus 5 for mail service."""
+
+ORDER_WINDOW_DAYS = 60
+"""LC 5909 — the WCAB must act on the petition within 60 days."""
+
+_REPLY_PROBABILITY = 0.45
+"""Chance the petitioner files a reply to the opposition."""
+
+_SETTLE_AS_CR_PROBABILITY = 0.6
+"""On remand, parties more often close with a C&R than with new stips."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReconTrack:
+    """The reconsideration round trip and everything it produced."""
+
+    enabled: bool
+    outcome: str | None
+    post_recon: str | None
+    award_date: date | None
+    petition_date: date | None
+    order_date: date | None
+    documents: tuple[DatedCandidate, ...]
+    warnings: tuple[str, ...] = ()
+
+    def summary(self) -> dict[str, object]:
+        """Manifest-shaped summary of the recon round trip."""
+        return {
+            "enabled": self.enabled,
+            "outcome": self.outcome,
+            "postRecon": self.post_recon,
+            "awardDate": self.award_date.isoformat() if self.award_date else None,
+            "petitionDate": self.petition_date.isoformat() if self.petition_date else None,
+            "orderDate": self.order_date.isoformat() if self.order_date else None,
+            "documentCount": len(self.documents),
+        }
+
+
+def _empty(seed: CaseSeed, warnings: tuple[str, ...] = ()) -> ReconTrack:
+    """A disabled (or impossible) recon track."""
+    recon = seed.lifecycle.reconsideration
+    return ReconTrack(
+        enabled=recon.enabled,
+        outcome=recon.outcome,
+        post_recon=recon.post_recon,
+        award_date=None,
+        petition_date=None,
+        order_date=None,
+        documents=(),
+        warnings=warnings,
+    )
+
+
+def _post_recon_litigation(
+    timeline: CaseTimeline, order_date: date, rng: random.Random
+) -> list[DatedCandidate]:
+    """Remand back to the trial level: new DOR, new hearing, amended award."""
+    dor = timeline.clamp(order_date + timedelta(days=rng.randint(15, 45)))
+    notice = timeline.clamp(dor + timedelta(days=rng.randint(20, 60)))
+    minutes = timeline.clamp(notice + timedelta(days=rng.randint(30, 90)))
+    amended = timeline.clamp(minutes + timedelta(days=rng.randint(10, 45)))
+    return [
+        DatedCandidate(
+            subtype="DECLARATION_OF_READINESS",
+            doc_date=dor,
+            track=TRACK_RECON,
+            priority=22,
+            author_role=ROLE_APPLICANT_ATTORNEY,
+            stage="post_recon",
+        ),
+        DatedCandidate(
+            subtype="NOTICE_OF_HEARING_COURT_ISSUED",
+            doc_date=notice,
+            track=TRACK_RECON,
+            priority=22,
+            author_role=ROLE_COURT,
+            stage="post_recon",
+        ),
+        DatedCandidate(
+            subtype="MINUTES_OF_HEARING",
+            doc_date=minutes,
+            track=TRACK_RECON,
+            priority=20,
+            author_role=ROLE_COURT,
+            stage="post_recon",
+        ),
+        DatedCandidate(
+            subtype="AMENDED_FINDINGS_AWARD",
+            doc_date=amended,
+            track=TRACK_RECON,
+            priority=18,
+            author_role=ROLE_COURT,
+            stage="post_recon",
+        ),
+    ]
+
+
+def _post_recon_settlement(
+    seed: CaseSeed, timeline: CaseTimeline, order_date: date, rng: random.Random
+) -> list[DatedCandidate]:
+    """Settled on remand: a new settlement and its approving order, post-recon."""
+    settled_on = timeline.clamp(order_date + timedelta(days=rng.randint(30, 120)))
+    approved_on = timeline.clamp(settled_on + timedelta(days=rng.randint(15, 60)))
+    if seed.injury.type == "death":
+        settlement = "COMPROMISE_AND_RELEASE_DEPENDENCY"
+    elif rng.random() < _SETTLE_AS_CR_PROBABILITY:
+        settlement = (
+            "COMPROMISE_AND_RELEASE_MSA"
+            if seed.lifecycle.resolution.msa
+            else "COMPROMISE_AND_RELEASE_STANDARD"
+        )
+    else:
+        settlement = "STIPULATIONS_WITH_REQUEST_FOR_AWARD"
+    return [
+        DatedCandidate(
+            subtype=settlement,
+            doc_date=settled_on,
+            track=TRACK_RECON,
+            priority=18,
+            author_role=ROLE_APPLICANT_ATTORNEY,
+            stage="post_recon",
+        ),
+        DatedCandidate(
+            subtype="ORDER_APPROVING_SETTLEMENT",
+            doc_date=approved_on,
+            track=TRACK_RECON,
+            priority=18,
+            author_role=ROLE_COURT,
+            stage="post_recon",
+        ),
+    ]
+
+
+def build_recon_track(seed: CaseSeed, timeline: CaseTimeline) -> ReconTrack:
+    """Build the reconsideration round trip for a case."""
+    recon = seed.lifecycle.reconsideration
+    if not recon.enabled:
+        return _empty(seed)
+
+    award_date = timeline.award_date
+    if award_date is None:
+        warning = (
+            f"case {seed.case_id}: lifecycle.reconsideration.enabled is true but "
+            f"lifecycle.resolution.type is {seed.lifecycle.resolution.type!r} — there is no "
+            "award to reconsider, so no reconsideration documents were emitted "
+            "(set resolution.type to findings_award, stipulations or c_and_r)"
+        )
+        log.warning(
+            "recon.no_award",
+            case_id=seed.case_id,
+            resolution=seed.lifecycle.resolution.type,
+        )
+        return _empty(seed, warnings=(warning,))
+
+    rng = seed.rng("recon")
+
+    petition_date = timeline.clamp(
+        award_date + timedelta(days=rng.randint(1, PETITION_WINDOW_DAYS))
+    )
+    opposition_date = timeline.clamp(petition_date + timedelta(days=rng.randint(5, 15)))
+    order_date = timeline.clamp(
+        petition_date + timedelta(days=rng.randint(30, ORDER_WINDOW_DAYS))
+    )
+
+    documents: list[DatedCandidate] = [
+        DatedCandidate(
+            subtype="PETITION_RECONSIDERATION_FILED",
+            doc_date=petition_date,
+            track=TRACK_RECON,
+            priority=8,
+            author_role=ROLE_APPLICANT_ATTORNEY,
+            stage="post_recon",
+        ),
+        DatedCandidate(
+            subtype="PETITION_RECONSIDERATION_OPPOSITION",
+            doc_date=opposition_date,
+            track=TRACK_RECON,
+            priority=12,
+            author_role=ROLE_DEFENSE_ATTORNEY,
+            stage="post_recon",
+        ),
+    ]
+
+    if rng.random() < _REPLY_PROBABILITY:
+        documents.append(
+            DatedCandidate(
+                subtype="PETITION_RECONSIDERATION_REPLY",
+                doc_date=timeline.clamp(
+                    opposition_date + timedelta(days=rng.randint(5, 15))
+                ),
+                track=TRACK_RECON,
+                priority=14,
+                author_role=ROLE_APPLICANT_ATTORNEY,
+                stage="post_recon",
+            )
+        )
+
+    documents.append(
+        DatedCandidate(
+            subtype="ORDER_ON_RECONSIDERATION",
+            doc_date=order_date,
+            track=TRACK_RECON,
+            priority=8,
+            author_role=ROLE_COURT,
+            stage="post_recon",
+        )
+    )
+
+    # A reversal rewrites the award on its face, before any remand proceedings.
+    if recon.outcome == "granted_reversed":
+        documents.append(
+            DatedCandidate(
+                subtype="AMENDED_FINDINGS_AWARD",
+                doc_date=timeline.clamp(order_date + timedelta(days=rng.randint(1, 21))),
+                track=TRACK_RECON,
+                priority=10,
+                author_role=ROLE_COURT,
+                stage="post_recon",
+            )
+        )
+
+    if recon.post_recon == "further_litigation":
+        documents.extend(_post_recon_litigation(timeline, order_date, rng))
+    elif recon.post_recon == "settled":
+        documents.extend(_post_recon_settlement(seed, timeline, order_date, rng))
+
+    # A reversal and a remand can both want an amended award; keep the later one.
+    deduped: dict[tuple[str, date], DatedCandidate] = {}
+    for candidate in documents:
+        deduped[(candidate.subtype, candidate.doc_date)] = candidate
+    ordered = sorted(deduped.values(), key=lambda item: (item.doc_date, item.subtype))
+
+    log.debug(
+        "recon.built",
+        case_id=seed.case_id,
+        outcome=recon.outcome,
+        post_recon=recon.post_recon,
+        documents=len(ordered),
+    )
+    return ReconTrack(
+        enabled=True,
+        outcome=recon.outcome,
+        post_recon=recon.post_recon,
+        award_date=award_date,
+        petition_date=petition_date,
+        order_date=order_date,
+        documents=tuple(ordered),
+    )
+
+
+__all__ = [
+    "ORDER_WINDOW_DAYS",
+    "PETITION_WINDOW_DAYS",
+    "ReconTrack",
+    "build_recon_track",
+]

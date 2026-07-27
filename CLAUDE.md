@@ -52,6 +52,7 @@ This monorepo consolidates 17 Glass Box packages into a single discoverable loca
 | [`packages/phileas/`](packages/phileas/) | Java 11+, Maven | PII/PHI redaction library (30+ entity types) |
 | [`packages/yevrah_terminal/`](packages/yevrah_terminal/) | Python 3.x, Groq, Cohere | Terminal legal research (keyword + semantic search) |
 | [`packages/merus-test-data-generator/`](packages/merus-test-data-generator/) | Python 3.12, reportlab, Faker | WC test case generator (10,000+ templated PDFs across 97+ subtypes; AMA Guides 5th Ed. impairment content, 30 edge case scenarios, Browserless MerusCase batch integration) |
+| [`packages/wc-synthetic-caseload-engine/`](packages/wc-synthetic-caseload-engine/) | Python 3.12, Pydantic, Click | Seed-driven synthetic CA WC attorney case files — per-case YAML seed, lien tracks through executed resolution, reconsideration round-trips, 353-subtype classifier taxonomy, byte-reproducible output (consumes `merus-test-data-generator` as a library) |
 
 ### Reference
 
@@ -84,6 +85,7 @@ cd packages/mcp-servers/
 cd packages/phileas/
 cd packages/yevrah_terminal/
 cd packages/merus-test-data-generator/
+cd packages/wc-synthetic-caseload-engine/
 ```
 
 ### Package-specific tests
@@ -135,6 +137,7 @@ gbs-tools-and-resources/
     ├── phileas/                      # PII/PHI redaction library (Java/Maven)
     ├── yevrah_terminal/              # Terminal legal research (Python)
     ├── merus-test-data-generator/    # WC test case PDF generator (Python)
+    ├── wc-synthetic-caseload-engine/ # Seed-driven synthetic WC attorney case files (Python)
     ├── awesome-agent-skills/         # Agent skills catalog (Markdown)
     ├── awesome-claude-code/          # Claude Code ecosystem resource list
     ├── cli-anything/                 # Claude Code plugin — GUI-to-CLI harness (Python/Click)
@@ -158,6 +161,7 @@ gbs-tools-and-resources/
 | gbs-integration-validator | 5500–5599 | Fastify: 5510 |
 | invoice-reconciliation-tester | 5500–5599 | Fastify: 5520 |
 | compliance-auditor | 5500–5599 | Fastify: 5530 |
+| wc-synthetic-caseload-engine | — | CLI only |
 
 ---
 

@@ -1,0 +1,188 @@
+# wc-caseload demo caseload — six cases, six different shapes of file.
+#
+#   wc-caseload generate --spec examples/demo-caseload.yaml --out /tmp/wcce-demo
+#   wc-caseload validate --out /tmp/wcce-demo
+#
+# Every case regenerates byte-identically: dates hang off a fixed anchor
+# (2026-01-01) rather than "today", and every random draw is seeded.
+#
+# Dates of injury are chosen to leave statutory runway. A case that petitions
+# for reconsideration and then settles on remand needs roughly nine months
+# after its award before the anchor date, or the whole post-award sequence
+# compresses into a single day.
+
+caseload_id: demo-2026q3
+
+defaults:
+  documents:
+    format_mix: {pdf: 0.6, scanned_pdf: 0.25, eml: 0.1, docx: 0.05}
+  output:
+    filename_style: neutral
+    formats: [pdf, scanned_pdf, eml, docx]
+
+cases:
+  # 1. Denied claim that fought all the way through reconsideration and then
+  #    settled on remand — the shape no previous generator could produce.
+  - case_id: alvarez-denied-recon-remand
+    rng_seed: 100001
+    profile:
+      applicant: {name: Rosa Alvarez, age: 47, occupation: Warehouse Associate, tenure_years: 6.5}
+      employer: {name: Inland Valley Distribution, industry: Warehousing, county: San Bernardino}
+      carrier: {name: Pacific Compensation Insurance}
+    injury:
+      type: specific
+      date_of_injury: 2022-03-14
+      mechanism: struck by falling inventory during a restock
+      body_parts:
+        - {part: lumbar_spine, icd10: M54.5, detail: L4-L5 disc protrusion}
+        - {part: shoulder, icd10: M75.100, detail: right rotator cuff tear}
+    lifecycle:
+      target_stage: post_recon
+      claim_response: denied
+      eval_type: qme
+      resolution: {type: findings_award}
+      reconsideration:
+        enabled: true
+        outcome: granted_remand
+        post_recon: settled
+      doctrine_hooks: [almaraz_guzman, escobedo]
+    documents:
+      global_cap: 55
+
+  # 2. Compromise and release with three lien claimants taken all the way to
+  #    executed Lien Resolution Agreements, litigated after the case-in-chief
+  #    closed. Corpus filenames so the classifier corpus tooling can sample it.
+  - case_id: nguyen-cr-three-liens
+    rng_seed: 100002
+    profile:
+      applicant: {name: David Nguyen, age: 39, occupation: Line Cook, tenure_years: 3.0}
+      employer: {name: Golden State Hospitality Group, industry: Food Service, county: Alameda}
+      carrier: {name: State Compensation Insurance Fund}
+      attorneys: {defense_firm: "Laughlin, Falbo, Levy & Moresi"}
+    injury:
+      type: specific
+      date_of_injury: 2022-08-02
+      mechanism: slip and fall on a wet kitchen floor
+      body_parts:
+        - {part: knee, icd10: M23.51, detail: medial meniscus tear}
+    lifecycle:
+      target_stage: resolved
+      claim_response: accepted
+      eval_type: ame
+      resolution: {type: c_and_r, msa: false}
+      liens:
+        count: 3
+        claimants: [medical_provider, hospital, pharmacy]
+        resolution: lien_resolution_agreement
+        post_resolution_litigation: true
+      doctrine_hooks: [benson]
+    output:
+      filename_style: corpus
+    documents:
+      global_cap: 60
+
+  # 3. Cumulative trauma, multiple body parts, treatment denied at UR and
+  #    appealed through IMR.
+  - case_id: okafor-ct-ur-imr
+    rng_seed: 100003
+    profile:
+      applicant: {name: Grace Okafor, age: 52, occupation: Medical Assistant, tenure_years: 11.0}
+      employer: {name: Sierra Health Partners, industry: Healthcare, county: Sacramento}
+      carrier: {name: Zenith Insurance Company}
+    injury:
+      type: cumulative_trauma
+      ct_start: 2020-09-01
+      ct_end: 2024-02-29
+      mechanism: repetitive keyboard and patient-transfer duties over a multi-year assignment
+      body_parts:
+        - {part: cervical_spine, icd10: M54.2, detail: C5-C6 disc bulge}
+        - {part: wrist, icd10: G56.00, detail: bilateral carpal tunnel syndrome}
+        - {part: shoulder, icd10: M75.100, detail: left impingement}
+    lifecycle:
+      target_stage: medical_legal
+      claim_response: delayed
+      eval_type: qme
+      ur_dispute:
+        enabled: true
+        decision: upheld
+        imr: true
+        imr_outcome: upheld
+      resolution: {type: pending}
+      doctrine_hooks: [imr_constitutionality, lc4664_prior_award]
+    documents:
+      global_cap: 50
+
+  # 4. Death claim with dependency benefits, resolved by stipulation.
+  - case_id: ramirez-death-dependency
+    rng_seed: 100004
+    profile:
+      applicant: {name: Miguel Ramirez, age: 44, occupation: Roofing Foreman, tenure_years: 14.0}
+      employer: {name: Coastline Roofing Contractors, industry: Construction, county: Orange}
+      carrier: {name: Berkshire Hathaway Homestate}
+    injury:
+      type: death
+      date_of_injury: 2023-01-19
+      mechanism: fatal fall from an unguarded elevated platform
+      body_parts:
+        - {part: head, icd10: S06.0X0A, detail: fatal traumatic brain injury}
+    lifecycle:
+      target_stage: resolved
+      claim_response: accepted
+      eval_type: none
+      resolution: {type: stipulations}
+      liens:
+        count: 1
+        claimants: [hospital]
+        resolution: lien_stipulation
+      doctrine_hooks: [death_dependency, gfpa]
+    documents:
+      global_cap: 40
+
+  # 5. A fresh file: intake only, nothing resolved, no evaluation yet.
+  - case_id: whitfield-early-intake
+    rng_seed: 100005
+    profile:
+      applicant: {name: Tara Whitfield, age: 29, occupation: Delivery Driver, tenure_years: 1.5}
+      employer: {name: Metro Parcel Express, industry: Transportation, county: Los Angeles}
+      carrier: {name: Travelers Property Casualty}
+    injury:
+      type: specific
+      date_of_injury: 2025-10-06
+      mechanism: motor vehicle accident while driving a company route
+      body_parts:
+        - {part: cervical_spine, icd10: M54.2, detail: whiplash-associated disorder}
+    lifecycle:
+      target_stage: intake
+      claim_response: accepted
+      eval_type: none
+      resolution: {type: pending}
+    documents:
+      global_cap: 20
+
+  # 6. Tried to decision, petitioned for reconsideration, petition denied —
+  #    the award stands and the file closes.
+  - case_id: castellanos-trial-recon-denied
+    rng_seed: 100006
+    profile:
+      applicant: {name: Hector Castellanos, age: 58, occupation: Machine Operator, tenure_years: 22.0}
+      employer: {name: Central Valley Manufacturing, industry: Manufacturing, county: Fresno}
+      carrier: {name: Republic Indemnity Company}
+    injury:
+      type: specific
+      date_of_injury: 2022-11-08
+      mechanism: ladder collapse during a maintenance call
+      body_parts:
+        - {part: thoracic_spine, icd10: M54.6, detail: T7-T8 compression fracture}
+        - {part: hip, icd10: M25.551, detail: left labral tear}
+    lifecycle:
+      target_stage: post_recon
+      claim_response: accepted
+      eval_type: qme
+      resolution: {type: findings_award}
+      reconsideration:
+        enabled: true
+        outcome: denied
+        post_recon: affirmed_final
+      doctrine_hooks: [ogilvie, kite]
+    documents:
+      global_cap: 55
