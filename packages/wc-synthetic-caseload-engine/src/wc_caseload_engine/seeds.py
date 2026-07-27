@@ -102,6 +102,45 @@ type DistributionName = Literal[
 ANCHOR_DATE: date = date(2026, 1, 1)
 """Fixed "today" for derived seeds — determinism forbids wall-clock reads."""
 
+STAGE_RUNWAY_DAYS: Mapping[str, int] = {
+    "intake": 30,
+    "active_treatment": 180,
+    "discovery": 180,
+    "medical_legal": 365,
+    "pre_trial": 365,
+    "resolved": 540,
+    "post_recon": 720,
+}
+"""Days a case of each stage needs between the injury onset and :data:`ANCHOR_DATE`.
+
+A California workers' compensation file cannot reach a stage faster than the
+statutory clock allows: an Application follows the injury by two to six months,
+resolution by another six, a petition for reconsideration by twenty-five days
+after the award, and the WCAB's order by sixty more. Seed a 2025-06-01 injury
+as ``resolved`` and the entire sequence has to fit into seven months.
+
+Before this floor existed the timeline silently absorbed the shortfall by
+clamping, which produced a case whose petition for reconsideration was dated
+eighty days *before* its Application for Adjudication. Failing loudly at the
+seed boundary is the contract: the seed is the interface, so the seed is where
+an impossible story gets rejected.
+"""
+
+RESOLVED_RUNWAY_DAYS = 540
+"""Runway a *resolved case-in-chief* needs, whatever stage label it carries.
+
+``target_stage`` says how far the file got; ``resolution.type`` says whether it
+actually ended. A seed can claim ``pre_trial`` and still settle, and it is the
+settlement — not the label — that has to fit before the anchor.
+"""
+
+POST_RESOLUTION_RUNWAY_DAYS = 720
+"""Runway a case needs when litigation continues *after* the resolution.
+
+Reconsideration and post-resolution lien litigation both run on past the award,
+so they need the resolved runway plus room for the appellate round trip.
+"""
+
 CASE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 """Case ids double as output directory names — keep them path-safe."""
 
@@ -352,6 +391,40 @@ class LifecycleSpec(_Model):
         return self
 
 
+def required_runway_days(lifecycle: LifecycleSpec) -> int:
+    """Days this lifecycle needs between the injury onset and :data:`ANCHOR_DATE`.
+
+    The maximum of three independent demands, because a case answers to all of
+    them at once:
+
+    * the stage it claims to have reached (:data:`STAGE_RUNWAY_DAYS`),
+    * whether the case-in-chief actually resolved
+      (:data:`RESOLVED_RUNWAY_DAYS`),
+    * whether anything litigates on after that resolution — reconsideration or
+      post-resolution lien practice (:data:`POST_RESOLUTION_RUNWAY_DAYS`).
+    """
+    required = STAGE_RUNWAY_DAYS[lifecycle.target_stage]
+    if lifecycle.resolution.type != "pending":
+        required = max(required, RESOLVED_RUNWAY_DAYS)
+    if lifecycle.reconsideration.enabled or lifecycle.liens.post_resolution_litigation:
+        required = max(required, POST_RESOLUTION_RUNWAY_DAYS)
+    return required
+
+
+def runway_driver(lifecycle: LifecycleSpec) -> str:
+    """Which part of the lifecycle set the runway — named in the error message."""
+    if lifecycle.reconsideration.enabled:
+        return "lifecycle.reconsideration.enabled"
+    if lifecycle.liens.post_resolution_litigation:
+        return "lifecycle.liens.post_resolution_litigation"
+    if (
+        lifecycle.resolution.type != "pending"
+        and STAGE_RUNWAY_DAYS[lifecycle.target_stage] < RESOLVED_RUNWAY_DAYS
+    ):
+        return f"lifecycle.resolution.type {lifecycle.resolution.type!r}"
+    return f"lifecycle.target_stage {lifecycle.target_stage!r}"
+
+
 class DocumentOverride(_Model):
     """One document control entry: an exact subtype count or a per-type bound."""
 
@@ -475,6 +548,34 @@ class CaseSeed(_Model):
     lifecycle: LifecycleSpec = Field(default_factory=LifecycleSpec)
     documents: DocumentControls = Field(default_factory=DocumentControls)
     output: OutputSpec = Field(default_factory=OutputSpec)
+
+    @model_validator(mode="after")
+    def _check_runway(self) -> CaseSeed:
+        """Reject an injury date too close to the anchor for the seeded story.
+
+        Fail-loud rather than silently compressible: the lifecycle used to
+        absorb a short runway by clamping every over-horizon date onto the
+        anchor, which inverted the date spine — a reconsideration petition
+        landing *before* the Application for Adjudication it appealed from.
+        """
+        required = required_runway_days(self.lifecycle)
+        onset = self.injury.onset_date
+        latest = ANCHOR_DATE - timedelta(days=required)
+        if onset <= latest:
+            return self
+
+        field = (
+            "injury.ct_end"
+            if self.injury.type == "cumulative_trauma"
+            else "injury.date_of_injury"
+        )
+        available = (ANCHOR_DATE - onset).days
+        raise ValueError(
+            f"{field} is {onset.isoformat()}, which leaves {available} day(s) before the "
+            f"{ANCHOR_DATE.isoformat()} anchor, but {runway_driver(self.lifecycle)} needs at "
+            f"least {required}. Move {field} to {latest.isoformat()} or earlier, or seed a "
+            f"lifecycle that reaches less far."
+        )
 
     def effective_format_mix(self) -> dict[str, float]:
         """Format weights restricted to ``output.formats`` and normalized to 1.0."""
@@ -921,14 +1022,21 @@ _MECHANISMS: Mapping[str, tuple[str, ...]] = {
 # Stage → (age of the injury in days, resolution weights). Later stages have
 # older injuries and firmer resolutions.
 _STAGE_AGE_DAYS: Mapping[str, tuple[int, int]] = {
-    "intake": (14, 75),
-    "active_treatment": (90, 300),
+    "intake": (30, 75),
+    "active_treatment": (180, 300),
     "discovery": (240, 480),
     "medical_legal": (365, 640),
     "pre_trial": (540, 900),
     "resolved": (720, 1200),
     "post_recon": (900, 1500),
 }
+"""How old a derived case's injury is, per stage.
+
+Each lower bound is at or above the corresponding runway floor, and
+:func:`_derive_injury` raises it further at run time rather than trusting this
+table to stay in step — so a derived seed can never fail the validation in
+:meth:`CaseSeed._check_runway`, no matter how the windows are later tuned.
+"""
 
 _STAGE_RESOLUTIONS: Mapping[str, Mapping[str, float]] = {
     "intake": {"pending": 1.0},
@@ -990,11 +1098,30 @@ def _derive_body_parts(rng: random.Random, category: str, count: int) -> list[Bo
     return [BodyPart(part=part, icd10=icd10, detail=detail) for part, icd10, detail in chosen]
 
 
+def _stage_runway_floor(stage: str) -> int:
+    """The worst-case runway any lifecycle at *stage* can demand.
+
+    :func:`_derive_injury` runs before the lifecycle exists, so it assumes the
+    most demanding shape the stage can still take: the resolved stages can go on
+    to draw reconsideration or post-resolution lien litigation, and both need
+    :data:`POST_RESOLUTION_RUNWAY_DAYS`.
+    """
+    floor = STAGE_RUNWAY_DAYS[stage]
+    if stage in _RESOLVED_STAGES:
+        return max(floor, RESOLVED_RUNWAY_DAYS, POST_RESOLUTION_RUNWAY_DAYS)
+    if stage == "pre_trial":
+        # ``_STAGE_RESOLUTIONS['pre_trial']`` can settle the case-in-chief.
+        return max(floor, RESOLVED_RUNWAY_DAYS)
+    return floor
+
+
 def _derive_injury(rng: random.Random, profile: DistributionProfile, stage: str) -> InjurySpec:
-    """Derive the injury block for one case."""
+    """Derive the injury block for one case, always leaving statutory runway."""
     injury_type = _weighted_choice(rng, profile.injury_types)
     category = _weighted_choice(rng, profile.body_part_categories)
     low, high = _STAGE_AGE_DAYS[stage]
+    low = max(low, _stage_runway_floor(stage))
+    high = max(high, low)
     age_days = rng.randint(low, high)
     onset = ANCHOR_DATE - timedelta(days=age_days)
     part_count = 1 if rng.random() > profile.complex_rate else rng.randint(2, 5)
@@ -1217,6 +1344,9 @@ __all__ = [
     "BODY_PART_CATALOG",
     "DEFAULT_FORMAT_MIX",
     "DISTRIBUTIONS",
+    "POST_RESOLUTION_RUNWAY_DAYS",
+    "RESOLVED_RUNWAY_DAYS",
+    "STAGE_RUNWAY_DAYS",
     "ApplicantProfile",
     "AttorneyProfile",
     "AutoSpec",
@@ -1249,7 +1379,9 @@ __all__ = [
     "load_caseload_spec",
     "parse_case_seed",
     "parse_caseload_spec",
+    "required_runway_days",
     "resolve_caseload",
+    "runway_driver",
     "seed_to_dict",
     "stage_order",
     "write_case_seed",

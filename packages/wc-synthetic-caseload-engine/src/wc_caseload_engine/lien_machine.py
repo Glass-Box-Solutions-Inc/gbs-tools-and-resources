@@ -26,7 +26,7 @@ from __future__ import annotations
 import random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 
 import structlog
 
@@ -37,6 +37,7 @@ from wc_caseload_engine.lifecycle_bridge import (
     ROLE_LIEN_CLAIMANT,
     CaseTimeline,
     DatedCandidate,
+    fit_track,
 )
 from wc_caseload_engine.seeds import CaseSeed
 
@@ -130,7 +131,7 @@ def _track_resolution(seed: CaseSeed, rng: random.Random) -> str:
     return declared
 
 
-def _base_date(seed: CaseSeed, timeline: CaseTimeline, rng: random.Random):
+def _base_date(seed: CaseSeed, timeline: CaseTimeline, rng: random.Random) -> date:
     """When this case's lien activity starts.
 
     Post-resolution lien litigation is the common real-world shape: the
@@ -140,11 +141,42 @@ def _base_date(seed: CaseSeed, timeline: CaseTimeline, rng: random.Random):
     liens = seed.lifecycle.liens
     resolution_date = timeline.resolution_date
     if liens.post_resolution_litigation and resolution_date is not None:
-        return timeline.clamp(resolution_date + timedelta(days=rng.randint(15, 90)))
+        return resolution_date + timedelta(days=rng.randint(15, 90))
     proposed = timeline.injury_date + timedelta(days=rng.randint(365, 730))
     if resolution_date is not None and proposed > resolution_date:
         proposed = resolution_date - timedelta(days=rng.randint(30, 120))
-    return timeline.clamp(proposed)
+    return max(timeline.injury_date, min(proposed, timeline.horizon))
+
+
+def _track_window(seed: CaseSeed, timeline: CaseTimeline, proposed: Sequence[date]) -> tuple[
+    date, date
+]:
+    """The ``[floor, ceiling]`` one lien track's documents must fit inside.
+
+    The floor is the injury, or the case-in-chief resolution when the seed says
+    the liens litigate on past it — a lien conference cannot precede the
+    settlement it is fighting over.
+
+    The ceiling is normally the case horizon. For a post-resolution track it is
+    **extended past the horizon** to whatever the chain actually needs. This is
+    the deliberate half of the fix: post-resolution lien practice genuinely runs
+    later than the case-in-chief, and a fixed anchor is an artifact of
+    determinism, not a fact about the file. Squeezing five lien documents into
+    the days between a late settlement and the anchor is what produced five
+    documents sharing one date; letting the track run past the anchor keeps the
+    story legible and the ordering real.
+    """
+    liens = seed.lifecycle.liens
+    resolution_date = timeline.resolution_date
+    post_resolution = liens.post_resolution_litigation and resolution_date is not None
+
+    floor = resolution_date + timedelta(days=1) if post_resolution else timeline.injury_date
+    if post_resolution:
+        needed = max(proposed) if proposed else floor
+        ceiling = max(timeline.horizon, needed, floor + timedelta(days=len(proposed)))
+    else:
+        ceiling = timeline.horizon
+    return floor, max(ceiling, floor)
 
 
 def build_lien_tracks(seed: CaseSeed, timeline: CaseTimeline) -> list[LienTrack]:
@@ -164,7 +196,7 @@ def build_lien_tracks(seed: CaseSeed, timeline: CaseTimeline) -> list[LienTrack]
 
         base = _base_date(seed, timeline, rng)
         # Stagger claimants so a file does not show eight liens filed the same day.
-        claim_date = timeline.clamp(base + timedelta(days=index * rng.randint(3, 21)))
+        claim_date = base + timedelta(days=index * rng.randint(3, 21))
         docs: list[DatedCandidate] = [
             DatedCandidate(
                 subtype=claim_subtype,
@@ -177,7 +209,7 @@ def build_lien_tracks(seed: CaseSeed, timeline: CaseTimeline) -> list[LienTrack]
             ),
             DatedCandidate(
                 subtype="NOTICE_OF_LIEN_FILING",
-                doc_date=timeline.clamp(claim_date + timedelta(days=rng.randint(0, 14))),
+                doc_date=claim_date + timedelta(days=rng.randint(0, 14)),
                 track=TRACK_LIEN,
                 priority=32,
                 author_role=ROLE_LIEN_CLAIMANT,
@@ -191,7 +223,7 @@ def build_lien_tracks(seed: CaseSeed, timeline: CaseTimeline) -> list[LienTrack]
         conference = resolution == "order_on_lien" or (
             resolution != "pending" and rng.random() < _CONFERENCE_PROBABILITY
         )
-        conference_date = timeline.clamp(claim_date + timedelta(days=rng.randint(60, 180)))
+        conference_date = claim_date + timedelta(days=rng.randint(60, 180))
         if conference:
             docs.append(
                 DatedCandidate(
@@ -207,9 +239,7 @@ def build_lien_tracks(seed: CaseSeed, timeline: CaseTimeline) -> list[LienTrack]
             docs.append(
                 DatedCandidate(
                     subtype="PRETRIAL_CONFERENCE_STATEMENT_LIEN",
-                    doc_date=timeline.clamp(
-                        conference_date + timedelta(days=rng.randint(20, 45))
-                    ),
+                    doc_date=conference_date + timedelta(days=rng.randint(20, 45)),
                     track=TRACK_LIEN,
                     priority=36,
                     author_role=ROLE_APPLICANT_ATTORNEY,
@@ -223,7 +253,7 @@ def build_lien_tracks(seed: CaseSeed, timeline: CaseTimeline) -> list[LienTrack]
             docs.append(
                 DatedCandidate(
                     subtype=resolution_subtype,
-                    doc_date=timeline.clamp(anchor + timedelta(days=rng.randint(30, 150))),
+                    doc_date=anchor + timedelta(days=rng.randint(30, 150)),
                     track=TRACK_LIEN,
                     priority=28,
                     author_role=(
@@ -233,6 +263,12 @@ def build_lien_tracks(seed: CaseSeed, timeline: CaseTimeline) -> list[LienTrack]
                     metadata={"lien_index": index, "claimant": claimant},
                 )
             )
+
+        # Dates above are the chain's *intent*, deliberately unclamped. Fitting
+        # the whole chain at once is what keeps the ordering; clamping each date
+        # as it was built is what used to pile a whole track onto the horizon.
+        floor, ceiling = _track_window(seed, timeline, [doc.doc_date for doc in docs])
+        docs = fit_track(docs, floor=floor, ceiling=ceiling, label=f"lien[{index}]:{claimant}")
 
         tracks.append(
             LienTrack(

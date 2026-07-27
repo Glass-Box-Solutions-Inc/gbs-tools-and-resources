@@ -82,6 +82,17 @@ If an import breaks, fix the bridge — not by copying files.
 - **`list(set(...))` in `data/content_pools.py`** (lines ~1043 and ~1136) makes substrate
   output non-reproducible across processes. Worked around here with `PYTHONHASHSEED=0`; the
   proper fix is `sorted(...)` upstream.
+- **Substrate `date.today()` in rendered content.** Four sites (`fake_data_generator`,
+  `qme_ame_report`, `settlement_memo`, `deposition_exchanges`) compute ages and hire dates from
+  the *local* wall clock. Rebound at runtime by `determinism.pin_substrate_clock()` — a
+  deliberate exception to the no-patching rule, and a narrow one: the anchor is a process-wide
+  constant, so it carries none of the shared-mutable-state risk that keeps the letterhead
+  unpatched. The proper fix is an injectable clock upstream.
+- **Faker's `date_of_birth` is clock-relative.** A seeded Faker is still not deterministic for
+  age-relative draws: the window ends at `datetime.now()`. Faker is *not* patched — rebinding
+  its `datetime` breaks the `isinstance` checks in its own date parser — so
+  `case_context._date_of_birth` owns the field instead, deriving it from `seed.rng("dob")`.
+  Any future substrate use of a clock-relative Faker provider needs the same treatment.
 - **Lien and recon templates are variants, not bespoke.** `LIEN_RESOLUTION` and
   `LIEN_STIPULATION_AGREEMENT` both render through `Stipulations`;
   `PETITION_RECONSIDERATION_FILED` renders through `ApplicationForAdjudication`;
@@ -94,15 +105,46 @@ If an import breaks, fix the bridge — not by copying files.
 ## Determinism rules (non-negotiable)
 
 1. **Never read the wall clock.** `ANCHOR_DATE` (2026-01-01) is "today". No manifest carries a
-   generation timestamp — that is what keeps the guarantee verifiable.
+   generation timestamp — that is what keeps the guarantee verifiable. This binds our *and*
+   the substrate's code: `determinism.pin_substrate_clock()` rebinds the four substrate names
+   that call `date.today()`, and any new one must be added to `CLOCK_PINNED_ATTRIBUTES` /
+   `CLOCK_PINNED_CALLABLES`.
 2. **Never use `hash()` or bare `random`** for anything that affects output. Use
    `seed.rng(salt)` or `derive_seed(rng_seed, salt)` (SHA-256 based).
-3. **Every new output format needs a determinism check.** Containers embed timestamps: ZIP
-   does, PDF does. Add the normalization to `determinism.py` and a test beside
-   `test_normalize_docx_is_stable_and_uses_the_document_date`.
-4. **Cross-process is the real test.** In-process double-runs share a hash salt and will pass
-   even when a leak exists. `test_same_seed_produces_identical_bytes_across_processes` spawns
-   fresh interpreters on purpose.
+3. **Never build a timestamp from local time.** No `datetime.now`, `date.today`,
+   `time.localtime`, `time.mktime`, `.timestamp()` or `.astimezone()` anywhere in a rendering
+   path. Every timestamp goes through `determinism.fixed_utc_datetime()` /
+   `pdf_date_string()` / `zip_date_time()`, all pinned to noon UTC on the document's own date.
+4. **Every new output format needs a determinism check.** Containers embed timestamps: ZIP
+   does, PDF does, RFC 2822 headers do. Add the normalization to `determinism.py` and a test
+   beside `test_normalize_docx_is_stable_and_uses_the_document_date`.
+5. **Cross-process is the real test, and so is cross-timezone.** In-process double-runs share a
+   hash salt and will pass even when a leak exists;
+   `test_same_seed_produces_identical_bytes_across_processes` spawns fresh interpreters on
+   purpose, and `test_timezone_determinism.py` renders the same case under
+   `America/Los_Angeles` and `Australia/Sydney`. The TZ probe is what caught the substrate's
+   `date.today()` content and Faker's clock-relative `date_of_birth`; a same-machine gate had
+   been passing over both for the whole of Phase B.
+6. **Library mode does not self-pin.** `ensure_stable_hashing()` works by re-executing the
+   process and only the CLI entry point calls it. Anything importing this package as a library
+   must call it first, or set `PYTHONHASHSEED=0` before the interpreter starts. Document this
+   wherever a new entry point is added.
+
+### Date-spine rules
+
+1. **Floors before ceilings.** Bound a date with `max(floor, min(proposed, ceiling))`, never a
+   bare `min(...)`. A bare clamp is what dated a reconsideration petition 80 days before the
+   Application it appealed from.
+2. **A sequenced chain is fitted, not clamped.** Lien tracks and the recon round trip build
+   their intended dates unclamped and pass the whole list through
+   `lifecycle_bridge.fit_track()`, which compresses in order with strictly increasing dates.
+   Clamping a chain date-by-date stacks it on the horizon. `CaseTimeline.clamp` is only for the
+   parallel core track, whose documents have no ordering relationship.
+3. **Impossible seeds are rejected, not absorbed.** `CaseSeed._check_runway` fails loudly when
+   the injury sits too close to the anchor for the seeded story. Adding a lifecycle feature that
+   consumes calendar time means adding its floor to `seeds.STAGE_RUNWAY_DAYS` (or the
+   resolution/post-resolution constants) *and* to `_stage_runway_floor`, so auto-derivation
+   stays compliant by construction.
 
 ---
 
@@ -110,7 +152,7 @@ If an import breaks, fix the bridge — not by copying files.
 
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/ -q      # 169 tests
+.venv/bin/python -m pytest tests/ -q      # 225 tests
 .venv/bin/ruff check .
 ```
 
@@ -122,6 +164,8 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_substrate_bridge.py` | The bridge imports cleanly (fail fast, clear message) |
 | `test_cli_surface.py` | Command surface, exit codes, templates |
 | `test_lifecycle_paths.py` | Lien resolutions, recon outcomes, statutory windows, dates |
+| `test_date_spine.py` | Runway validation, timeline invariants, ordering-preserving track fitting |
+| `test_timezone_determinism.py` | Cross-timezone byte identity, clock pinning, synthetic markers, `-m` re-exec |
 | `test_rendering.py` | Four formats open in their own readers, manifests, determinism |
 
 Tests requiring the substrate or the classifier checkout skip cleanly when absent — CI has the

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import subprocess
 import sys
 from collections.abc import Iterator, Sequence
 from functools import lru_cache
@@ -171,15 +172,115 @@ def substrate_available() -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# Provenance: which substrate produced this caseload
+# ---------------------------------------------------------------------------
+
+UNKNOWN_SHA = "unknown"
+"""Recorded when the substrate is not in a git checkout, or git is unavailable."""
+
+SUBSTRATE_PIN_FILE = "substrate_pin.txt"
+"""Package-root file recording the substrate commit this engine was verified against."""
+
+
+@lru_cache(maxsize=1)
+def substrate_git_sha() -> str:
+    """The commit the substrate is at, or :data:`UNKNOWN_SHA`.
+
+    Every rendered document's content ultimately comes from the substrate's
+    templates and content pools, so "same seed, same version" is only half the
+    provenance story — a manifest that does not name the substrate cannot be
+    reproduced from itself. This is recorded as ``provenance.substrateSha``.
+
+    Scoped to the substrate *directory* rather than plain ``rev-parse HEAD``:
+    the substrate is a package inside a monorepo, so bare ``HEAD`` moves on
+    every unrelated commit and a pin built on it would warn constantly — an
+    alarm that always fires is an alarm nobody reads. The last commit that
+    touched the substrate path is the value that actually answers "did the
+    substrate change under me?".
+    """
+    root = find_substrate()
+    if root is None:
+        return UNKNOWN_SHA
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), "log", "-1", "--format=%H", "--", "."],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.debug("substrate.sha_unavailable", error=str(exc))
+        return UNKNOWN_SHA
+    sha = completed.stdout.strip()
+    if completed.returncode != 0 or not sha:
+        log.debug("substrate.sha_unavailable", returncode=completed.returncode)
+        return UNKNOWN_SHA
+    return sha
+
+
+def substrate_pin_path() -> Path:
+    """Location of :data:`SUBSTRATE_PIN_FILE` at this package's root."""
+    # src/wc_caseload_engine/substrate.py -> <package root>
+    return Path(__file__).resolve().parents[2] / SUBSTRATE_PIN_FILE
+
+
+def read_substrate_pin() -> str | None:
+    """The pinned substrate SHA, or ``None`` when the package carries no pin."""
+    path = substrate_pin_path()
+    if not path.is_file():
+        return None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            return stripped
+    return None
+
+
+def check_substrate_pin() -> bool:
+    """Warn when the substrate has moved off the pinned commit.
+
+    A warning, never a failure: generating against a newer substrate is a normal
+    thing to do deliberately and an alarming thing to do by accident, and only
+    the operator can tell those apart. Returns ``True`` when the pin matches (or
+    there is nothing to compare).
+    """
+    pinned = read_substrate_pin()
+    if pinned is None:
+        return True
+    actual = substrate_git_sha()
+    if actual in (UNKNOWN_SHA, pinned):
+        return True
+    log.warning(
+        "substrate.pin_mismatch",
+        pinned=pinned,
+        actual=actual,
+        pin_file=str(substrate_pin_path()),
+        hint=(
+            "the substrate has changed since this engine was verified against it; "
+            "re-run the determinism gates and update substrate_pin.txt if the new "
+            "output is correct"
+        ),
+    )
+    return False
+
+
 __all__ = [
     "REQUIRED_MODULES",
     "SUBSTRATE_DIR_NAME",
     "SUBSTRATE_ENV_VAR",
+    "SUBSTRATE_PIN_FILE",
+    "UNKNOWN_SHA",
     "SubstrateUnavailableError",
+    "check_substrate_pin",
     "find_substrate",
     "import_substrate",
     "install_substrate_path",
+    "read_substrate_pin",
     "require_substrate",
     "substrate_available",
+    "substrate_git_sha",
     "substrate_path",
+    "substrate_pin_path",
 ]

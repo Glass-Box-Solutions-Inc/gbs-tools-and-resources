@@ -1,0 +1,17 @@
+# The merus-test-data-generator commit this engine's determinism gates were
+# last verified against. Every rendered document's content comes from that
+# substrate, so a caseload is only reproducible against a known substrate.
+#
+# Read by wc_caseload_engine.substrate.check_substrate_pin(), which logs a
+# WARN (never a failure) when the substrate has moved: generating against a
+# newer substrate is normal when deliberate and alarming when accidental, and
+# only the operator can tell those apart.
+#
+# The value is the last commit that touched packages/merus-test-data-generator,
+# not the monorepo HEAD -- HEAD moves on every unrelated commit, and a pin that
+# warns constantly is a pin nobody reads.
+#
+# To update: re-run the determinism gates (demo double-run + TZ probe), confirm
+# the output is correct, then replace the SHA below with
+#   git -C packages/merus-test-data-generator log -1 --format=%H -- .
+cb485354f16164ca2d422804fe9d40f9a2250920

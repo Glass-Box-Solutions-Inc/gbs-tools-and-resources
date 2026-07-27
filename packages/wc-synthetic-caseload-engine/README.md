@@ -248,7 +248,30 @@ emits no recon documents and records a warning naming the fix.
 `carrier`, `dateOfInjury`, `venue`, `judge`, `stage`, `resolution`), a `liens[]` summary, a
 `recon{}` summary, a `documents[]` array of
 `{filename, subtype, type, format, documentDate, md5Checksum, fileSize, mimeType}`, and a
-`provenance` block asserting `zeroRealPii: true` with the generator version and seed hash.
+`provenance` block asserting `zeroRealPii: true` with the generator version, the seed hash and
+`substrateSha`.
+
+**`provenance.substrateSha`.** Every document's content ultimately comes from the substrate's
+templates and content pools, so "same seed, same version" is only half the provenance story —
+a manifest that does not name the substrate cannot be reproduced from itself. The recorded
+value is the last commit that touched `packages/merus-test-data-generator` (not the monorepo
+`HEAD`, which moves on every unrelated commit), or `unknown` outside a git checkout.
+`substrate_pin.txt` records the commit the determinism gates were last verified against;
+generating against anything else logs a WARN and never fails, because deliberately moving to a
+newer substrate is normal and only the operator can tell deliberate from accidental.
+
+**Synthetic-data markers.** Every emitted file says what it is: PDFs carry
+`SYNTHETIC TEST DATA — wc-synthetic-caseload-engine` in `/Subject` and `/Producer`, `.docx`
+files in `core_properties.comments`, `.eml` files in an `X-Synthetic-Data: true` header. All
+are applied *before* the manifest checksum is taken, so a marker can never invalidate a
+recorded MD5. These are metadata-only: a visible page watermark would have to come from the
+substrate's page templates, which this package does not edit.
+
+**`caseload_manifest.json` → `subtypeCoverage`.** `{distinctSubtypesEmitted, totalCanonical,
+percent}`. The engine's *vocabulary* is the classifier's 353 subtypes; what any given caseload
+*emits* is whatever its seeds' lifecycles call for — a few dozen for the six-case demo. The
+field exists so "353-subtype taxonomy" is never read as "emits all 353"; the gap is the
+backlog of subtypes still needing targeted seeds.
 
 **Filename styles.** `neutral` (default) emits `###_YYYY-MM-DD.ext` and leaks no subtype — a
 classifier scored against these files cannot cheat by reading the name. `corpus` emits
@@ -259,21 +282,37 @@ classifier scored against these files cannot cheat by reading the name. `corpus`
 
 ## Determinism
 
-Same seed plus same version produces the same bytes, including every MD5 in the manifest.
-Manifests carry **no generation timestamp**, precisely so the guarantee stays verifiable.
+Same seed plus same version produces the same bytes — **on any machine, in any timezone, on any
+day** — including every MD5 in the manifest. Manifests carry **no generation timestamp**,
+precisely so the guarantee stays verifiable.
 
-Three leaks had to be closed, all in substrate output, none by editing the substrate
+Six leaks had to be closed, all in substrate or library output, none by editing the substrate
 (see `src/wc_caseload_engine/determinism.py`):
 
 | Leak | Fix |
 |------|-----|
 | `list(set(items))` in the substrate's content pools — salted string hashing reordered document content per process | The CLI re-executes once with `PYTHONHASHSEED=0`, which stabilizes every set-of-strings ordering at once |
-| `.docx` ZIP entries stamped with wall-clock times | Repacked with timestamps derived from the document date |
-| ReportLab's wall-clock `/CreationDate` and random `/ID`; PyMuPDF's `/ID` on scanned rewrites | `rl_config.invariant` plus a length-preserving `/ID` rewrite that keeps xref offsets valid |
+| `.docx` ZIP entries stamped with wall-clock times | Repacked with a stamp built from the document date's own fields — never via `localtime`/`mktime` |
+| ReportLab's wall-clock `/CreationDate` and random `/ID`; PyMuPDF's `/ID` on scanned rewrites | `rl_config.invariant` (a fixed `gmtime` epoch, so the date string carries an explicit `+00'00'`) plus a length-preserving `/ID` rewrite that keeps xref offsets valid |
+| Four substrate sites compute document *content* from `date.today()` — applicant age, years employed, deponent age, a settlement-memo age line | `pin_substrate_clock()` rebinds those names to `ANCHOR_DATE` |
+| `.eml` `Date:` headers built with `datetime(...).timestamp()`, which resolves a naive datetime in the **local** zone | `normalize_eml()` rewrites the header from the document date at noon UTC |
+| Faker's `date_of_birth` draws from a window ending at `datetime.now()` — a seeded Faker still moved with the clock | The applicant's date of birth is owned in `case_context.py` and derived from `seed.rng("dob")` against the anchor |
+
+The last three were found by running the demo caseload under `TZ=Australia/Sydney`: 55 of 289
+files differed from the same command under UTC. Same-machine determinism was real;
+cross-machine determinism was not, and the tree would equally have drifted from one day to the
+next.
 
 Scan simulation is seeded explicitly from `sha256(rng_seed, "scan:<index>")` rather than the
-substrate's `hash()`-derived seed. Set `WC_CASELOAD_NO_REEXEC=1` to suppress the re-exec when
-running under a debugger; determinism across processes is then no longer guaranteed.
+substrate's `hash()`-derived seed.
+
+**Library-mode caveat.** The `PYTHONHASHSEED=0` pin is applied by re-executing the process,
+and only the CLI entry point does that (`wc-caseload …` or `python -m wc_caseload_engine …`).
+Importing this package as a library skips it, so a library consumer **must** either call
+`wc_caseload_engine.determinism.ensure_stable_hashing()` before generating anything, or start
+the interpreter with `PYTHONHASHSEED=0` already set. Without one of those, output stays
+self-consistent within a process but differs between processes. Set `WC_CASELOAD_NO_REEXEC=1`
+to suppress the re-exec under a debugger — with the same consequence.
 
 Verify it:
 
@@ -281,7 +320,49 @@ Verify it:
 wc-caseload generate --spec examples/demo-caseload.yaml --out /tmp/run-a
 wc-caseload generate --spec examples/demo-caseload.yaml --out /tmp/run-b
 diff -r /tmp/run-a /tmp/run-b && echo "identical"
+
+# and across timezones
+TZ=Australia/Sydney wc-caseload generate --spec examples/demo-caseload.yaml --out /tmp/run-c
+diff -r /tmp/run-a /tmp/run-c && echo "timezone-independent"
 ```
+
+---
+
+## Statutory runway
+
+A seed states how far its case got; the calendar decides whether that is possible. An
+Application follows the injury by two to six months, resolution by another six, a petition for
+reconsideration within 25 days of the award, and the WCAB's order within 60 more. A seed whose
+injury sits too close to the fixed anchor (`2026-01-01`) cannot hold its own story.
+
+Such a seed is **rejected at load time**, naming the field, the driver, the minimum and the
+latest acceptable date:
+
+```
+injury.date_of_injury is 2025-06-01, which leaves 214 day(s) before the 2026-01-01 anchor,
+but lifecycle.target_stage 'resolved' needs at least 540. Move injury.date_of_injury to
+2024-07-10 or earlier, or seed a lifecycle that reaches less far.
+```
+
+| Driver | Minimum runway |
+|--------|---------------|
+| `target_stage: intake` | 30 days |
+| `target_stage: active_treatment` / `discovery` | 180 days |
+| `target_stage: medical_legal` / `pre_trial` | 365 days |
+| `target_stage: resolved`, or any `resolution.type` other than `pending` | 540 days |
+| `target_stage: post_recon`, `reconsideration.enabled`, or `liens.post_resolution_litigation` | 720 days |
+
+This replaced silent clamping, which had absorbed a short runway by pinning over-horizon dates
+onto the anchor — producing a case whose petition for reconsideration was dated 80 days
+*before* the Application it appealed from. Auto-derived seeds satisfy these floors by
+construction.
+
+Sequenced chains (each lien track, the reconsideration round trip) are fitted as a whole rather
+than clamped date by date, so a tight window compresses them **in order** with strictly
+increasing dates instead of stacking five documents on one day. A lien track seeded with
+`post_resolution_litigation: true` is allowed to run past the anchor rather than be compressed:
+post-resolution lien practice genuinely outlives the case-in-chief, and the anchor is an
+artifact of determinism, not a fact about the file.
 
 ---
 
@@ -316,12 +397,19 @@ conservative.
 `wc-caseload taxonomy-check` re-parses the classifier TypeScript at runtime and exits nonzero
 on any drift.
 
+**Vocabulary is not coverage.** 353 is what this engine can *name*, not what a run *emits*. A
+caseload emits the subtypes its seeds' lifecycles call for — the six-case demo lands in the
+dozens. `caseload_manifest.json` states the ratio in `subtypeCoverage`
+(`distinctSubtypesEmitted` / `totalCanonical` / `percent`) so nobody sizing a classifier
+accuracy corpus mistakes one for the other. Raising coverage is a matter of writing seeds that
+reach the untouched subtypes, which is exactly what the document controls are for.
+
 ---
 
 ## Development
 
 ```bash
-.venv/bin/python -m pytest tests/ -q     # 169 tests
+.venv/bin/python -m pytest tests/ -q     # 225 tests
 .venv/bin/ruff check .
 ```
 

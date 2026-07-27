@@ -48,8 +48,10 @@ from typing import Any
 import structlog
 
 from wc_caseload_engine.determinism import (
-    ensure_invariant_pdfs,
+    ensure_deterministic_substrate,
+    mark_docx_synthetic,
     normalize_docx,
+    normalize_eml,
     normalize_pdf_id,
 )
 from wc_caseload_engine.seeds import CaseSeed, derive_seed
@@ -77,11 +79,11 @@ _INVARIANT_SET = False
 
 
 def _ensure_invariant() -> None:
-    """Pin ReportLab to invariant output (fixed timestamps, fixed file id)."""
+    """Pin ReportLab and freeze the substrate's clock before the first render."""
     global _INVARIANT_SET
     if _INVARIANT_SET:
         return
-    ensure_invariant_pdfs()
+    ensure_deterministic_substrate()
     _INVARIANT_SET = True
 
 
@@ -263,8 +265,14 @@ def render_document(
             out_path.write_bytes(normalized)
             payload = normalized
     elif effective_format == "docx":
-        # python-docx stamps wall-clock ZIP entry times; repack them stably.
+        # Mark first, repack second: the ZIP normalization must be the last
+        # thing that touches the file, or the marker's save re-stamps the
+        # entry times it just fixed.
+        mark_docx_synthetic(out_path)
         payload = normalize_docx(out_path, doc_date)
+    elif effective_format == "eml":
+        # The substrate's Date header resolves a naive datetime in local time.
+        payload = normalize_eml(out_path, doc_date)
 
     return RenderResult(
         path=out_path,

@@ -1,0 +1,346 @@
+"""Regression tests for timezone- and clock-independent output.
+
+The reproduction: running the demo caseload under ``TZ=Australia/Sydney``
+produced 55 of 289 files different from the same command under ``TZ=UTC`` —
+every ``.eml`` (a local-offset ``Date:`` header), fifteen PDFs and two DOCX
+files (content computed from ``date.today()``, which had already rolled over in
+Sydney), and the six manifests that carry their checksums.
+
+Same-machine determinism was real; cross-machine determinism was not, and the
+same tree would also have drifted from one day to the next.
+
+@Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import subprocess
+import sys
+import time
+import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from conftest import requires_substrate
+from wc_caseload_engine.determinism import (
+    REEXEC_MODULE,
+    SYNTHETIC_EML_HEADER,
+    SYNTHETIC_MARKER,
+    fixed_utc_datetime,
+    normalize_eml,
+    pdf_date_string,
+    pin_substrate_clock,
+    zip_date_time,
+)
+from wc_caseload_engine.manifests import generate_case
+from wc_caseload_engine.seeds import ANCHOR_DATE, parse_case_seed
+from wc_caseload_engine.substrate import import_substrate
+
+# Two zones on opposite sides of the date line, chosen so that for most of the
+# UTC day they disagree about what "today" is — which is precisely the bug.
+ZONE_EAST = "Australia/Sydney"
+ZONE_WEST = "America/Los_Angeles"
+
+
+@contextmanager
+def timezone_set(name: str) -> Iterator[None]:
+    """Run the block with ``TZ`` set process-wide, then restore it exactly."""
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = name
+    time.tzset()
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        time.tzset()
+
+
+def small_case(case_id: str) -> dict[str, Any]:
+    """A case small enough to render twice in a test, covering all four formats."""
+    return {
+        "case_id": case_id,
+        "rng_seed": 987654,
+        "injury": {
+            "type": "specific",
+            "date_of_injury": "2022-05-17",
+            "body_parts": [{"part": "lumbar_spine", "icd10": "M54.5"}],
+        },
+        "lifecycle": {
+            "target_stage": "resolved",
+            "claim_response": "accepted",
+            "eval_type": "qme",
+            "resolution": {"type": "c_and_r"},
+        },
+        "documents": {"global_cap": 12},
+        "output": {"formats": ["pdf", "scanned_pdf", "eml", "docx"]},
+    }
+
+
+def digest_tree(root: Path) -> dict[str, str]:
+    """Path-keyed SHA-256 of every file under *root*."""
+    return {
+        str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+# ---------------------------------------------------------------------------
+# The reproduction
+# ---------------------------------------------------------------------------
+
+
+@requires_substrate
+def test_output_is_byte_identical_across_timezones(tmp_path: Path) -> None:
+    """The headline guarantee: same seed, different zone, same bytes."""
+    seed = parse_case_seed(small_case("tz-probe"))
+
+    with timezone_set(ZONE_WEST):
+        west = generate_case(seed, tmp_path / "west", case_number=1).directory
+    with timezone_set(ZONE_EAST):
+        east = generate_case(seed, tmp_path / "east", case_number=1).directory
+
+    west_digests = digest_tree(west)
+    east_digests = digest_tree(east)
+
+    assert set(west_digests) == set(east_digests), "the two runs wrote different files"
+    drifted = sorted(name for name in west_digests if west_digests[name] != east_digests[name])
+    assert not drifted, (
+        f"{len(drifted)} file(s) drifted between {ZONE_WEST} and {ZONE_EAST}: {drifted}"
+    )
+
+
+@requires_substrate
+def test_every_format_is_actually_exercised_by_the_probe(tmp_path: Path) -> None:
+    """A TZ test that renders only PDFs would have passed before the fix."""
+    seed = parse_case_seed(small_case("tz-formats"))
+    result = generate_case(seed, tmp_path, case_number=1)
+    formats = {entry["format"] for entry in result.manifest["documents"]}  # type: ignore[union-attr]
+    assert "eml" in formats, "the .eml Date header was the widest drift source"
+
+
+# ---------------------------------------------------------------------------
+# The substrate clock
+# ---------------------------------------------------------------------------
+
+
+@requires_substrate
+class TestSubstrateClockPin:
+    """Every substrate reading of "today" resolves to the anchor."""
+
+    def test_the_pin_is_applied_and_idempotent(self) -> None:
+        pin_substrate_clock()
+        assert pin_substrate_clock() is False
+
+    @pytest.mark.parametrize(
+        ("module_name", "attribute"),
+        [
+            ("data.fake_data_generator", "date"),
+            ("pdf_templates.medical.qme_ame_report", "_date"),
+            ("pdf_templates.summaries.settlement_memo", "date"),
+        ],
+    )
+    def test_module_level_today_is_the_anchor(self, module_name: str, attribute: str) -> None:
+        pin_substrate_clock()
+        pinned = getattr(import_substrate(module_name), attribute)
+        assert pinned.today() == ANCHOR_DATE
+
+    def test_the_function_local_helper_is_the_anchor(self) -> None:
+        """``deposition_exchanges._today`` imports ``date`` inside its body."""
+        pin_substrate_clock()
+        module = import_substrate("data.deposition_exchanges")
+        assert module._today() == ANCHOR_DATE
+
+    def test_the_anchor_is_the_same_in_both_zones(self) -> None:
+        pin_substrate_clock()
+        module = import_substrate("data.fake_data_generator")
+        with timezone_set(ZONE_EAST):
+            east = module.date.today()
+        with timezone_set(ZONE_WEST):
+            west = module.date.today()
+        assert east == west == ANCHOR_DATE
+
+
+# ---------------------------------------------------------------------------
+# Timestamp derivations
+# ---------------------------------------------------------------------------
+
+
+class TestTimestampDerivations:
+    """Each derivation is pinned to UTC, so none of them move with ``TZ``."""
+
+    SAMPLE = date(2024, 3, 15)
+
+    def test_fixed_utc_datetime_carries_utc_and_ignores_the_zone(self) -> None:
+        with timezone_set(ZONE_EAST):
+            east = fixed_utc_datetime(self.SAMPLE)
+        with timezone_set(ZONE_WEST):
+            west = fixed_utc_datetime(self.SAMPLE)
+        assert east == west
+        assert east.utcoffset().total_seconds() == 0  # type: ignore[union-attr]
+
+    def test_pdf_date_string_states_its_offset_literally(self) -> None:
+        with timezone_set(ZONE_EAST):
+            east = pdf_date_string(self.SAMPLE)
+        with timezone_set(ZONE_WEST):
+            west = pdf_date_string(self.SAMPLE)
+        assert east == west == "D:20240315120000+00'00'"
+
+    def test_zip_date_time_reads_the_date_fields_not_the_clock(self) -> None:
+        with timezone_set(ZONE_EAST):
+            east = zip_date_time(self.SAMPLE)
+        with timezone_set(ZONE_WEST):
+            west = zip_date_time(self.SAMPLE)
+        assert east == west
+        assert east[:3] == (2024, 3, 15)
+
+    def test_pre_1980_dates_fall_back_to_the_zip_epoch(self) -> None:
+        assert zip_date_time(date(1975, 6, 1)) == (1980, 1, 1, 0, 0, 0)
+
+
+class TestEmlNormalization:
+    """The ``.eml`` header rewrite, tested without a case around it."""
+
+    RAW = (
+        "From: a@example.com\n"
+        "To: b@example.com\n"
+        "Date: Fri, 25 Mar 2022 19:00:00 -0000\n"
+        "Subject: Probe\n"
+        "\n"
+        "body text\n"
+    )
+
+    def test_the_date_header_is_rewritten_to_fixed_utc(self, tmp_path: Path) -> None:
+        path = tmp_path / "probe.eml"
+        path.write_text(self.RAW, encoding="utf-8")
+        normalize_eml(path, date(2022, 3, 25))
+        assert "Date: Fri, 25 Mar 2022 12:00:00 +0000" in path.read_text(encoding="utf-8")
+
+    def test_the_synthetic_header_is_stamped_exactly_once(self, tmp_path: Path) -> None:
+        path = tmp_path / "probe.eml"
+        path.write_text(self.RAW, encoding="utf-8")
+        normalize_eml(path, date(2022, 3, 25))
+        normalize_eml(path, date(2022, 3, 25))
+        text = path.read_text(encoding="utf-8")
+        assert text.count(f"{SYNTHETIC_EML_HEADER}: true") == 1
+
+    def test_the_body_is_untouched(self, tmp_path: Path) -> None:
+        path = tmp_path / "probe.eml"
+        path.write_text(self.RAW, encoding="utf-8")
+        normalize_eml(path, date(2022, 3, 25))
+        assert path.read_text(encoding="utf-8").endswith("body text\n")
+
+    def test_normalization_is_idempotent_at_the_byte_level(self, tmp_path: Path) -> None:
+        path = tmp_path / "probe.eml"
+        path.write_text(self.RAW, encoding="utf-8")
+        once = normalize_eml(path, date(2022, 3, 25))
+        twice = normalize_eml(path, date(2022, 3, 25))
+        assert once == twice
+
+
+# ---------------------------------------------------------------------------
+# Synthetic-data markers
+# ---------------------------------------------------------------------------
+
+
+@requires_substrate
+class TestSyntheticMarkers:
+    """Every emitted file says what it is, and saying so costs no determinism."""
+
+    @pytest.fixture(scope="class")
+    def rendered(self, tmp_path_factory: pytest.TempPathFactory) -> Any:
+        seed = parse_case_seed(small_case("marker-probe"))
+        return generate_case(seed, tmp_path_factory.mktemp("markers"), case_number=1)
+
+    def _paths(self, rendered: Any, suffix: str) -> list[Path]:
+        return sorted((rendered.directory / "documents").glob(f"*{suffix}"))
+
+    def test_pdfs_carry_the_marker_in_subject_and_producer(self, rendered: Any) -> None:
+        pdfs = self._paths(rendered, ".pdf")
+        assert pdfs
+        payload = pdfs[0].read_bytes()
+        assert b"/Subject" in payload
+        assert b"SYNTHETIC TEST DATA" in payload
+
+    def test_docx_files_carry_the_marker_in_core_properties(self, rendered: Any) -> None:
+        docx_files = self._paths(rendered, ".docx")
+        if not docx_files:
+            pytest.skip("format mix produced no .docx for this seed")
+        with zipfile.ZipFile(docx_files[0]) as archive:
+            core = archive.read("docProps/core.xml").decode("utf-8")
+        assert SYNTHETIC_MARKER in core
+
+    def test_eml_files_carry_the_marker_header(self, rendered: Any) -> None:
+        emails = self._paths(rendered, ".eml")
+        if not emails:
+            pytest.skip("format mix produced no .eml for this seed")
+        assert f"{SYNTHETIC_EML_HEADER}: true" in emails[0].read_text(encoding="utf-8")
+
+    def test_markers_are_inside_the_hashed_bytes(self, rendered: Any) -> None:
+        """A marker applied after hashing would make every manifest a lie."""
+        for entry in rendered.manifest["documents"]:
+            path = rendered.directory / "documents" / entry["filename"]
+            actual = hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
+            assert actual == entry["md5Checksum"], entry["filename"]
+
+
+# ---------------------------------------------------------------------------
+# The ``-m`` re-exec form
+# ---------------------------------------------------------------------------
+
+
+class TestModuleEntryPoint:
+    """``python -m wc_caseload_engine`` must survive the hash-seed re-exec."""
+
+    def test_the_module_entry_point_exists(self) -> None:
+        from wc_caseload_engine import __main__
+
+        assert callable(__main__.main)
+
+    def test_the_module_form_runs_and_reports_its_version(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "-m", REEXEC_MODULE, "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr[-2000:]
+        assert "wc-caseload" in completed.stdout
+
+    def test_the_module_form_survives_the_reexec_with_a_pinned_hash_seed(self) -> None:
+        """The re-exec happens for real here: PYTHONHASHSEED starts unset."""
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONHASHSEED"}
+        completed = subprocess.run(
+            [sys.executable, "-m", REEXEC_MODULE, "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        assert completed.returncode == 0, completed.stderr[-2000:]
+        assert "taxonomy-check" in completed.stdout
+
+    def test_the_console_script_still_works_after_the_argv_change(self) -> None:
+        script = Path(sys.executable).with_name("wc-caseload")
+        if not script.exists():
+            pytest.skip("console script not installed in this environment")
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONHASHSEED"}
+        completed = subprocess.run(
+            [str(script), "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        assert completed.returncode == 0, completed.stderr[-2000:]
+        assert "wc-caseload" in completed.stdout

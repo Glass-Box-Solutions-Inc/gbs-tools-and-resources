@@ -35,6 +35,7 @@ import random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from itertools import pairwise
 from typing import Any
 
 import structlog
@@ -325,6 +326,27 @@ class DatedCandidate:
         )
 
 
+class TimelineInvariantError(ValueError):
+    """Raised when a built timeline or fitted track violates its ordering rules.
+
+    These are engine bugs, not seed problems — a seed that cannot produce a
+    coherent spine is rejected earlier, by
+    :meth:`~wc_caseload_engine.seeds.CaseSeed._check_runway`. Raising (rather
+    than asserting) keeps the check alive under ``python -O``.
+    """
+
+
+MIN_RESOLUTION_LAG_DAYS = 60
+"""Floor between the Application for Adjudication and any resolution.
+
+Nothing resolves the week it is filed. This is the invariant that the old
+``resolution = min(resolution, horizon - reserve)`` clamp could violate: a
+short-runway seed pulled the resolution *below* its own Application, and the
+reconsideration machine then dated a petition eighty days before the case
+existed.
+"""
+
+
 @dataclass(frozen=True, slots=True)
 class CaseTimeline:
     """The dates every track hangs off, all derived from the seed."""
@@ -336,8 +358,38 @@ class CaseTimeline:
     award_date: date | None
     horizon: date = ANCHOR_DATE
 
+    def __post_init__(self) -> None:
+        """Enforce the spine's ordering at construction, not at review time."""
+        if self.claim_filed_date < self.injury_date:
+            raise TimelineInvariantError(
+                f"claim_filed_date {self.claim_filed_date} precedes injury_date "
+                f"{self.injury_date}"
+            )
+        if self.application_filed_date < self.injury_date:
+            raise TimelineInvariantError(
+                f"application_filed_date {self.application_filed_date} precedes injury_date "
+                f"{self.injury_date}"
+            )
+        if self.resolution_date is not None:
+            if self.resolution_date < self.application_filed_date:
+                raise TimelineInvariantError(
+                    f"resolution_date {self.resolution_date} precedes application_filed_date "
+                    f"{self.application_filed_date}"
+                )
+            if self.award_date is not None and self.award_date < self.resolution_date:
+                raise TimelineInvariantError(
+                    f"award_date {self.award_date} precedes resolution_date "
+                    f"{self.resolution_date}"
+                )
+
     def clamp(self, value: date) -> date:
-        """Never let a document be dated in the future or before the injury."""
+        """Bound a single date to the case's window.
+
+        Suitable only for the *parallel* core track, where documents have no
+        ordering relationship with each other. Sequenced chains — lien tracks,
+        the reconsideration round trip — must use :func:`fit_track` instead,
+        because clamping a whole sequence collapses it onto one day.
+        """
         if value > self.horizon:
             return self.horizon
         if value < self.injury_date:
@@ -351,6 +403,130 @@ class CaseTimeline:
         if name == "application_filed":
             return self.application_filed_date
         return self.injury_date
+
+
+# ---------------------------------------------------------------------------
+# Ordering-preserving track fitting
+# ---------------------------------------------------------------------------
+
+
+def fit_dates(
+    proposed: Sequence[date],
+    *,
+    floor: date,
+    ceiling: date,
+    label: str = "track",
+) -> list[date]:
+    """Fit an ordered chain of dates into ``[floor, ceiling]``, keeping the order.
+
+    The chain arrives in the order its machine emitted it (petition, then
+    opposition, then order), and that order is what has to survive — not the
+    exact offsets. Two passes do it:
+
+    1. forward, pushing each date to at least its predecessor plus a day,
+    2. backward, pulling any date that overran the ceiling to at most its
+       successor minus a day.
+
+    When the window is wide enough for one document per day the result is
+    strictly increasing, which is the property callers assert on. When it is
+    not — only reachable by calling this directly with a hand-built window,
+    since the seed schema rejects such cases — the dates saturate to
+    non-decreasing and a warning is logged rather than silently returning a
+    broken chain.
+
+    Args:
+        proposed: the machine's intended dates, in intended order.
+        floor: earliest permissible date (e.g. the resolution the track follows).
+        ceiling: latest permissible date.
+        label: identifier used in the log line when the window is too narrow.
+
+    Returns:
+        A list of the same length, in the same order.
+    """
+    count = len(proposed)
+    if count == 0:
+        return []
+    if ceiling < floor:
+        ceiling = floor
+
+    span = (ceiling - floor).days + 1
+    strict = span >= count
+    if not strict:
+        log.warning(
+            "lifecycle.track_window_saturated",
+            track=label,
+            documents=count,
+            span_days=span,
+            floor=floor.isoformat(),
+            ceiling=ceiling.isoformat(),
+        )
+
+    step = timedelta(days=1) if strict else timedelta(days=0)
+
+    fitted = [max(value, floor) for value in proposed]
+    for index in range(1, count):
+        fitted[index] = max(fitted[index], fitted[index - 1] + step)
+
+    fitted[-1] = min(fitted[-1], ceiling)
+    for index in range(count - 2, -1, -1):
+        fitted[index] = min(fitted[index], fitted[index + 1] - step)
+
+    # The backward pass can push the head below the floor only when the window
+    # was too narrow, which is already logged; clamping keeps it non-decreasing.
+    for index in range(count):
+        fitted[index] = max(fitted[index], floor)
+    for index in range(1, count):
+        fitted[index] = max(fitted[index], fitted[index - 1])
+
+    return fitted
+
+
+def fit_track(
+    candidates: Sequence[DatedCandidate],
+    *,
+    floor: date,
+    ceiling: date,
+    label: str = "track",
+) -> list[DatedCandidate]:
+    """Re-date an ordered chain of candidates through :func:`fit_dates`.
+
+    Raises:
+        TimelineInvariantError: if the result is not strictly increasing while
+            the window had room for it — that would be a bug in the fit, and a
+            manifest with two lien documents on the same day is exactly the
+            defect this replaced.
+    """
+    if not candidates:
+        return []
+
+    fitted = fit_dates(
+        [candidate.doc_date for candidate in candidates],
+        floor=floor,
+        ceiling=ceiling,
+        label=label,
+    )
+    out = [
+        DatedCandidate(
+            subtype=candidate.subtype,
+            doc_date=doc_date,
+            track=candidate.track,
+            priority=candidate.priority,
+            author_role=candidate.author_role,
+            stage=candidate.stage,
+            metadata=candidate.metadata,
+        )
+        for candidate, doc_date in zip(candidates, fitted, strict=True)
+    ]
+
+    span = (ceiling - floor).days + 1
+    if span >= len(out):
+        for earlier, later in pairwise(out):
+            if later.doc_date <= earlier.doc_date:
+                raise TimelineInvariantError(
+                    f"{label}: {later.subtype} ({later.doc_date}) does not follow "
+                    f"{earlier.subtype} ({earlier.doc_date}) despite a {span}-day window"
+                )
+    return out
 
 
 RECON_RESERVE_DAYS: Mapping[str | None, int] = {
@@ -391,8 +567,13 @@ def build_timeline(seed: CaseSeed) -> CaseTimeline:
     injury = seed.injury.onset_date
     horizon = ANCHOR_DATE
 
-    claim_filed = min(injury + timedelta(days=rng.randint(1, 14)), horizon)
-    application_filed = min(injury + timedelta(days=rng.randint(60, 180)), horizon)
+    # Floors before ceilings, always. Bounding with ``min(..., horizon)`` alone
+    # is what let a short-runway seed produce an Application dated before its
+    # own injury; ``max(injury, ...)`` makes the ordering structural.
+    claim_filed = max(injury, min(injury + timedelta(days=rng.randint(1, 14)), horizon))
+    application_filed = max(
+        claim_filed, min(injury + timedelta(days=rng.randint(60, 180)), horizon)
+    )
 
     resolution_type = seed.lifecycle.resolution.type
     if resolution_type == "pending":
@@ -405,22 +586,30 @@ def build_timeline(seed: CaseSeed) -> CaseTimeline:
             horizon=horizon,
         )
 
-    # Everything after the award needs runway, or the clamp to ANCHOR_DATE
-    # collapses the sequence into a single day. The petition window (25) plus
-    # the decision window (60) is the floor; a remand that goes back to trial
-    # or settles needs months more.
+    # Everything after the award needs runway, or the post-award chain has
+    # nowhere to go. The petition window (25) plus the decision window (60) is
+    # the floor; a remand that goes back to trial or settles needs months more.
     reserve = RECON_RESERVE_DAYS.get(
         seed.lifecycle.reconsideration.post_recon if recon_enabled(seed) else None, 0
     )
+    floor = application_filed + timedelta(days=MIN_RESOLUTION_LAG_DAYS)
     earliest = application_filed + timedelta(days=180)
     proposed = injury + timedelta(days=rng.randint(600, 1000))
     latest = horizon - timedelta(days=reserve)
-    resolution = max(earliest, proposed)
-    if resolution > latest:
-        resolution = latest
-    if resolution < injury:
-        resolution = injury
-    resolution = min(resolution, horizon)
+
+    resolution = min(max(earliest, proposed), latest)
+    # The floor outranks both ceilings. A resolution that precedes its own
+    # Application is incoherent; one that crowds the anchor is merely tight, and
+    # the runway validation in the seed schema keeps that from happening at all.
+    resolution = max(resolution, floor)
+    if resolution > horizon:
+        log.warning(
+            "lifecycle.resolution_past_horizon",
+            case_id=seed.case_id,
+            resolution=resolution.isoformat(),
+            horizon=horizon.isoformat(),
+            reason="seed runway is shorter than the resolution floor",
+        )
 
     return CaseTimeline(
         injury_date=injury,
@@ -913,6 +1102,7 @@ def to_document_candidates(
 __all__ = [
     "DROPPED_SUBSTRATE_ONLY",
     "LIEN_OWNED_SUBTYPES",
+    "MIN_RESOLUTION_LAG_DAYS",
     "RECON_OWNED_SUBTYPES",
     "RESOLUTION_MAP",
     "ROLE_APPLICANT_ATTORNEY",
@@ -927,9 +1117,12 @@ __all__ = [
     "UR_DECISION_MAP",
     "CaseTimeline",
     "DatedCandidate",
+    "TimelineInvariantError",
     "author_role_for",
     "build_core_candidates",
     "build_timeline",
+    "fit_dates",
+    "fit_track",
     "normalize_subtype",
     "seed_to_case_parameters",
     "to_document_candidates",

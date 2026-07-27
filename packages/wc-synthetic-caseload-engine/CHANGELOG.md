@@ -83,8 +83,50 @@ First release. Ticket **AJC-34**.
   `PYTHONHASHSEED`-dependent `hash()`.
 
 **Quality**
-- 169 pytest tests; `ruff` clean; no network access in any test.
+- 225 pytest tests; `ruff` clean; no network access in any test.
 - `examples/demo-caseload.yaml` — six cases, 276 documents, all four formats.
+
+### Hardening (cross-model review)
+
+**Date spine**
+- Seeds whose injury sits too close to the fixed anchor for their own lifecycle are now
+  **rejected at load time**, naming the field, the driver, the minimum runway and the latest
+  acceptable date. Floors: 30 days (`intake`), 180 (`active_treatment` / `discovery`), 365
+  (`medical_legal` / `pre_trial`), 540 (any real resolution), 720 (reconsideration or
+  post-resolution lien litigation). Auto-derivation satisfies them by construction.
+- `build_timeline` uses `max()` floors instead of bare clamps, and `CaseTimeline` enforces its
+  ordering at construction. This fixes a spine inversion: a `2025-06-01` injury seeded as
+  resolved produced `application_filed=2025-09-12` with `resolution=2025-06-01`, after which
+  the reconsideration machine dated its petition 80 days before the Application.
+- Sequenced chains (each lien track, the recon round trip) are fitted as a whole through
+  `fit_track()` — ordering-preserving compression with strictly increasing dates — instead of
+  being clamped date by date, which had stacked five lien documents on one day. A lien track
+  with `post_resolution_litigation` extends past the anchor rather than compressing, because
+  post-resolution lien practice genuinely outlives the case-in-chief.
+
+**Determinism**
+- Output is now byte-identical **across timezones and across days**, not only across processes
+  on one machine. Under `TZ=Australia/Sydney` 55 of 289 demo files had differed from the same
+  command under UTC.
+- Three further leaks closed: substrate content computed from local `date.today()` (four sites
+  rebound to the anchor by `pin_substrate_clock()`), `.eml` `Date:` headers built through
+  local-zone `datetime.timestamp()` (rewritten to noon UTC by `normalize_eml()`), and Faker's
+  clock-relative `date_of_birth` (the field is now owned by `case_context` and derived from
+  `seed.rng("dob")`).
+- Every timestamp derivation goes through `fixed_utc_datetime()` / `pdf_date_string()` /
+  `zip_date_time()`; no `localtime`, `mktime`, `astimezone` or `.timestamp()` remains in a
+  rendering path.
+- `python -m wc_caseload_engine` added, and the `PYTHONHASHSEED` re-exec now re-enters through
+  the module form, so a `python -m` start no longer degrades into the console-script form.
+
+**Provenance & honesty**
+- `provenance.substrateSha` on every manifest, plus `substrate_pin.txt` and a WARN (never a
+  failure) when the substrate has moved off the pinned commit.
+- `caseload_manifest.json` gains `subtypeCoverage` — `{distinctSubtypesEmitted, totalCanonical,
+  percent}` — so a 353-subtype *vocabulary* is never read as 353 subtypes *emitted*.
+- Synthetic-data markers on every artifact: PDF `/Subject` and `/Producer`, `.docx`
+  `core_properties.comments`, and an `X-Synthetic-Data: true` header on `.eml`. All applied
+  before hashing, so no manifest checksum is invalidated.
 
 ### Known limitations
 
@@ -94,6 +136,11 @@ First release. Ticket **AJC-34**.
   bespoke templates, so the two lien resolution flavours differ only by variant string.
 - Format assignment is uniform across subtypes, so a pleading can be assigned `eml`. The seed's
   `format_mix` is the contract; constrain it per case with `output.formats` where that matters.
+- Synthetic-data marking is metadata-only. A visible page watermark would have to come from the
+  substrate's page templates, which this package does not edit.
+- Library consumers do not get the `PYTHONHASHSEED` pin for free: only the CLI re-execs. Call
+  `determinism.ensure_stable_hashing()` first, or set `PYTHONHASHSEED=0` before starting the
+  interpreter.
 
 ---
 

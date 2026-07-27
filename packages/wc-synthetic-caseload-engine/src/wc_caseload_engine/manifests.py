@@ -27,7 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,7 +37,12 @@ from wc_caseload_engine import __version__
 from wc_caseload_engine.planner import CasePlan, PlannedDocument, build_case_plan
 from wc_caseload_engine.renderer import FORMAT_EXTENSIONS, RenderResult, render_document
 from wc_caseload_engine.seeds import CaseSeed, write_case_seed
-from wc_caseload_engine.taxonomy import SUBSTRATE_ONLY_SUBTYPES, effective_taxonomy
+from wc_caseload_engine.substrate import check_substrate_pin, substrate_git_sha
+from wc_caseload_engine.taxonomy import (
+    EXPECTED_SUBTYPE_COUNT,
+    SUBSTRATE_ONLY_SUBTYPES,
+    effective_taxonomy,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -129,6 +134,7 @@ def build_manifest(
         "provenance": {
             "zeroRealPii": True,
             "generator": GENERATOR,
+            "substrateSha": substrate_git_sha(),
             "seedHash": seed.seed_hash(),
             "rngSeed": seed.rng_seed,
         },
@@ -203,6 +209,25 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
     )
 
 
+def subtype_coverage(emitted: Collection[str]) -> dict[str, object]:
+    """How much of the classifier taxonomy this caseload actually produced.
+
+    The engine's taxonomy *is* the classifier's 353 subtypes, and it is easy to
+    read "353-subtype taxonomy" as "emits all 353". It does not: a caseload emits
+    what its seeds' lifecycles call for, which for a six-case demo is a few dozen.
+    Stating the ratio in the manifest keeps anyone building a classifier accuracy
+    corpus from mistaking vocabulary for coverage — the gap *is* the backlog of
+    subtypes still needing targeted seeds.
+    """
+    total = EXPECTED_SUBTYPE_COUNT
+    distinct = len(set(emitted))
+    return {
+        "distinctSubtypesEmitted": distinct,
+        "totalCanonical": total,
+        "percent": round(100.0 * distinct / total, 1) if total else 0.0,
+    }
+
+
 def build_caseload_manifest(caseload_id: str, results: Sequence[CaseResult]) -> dict[str, object]:
     """Aggregate case results into the caseload-level manifest."""
     formats: dict[str, int] = {}
@@ -241,7 +266,12 @@ def build_caseload_manifest(caseload_id: str, results: Sequence[CaseResult]) -> 
         "documentCount": total,
         "formatCounts": dict(sorted(formats.items())),
         "distinctSubtypes": len(subtypes),
-        "provenance": {"zeroRealPii": True, "generator": GENERATOR},
+        "subtypeCoverage": subtype_coverage(subtypes),
+        "provenance": {
+            "zeroRealPii": True,
+            "generator": GENERATOR,
+            "substrateSha": substrate_git_sha(),
+        },
         "cases": cases,
     }
 
@@ -250,6 +280,7 @@ def generate_caseload(
     caseload_id: str, seeds: Iterable[CaseSeed], out_dir: Path
 ) -> list[CaseResult]:
     """Generate every case in a caseload and write the aggregate manifest."""
+    check_substrate_pin()
     out_dir.mkdir(parents=True, exist_ok=True)
     results: list[CaseResult] = []
     for case_number, seed in enumerate(seeds, start=1):
@@ -383,5 +414,6 @@ __all__ = [
     "generate_case",
     "generate_caseload",
     "neutral_filename",
+    "subtype_coverage",
     "validate_output_tree",
 ]

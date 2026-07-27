@@ -50,6 +50,7 @@ from wc_caseload_engine.lifecycle_bridge import (
     ROLE_DEFENSE_ATTORNEY,
     CaseTimeline,
     DatedCandidate,
+    fit_track,
 )
 from wc_caseload_engine.seeds import CaseSeed
 
@@ -113,10 +114,11 @@ def _post_recon_litigation(
     timeline: CaseTimeline, order_date: date, rng: random.Random
 ) -> list[DatedCandidate]:
     """Remand back to the trial level: new DOR, new hearing, amended award."""
-    dor = timeline.clamp(order_date + timedelta(days=rng.randint(15, 45)))
-    notice = timeline.clamp(dor + timedelta(days=rng.randint(20, 60)))
-    minutes = timeline.clamp(notice + timedelta(days=rng.randint(30, 90)))
-    amended = timeline.clamp(minutes + timedelta(days=rng.randint(10, 45)))
+    del timeline  # dates are fitted as one chain in build_recon_track
+    dor = order_date + timedelta(days=rng.randint(15, 45))
+    notice = dor + timedelta(days=rng.randint(20, 60))
+    minutes = notice + timedelta(days=rng.randint(30, 90))
+    amended = minutes + timedelta(days=rng.randint(10, 45))
     return [
         DatedCandidate(
             subtype="DECLARATION_OF_READINESS",
@@ -157,8 +159,9 @@ def _post_recon_settlement(
     seed: CaseSeed, timeline: CaseTimeline, order_date: date, rng: random.Random
 ) -> list[DatedCandidate]:
     """Settled on remand: a new settlement and its approving order, post-recon."""
-    settled_on = timeline.clamp(order_date + timedelta(days=rng.randint(30, 120)))
-    approved_on = timeline.clamp(settled_on + timedelta(days=rng.randint(15, 60)))
+    del timeline  # dates are fitted as one chain in build_recon_track
+    settled_on = order_date + timedelta(days=rng.randint(30, 120))
+    approved_on = settled_on + timedelta(days=rng.randint(15, 60))
     if seed.injury.type == "death":
         settlement = "COMPROMISE_AND_RELEASE_DEPENDENCY"
     elif rng.random() < _SETTLE_AS_CR_PROBABILITY:
@@ -212,13 +215,11 @@ def build_recon_track(seed: CaseSeed, timeline: CaseTimeline) -> ReconTrack:
 
     rng = seed.rng("recon")
 
-    petition_date = timeline.clamp(
-        award_date + timedelta(days=rng.randint(1, PETITION_WINDOW_DAYS))
-    )
-    opposition_date = timeline.clamp(petition_date + timedelta(days=rng.randint(5, 15)))
-    order_date = timeline.clamp(
-        petition_date + timedelta(days=rng.randint(30, ORDER_WINDOW_DAYS))
-    )
+    # Unclamped by design: the whole chain is fitted once, at the end, so its
+    # ordering survives a tight window instead of collapsing onto the horizon.
+    petition_date = award_date + timedelta(days=rng.randint(1, PETITION_WINDOW_DAYS))
+    opposition_date = petition_date + timedelta(days=rng.randint(5, 15))
+    order_date = petition_date + timedelta(days=rng.randint(30, ORDER_WINDOW_DAYS))
 
     documents: list[DatedCandidate] = [
         DatedCandidate(
@@ -243,9 +244,7 @@ def build_recon_track(seed: CaseSeed, timeline: CaseTimeline) -> ReconTrack:
         documents.append(
             DatedCandidate(
                 subtype="PETITION_RECONSIDERATION_REPLY",
-                doc_date=timeline.clamp(
-                    opposition_date + timedelta(days=rng.randint(5, 15))
-                ),
+                doc_date=opposition_date + timedelta(days=rng.randint(5, 15)),
                 track=TRACK_RECON,
                 priority=14,
                 author_role=ROLE_APPLICANT_ATTORNEY,
@@ -269,7 +268,7 @@ def build_recon_track(seed: CaseSeed, timeline: CaseTimeline) -> ReconTrack:
         documents.append(
             DatedCandidate(
                 subtype="AMENDED_FINDINGS_AWARD",
-                doc_date=timeline.clamp(order_date + timedelta(days=rng.randint(1, 21))),
+                doc_date=order_date + timedelta(days=rng.randint(1, 21)),
                 track=TRACK_RECON,
                 priority=10,
                 author_role=ROLE_COURT,
@@ -287,6 +286,21 @@ def build_recon_track(seed: CaseSeed, timeline: CaseTimeline) -> ReconTrack:
     for candidate in documents:
         deduped[(candidate.subtype, candidate.doc_date)] = candidate
     ordered = sorted(deduped.values(), key=lambda item: (item.doc_date, item.subtype))
+
+    # One fit for the whole round trip. The petition must follow the award and
+    # every step must follow the last; where the window is tight the chain
+    # compresses in order instead of stacking on the horizon.
+    ordered = fit_track(
+        ordered,
+        floor=award_date + timedelta(days=1),
+        ceiling=max(timeline.horizon, award_date + timedelta(days=len(ordered))),
+        label=f"recon:{seed.case_id}",
+    )
+    petition_date = ordered[0].doc_date
+    order_date = next(
+        (doc.doc_date for doc in ordered if doc.subtype == "ORDER_ON_RECONSIDERATION"),
+        order_date,
+    )
 
     log.debug(
         "recon.built",

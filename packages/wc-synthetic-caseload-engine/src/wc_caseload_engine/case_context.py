@@ -30,6 +30,7 @@ from typing import Any
 
 import structlog
 
+from wc_caseload_engine.determinism import pin_substrate_clock
 from wc_caseload_engine.lifecycle_bridge import CaseTimeline, seed_to_case_parameters
 from wc_caseload_engine.seeds import ANCHOR_DATE, CaseSeed, derive_seed
 from wc_caseload_engine.substrate import import_substrate
@@ -87,6 +88,37 @@ def _adj_number(seed: CaseSeed) -> str:
     return f"ADJ{rng.randrange(10 ** (_ADJ_DIGITS - 1), 10**_ADJ_DIGITS)}"
 
 
+_DERIVED_AGE_RANGE = (25, 62)
+"""Working-age band for an applicant whose seed does not state an age.
+
+Matches the band ``FakeDataGenerator`` asked Faker for, so derived casts keep the
+same shape — only the clock behind them changes.
+"""
+
+
+def _date_of_birth(seed: CaseSeed) -> date:
+    """The applicant's date of birth, always seed-derived and never clock-derived.
+
+    Faker's ``date_of_birth`` draws from a window ending at ``datetime.now()``,
+    and a seeded Faker does not make that window stable: the same seed produced
+    a 1999-08-14 birthday in Los Angeles and 1999-08-15 in Sydney, because the
+    two machines disagreed about what day it was. It would equally have moved
+    from one day to the next on one machine.
+
+    Faker is left alone — rebinding its ``datetime`` breaks the ``isinstance``
+    checks in its own date parser — and the field is simply owned here instead,
+    where the anchor already lives. Substrate templates read
+    ``case.applicant.date_of_birth``, so overwriting it settles every downstream
+    age line in one place.
+    """
+    stated = seed.profile.applicant.age
+    if stated is not None:
+        return ANCHOR_DATE - timedelta(days=int(stated * 365.25))
+    low, high = _DERIVED_AGE_RANGE
+    rng = seed.rng("dob")
+    return ANCHOR_DATE - timedelta(days=rng.randint(low * 365, high * 365) + rng.randint(0, 364))
+
+
 def _apply_profile_overrides(case: Any, seed: CaseSeed, timeline: CaseTimeline) -> None:
     """Overwrite the generated cast with everything the seed specifies."""
     profile = seed.profile
@@ -97,8 +129,7 @@ def _apply_profile_overrides(case: Any, seed: CaseSeed, timeline: CaseTimeline) 
         case.applicant.first_name = parts[0]
         case.applicant.last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
         case.applicant.full_name = applicant.name
-    if applicant.age is not None:
-        case.applicant.date_of_birth = ANCHOR_DATE - timedelta(days=int(applicant.age * 365.25))
+    case.applicant.date_of_birth = _date_of_birth(seed)
     if applicant.occupation:
         case.employer.position = applicant.occupation
     if applicant.tenure_years is not None:
@@ -159,6 +190,9 @@ def build_case_cast(seed: CaseSeed, timeline: CaseTimeline, case_number: int = 1
         A :class:`CaseCast` whose ``case`` attribute is the substrate object the
         templates render against.
     """
+    # FakeDataGenerator derives hire dates and litigation stages from
+    # ``date.today()``; freeze it before the cast exists, not at render time.
+    pin_substrate_clock()
     fake_data = import_substrate("data.fake_data_generator")
 
     params = seed_to_case_parameters(seed)
