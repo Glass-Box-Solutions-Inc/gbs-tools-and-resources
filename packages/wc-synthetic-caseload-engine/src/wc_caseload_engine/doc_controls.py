@@ -209,6 +209,7 @@ def resolve_document_controls(
     parent_type_of: ParentResolver | None = None,
     case_id: str | None = None,
     logger: Any | None = None,
+    pre_dropped: Mapping[str, str] | None = None,
 ) -> ControlResolution:
     """Apply the documented control precedence and return the final plan.
 
@@ -221,13 +222,19 @@ def resolve_document_controls(
             omit it in pure unit tests).
         case_id: included in warning logs.
         logger: structlog-style logger override (defaults to this module's).
+        pre_dropped: ``{subtype: reason}`` for candidates something upstream
+            already removed — today, paper the case's *perspective* says this
+            file does not hold. They are absent from *candidates*, so they need
+            no suppressing here; naming them only lets the override path say
+            *why* it is overruling, instead of reporting the subtype as one the
+            lifecycle never proposed. An explicit override still wins, loudly.
 
     Returns:
         A :class:`ControlResolution` carrying the plan, warnings and drop audit.
     """
     emit_log = logger if logger is not None else log
     warnings: list[str] = []
-    dropped: dict[str, str] = {}
+    dropped: dict[str, str] = dict(pre_dropped or {})
 
     # 4. Lifecycle emission defaults.
     plan: list[PlannedDocumentCount] = _collapse_candidates(candidates, parent_type_of)

@@ -67,6 +67,7 @@ default, and anything omitted is derived deterministically from `rng_seed`.
 ```yaml
 case_id: martinez-001          # also the output directory name
 rng_seed: 12345                # fully determines the case
+perspective: applicant         # applicant | defense — whose file this is
 profile:                       # all optional — derived when omitted
   applicant: {name, age, occupation, tenure_years}
   employer:  {name, industry, county}
@@ -152,6 +153,89 @@ Highest wins:
 
 Counts are resolved without dates, then dates are re-attached from the proposing candidate;
 copies beyond what the lifecycle proposed continue the same date series deterministically.
+
+---
+
+## Perspective — whose file is this
+
+One injury, two case files. The applicant firm's folder and the defense firm's folder describe
+the same claim and share most of their paper, but the privileged half of each is written by a
+different lawyer for a different client. `perspective` picks which folder you are generating.
+
+```yaml
+perspective: applicant   # the default
+perspective: defense
+```
+
+**It never changes a case fact.** Same `rng_seed`, same everything else: identical cast (both
+firms exist in both files — they are opposing counsel, not alternatives), identical ADJ number,
+identical date of injury, identical lifecycle event dates. Only the file's point of view moves.
+That is enforced structurally rather than by convention — `perspective` is never mixed into an
+RNG salt that feeds a fact, and on the applicant path the whole module is an identity function
+that draws no randomness at all. Which is also why every seed written before this field existed
+plans, dates and renders exactly as it did.
+
+Three things change, all of them in `perspective.py`:
+
+**1. Work product swaps.** Privileged analysis belongs to whoever owns the file.
+
+| Applicant file | Defense file |
+|---|---|
+| `CASE_ANALYSIS_MEMO` | `DEFENSE_CASE_ANALYSIS` |
+| `SETTLEMENT_VALUATION_MEMO` | `DEFENSE_MSC_STATEMENT` |
+| `TRIAL_BRIEF` | `DEFENSE_TRIAL_BRIEF` |
+
+All six are canonical `WORK_PRODUCT` keys, so the swap is a rename and never a taxonomy escape.
+Work product both sides prepare under the same name — `MEDICAL_CHRONOLOGY_TIMELINE`,
+`DEPOSITION_SUMMARY` — deliberately does not swap.
+
+**2. Emission profiles.** `PERSPECTIVE_PROFILES` maps a subtype *or* a parent type to
+`{applicant_weight, defense_weight}`, multipliers on what the shared lifecycle proposed. A
+subtype row beats its type's row; a key with no row is carried unchanged by both files. **Tuning
+is one edit to that table.**
+
+| Key | Applicant | Defense | Why |
+|---|---|---|---|
+| `CLIENT_CORRESPONDENCE_INFORMATIONAL` / `_REQUEST` | 1.0 | 1.0 | Both firms write to their own client; only the roles invert |
+| `CLIENT_INTAKE_CORRESPONDENCE` | 1.0 | 0.0 | Defense counsel is assigned by a carrier; it runs no intake |
+| `CLIENT_STATUS_LETTERS` | 1.0 | 0.0 | Status letters go to an injured worker |
+| `ADVOCACY_LETTERS_*` (PTP/QME/AME) | 1.0 | 0.0 | Lobbying a physician toward a finding is applicant-side practice |
+| `SETTLEMENT_DEMAND_LETTER` | 1.0 | 1.0 | Applicant-authored; the defense file holds it as *received* mail |
+| `CLAIMS_ADMINISTRATION` (type) | 1.0 | 2.5 | The carrier's own claim file — reserves, diary notes, nurse case management |
+| `INVESTIGATION` (type) | 1.0 | 3.0 + floor | Sub-rosa surveillance and social-media workups are defense-retained |
+
+`INVESTIGATION` is the one case a multiplier cannot express alone: the shared lifecycle proposes
+*zero* investigator reports, and any multiple of zero is zero. So a row may name a **floor** —
+subtypes planted once each when the characteristic side's pool is otherwise empty. Defense files
+get `INVESTIGATOR_REPORT`, `SURVEILLANCE_VIDEO` and `SOCIAL_MEDIA_EVIDENCE`. "Characteristic
+side" is whichever weight is strictly higher; equal weights plant nothing.
+
+**Perspective is a default, not a veto.** An explicit `documents.overrides` entry still forces
+applicant-only paper into a defense file, through the same forced-emission path as any other
+lifecycle-invalid override (see *Document control precedence*), with a WARN that names the
+perspective as what it is overruling.
+
+**3. Roles.** "Client" means the injured worker on an applicant file and the employer/carrier on
+a defense file, so the author and recipient of client correspondence invert. Documents the file
+owner authors (work product, client correspondence) get the owner's attorney as author and the
+owner's client as recipient; everything else keeps the author the facts give it — an Application
+for Adjudication is applicant-filed in *both* files, an order is the judge's in both — and is
+addressed to the firm that owns the file, which is what makes it *received* paper. Roles reach
+the templates through the render context alongside `perspective` and `file_owner_firm`.
+
+### Known limitation: defense letterhead
+
+The substrate hard-codes `Martinez & Associates, APC` on the docx letterhead
+(`data/docx_styles.py`), so **`.docx` files in a defense case file carry the applicant firm's
+letterhead**. This is the same limitation already documented for `profile.attorneys.
+applicant_firm`, now with a second visible symptom. It is not worked around for the same reason:
+patching a substrate module's private constant at runtime is shared mutable state across cases,
+and this package consumes the substrate as a library rather than editing it. The proper fix is an
+injectable firm identity upstream.
+
+Scope of the defect: the rendered docx letterhead only. The manifest, the seed, the subtype set,
+the roles and every other format are unaffected — `manifest.json` records
+`perspective: defense` and the correct `applicantFirm` / `defenseFirm` regardless.
 
 ---
 
@@ -368,7 +452,7 @@ artifact of determinism, not a fact about the file.
 
 ## Example caseload walkthrough
 
-`examples/demo-caseload.yaml` generates six cases, 276 documents, all four formats:
+`examples/demo-caseload.yaml` generates seven cases, 331 documents, all four formats:
 
 | Case | Shape |
 |------|-------|
@@ -378,6 +462,7 @@ artifact of determinism, not a fact about the file.
 | `ramirez-death-dependency` | Death claim with dependency benefits, resolved by stipulation, one hospital lien |
 | `whitfield-early-intake` | A fresh file — intake only, nothing resolved |
 | `castellanos-trial-recon-denied` | Tried to decision, petition for reconsideration denied, award stands |
+| `whitaker-defense-qme-surveillance` | **The other chair** — a defense file on an accepted claim: disputed QME apportionment, sub-rosa surveillance, C&R. Carries the carrier's reserve worksheets and investigator reports, and no client intake or physician advocacy at all |
 
 Dates of injury are chosen to leave statutory runway: a case that petitions and then settles
 on remand needs roughly nine months after its award before the fixed anchor date

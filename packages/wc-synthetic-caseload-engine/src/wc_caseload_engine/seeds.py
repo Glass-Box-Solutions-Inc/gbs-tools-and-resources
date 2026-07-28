@@ -95,6 +95,13 @@ type DoctrineHook = Literal[
 ]
 type DocumentFormat = Literal["pdf", "scanned_pdf", "eml", "docx"]
 type FilenameStyle = Literal["neutral", "corpus"]
+type Perspective = Literal["applicant", "defense"]
+"""Whose case file this is.
+
+Not a fact about the claim — a fact about the *file*. The same injury generates
+one applicant-side file and one defense-side file, and they contain overlapping
+but different paper. See :mod:`wc_caseload_engine.perspective`.
+"""
 type DistributionName = Literal[
     "balanced", "early_stage", "settlement_heavy", "complex_litigation"
 ]
@@ -543,6 +550,15 @@ class CaseSeed(_Model):
 
     case_id: str = Field(pattern=CASE_ID_PATTERN)
     rng_seed: int = Field(ge=0, lt=2**32)
+    perspective: Perspective = "applicant"
+    """Whose file this is. Top-level because it governs the whole document set.
+
+    Deliberately *not* part of ``profile`` or ``documents``: it is neither a
+    party fact nor a control knob, and it changes no case fact at all. Defaults
+    to ``applicant`` so every seed written before this field existed loads and
+    generates exactly as it did.
+    """
+
     profile: CaseProfile = Field(default_factory=CaseProfile)
     injury: InjurySpec
     lifecycle: LifecycleSpec = Field(default_factory=LifecycleSpec)

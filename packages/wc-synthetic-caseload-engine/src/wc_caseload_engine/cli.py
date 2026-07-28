@@ -61,6 +61,7 @@ def _summarize(seed: CaseSeed) -> str:
     bits = [
         f"{seed.case_id:<24}",
         f"seed={seed.rng_seed:<10}",
+        f"pov={seed.perspective:<9}",
         f"stage={lifecycle.target_stage:<16}",
         f"injury={seed.injury.type:<17}",
         f"claim={lifecycle.claim_response:<8}",

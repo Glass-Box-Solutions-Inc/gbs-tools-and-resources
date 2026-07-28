@@ -1,4 +1,4 @@
-# wc-caseload demo caseload — six cases, six different shapes of file.
+# wc-caseload demo caseload — seven cases, seven different shapes of file.
 #
 #   wc-caseload generate --spec examples/demo-caseload.yaml --out /tmp/wcce-demo
 #   wc-caseload validate --out /tmp/wcce-demo
@@ -10,6 +10,11 @@
 # for reconsideration and then settles on remand needs roughly nine months
 # after its award before the anchor date, or the whole post-award sequence
 # compresses into a single day.
+#
+# Cases 1-6 are applicant-side files (the default). Case 7 is the same product
+# seen from the other chair: a defense file, carrying the carrier's own claims
+# administration and the surveillance it paid for, and carrying none of the
+# intake and advocacy paper that only an applicant firm generates.
 
 caseload_id: demo-2026q3
 
@@ -184,5 +189,38 @@ cases:
         outcome: denied
         post_recon: affirmed_final
       doctrine_hooks: [ogilvie, kite]
+    documents:
+      global_cap: 55
+
+  # 7. The other chair. An accepted claim the defense is actively working:
+  #    a QME whose apportionment the carrier disputes, sub-rosa surveillance
+  #    ordered on the strength of it, and a Compromise and Release once the
+  #    surveillance settles the exposure question.
+  #
+  #    Same engine, same seed mechanics — only the file's owner changes. The
+  #    folder holds the carrier's reserve worksheets, diary notes and
+  #    investigator reports, and holds no client intake or physician advocacy
+  #    letters at all, because defense counsel generates neither.
+  - case_id: whitaker-defense-qme-surveillance
+    rng_seed: 100007
+    perspective: defense
+    profile:
+      applicant: {name: Dana Whitaker, age: 41, occupation: Warehouse Picker, tenure_years: 4.5}
+      employer: {name: Harborline Logistics, industry: Warehousing, county: San Joaquin}
+      carrier: {name: Employers Compensation Insurance}
+      attorneys: {defense_firm: "Grancell, Stander, Reubens, Thomas & Kinsey"}
+    injury:
+      type: specific
+      date_of_injury: 2022-06-21
+      mechanism: lifting a mis-stacked pallet during a night shift
+      body_parts:
+        - {part: lumbar_spine, icd10: M54.5, detail: L5-S1 annular tear}
+        - {part: shoulder, icd10: M75.100, detail: left rotator cuff tendinopathy}
+    lifecycle:
+      target_stage: resolved
+      claim_response: accepted
+      eval_type: qme
+      resolution: {type: c_and_r, msa: false}
+      doctrine_hooks: [escobedo, benson]
     documents:
       global_cap: 55

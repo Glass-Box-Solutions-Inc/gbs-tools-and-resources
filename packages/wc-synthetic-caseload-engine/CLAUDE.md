@@ -36,6 +36,7 @@ package is built on. Flagged and accepted as an explicit stack decision.
 | `lien_machine.py` | One `LienTrack` per claimant, claim → notice → conference → resolution. |
 | `recon_machine.py` | The petition-for-reconsideration round trip and its post-recon paths. |
 | `case_context.py` | The one canonical cast per case (`CaseCast`). |
+| `perspective.py` | Applicant vs defense **file** POV: the work-product swap table, `PERSPECTIVE_PROFILES` (per-key emission weights + floors), and author/recipient roles. Changes no case fact — the applicant path is a literal identity function. |
 | `planner.py` | Composes the three machines through the resolver into an ordered `CasePlan`. |
 | `renderer.py` | Template dispatch, format assignment, per-document reproducibility. |
 | `determinism.py` | The three reproducibility fixes (hash seed, docx ZIP times, PDF `/ID`). |

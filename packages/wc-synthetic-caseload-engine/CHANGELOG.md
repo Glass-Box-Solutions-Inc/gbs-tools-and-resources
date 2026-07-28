@@ -7,6 +7,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+**Perspective — applicant vs defense case files** (ISC-75..84, ticket **AJC-34**)
+- `CaseSeed.perspective: applicant | defense`, a top-level field defaulting to `applicant`.
+  Every seed written before it loads, plans and renders unchanged.
+- `perspective.py` — the whole feature as data: `WORK_PRODUCT_SWAP` (privileged analysis
+  renamed to the file owner's vocabulary), `PERSPECTIVE_PROFILES` (per subtype-or-type
+  `{applicant_weight, defense_weight}` emission multipliers, plus a `floor` for paper a
+  multiplier cannot conjure from zero), and author/recipient role resolution.
+- Defense files emit `DEFENSE_CASE_ANALYSIS` / `DEFENSE_MSC_STATEMENT` / `DEFENSE_TRIAL_BRIEF`
+  in place of `CASE_ANALYSIS_MEMO` / `SETTLEMENT_VALUATION_MEMO` / `TRIAL_BRIEF`, carry ~2.5x
+  the carrier's claims-administration paper and always carry investigation/surveillance, and
+  carry no client intake or physician advocacy letters at all.
+- An explicit `documents.overrides` entry still forces applicant-only paper into a defense
+  file through the existing forced-emission path, with a WARN naming the perspective.
+- `manifest.json` carries `perspective`; `caseload_manifest.json` carries it per case plus a
+  `perspectiveCounts` summary.
+- `examples/demo-caseload.yaml` gains a seventh case — `whitaker-defense-qme-surveillance`.
+
+**Perspective changes no case fact.** Same `rng_seed` → identical cast (both firms exist in
+both files), ADJ number and lifecycle dates across perspectives. Enforced structurally: the
+value never enters a fact-feeding RNG salt, and the applicant path is an identity function
+that draws no randomness.
+
+### Known limitation
+
+- The substrate hard-codes `Martinez & Associates, APC` on the docx letterhead, so `.docx`
+  files in a **defense** case file show the applicant firm's letterhead. Manifest, seed,
+  subtypes, roles and all other formats are unaffected. Same root cause as the existing
+  `profile.attorneys.applicant_firm` limitation; the fix belongs upstream.
+
+---
+
 ## [0.1.0] — 2026-07-27
 
 First release. Ticket **AJC-34**.

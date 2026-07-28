@@ -5,7 +5,7 @@ slug: 20260727-143600_wc-synthetic-caseload-engine
 effort: E4
 effort_source: classifier
 phase: verify
-progress: 73/84
+progress: 82/84
 mode: interactive
 started: 2026-07-27T14:36:00-07:00
 updated: 2026-07-27T19:30:00-07:00
@@ -149,16 +149,16 @@ A new installable package whose CLI turns a caseload spec (defaults + distributi
 - [x] ISC-74: Anti: generation never writes outside `--out` (probe: strace-free check via before/after tree diff of cwd)
 
 ### Perspective (applicant vs defense files — added 2026-07-27 evening)
-- [ ] ISC-75: `CaseSeed.perspective` accepts `applicant | defense`, defaults to `applicant`; all pre-existing seeds load unchanged
-- [ ] ISC-76: Defense perspective makes the defense firm the file owner in the cast and `perspective` is recorded in the case manifest
-- [ ] ISC-77: Defense cases emit DEFENSE_TRIAL_BRIEF / DEFENSE_MSC_STATEMENT / DEFENSE_CASE_ANALYSIS as the privileged work product in place of applicant-side memos
-- [ ] ISC-78: Client correspondence targets the worker on applicant side and the employer/carrier contact on defense side (author/recipient roles in rendered docs + manifest)
-- [ ] ISC-79: Defense files emit CLAIMS_ADMINISTRATION and INVESTIGATION subtypes at materially higher frequency than mirrored applicant files (comparative probe)
-- [ ] ISC-80: Applicant-only material (client intake, advocacy letters to treaters, applicant client status letters) is absent from defense files by default, present only via explicit override
-- [ ] ISC-81: Demo caseload gains a defense-perspective case; all gates stay green (pytest, ruff, double-run + TZ determinism, validate)
-- [ ] ISC-82: Anti: flipping perspective never changes case facts — mirrored seeds (same rng_seed/injury/lifecycle) produce identical cast, ADJ number, and event dates (probe: manifest field diff)
+- [x] ISC-75: `CaseSeed.perspective` accepts `applicant | defense`, defaults to `applicant`; all pre-existing seeds load unchanged
+- [x] ISC-76: Defense perspective makes the defense firm the file owner in the cast and `perspective` is recorded in the case manifest
+- [x] ISC-77: Defense cases emit DEFENSE_TRIAL_BRIEF / DEFENSE_MSC_STATEMENT / DEFENSE_CASE_ANALYSIS as the privileged work product in place of applicant-side memos
+- [x] ISC-78: Client correspondence targets the worker on applicant side and the employer/carrier contact on defense side (author/recipient roles in rendered docs + manifest)
+- [x] ISC-79: Defense files emit CLAIMS_ADMINISTRATION and INVESTIGATION subtypes at materially higher frequency than mirrored applicant files (comparative probe)
+- [x] ISC-80: Applicant-only material (client intake, advocacy letters to treaters, applicant client status letters) is absent from defense files by default, present only via explicit override
+- [x] ISC-81: Demo caseload gains a defense-perspective case; all gates stay green (pytest, ruff, double-run + TZ determinism, validate)
+- [x] ISC-82: Anti: flipping perspective never changes case facts — mirrored seeds (same rng_seed/injury/lifecycle) produce identical cast, ADJ number, and event dates (probe: manifest field diff)
 - [ ] ISC-83: README + user guide document perspective semantics and the defense-side docx letterhead limitation
-- [ ] ISC-84: Tests cover default, swap logic, applicant-only absence, and the mirrored-facts invariant
+- [x] ISC-84: Tests cover default, swap logic, applicant-only absence, and the mirrored-facts invariant
 
 ## Test Strategy
 
@@ -205,6 +205,7 @@ A new installable package whose CLI turns a caseload spec (defaults + distributi
 - 2026-07-27 17:25 — Advisor (Rule 2) verdict: 4 blockers → accepted: substrate-SHA pin in manifest, subtype-coverage stats, clock-shifted determinism probe, synthetic-data marker (metadata-level; visible watermark needs substrate → surfaced). Letterhead provenance (substrate hardcodes "Martinez & Associates, APC") → surfaced to Alex, not fixable from this package.
 - 2026-07-27 17:30 — Clock-shift probe (TZ=Australia/Sydney) CONFIRMED advisor: ~60/289 files drift (EML Date local offsets; PDF/docx timestamp normalization TZ-dependent). Same-machine determinism real; cross-TZ broken. Fix: pin all timestamp derivations to fixed zone. Advisor and empirics agree — no Rule 3 conflict.
 - 2026-07-27 19:05 — refined: Alex: "I want this engine to be able to produce Applicant sided cases or defense sided cases." Defense POV moved from Out of Scope to ISC-75..84. Design: `perspective` seed field flips file ownership, work-product authorship, and emission profiles — never the case facts (ISC-82 anti-criterion guards this).
+- 2026-07-27 20:10 — Perspective builder authored parallel ISC-75..84 wording in its worktree (it branched before master's criteria were committed). Master numbering wins per ID-stability; its criteria map 1:1 onto master's and all evidence carries over. Its `floor` addition to PERSPECTIVE_PROFILES (weights can't multiply zero-proposal subtypes like INVESTIGATION into existence) accepted as a design improvement; cap-vs-floor bug found and fixed by its own demo gate.
 - 2026-07-27 17:35 — Forge interim: re-exec safe (os.execve, double loop-guard; `-m` form not preserved — noted), manifest md5s hash final bytes (normalize-then-hash order verified), `py.typed` declared but missing.
 - 2026-07-27 18:20 — Runway validation placed at the **seed boundary** (fail loud), not as a lifecycle repair. The seed is the interface, so an impossible story is rejected where it is written; the lifecycle then only has to enforce invariants it can always satisfy. Floors keyed on three independent drivers (stage, real resolution, post-resolution litigation) because a seed answers to all three at once.
 - 2026-07-27 18:20 — `CaseTimeline` validates its own ordering in `__post_init__` and raises `TimelineInvariantError` rather than asserting — asserts vanish under `python -O`, and a silently inverted spine is the exact defect being fixed.
@@ -234,4 +235,6 @@ Evidence is grouped; every probe was run in the main checkout on the fast-forwar
 - ISC-60..64: Bash — `taxonomy-check` exit 0 at 353/353 parity; `validate --out` OK (276 docs canonical, checksums match); corpus filename regex 0 failures on 50 PDFs; neutral naming is default.
 - ISC-65..68: manifest probes — per-doc fields incl. md5/fileSize/mimeType; provenance {zeroRealPii: true, substrateSha, seedHash}; caseload manifest carries stage/resolution/lien/recon summaries + subtypeCoverage {78, 353, 22.1%}.
 - ISC-70..74: 225 tests; ruff clean; anti-probes — no substrate file copied (content-hash test + Forge trace), Faker-sourced cast only with synthetic markers in PDF/docx/EML metadata, `git status` shows no writes outside `--out` after repeated generation runs.
+- ISC-75..82, 84: perspective build (commit 217b6d2) — 257 tests (+32) incl. mirrored-facts invariant (identical cast/ADJ/dates across perspectives), work-product swap, applicant-only absence + forced-override WARN path, comparative frequency probe (defense CLAIMS_ADMINISTRATION=9, INVESTIGATION=3 vs applicant baseline), 7-case demo double-run + TZ run MD5-identical (346 files), validate OK (331 docs), six pre-existing cases byte-stable (only intended manifest deltas: perspective field + seedHash).
+- ISC-83: README/CHANGELOG done; HTML user guide perspective section pending — checked after guide refresh.
 - ISC-21: DEFERRED-VERIFY — doctrine_hooks accepted by schema and wired into the plan; content-depth probe (per-hook language in rendered docs) deferred to the KB-grounding follow-up under AJC-34.

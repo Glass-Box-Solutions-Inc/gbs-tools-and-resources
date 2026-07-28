@@ -122,6 +122,7 @@ def build_manifest(
 
     manifest: dict[str, object] = {
         "caseId": seed.case_id,
+        "perspective": seed.perspective,
         "stage": seed.lifecycle.target_stage,
         "resolution": seed.lifecycle.resolution.type,
         "injuryType": seed.injury.type,
@@ -186,6 +187,8 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
             index=document.index,
             out_path=documents_dir / filename,
             title=document.title,
+            author_role=document.author_role,
+            recipient_role=document.recipient_role,
         )
         # A format fallback can change the extension; trust the written path.
         renders.append((result.path.name, result))
@@ -232,6 +235,7 @@ def build_caseload_manifest(caseload_id: str, results: Sequence[CaseResult]) -> 
     """Aggregate case results into the caseload-level manifest."""
     formats: dict[str, int] = {}
     subtypes: set[str] = set()
+    perspectives: dict[str, int] = {}
     total = 0
     cases: list[dict[str, object]] = []
 
@@ -241,9 +245,12 @@ def build_caseload_manifest(caseload_id: str, results: Sequence[CaseResult]) -> 
             formats[render.doc_format] = formats.get(render.doc_format, 0) + 1
             subtypes.add(render.subtype)
         plan = result.plan
+        perspective = plan.seed.perspective
+        perspectives[perspective] = perspectives.get(perspective, 0) + 1
         cases.append(
             {
                 "caseId": result.case_id,
+                "perspective": perspective,
                 "adjNumber": plan.cast.adj_number,
                 "applicant": plan.cast.applicant_name,
                 "stage": plan.seed.lifecycle.target_stage,
@@ -265,6 +272,7 @@ def build_caseload_manifest(caseload_id: str, results: Sequence[CaseResult]) -> 
         "caseCount": len(results),
         "documentCount": total,
         "formatCounts": dict(sorted(formats.items())),
+        "perspectiveCounts": dict(sorted(perspectives.items())),
         "distinctSubtypes": len(subtypes),
         "subtypeCoverage": subtype_coverage(subtypes),
         "provenance": {

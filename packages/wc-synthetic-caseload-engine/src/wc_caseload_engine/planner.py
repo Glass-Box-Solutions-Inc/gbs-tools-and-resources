@@ -38,6 +38,7 @@ from wc_caseload_engine.lifecycle_bridge import (
     build_timeline,
     to_document_candidates,
 )
+from wc_caseload_engine.perspective import apply_perspective, document_roles
 from wc_caseload_engine.recon_machine import ReconTrack, build_recon_track
 from wc_caseload_engine.renderer import choose_format
 from wc_caseload_engine.seeds import CaseSeed
@@ -58,6 +59,12 @@ class PlannedDocument:
     track: str
     author_role: str
     title: str
+    recipient_role: str = ""
+    """Who this document was addressed to, from the file owner's point of view.
+
+    Empty only for plans built before perspective existed; every plan this
+    module builds sets it. See :func:`wc_caseload_engine.perspective.document_roles`.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +79,12 @@ class CasePlan:
     recon: ReconTrack
     control: ControlResolution
     warnings: tuple[str, ...] = ()
+    perspective_notes: tuple[str, ...] = ()
+    """Every swap, rescale and suppression the case's perspective applied.
+
+    Empty for an applicant file, which is the whole point: the applicant path
+    changes nothing.
+    """
 
     @property
     def document_count(self) -> int:
@@ -143,11 +156,18 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
 
     candidates: list[DatedCandidate] = [*core, *lien_candidates(lien_tracks), *recon.documents]
 
+    # Whose file is this? The three machines above are perspective-blind on
+    # purpose — they model the *claim*, which both sides share. Only here does
+    # the claim become one side's folder.
+    pov = apply_perspective(seed, timeline, candidates)
+    candidates = list(pov.candidates)
+
     control = resolve_document_controls(
         to_document_candidates(candidates),
         seed.documents,
         parent_type_of=parent_type_of,
         case_id=seed.case_id,
+        pre_dropped=pov.suppressed,
     )
 
     pool: dict[str, list[DatedCandidate]] = defaultdict(list)
@@ -177,6 +197,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
 
     documents: list[PlannedDocument] = []
     for index, (doc_date, subtype, track, role) in enumerate(dated):
+        roles = document_roles(subtype, role, seed.perspective)
         documents.append(
             PlannedDocument(
                 index=index,
@@ -185,8 +206,9 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
                 doc_date=doc_date,
                 doc_format=choose_format(seed, index),
                 track=track,
-                author_role=role,
+                author_role=roles.author_role,
                 title=taxonomy.label(subtype) or subtype.replace("_", " ").title(),
+                recipient_role=roles.recipient_role,
             )
         )
 
@@ -196,6 +218,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     log.debug(
         "plan.built",
         case_id=seed.case_id,
+        perspective=seed.perspective,
         documents=len(documents),
         liens=len(lien_tracks),
         recon=recon.enabled,
@@ -210,6 +233,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         recon=recon,
         control=control,
         warnings=warnings,
+        perspective_notes=pov.notes,
     )
 
 

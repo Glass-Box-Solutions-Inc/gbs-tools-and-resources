@@ -54,6 +54,7 @@ from wc_caseload_engine.determinism import (
     normalize_eml,
     normalize_pdf_id,
 )
+from wc_caseload_engine.perspective import file_owner_firm
 from wc_caseload_engine.seeds import CaseSeed, derive_seed
 from wc_caseload_engine.substrate import import_substrate
 
@@ -181,6 +182,8 @@ def render_document(
     index: int,
     out_path: Path,
     title: str | None = None,
+    author_role: str | None = None,
+    recipient_role: str | None = None,
 ) -> RenderResult:
     """Render one planned document to *out_path*, reproducibly.
 
@@ -193,6 +196,8 @@ def render_document(
         index: document index within the case — seeds content and scan noise.
         out_path: destination file (extension included).
         title: document title; defaults to the taxonomy label.
+        author_role: who wrote it, from the file owner's point of view.
+        recipient_role: who received it, likewise.
 
     Returns:
         A :class:`RenderResult` with the checksum and size for the manifest.
@@ -208,6 +213,20 @@ def render_document(
         # The substrate never wires the registry's variant into the spec, so
         # UR/QME/TPR templates would all render their default flavour.
         context["variant"] = variant
+
+    # Point of view. The substrate reads only ``_accumulator`` off the context,
+    # so these keys reach the templates that grow to want them and are inert in
+    # the rest — the honest state of a bridge we do not edit. The one visible
+    # consequence today is the docx letterhead, which is hard-coded to the
+    # applicant firm and therefore wrong on a defense file (README limitation).
+    context["perspective"] = seed.perspective
+    context["file_owner_firm"] = file_owner_firm(
+        seed.perspective, cast.applicant_firm, cast.defense_firm
+    )
+    if author_role:
+        context["author_role"] = author_role
+    if recipient_role:
+        context["recipient_role"] = recipient_role
 
     spec = _DocumentSpec(
         subtype=_SubtypeProxy(subtype),
