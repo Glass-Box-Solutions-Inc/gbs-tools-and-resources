@@ -1,0 +1,1573 @@
+<meta charset="utf-8" />
+<title>WC Synthetic Caseload Engine &mdash; User Guide</title>
+<style>
+  :root {
+    --bg: #fbfaf8;
+    --panel: #ffffff;
+    --ink: #24292e;
+    --ink-soft: #57606a;
+    --border: #e2ddd3;
+    --accent: #7a4b2a;
+    --accent-soft: #a9713f;
+    --code-bg: #f4efe6;
+    --code-ink: #3a3226;
+    --code-string: #715f3a;
+    --code-key: #8a5a2b;
+    --code-comment: #9a8f7a;
+    --code-punct: #6b6459;
+    --table-head: #f1ece1;
+    --warn-bg: #fbf1e3;
+    --warn-border: #d9a45c;
+    --sidebar-w: 280px;
+    --measure: 780px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+    font-size: 16.5px;
+    line-height: 1.65;
+  }
+
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(122,75,42,0.35); }
+  a:hover { border-bottom-color: var(--accent); }
+
+  code, pre, kbd, .mono {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  }
+
+  /* ---------- layout ---------- */
+  .shell {
+    display: flex;
+    align-items: flex-start;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    width: var(--sidebar-w);
+    flex: 0 0 var(--sidebar-w);
+    overflow-y: auto;
+    padding: 28px 20px 40px 28px;
+    border-right: 1px solid var(--border);
+    background: var(--panel);
+  }
+
+  nav.toc .brand {
+    font-family: "Iowan Old Style", Georgia, serif;
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: var(--accent);
+    margin-bottom: 2px;
+    letter-spacing: 0.01em;
+  }
+  nav.toc .brand-sub {
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    margin-bottom: 22px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  nav.toc ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: sec;
+  }
+  nav.toc > ol > li {
+    counter-increment: sec;
+    margin-bottom: 3px;
+  }
+  nav.toc > ol > li > a {
+    display: block;
+    padding: 5px 8px;
+    border-radius: 5px;
+    font-size: 0.86rem;
+    color: var(--ink);
+    border-bottom: none;
+    line-height: 1.35;
+  }
+  nav.toc > ol > li > a::before {
+    content: counter(sec) ". ";
+    color: var(--accent-soft);
+    font-weight: 600;
+  }
+  nav.toc > ol > li > a:hover {
+    background: var(--code-bg);
+  }
+  nav.toc ol ol {
+    padding-left: 18px;
+    margin-bottom: 6px;
+  }
+  nav.toc ol ol li a {
+    display: block;
+    padding: 3px 8px;
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    border-bottom: none;
+  }
+  nav.toc ol ol li a::before { content: "&ndash; "; color: var(--border); }
+  nav.toc ol ol li a:hover { color: var(--accent); background: var(--code-bg); }
+
+  main {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 48px 56px 100px;
+  }
+
+  .measure { max-width: var(--measure); }
+
+  header.titleblock {
+    max-width: var(--measure);
+    margin-bottom: 8px;
+  }
+  header.titleblock h1 {
+    font-size: 2.15rem;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+    color: #1c1a17;
+  }
+  header.titleblock .dek {
+    font-size: 1.08rem;
+    color: var(--ink-soft);
+    margin: 0 0 18px;
+    font-style: italic;
+  }
+  header.titleblock .meta {
+    font-size: 0.82rem;
+    color: var(--ink-soft);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 0;
+    margin-bottom: 36px;
+  }
+  header.titleblock .meta span { margin-right: 18px; }
+  header.titleblock .meta b { color: var(--ink); }
+
+  section { max-width: var(--measure); margin-bottom: 54px; scroll-margin-top: 20px; }
+  section h2 {
+    font-size: 1.5rem;
+    margin: 0 0 4px;
+    padding-top: 6px;
+    color: #1c1a17;
+    border-bottom: 2px solid var(--accent);
+    display: inline-block;
+    padding-bottom: 3px;
+  }
+  section .section-num {
+    display: block;
+    font-size: 0.74rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-soft);
+    margin-bottom: 6px;
+    font-family: "SFMono-Regular", Consolas, monospace;
+  }
+  section > p:first-of-type { margin-top: 18px; }
+
+  h3 {
+    font-size: 1.14rem;
+    margin: 30px 0 8px;
+    color: #2c2721;
+  }
+  h4 {
+    font-size: 0.98rem;
+    margin: 22px 0 6px;
+    color: #3a342b;
+  }
+
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 14px; padding-left: 24px; }
+  li { margin-bottom: 5px; }
+
+  strong { color: #1c1a17; }
+
+  .lede {
+    font-size: 1.05rem;
+    color: #3a342b;
+  }
+
+  /* ---------- code blocks ---------- */
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent-soft);
+    border-radius: 6px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    line-height: 1.55;
+    margin: 14px 0 18px;
+  }
+  pre code { background: none; padding: 0; border: none; font-size: inherit; }
+  code.inline, p code, li code, td code {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.85em;
+    color: var(--code-key);
+  }
+
+  .cm { color: var(--code-comment); font-style: italic; }
+  .key { color: var(--code-key); font-weight: 600; }
+  .str { color: var(--code-string); }
+  .pun { color: var(--code-punct); }
+  .val { color: #2b6b4f; }
+
+  .cmdline { color: var(--accent); }
+  .cmdline::before { content: "$ "; color: var(--code-comment); }
+
+  figcaption, .caption {
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    margin: -10px 0 18px;
+    padding-left: 2px;
+  }
+
+  /* ---------- tables ---------- */
+  .tablewrap { overflow-x: auto; margin: 14px 0 20px; border: 1px solid var(--border); border-radius: 6px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.86rem;
+    background: var(--panel);
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    background: var(--table-head);
+    font-weight: 700;
+    color: #3a342b;
+    font-size: 0.78rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+
+  /* ---------- callouts ---------- */
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent-soft);
+    background: var(--panel);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 16px 0 20px;
+    font-size: 0.92rem;
+  }
+  .callout .callout-label {
+    font-weight: 700;
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .callout.warn { border-left-color: var(--warn-border); background: var(--warn-bg); }
+  .callout.warn .callout-label { color: #9c6a1f; }
+
+  .rank {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin: 6px 0;
+    padding: 8px 10px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+  }
+  .rank .n {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-weight: 700;
+    color: #fff;
+    background: var(--accent-soft);
+    border-radius: 50%;
+    width: 22px; height: 22px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.76rem;
+    flex: none;
+  }
+  .rank .t { font-size: 0.9rem; }
+
+  hr.rule {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 40px 0;
+    max-width: var(--measure);
+  }
+
+  footer {
+    max-width: var(--measure);
+    margin-top: 60px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+  }
+
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    color: var(--code-key);
+    padding: 1px 7px;
+    border-radius: 10px;
+    margin-left: 6px;
+  }
+
+  .flow {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    font-size: 0.85rem;
+    line-height: 1.9;
+    margin: 14px 0 20px;
+  }
+  .flow .step { display: block; }
+  .flow .arrow { color: var(--accent-soft); }
+  .flow .branch { padding-left: 22px; color: var(--ink-soft); }
+  .flow .branch b { color: var(--ink); font-weight: 600; }
+
+  @media (max-width: 980px) {
+    nav.toc { display: none; }
+    main { padding: 32px 22px 80px; }
+  }
+</style>
+
+<div class="shell">
+  <nav class="toc" aria-label="Table of contents">
+    <div class="brand">WC Caseload Engine</div>
+    <div class="brand-sub">User Guide &mdash; for Alex &amp; future operators</div>
+    <ol>
+      <li><a href="#overview">What it is, and why</a></li>
+      <li><a href="#quickstart">Install &amp; quickstart</a></li>
+      <li><a href="#seed-schema">The CaseSeed YAML</a>
+        <ol>
+          <li><a href="#seed-fields">Every field</a></li>
+          <li><a href="#runway">Runway validation</a></li>
+        </ol>
+      </li>
+      <li><a href="#case-perspective">Case perspective</a></li>
+      <li><a href="#caseload-spec">CaseloadSpec</a></li>
+      <li><a href="#doc-controls">Document controls</a></li>
+      <li><a href="#lifecycle">Lifecycle paths</a>
+        <ol>
+          <li><a href="#lifecycle-core">Core stages</a></li>
+          <li><a href="#lifecycle-liens">Lien tracks</a></li>
+          <li><a href="#lifecycle-recon">Reconsideration</a></li>
+        </ol>
+      </li>
+      <li><a href="#doctrine">Doctrine hooks</a>
+        <ol>
+          <li><a href="#doctrine-gating">Prerequisite gating</a></li>
+        </ol>
+      </li>
+      <li><a href="#needed-seeds">Needed seeds, per doctrine</a>
+        <ol>
+          <li><a href="#doctrine-showcase">The showcase spec</a></li>
+        </ol>
+      </li>
+      <li><a href="#outputs">Output layout</a>
+        <ol>
+          <li><a href="#manifest-truthfulness">Manifest truthfulness</a></li>
+        </ol>
+      </li>
+      <li><a href="#determinism">Determinism guarantees</a></li>
+      <li><a href="#filenames">Filename modes &amp; classifier</a></li>
+      <li><a href="#troubleshooting">Troubleshooting</a></li>
+      <li><a href="#limitations">Known limitations</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="titleblock">
+      <h1>WC Synthetic Caseload Engine</h1>
+      <p class="dek">A user guide for generating complete, byte-reproducible synthetic California workers&rsquo; compensation attorney case files &mdash; for Adjudica demo accounts, classifier training corpora, and testing.</p>
+      <div class="meta">
+        <span><b>Package</b> <code class="inline">packages/wc-synthetic-caseload-engine</code></span>
+        <span><b>Version</b> 0.1.0</span>
+        <span><b>Tickets</b> AJC-34, AJC-36</span>
+        <span><b>CLI</b> <code class="inline">wc-caseload</code></span>
+      </div>
+    </header>
+
+    <!-- ================= 1. OVERVIEW ================= -->
+    <section id="overview">
+      <span class="section-num">Section 1</span>
+      <h2>What it is, and why</h2>
+      <p class="lede">The engine turns a small YAML seed into a complete synthetic California workers&rsquo; compensation attorney case file &mdash; the kind that reads as if an applicant-side firm actually produced it, right down to lien conferences that end in executed lien resolution agreements and petitions for reconsideration that come back remanded and settled on remand.</p>
+      <p>Write one <code class="inline">CaseSeed</code> per case &mdash; who was hurt, how, how far the case went, which legal doctrines flavor it, and exactly which documents you want in what quantities and formats &mdash; run one command, and get back a folder of rendered documents plus a manifest describing every one of them. The same seed regenerates the same caseload forever, byte for byte.</p>
+
+      <h3>The problem it solves</h3>
+      <p>Adjudica demo accounts held five document-free matters and one hand-populated case. The closest existing tool, <code class="inline">merus-test-data-generator</code>, generates documents at scale but takes only CLI flags: no per-case seed artifact to review, no reconsideration round-trips, thin lien modelling, and no fine-grained per-case document controls. Because nothing could generate targeted documents to specification, the classifier&rsquo;s accuracy corpus covered only 97 of its 353 subtypes.</p>
+      <p>This engine adds <strong>control</strong> on top of that substrate. It consumes <code class="inline">merus-test-data-generator</code> as a library &mdash; the 25 ReportLab template classes, the content pools, the lifecycle machinery &mdash; and never copies or edits it. This package owns the seed schema, the lien and reconsideration machines, document-control precedence, determinism fixes, and manifests; the substrate owns rendering.</p>
+
+      <h3>What you get out of one run</h3>
+      <ul>
+        <li>A reviewable <code class="inline">seed.yaml</code> per case &mdash; even auto-derived cases are always materialized to disk, so nothing about a case is implicit.</li>
+        <li>Rendered documents in up to four formats: <code class="inline">pdf</code>, <code class="inline">scanned_pdf</code>, <code class="inline">eml</code>, <code class="inline">docx</code>.</li>
+        <li>A per-case <code class="inline">manifest.json</code> and a caseload-level <code class="inline">caseload_manifest.json</code>, both carrying provenance so every byte can be traced back to the seed and the substrate commit that produced it.</li>
+        <li>A guarantee that the same seed and engine version reproduce the identical bytes &mdash; on any machine, in any timezone, on any day.</li>
+      </ul>
+      <p>Generation never touches the network and never writes outside the directory you pass to <code class="inline">--out</code>.</p>
+    </section>
+
+    <!-- ================= 2. QUICKSTART ================= -->
+    <section id="quickstart">
+      <span class="section-num">Section 2</span>
+      <h2>Install &amp; quickstart</h2>
+      <p>The substrate package, <code class="inline">packages/merus-test-data-generator</code>, must be checked out alongside this one (both live under <code class="inline">packages/</code> in the <code class="inline">gbs-tools-and-resources</code> monorepo, so this is automatic in a normal checkout). If it lives somewhere else, point at it with the <code class="inline">WC_CASELOAD_SUBSTRATE=/abs/path</code> environment variable.</p>
+
+      <h3>Install</h3>
+      <pre><code><span class="cmdline">uv venv --python 3.12</span>
+<span class="cmdline">uv pip install -e ".[dev]"</span></code></pre>
+      <p class="caption">Run from inside <code class="inline">packages/wc-synthetic-caseload-engine/</code>. This creates <code class="inline">.venv/</code> and installs the <code class="inline">wc-caseload</code> console script into it.</p>
+
+      <h3>Generate the demo caseload in three commands</h3>
+      <pre><code><span class="cmdline">wc-caseload generate --spec examples/demo-caseload.yaml --out /tmp/wcce-demo</span>
+<span class="cmdline">wc-caseload validate --out /tmp/wcce-demo</span>
+<span class="cmdline">wc-caseload taxonomy-check</span></code></pre>
+      <p>The first command resolves the demo caseload, plans every case, renders every document and writes manifests. On a real run this produces <strong>7 cases and 331 documents</strong> across all four formats. The second confirms every manifest subtype is canonical and every checksum matches what is on disk. The third confirms the engine&rsquo;s taxonomy hasn&rsquo;t drifted from the classifier it feeds.</p>
+      <p>The demo also prints two doctrine warnings, on purpose &mdash; it carries two hooks whose cases cannot support them, to exercise the kept-and-warned path described in <a href="#doctrine-gating">Section 8</a>. For the opposite exercise, a warning-free run covering all fourteen doctrines, generate <code class="inline">examples/doctrine-showcase.yaml</code> instead (<a href="#doctrine-showcase">Section 9</a>).</p>
+
+      <div class="callout">
+        <span class="callout-label">Tip</span>
+        Add <code class="inline">--dry-run</code> to <code class="inline">generate</code> to validate and print the resolved plan (one line per case: seed, stage, injury, claim response, resolution, lien count, whether recon fired) without writing anything. Useful for sanity-checking a spec before committing to a render, which is the slower step.
+      </div>
+
+      <h3>The CLI surface</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code>wc-caseload generate --spec S --out D</code></td><td>Resolve a caseload, plan every case, render every document, write manifests.</td></tr>
+            <tr><td><code>wc-caseload generate --spec S --out D --dry-run</code></td><td>Parse, validate and resolve the caseload; print the plan; write nothing.</td></tr>
+            <tr><td><code>wc-caseload generate ... --seed N</code></td><td>Override <code>auto.rng_seed</code> for this run only (explicit case seeds are untouched).</td></tr>
+            <tr><td><code>wc-caseload seed --template [--kind case|caseload]</code></td><td>Print an annotated seed covering every controllable field. <code>--kind</code> defaults to <code>case</code>; add <code>--out FILE</code> to write instead of printing to stdout.</td></tr>
+            <tr><td><code>wc-caseload validate --spec S</code></td><td>Schema, cross-field rules and document-control key validity for a spec file.</td></tr>
+            <tr><td><code>wc-caseload validate --out D</code></td><td>Every manifest subtype canonical and parent-valid, every file present, every MD5 matching.</td></tr>
+            <tr><td><code>wc-caseload taxonomy-check [--classifier-path DIR]</code></td><td>Diff the engine taxonomy against the classifier source; nonzero exit on drift. Classifier checkout defaults to <code>WC_CASELOAD_CLASSIFIER</code> or <code>~/projects</code>.</td></tr>
+            <tr><td><code>wc-caseload --version</code></td><td>Print the installed engine version (currently <code>0.1.0</code>).</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Every subcommand also takes <code class="inline">-h</code>/<code class="inline">--help</code>.</p>
+    </section>
+
+    <!-- ================= 3. SEED SCHEMA ================= -->
+    <section id="seed-schema">
+      <span class="section-num">Section 3</span>
+      <h2>The CaseSeed YAML</h2>
+      <p>One case is one <code class="inline">CaseSeed</code>. Every field except <code class="inline">case_id</code>, <code class="inline">rng_seed</code> and <code class="inline">injury</code> has a default, and anything you omit is derived deterministically from <code class="inline">rng_seed</code>. This is the whole point: the seed <em>is</em> the interface, and it is designed so that a one-line seed (<code class="inline">case_id</code> + <code class="inline">rng_seed</code> + <code class="inline">injury</code>) is already valid and produces a fully realized case.</p>
+      <p>Get the canonical, fully-annotated template any time with:</p>
+      <pre><code><span class="cmdline">wc-caseload seed --template --out seed.yaml</span></code></pre>
+
+      <div class="callout warn">
+        <span class="callout-label">Strict by design</span>
+        Unknown fields and invalid enum values are rejected at load time, naming the dotted field path, the allowed values, and the offending input. A typo never silently generates the wrong caseload &mdash; see <a href="#runway">Runway validation</a> below for exact error text.
+      </div>
+
+      <h3 id="seed-fields">Full annotated example, field by field</h3>
+      <p>This is the live output of <code class="inline">wc-caseload seed --template --kind case</code>, reproduced in full:</p>
+
+<pre><code><span class="cm"># Case identifier. Doubles as the output directory name, so keep it path-safe:</span>
+<span class="cm"># letters, digits, dot, dash, underscore; 1-64 chars.</span>
+<span class="key">case_id:</span> <span class="val">martinez-001</span>
+
+<span class="cm"># Master seed. Same rng_seed + same engine version =&gt; identical case, forever.</span>
+<span class="key">rng_seed:</span> <span class="val">12345</span>
+
+<span class="cm"># profile &mdash; the cast. Every field is optional; anything omitted is derived</span>
+<span class="cm"># deterministically from rng_seed (Faker, seeded). Set fields to pin them.</span>
+<span class="key">profile:</span>
+  <span class="key">applicant:</span>
+    <span class="key">name:</span> <span class="val">Elena Martinez</span>          <span class="cm"># synthetic only &mdash; never a real person</span>
+    <span class="key">age:</span> <span class="val">44</span>                       <span class="cm"># 16-99</span>
+    <span class="key">occupation:</span> <span class="val">Warehouse Associate</span>
+    <span class="key">tenure_years:</span> <span class="val">6.5</span>             <span class="cm"># 0-60</span>
+  <span class="key">employer:</span>
+    <span class="key">name:</span> <span class="val">Valley Fresh Distribution, Inc.</span>
+    <span class="key">industry:</span> <span class="val">Food distribution</span>
+    <span class="key">county:</span> <span class="val">San Bernardino</span>        <span class="cm"># CA county &mdash; drives the WCAB venue</span>
+  <span class="key">carrier:</span>
+    <span class="key">name:</span> <span class="val">Pacific Mutual Compensation Insurance Co.</span>
+  <span class="key">attorneys:</span>
+    <span class="key">applicant_firm:</span> <span class="val">Reyes &amp; Whitfield, APC</span>     <span class="cm"># files are applicant-side POV</span>
+    <span class="key">defense_firm:</span> <span class="val">Hallman, Cortez &amp; Ng, LLP</span>
+  <span class="key">physicians:</span>
+    <span class="key">ptp_specialty:</span> <span class="val">Orthopedic Surgery</span>          <span class="cm"># primary treating physician</span>
+    <span class="key">qme_specialty:</span> <span class="val">Orthopedic Surgery</span>          <span class="cm"># QME/AME panel specialty</span>
+
+<span class="cm"># injury &mdash; what happened.</span>
+<span class="cm">#   type: specific | cumulative_trauma | death</span>
+<span class="cm">#     specific / death  -&gt; date_of_injury is required</span>
+<span class="cm">#     cumulative_trauma -&gt; ct_start + ct_end are required (ct_end &gt;= ct_start)</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2023-04-12</span>
+  <span class="cm"># For a cumulative trauma claim, drop date_of_injury and use instead:</span>
+  <span class="cm"># type: cumulative_trauma</span>
+  <span class="cm"># ct_start: 2021-01-04</span>
+  <span class="cm"># ct_end: 2023-04-12</span>
+  <span class="key">body_parts:</span>                     <span class="cm"># 1-5 entries, each with an ICD-10 code</span>
+    <span class="pun">-</span> <span class="key">part:</span> <span class="val">lumbar_spine</span>
+      <span class="key">icd10:</span> <span class="val">M54.5</span>
+      <span class="key">detail:</span> <span class="val">L4-L5 disc protrusion with radiculopathy</span>
+    <span class="pun">-</span> <span class="key">part:</span> <span class="val">shoulder</span>
+      <span class="key">icd10:</span> <span class="val">M75.100</span>
+      <span class="key">detail:</span> <span class="val">right rotator cuff partial-thickness tear</span>
+  <span class="key">mechanism:</span> <span class="val">lifting a pallet of stock from a floor-level rack</span>   <span class="cm"># or: auto</span>
+
+<span class="cm"># lifecycle &mdash; how far the case went and which branches it took.</span>
+<span class="key">lifecycle:</span>
+  <span class="cm"># intake | active_treatment | discovery | medical_legal | pre_trial |</span>
+  <span class="cm"># resolved | post_recon   (post_recon requires reconsideration.enabled)</span>
+  <span class="key">target_stage:</span> <span class="val">post_recon</span>
+
+  <span class="key">claim_response:</span> <span class="val">denied</span>            <span class="cm"># accepted | delayed | denied</span>
+
+  <span class="key">eval_type:</span> <span class="val">qme</span>                   <span class="cm"># qme | ame | none</span>
+
+  <span class="cm"># Utilization review dispute and its optional IMR appeal.</span>
+  <span class="key">ur_dispute:</span>
+    <span class="key">enabled:</span> <span class="val">true</span>
+    <span class="key">decision:</span> <span class="val">upheld</span>            <span class="cm"># upheld | overturned (upheld = treatment denied)</span>
+    <span class="key">imr:</span> <span class="val">true</span>                   <span class="cm"># requires enabled: true</span>
+    <span class="key">imr_outcome:</span> <span class="val">upheld</span>         <span class="cm"># upheld | overturned; requires imr: true</span>
+
+  <span class="cm"># How the case-in-chief ended.</span>
+  <span class="key">resolution:</span>
+    <span class="cm"># stipulations | c_and_r | findings_award | take_nothing | pending</span>
+    <span class="key">type:</span> <span class="val">findings_award</span>
+    <span class="key">msa:</span> <span class="val">false</span>                  <span class="cm"># Medicare Set-Aside allocation in the file</span>
+
+  <span class="cm"># Petition for reconsideration round trip (requires an award to attack).</span>
+  <span class="key">reconsideration:</span>
+    <span class="key">enabled:</span> <span class="val">true</span>
+    <span class="key">outcome:</span> <span class="val">granted_remand</span>     <span class="cm"># denied | granted_remand | granted_reversed</span>
+    <span class="cm"># further_litigation | settled | affirmed_final</span>
+    <span class="cm">#   denied         =&gt; must be affirmed_final</span>
+    <span class="cm">#   granted_remand =&gt; further_litigation or settled</span>
+    <span class="key">post_recon:</span> <span class="val">settled</span>
+
+  <span class="cm"># Lien claimant tracks. Liens routinely outlive the case-in-chief.</span>
+  <span class="key">liens:</span>
+    <span class="key">count:</span> <span class="val">3</span>                    <span class="cm"># 0-8</span>
+    <span class="key">claimants:</span>                  <span class="cm"># &lt;= count entries; the rest are derived</span>
+      <span class="pun">-</span> <span class="val">medical_provider</span>        <span class="cm"># medical_provider | hospital | pharmacy |</span>
+      <span class="pun">-</span> <span class="val">hospital</span>                <span class="cm"># ambulance | edd | attorney_costs |</span>
+      <span class="pun">-</span> <span class="val">edd</span>                     <span class="cm"># self_procured</span>
+    <span class="cm"># lien_stipulation | lien_resolution_agreement | dismissal |</span>
+    <span class="cm"># order_on_lien | mixed | pending</span>
+    <span class="key">resolution:</span> <span class="val">lien_resolution_agreement</span>
+    <span class="key">post_resolution_litigation:</span> <span class="val">true</span>   <span class="cm"># lien fight continues after resolution</span>
+
+  <span class="cm"># Landmark doctrines that flavour the generated content.</span>
+  <span class="cm"># ogilvie | almaraz_guzman | benson | escobedo | kite | going_and_coming |</span>
+  <span class="cm"># sibtf | death_dependency | lc3208_3_psych | gfpa |</span>
+  <span class="cm"># firefighter_presumption | imr_constitutionality | ab5_dynamex |</span>
+  <span class="cm"># lc4664_prior_award</span>
+  <span class="key">doctrine_hooks:</span>
+    <span class="pun">-</span> <span class="val">almaraz_guzman</span>
+    <span class="pun">-</span> <span class="val">kite</span>
+
+<span class="cm"># documents &mdash; fine-grained control over what lands in the file.</span>
+<span class="cm"># (precedence explained in full in Section 6)</span>
+<span class="key">documents:</span>
+  <span class="key">global_cap:</span> <span class="val">120</span>               <span class="cm"># max documents for this case (omit for none)</span>
+  <span class="key">format_mix:</span>
+    <span class="key">pdf:</span> <span class="val">0.6</span>
+    <span class="key">scanned_pdf:</span> <span class="val">0.25</span>
+    <span class="key">eml:</span> <span class="val">0.1</span>
+    <span class="key">docx:</span> <span class="val">0.05</span>
+  <span class="key">include_only:</span> <span class="pun">[]</span>            <span class="cm"># subtype and/or parent-type keys; [] = no filter</span>
+  <span class="key">exclude:</span>
+    <span class="pun">-</span> <span class="val">SURVEILLANCE_VIDEO</span>
+  <span class="key">overrides:</span>
+    <span class="pun">-</span> <span class="key">subtype:</span> <span class="val">DEPOSITION_TRANSCRIPT</span>   <span class="cm"># exact count for one subtype</span>
+      <span class="key">count:</span> <span class="val">2</span>
+    <span class="pun">-</span> <span class="key">type:</span> <span class="val">MEDICAL_CLINICAL</span>           <span class="cm"># bounds for a whole parent type</span>
+      <span class="key">min:</span> <span class="val">8</span>
+      <span class="key">max:</span> <span class="val">25</span>
+
+<span class="cm"># output &mdash; filenames and permitted formats.</span>
+<span class="key">output:</span>
+  <span class="cm"># neutral -&gt; no subtype leak in filenames (honest classifier measurement)</span>
+  <span class="cm"># corpus  -&gt; TC-###_###_&lt;SUBTYPE&gt;_&lt;YYYY-MM-DD&gt;.&lt;ext&gt; (classifier corpus mode)</span>
+  <span class="key">filename_style:</span> <span class="val">neutral</span>
+  <span class="key">formats:</span>
+    <span class="pun">-</span> <span class="val">pdf</span>
+    <span class="pun">-</span> <span class="val">scanned_pdf</span>
+    <span class="pun">-</span> <span class="val">eml</span>
+    <span class="pun">-</span> <span class="val">docx</span></code></pre>
+
+      <h4>Field reference at a glance</h4>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Section</th><th>Field</th><th>Values / range</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td rowspan="3">top-level</td><td><code>case_id</code></td><td>1&ndash;64 chars, path-safe</td><td>Required. Also the output directory name.</td></tr>
+            <tr><td><code>rng_seed</code></td><td>integer</td><td>Required. Fully determines the case.</td></tr>
+            <tr><td><code>perspective</code></td><td><code>applicant</code> | <code>defense</code></td><td>Default <code>applicant</code>. Whose file this is &mdash; see <a href="#case-perspective">Case perspective</a>. Never changes a case fact.</td></tr>
+            <tr><td rowspan="5">profile</td><td><code>applicant</code></td><td>name, age (16&ndash;99), occupation, tenure_years (0&ndash;60)</td><td>All optional; derived from rng_seed when omitted.</td></tr>
+            <tr><td><code>employer</code></td><td>name, industry, county</td><td>County is a CA county and drives the WCAB venue.</td></tr>
+            <tr><td><code>carrier</code></td><td>name</td><td>&nbsp;</td></tr>
+            <tr><td><code>attorneys</code></td><td>applicant_firm, defense_firm</td><td>Recorded in seed/manifest; see <a href="#limitations">Known limitations</a> for the applicant-firm letterhead caveat.</td></tr>
+            <tr><td><code>physicians</code></td><td>ptp_specialty, qme_specialty</td><td>&nbsp;</td></tr>
+            <tr><td rowspan="3">injury</td><td><code>type</code></td><td><code>specific</code> | <code>cumulative_trauma</code> | <code>death</code></td><td>Required.</td></tr>
+            <tr><td><code>date_of_injury</code> / <code>ct_start</code>+<code>ct_end</code></td><td>dates</td><td>DOI required for specific/death; CT start+end required for cumulative_trauma (end &ge; start).</td></tr>
+            <tr><td><code>body_parts</code></td><td>1&ndash;5 entries: part, icd10, detail</td><td>Required, at least one.</td></tr>
+            <tr><td rowspan="8">lifecycle</td><td><code>target_stage</code></td><td><code>intake</code> | <code>active_treatment</code> | <code>discovery</code> | <code>medical_legal</code> | <code>pre_trial</code> | <code>resolved</code> | <code>post_recon</code></td><td><code>post_recon</code> requires <code>reconsideration.enabled</code>.</td></tr>
+            <tr><td><code>claim_response</code></td><td><code>accepted</code> | <code>delayed</code> | <code>denied</code></td><td>&nbsp;</td></tr>
+            <tr><td><code>eval_type</code></td><td><code>qme</code> | <code>ame</code> | <code>none</code></td><td>&nbsp;</td></tr>
+            <tr><td><code>ur_dispute</code></td><td>enabled, decision (upheld/overturned), imr, imr_outcome</td><td><code>upheld</code> = the UR denial stands. <code>imr</code>/<code>imr_outcome</code> require <code>enabled: true</code>.</td></tr>
+            <tr><td><code>resolution</code></td><td>type: stipulations/c_and_r/findings_award/take_nothing/pending; msa: bool</td><td>&nbsp;</td></tr>
+            <tr><td><code>reconsideration</code></td><td>enabled; outcome: denied/granted_remand/granted_reversed; post_recon: further_litigation/settled/affirmed_final</td><td>Requires an award to attack. <code>denied</code>&rarr;must be <code>affirmed_final</code>; <code>granted_remand</code>&rarr;<code>further_litigation</code> or <code>settled</code>.</td></tr>
+            <tr><td><code>liens</code></td><td>count 0&ndash;8; claimants list; resolution: lien_stipulation/lien_resolution_agreement/dismissal/order_on_lien/mixed/pending; post_resolution_litigation: bool</td><td>Claimant types: medical_provider, hospital, pharmacy, ambulance, edd, attorney_costs, self_procured.</td></tr>
+            <tr><td><code>doctrine_hooks</code></td><td>list of 14 landmark doctrines</td><td>Steers subtypes <em>and</em> injects doctrine language &mdash; each hook has a prerequisite the seed must satisfy. See <a href="#doctrine">Doctrine hooks</a> and the per-hook seeds in <a href="#needed-seeds">Section 9</a>.</td></tr>
+            <tr><td rowspan="5">documents</td><td><code>global_cap</code></td><td>integer</td><td>Max documents for the case; omit for no cap.</td></tr>
+            <tr><td><code>format_mix</code></td><td>relative weights: pdf, scanned_pdf, eml, docx</td><td>Renormalized over <code>output.formats</code>.</td></tr>
+            <tr><td><code>include_only</code> / <code>exclude</code></td><td>list of subtype and/or parent-type keys</td><td>Whitelist then blacklist. Empty list = no filter.</td></tr>
+            <tr><td><code>overrides</code></td><td>list of <code>{subtype, count}</code> or <code>{type, min, max}</code></td><td>See <a href="#doc-controls">Document controls</a> for precedence.</td></tr>
+            <tr><td rowspan="2">output</td><td><code>filename_style</code></td><td><code>neutral</code> | <code>corpus</code></td><td>Default <code>neutral</code>.</td></tr>
+            <tr><td><code>formats</code></td><td>list from: pdf, scanned_pdf, eml, docx</td><td>&nbsp;</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="runway">Runway validation: what gets rejected, and how to read the error</h3>
+      <p>A seed states how far its case got; the calendar decides whether that is possible. This engine anchors "today" at a fixed date, <code class="inline">2026-01-01</code> (never the wall clock &mdash; see <a href="#determinism">Determinism</a>), and every lifecycle stage needs a minimum number of days between the injury and that anchor to hold its own story: an Application follows the injury by two to six months, resolution by another six, a petition for reconsideration within 25 days of the award, and the WCAB&rsquo;s order within 60 more.</p>
+      <p>A seed whose injury sits too close to the anchor for the story it claims is <strong>rejected at load time</strong>, before any rendering happens. Verified live against the CLI, an over-tight seed produces:</p>
+      <pre><code>Error: bad-runway.yaml: 1 validation error(s)
+  cases.0: Value error, injury.date_of_injury is 2025-06-01, which leaves
+  214 day(s) before the 2026-01-01 anchor, but lifecycle.target_stage
+  'resolved' needs at least 540. Move injury.date_of_injury to 2024-07-10
+  or earlier, or seed a lifecycle that reaches less far.</code></pre>
+      <p>The message names the offending field, the actual runway available, the driver that demanded more, the minimum it needed, and a concrete fix &mdash; either move the date or seed a lifecycle that reaches less far. Exit code is nonzero (<code class="inline">1</code>).</p>
+
+      <h4>Runway floors</h4>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Driver</th><th>Minimum runway</th></tr></thead>
+          <tbody>
+            <tr><td><code>target_stage: intake</code></td><td>30 days</td></tr>
+            <tr><td><code>target_stage: active_treatment</code> / <code>discovery</code></td><td>180 days</td></tr>
+            <tr><td><code>target_stage: medical_legal</code> / <code>pre_trial</code></td><td>365 days</td></tr>
+            <tr><td><code>target_stage: resolved</code>, or any <code>resolution.type</code> other than <code>pending</code></td><td>540 days</td></tr>
+            <tr><td><code>target_stage: post_recon</code>, <code>reconsideration.enabled</code>, or <code>liens.post_resolution_litigation</code></td><td>720 days</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>This replaced an earlier behavior of silent clamping, which absorbed a short runway by pinning over-horizon dates onto the anchor &mdash; producing, in one real case, a petition for reconsideration dated 80 days <em>before</em> the Application it appealed from. Sequenced chains (each lien track, the reconsideration round trip) are fitted as a whole rather than clamped date by date, so a tight window compresses them in order with strictly increasing dates instead of stacking several documents on one day. A lien track seeded with <code class="inline">post_resolution_litigation: true</code> is allowed to run past the anchor rather than be compressed, because post-resolution lien practice genuinely outlives the case-in-chief. Auto-derived seeds (see next section) satisfy these floors by construction, so you will only meet this error when hand-writing a seed.</p>
+
+      <p>Two other rejection classes you&rsquo;ll meet at the same <code class="inline">validate</code>/<code class="inline">generate</code> boundary, confirmed live:</p>
+      <pre><code><span class="cm">## invalid enum value</span>
+Error: bad-enum.yaml: 1 validation error(s)
+  cases.0.lifecycle.claim_response: Input should be 'accepted', 'delayed'
+  or 'denied' (allowed: 'accepted', 'delayed' or 'denied') [got 'maybe']
+
+<span class="cm">## unknown / misspelled field</span>
+Error: unknown-field.yaml: 1 validation error(s)
+  cases.0.lifecycle.claim_repsonse: unknown field &mdash; remove it or fix the
+  spelling [got 'accepted']</code></pre>
+    </section>
+
+    <!-- ================= 4. CASE PERSPECTIVE ================= -->
+    <section id="case-perspective">
+      <span class="section-num">Section 4</span>
+      <h2>Case perspective: applicant or defense</h2>
+      <p>One injury, two case files. The applicant firm&rsquo;s folder and the defense firm&rsquo;s folder describe the same claim and share most of their paper, but the privileged half of each is written by a different lawyer for a different client. The top-level <code class="inline">perspective</code> field on <code class="inline">CaseSeed</code> picks which folder you are generating:</p>
+<pre><code><span class="key">case_id:</span> <span class="val">whitaker-defense-qme-surveillance</span>
+<span class="key">rng_seed:</span> <span class="val">100007</span>
+<span class="key">perspective:</span> <span class="val">defense</span>   <span class="cm"># applicant (the default) | defense</span></code></pre>
+      <p>It sits right after <code class="inline">rng_seed</code> and before <code class="inline">profile</code> in the schema, and defaults to <code class="inline">applicant</code> when omitted &mdash; every seed written before this field existed still resolves to <code class="inline">applicant</code> and plans, dates and renders exactly as it always did.</p>
+
+      <div class="callout warn">
+        <span class="callout-label">Not yet in <code>seed --template</code></span>
+        Verified live: as of this writing, <code class="inline">wc-caseload seed --template --kind case</code> does not print a <code class="inline">perspective:</code> line in its annotated output &mdash; the field is real and live in the schema (it is on <code class="inline">CaseSeed</code>, it drives <code class="inline">--dry-run</code>&rsquo;s <code class="inline">pov=</code> column, and it is recorded in every manifest) but the generated template text itself has not been updated to demonstrate it yet. Until it is, add it by hand as shown above, or copy it from the demo caseload&rsquo;s <code class="inline">whitaker-defense-qme-surveillance</code> case in <code class="inline">examples/demo-caseload.yaml</code>.
+      </div>
+
+      <h3>The invariant: perspective never changes a case fact</h3>
+      <p>Same <code class="inline">rng_seed</code>, same everything else: identical cast &mdash; both firms exist in both files, because they are opposing counsel, not alternatives &mdash; identical ADJ number, identical date of injury, identical lifecycle event dates. Only the file&rsquo;s point of view moves.</p>
+      <p>That is enforced structurally rather than by convention. <code class="inline">perspective</code> is never mixed into an RNG salt that feeds a fact &mdash; the module draws only from its own salt, <code class="inline">"perspective"</code>, a stream nothing fact-producing reads, used solely to date the paper this side of the file adds on its own. On the applicant path, <code class="inline">apply_perspective()</code> is a literal identity function that draws no randomness at all, which is exactly what keeps every seed written before this field existed byte-stable.</p>
+
+      <h3>Three things change, all in <code>perspective.py</code></h3>
+
+      <h4>1. Work-product swap</h4>
+      <p>Privileged analysis belongs to whoever owns the file, so a defense file calls it something else:</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Applicant file</th><th>Defense file</th></tr></thead>
+          <tbody>
+            <tr><td><code>CASE_ANALYSIS_MEMO</code></td><td><code>DEFENSE_CASE_ANALYSIS</code></td></tr>
+            <tr><td><code>SETTLEMENT_VALUATION_MEMO</code></td><td><code>DEFENSE_MSC_STATEMENT</code></td></tr>
+            <tr><td><code>TRIAL_BRIEF</code></td><td><code>DEFENSE_TRIAL_BRIEF</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>All six are canonical <code class="inline">WORK_PRODUCT</code> subtype keys, so the swap is a rename and never a taxonomy escape. <code class="inline">SETTLEMENT_VALUATION_MEMO</code> maps to <code class="inline">DEFENSE_MSC_STATEMENT</code> because that is where a defense file states its valuation: the mandatory settlement conference statement is the defense&rsquo;s number, filed rather than filed away. Work product both sides prepare under the same name &mdash; <code class="inline">MEDICAL_CHRONOLOGY_TIMELINE</code>, <code class="inline">DEPOSITION_SUMMARY</code> &mdash; deliberately does not swap.</p>
+
+      <h4>2. Emission profiles</h4>
+      <p>A table of per-subtype-or-parent-type weights multiplies what the shared lifecycle proposed. A subtype row beats its type&rsquo;s row; a key with no row is carried unchanged by both files.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Key</th><th>Applicant</th><th>Defense</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td><code>CLIENT_CORRESPONDENCE_INFORMATIONAL</code> / <code>_REQUEST</code></td><td>1.0</td><td>1.0</td><td>Both firms write to their own client; only the roles invert.</td></tr>
+            <tr><td><code>CLIENT_INTAKE_CORRESPONDENCE</code></td><td>1.0</td><td>0.0</td><td>Defense counsel is assigned by a carrier; it runs no intake.</td></tr>
+            <tr><td><code>CLIENT_STATUS_LETTERS</code></td><td>1.0</td><td>0.0</td><td>Status letters go to an injured worker.</td></tr>
+            <tr><td><code>ADVOCACY_LETTERS_*</code> (PTP/QME/AME)</td><td>1.0</td><td>0.0</td><td>Lobbying a physician toward a finding is applicant-side practice.</td></tr>
+            <tr><td><code>SETTLEMENT_DEMAND_LETTER</code></td><td>1.0</td><td>1.0</td><td>Applicant-authored; the defense file holds it as <em>received</em> mail.</td></tr>
+            <tr><td><code>CLAIMS_ADMINISTRATION</code> (type)</td><td>1.0</td><td>2.5</td><td>The carrier&rsquo;s own claim file &mdash; reserves, diary notes, nurse case management.</td></tr>
+            <tr><td><code>INVESTIGATION</code> (type)</td><td>1.0</td><td>3.0 + floor</td><td>Sub-rosa surveillance and social-media workups are defense-retained.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>A positive weight never rounds a non-empty pool down to nothing; only an explicit <code class="inline">0.0</code> removes a document type entirely. <code class="inline">INVESTIGATION</code> is the one case a multiplier alone cannot express: the shared lifecycle proposes <em>zero</em> investigator reports, and any multiple of zero is zero. So its row also names a <strong>floor</strong> &mdash; subtypes planted once each when the characteristic side&rsquo;s pool is otherwise empty. Defense files get <code class="inline">INVESTIGATOR_REPORT</code>, <code class="inline">SURVEILLANCE_VIDEO</code> and <code class="inline">SOCIAL_MEDIA_EVIDENCE</code> planted this way. &ldquo;Characteristic side&rdquo; is whichever weight is strictly higher; equal weights plant nothing.</p>
+      <div class="callout">
+        <span class="callout-label">Why the floor outranks routine paper</span>
+        Floor-planted documents are placed at a deliberately high <code class="inline">priority</code> (15, near the top of the core track) so <code class="inline">documents.global_cap</code> cannot delete them. Early testing found the demo&rsquo;s defense file emitting zero investigation documents under <code class="inline">global_cap: 55</code>: the cap consumed the entire floor before it reached the twenty-third adjuster letter, so the one mechanism whose whole job is &ldquo;this file always has surveillance&rdquo; reliably produced a file with none. A floor the weakest control can delete is not a floor.
+      </div>
+      <p><strong>Perspective is a default, not a veto.</strong> An explicit <code class="inline">documents.overrides</code> entry still forces applicant-only paper into a defense file, through the same forced-emission path as any other lifecycle-invalid override (see <a href="#doc-controls">Document controls</a>), with a WARN that names the perspective as what it is overruling.</p>
+
+      <h4>3. Roles</h4>
+      <p>&ldquo;Client&rdquo; means the injured worker on an applicant file and the employer/carrier on a defense file, so the author and recipient of client correspondence invert. Documents the file owner authors &mdash; work product, client correspondence &mdash; get the owner&rsquo;s attorney as author and the owner&rsquo;s client as recipient. Everything else keeps the author the facts give it: an Application for Adjudication is applicant-filed in <em>both</em> files, an order is the judge&rsquo;s in both. That document is instead addressed to the firm that owns the file, which is what makes it <em>received</em> paper.</p>
+
+      <h3>Known limitation: defense docx letterhead</h3>
+      <p>The substrate hard-codes <code class="inline">Martinez &amp; Associates, APC</code> on the <code class="inline">.docx</code> letterhead (<code class="inline">data/docx_styles.py</code>), so <strong><code class="inline">.docx</code> files in a defense case file carry the applicant firm&rsquo;s letterhead</strong>. This is the same limitation already documented for <code class="inline">profile.attorneys.applicant_firm</code> (see <a href="#limitations">Known limitations</a>), now with a second visible symptom, and it is left unpatched for the same reason: rewriting a substrate module&rsquo;s private constant at runtime would be shared mutable state across cases, and this package consumes the substrate as a library rather than editing it.</p>
+      <p>The defect is scoped to the rendered docx letterhead only. The manifest, the seed, the subtype set, the roles and every other format are unaffected &mdash; live-verified against the demo caseload&rsquo;s defense case, <code class="inline">whitaker-defense-qme-surveillance</code>, whose <code class="inline">manifest.json</code> correctly records <code class="inline">"perspective": "defense"</code> alongside the correct <code class="inline">applicantFirm</code> and <code class="inline">defenseFirm</code> values regardless of the docx letterhead limitation.</p>
+
+      <h3>Live example from the demo caseload</h3>
+      <p><code class="inline">examples/demo-caseload.yaml</code> now includes a seventh case, <code class="inline">whitaker-defense-qme-surveillance</code>: an accepted claim with a disputed QME apportionment, sub-rosa surveillance, and a C&amp;R &mdash; generated with <code class="inline">perspective: defense</code>. Regenerating it live confirms the mechanics above: its 55-document file contains <code class="inline">DEFENSE_MSC_STATEMENT</code>, <code class="inline">SURVEILLANCE_VIDEO</code>, <code class="inline">SOCIAL_MEDIA_EVIDENCE</code>, <code class="inline">INVESTIGATOR_REPORT</code>, <code class="inline">RESERVE_WORKSHEET</code>, <code class="inline">COMPENSABILITY_DETERMINATION</code> and <code class="inline">DEFENSE_COUNSEL_LETTER_INFORMATIONAL</code> &mdash; and contains no <code class="inline">CLIENT_INTAKE_CORRESPONDENCE</code> or any <code class="inline">ADVOCACY_LETTERS_*</code> subtype at all, exactly as the emission-profile table predicts. See <a href="#outputs">Output layout</a> for the caseload-wide <code class="inline">perspectiveCounts</code> tally this case now produces.</p>
+    </section>
+
+    <!-- ================= 5. CASELOAD SPEC ================= -->
+    <section id="caseload-spec">
+      <span class="section-num">Section 5</span>
+      <h2>CaseloadSpec: defaults, explicit cases, and auto derivation</h2>
+      <p>A caseload spec is what you pass to <code class="inline">--spec</code>. It combines a shared defaults block, an explicit list of hand-written cases, and an optional <code class="inline">auto:</code> block that derives additional fully-materialized cases from a calibrated distribution.</p>
+
+<pre><code><span class="key">caseload_id:</span> <span class="val">demo-2026q3</span>
+
+<span class="key">defaults:</span> <span class="pun">{&lt;partial CaseSeed&gt;}</span>   <span class="cm"># deep-merged UNDER each case</span>
+
+<span class="key">cases:</span> <span class="pun">[&lt;CaseSeed&gt;, ...]</span>
+
+<span class="key">auto:</span> <span class="pun">{</span><span class="key">count:</span> <span class="val">20</span><span class="pun">,</span> <span class="key">distribution:</span> <span class="val">balanced</span><span class="pun">,</span> <span class="key">rng_seed:</span> <span class="val">777</span><span class="pun">}</span></code></pre>
+
+      <h3>How <code>defaults</code> merges</h3>
+      <p><code class="inline">defaults</code> is a partial <code class="inline">CaseSeed</code> deep-merged <em>under</em> each entry in <code class="inline">cases[]</code> &mdash; mappings merge key-by-key, and any field the explicit case sets wins. Lists are replaced wholesale by the case, not concatenated. <code class="inline">defaults</code> does not apply to auto-derived cases; those are already fully materialized by the distribution.</p>
+      <p>From the demo caseload spec, the shared defaults set format mix and output settings once instead of repeating them per case:</p>
+<pre><code><span class="key">defaults:</span>
+  <span class="key">documents:</span>
+    <span class="key">format_mix:</span> <span class="pun">{</span><span class="key">pdf:</span> <span class="val">0.6</span><span class="pun">,</span> <span class="key">scanned_pdf:</span> <span class="val">0.25</span><span class="pun">,</span> <span class="key">eml:</span> <span class="val">0.1</span><span class="pun">,</span> <span class="key">docx:</span> <span class="val">0.05</span><span class="pun">}</span>
+  <span class="key">output:</span>
+    <span class="key">filename_style:</span> <span class="val">neutral</span>
+    <span class="key">formats:</span> <span class="pun">[</span><span class="val">pdf</span><span class="pun">,</span> <span class="val">scanned_pdf</span><span class="pun">,</span> <span class="val">eml</span><span class="pun">,</span> <span class="val">docx</span><span class="pun">]</span></code></pre>
+      <p>A second example, from the caseload template, shows a case overriding one defaulted field (<code class="inline">claim_response</code>) while inheriting the rest:</p>
+<pre><code><span class="key">defaults:</span>
+  <span class="key">lifecycle:</span>
+    <span class="key">claim_response:</span> <span class="val">accepted</span>
+    <span class="key">eval_type:</span> <span class="val">qme</span>
+<span class="key">cases:</span>
+  <span class="pun">-</span> <span class="key">case_id:</span> <span class="val">martinez-001</span>
+    <span class="cm">### ...</span>
+    <span class="key">lifecycle:</span>
+      <span class="key">claim_response:</span> <span class="val">denied</span>          <span class="cm"># overrides the default above</span></code></pre>
+
+      <h3>Auto derivation and the four distributions</h3>
+      <p><code class="inline">auto: {count, distribution, rng_seed}</code> derives <code class="inline">count</code> additional cases from a named distribution, fully seeded from <code class="inline">rng_seed</code>. <strong>Auto-derived seeds are always materialized</strong> to <code class="inline">&lt;out&gt;/&lt;case_id&gt;/seed.yaml</code> &mdash; the seed is the surfaced contract, never an implicit one, even for cases you never hand-wrote.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Distribution</th><th>Shape</th></tr></thead>
+          <tbody>
+            <tr><td><code>balanced</code></td><td>Mirrors the KB PRD attorney-caseload mix &mdash; all stages represented.</td></tr>
+            <tr><td><code>early_stage</code></td><td>Intake through discovery; nothing resolved.</td></tr>
+            <tr><td><code>settlement_heavy</code></td><td>Settlement and resolved files; liens common.</td></tr>
+            <tr><td><code>complex_litigation</code></td><td>Trials, liens, reconsideration round trips.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Use <code class="inline">--seed N</code> on <code class="inline">generate</code> to override <code class="inline">auto.rng_seed</code> for a single run without editing the spec file &mdash; explicit case seeds in <code class="inline">cases[]</code> are untouched by this flag.</p>
+    </section>
+
+    <!-- ================= 6. DOC CONTROLS ================= -->
+    <section id="doc-controls">
+      <span class="section-num">Section 6</span>
+      <h2>Fine-grained document controls</h2>
+      <p>Every case&rsquo;s lifecycle proposes a set of documents on its own. The <code class="inline">documents</code> block lets you reshape that set precisely &mdash; force a subtype in, keep one out, bound a category, or cap the total. The controls compose through a strict precedence order, highest wins:</p>
+
+      <div class="rank"><span class="n">1</span><span class="t"><strong>Per-subtype override</strong> &mdash; <code class="inline">{subtype: X, count: N}</code> emits exactly <code class="inline">N</code>, even if the lifecycle never proposed that subtype and even if a blacklist or the cap would otherwise remove it. Forcing a lifecycle-invalid subtype works and logs a <code class="inline">WARN</code>: explicit control wins, loudly.</span></div>
+      <div class="rank"><span class="n">2</span><span class="t"><strong><code class="inline">include_only</code> / <code class="inline">exclude</code></strong> &mdash; whitelist then blacklist, each matching either a subtype key or a parent type key.</span></div>
+      <div class="rank"><span class="n">3</span><span class="t"><strong>Per-type <code class="inline">min</code>/<code class="inline">max</code></strong> &mdash; bounds the surviving total for a parent type.</span></div>
+      <div class="rank"><span class="n">4</span><span class="t"><strong>Lifecycle emission defaults</strong> &mdash; what the core/lien/recon machines proposed on their own.</span></div>
+      <div class="rank"><span class="n">5</span><span class="t"><strong><code class="inline">global_cap</code></strong> &mdash; trims last, taking the most-trimmable documents first: filler, then supporting, then core; within a track, the highest <code class="inline">priority</code> number goes first. Never trims a per-subtype override and never pushes a type below its <code class="inline">min</code>.</span></div>
+
+      <p>Counts are resolved first, without dates; dates are then re-attached from the proposing candidate, and any copies beyond what the lifecycle originally proposed continue the same date series deterministically &mdash; so asking for extra copies of a subtype never produces documents dated out of order.</p>
+
+      <h3>Worked example</h3>
+<pre><code><span class="key">documents:</span>
+  <span class="key">global_cap:</span> <span class="val">120</span>
+  <span class="key">format_mix:</span> <span class="pun">{</span><span class="key">pdf:</span> <span class="val">0.6</span><span class="pun">,</span> <span class="key">scanned_pdf:</span> <span class="val">0.25</span><span class="pun">,</span> <span class="key">eml:</span> <span class="val">0.1</span><span class="pun">,</span> <span class="key">docx:</span> <span class="val">0.05</span><span class="pun">}</span>
+  <span class="key">include_only:</span> <span class="pun">[]</span>
+  <span class="key">exclude:</span> <span class="pun">[]</span>
+  <span class="key">overrides:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">subtype:</span> <span class="val">DEPOSITION_TRANSCRIPT</span><span class="pun">,</span> <span class="key">count:</span> <span class="val">2</span><span class="pun">}</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">type:</span> <span class="val">MEDICAL_CLINICAL</span><span class="pun">,</span> <span class="key">min:</span> <span class="val">8</span><span class="pun">,</span> <span class="key">max:</span> <span class="val">25</span><span class="pun">}</span></code></pre>
+      <p>Here, exactly two <code class="inline">DEPOSITION_TRANSCRIPT</code> documents always land in the plan regardless of what else happens; the <code class="inline">MEDICAL_CLINICAL</code> parent type is held between 8 and 25 documents after any whitelist/blacklist is applied; and if the case still exceeds 120 documents after all that, the global cap trims the least-essential remainder without violating either rule above it.</p>
+
+      <h3 id="control-keys">Control keys are canonicalized before anything reads them</h3>
+      <p>A control key may be a canonical subtype, one of the 15 parent type keys, or a substrate-only key with an unambiguous canonical equivalent &mdash; which is translated through the same table the lifecycle walk normalizes through, so a control and a candidate always mean the same thing by the same rule. Anything else is refused rather than guessed at, and the error lists every offending key at once so fixing a spec is not an exercise in repetition:</p>
+      <pre><code>k1: documents.exclude = 'NOT_A_REAL_SUBTYPE' is neither a document type
+    nor a known subtype
+Error: 1 document control key(s) are not valid taxonomy keys</code></pre>
+      <p class="caption">Live-verified from <code class="inline">wc-caseload validate --spec</code>. The same check runs inside <code class="inline">generate</code>, so an unusable key can never reach a manifest.</p>
+      <div class="callout warn">
+        <span class="callout-label">Aliases collide after canonicalization, not before</span>
+        Three substrate keys canonicalize to <code class="inline">CLIENT_CORRESPONDENCE_INFORMATIONAL</code>, and two more such pairs exist. So <code class="inline">include_only: [CLIENT_CORRESPONDENCE_INFORMATIONAL]</code> together with <code class="inline">exclude: [CLIENT_REPORT_ANALYSIS_LETTER]</code> is <em>one subtype written two ways</em> &mdash; the schema validator compares raw strings, sees no overlap, and the resolver would then quietly drop the include you explicitly asked for. Every check the schema runs on raw keys is therefore re-run on canonical ones, and the error names the aliases you actually wrote (live-verified): <code class="inline">documents.include_only and documents.exclude name the same subtype under different substrate aliases &mdash; CLIENT_CORRESPONDENCE_INFORMATIONAL (include_only: 'CLIENT_CORRESPONDENCE_INFORMATIONAL', exclude: 'CLIENT_REPORT_ANALYSIS_LETTER'). Name it once, canonically.</code> The same re-check catches a list that names one subtype twice under two aliases.
+      </div>
+    </section>
+
+    <!-- ================= 7. LIFECYCLE ================= -->
+    <section id="lifecycle">
+      <span class="section-num">Section 7</span>
+      <h2>Lifecycle paths</h2>
+      <p>Three machines compose an ordered plan for each case: a core lifecycle walk, one lien track per claimant, and a reconsideration round trip. Each is described below with the exact subtype and stage vocabulary the seed uses.</p>
+
+      <h3 id="lifecycle-core">Core stages</h3>
+      <div class="flow">
+        <span class="step">Injury &rarr; Claim filed (DWC-1) &rarr; <b>claim response</b></span>
+        <span class="branch"><b>accepted</b> &rarr; Active treatment</span>
+        <span class="branch"><b>delayed</b> &rarr; Investigation &rarr; Active treatment</span>
+        <span class="branch"><b>denied</b> &rarr; <code class="inline">CLAIM_DENIAL_LETTER</code> &rarr; Application for Adjudication</span>
+        <span class="step">Active treatment &rarr; <b>UR dispute?</b></span>
+        <span class="branch"><b>no</b> &rarr; Application for Adjudication</span>
+        <span class="branch"><b>yes</b> &rarr; RFA &rarr; UR decision &rarr; <b>IMR?</b> &rarr; (yes: IMR application &rarr; determination) &rarr; Application for Adjudication</span>
+        <span class="step">Application &rarr; <b>eval type</b></span>
+        <span class="branch"><b>qme</b> &rarr; Panel 105 &rarr; order &rarr; QME report &rarr; Discovery</span>
+        <span class="branch"><b>ame</b> &rarr; AME report &rarr; Discovery</span>
+        <span class="branch"><b>none</b> &rarr; Discovery</span>
+        <span class="step">Discovery &rarr; <b>resolution</b></span>
+        <span class="branch"><b>c_and_r</b> &rarr; C&amp;R + <code class="inline">ORDER_APPROVING_SETTLEMENT</code></span>
+        <span class="branch"><b>stipulations</b> &rarr; Stips + <code class="inline">ORDER_APPROVING_SETTLEMENT</code></span>
+        <span class="branch"><b>findings_award / take_nothing</b> &rarr; Minutes + <code class="inline">FINDINGS_AND_AWARD</code> + <code class="inline">OPINION_ON_DECISION</code></span>
+        <span class="branch"><b>pending</b> &rarr; file stays open</span>
+      </div>
+
+      <h3 id="lifecycle-liens">Lien tracks through executed lien resolution agreements</h3>
+      <p>Each claimant in <code class="inline">liens.claimants</code> gets its own independent track. A claimant type maps to a specific lien claim subtype:</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Claimant type</th><th>Lien claim subtype</th></tr></thead>
+          <tbody>
+            <tr><td><code>medical_provider</code></td><td><code>LIEN_MEDICAL_PROVIDER</code></td></tr>
+            <tr><td><code>hospital</code></td><td><code>LIEN_HOSPITAL</code></td></tr>
+            <tr><td><code>pharmacy</code></td><td><code>LIEN_PHARMACY</code></td></tr>
+            <tr><td><code>ambulance</code></td><td><code>LIEN_AMBULANCE_TRANSPORT</code></td></tr>
+            <tr><td><code>edd</code></td><td><code>LIEN_EDD_OVERPAYMENT</code></td></tr>
+            <tr><td><code>attorney_costs</code></td><td><code>LIEN_ATTORNEY_COSTS</code></td></tr>
+            <tr><td><code>self_procured</code></td><td><code>LIEN_SELF_PROCUREMENT_MEDICAL</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="flow">
+        <span class="step">Claimant type &rarr; lien claim subtype &rarr; <code class="inline">NOTICE_OF_LIEN_FILING</code> &rarr; <b>conference?</b></span>
+        <span class="branch"><b>yes</b> &rarr; <code class="inline">NOTICE_OF_LIEN_CONFERENCE</code> &rarr; <code class="inline">PRETRIAL_CONFERENCE_STATEMENT_LIEN</code> &rarr; resolution</span>
+        <span class="branch"><b>no</b> &rarr; straight to resolution</span>
+        <span class="step">Resolution:</span>
+        <span class="branch"><b>lien_resolution_agreement</b> &rarr; <code class="inline">LIEN_RESOLUTION</code> (the executed &ldquo;Lien Resolution Agreement&rdquo;)</span>
+        <span class="branch"><b>lien_stipulation</b> &rarr; <code class="inline">LIEN_STIPULATION_AGREEMENT</code></span>
+        <span class="branch"><b>dismissal</b> &rarr; <code class="inline">LIEN_DISMISSAL</code></span>
+        <span class="branch"><b>order_on_lien</b> &rarr; <code class="inline">ORDER_ON_LIEN</code></span>
+        <span class="branch"><b>pending</b> &rarr; track stays open</span>
+      </div>
+      <p><code class="inline">resolution: mixed</code> picks a resolution per track independently, so one case can settle one lien, stipulate another, and dismiss a third in the same run. With <code class="inline">post_resolution_litigation: true</code>, every lien document in that track is dated <strong>after</strong> the case-in-chief&rsquo;s own resolution &mdash; the common real-world shape where the case settles and the liens keep fighting on their own timeline.</p>
+      <p>Live-verified: generating <code class="inline">nguyen-cr-three-liens</code> from the demo spec (three lien claimants: medical_provider, hospital, pharmacy, all <code class="inline">lien_resolution_agreement</code>, <code class="inline">post_resolution_litigation: true</code>) produces three tracks each with a conference and 5 documents, each resolving to a <code class="inline">LIEN_RESOLUTION</code> subtype at <code class="inline">resolutionSubtype</code> in the manifest.</p>
+
+      <h3 id="lifecycle-recon">Reconsideration round-trips</h3>
+      <div class="flow">
+        <span class="step">Award (F&amp;A or Order Approving Settlement) &rarr; <code class="inline">PETITION_RECONSIDERATION_FILED</code></span>
+        <span class="step">&rarr; <code class="inline">PETITION_RECONSIDERATION_OPPOSITION</code> &rarr; <code class="inline">PETITION_RECONSIDERATION_REPLY</code> (seed-drawn, probabilistic) &rarr; <code class="inline">ORDER_ON_RECONSIDERATION</code></span>
+        <span class="step">Outcome / post_recon:</span>
+        <span class="branch"><b>denied / affirmed_final</b> &rarr; award stands, nothing further</span>
+        <span class="branch"><b>granted_remand / further_litigation</b> &rarr; DOR &rarr; Notice of Hearing &rarr; Minutes of Hearing &rarr; <code class="inline">AMENDED_FINDINGS_AWARD</code></span>
+        <span class="branch"><b>granted_remand / settled</b> &rarr; C&amp;R or Stips + <code class="inline">ORDER_APPROVING_SETTLEMENT</code>, dated post-recon</span>
+        <span class="branch"><b>granted_reversed</b> &rarr; <code class="inline">AMENDED_FINDINGS_AWARD</code></span>
+      </div>
+      <p>Statutory clocks are enforced and assertable straight from the manifest: the petition is filed within <strong>25 days</strong> of the award (LC 5903 &mdash; 20 days plus 5 for mail service), and the order issues within <strong>60 days</strong> of the petition (LC 5909). A live probe against the demo caseload measured petitions at 23 and 18 days, and orders at 42 and 49 days &mdash; both comfortably inside their windows.</p>
+      <div class="callout warn">
+        <span class="callout-label">A seed that can't work</span>
+        A seed that enables reconsideration on an unresolved case has nothing to attack; the engine emits no recon documents and records a warning naming the fix, rather than failing or fabricating an award.
+      </div>
+      <p>The demo caseload shows both directions of this branch: <code class="inline">alvarez-denied-recon-remand</code> is denied at the claim level, tried to a Findings &amp; Award, petitions for reconsideration, is granted remand, and settles on remand; <code class="inline">castellanos-trial-recon-denied</code> is tried to decision and petitions, but the petition is denied and the original award stands.</p>
+    </section>
+
+    <!-- ================= 8. DOCTRINE ================= -->
+    <section id="doctrine">
+      <span class="section-num">Section 8</span>
+      <h2>Doctrine hooks: what they inject, and what gates them</h2>
+      <p class="lede"><code class="inline">lifecycle.doctrine_hooks</code> names the landmark California authorities a case is really about. Naming one does three things: it is recorded in the manifest, it steers which subtypes the lifecycle proposes, and &mdash; the part this section is about &mdash; it injects doctrine-specific language into the documents where a real practitioner would actually argue it.</p>
+
+      <h3>The two registers</h3>
+      <p>A doctrine reads differently depending on who is writing. A QME does not brief a case and an attorney does not offer a clinical opinion, so each hook carries two independent bodies of prose and the engine picks by the document&rsquo;s own subtype:</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Register</th><th>Appended heading</th><th>Lands on</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Medical-legal</strong></td><td><code>ADDENDUM &mdash; MEDICAL-LEGAL DISCUSSION OF CONTROLLING AUTHORITY</code></td><td>QME/AME reports, apportionment and impairment reports, psych evaluations, vocational and earnings-capacity opinions.</td></tr>
+            <tr><td><strong>Legal</strong></td><td><code>POINTS AND AUTHORITIES &mdash; CONTROLLING DOCTRINE</code></td><td>Trial briefs, petitions for reconsideration, answers, denial letters, rating and apportionment worksheets, settlement valuation memos, compensability determinations.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Each register is three paragraphs plus the full citation, appended as a titled section at the end of the document&rsquo;s own story. A document carrying several hooks gets several sections, always in the order the hooks appear in <code class="inline">DOCTRINE_CONTENT</code> rather than the order you happened to write them in the seed &mdash; so two seeds naming the same hooks in different orders produce identical bytes.</p>
+
+      <h3>Which documents get flagged</h3>
+      <p>Every hook names its own target subtypes per register, and a document is flagged only when its subtype is in the set. That is deliberately narrow: a doctrine appended to every document in the case would be noise, not realism. The engine records the decision at plan time on <code class="inline">PlannedDocument.content_flags</code>, and the manifest carries it through as <code class="inline">contentFlags</code> &mdash; present only on documents that actually received language, never as an empty array:</p>
+      <pre><code><span class="pun">{</span>
+  <span class="key">"filename":</span> <span class="str">"028_2022-12-04.pdf"</span><span class="pun">,</span>
+  <span class="key">"subtype":</span> <span class="str">"QME_REPORT_INITIAL"</span><span class="pun">,</span>
+  <span class="key">"type":</span> <span class="str">"MEDICAL_LEGAL"</span><span class="pun">,</span>
+  <span class="cm">// ... format, dates, checksum ...</span>
+  <span class="key">"template":</span> <span class="str">"QmeAmeReport/qme_initial"</span><span class="pun">,</span>
+  <span class="key">"fallback":</span> <span class="val">false</span><span class="pun">,</span>
+  <span class="key">"contentFlags":</span> <span class="pun">[</span><span class="str">"almaraz_guzman"</span><span class="pun">]</span>
+<span class="pun">}</span></code></pre>
+      <p class="caption">Live-verified from the demo caseload&rsquo;s <code class="inline">alvarez-denied-recon-remand</code>, where 7 of 55 documents carry a <code class="inline">contentFlags</code> entry.</p>
+      <div class="callout">
+        <span class="callout-label">Provenance, not decoration</span>
+        <code class="inline">contentFlags</code> records what was <em>applied to that file</em>, not what the seed asked for. It is written from the renderer&rsquo;s own return value after canonicalization, so a hook the seed named but the document&rsquo;s subtype does not target never appears &mdash; which is what makes the field usable as ground truth for a classifier or an audit.
+      </div>
+
+      <h3>The fourteen hooks, their citations and their markers</h3>
+      <p>Each hook writes a distinctive short string into every document it touches. Grep for the marker to confirm the language actually arrived on the page:</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Hook</th><th>Doctrine</th><th>Marker</th></tr></thead>
+          <tbody>
+            <tr><td><code>ogilvie</code></td><td>Rebuttal of the scheduled rating &mdash; <em>Ogilvie v. WCAB</em> (2011) 197 Cal.App.4th 1262</td><td><code>Ogilvie</code></td></tr>
+            <tr><td><code>almaraz_guzman</code></td><td>Alternative impairment rating within the four corners of the AMA Guides &mdash; <em>Milpitas USD v. WCAB (Guzman)</em> (2010) 187 Cal.App.4th 808</td><td><code>Guzman</code></td></tr>
+            <tr><td><code>benson</code></td><td>Separate awards for distinct industrial injuries &mdash; <em>Benson v. WCAB</em> (2009) 170 Cal.App.4th 1535</td><td><code>Benson</code></td></tr>
+            <tr><td><code>escobedo</code></td><td>Apportionment must rest on substantial medical evidence &mdash; <em>Escobedo v. Marshalls</em> (2005) 70 Cal.Comp.Cases 604 (en banc)</td><td><code>Escobedo</code></td></tr>
+            <tr><td><code>kite</code></td><td>Impairments added rather than combined &mdash; <em>Athens Administrators v. WCAB (Kite)</em> (2013) 78 Cal.Comp.Cases 213</td><td><code>Kite</code></td></tr>
+            <tr><td><code>going_and_coming</code></td><td>Going and coming rule and its exceptions &mdash; <em>Hinojosa v. WCAB</em> (1972) 8 Cal.3d 150</td><td><code>going and coming</code></td></tr>
+            <tr><td><code>sibtf</code></td><td>Subsequent Injuries Benefits Trust Fund &mdash; Labor Code &sect; 4751</td><td><code>4751</code></td></tr>
+            <tr><td><code>death_dependency</code></td><td>Death benefits and dependency &mdash; Labor Code &sect;&sect; 3501&ndash;3503, 4702</td><td><code>3501</code></td></tr>
+            <tr><td><code>lc3208_3_psych</code></td><td>Psychiatric injury threshold &mdash; Labor Code &sect; 3208.3</td><td><code>3208.3</code></td></tr>
+            <tr><td><code>gfpa</code></td><td>Good faith personnel action defence &mdash; Labor Code &sect; 3208.3(h)</td><td><code>personnel action</code></td></tr>
+            <tr><td><code>firefighter_presumption</code></td><td>Safety-member cancer presumption &mdash; Labor Code &sect; 3212.1</td><td><code>3212.1</code></td></tr>
+            <tr><td><code>imr_constitutionality</code></td><td>IMR due-process challenge &mdash; <em>Stevens v. WCAB</em> (2015) 241 Cal.App.4th 1074; <em>Ramirez v. WCAB</em> (2017) 10 Cal.App.5th 205</td><td><code>Stevens</code></td></tr>
+            <tr><td><code>ab5_dynamex</code></td><td>ABC test for employee status &mdash; <em>Dynamex</em> (2018) 4 Cal.5th 903; Labor Code &sect; 2775</td><td><code>Dynamex</code></td></tr>
+            <tr><td><code>lc4664_prior_award</code></td><td>Apportionment to a prior award &mdash; Labor Code &sect; 4664(b)&ndash;(c)</td><td><code>4664</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="doctrine-gating">Prerequisite gating: a doctrine needs facts to argue from</h3>
+      <p>A death-benefits argument in a living applicant&rsquo;s file is not a feature. Every hook therefore carries a <strong>prerequisite</strong> &mdash; a predicate over the seed&rsquo;s own fields &mdash; and the engine treats a failed prerequisite differently depending on who asked for the hook:</p>
+      <div class="rank"><span class="n">1</span><span class="t"><strong>You named it &rarr; kept, and warned about.</strong> An explicit <code class="inline">doctrine_hooks</code> entry is a choice, and the same rule that governs document controls governs this: explicit control wins, loudly. The hook stays, the language renders, and the case records a warning.</span></div>
+      <div class="rank"><span class="n">2</span><span class="t"><strong>The distribution drew it &rarr; filtered out silently.</strong> An auto-derived case (<code class="inline">auto:</code>) draws hooks from a pool that has already been filtered against the same prerequisites. A draw is nobody&rsquo;s choice, so there is nothing to respect and nothing to warn about.</span></div>
+      <p>The warning is verbatim from a live run of the demo caseload, whose <code class="inline">nguyen-cr-three-liens</code> case names <code class="inline">benson</code> on a single-body-part claim precisely to exercise this path:</p>
+      <pre><code>lifecycle.doctrine_hooks names benson on a case that cannot support it:
+apportioning between injuries needs a rating and more than one impaired
+region to argue about &mdash; lifecycle.eval_type must not be none and
+injury.body_parts must name at least two parts. The hook is kept and its
+language will be rendered (an explicit seed wins), but the argument will
+not match the rest of the file.</code></pre>
+      <p>It is emitted twice: as a <code class="inline">WARN</code> on the console (<code class="inline">doctrine.unsupported_hook</code>) and as an entry in the case manifest&rsquo;s <code class="inline">warnings</code> array, so a caseload generated in CI can be checked without scraping logs. <code class="inline">generate</code> prints a run-level tally &mdash; <code class="inline">warnings : 2 (see per-case manifest 'warnings')</code> &mdash; and still exits zero, because a deliberately-unsupported hook is a legitimate thing to seed.</p>
+
+      <div class="callout warn">
+        <span class="callout-label">A prerequisite approximates a doctrine; it does not prove one</span>
+        <p>A gate is <strong>exact</strong> when a seed satisfying it must also satisfy the doctrine&rsquo;s own factual predicate, and an <strong>approximation</strong> when the seed can pass the gate while the predicate stays unknown. Approximations exist because a <code class="inline">CaseSeed</code> models one injury, no prior award, no prior disability, no diagnosis, no employment-event history, and no grounds of denial &mdash; so some doctrines can only be gated on the closest thing a seed <em>can</em> establish.</p>
+        <p>Which hooks fall on which side is settled in <strong>one authoritative table in the README</strong> (&ldquo;Which gates are exact, and which approximate&rdquo;), with the full predicate and gate for all fourteen. This guide deliberately keeps no list or count of its own: two enumerations drift, and this one has drifted before.</p>
+        <p style="margin-bottom:0;">The paragraphs an approximating hook injects are written as a <em>contention register</em> &mdash; what each side asserts and what the trier must decide &mdash; rather than as findings: &ldquo;Where a prior award is established&hellip;&rdquo;, not &ldquo;A prior award exists&rdquo;. No paragraph asserts the doctrinal predicate its gate approximates. <code class="inline">BANNED_ASSERTIONS</code> in <code class="inline">tests/test_doctrine_content.py</code> holds that line: it fails the build if any hook&rsquo;s prose starts asserting a fact the seed cannot establish.</p>
+      </div>
+
+      <h3>Supported is not the same as rendered</h3>
+      <p>A hook passing its prerequisite guarantees the argument is <em>coherent</em>; it does not guarantee the case emits a document that hook targets. Five of the rating doctrines &mdash; <code class="inline">ogilvie</code>, <code class="inline">almaraz_guzman</code>, <code class="inline">benson</code>, <code class="inline">kite</code>, <code class="inline">sibtf</code> &mdash; land most of their language on trial and petition paper, so a case that stops at <code class="inline">pre_trial</code> can carry them without a single <code class="inline">contentFlags</code> entry. Two ways to close that gap, both live-verified:</p>
+      <ul>
+        <li><strong>Let the lifecycle reach the paper.</strong> Add <code class="inline">resolution: {type: findings_award}</code> and a <code class="inline">target_stage</code> of <code class="inline">resolved</code> or later; the trial brief that appears is a target of all five. This is what the fragments in <a href="#needed-seeds">Section 9</a> do.</li>
+        <li><strong>Force a target subtype.</strong> <code class="inline">documents.overrides: [{subtype: TRIAL_BRIEF, count: 1}]</code> plants one regardless of stage &mdash; but forcing a subtype the lifecycle would not have proposed is itself a <code class="inline">WARN</code> (see <a href="#doc-controls">Document controls</a>), so prefer the first route when you can.</li>
+      </ul>
+
+      <h3>Determinism properties</h3>
+      <ul>
+        <li>The content table is a frozen dataclass of literal strings &mdash; no drawing, no formatting from case facts, so injection consumes no randomness and cannot perturb any other draw.</li>
+        <li>Sections are emitted in table order, not seed order.</li>
+        <li>Injection happens at render time by subclassing the substrate&rsquo;s own template class and extending its story, so a flagged document uses the same template as an unflagged one and <code class="inline">validate --out</code> still reports zero fallbacks.</li>
+      </ul>
+      <div class="callout warn">
+        <span class="callout-label">Hook count changes the whole case, and that is not the injection</span>
+        Naming <strong>two or more</strong> hooks flips the derived case complexity to <code class="inline">complex</code>, which changes document counts and content across the entire case &mdash; not just the flagged documents. So a two-hook case and a one-hook case are not a controlled comparison, and diffing them will show far more than the injected sections. To isolate the injection itself, hold the hook count fixed. This coupling predates content injection and is pinned by a test so it cannot change silently.
+      </div>
+    </section>
+
+    <!-- ================= 9. NEEDED SEEDS ================= -->
+    <section id="needed-seeds">
+      <span class="section-num">Section 9</span>
+      <h2>The needed-seeds reference: what each doctrine requires</h2>
+      <p class="lede">One block per hook. Each gives the doctrine and its citation, exactly what the seed must establish for the hook to be supported, a minimal runnable seed, and the subtypes that will carry the language. Every fragment below was loaded and planned against the merged engine: <strong>all fourteen produce zero warnings and at least one flagged document</strong>.</p>
+      <p>Each fragment is a complete <code class="inline">CaseSeed</code>. Drop one into a caseload spec&rsquo;s <code class="inline">cases:</code> list and run it:</p>
+      <pre><code><span class="cmdline">wc-caseload generate --spec my-spec.yaml --out /tmp/probe --dry-run</span>
+<span class="cmdline">wc-caseload generate --spec my-spec.yaml --out /tmp/probe</span>
+<span class="cmdline">grep -rl "Ogilvie" /tmp/probe/*/documents/   # the marker for this hook</span></code></pre>
+      <p>The <code class="inline">date_of_injury</code> in every fragment is <code class="inline">2022-04-11</code>, comfortably clear of the runway floors (see <a href="#runway">Section 3</a>) for the stage each one seeds. Move it later at your own risk; move it earlier freely.</p>
+
+      <div class="callout">
+        <span class="callout-label">The two axes, restated</span>
+        <strong>Needs</strong> is the prerequisite &mdash; fail it and you get a warning. <strong>Reaches</strong> is the lifecycle &mdash; fail it and you get silence. A fragment below satisfies both; if you strip it down, keep the <em>Needs</em> line and expect to lose the <em>Renders on</em> line.
+      </div>
+
+      <h3>Rating doctrines &mdash; the case must reach a permanent disability rating</h3>
+      <p>Five hooks share one gate: <code class="inline">lifecycle.eval_type</code> must be <code class="inline">qme</code> or <code class="inline">ame</code>, never <code class="inline">none</code>. Two of them (<code class="inline">benson</code>, <code class="inline">kite</code>) additionally need two impaired regions, because you cannot apportion between injuries or add impairments when there is only one. All of them argue on trial paper, so the fragments seed a <code class="inline">findings_award</code>.</p>
+
+      <h4><code>ogilvie</code> &mdash; rebuttal of the scheduled rating</h4>
+      <p><em>Ogilvie v. WCAB</em> (2011) 197 Cal.App.4th 1262, 76 Cal.Comp.Cases 624 &mdash; rebuttal of the scheduled permanent disability rating by vocational evidence of diminished future earning capacity.</p>
+      <p><strong>Needs:</strong> a PD rating &mdash; <code class="inline">eval_type</code> other than <code class="inline">none</code>.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">ogilvie-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">lumbar_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M54.5</span><span class="pun">}</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">resolved</span>
+  <span class="key">resolution:</span> <span class="pun">{</span><span class="key">type:</span> <span class="val">findings_award</span><span class="pun">}</span>   <span class="cm"># trial paper is where this doctrine is argued</span>
+  <span class="key">eval_type:</span> <span class="val">qme</span>          <span class="cm"># any value but `none` &mdash; the case must reach a PD rating</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">ogilvie</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">TRIAL_BRIEF</code>, <code class="inline">DEFENSE_TRIAL_BRIEF</code>. <strong>Also targets:</strong> vocational expert reports, transferable-skills analyses, earnings-capacity opinions, QME/AME reports, PD rating worksheets, petitions for reconsideration. <strong>Marker:</strong> <code class="inline">Ogilvie</code>.</p>
+
+      <h4><code>almaraz_guzman</code> &mdash; alternative impairment rating</h4>
+      <p><em>Milpitas Unified School Dist. v. WCAB (Guzman)</em> (2010) 187 Cal.App.4th 808, 75 Cal.Comp.Cases 837 &mdash; alternative impairment rating within the four corners of the AMA Guides.</p>
+      <p><strong>Needs:</strong> a PD rating &mdash; <code class="inline">eval_type</code> other than <code class="inline">none</code>.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">guzman-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">lumbar_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M54.5</span><span class="pun">}</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">resolved</span>
+  <span class="key">resolution:</span> <span class="pun">{</span><span class="key">type:</span> <span class="val">findings_award</span><span class="pun">}</span>
+  <span class="key">eval_type:</span> <span class="val">ame</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">almaraz_guzman</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">TRIAL_BRIEF</code>, <code class="inline">DEFENSE_TRIAL_BRIEF</code>. <strong>Also targets</strong> (the widest medical set of any hook, because a Guzman opinion can appear in any evaluation that derives an impairment): <code class="inline">QME_COMPREHENSIVE_REPORT</code>, <code class="inline">AME_COMPREHENSIVE_REPORT</code>, <code class="inline">QME_REPORT_INITIAL</code>, <code class="inline">QME_REPORT_SUPPLEMENTAL</code>, <code class="inline">SUPPLEMENTAL_QME_AME_REPORT</code>, <code class="inline">MEDICAL_LEGAL_QME_AME_IME</code> and <code class="inline">IMPAIRMENT_RATING_WORKSHEET</code>; on the legal side, <code class="inline">PD_RATING_CALCULATION_WORKSHEET</code> and <code class="inline">PETITION_RECONSIDERATION_FILED</code>. Note it does <em>not</em> target <code class="inline">AME_REPORT</code> or <code class="inline">PSYCH_EVAL_REPORT_QME_AME</code>, so &ldquo;every QME/AME report&rdquo; would overstate it. <strong>Marker:</strong> <code class="inline">Guzman</code>.</p>
+
+      <h4><code>benson</code> &mdash; separate awards for separate injuries</h4>
+      <p><em>Benson v. WCAB</em> (2009) 170 Cal.App.4th 1535, 74 Cal.Comp.Cases 113 &mdash; separate awards for distinct industrial injuries, and apportionment between them.</p>
+      <p><strong>Needs:</strong> a PD rating <em>and</em> at least two entries in <code class="inline">injury.body_parts</code>. This is the gate the demo caseload deliberately fails.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">benson-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>              <span class="cm"># two parts &mdash; Benson needs two injuries to apportion between</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">lumbar_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M54.5</span><span class="pun">}</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">cervical_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M50.20</span><span class="pun">}</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">resolved</span>
+  <span class="key">resolution:</span> <span class="pun">{</span><span class="key">type:</span> <span class="val">findings_award</span><span class="pun">}</span>
+  <span class="key">eval_type:</span> <span class="val">ame</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">benson</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">TRIAL_BRIEF</code>, <code class="inline">DEFENSE_TRIAL_BRIEF</code>. <strong>Also targets:</strong> apportionment reports and worksheets, QME/AME reports, motions to consolidate, stipulations with request for award. <strong>Marker:</strong> <code class="inline">Benson</code>.</p>
+
+      <h4><code>escobedo</code> &mdash; substantial evidence for apportionment</h4>
+      <p><em>Escobedo v. Marshalls</em> (2005) 70 Cal.Comp.Cases 604 (en banc) &mdash; apportionment to nonindustrial pathology must rest on substantial medical evidence.</p>
+      <p><strong>Needs:</strong> a PD rating &mdash; <code class="inline">eval_type</code> other than <code class="inline">none</code>. Unlike its four neighbours this one reaches a medical-legal document at <code class="inline">pre_trial</code>, so the fragment stays short.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">escobedo-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">lumbar_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M54.5</span><span class="pun">}</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">pre_trial</span>
+  <span class="key">eval_type:</span> <span class="val">qme</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">escobedo</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">QME_REPORT_SUPPLEMENTAL</code>. <strong>Also targets:</strong> apportionment reports and worksheets, comprehensive QME/AME reports, trial briefs, petitions for reconsideration. <strong>Marker:</strong> <code class="inline">Escobedo</code>.</p>
+
+      <h4><code>kite</code> &mdash; adding rather than combining impairments</h4>
+      <p><em>Athens Administrators v. WCAB (Kite)</em> (2013) 78 Cal.Comp.Cases 213 (writ den.) &mdash; impairments added rather than combined where a synergistic effect is shown.</p>
+      <p><strong>Needs:</strong> a PD rating <em>and</em> at least two entries in <code class="inline">injury.body_parts</code> &mdash; there must be two impairments to add.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">kite-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>              <span class="cm"># two parts &mdash; Kite adds impairments, so there must be two</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">lumbar_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M54.5</span><span class="pun">}</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">shoulder</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M75.100</span><span class="pun">}</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">resolved</span>
+  <span class="key">resolution:</span> <span class="pun">{</span><span class="key">type:</span> <span class="val">findings_award</span><span class="pun">}</span>
+  <span class="key">eval_type:</span> <span class="val">qme</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">kite</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">TRIAL_BRIEF</code>, <code class="inline">DEFENSE_TRIAL_BRIEF</code>. <strong>Also targets:</strong> QME/AME reports, impairment rating worksheets, PD rating worksheets and conversions. <strong>Marker:</strong> <code class="inline">Kite</code>.</p>
+
+      <h4><code>sibtf</code> &mdash; Subsequent Injuries Benefits Trust Fund</h4>
+      <p>Labor Code &sect; 4751 &mdash; preexisting labor-disabling permanent partial disability combined with a subsequent industrial injury.</p>
+      <p><strong>Needs:</strong> a PD rating &mdash; <code class="inline">eval_type</code> other than <code class="inline">none</code>.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">sibtf-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">lumbar_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M54.5</span><span class="pun">}</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">resolved</span>
+  <span class="key">resolution:</span> <span class="pun">{</span><span class="key">type:</span> <span class="val">findings_award</span><span class="pun">}</span>
+  <span class="key">eval_type:</span> <span class="val">qme</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">sibtf</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">TRIAL_BRIEF</code>, <code class="inline">SETTLEMENT_VALUATION_MEMO</code>. <strong>Also targets:</strong> QME/AME reports, impairment rating worksheets, case analysis memos, motions for joinder (the Fund is joined, not sued). <strong>Marker:</strong> <code class="inline">4751</code>.</p>
+
+      <h4><code>lc4664_prior_award</code> &mdash; apportionment to a prior award</h4>
+      <p>Labor Code &sect; 4664(b) &mdash; conclusive presumption that a prior award of permanent disability still exists &mdash; and &sect; 4664(c), the lifetime accumulation cap by region of the body.</p>
+      <p><strong>Needs:</strong> a PD rating &mdash; <code class="inline">eval_type</code> other than <code class="inline">none</code>.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">lc4664-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">lumbar_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M54.5</span><span class="pun">}</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">pre_trial</span>
+  <span class="key">eval_type:</span> <span class="val">qme</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">lc4664_prior_award</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">ANSWER_TO_APPLICATION</code>. <strong>Also targets:</strong> apportionment reports and worksheets, QME/AME reports, PD rating worksheets, trial briefs. <strong>Marker:</strong> <code class="inline">4664</code>.</p>
+
+      <h3>Threshold defences &mdash; the claim must actually be contested</h3>
+      <p>Both of these ask whether the claim is compensable <em>at all</em>, which presupposes somebody said no. The gate is <code class="inline">lifecycle.claim_response</code> being <code class="inline">denied</code> or <code class="inline">delayed</code>. See the gate-approximation caveat in <a href="#doctrine-gating">Section 8</a>: a contested claim is not by itself a commute injury or a misclassification, and the prose is written accordingly.</p>
+
+      <h4><code>going_and_coming</code> &mdash; the going and coming rule</h4>
+      <p><em>Hinojosa v. WCAB</em> (1972) 8 Cal.3d 150, 37 Cal.Comp.Cases 724 &mdash; the going and coming rule, with its special-mission and required-vehicle exceptions.</p>
+      <p><strong>Needs:</strong> <code class="inline">claim_response</code> of <code class="inline">denied</code> or <code class="inline">delayed</code>.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">going-and-coming-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">lumbar_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M54.5</span><span class="pun">}</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">pre_trial</span>
+  <span class="key">claim_response:</span> <span class="val">denied</span>   <span class="cm"># or `delayed` &mdash; AOE/COE must actually be in dispute</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">going_and_coming</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">CLAIM_DENIAL_LETTER</code>, <code class="inline">ANSWER_TO_APPLICATION</code>. <strong>Also targets:</strong> compensability determinations, investigation reports, trial briefs, QME/AME reports. Give the case a commute-shaped <code class="inline">injury.mechanism</code> so the narrative and the doctrine agree. <strong>Marker:</strong> <code class="inline">going and coming</code>.</p>
+
+      <h4><code>ab5_dynamex</code> &mdash; employee status under the ABC test</h4>
+      <p><em>Dynamex Operations West, Inc. v. Superior Court</em> (2018) 4 Cal.5th 903, and Labor Code &sect; 2775 &mdash; the ABC test for employee status.</p>
+      <p><strong>Needs:</strong> <code class="inline">claim_response</code> of <code class="inline">denied</code> or <code class="inline">delayed</code>.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">dynamex-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">lumbar_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M54.5</span><span class="pun">}</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">pre_trial</span>
+  <span class="key">claim_response:</span> <span class="val">denied</span>   <span class="cm"># or `delayed` &mdash; employment status must be contested</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">ab5_dynamex</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">CLAIM_DENIAL_LETTER</code>, <code class="inline">ANSWER_TO_APPLICATION</code>. <strong>Also targets:</strong> compensability determinations, investigation reports, trial briefs, QME/AME reports. A gig-economy or owner-operator <code class="inline">profile.applicant.occupation</code> makes the file read right. <strong>Marker:</strong> <code class="inline">Dynamex</code>.</p>
+
+      <h3>Death benefits</h3>
+
+      <h4><code>death_dependency</code> &mdash; death benefits and dependency</h4>
+      <p>Labor Code &sect;&sect; 3501, 3502 and 3503, and &sect; 4702 &mdash; death benefits, the conclusive presumptions of total dependency, dependency in fact, and allocation among dependents.</p>
+      <p><strong>Needs:</strong> <code class="inline">injury.type: death</code>. Nothing else establishes a death claim, and the engine will not infer one from a fatal-sounding mechanism.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">death-dependency-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">death</span>              <span class="cm"># the only gate &mdash; nothing else establishes a death claim</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">cardiovascular</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">I21.9</span><span class="pun">}</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">resolved</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">death_dependency</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">APPLICATION_FOR_ADJUDICATION_DEATH</code> (and <code class="inline">STIPULATIONS_DEATH_CASE</code> once the case resolves by stipulation). <strong>Also targets:</strong> dependency C&amp;Rs, petitions for guardian ad litem, trial briefs, QME/AME reports. <strong>Marker:</strong> <code class="inline">3501</code>.</p>
+
+      <h3>The psychiatric pair &mdash; there must be a psychiatric claim</h3>
+      <p>Both hooks read <code class="inline">injury.body_parts</code> for <code class="inline">psyche</code>. A threshold that applies to nothing, or a defence to a claim nobody made, is the failure mode these gates exist to prevent.</p>
+
+      <h4><code>lc3208_3_psych</code> &mdash; the psychiatric injury threshold</h4>
+      <p>Labor Code &sect; 3208.3 &mdash; the six-month employment bar, the predominant-cause standard, and the sudden-and-extraordinary employment condition exception.</p>
+      <p><strong>Needs:</strong> <code class="inline">psyche</code> named in <code class="inline">injury.body_parts</code>.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">lc3208-3-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">lumbar_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M54.5</span><span class="pun">}</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">psyche</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">F43.10</span><span class="pun">}</span>   <span class="cm"># a psychiatric claim to apply the threshold to</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">pre_trial</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">lc3208_3_psych</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">PSYCH_EVAL_REPORT_QME_AME</code>, <code class="inline">ANSWER_TO_APPLICATION</code>. <strong>Also targets:</strong> psychological testing protocols, comprehensive QME/AME reports, claim denial letters, trial briefs. Seeding <code class="inline">profile.applicant.tenure_years</code> below <code class="inline">0.5</code> makes the six-month bar the live issue. <strong>Marker:</strong> <code class="inline">3208.3</code>.</p>
+
+      <h4><code>gfpa</code> &mdash; the good faith personnel action defence</h4>
+      <p>Labor Code &sect; 3208.3(h) &mdash; a psychiatric injury substantially caused by a lawful, nondiscriminatory, good faith personnel action is not compensable.</p>
+      <p><strong>Needs:</strong> <code class="inline">psyche</code> named in <code class="inline">injury.body_parts</code>, or <code class="inline">lc3208_3_psych</code> seeded alongside it. This is the second gate the demo caseload deliberately fails.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">gfpa-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">lumbar_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M54.5</span><span class="pun">}</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">psyche</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">F43.10</span><span class="pun">}</span>   <span class="cm"># the claim the personnel-action defence answers</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">pre_trial</span>
+  <span class="key">claim_response:</span> <span class="val">denied</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">gfpa</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">PSYCH_EVAL_REPORT_QME_AME</code>, <code class="inline">CLAIM_DENIAL_LETTER</code>, <code class="inline">ANSWER_TO_APPLICATION</code>. <strong>Also targets:</strong> defence case analyses, trial briefs, comprehensive QME/AME reports. <code class="inline">claim_response: denied</code> is not part of the gate but it is what makes a defence coherent, and it is what puts the denial letter in the plan. <strong>Marker:</strong> <code class="inline">personnel action</code>.</p>
+
+      <h3>Safety members and IMR</h3>
+
+      <h4><code>firefighter_presumption</code> &mdash; the cancer presumption</h4>
+      <p>Labor Code &sect; 3212.1 &mdash; the rebuttable cancer presumption for firefighters and peace officers demonstrating exposure to a known carcinogen.</p>
+      <p><strong>Needs:</strong> <code class="inline">profile.employer.industry: government</code>, or a <code class="inline">profile.applicant.occupation</code> naming a qualifying role.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">firefighter-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">profile:</span>
+  <span class="key">employer:</span>
+    <span class="key">industry:</span> <span class="val">government</span>   <span class="cm"># or an applicant.occupation naming a qualifying role</span>
+  <span class="key">applicant:</span>
+    <span class="key">occupation:</span> <span class="val">Firefighter</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">internal_organs</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">C34.90</span><span class="pun">}</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">pre_trial</span>
+  <span class="key">claim_response:</span> <span class="val">denied</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">firefighter_presumption</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">CLAIM_DENIAL_LETTER</code>, <code class="inline">ANSWER_TO_APPLICATION</code>. <strong>Also targets:</strong> compensability determinations, medical-legal evaluations, trial briefs. A cumulative-trauma injury spanning a career reads more like a real presumption case than a specific injury does. <strong>Marker:</strong> <code class="inline">3212.1</code>.</p>
+
+      <h4><code>imr_constitutionality</code> &mdash; the IMR due-process challenge</h4>
+      <p><em>Stevens v. WCAB</em> (2015) 241 Cal.App.4th 1074 and <em>Ramirez v. WCAB</em> (2017) 10 Cal.App.5th 205 &mdash; due-process challenges to independent medical review, and the Labor Code &sect; 4610.6(h) appeal grounds.</p>
+      <p><strong>Needs:</strong> both <code class="inline">lifecycle.ur_dispute.enabled</code> and <code class="inline">lifecycle.ur_dispute.imr</code> true. A UR denial on its own is not an IMR, and this is the gate people miss.</p>
+<pre><code><span class="key">case_id:</span> <span class="val">imr-minimal</span>
+<span class="key">rng_seed:</span> <span class="val">424242</span>
+<span class="key">injury:</span>
+  <span class="key">type:</span> <span class="val">specific</span>
+  <span class="key">date_of_injury:</span> <span class="val">2022-04-11</span>
+  <span class="key">body_parts:</span>
+    <span class="pun">-</span> <span class="pun">{</span><span class="key">part:</span> <span class="val">lumbar_spine</span><span class="pun">,</span> <span class="key">icd10:</span> <span class="val">M54.5</span><span class="pun">}</span>
+<span class="key">lifecycle:</span>
+  <span class="key">target_stage:</span> <span class="val">pre_trial</span>
+  <span class="key">ur_dispute:</span>              <span class="cm"># both flags &mdash; there must be an IMR to challenge</span>
+    <span class="key">enabled:</span> <span class="val">true</span>
+    <span class="key">decision:</span> <span class="val">upheld</span>
+    <span class="key">imr:</span> <span class="val">true</span>
+    <span class="key">imr_outcome:</span> <span class="val">upheld</span>
+  <span class="key">doctrine_hooks:</span> <span class="pun">[</span><span class="val">imr_constitutionality</span><span class="pun">]</span></code></pre>
+      <p><strong>Renders on:</strong> <code class="inline">IMR_DETERMINATION_FORM</code>, <code class="inline">INDEPENDENT_MEDICAL_REVIEW_DECISION</code>. <strong>Also targets:</strong> UR appeal letters, petitions for reconsideration, trial briefs, QME/AME reports. The gate does not read <code class="inline">imr_outcome</code>, so the language holds whether the review was upheld or overturned. <strong>Marker:</strong> <code class="inline">Stevens</code>.</p>
+
+      <h3 id="doctrine-showcase">A committed spec that exercises all fourteen</h3>
+      <p><code class="inline">examples/doctrine-showcase.yaml</code> is six cases grouped by prerequisite, covering every hook with <strong>zero</strong> doctrine warnings and not a single <code class="inline">documents.overrides</code> entry &mdash; each case&rsquo;s own lifecycle emits at least one target document for every hook it carries. It is the counterpart to the demo caseload, which deliberately carries two unsupported hooks to exercise the warning path.</p>
+      <pre><code><span class="cmdline">wc-caseload generate --spec examples/doctrine-showcase.yaml --out /tmp/wcce-doctrine</span>
+<span class="cmdline">wc-caseload validate --out /tmp/wcce-doctrine</span></code></pre>
+      <p>Live-verified output of exactly those two commands:</p>
+      <pre><code>generated: 6 cases, 210 documents
+<span class="cm"># (no "warnings :" line &mdash; a warning-free run does not print one)</span>
+
+manifests : 6
+documents : 210
+fallbacks : 0
+result    : OK &mdash; every subtype canonical, every checksum matches,
+            every document rendered by its own template</code></pre>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Case</th><th>What its facts establish</th><th>Hooks</th></tr></thead>
+          <tbody>
+            <tr><td><code>showcase-rating-doctrines</code></td><td><code>eval_type: qme</code>, two body parts, findings &amp; award, recon round trip</td><td>ogilvie, almaraz_guzman, benson, escobedo, kite, sibtf, lc4664_prior_award</td></tr>
+            <tr><td><code>showcase-threshold-defences</code></td><td><code>claim_response: denied</code></td><td>going_and_coming, ab5_dynamex</td></tr>
+            <tr><td><code>showcase-death-dependency</code></td><td><code>injury.type: death</code></td><td>death_dependency</td></tr>
+            <tr><td><code>showcase-psychiatric</code></td><td><code>psyche</code> in body_parts</td><td>lc3208_3_psych, gfpa</td></tr>
+            <tr><td><code>showcase-firefighter-presumption</code></td><td><code>employer.industry: government</code></td><td>firefighter_presumption</td></tr>
+            <tr><td><code>showcase-imr-challenge</code></td><td><code>ur_dispute.enabled</code> + <code>imr: true</code></td><td>imr_constitutionality</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Confirm the language actually reached the page by grepping the rendered PDFs for each marker &mdash; a sweep across all fourteen markers over this output finds every one. The spec is pinned by <code class="inline">tests/test_doctrine_content.py</code>, which fails the build if a case stops supporting a hook it claims.</p>
+    </section>
+
+    <!-- ================= 10. OUTPUTS ================= -->
+    <section id="outputs">
+      <span class="section-num">Section 10</span>
+      <h2>Output layout</h2>
+      <pre><code>&lt;out&gt;/&lt;case_id&gt;/
+  seed.yaml          <span class="cm"># the surfaced contract &mdash; always materialized, round-trips exactly</span>
+  manifest.json
+  documents/&lt;files&gt;
+&lt;out&gt;/caseload_manifest.json</code></pre>
+      <p>Every materialized <code class="inline">seed.yaml</code> opens with a header naming the exact command to regenerate that case, live-verified:</p>
+      <pre><code><span class="cm"># wc-caseload seed &mdash; case whitfield-early-intake</span>
+<span class="cm"># Regenerate this exact case with:</span>
+<span class="cm">#   wc-caseload generate --spec &lt;spec.yaml&gt; --out &lt;dir&gt;   (rng_seed 100005)</span></code></pre>
+
+      <h3>Per-case <code>manifest.json</code></h3>
+      <p>Carries the case facts, a lien summary, a recon summary, a document array, and a provenance block. Fields confirmed live against a generated case:</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Top-level field</th><th>Contents</th></tr></thead>
+          <tbody>
+            <tr><td><code>caseId, adjNumber, applicant, employer, carrier, applicantFirm, defenseFirm, dateOfInjury, venue, judge, perspective, stage, resolution, injuryType, claimResponse, evalType, doctrineHooks</code></td><td>The core case facts, coherent across every document in the case. <code>perspective</code> is <code>applicant</code> or <code>defense</code> &mdash; see <a href="#case-perspective">Case perspective</a>.</td></tr>
+            <tr><td><code>liens[]</code></td><td>One entry per lien track: <code>index, claimant, claimSubtype, resolution, resolutionSubtype, conference, documentCount, plannedDocumentCount</code>.</td></tr>
+            <tr><td><code>recon{}</code></td><td><code>enabled, outcome, postRecon, awardDate, petitionDate, orderDate, documentCount</code>, plus the proposed-side <code>plannedPetitionDate, plannedOrderDate, plannedDocumentCount</code>.</td></tr>
+            <tr><td><code>documents[]</code></td><td>One entry per file: <code>filename, subtype, type, format, documentDate, md5Checksum, fileSize, mimeType, template, fallback</code>, and <code>contentFlags</code> on documents that received doctrine language.</td></tr>
+            <tr><td><code>provenance{}</code></td><td><code>zeroRealPii, castProvenance, generator, substrateSha, seedHash, rngSeed</code>.</td></tr>
+            <tr><td><code>warnings[]</code></td><td>Present only when the case produced warnings &mdash; unsupported doctrine hooks, forced lifecycle-invalid subtypes, a reconsideration with no award to attack.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Sample document entry, exactly as rendered:</p>
+      <pre><code><span class="pun">{</span>
+  <span class="key">"filename":</span> <span class="str">"001_2023-01-19.pdf"</span><span class="pun">,</span>
+  <span class="key">"subtype":</span> <span class="str">"EMERGENCY_ROOM_RECORDS"</span><span class="pun">,</span>
+  <span class="key">"type":</span> <span class="str">"MEDICAL_CLINICAL"</span><span class="pun">,</span>
+  <span class="key">"format":</span> <span class="str">"scanned_pdf"</span><span class="pun">,</span>
+  <span class="key">"documentDate":</span> <span class="str">"2023-01-19"</span><span class="pun">,</span>
+  <span class="key">"md5Checksum":</span> <span class="str">"661a3d4682464c69d4ce03e754f7c554"</span><span class="pun">,</span>
+  <span class="key">"fileSize":</span> <span class="val">402041</span><span class="pun">,</span>
+  <span class="key">"mimeType":</span> <span class="str">"application/pdf"</span><span class="pun">,</span>
+  <span class="key">"template":</span> <span class="str">"OperativeRecord/er"</span><span class="pun">,</span>
+  <span class="key">"fallback":</span> <span class="val">false</span>
+<span class="pun">}</span></code></pre>
+      <p class="caption"><code class="inline">template</code> and <code class="inline">fallback</code> are written on <em>every</em> document, not just flagged ones: they record which substrate template class actually ran and whether dispatch fell back to the generic one. <code class="inline">contentFlags</code> would appear here too had this document received doctrine language. A document is only absent from this list if it was never emitted.</p>
+
+      <h3 id="manifest-truthfulness">Manifest truthfulness: what was emitted vs. what was proposed</h3>
+      <p>A manifest is evidence, so where a summary could describe something the case does not contain, the field is split in two. The rule throughout: <strong>the unprefixed field is what is on disk; the <code class="inline">planned*</code> field is what the machine proposed before document controls had their say.</strong></p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Emitted</th><th>Proposed</th><th>Why they can differ</th></tr></thead>
+          <tbody>
+            <tr><td><code>liens[].documentCount</code></td><td><code>liens[].plannedDocumentCount</code></td><td><code>documents.exclude</code>, a per-type <code>max</code>, or <code>global_cap</code> trimmed part of the track. A lien track spans <code>LIENS</code> <em>and</em> the <code>CORRESPONDENCE</code> notices, so excluding one parent type prunes it without removing it.</td></tr>
+            <tr><td><code>recon.documentCount</code></td><td><code>recon.plannedDocumentCount</code></td><td>Same controls, applied to the reconsideration round trip.</td></tr>
+            <tr><td><code>recon.petitionDate</code> / <code>orderDate</code></td><td><code>recon.plannedPetitionDate</code> / <code>plannedOrderDate</code></td><td>The emitted dates are <code>null</code> unless that document actually survived to disk. A manifest asserting an order date for an order nobody can open is the exact failure this split prevents.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Live-verified from the demo caseload&rsquo;s <code class="inline">alvarez-denied-recon-remand</code>, where nothing was trimmed and the two sides therefore agree:</p>
+      <pre><code><span class="key">"recon":</span> <span class="pun">{</span>
+  <span class="key">"enabled":</span> <span class="val">true</span><span class="pun">,</span>
+  <span class="key">"outcome":</span> <span class="str">"granted_remand"</span><span class="pun">,</span>
+  <span class="key">"postRecon":</span> <span class="str">"settled"</span><span class="pun">,</span>
+  <span class="key">"awardDate":</span> <span class="str">"2024-04-12"</span><span class="pun">,</span>
+  <span class="key">"petitionDate":</span> <span class="str">"2024-05-05"</span><span class="pun">,</span>
+  <span class="key">"orderDate":</span> <span class="str">"2024-06-22"</span><span class="pun">,</span>
+  <span class="key">"plannedPetitionDate":</span> <span class="str">"2024-05-05"</span><span class="pun">,</span>
+  <span class="key">"plannedOrderDate":</span> <span class="str">"2024-06-22"</span><span class="pun">,</span>
+  <span class="key">"documentCount":</span> <span class="val">6</span><span class="pun">,</span>
+  <span class="key">"plannedDocumentCount":</span> <span class="val">6</span>
+<span class="pun">}</span></code></pre>
+      <p>A case with no reconsideration reports every one of those as <code class="inline">null</code> or <code class="inline">0</code> rather than omitting the block, so a consumer never has to distinguish &ldquo;absent&rdquo; from &ldquo;absent because unset&rdquo;.</p>
+
+      <h4><code>zeroRealPii</code> is computed, not asserted</h4>
+      <p>The flag is derived from the case&rsquo;s own <code class="inline">castProvenance</code> map, which records where every name came from &mdash; <code class="inline">seed</code>, <code class="inline">faker</code>, <code class="inline">engine</code>, or <code class="inline">seed_denylisted</code>. Only the first three are in the synthetic-provenance set. If a seed names an entity that hits the shipped real-entity denylist, the engine keeps the name (an explicit seed wins), warns, records that field&rsquo;s provenance as <code class="inline">seed_denylisted</code>, and <code class="inline">zeroRealPii</code> computes to <code class="inline">false</code> for that case. It is a measurement of the cast, not a constant the generator writes.</p>
+      <p>The denylist is not only the shipped list of real entities: <code class="inline">name_denylist.py</code> also reads the substrate&rsquo;s four organization pools <em>live</em>, so real employers, carriers, defence firms and medical facilities that exist upstream cannot go stale here. Where a seed does not name its own, the engine substitutes coined organizations rather than drawing from those pools at all.</p>
+
+      <h3>Caseload-level <code>caseload_manifest.json</code></h3>
+      <p>Aggregates every case: <code class="inline">caseloadId, generator, caseCount, documentCount, formatCounts, perspectiveCounts, distinctSubtypes, subtypeCoverage, distinctTemplates, fallbackCount, provenance, cases[]</code>.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Field</th><th>What it tells you</th></tr></thead>
+          <tbody>
+            <tr><td><code>distinctTemplates</code></td><td>How many distinct <strong>recorded template labels</strong> ran across the caseload &mdash; the render-side counterpart to <code>distinctSubtypes</code>. A label is <code>ClassName</code>, or <code>ClassName/variant</code> where the subtype selects a variant, and it is the same string each document carries in its own <code>template</code> field. So it counts labels, <em>not</em> classes: <code>LIEN_RESOLUTION</code> and <code>LIEN_STIPULATION_AGREEMENT</code> both render through the one <code>Stipulations</code> class (see <a href="#limitations">Known limitations</a>) but record <code>Stipulations/lien_resolution</code> and <code>Stipulations/lien_stipulation</code>, and so count as <strong>two</strong>.</td></tr>
+            <tr><td><code>fallbackCount</code></td><td>Documents that fell through to the generic template because dispatch had nothing better. <strong>A healthy caseload reports <code>0</code></strong>, and <code>validate --out</code> fails on a nonzero count unless you pass <code>--allow-fallback</code>. Live-verified at <code>0</code> for both the demo and the doctrine showcase.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4><code>perspectiveCounts</code> and the demo&rsquo;s defense case</h4>
+      <p><code class="inline">examples/demo-caseload.yaml</code> now includes a seventh case, <code class="inline">whitaker-defense-qme-surveillance</code>, seeded with <code class="inline">perspective: defense</code> (see <a href="#case-perspective">Case perspective</a>). Every case&rsquo;s own manifest now also carries a top-level <code class="inline">perspective</code> field, and the caseload manifest tallies the mix in <code class="inline">perspectiveCounts</code>, live-verified as:</p>
+      <pre><code><span class="pun">{</span>
+  <span class="key">"applicant":</span> <span class="val">6</span><span class="pun">,</span>
+  <span class="key">"defense":</span> <span class="val">1</span>
+<span class="pun">}</span></code></pre>
+      <p>Use it to confirm a generated caseload actually has the applicant/defense mix you intended &mdash; a caseload spec that means to include both chairs but omits <code class="inline">perspective: defense</code> anywhere will silently show <code class="inline">{"applicant": N}</code> with no <code class="inline">defense</code> key at all, since every case defaults to <code class="inline">applicant</code>.</p>
+
+      <h4><code>subtypeCoverage</code></h4>
+      <p>Live-verified from the seven-case demo:</p>
+      <pre><code><span class="pun">{</span>
+  <span class="key">"distinctSubtypesEmitted":</span> <span class="val">83</span><span class="pun">,</span>
+  <span class="key">"totalCanonical":</span> <span class="val">353</span><span class="pun">,</span>
+  <span class="key">"percent":</span> <span class="val">23.5</span>
+<span class="pun">}</span></code></pre>
+      <p>The engine&rsquo;s <em>vocabulary</em> is the classifier&rsquo;s full 353 subtypes; what any given caseload <em>emits</em> is only whatever its seeds&rsquo; lifecycles call for. This field exists so &ldquo;353-subtype taxonomy&rdquo; is never misread as &ldquo;emits all 353&rdquo; &mdash; the gap between <code class="inline">distinctSubtypesEmitted</code> and <code class="inline">totalCanonical</code> is the backlog of subtypes still needing targeted seeds to reach them, which document controls (Section 6) exist precisely to close. With the defense case added, the seven-case demo now reaches <strong>83 distinct subtypes (23.5%)</strong>, live-verified &mdash; the defense-only <code class="inline">CLAIMS_ADMINISTRATION</code> and floor-planted <code class="inline">INVESTIGATION</code> paper (see <a href="#case-perspective">Case perspective</a>) reaches subtypes the six applicant-only cases never touched, which is exactly the kind of targeted coverage gain this field is meant to make visible.</p>
+
+      <h4>Provenance and <code>substrateSha</code></h4>
+      <p>Every document&rsquo;s content ultimately comes from the substrate&rsquo;s templates and content pools, so &ldquo;same seed, same version&rdquo; is only half the provenance story &mdash; a manifest that doesn&rsquo;t name the substrate can&rsquo;t be reproduced from itself. <code class="inline">provenance.substrateSha</code> records the last commit that touched <code class="inline">packages/merus-test-data-generator</code> specifically (not the monorepo <code class="inline">HEAD</code>, which moves on every unrelated commit), or <code class="inline">unknown</code> outside a git checkout. <code class="inline">substrate_pin.txt</code> in the package root records the commit the determinism gates were last verified against; generating against anything else logs a <code class="inline">WARN</code> and never fails &mdash; moving to a newer substrate deliberately is normal, and only the operator can tell deliberate from accidental.</p>
+
+      <h4>Synthetic-data markers</h4>
+      <p>Every emitted file says what it is. Live-verified: <code class="inline">.eml</code> files carry an <code class="inline">X-Synthetic-Data: true</code> header. Per the README, PDFs carry <code class="inline">SYNTHETIC TEST DATA &mdash; wc-synthetic-caseload-engine</code> in their <code class="inline">/Subject</code> and <code class="inline">/Producer</code> metadata, and <code class="inline">.docx</code> files carry it in <code class="inline">core_properties.comments</code>. All markers are applied <em>before</em> the manifest checksum is taken, so a marker can never invalidate a recorded MD5. These are metadata-only markers &mdash; see <a href="#limitations">Known limitations</a> for why a visible page watermark isn&rsquo;t possible from this package.</p>
+    </section>
+
+    <!-- ================= 9. DETERMINISM ================= -->
+    <section id="determinism">
+      <span class="section-num">Section 11</span>
+      <h2>Determinism guarantees</h2>
+      <p>Same seed plus same engine version produces the same bytes &mdash; <strong>on any machine, in any timezone, on any day</strong> &mdash; including every MD5 in the manifest. Manifests carry no generation timestamp, precisely so this guarantee stays independently verifiable.</p>
+
+      <h3>Verify it yourself</h3>
+      <pre><code><span class="cmdline">wc-caseload generate --spec examples/demo-caseload.yaml --out /tmp/run-a</span>
+<span class="cmdline">wc-caseload generate --spec examples/demo-caseload.yaml --out /tmp/run-b</span>
+<span class="cmdline">diff -r /tmp/run-a /tmp/run-b &amp;&amp; echo "identical"</span>
+
+<span class="cm"># and across timezones</span>
+<span class="cmdline">TZ=Australia/Sydney wc-caseload generate --spec examples/demo-caseload.yaml --out /tmp/run-c</span>
+<span class="cmdline">diff -r /tmp/run-a /tmp/run-c &amp;&amp; echo "timezone-independent"</span></code></pre>
+
+      <h3>Six leaks, closed without touching the substrate</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Leak</th><th>Fix</th></tr></thead>
+          <tbody>
+            <tr><td><code>list(set(items))</code> in the substrate&rsquo;s content pools &mdash; salted string hashing reordered document content per process.</td><td>The CLI re-executes itself once with <code>PYTHONHASHSEED=0</code>, stabilizing every set-of-strings ordering at once.</td></tr>
+            <tr><td><code>.docx</code> ZIP entries stamped with wall-clock times.</td><td>Repacked with a stamp built from the document date&rsquo;s own fields &mdash; never via <code>localtime</code>/<code>mktime</code>.</td></tr>
+            <tr><td>ReportLab&rsquo;s wall-clock <code>/CreationDate</code> and random <code>/ID</code>; PyMuPDF&rsquo;s <code>/ID</code> on scanned rewrites.</td><td><code>rl_config.invariant</code> (a fixed <code>gmtime</code> epoch, explicit <code>+00'00'</code>) plus a length-preserving <code>/ID</code> rewrite that keeps xref offsets valid.</td></tr>
+            <tr><td>Four substrate sites compute document content from <code>date.today()</code> &mdash; applicant age, years employed, deponent age, a settlement-memo age line.</td><td><code>pin_substrate_clock()</code> rebinds those names to <code>ANCHOR_DATE</code>.</td></tr>
+            <tr><td><code>.eml Date:</code> headers built with <code>datetime(...).timestamp()</code>, which resolves a naive datetime in the <strong>local</strong> zone.</td><td><code>normalize_eml()</code> rewrites the header from the document date at noon UTC.</td></tr>
+            <tr><td>Faker&rsquo;s <code>date_of_birth</code> draws from a window ending at <code>datetime.now()</code> &mdash; a seeded Faker still moved with the clock.</td><td>The applicant&rsquo;s date of birth is owned in <code>case_context.py</code> and derived from <code>seed.rng("dob")</code> against the anchor.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The last three of these were found by running the demo caseload under <code class="inline">TZ=Australia/Sydney</code>: 55 of 289 files differed from the same command run under UTC. Same-machine determinism was real; cross-machine determinism was not, and the tree would equally have drifted from one calendar day to the next. Scan simulation is seeded explicitly from <code class="inline">sha256(rng_seed, "scan:&lt;index&gt;")</code> rather than the substrate&rsquo;s <code class="inline">hash()</code>-derived seed, for the same reason.</p>
+
+      <div class="callout warn">
+        <span class="callout-label">Library-mode caveat</span>
+        <p>The <code class="inline">PYTHONHASHSEED=0</code> pin is applied by re-executing the process, and <strong>only the CLI entry point does that</strong> (<code class="inline">wc-caseload &hellip;</code> or <code class="inline">python -m wc_caseload_engine &hellip;</code>). Importing this package as a library skips it entirely.</p>
+        <p>If you consume <code class="inline">wc_caseload_engine</code> as a library rather than through the CLI, you must either:</p>
+        <ul style="margin-bottom:0;">
+          <li>call <code class="inline">wc_caseload_engine.determinism.ensure_stable_hashing()</code> before generating anything, or</li>
+          <li>start the interpreter with <code class="inline">PYTHONHASHSEED=0</code> already set.</li>
+        </ul>
+        <p style="margin-top:10px; margin-bottom:0;">Without one of those, output stays self-consistent within a single process but will differ between processes. <code class="inline">WC_CASELOAD_NO_REEXEC=1</code> suppresses the re-exec (useful under a debugger) with the same consequence &mdash; use it only when you understand you&rsquo;re trading away cross-process determinism.</p>
+      </div>
+    </section>
+
+    <!-- ================= 10. FILENAMES ================= -->
+    <section id="filenames">
+      <span class="section-num">Section 12</span>
+      <h2>Corpus vs. neutral filename modes and the classifier round-trip</h2>
+      <p>Set per-case (or in <code class="inline">defaults</code>) via <code class="inline">output.filename_style</code>.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Style</th><th>Pattern</th><th>Use for</th></tr></thead>
+          <tbody>
+            <tr><td><code>neutral</code> (default)</td><td><code>###_YYYY-MM-DD.ext</code></td><td>Honest classifier measurement &mdash; the filename leaks no subtype, so a classifier scored against these files can&rsquo;t cheat by reading the name.</td></tr>
+            <tr><td><code>corpus</code></td><td><code>TC-###_###_&lt;SUBTYPE&gt;_&lt;YYYY-MM-DD&gt;.&lt;ext&gt;</code></td><td>Building a classifier training/accuracy corpus that needs ground-truth labels in the filename.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Live-verified samples of each, from the demo caseload&rsquo;s <code class="inline">ramirez-death-dependency</code> (neutral) and <code class="inline">nguyen-cr-three-liens</code> (corpus) cases:</p>
+      <pre><code><span class="cm"># neutral</span>
+001_2023-01-19.pdf
+002_2023-01-20.pdf
+007_2023-01-29.eml
+
+<span class="cm"># corpus</span>
+TC-002_001_CLAIM_FORM_DWC1_2022-08-03.pdf
+TC-002_002_FIRST_REPORT_OF_INJURY_PHYSICIAN_2022-08-03.docx
+TC-002_032_ADJUSTER_LETTER_INFORMATIONAL_2023-09-20.eml</code></pre>
+      <p>The classifier&rsquo;s documented sampling regex is:</p>
+      <pre><code>^(TC-\d{3})_(\d{3})_(.+)_(\d{4}-\d{2}-\d{2})\.pdf$</code></pre>
+      <div class="callout">
+        <span class="callout-label">Precision note</span>
+        Corpus mode applies the <code class="inline">TC-###_###_SUBTYPE_DATE</code> naming convention to <strong>every</strong> output format &mdash; <code class="inline">.pdf</code>, <code class="inline">.docx</code>, and <code class="inline">.eml</code> alike, as verified live above. The classifier&rsquo;s sampling regex, however, is anchored specifically to the <code class="inline">.pdf</code> extension. If you&rsquo;re building a corpus that the classifier will sample with this exact regex, either restrict <code class="inline">output.formats</code> to <code class="inline">[pdf]</code> for that run, or confirm your ingestion path also handles the corpus-named <code class="inline">.docx</code>/<code class="inline">.eml</code> files by another means.
+      </div>
+    </section>
+
+    <!-- ================= 11. TROUBLESHOOTING ================= -->
+    <section id="troubleshooting">
+      <span class="section-num">Section 13</span>
+      <h2>Troubleshooting</h2>
+
+      <h3>Substrate bridge errors</h3>
+      <p>The substrate (<code class="inline">packages/merus-test-data-generator</code>) is consumed as a library via a documented <code class="inline">sys.path</code> bridge in <code class="inline">substrate.py</code> &mdash; the only place in this package that touches <code class="inline">sys.path</code>. Its own modules import each other as top-level packages (<code class="inline">data.x</code>, <code class="inline">pdf_templates.y</code>), so the substrate <em>root</em> must be discoverable.</p>
+      <ul>
+        <li>If the substrate can&rsquo;t be located, set <code class="inline">WC_CASELOAD_SUBSTRATE=/abs/path/to/merus-test-data-generator</code> to point at it explicitly.</li>
+        <li>The bridge path is <em>appended</em> to <code class="inline">sys.path</code>, not prepended, specifically so it can never shadow this package&rsquo;s own modules or a same-named test module. If you see an import resolving to the wrong package, check for a naming collision rather than assuming the bridge is broken.</li>
+        <li>If an import from the substrate breaks after a substrate change, the fix belongs in the bridge (<code class="inline">substrate.py</code> / <code class="inline">lifecycle_bridge.py</code>) &mdash; never by copying substrate files into this package. No module from <code class="inline">merus-test-data-generator</code> is ever duplicated here; that invariant is itself tested.</li>
+      </ul>
+
+      <h3>Runway rejections</h3>
+      <p>See <a href="#runway">Section 3</a> for the full mechanics and exact error text. In short: if <code class="inline">generate</code> or <code class="inline">validate</code> exits nonzero naming <code class="inline">injury.date_of_injury</code> and a runway shortfall in days, either move the date of injury earlier by the stated amount, or reduce <code class="inline">lifecycle.target_stage</code>/drop <code class="inline">reconsideration.enabled</code>/<code class="inline">liens.post_resolution_litigation</code> to a driver with a smaller floor. Auto-derived (<code class="inline">auto:</code>) seeds cannot hit this error by construction; only hand-written seeds can.</p>
+
+      <h3>Taxonomy drift</h3>
+      <p>Run <code class="inline">wc-caseload taxonomy-check</code> to compare the engine&rsquo;s taxonomy against the classifier source tree at runtime. A clean run looks like this (live-verified):</p>
+      <pre><code>classifier source : ~/projects/Adjudica-classifier
+classifier subtypes: 353
+engine subtypes    : 353
+drift: none &mdash; engine taxonomy matches the classifier exactly</code></pre>
+      <p>If it exits nonzero, the classifier&rsquo;s subtype set has moved out from under the engine&rsquo;s pinned taxonomy. Point <code class="inline">--classifier-path</code> (or <code class="inline">WC_CASELOAD_CLASSIFIER</code>) at the correct checkout if the default (<code class="inline">~/projects</code>) isn&rsquo;t where it lives, and if the diff is real, the engine&rsquo;s taxonomy module needs to be updated to match &mdash; do not hand-edit a manifest to paper over drift, since <code class="inline">validate --out</code> checks every manifest subtype against the same taxonomy.</p>
+
+      <h3>Other quick checks</h3>
+      <ul>
+        <li><strong>Nothing renders / command hangs:</strong> generation never touches the network by design, so a hang is not a connectivity issue &mdash; check the substrate bridge first.</li>
+        <li><strong>Suspiciously few documents for a seeded case:</strong> check <code class="inline">documents.global_cap</code> and any <code class="inline">exclude</code>/<code class="inline">include_only</code> entries before assuming the lifecycle is broken; the precedence order in Section 6 usually explains a shorter-than-expected plan.</li>
+        <li><strong>Output looks different than last time for the same seed:</strong> confirm you generated through the <code class="inline">wc-caseload</code> CLI (or <code class="inline">python -m wc_caseload_engine</code>) rather than importing the package as a library without pinning <code class="inline">PYTHONHASHSEED</code> &mdash; see the library-mode caveat in Section 11.</li>
+      </ul>
+    </section>
+
+    <!-- ================= 12. LIMITATIONS ================= -->
+    <section id="limitations">
+      <span class="section-num">Section 14</span>
+      <h2>Known limitations</h2>
+      <p>These are documented, deliberate trade-offs rather than bugs &mdash; each one was weighed against patching the substrate in place, and left as a surfaced limitation because patching would have introduced shared mutable state or forfeited the substrate&rsquo;s reuse value.</p>
+
+      <h3>Hardcoded applicant-firm letterhead</h3>
+      <p>The substrate&rsquo;s <code class="inline">data/docx_styles.py</code> renders <code class="inline">Martinez &amp; Associates, APC</code> on the letterhead of every document, regardless of what you set in <code class="inline">profile.attorneys.applicant_firm</code>. That field is faithfully recorded in the seed and in the manifest&rsquo;s <code class="inline">applicantFirm</code> field &mdash; live-verified across multiple demo cases, including one where <code class="inline">defense_firm</code> was explicitly overridden and <code class="inline">applicant_firm</code> was not &mdash; but it does not change the rendered letterhead text. Patching the substrate&rsquo;s private constant at runtime would create shared mutable state across cases running in the same process, so this is left as a documented limitation rather than worked around.</p>
+
+      <h3>Synthetic-data markers are metadata-only</h3>
+      <p>Every file is marked as synthetic in its metadata &mdash; <code class="inline">/Subject</code> and <code class="inline">/Producer</code> for PDFs, <code class="inline">core_properties.comments</code> for <code class="inline">.docx</code>, an <code class="inline">X-Synthetic-Data: true</code> header for <code class="inline">.eml</code> (the last confirmed live). None of this is a visible watermark on the rendered page itself &mdash; that would have to come from the substrate&rsquo;s page templates, which this package does not edit.</p>
+
+      <h3>Doctrine prose is fixed text, and a gate is an approximation</h3>
+      <p>All 14 hooks now inject doctrine-specific language into the documents they target (<a href="#doctrine">Section 8</a>), verified end to end: every marker is findable in a rendered PDF of <code class="inline">examples/doctrine-showcase.yaml</code>. Two honest limits remain on what that language <em>is</em>.</p>
+      <p>First, each hook&rsquo;s paragraphs are literal, fixed text &mdash; chosen for the doctrine, not composed from the case. That is what makes injection free of randomness and byte-stable, but it also means the prose never names this applicant&rsquo;s body parts, this QME&rsquo;s findings or this employer&rsquo;s conduct. The surrounding document supplies the facts; the doctrine section supplies the argument.</p>
+      <p>Second, some prerequisites approximate a legal predicate the seed schema cannot express &mdash; either a discrete entity it has no field for (a second injury, a prior award, a prior disability, a diagnosis) or the grounds of the dispute itself (a commute defence, a misclassification defence, a personnel action). The README&rsquo;s exact/approximation table settles which hooks these are. Rather than let a gate imply more than it checks, those hooks&rsquo; paragraphs are written as a contention register: what each side asserts, what the trier must decide. No paragraph asserts the doctrinal predicate its gate approximates, and a test enforces that. If you need prose that <em>finds</em> those facts rather than framing them as contested, that needs richer seed fields first, not richer prose.</p>
+
+      <h3>Lien and reconsideration documents are template variants, not bespoke templates</h3>
+      <p>The lien and recon machines produce real, correctly-formatted documents, but several of them render through a shared underlying template distinguished only by a variant string: <code class="inline">LIEN_RESOLUTION</code> and <code class="inline">LIEN_STIPULATION_AGREEMENT</code> both render through the <code class="inline">Stipulations</code> template; <code class="inline">PETITION_RECONSIDERATION_FILED</code> renders through <code class="inline">ApplicationForAdjudication</code>; <code class="inline">ORDER_ON_RECONSIDERATION</code> and <code class="inline">AMENDED_FINDINGS_AWARD</code> both render through <code class="inline">MinutesOrders</code>. The documents are correct-looking and subtype-accurate, but if you need the two lien resolution flavors (or the recon documents) to look structurally distinct at the template level rather than just differ by heading and content, that is a substrate-level template gap, not a configuration you can change from a seed.</p>
+
+      <h3>Vocabulary is not coverage</h3>
+      <p>Not strictly a defect, but worth restating here: the engine can <em>name</em> 353 canonical subtypes, but a given caseload only <em>emits</em> whatever its seeds&rsquo; lifecycles call for &mdash; the seven-case demo lands at 83 distinct subtypes, 23.5% of the taxonomy (see <code class="inline">subtypeCoverage</code> in Section 10). Raising coverage for a classifier corpus means writing seeds and document-control overrides that deliberately reach the untouched subtypes; it does not happen by generating more cases from the same distributions.</p>
+
+      <h3>The substrate&rsquo;s 384-key enum vs. the classifier&rsquo;s 353 canonical subtypes</h3>
+      <p>The substrate enum carries 384 keys: 350 canonical plus 34 local realism subtypes (fax cover sheets, blank scanned pages, internal file notes) that are not classifier vocabulary. Those 34 are never written to a manifest &mdash; 11 map to an unambiguous canonical equivalent and the rest are dropped outright, deliberately conservatively, because a wrong mapping would silently poison the accuracy corpus this engine exists to feed.</p>
+    </section>
+
+    <hr class="rule" />
+
+    <footer>
+      @Developed &amp; Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+    </footer>
+  </main>
+</div>

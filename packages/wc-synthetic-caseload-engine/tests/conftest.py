@@ -27,6 +27,14 @@ from wc_caseload_engine.taxonomy import find_classifier
 DEMO_SPEC = Path(__file__).resolve().parents[1] / "examples" / "demo-caseload.yaml"
 """The committed demo caseload — the caseload every published claim is about."""
 
+SHOWCASE_SPEC = Path(__file__).resolve().parents[1] / "examples" / "doctrine-showcase.yaml"
+"""The committed doctrine showcase — every hook supported, zero warnings.
+
+The counterpart to :data:`DEMO_SPEC`, which deliberately carries two hooks its
+cases cannot support. The user guide publishes this spec as the warning-free
+run, so its warning count is a documented claim and is pinned as one.
+"""
+
 requires_substrate = pytest.mark.skipif(
     find_substrate() is None,
     reason="merus-test-data-generator substrate not on disk",

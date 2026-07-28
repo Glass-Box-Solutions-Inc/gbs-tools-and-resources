@@ -376,30 +376,65 @@ as fact would describe a case the generator did not produce. The paragraphs ther
 doctrine as a contention ("Where a prior award is established...") rather than as a finding, and
 a test enumerates the banned factual assertions so they cannot creep back.
 
-**Four prerequisites ask for less than their doctrine does**, because the seed schema cannot
-express the real predicate. Each is an approximation, chosen as the closest thing a seed *can*
-establish, and the paragraphs are written so the gap is a contention rather than a false claim:
+#### Which gates are exact, and which approximate — the authoritative table
 
-| Hook | What the doctrine needs | What the prerequisite can ask for |
-|------|------------------------|-----------------------------------|
-| `benson` | two distinct industrial injuries | a rating and two impaired regions |
-| `sibtf` | a preexisting labor-disabling disability | a rating |
-| `lc4664_prior_award` | a prior award of permanent disability | a rating |
-| `firefighter_presumption` | a cancer diagnosis in a qualifying member | a qualifying occupation or industry |
+**This table is the single source of truth for the exact/approximation split.** The user guide
+describes the class and points here; it deliberately carries no enumeration or count of its own,
+because keeping two lists in sync is how the previous three versions of this section each shipped
+a different answer.
 
-Everything else is gated on exactly what it needs — `death_dependency` on a death claim,
-`imr_constitutionality` on an IMR that happened, `lc3208_3_psych` and `gfpa` on a psychiatric
-claim, `kite` on two impairments to add. Closing the four above means modelling a second date of
-injury, a prior award and a diagnosis in the seed schema; that is a schema change, not a content
-change.
+The classification is derived, not counted, by one test: **does the truth of the gate entail the
+truth of the doctrinal predicate?** If a seed satisfying the gate must also satisfy the predicate,
+the gate is *exact*. If it can satisfy the gate while the predicate remains unknown, it is an
+*approximation*.
 
-Because those four gates are approximations, **no paragraph anywhere asserts a fact its own gate
-does not establish** — the approximation is confined to the gate and never leaks into the prose.
+| Hook | Doctrinal predicate | What the gate establishes | Verdict |
+|------|---------------------|---------------------------|---------|
+| `ogilvie` | A scheduled PD rating exists to rebut | `eval_type` ≠ `none` → the case reaches a PD rating | **exact** |
+| `almaraz_guzman` | An AMA Guides impairment rating is being derived | `eval_type` ≠ `none` → the case reaches a PD rating | **exact** |
+| `benson` | **Two or more distinct industrial injuries**, each producing PD | a rating and ≥2 entries in `injury.body_parts` — two impaired regions of **one** injury | *approximation* |
+| `escobedo` | An apportionment opinion is offered in a rated case (an evidentiary standard, not a fact pattern) | `eval_type` ≠ `none` → the case reaches a PD rating | **exact** |
+| `kite` | Two or more impairments capable of being combined or added | a rating and ≥2 entries in `injury.body_parts` | **exact** |
+| `going_and_coming` | The injury occurred **during an ordinary commute** | `claim_response` is `denied` or `delayed` → the claim is contested | *approximation* |
+| `sibtf` | A **preexisting labor-disabling PPD** combined with a subsequent industrial injury | `eval_type` ≠ `none` → the case reaches a PD rating | *approximation* |
+| `death_dependency` | An industrial death (dependency shares are the doctrine's subject, not its predicate) | `injury.type` is `death` | **exact** |
+| `lc3208_3_psych` | A psychiatric injury is claimed | `psyche` named in `injury.body_parts` | **exact** |
+| `gfpa` | A psychiatric claim **and a lawful good faith personnel action** contended to have substantially caused it | Either branch of a disjunction: `psyche` named in `injury.body_parts`, **or** the string `lc3208_3_psych` present in the same seed's `lifecycle.doctrine_hooks`. The second branch establishes **no case fact whatsoever** — naming one hook satisfies another hook's gate, so `doctrine_hooks: [lc3208_3_psych, gfpa]` passes on a lumbar-only claim with no psychiatric component at all. Neither branch reaches the personnel action. | *approximation* |
+| `firefighter_presumption` | A **qualifying safety member** with a **cancer diagnosis** and demonstrated carcinogen exposure | Either branch of a disjunction: `employer.industry` lower-cased equals `government`, **or** `applicant.occupation` lower-cased *contains* any of `fire`, `police`, `peace officer`, `sheriff`, `deputy`. The second branch is a substring test, so `Fire Safety Inspector` and `Deputy Comptroller` both pass. Neither branch reaches a diagnosis. | *approximation* |
+| `imr_constitutionality` | An IMR determination happened and is being challenged | `ur_dispute.enabled` **and** `ur_dispute.imr` both true | **exact** |
+| `ab5_dynamex` | **Employment status is disputed** — the worker is contended to be an independent contractor | `claim_response` is `denied` or `delayed` → the claim is contested | *approximation* |
+| `lc4664_prior_award` | A **prior award of permanent disability** to an overlapping region | `eval_type` ≠ `none` → the case reaches a PD rating | *approximation* |
+
+Every cell above is written against the predicate lambda in `doctrine.py`, not against its
+human-readable `description`. Two gates are **disjunctions** and both branches are spelled out —
+`gfpa` and `firefighter_presumption`; the other twelve are a single condition or a conjunction
+with every conjunct stated. Both disjunctive branches were confirmed live: seeding
+`[lc3208_3_psych, gfpa]` on a lumbar-only claim makes `gfpa` report as supported with zero
+warnings, and an occupation of `Deputy Comptroller` satisfies the safety-member gate.
+
+**Seven exact, seven approximations.** The approximations fall into two shapes, and the second
+shape is what earlier versions of this table missed. Four are missing a discrete *entity* the seed
+has no field for — a second injury (`benson`), a prior disability (`sibtf`), a prior award
+(`lc4664_prior_award`), a diagnosis (`firefighter_presumption`). Three are missing the *nature of
+the dispute*: `claim_response: denied` says the claim is contested but not **why**, so it cannot
+distinguish a commute defence (`going_and_coming`) from a misclassification defence
+(`ab5_dynamex`) from any of the dozen other reasons a claim gets denied; and `psyche` in
+`body_parts` establishes the claim `gfpa` defends against but never the personnel action that is
+the defence's whole substance.
+
+Closing the first four means modelling a second date of injury, a prior award, a prior disability
+and a diagnosis. Closing the last three means modelling the *grounds* of denial and an employment
+event history. Both are schema changes, not content changes.
+
+Because these seven gates are approximations, **no paragraph asserts the doctrinal predicate its
+gate approximates** — the approximation is confined to the gate and never leaks into the prose.
 Where a hook argues about something the seed cannot model, the language raises it conditionally
 ("Where a prior award is produced...", "Where the records establish a prior condition..."), and
 `BANNED_ASSERTIONS` in `tests/test_doctrine_content.py` holds a positive control for every
-sentence that once did otherwise. A prerequisite also governs only the **draw**: a hook you seed
-by name is always kept and always renders, warning and all.
+sentence that once did otherwise — including entries for all three of the dispute-shaped
+approximations, which is why the prose was already correct while this table was not. A
+prerequisite also governs only the **draw**: a hook you seed by name is always kept and always
+renders, warning and all.
 
 **The section is appended, not interleaved.** A flagged document gets its doctrine content as a
 trailing section — `ADDENDUM — MEDICAL-LEGAL DISCUSSION OF CONTROLLING AUTHORITY` on a medical
@@ -686,6 +721,38 @@ never crosses the horizon, so the extension cannot leak into ordinary cases.
 Dates of injury are chosen to leave statutory runway: a case that petitions and then settles
 on remand needs roughly nine months after its award before the fixed anchor date
 (`2026-01-01`), or the whole post-award sequence compresses into a single day.
+
+The demo deliberately carries two doctrine hooks its cases cannot support — `benson` on
+`nguyen-cr-three-liens` and `gfpa` on `ramirez-death-dependency` — so a normal run demonstrates
+the kept-and-warned path rather than only the happy one.
+
+### `examples/doctrine-showcase.yaml` — the warning-free counterpart
+
+Six cases grouped by prerequisite, covering **all fourteen doctrine hooks with zero warnings**
+and no `documents.overrides` anywhere: every hook reaches a target document through its case's
+own lifecycle. Live-verified at 210 documents, `validate --out` clean with zero fallbacks, and
+every hook's marker findable in a rendered PDF.
+
+```bash
+wc-caseload generate --spec examples/doctrine-showcase.yaml --out /tmp/wcce-doctrine
+wc-caseload validate --out /tmp/wcce-doctrine
+```
+
+| Case | What its facts establish | Hooks |
+|------|--------------------------|-------|
+| `showcase-rating-doctrines` | `eval_type: qme`, two body parts, F&A, recon round trip | ogilvie, almaraz_guzman, benson, escobedo, kite, sibtf, lc4664_prior_award |
+| `showcase-threshold-defences` | `claim_response: denied` | going_and_coming, ab5_dynamex |
+| `showcase-death-dependency` | `injury.type: death` | death_dependency |
+| `showcase-psychiatric` | `psyche` in `body_parts` | lc3208_3_psych, gfpa |
+| `showcase-firefighter-presumption` | `employer.industry: government` | firefighter_presumption |
+| `showcase-imr-challenge` | `ur_dispute.enabled` + `imr: true` | imr_constitutionality |
+
+`tests/test_doctrine_content.py` pins all four claims — every hook seeded, zero warnings, every
+hook landing on a document, and no forced subtypes.
+
+For a per-hook reference — the doctrine, its citation, exactly what the seed must establish, a
+minimal runnable seed, and the subtypes that carry the language — see the user guide at
+[`docs/user-guide/index.html`](docs/user-guide/index.html).
 
 ---
 

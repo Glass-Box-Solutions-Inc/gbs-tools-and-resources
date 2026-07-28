@@ -9,6 +9,70 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+**Operator user guide and a doctrine showcase caseload** (ticket **AJC-36**).
+
+- **`docs/user-guide/index.html`** — a 14-section operator guide, brought current with the
+  merged engine. New material: *Doctrine hooks* (the two registers and their headings, which
+  subtypes each hook targets, `contentFlags` provenance, the fourteen citations and markers,
+  prerequisite gating, and the determinism properties of injection); the *needed-seeds
+  reference*, one block per hook giving the doctrine, its citation, exactly what the seed must
+  establish, a minimal runnable seed and the subtypes that carry the language; *manifest
+  truthfulness* (`documentCount` vs `plannedDocumentCount`, `petitionDate`/`orderDate` vs their
+  `planned*` twins, the `warnings` array, and `zeroRealPii` as a computed measurement of
+  `castProvenance` rather than an asserted constant); and *control-key canonicalization*,
+  including the alias-collision check that catches one subtype written two ways.
+- **`examples/doctrine-showcase.yaml`** — six cases grouped by prerequisite that exercise all
+  fourteen hooks with **zero warnings** and no `documents.overrides` anywhere: every hook
+  reaches a target document through its case's own lifecycle. Verified at 210 documents,
+  `validate --out` clean with zero fallbacks, and every hook's marker present in a rendered PDF.
+  Four assertions in `tests/test_doctrine_content.py` pin it — every hook seeded, the run
+  warning-free, every hook landing on a document, and no forced subtypes — because a showcase
+  that silently stops showcasing is worse than none.
+
+### Changed
+
+- Corrected stale claims in the guide against the merged code: the *Doctrine-hook content depth*
+  limitation (content injection now ships and is verified end to end, replaced by the two limits
+  that are actually real — the prose is fixed text, and some gates approximate their doctrine);
+  the demo caseload totals (7 cases / 331 documents / 83 subtypes, not 6 / 276 / 78); and the
+  per-case manifest field lists, which omitted `contentFlags`, `template`, `fallback`,
+  `castProvenance`, `warnings` and every `planned*` field.
+- Scoped the README's doctrine-prose claim from "no paragraph anywhere asserts a fact its own
+  gate does not establish" to "no paragraph asserts the doctrinal predicate its gate
+  approximates" — the narrower statement is the one the tests actually enforce (AJC-35 #22).
+- **Derived the exact/approximation split for all 14 doctrine gates instead of counting it.**
+  The README table named four (`benson`, `sibtf`, `lc4664_prior_award`,
+  `firefighter_presumption`) and explicitly grouped `gfpa` with `lc3208_3_psych` as "gated on
+  exactly what it needs" — but `gfpa`'s doctrine needs a good faith personnel action while its
+  gate establishes only a psychiatric claim. Reclassified by one stated test, applied to all
+  fourteen: **does the truth of the gate entail the truth of the doctrinal predicate?** The
+  answer is **seven exact, seven approximations**, the three additions being `gfpa`,
+  `going_and_coming` and `ab5_dynamex`. The approximations turn out to have two shapes, and the
+  second is what three successive versions of this table missed: four are missing a discrete
+  *entity* the seed has no field for, three are missing the *nature of the dispute*
+  (`claim_response: denied` says a claim is contested but never why). The README now carries one
+  authoritative 14-row table — predicate, gate, verdict — and the guide describes the class and
+  points at it, holding no enumeration or count of its own.
+  `BANNED_ASSERTIONS` already carried entries for all three additions, so the shipped prose was
+  correct throughout; only the table was stale. No doctrine content changed.
+  Every cell is written against the predicate lambda rather than its human-readable
+  `description`, and the two **disjunctive** gates now spell out both branches. `gfpa` is
+  satisfied by `psyche` in `body_parts` **or** by `lc3208_3_psych` appearing in the same seed's
+  `doctrine_hooks` — a branch that establishes no case fact at all, since naming one hook
+  satisfies another hook's gate (confirmed live: `[lc3208_3_psych, gfpa]` on a lumbar-only claim
+  reports `gfpa` supported with zero warnings). `firefighter_presumption` is satisfied by
+  `industry == "government"` **or** a substring match of `fire`/`police`/`peace officer`/
+  `sheriff`/`deputy` against the occupation, so `Deputy Comptroller` passes. Both are documented
+  as defects of the gate, not of the prose; the `gfpa` weakness is ticketed on the merits in
+  AJC-35.
+- Corrected the guide's `distinctTemplates` description: the implementation counts
+  `template_label(class_name, variant)` strings, so it counts recorded **labels**, not template
+  classes. `LIEN_RESOLUTION` and `LIEN_STIPULATION_AGREEMENT` share the one `Stipulations` class
+  but record `Stipulations/lien_resolution` and `Stipulations/lien_stipulation` and count as two
+  — the opposite of what the row previously claimed.
+
 ### Fixed
 
 **Cross-model release review — six blocking findings** (ticket **AJC-34**). Each was reproduced
