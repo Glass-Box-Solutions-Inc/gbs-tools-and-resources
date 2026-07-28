@@ -20,6 +20,20 @@ these interfaces.
 
 from __future__ import annotations
 
+import sys
+
+# The earliest executable line in this package, and therefore the earliest point
+# at which bytecode caching can be switched off. Everything imported from here
+# on — the rest of this package, click, structlog, and the whole substrate —
+# leaves no ``__pycache__`` behind, which is what makes "writes nothing outside
+# --out" true rather than nearly true.
+#
+# One file is unreachable from here: this module's own ``__init__`` bytecode,
+# which CPython writes while compiling this file, before the first line runs.
+# That is an interpreter-level floor, not a gap in the guarantee, and the
+# anti-probe names it explicitly rather than exempting a directory.
+sys.dont_write_bytecode = True
+
 __version__ = "0.1.0"
 
 __all__ = ["__version__"]

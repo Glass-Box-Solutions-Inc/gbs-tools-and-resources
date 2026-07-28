@@ -13,6 +13,13 @@ styles survive the re-exec unchanged.
 
 from __future__ import annotations
 
+import sys
+
+# Set here as well as in ``cli``, and before the import that reaches it: this
+# module is the first of the two to execute under ``python -m``, so the flag has
+# to be raised here or the ``cli`` import itself has already cached bytecode.
+sys.dont_write_bytecode = True
+
 from wc_caseload_engine.cli import main
 
 if __name__ == "__main__":

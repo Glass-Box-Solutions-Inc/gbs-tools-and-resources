@@ -33,6 +33,7 @@ import structlog
 
 from wc_caseload_engine.determinism import pin_substrate_clock
 from wc_caseload_engine.lifecycle_bridge import CaseTimeline, seed_to_case_parameters
+from wc_caseload_engine.name_denylist import warn_if_denylisted
 from wc_caseload_engine.seeds import ANCHOR_DATE, CaseSeed, derive_seed
 from wc_caseload_engine.substrate import import_substrate
 
@@ -130,6 +131,86 @@ _FIRM_SURNAMES: tuple[str, ...] = (
 """Coined surnames for synthetic law-firm names — same reasoning as the carriers."""
 
 _FIRM_SUFFIXES: tuple[str, ...] = ("LLP", "APC", "& Associates, APC", "LLP")
+
+_ORGANIZATION_STEMS: tuple[str, ...] = (
+    "Ashvale",
+    "Bellhurst",
+    "Cordwyn",
+    "Dunmarch",
+    "Eastmoor",
+    "Fallowbrook",
+    "Grimsby Hollow",
+    "Hallowmere",
+    "Ironvale",
+    "Juniper Reach",
+    "Kestrelford",
+    "Lowfell",
+    "Mendlebury",
+    "Netherby",
+    "Oakhaven",
+    "Pinecross",
+    "Quillhaven",
+    "Redmarch",
+    "Stonebridge Vale",
+    "Thistledown",
+    "Underhill",
+    "Vantry",
+    "Westmarsh",
+    "Yarrowfield",
+)
+"""Coined place-stems shared by employers and medical facilities.
+
+Same reasoning as :data:`_CARRIER_STEMS`: invented rather than drawn from a
+real-place list, because a plausible Californian place name is exactly how a
+real employer or a real clinic is named.
+"""
+
+_EMPLOYER_SUFFIXES_BY_INDUSTRY: Mapping[str, tuple[str, ...]] = {
+    "government": (
+        "Municipal Services District",
+        "Regional Public Works Authority",
+        "County Services Authority",
+    ),
+    "manufacturing": (
+        "Manufacturing Company",
+        "Industrial Works, Inc.",
+        "Fabrication Company",
+    ),
+    "construction": ("Construction Group", "Builders, Inc.", "Contracting Company"),
+    "healthcare": ("Health Partners", "Medical Group", "Care Network"),
+    "warehouse_logistics": (
+        "Logistics Company",
+        "Distribution Center",
+        "Freight Services, Inc.",
+    ),
+    "retail_service": ("Retail Group", "Markets, Inc.", "Stores Company"),
+}
+"""Coined employer suffixes, chosen to match the industry the substrate drew.
+
+The substrate picks ``(industry, company, position)`` as one unit, and the
+industry and the position stay — a Sheriff's Deputy at a coined *retail* chain
+would be a worse document than a real employer name is a risk. Only the
+company is replaced, with a suffix that keeps the trio coherent.
+"""
+
+_EMPLOYER_SUFFIXES_DEFAULT: tuple[str, ...] = (
+    "Industries, Inc.",
+    "Enterprises, Inc.",
+    "Services Company",
+)
+"""Used when the substrate's industry key is one this table does not know."""
+
+_FACILITY_SUFFIXES: tuple[str, ...] = (
+    "Orthopedic & Spine Center",
+    "Medical Group",
+    "Pain Management Clinic",
+    "Rehabilitation Center",
+    "Diagnostic Imaging Center",
+    "Neurology Associates",
+    "Physical Therapy Associates",
+    "Occupational Health Center",
+)
+"""Coined medical-facility suffixes covering the specialties the substrate uses."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +314,33 @@ def synthetic_firm_name(seed: CaseSeed, salt: str) -> str:
     return f"{first} & {second} {suffix}"
 
 
+def synthetic_employer_name(seed: CaseSeed, industry: str) -> str:
+    """A coined employer name for *industry*, stable for a given seed."""
+    rng = seed.rng(f"employer:{industry}")
+    suffixes = _EMPLOYER_SUFFIXES_BY_INDUSTRY.get(industry, _EMPLOYER_SUFFIXES_DEFAULT)
+    return f"{rng.choice(_ORGANIZATION_STEMS)} {rng.choice(suffixes)}"
+
+
+def synthetic_facility_name(seed: CaseSeed, salt: str) -> str:
+    """A coined medical-facility name, stable for a given seed and *salt*."""
+    rng = seed.rng(f"facility:{salt}")
+    return f"{rng.choice(_ORGANIZATION_STEMS)} {rng.choice(_FACILITY_SUFFIXES)}"
+
+
+def _industry_key(case: Any) -> str:
+    """Recover the substrate's industry key from the employer it generated.
+
+    ``FakeDataGenerator`` stores the industry as ``department``, title-cased
+    with underscores expanded (``warehouse_logistics`` -> ``Warehouse
+    Logistics``). Reversing that is enough to pick a coherent coined suffix, and
+    an unrecognized value simply falls through to the neutral pool. This runs
+    *before* ``_apply_profile_overrides``, which is what overwrites
+    ``department`` with the seed's own industry string.
+    """
+    department = str(getattr(case.employer, "department", "") or "")
+    return department.strip().lower().replace(" ", "_")
+
+
 def _contact_email(person: str, organization: str) -> str:
     """Rebuild a contact email so it matches the organization actually named.
 
@@ -248,39 +356,105 @@ def _contact_email(person: str, organization: str) -> str:
 
 
 def _replace_real_organizations(case: Any, seed: CaseSeed) -> dict[str, str]:
-    """Swap the substrate's real carrier and defense-firm draws for coined names.
+    """Swap **every** substrate organization draw for a coined name.
 
-    ``data/wc_constants.py`` seeds ``INSURANCE_CARRIERS`` and ``DEFENSE_FIRMS``
-    with **actual** California workers' compensation insurers and defense firms
-    — State Fund, Zenith, Bradford & Barthel, Laughlin Falbo. Realistic, and
-    exactly the wrong kind of realistic: a fabricated claim file naming a real
-    carrier or a real firm is a real-world collision, whatever the folder says
-    about being synthetic.
+    ``data/wc_constants.py`` holds four pools that name organizations, and all
+    four reach the cast:
+
+    ================== ======================================================
+    Pool               Real entities it contains
+    ================== ======================================================
+    INSURANCE_CARRIERS State Fund, Zenith, Liberty Mutual, Sedgwick
+    DEFENSE_FIRMS      Bradford & Barthel, Laughlin Falbo, Hanna Brophy
+    ALL_EMPLOYERS      Safeway, Costco, Kaiser Permanente, UPS, City of LA
+    MEDICAL_FACILITIES clinic names for the treating, QME and prior providers
+    ================== ======================================================
+
+    Realistic, and exactly the wrong kind of realistic: a fabricated claim file
+    naming a real employer is a real-world collision whatever the folder says
+    about being synthetic — and it is worse than a real carrier, because the
+    employer is a *named defendant* in the caption of every legal document.
+
+    Covering only the first two pools is the defect this replaced. ``Safeway
+    Inc.`` was appearing as the defendant on Applications for Adjudication
+    under a manifest asserting ``zeroRealPii: true``, because the employer was
+    classed as a Faker draw when it was really a pool draw.
 
     The substrate is a library we do not edit, so the substitution happens here,
     on the generated case object, before any template reads it. A seed that
-    names its own carrier or firm is untouched — the seed is the contract.
+    names its own organization is untouched — the seed is the contract — but it
+    is checked against the denylist and warned about, so a deliberate real name
+    is visible rather than silent.
 
     Returns:
         The provenance entries for the fields this function owned.
     """
     provenance: dict[str, str] = {}
+    profile = seed.profile
 
-    if not seed.profile.carrier.name:
+    if not profile.carrier.name:
         case.insurance.carrier_name = synthetic_carrier_name(seed)
         case.insurance.adjuster_email = _contact_email(
             case.insurance.adjuster_name, case.insurance.carrier_name
         )
         provenance["carrier"] = PROVENANCE_ENGINE
 
-    if not seed.profile.attorneys.defense_firm:
+    if not profile.attorneys.defense_firm:
         case.insurance.defense_firm = synthetic_firm_name(seed, "defense_firm")
         case.insurance.defense_email = _contact_email(
             case.insurance.defense_attorney, case.insurance.defense_firm
         )
         provenance["defenseFirm"] = PROVENANCE_ENGINE
 
+    if not profile.employer.name:
+        case.employer.company_name = synthetic_employer_name(seed, _industry_key(case))
+        provenance["employer"] = PROVENANCE_ENGINE
+
+    # Facilities are never seed-declarable — the seed picks specialties, not
+    # clinics — so every one of them is coined, unconditionally.
+    for label, physician in _facility_bearers(case):
+        physician.facility = synthetic_facility_name(seed, label)
+        provenance[f"{label}Facility"] = PROVENANCE_ENGINE
+
     return provenance
+
+
+def _facility_bearers(case: Any) -> list[tuple[str, Any]]:
+    """``(provenance label, physician)`` for every facility-bearing provider.
+
+    Prior providers are included because the substrate draws their clinics from
+    the same pool and a medical chronology lists them by name; a sweep that
+    stopped at the treating physician would leave the longest document in the
+    file unswept.
+    """
+    bearers: list[tuple[str, Any]] = [("treating", case.treating_physician)]
+    if getattr(case, "qme_physician", None) is not None:
+        bearers.append(("qme", case.qme_physician))
+    for index, provider in enumerate(getattr(case, "prior_providers", ()) or ()):
+        bearers.append((f"priorProvider{index}", provider))
+    return bearers
+
+
+def _warn_on_seed_declared_real_names(seed: CaseSeed) -> None:
+    """Check every seed-declared organization against the denylist, and warn.
+
+    Seed-declared names are kept: the seed is the contract, and a seeder naming
+    a party is the one channel where a real name could be intentional. What the
+    engine owes is visibility — ``castProvenance`` records these fields as
+    ``seed`` rather than ``engine``, and this makes a collision audible at
+    generation time.
+    """
+    profile = seed.profile
+    declared = (
+        ("profile.employer.name", profile.employer.name),
+        ("profile.carrier.name", profile.carrier.name),
+        ("profile.attorneys.applicant_firm", profile.attorneys.applicant_firm),
+        ("profile.attorneys.defense_firm", profile.attorneys.defense_firm),
+        ("profile.applicant.name", profile.applicant.name),
+    )
+    for field_path, value in declared:
+        if value:
+            warn_if_denylisted(value, field=field_path, case_id=seed.case_id)
 
 
 def _apply_profile_overrides(case: Any, seed: CaseSeed, timeline: CaseTimeline) -> None:
@@ -351,10 +525,15 @@ def _apply_injury_overrides(case: Any, seed: CaseSeed, adj_number: str) -> None:
 def _cast_provenance(seed: CaseSeed, engine_owned: Mapping[str, str]) -> dict[str, str]:
     """Classify where every identity-bearing cast field came from.
 
-    Two channels, and the distinction is the whole content of the
+    Three channels, and the distinction is the whole content of the
     ``zeroRealPii`` claim: a field the seed states is synthetic on the seed
     author's word, a field Faker drew is synthetic by construction, and a field
     this module coined replaced a substrate constant that named a real body.
+
+    ``employer`` is classified from ``engine_owned`` rather than defaulted to
+    Faker. Calling it a Faker draw was the bookkeeping error behind the
+    real-employer leak: the substrate draws employers from a *pool*, not from
+    Faker, so the field was vouched for by a claim that was never true of it.
     """
     profile = seed.profile
     declared = {
@@ -403,6 +582,7 @@ def build_case_cast(seed: CaseSeed, timeline: CaseTimeline, case_number: int = 1
     case = generator.generate_case_from_params(case_number, params)
 
     adj_number = _adj_number(seed)
+    _warn_on_seed_declared_real_names(seed)
     engine_owned = _replace_real_organizations(case, seed)
     _apply_profile_overrides(case, seed, timeline)
     _apply_injury_overrides(case, seed, adj_number)

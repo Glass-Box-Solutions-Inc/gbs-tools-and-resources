@@ -35,7 +35,8 @@ package is built on. Flagged and accepted as an explicit stack decision.
 | `lifecycle_bridge.py` | Seed → substrate `CaseParameters`, the walk, vocabulary normalization, deterministic guarantees, `CaseTimeline`. |
 | `lien_machine.py` | One `LienTrack` per claimant, claim → notice → conference → resolution. |
 | `recon_machine.py` | The petition-for-reconsideration round trip and its post-recon paths. |
-| `case_context.py` | The one canonical cast per case (`CaseCast`). |
+| `case_context.py` | The one canonical cast per case (`CaseCast`), including the coined-name substitution for every substrate organization pool. |
+| `name_denylist.py` | The shipped real-entity denylist (package data) and the **live** read of the substrate's organization pools. Engine and anti-probes read one list. |
 | `perspective.py` | Applicant vs defense **file** POV: the work-product swap table, `PERSPECTIVE_PROFILES` (per-key emission weights + floors), and author/recipient roles. Changes no case fact — the applicant path is a literal identity function. |
 | `planner.py` | Composes the three machines through the resolver into an ordered `CasePlan`. |
 | `renderer.py` | Template dispatch, format assignment, per-document reproducibility. |
@@ -72,7 +73,7 @@ If an import breaks, fix the bridge — not by copying files.
 | `load_template_class` falls back through `orchestration.pipeline`, which needs `dotenv` | `GenericDocumentTemplate` is imported directly |
 | Registry `variant` is never wired into the spec | The renderer sets `context["variant"]` itself |
 | `get_template_for_subtype` returns `GenericDocumentTemplate` for keys it does not know, so "missing" and "generic" are the same answer | `RenderResult.template` / `.fallback` record which ran; `renderer.OVERLAY_TEMPLATES` resolves the three overlay subtypes the substrate enum lacks |
-| `INSURANCE_CARRIERS` / `DEFENSE_FIRMS` in `data/wc_constants.py` are **real** companies | `case_context._replace_real_organizations` substitutes coined names whenever the seed does not name its own, and rebuilds the derived adjuster/defense emails |
+| **Four** `data/wc_constants.py` pools name real organizations — `INSURANCE_CARRIERS`, `DEFENSE_FIRMS`, `ALL_EMPLOYERS` (Safeway, Costco, Kaiser, UPS, City of LA), `MEDICAL_FACILITIES` | `case_context._replace_real_organizations` substitutes coined names on every one whenever the seed does not name its own, and rebuilds the derived adjuster/defense emails. `name_denylist.substrate_organization_pools()` reads the pools **live** so the sweep cannot go stale |
 | Templates draw from the **global** `random` module | Re-seeded per document from `rng_seed` + index |
 
 ### Known substrate limitations (documented, not worked around)
@@ -148,6 +149,17 @@ If an import breaks, fix the bridge — not by copying files.
    consumes calendar time means adding its floor to `seeds.STAGE_RUNWAY_DAYS` (or the
    resolution/post-resolution constants) *and* to `_stage_runway_floor`, so auto-derivation
    stays compliant by construction.
+4. **A branch is a chain, so a branch has a floor.** The stage and the resolution are not the
+   only things that consume calendar. `seeds.runway_demands()` enumerates every demand —
+   stage, `claim_response: denied` (90d), `ur_dispute` (65d), `imr` (120d), `eval_type`
+   qme/ame (240d), resolution (540d), recon / post-resolution liens (720d) — and the error
+   names whichever one binds. Each floor is derived from the minimum its own document chain
+   can be drawn at, not estimated: read the machine before choosing the number.
+5. **`__pycache__` is a write.** `sys.dont_write_bytecode = True` is set on the first
+   executable line of `__init__.py` (and again in `cli.py` / `__main__.py`), and
+   `PYTHONDONTWRITEBYTECODE=1` rides through the re-exec. Without it, importing the substrate
+   scatters bytecode across a read-only dependency's source tree — outside `--out`, and
+   outside the guarantee.
 
 ---
 

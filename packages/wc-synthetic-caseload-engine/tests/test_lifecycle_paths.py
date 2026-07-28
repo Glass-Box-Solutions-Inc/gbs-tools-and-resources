@@ -165,13 +165,32 @@ def test_post_resolution_liens_are_dated_after_the_case_resolves() -> None:
 
 
 def test_liens_without_post_resolution_litigation_run_alongside_the_case() -> None:
+    """Concurrent liens start before the resolution **and end inside the horizon**.
+
+    The horizon assertion is the boundary of a deliberate design decision, not a
+    bug guard. ``post_resolution_litigation: true`` lets a lien track run past
+    the case-in-chief resolution *and past the anchor* — real lien practice
+    routinely outlives the case, and squeezing five lien documents into the days
+    before a fixed anchor is what produced five documents sharing one date.
+
+    That extension is opt-in. Without the flag the horizon still binds, and this
+    is what proves the two halves stay separable: if the extension ever leaked
+    into the default path, every seed would silently start generating documents
+    dated after the date the whole caseload calls "today".
+    """
     seed = make_seed(
         resolution={"type": "c_and_r"},
         liens={"count": 2, "resolution": "lien_resolution_agreement"},
     )
     plan = build_case_plan(seed)
     lien_dates = [d.doc_date for d in plan.documents if d.track == "lien"]
+    assert lien_dates, "no lien documents were planned"
     assert min(lien_dates) <= plan.timeline.resolution_date
+    overrun = sorted(d for d in lien_dates if d > plan.timeline.horizon)
+    assert not overrun, (
+        f"{len(overrun)} lien document(s) ran past the horizon "
+        f"{plan.timeline.horizon} without post_resolution_litigation: {overrun[:5]}"
+    )
 
 
 # ---------------------------------------------------------------------------

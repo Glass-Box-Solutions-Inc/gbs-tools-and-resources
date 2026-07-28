@@ -58,6 +58,46 @@ attorney work product, not a filing, and it is not captioned. One entry, listed
 explicitly so that a second one has to be argued for rather than absorbed.
 """
 
+UNCAPTIONED_TEMPLATES: frozenset[str] = frozenset({"ClientIntake"})
+"""Substrate templates that render no case caption at all, for any subtype.
+
+``pdf_templates/correspondence/client_intake.py`` builds a letter — letterhead,
+date, client address, ``Re:`` line, body — and never prints an ADJ number. Sixty
+subtypes route through it (registry.py), because the substrate uses it as its
+generic letter shape; it takes a ``variant`` argument it does not read.
+
+Exempting by *template* rather than by subtype is deliberate. The subtype list
+would be sixty entries long and would grow silently, and it would describe
+symptoms. One template name describes the cause: a class of documents whose
+renderer has no caption block to put a case number in. This is a substrate
+template-fidelity limitation, documented in ``README.md`` alongside the
+hard-coded letterhead firm; the engine does not edit substrate templates.
+
+The set is deliberately tiny, and
+:func:`test_the_uncaptioned_template_exemption_is_narrow` keeps it that way: a
+second caption-less template has to be argued for, and the exemption may never
+cover so much of the case file that the assertion stops meaning anything.
+"""
+
+
+def _template_class(entry: dict[str, Any]) -> str:
+    """The template class that rendered this document.
+
+    Manifests record ``ClassName/variant`` (``ClientIntake/qme_105``), because a
+    variant is worth knowing when reading a file listing. Caption behaviour is a
+    property of the class, not the variant — ``ClientIntake`` takes a variant
+    argument it never reads — so the class is what this splits out.
+    """
+    return str(entry.get("template", "")).split("/", 1)[0]
+
+
+def _is_captioned(entry: dict[str, Any]) -> bool:
+    """``True`` when this document's renderer produces a captioned filing."""
+    return (
+        entry["subtype"] not in UNCAPTIONED_SUBTYPES
+        and _template_class(entry) not in UNCAPTIONED_TEMPLATES
+    )
+
 
 @pytest.fixture(scope="module")
 def swept(demo_manifests: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -122,10 +162,40 @@ def test_every_post_filing_document_carries_the_adj_number(
         f"{entry['filename']} ({entry['subtype']}, {entry['documentDate']})"
         for entry, text in swept_texts
         if entry["documentDate"] >= filed_on
-        and entry["subtype"] not in UNCAPTIONED_SUBTYPES
+        and _is_captioned(entry)
         and adj.lower() not in text.lower()
     ]
     assert not missing, f"{len(missing)} post-filing document(s) omit {adj}: {missing[:20]}"
+
+
+def test_the_uncaptioned_template_exemption_is_narrow(
+    swept: dict[str, Any], swept_texts: list[tuple[dict[str, Any], str]]
+) -> None:
+    """An exemption large enough to hide a regression is not an exemption.
+
+    The caption assertion above cannot demand a case number from a renderer that
+    has no caption block. That is a real limit, but it is only acceptable while
+    it stays a minority of the file — if half the case file routed through the
+    letter template, "every post-filing document carries the ADJ number" would
+    be true of almost nothing.
+    """
+    exempt = [entry for entry, _ in swept_texts if not _is_captioned(entry)]
+    captioned = [entry for entry, _ in swept_texts if _is_captioned(entry)]
+
+    assert captioned, "every document is exempt — the caption assertion is vacuous"
+    assert len(exempt) <= len(swept_texts) // 3, (
+        f"{len(exempt)}/{len(swept_texts)} documents are exempt from the caption "
+        f"assertion: {[e['subtype'] for e in exempt][:10]}"
+    )
+
+    unexpected = {
+        _template_class(entry)
+        for entry in exempt
+        if entry["subtype"] not in UNCAPTIONED_SUBTYPES
+    } - UNCAPTIONED_TEMPLATES
+    assert not unexpected, (
+        f"documents exempted by a template not declared caption-less: {sorted(unexpected)}"
+    )
 
 
 def test_pre_filing_documents_are_the_ones_without_a_case_number(
@@ -149,7 +219,7 @@ def test_pre_filing_documents_are_the_ones_without_a_case_number(
     late = [
         f"{entry['filename']} ({entry['subtype']}, {entry['documentDate']})"
         for entry in without
-        if entry["documentDate"] >= filed_on and entry["subtype"] not in UNCAPTIONED_SUBTYPES
+        if entry["documentDate"] >= filed_on and _is_captioned(entry)
     ]
     assert not late, f"post-filing documents without a case number: {late}"
 

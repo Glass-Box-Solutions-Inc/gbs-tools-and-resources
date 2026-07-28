@@ -350,13 +350,35 @@ from the seeded generator), `seed` (declared in the YAML) or `engine` (coined he
 a substrate constant naming a real company). A flag that no input can falsify says nothing;
 this one goes false the moment an identity arrives by a channel the engine cannot vouch for.
 
-**Real organizations never reach a document.** The substrate's `INSURANCE_CARRIERS` and
-`DEFENSE_FIRMS` pools are *actual* California carriers and defense firms, drawn whenever a
-seed does not name its own. A fabricated claim file naming a real carrier is a real-world
-collision whatever the folder says, so the engine substitutes coined names on that path and
-rebuilds the derived adjuster and defense email addresses, which otherwise kept the original
-company's domain. `tests/data/name_denylist.txt` is swept against every text-bearing demo
-document and every manifest cast field to keep it that way.
+**Real organizations never reach a document.** `data/wc_constants.py` has **four** pools that
+name organizations, and all four reach the cast:
+
+| Substrate pool | Reaches | Real entities it contains |
+|---|---|---|
+| `INSURANCE_CARRIERS` | `carrier` | State Fund, Zenith, Liberty Mutual, Sedgwick |
+| `DEFENSE_FIRMS` | `defenseFirm` | Bradford & Barthel, Laughlin Falbo, Hanna Brophy |
+| `ALL_EMPLOYERS` | `employer` | Safeway, Costco, Kaiser Permanente, UPS, City of Los Angeles |
+| `MEDICAL_FACILITIES` | treating / QME / prior-provider clinics | clinic names |
+
+A fabricated claim file naming a real employer is worse than one naming a real carrier — the
+employer is a *named defendant* in the caption of every legal document in the file. The engine
+substitutes seed-stable coined names on every one of these paths and rebuilds the derived
+adjuster and defense email addresses, which otherwise kept the original company's domain.
+
+Two layers keep it that way, and the second is the one that cannot go stale:
+
+* `src/wc_caseload_engine/data/name_denylist.txt` — a curated list of real bodies, swept
+  against every text-bearing demo document and every manifest cast field. Shipped as package
+  data because the engine reads it too.
+* `name_denylist.substrate_organization_pools()` — reads the substrate's pools **live**, so a
+  pool that grows upstream is swept without anyone editing a fixture. A renamed constant
+  raises rather than silently sweeping nothing.
+
+**Seed-declared names are kept, and warned about.** A name the seed author wrote is the
+seeder's deliberate input and the seed is the contract, so the engine does not override it —
+but it checks it against the denylist and emits a `cast.seed_name_on_denylist` warning on a
+hit. `castProvenance` already records the field as `seed` rather than `engine`, so a reviewer
+can see whose choice it was.
 
 **`provenance.substrateSha`.** Every document's content ultimately comes from the substrate's
 templates and content pools, so "same seed, same version" is only half the provenance story —
@@ -398,7 +420,7 @@ Six leaks had to be closed, all in substrate or library output, none by editing 
 
 | Leak | Fix |
 |------|-----|
-| `list(set(items))` in the substrate's content pools — salted string hashing reordered document content per process | The CLI re-executes once with `PYTHONHASHSEED=0`, which stabilizes every set-of-strings ordering at once |
+| `list(set(items))` in the substrate's content pools — salted string hashing reordered document content per process | The CLI re-executes once with `PYTHONHASHSEED=0`, which stabilizes every set-of-strings ordering at once. **Only `0` is accepted**: `1`, `2` and `random` are all valid settings that leave hashing salted, so each produces a different caseload from one seed |
 | `.docx` ZIP entries stamped with wall-clock times | Repacked with a stamp built from the document date's own fields — never via `localtime`/`mktime` |
 | ReportLab's wall-clock `/CreationDate` and random `/ID`; PyMuPDF's `/ID` on scanned rewrites | `rl_config.invariant` (a fixed `gmtime` epoch, so the date string carries an explicit `+00'00'`) plus a length-preserving `/ID` rewrite that keeps xref offsets valid |
 | Four substrate sites compute document *content* from `date.today()` — applicant age, years employed, deponent age, a settlement-memo age line | `pin_substrate_clock()` rebinds those names to `ANCHOR_DATE` |
@@ -412,6 +434,19 @@ next.
 
 Scan simulation is seeded explicitly from `sha256(rng_seed, "scan:<index>")` rather than the
 substrate's `hash()`-derived seed.
+
+### Where the tool writes
+
+`--out` is the entire write surface. Two things had to be true for that to be a guarantee
+rather than a habit: nothing may write into `$HOME`, `$TMPDIR` or the working directory
+(checked by a sandboxed-environment probe), and importing the substrate may not scatter
+`__pycache__` directories through a dependency's source tree. `sys.dont_write_bytecode` is set
+on the first executable line of `wc_caseload_engine/__init__.py`, and
+`PYTHONDONTWRITEBYTECODE=1` is carried through the hash-seed re-exec.
+
+One file is outside that reach: CPython writes `__init__`'s own bytecode while compiling the
+file, before its first line runs. That is an interpreter floor, and the anti-probe names it
+explicitly rather than exempting a directory — any other bytecode file fails the test.
 
 **Library-mode caveat.** The `PYTHONHASHSEED=0` pin is applied by re-executing the process,
 and only the CLI entry point does that (`wc-caseload …` or `python -m wc_caseload_engine …`).
@@ -451,25 +486,53 @@ but lifecycle.target_stage 'resolved' needs at least 540. Move injury.date_of_in
 2024-07-10 or earlier, or seed a lifecycle that reaches less far.
 ```
 
-| Driver | Minimum runway |
-|--------|---------------|
-| `target_stage: intake` | 30 days |
-| `target_stage: active_treatment` / `discovery` | 180 days |
-| `target_stage: medical_legal` / `pre_trial` | 365 days |
-| `target_stage: resolved`, or any `resolution.type` other than `pending` | 540 days |
-| `target_stage: post_recon`, `reconsideration.enabled`, or `liens.post_resolution_litigation` | 720 days |
+The floor is the **largest** demand the lifecycle makes, and every branch that produces a dated
+document chain makes one:
+
+| Driver | Minimum runway | Why |
+|--------|---------------|-----|
+| `target_stage: intake` | 30 days | |
+| `ur_dispute.enabled` | 65 days | RFA at 60 days + the LC 4610 five-day decision window |
+| `claim_response: denied` | 90 days | denial (claim + 30) → Application (+7) → DOR (+60) |
+| `ur_dispute.imr` | 120 days | RFA → UR → IMR application → IMR determination |
+| `target_stage: active_treatment` / `discovery` | 180 days | |
+| `eval_type: qme` / `ame` | 240 days | panel request at 180 days + report at +60 |
+| `target_stage: medical_legal` / `pre_trial` | 365 days | |
+| `target_stage: resolved`, or any `resolution.type` other than `pending` | 540 days | |
+| `target_stage: post_recon`, `reconsideration.enabled`, or `liens.post_resolution_litigation` | 720 days | |
+
+Every branch number is derived from the minimum its own document chain can be drawn at, in
+`lifecycle_bridge`, rather than estimated — so a seed that passes validation has room for the
+documents it asked for.
 
 This replaced silent clamping, which had absorbed a short runway by pinning over-horizon dates
 onto the anchor — producing a case whose petition for reconsideration was dated 80 days
-*before* the Application it appealed from. Auto-derived seeds satisfy these floors by
-construction.
+*before* the Application it appealed from, and a 30-day intake seed whose denial letter, the
+Application answering it and the Declaration of Readiness advancing it were all dated
+2026-01-01. Auto-derived seeds satisfy these floors by construction.
 
-Sequenced chains (each lien track, the reconsideration round trip) are fitted as a whole rather
-than clamped date by date, so a tight window compresses them **in order** with strictly
-increasing dates instead of stacking five documents on one day. A lien track seeded with
-`post_resolution_litigation: true` is allowed to run past the anchor rather than be compressed:
-post-resolution lien practice genuinely outlives the case-in-chief, and the anchor is an
-artifact of determinism, not a fact about the file.
+Sequenced chains — each lien track, the reconsideration round trip, the denial response — are
+fitted as a whole rather than clamped date by date, so a tight window compresses them **in
+order** with strictly increasing dates instead of stacking documents on one day.
+
+### Post-resolution lien tracks run past the anchor, on purpose
+
+A lien track seeded with `post_resolution_litigation: true` is allowed to run past the case
+horizon rather than be compressed into it. This is a design decision, not an oversight:
+post-resolution lien practice genuinely outlives the case-in-chief — the applicant settles,
+the providers keep fighting — and the anchor is an artifact of determinism, not a fact about
+the file. Squeezing a five-document lien track into the days between a late settlement and a
+fixed anchor is what produced five documents sharing one date.
+
+The extension is strictly opt-in, and the two halves stay separable:
+
+| `liens.post_resolution_litigation` | Track floor | Track ceiling |
+|---|---|---|
+| `false` (default) | injury date | the case horizon (`2026-01-01`) — **never exceeded** |
+| `true` | the day after the resolution | whatever the chain needs |
+
+`test_liens_without_post_resolution_litigation_run_alongside_the_case` asserts the default path
+never crosses the horizon, so the extension cannot leak into ordinary cases.
 
 ---
 

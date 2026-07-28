@@ -16,6 +16,15 @@ Four commands:
 from __future__ import annotations
 
 import sys
+
+# Before any other import, and deliberately not at the bottom of the import
+# block: importing this package pulls in the substrate, and a fresh interpreter
+# writes ``__pycache__`` directories into whatever it imports. Those writes land
+# in the package and substrate *source* trees — outside ``--out``, and outside
+# the guarantee this tool makes about where it writes. Setting the flag after
+# the imports would be setting it one directory tree too late.
+sys.dont_write_bytecode = True
+
 from pathlib import Path
 
 import click

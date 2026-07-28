@@ -192,6 +192,25 @@ def _post_recon_settlement(
     ]
 
 
+def _order_date(rng: random.Random, *, petition_date: date, last_brief: date) -> date:
+    """When the Board rules — after the briefing closes, inside LC 5909 if it can.
+
+    Two constraints, and they can disagree. LC 5909 gives the WCAB sixty days
+    from the petition; the briefing schedule can put the petitioner's reply as
+    late as petition + 30. Drawing the order independently of the briefing (the
+    old behaviour) let the second constraint lose silently, producing an order
+    dated a day *before* the reply it had supposedly considered.
+
+    So the floor is the later of the two — thirty days for the Board to work,
+    and at minimum the day after the last brief — and the statutory window is
+    the ceiling only when it is still above that floor. A ruling one day late is
+    a realistic file; a ruling that predates the briefing is not a file at all.
+    """
+    floor = max(petition_date + timedelta(days=30), last_brief + timedelta(days=1))
+    ceiling = max(floor, petition_date + timedelta(days=ORDER_WINDOW_DAYS))
+    return floor + timedelta(days=rng.randint(0, (ceiling - floor).days))
+
+
 def build_recon_track(seed: CaseSeed, timeline: CaseTimeline) -> ReconTrack:
     """Build the reconsideration round trip for a case."""
     recon = seed.lifecycle.reconsideration
@@ -219,7 +238,6 @@ def build_recon_track(seed: CaseSeed, timeline: CaseTimeline) -> ReconTrack:
     # ordering survives a tight window instead of collapsing onto the horizon.
     petition_date = award_date + timedelta(days=rng.randint(1, PETITION_WINDOW_DAYS))
     opposition_date = petition_date + timedelta(days=rng.randint(5, 15))
-    order_date = petition_date + timedelta(days=rng.randint(30, ORDER_WINDOW_DAYS))
 
     documents: list[DatedCandidate] = [
         DatedCandidate(
@@ -240,11 +258,14 @@ def build_recon_track(seed: CaseSeed, timeline: CaseTimeline) -> ReconTrack:
         ),
     ]
 
+    # The reply, when it is filed, is the last word before the Board rules.
+    last_brief = opposition_date
     if rng.random() < _REPLY_PROBABILITY:
+        last_brief = opposition_date + timedelta(days=rng.randint(5, 15))
         documents.append(
             DatedCandidate(
                 subtype="PETITION_RECONSIDERATION_REPLY",
-                doc_date=opposition_date + timedelta(days=rng.randint(5, 15)),
+                doc_date=last_brief,
                 track=TRACK_RECON,
                 priority=14,
                 author_role=ROLE_APPLICANT_ATTORNEY,
@@ -252,6 +273,7 @@ def build_recon_track(seed: CaseSeed, timeline: CaseTimeline) -> ReconTrack:
             )
         )
 
+    order_date = _order_date(rng, petition_date=petition_date, last_brief=last_brief)
     documents.append(
         DatedCandidate(
             subtype="ORDER_ON_RECONSIDERATION",
@@ -263,9 +285,13 @@ def build_recon_track(seed: CaseSeed, timeline: CaseTimeline) -> ReconTrack:
         )
     )
 
+    # Everything from here follows the order, so it is a tail on the chain
+    # rather than another interleaved draw.
+    tail: list[DatedCandidate] = []
+
     # A reversal rewrites the award on its face, before any remand proceedings.
     if recon.outcome == "granted_reversed":
-        documents.append(
+        tail.append(
             DatedCandidate(
                 subtype="AMENDED_FINDINGS_AWARD",
                 doc_date=order_date + timedelta(days=rng.randint(1, 21)),
@@ -277,19 +303,26 @@ def build_recon_track(seed: CaseSeed, timeline: CaseTimeline) -> ReconTrack:
         )
 
     if recon.post_recon == "further_litigation":
-        documents.extend(_post_recon_litigation(timeline, order_date, rng))
+        tail.extend(_post_recon_litigation(timeline, order_date, rng))
     elif recon.post_recon == "settled":
-        documents.extend(_post_recon_settlement(seed, timeline, order_date, rng))
+        tail.extend(_post_recon_settlement(seed, timeline, order_date, rng))
 
     # A reversal and a remand can both want an amended award; keep the later one.
     deduped: dict[tuple[str, date], DatedCandidate] = {}
-    for candidate in documents:
+    for candidate in tail:
         deduped[(candidate.subtype, candidate.doc_date)] = candidate
-    ordered = sorted(deduped.values(), key=lambda item: (item.doc_date, item.subtype))
+    ordered = [
+        *documents,
+        *sorted(deduped.values(), key=lambda item: (item.doc_date, item.subtype)),
+    ]
 
-    # One fit for the whole round trip. The petition must follow the award and
-    # every step must follow the last; where the window is tight the chain
-    # compresses in order instead of stacking on the horizon.
+    # One fit for the whole round trip, over a list that is already in *legal*
+    # order rather than one sorted by date. Sorting by ``(date, subtype)`` was
+    # the defect: it accepted whatever order the independent draws happened to
+    # produce, so a reply drawn at opposition+15 landed after an order drawn at
+    # petition+30 and the sort dutifully filed the reply behind the ruling it
+    # was replying to. Order is now a property of the sequence, and the dates
+    # are fitted to the sequence — never the other way round.
     ordered = fit_track(
         ordered,
         floor=award_date + timedelta(days=1),

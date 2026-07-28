@@ -91,7 +91,12 @@ FIXED_CLOCK = time(12, 0, 0)
 """Clock time every derived timestamp uses — noon, far from any date boundary."""
 
 STABLE_HASH_SEED = "0"
-"""``PYTHONHASHSEED`` value that disables salted string hashing entirely."""
+"""``PYTHONHASHSEED`` value that disables salted string hashing entirely.
+
+The *only* accepted value. ``1``, ``2`` and ``random`` are all valid settings
+that leave string hashing salted, so each of them produces a different caseload
+from the same seed; :func:`ensure_stable_hashing` re-execs on every one of them.
+"""
 
 REEXEC_GUARD_VAR = "WC_CASELOAD_HASH_PINNED"
 """Set after re-exec so the process can never loop."""
@@ -119,28 +124,47 @@ def hashing_is_stable() -> bool:
 
 
 def ensure_stable_hashing() -> None:
-    """Re-execute this process once with ``PYTHONHASHSEED=0`` if it is unset.
+    """Re-execute this process unless ``PYTHONHASHSEED`` is exactly ``"0"``.
 
     Called from the CLI entry point before any generation work. Without it,
     ``list(set(...))`` inside the substrate's content pools yields a different
     order in every process, and two runs of the same spec produce different
     documents.
 
-    Respects an explicitly-set ``PYTHONHASHSEED`` (the caller has already made
-    a determinism choice) and honours :data:`DISABLE_REEXEC_VAR`.
+    **Any** other value re-execs, including a value the caller set on purpose.
+    Deferring to a pre-set value was the defect this replaced: ``PYTHONHASHSEED``
+    is not a boolean, and ``1`` and ``2`` are two different salts that produce
+    two different caseloads from one seed — while ``random`` is the *default*
+    behaviour spelled out explicitly, which the old guard read as a deliberate
+    determinism choice. Only ``0`` disables salting, so only ``0`` is accepted.
+
+    :data:`DISABLE_REEXEC_VAR` still opts out for debuggers and profilers, now
+    with a warning: opting out is opting out of the reproducibility guarantee,
+    and that is worth one line of log output.
     """
     if os.environ.get(REEXEC_GUARD_VAR):
         return
     if os.environ.get(DISABLE_REEXEC_VAR):
-        log.debug("determinism.reexec_disabled")
+        if not hashing_is_stable():
+            log.warning(
+                "determinism.reexec_disabled",
+                hash_seed=os.environ.get("PYTHONHASHSEED", "<unset>"),
+                consequence=(
+                    "byte-identical output is NOT guaranteed — the substrate orders "
+                    "content-pool strings through set(), which is salted per process"
+                ),
+            )
         return
-    if os.environ.get("PYTHONHASHSEED"):
-        # Caller pinned it deliberately; do not override their value.
+    if hashing_is_stable():
         return
 
     env = dict(os.environ)
     env["PYTHONHASHSEED"] = STABLE_HASH_SEED
     env[REEXEC_GUARD_VAR] = "1"
+    # Carried through the re-exec: the child is a fresh interpreter and would
+    # otherwise start writing ``__pycache__`` into the package and substrate
+    # source trees, which are outside ``--out``.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     # Always re-enter through the module form. ``sys.argv[0]`` is whatever
     # launched us — the console script in ``.venv/bin``, or ``__main__.py`` when
     # started as ``python -m`` — and re-executing *that* path is only correct in

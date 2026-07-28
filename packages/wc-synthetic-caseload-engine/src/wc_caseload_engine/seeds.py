@@ -148,6 +148,46 @@ Reconsideration and post-resolution lien litigation both run on past the award,
 so they need the resolved runway plus room for the appellate round trip.
 """
 
+DENIAL_RESPONSE_RUNWAY_DAYS = 90
+"""Runway the denial-response chain needs, independent of the stage.
+
+``lifecycle_bridge._guaranteed_denial_documents`` encodes the sequence: the
+denial lands 30-90 days after the claim is filed, the Application follows it by
+7-60, and the Declaration of Readiness by 60-180. A 30-day intake seed has room
+for none of it, and before this floor existed the whole chain clamped onto the
+anchor — a denial letter, the Application answering it and the DOR advancing it
+all dated 2026-01-01, in a file whose stage says nothing has happened yet.
+"""
+
+UR_DISPUTE_RUNWAY_DAYS = 65
+"""Runway a utilization-review dispute needs.
+
+The encoded sequence puts the RFA at 60-240 days after the injury and the UR
+decision 3-5 days after that (LC 4610's five working days). Sixty days is the
+first of those two; the extra five are the decision window, without which the
+RFA and the decision it answers can only share the anchor.
+"""
+
+IMR_RUNWAY_DAYS = 120
+"""Cumulative runway a UR dispute appealed to IMR needs.
+
+RFA (60) -> UR decision (+3) -> IMR application (+10, LC 4610.5 allows 30) ->
+IMR determination (+30) is 103 days at its fastest. 120 leaves the chain room
+to be drawn at something other than its minimum on every step.
+"""
+
+EVAL_RUNWAY_DAYS = 240
+"""Runway a QME or AME evaluation needs.
+
+``_guaranteed_eval_documents`` draws the panel request at 180-365 days after
+the injury and the report 60-180 days after the panel — 240 days at the
+absolute fastest. The release review proposed 120; the sequence already encoded
+in this engine cannot fit in 120, so the floor is set from the code rather than
+from the estimate, and a seed claiming a completed QME on a four-month-old
+injury is now rejected instead of silently stacking the panel request and the
+report on the same day.
+"""
+
 CASE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 """Case ids double as output directory names — keep them path-safe."""
 
@@ -398,38 +438,67 @@ class LifecycleSpec(_Model):
         return self
 
 
-def required_runway_days(lifecycle: LifecycleSpec) -> int:
-    """Days this lifecycle needs between the injury onset and :data:`ANCHOR_DATE`.
+def runway_demands(lifecycle: LifecycleSpec) -> list[tuple[int, str]]:
+    """Every runway demand this lifecycle makes, as ``(days, driver name)``.
 
-    The maximum of three independent demands, because a case answers to all of
-    them at once:
+    A case answers to all of them at once, so the binding demand is simply the
+    largest. Listing them rather than folding them into one number is what lets
+    the error message name the *branch* that actually blocked the seed:
 
     * the stage it claims to have reached (:data:`STAGE_RUNWAY_DAYS`),
+    * the branches it took — a denied claim, a UR dispute, an IMR appeal, a QME
+      or AME evaluation — each of which is a dated document chain,
     * whether the case-in-chief actually resolved
       (:data:`RESOLVED_RUNWAY_DAYS`),
     * whether anything litigates on after that resolution — reconsideration or
       post-resolution lien practice (:data:`POST_RESOLUTION_RUNWAY_DAYS`).
+
+    The branch demands were the gap this closed. Runway was validated against
+    the stage and the resolution only, so a 30-day ``intake`` seed that also
+    said ``claim_response: denied`` passed validation and then produced a
+    denial letter, an Application for Adjudication and a Declaration of
+    Readiness all dated on the anchor.
     """
-    required = STAGE_RUNWAY_DAYS[lifecycle.target_stage]
+    stage = lifecycle.target_stage
+    demands: list[tuple[int, str]] = [
+        (STAGE_RUNWAY_DAYS[stage], f"lifecycle.target_stage {stage!r}")
+    ]
+    if lifecycle.claim_response == "denied":
+        demands.append((DENIAL_RESPONSE_RUNWAY_DAYS, "lifecycle.claim_response 'denied'"))
+    if lifecycle.ur_dispute.enabled:
+        demands.append((UR_DISPUTE_RUNWAY_DAYS, "lifecycle.ur_dispute.enabled"))
+    if lifecycle.ur_dispute.imr:
+        demands.append((IMR_RUNWAY_DAYS, "lifecycle.ur_dispute.imr"))
+    if lifecycle.eval_type in {"qme", "ame"}:
+        demands.append((EVAL_RUNWAY_DAYS, f"lifecycle.eval_type {lifecycle.eval_type!r}"))
     if lifecycle.resolution.type != "pending":
-        required = max(required, RESOLVED_RUNWAY_DAYS)
-    if lifecycle.reconsideration.enabled or lifecycle.liens.post_resolution_litigation:
-        required = max(required, POST_RESOLUTION_RUNWAY_DAYS)
-    return required
+        demands.append(
+            (RESOLVED_RUNWAY_DAYS, f"lifecycle.resolution.type {lifecycle.resolution.type!r}")
+        )
+    if lifecycle.reconsideration.enabled:
+        demands.append((POST_RESOLUTION_RUNWAY_DAYS, "lifecycle.reconsideration.enabled"))
+    if lifecycle.liens.post_resolution_litigation:
+        demands.append(
+            (POST_RESOLUTION_RUNWAY_DAYS, "lifecycle.liens.post_resolution_litigation")
+        )
+    return demands
+
+
+def required_runway_days(lifecycle: LifecycleSpec) -> int:
+    """Days this lifecycle needs between the injury onset and :data:`ANCHOR_DATE`."""
+    return max(days for days, _driver in runway_demands(lifecycle))
 
 
 def runway_driver(lifecycle: LifecycleSpec) -> str:
-    """Which part of the lifecycle set the runway — named in the error message."""
-    if lifecycle.reconsideration.enabled:
-        return "lifecycle.reconsideration.enabled"
-    if lifecycle.liens.post_resolution_litigation:
-        return "lifecycle.liens.post_resolution_litigation"
-    if (
-        lifecycle.resolution.type != "pending"
-        and STAGE_RUNWAY_DAYS[lifecycle.target_stage] < RESOLVED_RUNWAY_DAYS
-    ):
-        return f"lifecycle.resolution.type {lifecycle.resolution.type!r}"
-    return f"lifecycle.target_stage {lifecycle.target_stage!r}"
+    """Which part of the lifecycle set the runway — named in the error message.
+
+    Ties break toward the *first* demand in :func:`runway_demands`, which lists
+    the stage before any branch. A ``resolved`` case that also resolved is
+    blocked by 540 days twice over, and the stage is the more useful of the two
+    to name: it is the field the author would edit to make the seed fit.
+    """
+    binding = max(runway_demands(lifecycle), key=lambda demand: demand[0])
+    return binding[1]
 
 
 class DocumentOverride(_Model):
@@ -1038,8 +1107,11 @@ _MECHANISMS: Mapping[str, tuple[str, ...]] = {
 # Stage → (age of the injury in days, resolution weights). Later stages have
 # older injuries and firmer resolutions.
 _STAGE_AGE_DAYS: Mapping[str, tuple[int, int]] = {
-    "intake": (30, 75),
-    "active_treatment": (180, 300),
+    # Widened from (30, 75) when the denial-response chain got a runway floor:
+    # a derived intake case can draw ``claim_response: denied``, and 30 days is
+    # not enough calendar for a denial letter and the Application answering it.
+    "intake": (90, 165),
+    "active_treatment": (240, 360),
     "discovery": (240, 480),
     "medical_legal": (365, 640),
     "pre_trial": (540, 900),
@@ -1118,15 +1190,31 @@ def _stage_runway_floor(stage: str) -> int:
     """The worst-case runway any lifecycle at *stage* can demand.
 
     :func:`_derive_injury` runs before the lifecycle exists, so it assumes the
-    most demanding shape the stage can still take: the resolved stages can go on
-    to draw reconsideration or post-resolution lien litigation, and both need
-    :data:`POST_RESOLUTION_RUNWAY_DAYS`.
+    most demanding shape the stage can still take. Three families of demand:
+
+    * *Stage reach* — the resolved stages can go on to draw reconsideration or
+      post-resolution lien litigation, and both need
+      :data:`POST_RESOLUTION_RUNWAY_DAYS`; ``pre_trial`` can settle the
+      case-in-chief (``_STAGE_RESOLUTIONS['pre_trial']``).
+    * *Branches available at every stage* — ``claim_responses`` includes
+      ``denied`` in every distribution, so the denial chain's floor applies
+      everywhere.
+    * *Branches the stage can draw* — UR/IMR is suppressed at ``intake``
+      (:func:`_derive_ur_dispute`) and an evaluation is impossible there
+      (``_STAGE_EVALS['intake']`` is ``none`` with probability 1), so those two
+      floors apply from ``active_treatment`` on.
+
+    Keeping this in step with :func:`runway_demands` by hand is the one way
+    auto-derivation can start emitting seeds its own validator rejects, which is
+    why ``TestAutoDerivedSeedsAreCompliant`` draws sixty per distribution rather
+    than trusting the table.
     """
-    floor = STAGE_RUNWAY_DAYS[stage]
+    floor = max(STAGE_RUNWAY_DAYS[stage], DENIAL_RESPONSE_RUNWAY_DAYS)
+    if stage != "intake":
+        floor = max(floor, UR_DISPUTE_RUNWAY_DAYS, IMR_RUNWAY_DAYS, EVAL_RUNWAY_DAYS)
     if stage in _RESOLVED_STAGES:
         return max(floor, RESOLVED_RUNWAY_DAYS, POST_RESOLUTION_RUNWAY_DAYS)
     if stage == "pre_trial":
-        # ``_STAGE_RESOLUTIONS['pre_trial']`` can settle the case-in-chief.
         return max(floor, RESOLVED_RUNWAY_DAYS)
     return floor
 

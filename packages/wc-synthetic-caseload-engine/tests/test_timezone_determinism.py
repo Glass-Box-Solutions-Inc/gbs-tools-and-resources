@@ -30,10 +30,12 @@ import pytest
 
 from conftest import requires_substrate
 from wc_caseload_engine.determinism import (
+    DISABLE_REEXEC_VAR,
     REEXEC_MODULE,
     SYNTHETIC_EML_HEADER,
     SYNTHETIC_MARKER,
     fixed_utc_datetime,
+    hashing_is_stable,
     normalize_eml,
     pdf_date_string,
     pin_substrate_clock,
@@ -292,6 +294,129 @@ class TestSyntheticMarkers:
             path = rendered.directory / "documents" / entry["filename"]
             actual = hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
             assert actual == entry["md5Checksum"], entry["filename"]
+
+
+# ---------------------------------------------------------------------------
+# The hash-seed guard
+# ---------------------------------------------------------------------------
+
+
+def _generate_in_subprocess(spec: Path, out: Path, hash_seed: str | None) -> None:
+    """Run one full generation in a fresh interpreter under *hash_seed*."""
+    env = dict(os.environ)
+    if hash_seed is None:
+        env.pop("PYTHONHASHSEED", None)
+    else:
+        env["PYTHONHASHSEED"] = hash_seed
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            REEXEC_MODULE,
+            "generate",
+            "--spec",
+            str(spec),
+            "--out",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert completed.returncode == 0, completed.stderr[-2000:]
+
+
+def _hash_seed_spec(path: Path) -> Path:
+    """Write a one-case spec small enough to render twice per test."""
+    import yaml
+
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "caseload_id": "hashseed-load",
+                "cases": [{**small_case("hs-001"), "documents": {"global_cap": 10}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@requires_substrate
+class TestHashSeedGuard:
+    """``PYTHONHASHSEED`` is not a boolean, and the guard used to treat it as one.
+
+    The substrate orders content-pool strings through ``list(set(...))``, whose
+    iteration order depends on the per-process string-hash salt. Only ``0``
+    disables that salt. The old guard returned early for *any* non-empty value,
+    so ``PYTHONHASHSEED=1`` and ``PYTHONHASHSEED=2`` were both accepted as
+    deliberate determinism choices — and produced two different caseloads from
+    one seed. ``random``, which is the default behaviour written out longhand,
+    was accepted too.
+    """
+
+    def test_two_different_pre_set_hash_seeds_produce_identical_trees(
+        self, tmp_path: Path
+    ) -> None:
+        """The exact reproduction: ``=1`` versus ``=2``, whole tree compared."""
+        spec = _hash_seed_spec(tmp_path / "spec.yaml")
+        one, two = tmp_path / "seed-one", tmp_path / "seed-two"
+
+        _generate_in_subprocess(spec, one, "1")
+        _generate_in_subprocess(spec, two, "2")
+
+        first, second = digest_tree(one), digest_tree(two)
+        assert first, "nothing was generated — the probe proves nothing"
+        assert set(first) == set(second), "the two runs wrote different files"
+        drifted = sorted(name for name in first if first[name] != second[name])
+        assert not drifted, (
+            f"{len(drifted)} file(s) drifted between PYTHONHASHSEED=1 and =2: {drifted[:10]}"
+        )
+
+    def test_a_pre_set_hash_seed_matches_an_unset_one(self, tmp_path: Path) -> None:
+        """The pinned path and the re-exec path must land on the same bytes."""
+        spec = _hash_seed_spec(tmp_path / "spec.yaml")
+        pinned, unset = tmp_path / "pinned", tmp_path / "unset"
+
+        _generate_in_subprocess(spec, pinned, "random")
+        _generate_in_subprocess(spec, unset, None)
+
+        first, second = digest_tree(pinned), digest_tree(unset)
+        drifted = sorted(name for name in first if first[name] != second[name])
+        assert not drifted, f"PYTHONHASHSEED=random drifted from unset: {drifted[:10]}"
+
+    @pytest.mark.parametrize("value", ["1", "2", "random", ""])
+    def test_only_zero_is_treated_as_stable(self, value: str) -> None:
+        """The predicate the guard branches on, checked directly."""
+        previous = os.environ.get("PYTHONHASHSEED")
+        try:
+            os.environ["PYTHONHASHSEED"] = value
+            assert not hashing_is_stable(), f"{value!r} must not count as stable"
+            os.environ["PYTHONHASHSEED"] = "0"
+            assert hashing_is_stable()
+        finally:
+            if previous is None:
+                os.environ.pop("PYTHONHASHSEED", None)
+            else:
+                os.environ["PYTHONHASHSEED"] = previous
+
+    def test_opting_out_of_the_reexec_warns_that_determinism_is_lost(self) -> None:
+        """An opt-out that is silent is an opt-out nobody knows they took."""
+        env = dict(os.environ)
+        env[DISABLE_REEXEC_VAR] = "1"
+        env["PYTHONHASHSEED"] = "1"
+        completed = subprocess.run(
+            [sys.executable, "-m", REEXEC_MODULE, "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        assert completed.returncode == 0, completed.stderr[-2000:]
+        combined = completed.stdout + completed.stderr
+        assert "determinism.reexec_disabled" in combined
+        assert "NOT guaranteed" in combined
 
 
 # ---------------------------------------------------------------------------

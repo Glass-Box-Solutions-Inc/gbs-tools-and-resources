@@ -9,6 +9,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+**Release-review round** (ticket **AJC-34**) — five reproduced findings from an independent
+GPT-5.6-Sol release review, each closed with a regression test using the exact reproduction.
+
+- **Real-organization substitution now covers every substrate pool.** It covered carriers and
+  defense firms; `data/wc_constants.py` has four organization pools, and `ALL_EMPLOYERS`
+  (Safeway, Costco, Kaiser Permanente, UPS, City of Los Angeles) and `MEDICAL_FACILITIES` were
+  reaching output under `zeroRealPii: true` — the employer being the *named defendant* in
+  every caption. All four are now coined with seed-stable names, the employer suffix matching
+  the substrate's own industry key. `castProvenance` no longer misfiles a pool draw as a Faker
+  draw. Seed-declared names are kept (the seed is the contract) but checked against the
+  denylist with a `cast.seed_name_on_denylist` warning.
+- **`name_denylist.py`** — the denylist moved from `tests/data/` into package data so the
+  engine and the anti-probes read one list, and `substrate_organization_pools()` now reads the
+  substrate's pools **live**, so the sweep cannot go stale when a pool grows upstream.
+- **Runway validation now accounts for lifecycle branches.** A 30-day `intake` + `denied` seed
+  validated and then dated its denial letter, Application and Declaration of Readiness all on
+  the anchor. `seeds.runway_demands()` adds floors for `claim_response: denied` (90d),
+  `ur_dispute` (65d), `imr` (120d) and `eval_type` qme/ame (240d), each derived from the
+  minimum its own encoded chain can be drawn at, and the error names the binding branch.
+- **The denial-response chain is fitted, not clamped** — it is a sequence, so it goes through
+  `fit_track` like the lien and reconsideration chains.
+- **`PYTHONHASHSEED` is only trusted when it is exactly `0`.** Any other value — including
+  `random`, and including two different salts like `1` and `2` — now re-execs. `1` and `2`
+  previously produced two different caseloads from one seed. `WC_CASELOAD_NO_REEXEC` still
+  opts out, now with a warning naming the consequence.
+- **Reconsideration briefing is ordered structurally.** The order was drawn independently of
+  the briefing schedule and the chain sorted by date, producing a Board ruling filed before
+  the reply it had considered. The chain is now built in legal order and the dates fitted to
+  it; the ruling is floored at the day after the last brief.
+- **`__pycache__` no longer escapes `--out`.** `sys.dont_write_bytecode` is set on the first
+  executable line of `__init__.py` and `PYTHONDONTWRITEBYTECODE=1` rides through the re-exec;
+  13 `__pycache__` directories across the package and substrate source trees became zero in
+  the substrate and one interpreter-written file in the package.
+
+### Documented
+
+- Post-resolution lien tracks extending past the case horizon under
+  `post_resolution_litigation: true` is **intended** behaviour, now stated in README with the
+  floor/ceiling table and asserted at its boundary: without the flag the horizon still binds.
+- The caption assertion's exemption is now keyed to the *template* (`ClientIntake` renders no
+  case caption for any of the ~60 subtypes routed to it) rather than to a growing subtype
+  list, with a companion test capping the exemption at a third of the case file.
+
 ### Added
 
 **Perspective — applicant vs defense case files** (ISC-75..84, ticket **AJC-34**)

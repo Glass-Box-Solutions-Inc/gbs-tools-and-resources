@@ -19,6 +19,7 @@ regression test that no longer reproduces the original bug is decoration.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from itertools import pairwise
 from typing import Any
 
 import pytest
@@ -30,15 +31,20 @@ from wc_caseload_engine.lifecycle_bridge import (
     CaseTimeline,
     DatedCandidate,
     TimelineInvariantError,
+    build_core_candidates,
     build_timeline,
     fit_dates,
     fit_track,
 )
-from wc_caseload_engine.recon_machine import build_recon_track
+from wc_caseload_engine.recon_machine import ORDER_WINDOW_DAYS, build_recon_track
 from wc_caseload_engine.seeds import (
     ANCHOR_DATE,
+    DENIAL_RESPONSE_RUNWAY_DAYS,
+    EVAL_RUNWAY_DAYS,
+    IMR_RUNWAY_DAYS,
     POST_RESOLUTION_RUNWAY_DAYS,
     STAGE_RUNWAY_DAYS,
+    UR_DISPUTE_RUNWAY_DAYS,
     AutoSpec,
     SeedValidationError,
     derive_auto_seeds,
@@ -166,6 +172,127 @@ class TestRunwayValidation:
                              resolution={"type": "c_and_r"})
             )
         assert "lifecycle.resolution.type 'c_and_r'" in str(caught.value)
+
+
+class TestBranchRunwayFloors:
+    """Runway used to be validated against the stage and the resolution only.
+
+    A lifecycle branch is a dated document chain like any other, and three of
+    them were invisible to the check: the denial response, the UR/IMR appeal
+    and the medical-legal evaluation. The reproduction is a 30-day ``intake``
+    seed that also says ``claim_response: denied`` — it validated, and then
+    produced a denial letter, the Application answering it and the Declaration
+    of Readiness advancing it, all dated 2026-01-01.
+    """
+
+    @staticmethod
+    def _denied_intake(injury: str) -> dict[str, Any]:
+        return {
+            "case_id": "denied-intake",
+            "rng_seed": 7,
+            "injury": {
+                "type": "specific",
+                "date_of_injury": injury,
+                "body_parts": [{"part": "knee", "icd10": "M23.51"}],
+            },
+            "lifecycle": {
+                "target_stage": "intake",
+                "claim_response": "denied",
+                "eval_type": "none",
+            },
+        }
+
+    def test_the_thirty_day_denied_reproduction_is_rejected(self) -> None:
+        """The exact seed from the release review, and the message names the branch."""
+        with pytest.raises(SeedValidationError) as caught:
+            parse_case_seed(self._denied_intake("2025-12-02"), source="repro")
+        message = str(caught.value)
+        assert "lifecycle.claim_response 'denied'" in message, message
+        assert str(DENIAL_RESPONSE_RUNWAY_DAYS) in message
+        assert latest_valid(DENIAL_RESPONSE_RUNWAY_DAYS).isoformat() in message
+        assert "injury.date_of_injury" in message
+
+    def test_the_denial_floor_boundary_is_exact(self) -> None:
+        """On the floor the seed loads; one day later it does not."""
+        boundary = latest_valid(DENIAL_RESPONSE_RUNWAY_DAYS)
+        parse_case_seed(self._denied_intake(boundary.isoformat()))
+        with pytest.raises(SeedValidationError):
+            parse_case_seed(
+                self._denied_intake((boundary + timedelta(days=1)).isoformat())
+            )
+
+    @pytest.mark.parametrize(
+        ("lifecycle", "days", "driver"),
+        [
+            ({"ur_dispute": {"enabled": True, "decision": "overturned"}},
+             UR_DISPUTE_RUNWAY_DAYS, "lifecycle.ur_dispute.enabled"),
+            ({"ur_dispute": {"enabled": True, "decision": "upheld", "imr": True,
+                             "imr_outcome": "upheld"}},
+             IMR_RUNWAY_DAYS, "lifecycle.ur_dispute.imr"),
+            ({"eval_type": "qme"}, EVAL_RUNWAY_DAYS, "lifecycle.eval_type 'qme'"),
+            ({"eval_type": "ame"}, EVAL_RUNWAY_DAYS, "lifecycle.eval_type 'ame'"),
+        ],
+    )
+    def test_each_branch_floor_binds_and_names_itself(
+        self, lifecycle: dict[str, Any], days: int, driver: str
+    ) -> None:
+        """Every branch that consumes calendar time raises the floor it needs."""
+        base: dict[str, Any] = {
+            "target_stage": "intake",
+            "claim_response": "accepted",
+            "eval_type": "none",
+            **lifecycle,
+        }
+        raw = {
+            "case_id": "branch-floor",
+            "rng_seed": 11,
+            "injury": {
+                "type": "specific",
+                "date_of_injury": latest_valid(days).isoformat(),
+                "body_parts": [{"part": "knee", "icd10": "M23.51"}],
+            },
+            "lifecycle": base,
+        }
+        parse_case_seed(raw)
+
+        raw["injury"]["date_of_injury"] = (  # type: ignore[index]
+            latest_valid(days) + timedelta(days=1)
+        ).isoformat()
+        with pytest.raises(SeedValidationError) as caught:
+            parse_case_seed(raw, source="branch")
+        assert driver in str(caught.value)
+
+    @requires_substrate
+    def test_a_boundary_valid_denied_seed_orders_its_chain_strictly(self) -> None:
+        """The other half of the fix: the chain is fitted, not clamped.
+
+        Three documents that each independently overran the horizon were each
+        independently pinned to it. They are one sequence — denial, then the
+        Application answering it, then the DOR advancing it — so they are fitted
+        as one, and strict ordering is the assertion that proves it.
+        """
+        seed = parse_case_seed(
+            self._denied_intake(latest_valid(DENIAL_RESPONSE_RUNWAY_DAYS).isoformat())
+        )
+        timeline = build_timeline(seed)
+        chain = {
+            "CLAIM_DENIAL_LETTER": None,
+            "APPLICATION_FOR_ADJUDICATION_ORIGINAL": None,
+            "DECLARATION_OF_READINESS": None,
+        }
+        for candidate in build_core_candidates(seed, timeline):
+            if candidate.subtype in chain and chain[candidate.subtype] is None:
+                chain[candidate.subtype] = candidate.doc_date  # type: ignore[assignment]
+
+        missing = [name for name, value in chain.items() if value is None]
+        assert not missing, f"denial chain incomplete: {missing}"
+        denial = chain["CLAIM_DENIAL_LETTER"]
+        application = chain["APPLICATION_FOR_ADJUDICATION_ORIGINAL"]
+        readiness = chain["DECLARATION_OF_READINESS"]
+        assert denial < application < readiness, (
+            f"denial chain is not strictly ordered: {denial} / {application} / {readiness}"
+        )
+        assert readiness <= timeline.horizon
 
 
 class TestAutoDerivedSeedsAreCompliant:
@@ -426,3 +553,125 @@ class TestReconTrackOrdering:
         assert recon.petition_date is not None
         assert recon.order_date is not None
         assert recon.order_date > recon.petition_date
+
+
+# ---------------------------------------------------------------------------
+# 1d. Reconsideration briefing order — legal sequence, not date sort
+# ---------------------------------------------------------------------------
+
+
+RECON_BRIEFING_ORDER: tuple[str, ...] = (
+    "PETITION_RECONSIDERATION_FILED",
+    "PETITION_RECONSIDERATION_OPPOSITION",
+    "PETITION_RECONSIDERATION_REPLY",
+    "ORDER_ON_RECONSIDERATION",
+)
+"""The briefing sequence, in the only order it can legally occur.
+
+The petitioner petitions, the respondent opposes, the petitioner may reply, and
+only then does the Board rule. Every step is a response to the one before it,
+which is what makes the order structural rather than stylistic.
+"""
+
+
+class TestReconBriefingOrder:
+    """A reply filed after the ruling it replies to is not a document, it is a bug.
+
+    ``recon_machine`` drew the order independently of the briefing schedule and
+    then sorted the whole chain by ``(date, subtype)``. The sort faithfully
+    recorded whatever the independent draws produced, so an order drawn at
+    petition+30 and a reply drawn at opposition+15 came out in that order — the
+    Board ruling first, the petitioner's reply filed the day after.
+    """
+
+    @staticmethod
+    def _seed(rng_seed: int) -> Any:
+        return parse_case_seed(
+            {
+                "case_id": f"recon-{rng_seed}",
+                "rng_seed": rng_seed,
+                "injury": {
+                    "type": "specific",
+                    "date_of_injury": "2022-01-05",
+                    "body_parts": [{"part": "knee", "icd10": "M23.51"}],
+                },
+                "lifecycle": {
+                    "target_stage": "post_recon",
+                    "resolution": {"type": "findings_award"},
+                    "reconsideration": {
+                        "enabled": True,
+                        "outcome": "denied",
+                        "post_recon": "affirmed_final",
+                    },
+                },
+            }
+        )
+
+    @staticmethod
+    def _briefing_dates(documents: Any) -> dict[str, date]:
+        wanted = set(RECON_BRIEFING_ORDER)
+        return {
+            document.subtype: document.doc_date
+            for document in documents
+            if document.subtype in wanted
+        }
+
+    def test_the_rng_seed_155_reproduction_files_the_reply_before_the_order(self) -> None:
+        """The exact seed from the release review, which had reply == order + 1."""
+        seed = self._seed(155)
+        recon = build_recon_track(seed, build_timeline(seed))
+        dates = self._briefing_dates(recon.documents)
+
+        assert "PETITION_RECONSIDERATION_REPLY" in dates, (
+            "this seed must draw a reply, or the reproduction proves nothing"
+        )
+        assert dates["PETITION_RECONSIDERATION_REPLY"] < dates["ORDER_ON_RECONSIDERATION"], (
+            f"reply {dates['PETITION_RECONSIDERATION_REPLY']} does not precede order "
+            f"{dates['ORDER_ON_RECONSIDERATION']}"
+        )
+
+    def test_the_briefing_invariant_holds_over_fifty_seeds(self) -> None:
+        """Property-style: petition < opposition < reply < order, strictly, always."""
+        offences: list[str] = []
+        replies = 0
+        for rng_seed in range(50):
+            seed = self._seed(rng_seed)
+            recon = build_recon_track(seed, build_timeline(seed))
+            dates = self._briefing_dates(recon.documents)
+            if "PETITION_RECONSIDERATION_REPLY" in dates:
+                replies += 1
+
+            sequence = [
+                (subtype, dates[subtype])
+                for subtype in RECON_BRIEFING_ORDER
+                if subtype in dates
+            ]
+            for (earlier, earlier_date), (later, later_date) in pairwise(sequence):
+                if later_date <= earlier_date:
+                    offences.append(
+                        f"rng_seed={rng_seed}: {later} ({later_date}) does not follow "
+                        f"{earlier} ({earlier_date})"
+                    )
+
+        assert replies >= 10, (
+            f"only {replies}/50 seeds drew a reply — the invariant is barely exercised"
+        )
+        assert not offences, f"{len(offences)} ordering violation(s): {offences[:10]}"
+
+    def test_the_order_still_lands_inside_the_statutory_window_when_it_can(self) -> None:
+        """LC 5909 is honoured except where the briefing schedule outruns it.
+
+        Constraining the order to follow the last brief can push it past sixty
+        days from the petition. That is the right trade — a ruling a few days
+        late is an ordinary file, a ruling that predates the briefing is not —
+        but it should stay the exception, so the exception is counted.
+        """
+        late = 0
+        for rng_seed in range(50):
+            seed = self._seed(rng_seed)
+            recon = build_recon_track(seed, build_timeline(seed))
+            assert recon.petition_date is not None
+            assert recon.order_date is not None
+            if (recon.order_date - recon.petition_date).days > ORDER_WINDOW_DAYS:
+                late += 1
+        assert late <= 10, f"{late}/50 orders fell outside the LC 5909 window"

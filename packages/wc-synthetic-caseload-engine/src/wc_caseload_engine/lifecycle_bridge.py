@@ -759,10 +759,29 @@ def walk_core_track(seed: CaseSeed, timeline: CaseTimeline) -> list[DatedCandida
 def _guaranteed_denial_documents(
     seed: CaseSeed, timeline: CaseTimeline, rng: random.Random
 ) -> list[DatedCandidate]:
-    """A denied claim always denies in writing and is always answered."""
+    """A denied claim always denies in writing and is always answered.
+
+    This is a **sequenced** chain, not three independent documents: the carrier
+    denies, the applicant files an Application for Adjudication *because* of the
+    denial, and a Declaration of Readiness advances the case the Application
+    opened. So it is fitted as one track — the same treatment lien chains and
+    the reconsideration round trip already get — rather than clamped date by
+    date.
+
+    Per-date clamping is what produced the release-review reproduction: a
+    denial letter, the Application answering it and the DOR advancing it all
+    dated 2026-01-01, because each date independently overran the horizon and
+    each was independently pinned to it. Clamping is only sound for the parallel
+    core track, where documents have no ordering relationship; see
+    :meth:`CaseTimeline.clamp`.
+
+    The seed schema now also refuses a seed too short for this chain
+    (:data:`~wc_caseload_engine.seeds.DENIAL_RESPONSE_RUNWAY_DAYS`), so the fit
+    below is a structural guarantee rather than a rescue.
+    """
     if seed.lifecycle.claim_response != "denied":
         return []
-    denial = timeline.clamp(timeline.claim_filed_date + timedelta(days=rng.randint(30, 90)))
+    denial = timeline.claim_filed_date + timedelta(days=rng.randint(30, 90))
     docs = [
         DatedCandidate(
             subtype="CLAIM_DENIAL_LETTER",
@@ -773,20 +792,25 @@ def _guaranteed_denial_documents(
         ),
         DatedCandidate(
             subtype="APPLICATION_FOR_ADJUDICATION_ORIGINAL",
-            doc_date=timeline.clamp(denial + timedelta(days=rng.randint(7, 60))),
+            doc_date=denial + timedelta(days=rng.randint(7, 60)),
             priority=5,
             author_role=ROLE_APPLICANT_ATTORNEY,
             stage="application_filed",
         ),
         DatedCandidate(
             subtype="DECLARATION_OF_READINESS",
-            doc_date=timeline.clamp(denial + timedelta(days=rng.randint(60, 180))),
+            doc_date=denial + timedelta(days=rng.randint(60, 180)),
             priority=12,
             author_role=ROLE_APPLICANT_ATTORNEY,
             stage="application_filed",
         ),
     ]
-    return docs
+    return fit_track(
+        docs,
+        floor=timeline.claim_filed_date + timedelta(days=1),
+        ceiling=timeline.horizon,
+        label=f"denial:{seed.case_id}",
+    )
 
 
 def _guaranteed_ur_documents(
