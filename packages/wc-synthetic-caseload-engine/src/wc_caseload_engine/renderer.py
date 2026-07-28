@@ -32,6 +32,20 @@ regenerates byte-for-byte:
 Format assignment honours ``seed.effective_format_mix()``; when a subtype and
 format cannot be paired the renderer falls back to pdf and says so.
 
+**Doctrine content injection.** A planned document may carry
+``content_flags`` — the doctrine hooks its subtype is a target for (see
+:mod:`wc_caseload_engine.doctrine`). When it does, the resolved template class
+is subclassed at render time and its ``build_story`` extended with a trailing
+authorities section. The shape of that intervention is deliberate: the base
+story is produced by ``super()`` untouched, the appended flowables are plain
+``Paragraph``/``Spacer``/``HRFlowable`` objects so the substrate's own
+``_story_to_plaintext`` and ``_story_to_docx`` carry them into eml and docx
+without further work, and the paragraph choice is drawn from a *private*
+:class:`random.Random` rather than the re-seeded global stream, so a flagged
+document's pre-existing content is bit-for-bit what it would have been
+unflagged. With no flags the wrapper is never built and the code path is the
+original one.
+
 Dispatch has one trap worth naming: ``registry.get_template_for_subtype``
 answers ``GenericDocumentTemplate`` for keys it does not know, so a missing
 template and a deliberate one are the same return value. Every render therefore
@@ -48,7 +62,7 @@ from __future__ import annotations
 
 import hashlib
 import random
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -62,6 +76,11 @@ from wc_caseload_engine.determinism import (
     normalize_docx,
     normalize_eml,
     normalize_pdf_id,
+)
+from wc_caseload_engine.doctrine import (
+    DOCTRINE_CONTENT,
+    heading_for_register,
+    register_for_subtype,
 )
 from wc_caseload_engine.perspective import file_owner_firm
 from wc_caseload_engine.seeds import CaseSeed, derive_seed
@@ -162,6 +181,14 @@ class RenderResult:
     rather than leaving it to be re-derived. A caseload whose dispatch quietly
     degrades is otherwise indistinguishable from one that did not.
     """
+    content_flags: tuple[str, ...] = ()
+    """Doctrine hooks whose language this file carries.
+
+    Provenance for the same reason :attr:`template` is: a corpus consumer
+    grepping for doctrine language needs to know which files were *supposed* to
+    contain it, and a file that was flagged but rendered nothing is otherwise
+    indistinguishable from one that was never flagged.
+    """
 
     @property
     def fallback(self) -> bool:
@@ -237,6 +264,96 @@ def _md5(payload: bytes) -> str:
     return hashlib.md5(payload, usedforsecurity=False).hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# Doctrine content injection
+# ---------------------------------------------------------------------------
+
+DOCTRINE_CLASS_SUFFIX = "WithDoctrine"
+"""Appended to a template class name when it is wrapped for content injection.
+
+Named rather than inlined so a test can tell a wrapped dispatch from a plain
+one without matching on a string literal it also has to keep in sync.
+"""
+
+
+def doctrine_flowables(
+    template: Any,
+    *,
+    subtype: str,
+    rng_seed: int,
+    index: int,
+    content_flags: Sequence[str],
+) -> list[Any]:
+    """The authorities section appended to a flagged document's story.
+
+    Built from the *base template's own* style sheet and rules, so the section
+    looks like the rest of the document rather than like something bolted on.
+    Each flagged hook contributes one paragraph — chosen with a private
+    :class:`random.Random` seeded from ``rng_seed`` and the hook name, never
+    from the global stream the substrate templates draw from — followed by the
+    controlling authority.
+
+    Returns an empty list when no flagged hook has content for *subtype*, so a
+    heading is never emitted over nothing.
+    """
+    from reportlab.platypus import Paragraph, Spacer
+
+    styles = template.styles
+    body: list[Any] = []
+    for hook in sorted(set(content_flags)):
+        content = DOCTRINE_CONTENT.get(hook)
+        if content is None:
+            log.warning("render.unknown_doctrine_hook", hook=hook, subtype=subtype)
+            continue
+        pool = content.paragraphs_for(subtype)
+        if not pool:
+            continue
+        rng = random.Random(derive_seed(rng_seed, f"doctrine:{index}:{hook}"))
+        body.append(Paragraph(rng.choice(pool), styles["BodyText14"]))
+        body.append(Paragraph(content.citation, styles["SmallItalic"]))
+        body.append(Spacer(1, 8))
+
+    if not body:
+        return []
+
+    heading = heading_for_register(register_for_subtype(subtype))
+    return [
+        Spacer(1, 16),
+        template.make_hr(),
+        Paragraph(heading, styles["SectionHeader"]),
+        *body,
+    ]
+
+
+def doctrine_template_class(base: type, section_builder: Any) -> type:
+    """Subclass *base* so its story gains the section *section_builder* returns.
+
+    The substrate is consumed as a read-only library, so injection happens by
+    subclassing rather than by patching: the wrapper calls ``super()`` for the
+    document the template would otherwise have produced and appends to the
+    result. ``section_builder(template, doc_spec)`` returns the flowables to
+    append.
+    """
+
+    def build_story(self: Any, doc_spec: Any) -> list[Any]:
+        # ``wrapper`` is bound below, before this ever runs — the two-argument
+        # ``super()`` is required because this function is not defined inside a
+        # class body and so has no ``__class__`` cell to close over.
+        story = list(super(wrapper, self).build_story(doc_spec))
+        story.extend(section_builder(self, doc_spec))
+        return story
+
+    wrapper = type(
+        f"{base.__name__}{DOCTRINE_CLASS_SUFFIX}",
+        (base,),
+        {
+            "build_story": build_story,
+            "__doc__": f"{base.__name__} with a doctrine authorities section appended.",
+        },
+    )
+    return wrapper
+
+
 def render_document(
     *,
     seed: CaseSeed,
@@ -249,6 +366,7 @@ def render_document(
     title: str | None = None,
     author_role: str | None = None,
     recipient_role: str | None = None,
+    content_flags: Sequence[str] = (),
 ) -> RenderResult:
     """Render one planned document to *out_path*, reproducibly.
 
@@ -263,6 +381,10 @@ def render_document(
         title: document title; defaults to the taxonomy label.
         author_role: who wrote it, from the file owner's point of view.
         recipient_role: who received it, likewise.
+        content_flags: doctrine hooks whose language this document carries
+            (:attr:`~wc_caseload_engine.planner.PlannedDocument.content_flags`).
+            Empty is the original code path exactly — no wrapper class is built
+            and nothing is appended.
 
     Returns:
         A :class:`RenderResult` with the checksum and size for the manifest.
@@ -272,6 +394,22 @@ def render_document(
 
     template_class, variant, class_name = _load_template(subtype)
     output_format = models.OutputFormat(doc_format if doc_format != "scanned_pdf" else "pdf")
+
+    flags = tuple(content_flags)
+    if flags:
+        # Wrap once, before every construction below (including the format
+        # fallback's second attempt), so a flagged document cannot lose its
+        # doctrine section by falling back to pdf.
+        template_class = doctrine_template_class(
+            template_class,
+            lambda template, _doc_spec: doctrine_flowables(
+                template,
+                subtype=subtype,
+                rng_seed=seed.rng_seed,
+                index=index,
+                content_flags=flags,
+            ),
+        )
 
     context: dict[str, Any] = {}
     if variant:
@@ -380,16 +518,20 @@ def render_document(
         mime_type=MIME_TYPES[effective_format],
         fallback_reason=fallback_reason,
         template=template_label(class_name, variant),
+        content_flags=flags,
     )
 
 
 __all__ = [
+    "DOCTRINE_CLASS_SUFFIX",
     "FORMAT_EXTENSIONS",
     "GENERIC_TEMPLATE_CLASS",
     "MIME_TYPES",
     "OVERLAY_TEMPLATES",
     "RenderResult",
     "choose_format",
+    "doctrine_flowables",
+    "doctrine_template_class",
     "normalize_pdf_id",
     "render_document",
     "resolve_template",

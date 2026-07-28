@@ -1,0 +1,886 @@
+"""Doctrine content — the landmark authorities, as renderable language.
+
+``lifecycle.doctrine_hooks`` names the doctrines a case turns on. Before this
+module those names reached the manifest, forced the psych flag and nudged
+complexity, and stopped there: a caseload seeded ``[kite, escobedo]`` rendered
+documents that never said "Kite" or "Escobedo" anywhere. A classifier corpus
+built from it could not be used to measure whether a model finds doctrine
+language, because the language was not in the corpus.
+
+This module is the content table that closes that gap. Each of the fourteen
+:data:`~wc_caseload_engine.seeds.DoctrineHook` values maps to one
+:class:`DoctrineContent`: the controlling authority, a short **marker** that
+survives PDF text extraction, and two pools of paragraphs — one written in the
+register of a med-legal evaluator's discussion addendum, one in the register of
+points and authorities in a brief. Which pool a document draws from is decided
+by the document's own subtype, through :attr:`DoctrineContent.medical_targets`
+and :attr:`DoctrineContent.legal_targets`.
+
+Three properties are load-bearing:
+
+* **Every target key is canonical.** A target that is not one of the
+  classifier's 353 subtypes would silently never match, and the hook would
+  quietly render nothing — the exact failure this module exists to end.
+  ``tests/test_doctrine_content.py`` asserts the whole target surface against
+  :func:`~wc_caseload_engine.taxonomy.effective_taxonomy`.
+* **Every paragraph carries its hook's marker.** The marker is what a probe (or
+  a corpus consumer) greps for, so a paragraph without one is content that
+  cannot be verified to have arrived.
+* **A subtype has one register across all fourteen hooks.** ``TRIAL_BRIEF`` is
+  legal for every hook that targets it; ``QME_COMPREHENSIVE_REPORT`` is medical
+  for every hook that targets it. That invariant is what lets a document flagged
+  with two hooks carry one heading instead of two contradictory ones.
+
+**Real names.** The engine's standing rule is that no real person or
+organization reaches output; :mod:`wc_caseload_engine.name_denylist` enforces it.
+Case citations are the one deliberate exception — a controlling authority is
+named by its case name or it is not a citation. The names admitted here are
+therefore exactly the parties to published California decisions, and nothing
+else. They are checked against the denylist and against the substrate's live
+organization pools by ``tests/test_doctrine_content.py``, and they carry one
+real hazard worth naming: a citation surname that also happens to be a seeded
+applicant's surname would read as cross-case contamination in a generated
+corpus. ``Ramirez`` is already both (see ``examples/demo-caseload.yaml``), which
+is why the cross-case sweep in ``tests/test_coherence.py`` is the tripwire for
+anyone adding a hook to a case whose neighbours share a citation's name.
+
+@Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+
+MEDICAL_REGISTER = "medical"
+"""Register of a QME/AME/PTP discussion addendum."""
+
+LEGAL_REGISTER = "legal"
+"""Register of points and authorities in a brief, petition or denial."""
+
+MEDICAL_HEADING = "ADDENDUM — MEDICAL-LEGAL DISCUSSION OF CONTROLLING AUTHORITY"
+"""Section heading used on documents whose subtype is a medical target."""
+
+LEGAL_HEADING = "POINTS AND AUTHORITIES — CONTROLLING DOCTRINE"
+"""Section heading used on documents whose subtype is a legal target."""
+
+
+@dataclass(frozen=True, slots=True)
+class DoctrineContent:
+    """One doctrine hook's renderable content and the subtypes it reaches.
+
+    ``marker`` is deliberately short and free of punctuation that a PDF text
+    extractor might reflow — a statute number, or the surname a decision is
+    known by. It is the string every paragraph in both pools contains and the
+    string a verification probe looks for.
+    """
+
+    hook: str
+    display: str
+    marker: str
+    citation: str
+    medical_paragraphs: tuple[str, ...]
+    legal_paragraphs: tuple[str, ...]
+    medical_targets: frozenset[str]
+    legal_targets: frozenset[str]
+
+    @property
+    def targets(self) -> frozenset[str]:
+        """Every subtype this hook injects content into."""
+        return self.medical_targets | self.legal_targets
+
+    def register_for(self, subtype: str) -> str | None:
+        """``"medical"``, ``"legal"`` or ``None`` when this hook skips *subtype*."""
+        if subtype in self.medical_targets:
+            return MEDICAL_REGISTER
+        if subtype in self.legal_targets:
+            return LEGAL_REGISTER
+        return None
+
+    def paragraphs_for(self, subtype: str) -> tuple[str, ...]:
+        """The pool this hook draws from for *subtype* (empty when it skips it)."""
+        register = self.register_for(subtype)
+        if register == MEDICAL_REGISTER:
+            return self.medical_paragraphs
+        if register == LEGAL_REGISTER:
+            return self.legal_paragraphs
+        return ()
+
+    def targets_subtype(self, subtype: str) -> bool:
+        """``True`` when this hook has content for *subtype*."""
+        return subtype in self.targets
+
+
+# ---------------------------------------------------------------------------
+# Shared target sets
+#
+# Named rather than repeated so that "the med-legal report family" means one
+# thing across all fourteen hooks. A hook that wants a narrower reach declares
+# its own set; a hook that wants the family uses the family.
+# ---------------------------------------------------------------------------
+
+_CORE_MEDLEGAL: frozenset[str] = frozenset(
+    {
+        "QME_COMPREHENSIVE_REPORT",
+        "AME_COMPREHENSIVE_REPORT",
+        "SUPPLEMENTAL_QME_AME_REPORT",
+    }
+)
+"""The med-legal reports every doctrine discussion can plausibly land in."""
+
+_BRIEFS: frozenset[str] = frozenset({"TRIAL_BRIEF", "DEFENSE_TRIAL_BRIEF"})
+"""Trial briefs, applicant and defense."""
+
+_AOE_COE_DEFENSE: frozenset[str] = frozenset(
+    {
+        "CLAIM_DENIAL_LETTER",
+        "COMPENSABILITY_DETERMINATION",
+        "ANSWER_TO_APPLICATION",
+    }
+)
+"""Where a threshold compensability defense is first stated in writing."""
+
+
+DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
+    "ogilvie": DoctrineContent(
+        hook="ogilvie",
+        display="Ogilvie — rebuttal of the scheduled rating",
+        marker="Ogilvie",
+        citation=(
+            "Ogilvie v. WCAB (2011) 197 Cal.App.4th 1262, 76 Cal.Comp.Cases 624 "
+            "(rebuttal of the scheduled permanent disability rating by vocational "
+            "evidence of diminished future earning capacity)."
+        ),
+        medical_paragraphs=(
+            "The scheduled rating produced by the permanent disability rating schedule is a "
+            "rebuttable starting point, and this evaluation addresses the Ogilvie question "
+            "directly: whether the applicant's diminished future earning capacity departs from "
+            "the adjustment the schedule assumes for an impairment of this kind. The vocational "
+            "history, the residual functional capacity documented on examination and the absence "
+            "of any offer of modified work are the data on which an Ogilvie analysis would rest.",
+            "For purposes of an Ogilvie rebuttal I have described the applicant's residual "
+            "capacity in vocational rather than purely clinical terms: sitting, standing, lifting "
+            "and pace tolerances are stated in ranges an evaluator of employability can use. "
+            "Whether those tolerances amount to the loss of earning capacity contemplated in "
+            "Ogilvie is a question I defer to the vocational expert and to the trier of fact.",
+            "I am asked to state whether the industrial injury, rather than a nonindustrial "
+            "vocational factor, is what forecloses this applicant's return to the open labor "
+            "market. That framing follows Ogilvie, which permits the scheduled rating to be "
+            "rebutted only where the diminished future earning capacity is shown to be caused by "
+            "the industrial injury itself. My opinion on that causal question is set out above "
+            "and is not altered by this addendum.",
+        ),
+        legal_paragraphs=(
+            "The scheduled permanent disability rating is prima facie evidence only. Under "
+            "Ogilvie v. WCAB the schedule may be rebutted by evidence that the employee's "
+            "diminished future earning capacity differs from that contemplated by the adjustment "
+            "factor applied to this impairment, and the rebuttal is evaluated on the record as a "
+            "whole rather than on a formulaic recalculation.",
+            "An Ogilvie rebuttal requires more than an expert's assertion that the applicant is "
+            "unemployable. The proponent must show that the industrial injury is the cause of the "
+            "diminished earning capacity and must account for nonindustrial vocational factors; a "
+            "vocational opinion that does not perform that separation is not substantial evidence "
+            "and cannot carry an Ogilvie rebuttal.",
+            "The parties are on notice that the rating issue in this matter will be litigated as "
+            "an Ogilvie question. Discovery directed to post-injury earnings, the availability of "
+            "modified or alternative work and the vocational expert's methodology is therefore "
+            "relevant, and the pretrial conference statement should frame the Ogilvie rebuttal as "
+            "a contested issue.",
+        ),
+        medical_targets=_CORE_MEDLEGAL
+        | {
+            "VOCATIONAL_EXPERT_REPORT",
+            "EARNINGS_CAPACITY_OPINION",
+            "TRANSFERABLE_SKILLS_ANALYSIS",
+        },
+        legal_targets=_BRIEFS
+        | {"PD_RATING_CALCULATION_WORKSHEET", "PETITION_RECONSIDERATION_FILED"},
+    ),
+    "almaraz_guzman": DoctrineContent(
+        hook="almaraz_guzman",
+        display="Almaraz/Guzman — alternative impairment rating",
+        marker="Guzman",
+        citation=(
+            "Milpitas Unified School Dist. v. WCAB (Guzman) (2010) 187 Cal.App.4th 808, "
+            "75 Cal.Comp.Cases 837 (alternative impairment rating within the four corners "
+            "of the AMA Guides)."
+        ),
+        medical_paragraphs=(
+            "Strict application of the AMA Guides does not, in my opinion, produce an accurate "
+            "impairment rating for this applicant, and I have therefore provided an alternative "
+            "rating under Almaraz/Guzman. As Guzman requires, that alternative remains within the "
+            "four corners of the AMA Guides: I have used a different table and a different method "
+            "described in the Guides themselves rather than a rating invented outside them.",
+            "I state the strict rating first and the Guzman rating second, with the reasoning for "
+            "the departure, so that the trier of fact may adopt either. The basis for the Guzman "
+            "alternative is the applicant's documented loss of activities of daily living, which "
+            "the strict method captures inadequately for the body part at issue here.",
+            "A Guzman analysis is only as good as the explanation supporting it. I have "
+            "identified the chapter, table and figure of the AMA Guides relied on for the "
+            "alternative rating, the reason the strict method understates this impairment, and "
+            "the analogy drawn, so that the opinion can be tested as substantial evidence rather "
+            "than accepted on the strength of the label.",
+        ),
+        legal_paragraphs=(
+            "Milpitas Unified School Dist. v. WCAB (Guzman) holds that a physician may depart "
+            "from strict application of the AMA Guides where strict application does not "
+            "accurately reflect the employee's impairment, provided the alternative rating stays "
+            "within the four corners of the Guides. A Guzman opinion that reaches outside the "
+            "Guides, or that offers no reasoning for the departure, is not substantial evidence.",
+            "The burden rests on the party offering the Guzman rating to show both that the "
+            "strict rating is inaccurate for this employee and that the alternative selected is "
+            "grounded in the Guides. A conclusory statement that the strict rating does not "
+            "capture the impairment does not satisfy Guzman and is entitled to no weight.",
+            "Because the Guzman issue is dispositive of the permanent disability rating in this "
+            "file, the parties should identify, in their pretrial statements, the strict rating, "
+            "the Guzman alternative, the provisions of the Guides relied on for each, and the "
+            "reasoning that connects them.",
+        ),
+        medical_targets=_CORE_MEDLEGAL
+        | {
+            "QME_REPORT_INITIAL",
+            "QME_REPORT_SUPPLEMENTAL",
+            "MEDICAL_LEGAL_QME_AME_IME",
+            "IMPAIRMENT_RATING_WORKSHEET",
+        },
+        legal_targets=_BRIEFS
+        | {"PD_RATING_CALCULATION_WORKSHEET", "PETITION_RECONSIDERATION_FILED"},
+    ),
+    "benson": DoctrineContent(
+        hook="benson",
+        display="Benson — separate awards for separate injuries",
+        marker="Benson",
+        citation=(
+            "Benson v. WCAB (2009) 170 Cal.App.4th 1535, 74 Cal.Comp.Cases 113 "
+            "(separate awards for distinct industrial injuries; apportionment between them)."
+        ),
+        medical_paragraphs=(
+            "Where an applicant sustains two distinct industrial injuries, Benson requires the "
+            "evaluator to apportion the permanent disability between them rather than to issue "
+            "one combined rating. I have therefore addressed each injury separately and stated "
+            "the percentage of the current impairment attributable to each, to the extent the "
+            "medical record permits that separation.",
+            "I am able to make the Benson apportionment for the orthopedic impairment on the "
+            "basis of the imaging and the treatment history bracketing the two dates of injury. "
+            "Where the record does not permit a separation I say so rather than dividing the "
+            "disability arbitrarily, because an unsupported Benson split is no more useful to the "
+            "trier of fact than no split at all.",
+            "This addendum reaches the Benson question because the file contains more than one "
+            "claimed date of injury involving the same region. My opinion on whether the "
+            "disability from the two injuries is inextricably intertwined, and therefore not "
+            "susceptible to a Benson apportionment, is stated with the reasoning that supports it.",
+        ),
+        legal_paragraphs=(
+            "Benson v. WCAB holds that where an employee suffers two or more distinct industrial "
+            "injuries, each producing permanent disability, separate awards apportioned between "
+            "them are required rather than a single combined award. The exception recognized in "
+            "Benson is narrow: a combined award is permissible only where the evaluator cannot "
+            "parcel out the causation between the injuries.",
+            "The consequence of Benson in this matter is immediate and practical. It affects the "
+            "applicability of the multiple-disability rating, the permanent disability rate "
+            "payable for each injury, and the reach of any prior award, and the parties should "
+            "address the Benson issue separately from general apportionment.",
+            "A medical opinion offered to defeat separate awards under Benson must state, with "
+            "reasoning, why the disabilities cannot be parceled out between the two injuries. An "
+            "evaluator's silence on the question is not a finding that the injuries are "
+            "inextricably intertwined, and Benson is not satisfied by silence.",
+        ),
+        medical_targets=_CORE_MEDLEGAL | {"APPORTIONMENT_REPORT"},
+        legal_targets=_BRIEFS
+        | {
+            "APPORTIONMENT_WORKSHEET",
+            "MOTION_TO_CONSOLIDATE",
+            "STIPULATIONS_WITH_REQUEST_FOR_AWARD",
+        },
+    ),
+    "escobedo": DoctrineContent(
+        hook="escobedo",
+        display="Escobedo — substantial evidence for apportionment",
+        marker="Escobedo",
+        citation=(
+            "Escobedo v. Marshalls (2005) 70 Cal.Comp.Cases 604 (en banc) "
+            "(apportionment to nonindustrial pathology must rest on substantial "
+            "medical evidence)."
+        ),
+        medical_paragraphs=(
+            "Apportionment of permanent disability is a medical question, and Escobedo sets the "
+            "standard this opinion must meet: I must state what approximate percentage of the "
+            "permanent disability is caused by the industrial injury and what percentage is "
+            "caused by other factors, and I must explain how and why I reached those percentages.",
+            "The nonindustrial contribution described above is degenerative pathology documented "
+            "on imaging that predates the industrial event. Escobedo requires more than the "
+            "recitation of a preexisting condition: the pathology must be shown to be causing "
+            "permanent disability now, and I have set out the findings on which that conclusion "
+            "rests.",
+            "Where I cannot apportion to a reasonable medical probability, Escobedo requires that "
+            "I say so rather than supply a number. This addendum distinguishes the portion of the "
+            "disability I can allocate with the necessary certainty from the portion I cannot.",
+        ),
+        legal_paragraphs=(
+            "Escobedo v. Marshalls, decided en banc, requires that a medical opinion on "
+            "apportionment explain the how and why of the apportionment determination, and that "
+            "the physician find the nonindustrial factor to be causing permanent disability "
+            "rather than merely to be present. An opinion that recites a preexisting condition "
+            "without that analysis is not substantial evidence under Escobedo.",
+            "The burden of proving apportionment rests on the defendant, and Escobedo makes "
+            "clear that the burden is not carried by a percentage stated without reasoning. Any "
+            "apportionment adopted in this matter must be traceable to the record evidence the "
+            "evaluator identified.",
+            "The parties should be prepared to address whether the apportionment opinion in this "
+            "file satisfies Escobedo, and if it does not, whether the remedy is a supplemental "
+            "report, the deposition of the evaluator, or an award unapportioned as to the "
+            "deficient component.",
+        ),
+        medical_targets=_CORE_MEDLEGAL
+        | {"APPORTIONMENT_REPORT", "QME_REPORT_SUPPLEMENTAL"},
+        legal_targets=_BRIEFS
+        | {"APPORTIONMENT_WORKSHEET", "PETITION_RECONSIDERATION_FILED"},
+    ),
+    "kite": DoctrineContent(
+        hook="kite",
+        display="Kite — adding rather than combining impairments",
+        marker="Kite",
+        citation=(
+            "Athens Administrators v. WCAB (Kite) (2013) 78 Cal.Comp.Cases 213 (writ den.) "
+            "(impairments added rather than combined where a synergistic effect is shown)."
+        ),
+        medical_paragraphs=(
+            "The Combined Values Chart assumes that impairments affect independent functions. "
+            "Where two impairments act on the same activities of daily living the chart "
+            "understates the resulting disability, and Kite permits the impairments to be added "
+            "instead. I have addressed that question expressly rather than defaulting to the "
+            "chart.",
+            "My opinion that the impairments in this case should be added under Kite rests on the "
+            "overlapping effect the injuries have on the same activities: gait, standing "
+            "tolerance, and the ability to compensate with the contralateral limb. Addition under "
+            "Kite is not automatic and I do not apply it merely because two body parts are "
+            "involved.",
+            "Where the synergy Kite describes is absent I say so and use the Combined Values "
+            "Chart. In this file I have stated which impairments I would add and which I would "
+            "combine, with the functional reasoning for each, so that the rating can be "
+            "constructed either way.",
+        ),
+        legal_paragraphs=(
+            "Athens Administrators v. WCAB (Kite) recognizes that impairments may be added rather "
+            "than combined where the medical evidence establishes a synergistic effect on the "
+            "same activities of daily living. Kite is a writ denied case and is persuasive rather "
+            "than binding, but the analysis it approves is now routinely applied at the trial "
+            "level.",
+            "A Kite rating requires medical evidence of the synergy, not an arithmetic "
+            "preference. The proponent must point to a reasoned explanation of how the "
+            "impairments interact; without it the Combined Values Chart applies and a Kite "
+            "addition should be rejected.",
+            "The difference between a Kite addition and a combined rating is material to the "
+            "permanent disability award in this matter and therefore to the value of the case. "
+            "The parties should frame the Kite question as a contested rating issue and identify "
+            "the medical evidence supporting their positions.",
+        ),
+        medical_targets=_CORE_MEDLEGAL | {"IMPAIRMENT_RATING_WORKSHEET"},
+        legal_targets=_BRIEFS
+        | {"PD_RATING_CALCULATION_WORKSHEET", "PD_RATING_CONVERSION"},
+    ),
+    "going_and_coming": DoctrineContent(
+        hook="going_and_coming",
+        display="Going and coming rule",
+        marker="going and coming",
+        citation=(
+            "Hinojosa v. WCAB (1972) 8 Cal.3d 150, 37 Cal.Comp.Cases 724 "
+            "(going and coming rule; special-mission and required-vehicle exceptions)."
+        ),
+        medical_paragraphs=(
+            "I am asked to describe the circumstances of the injury as the applicant reported "
+            "them, including where the applicant was travelling, in what vehicle, at whose "
+            "direction and for what purpose. Those facts bear on the going and coming rule, which "
+            "is a legal question I do not decide; I report the history and state whether the "
+            "mechanism described is consistent with the injuries found on examination.",
+            "The applicant's account places the event during a commute. Whether the going and "
+            "coming rule bars the claim is outside my role as a medical evaluator, and my opinion "
+            "is confined to industrial causation in the medical sense: whether the described "
+            "mechanism could produce the pathology documented, which in my opinion it could.",
+            "For completeness I note the facts a going and coming analysis would turn on, as the "
+            "applicant related them at the time of the evaluation: the origin and destination of "
+            "the trip, whether a work vehicle or a personal vehicle was used, and whether the "
+            "applicant was carrying tools or performing an errand for the employer.",
+        ),
+        legal_paragraphs=(
+            "The going and coming rule bars compensation for injuries sustained during an "
+            "ordinary local commute, on the reasoning that the employment relationship is "
+            "suspended from the time the employee leaves work until the employee returns. The "
+            "rule and its limits are described in Hinojosa v. WCAB, which cautions that it is "
+            "riddled with exceptions and is not to be applied mechanically.",
+            "Two exceptions to the going and coming rule are placed at issue on these facts: the "
+            "special mission exception, which applies where the employee is engaged in an "
+            "extraordinary errand at the employer's request, and the required vehicle exception, "
+            "which applies where the employer expressly or impliedly requires the employee to "
+            "furnish a vehicle for work.",
+            "The party asserting an exception to the going and coming rule bears the burden of "
+            "establishing the facts that trigger it. Discovery should therefore be directed to "
+            "the purpose of the trip, the employer's expectations regarding use of a personal "
+            "vehicle, and any mileage or vehicle allowance paid.",
+        ),
+        medical_targets=frozenset({"QME_COMPREHENSIVE_REPORT", "AME_COMPREHENSIVE_REPORT"}),
+        legal_targets=_AOE_COE_DEFENSE | _BRIEFS | {"INVESTIGATION_REPORT"},
+    ),
+    "sibtf": DoctrineContent(
+        hook="sibtf",
+        display="SIBTF — Subsequent Injuries Benefits Trust Fund",
+        marker="4751",
+        citation=(
+            "Labor Code section 4751 (Subsequent Injuries Benefits Trust Fund; preexisting "
+            "labor-disabling permanent partial disability combined with a subsequent "
+            "industrial injury)."
+        ),
+        medical_paragraphs=(
+            "This addendum addresses the preexisting labor-disabling impairment relevant to Labor "
+            "Code section 4751. I have described the prior condition, its effect on the "
+            "applicant's ability to compete in the open labor market before the industrial "
+            "injury, and the combined effect of the prior and the current impairments.",
+            "Section 4751 requires that the preexisting disability be labor disabling rather than "
+            "merely present, and that the subsequent industrial injury combine with it to produce "
+            "a substantially greater disability. I have stated the prior impairment as a whole "
+            "person figure and explained the basis for it so the section 4751 threshold can be "
+            "tested against evidence.",
+            "In my opinion the combined effect of the prior condition and the current industrial "
+            "injury exceeds the sum of their separate effects, for the reasons stated above. "
+            "Whether that satisfies the thresholds of section 4751 is a legal determination that "
+            "I do not make.",
+        ),
+        legal_paragraphs=(
+            "Labor Code section 4751 provides benefits from the Subsequent Injuries Benefits "
+            "Trust Fund where an employee with a preexisting permanent partial disability "
+            "sustains a subsequent industrial injury and the combined permanent disability "
+            "reaches seventy percent or more. The section 4751 thresholds must be pleaded and "
+            "proved.",
+            "A claim under section 4751 requires either a preexisting disability of at least "
+            "thirty-five percent, or a subsequent injury to an opposite and corresponding member "
+            "producing at least five percent, together with the statutory combined threshold. The "
+            "Fund is a separate party and must be joined; a case in chief resolved without "
+            "joinder does not resolve the claim against it.",
+            "The applicant is on notice that the section 4751 claim will require evidence of the "
+            "labor-disabling character of the preexisting condition at the time of the subsequent "
+            "injury, independent of the medical evidence supporting the case in chief.",
+        ),
+        medical_targets=frozenset(
+            {
+                "QME_COMPREHENSIVE_REPORT",
+                "AME_COMPREHENSIVE_REPORT",
+                "IMPAIRMENT_RATING_WORKSHEET",
+            }
+        ),
+        legal_targets=frozenset(
+            {
+                "MOTION_FOR_JOINDER",
+                "TRIAL_BRIEF",
+                "CASE_ANALYSIS_MEMO",
+                "SETTLEMENT_VALUATION_MEMO",
+            }
+        ),
+    ),
+    "death_dependency": DoctrineContent(
+        hook="death_dependency",
+        display="Death benefits and dependency",
+        marker="3501",
+        citation=(
+            "Labor Code sections 3501, 3502 and 3503, and section 4702 (death benefits; "
+            "conclusive presumptions of total dependency, dependency in fact, and "
+            "allocation among dependents)."
+        ),
+        medical_paragraphs=(
+            "This addendum addresses the medical question underlying the dependency claim: "
+            "whether the industrial injury or exposure was a contributing cause of death. The "
+            "dependency determinations governed by Labor Code section 3501 and the provisions "
+            "following it are legal rather than medical, and I express no opinion on them.",
+            "I have reviewed the terminal records, the certificate of death and the treatment "
+            "history for the purpose of determining industrial causation. Which persons are "
+            "dependents within the meaning of section 3501, and which must prove dependency in "
+            "fact, will be determined on family circumstances that fall outside a medical "
+            "evaluation.",
+            "In my opinion the industrial condition was a contributing cause of death to a "
+            "reasonable medical probability. Allocation of the death benefit among the dependents "
+            "identified under section 3501 and the sections following it is a matter for the "
+            "trier of fact.",
+        ),
+        legal_paragraphs=(
+            "Labor Code section 3501 conclusively presumes total dependency for a surviving "
+            "spouse who earned no income in the twelve months preceding the injury, and for "
+            "children under the age of eighteen or incapacitated from earning. The presumption is "
+            "conclusive: evidence of actual contribution is neither required to establish it nor "
+            "admissible to defeat it.",
+            "Persons outside the conclusive presumption of section 3501 may still establish total "
+            "or partial dependency in fact, determined as of the date of injury, and the death "
+            "benefit is then allocated among total and partial dependents under Labor Code "
+            "section 4702. The distinction drives the amount payable and should be resolved "
+            "before any settlement is submitted for approval.",
+            "The parties should identify every claimed dependent, the basis of dependency "
+            "asserted under section 3501 or in fact, and whether a guardian ad litem is required "
+            "for any minor claimant, so that the death benefit can be allocated in a single "
+            "proceeding.",
+        ),
+        medical_targets=frozenset({"QME_COMPREHENSIVE_REPORT", "AME_COMPREHENSIVE_REPORT"}),
+        legal_targets=frozenset(
+            {
+                "APPLICATION_FOR_ADJUDICATION_DEATH",
+                "STIPULATIONS_DEATH_CASE",
+                "COMPROMISE_AND_RELEASE_DEPENDENCY",
+                "PETITION_GUARDIAN_AD_LITEM",
+                "TRIAL_BRIEF",
+            }
+        ),
+    ),
+    "lc3208_3_psych": DoctrineContent(
+        hook="lc3208_3_psych",
+        display="Labor Code 3208.3 — psychiatric injury threshold",
+        marker="3208.3",
+        citation=(
+            "Labor Code section 3208.3 (psychiatric injury; six-month employment bar, "
+            "predominant-cause standard, and the sudden and extraordinary employment "
+            "condition exception)."
+        ),
+        medical_paragraphs=(
+            "This psychiatric evaluation is framed by Labor Code section 3208.3, which requires "
+            "that actual events of employment be the predominant cause of the psychiatric injury "
+            "when all causes are considered together. I have therefore weighed the industrial and "
+            "the nonindustrial stressors against each other rather than listing them.",
+            "The diagnosis is stated in the terminology of the diagnostic manual, as section "
+            "3208.3 requires, and the industrial and nonindustrial causes are assigned "
+            "approximate percentages with the reasoning for each. Section 3208.3 makes causation "
+            "a threshold question rather than an apportionment question, and this opinion "
+            "addresses it in those terms.",
+            "The applicant's employment predates the claimed psychiatric injury by more than six "
+            "months, so the employment-duration bar in section 3208.3 is not implicated on the "
+            "facts as reported to me. I note the sudden and extraordinary employment condition "
+            "exception in the event the duration facts are disputed.",
+        ),
+        legal_paragraphs=(
+            "Labor Code section 3208.3 imposes a heightened threshold for psychiatric injury: the "
+            "employee must prove by a preponderance of the evidence that actual events of "
+            "employment were predominant as to all causes combined. The section 3208.3 threshold "
+            "is an element of the claim rather than an affirmative defense, and the burden is the "
+            "applicant's.",
+            "Section 3208.3, subdivision (d), bars compensation for a psychiatric injury unless "
+            "the employee has been employed for at least six months, which need not be "
+            "continuous, except where the injury is caused by a sudden and extraordinary "
+            "employment condition. That exception is construed narrowly and is not satisfied by "
+            "an ordinary, if serious, workplace event.",
+            "The parties should expect the section 3208.3 threshold to be litigated as a separate "
+            "issue, on medical evidence that assigns percentages to the industrial and the "
+            "nonindustrial causes. An evaluation that lists stressors without weighing them does "
+            "not permit a finding under section 3208.3.",
+        ),
+        medical_targets=frozenset(
+            {
+                "PSYCH_EVAL_REPORT_QME_AME",
+                "PSYCHOLOGICAL_TESTING_PROTOCOL",
+                "QME_COMPREHENSIVE_REPORT",
+                "AME_COMPREHENSIVE_REPORT",
+            }
+        ),
+        legal_targets=_BRIEFS | {"CLAIM_DENIAL_LETTER", "ANSWER_TO_APPLICATION"},
+    ),
+    "gfpa": DoctrineContent(
+        hook="gfpa",
+        display="Good faith personnel action defense",
+        marker="personnel action",
+        citation=(
+            "Labor Code section 3208.3, subdivision (h) (a psychiatric injury substantially "
+            "caused by a lawful, nondiscriminatory, good faith personnel action is not "
+            "compensable)."
+        ),
+        medical_paragraphs=(
+            "Labor Code section 3208.3, subdivision (h), makes a psychiatric injury "
+            "noncompensable where it is substantially caused by a lawful, nondiscriminatory, good "
+            "faith personnel action. I have therefore separated the applicant's reaction to "
+            "personnel action events from the reaction to other events of employment, and stated "
+            "approximate percentages for each.",
+            "The applicant attributes the psychiatric condition primarily to a disciplinary "
+            "sequence and a change in assignment. Whether those events were a lawful, "
+            "nondiscriminatory and good faith personnel action is a question outside my role; I "
+            "have assigned the causation percentages so that the trier of fact can apply the "
+            "defense to the medical opinion.",
+            "In my opinion, personnel action events account for the percentage of causation "
+            "stated above, and the remaining causation is attributable to the other employment "
+            "events described. I express no view on whether the employer's conduct was carried "
+            "out in good faith.",
+        ),
+        legal_paragraphs=(
+            "Labor Code section 3208.3, subdivision (h), bars a psychiatric injury claim where "
+            "the injury was substantially caused by a lawful, nondiscriminatory, good faith "
+            "personnel action. The defense requires the employer to establish that the conduct "
+            "was a personnel action, that it was lawful and nondiscriminatory, and that it was "
+            "carried out in good faith.",
+            "The good faith personnel action defense turns on a percentage: the personnel action "
+            "must be a substantial cause of the psychiatric injury, which is at least "
+            "thirty-five to forty percent of the causation from all sources combined. Medical "
+            "evidence that does not quantify that contribution cannot establish the defense.",
+            "The conduct asserted here — criticism of performance, a change in assignment and the "
+            "initiation of a disciplinary process — is personnel action within the meaning of the "
+            "statute. What remains disputed is its lawfulness and the good faith with which it "
+            "was carried out, and the parties should address both.",
+        ),
+        medical_targets=frozenset(
+            {
+                "PSYCH_EVAL_REPORT_QME_AME",
+                "QME_COMPREHENSIVE_REPORT",
+                "AME_COMPREHENSIVE_REPORT",
+            }
+        ),
+        legal_targets=_BRIEFS
+        | {"CLAIM_DENIAL_LETTER", "ANSWER_TO_APPLICATION", "DEFENSE_CASE_ANALYSIS"},
+    ),
+    "firefighter_presumption": DoctrineContent(
+        hook="firefighter_presumption",
+        display="Firefighter cancer presumption",
+        marker="3212.1",
+        citation=(
+            "Labor Code section 3212.1 (rebuttable cancer presumption for firefighters and "
+            "peace officers demonstrating exposure to a known carcinogen)."
+        ),
+        medical_paragraphs=(
+            "This evaluation addresses the medical questions raised by the cancer presumption in "
+            "Labor Code section 3212.1: the diagnosis, its date, the applicant's period of active "
+            "service, and whether the applicant was exposed to a known carcinogen during that "
+            "service. The presumption itself is applied by the trier of fact and not by the "
+            "evaluator.",
+            "Section 3212.1 permits rebuttal only by evidence that the carcinogen to which the "
+            "member was exposed is not reasonably linked to the disabling cancer. I have "
+            "identified the exposures documented in the record and the literature bearing on that "
+            "link, without expressing an opinion on whether a rebuttal succeeds.",
+            "The service history and the date of diagnosis are set out above because together "
+            "they determine whether the extended post-service period described in section 3212.1 "
+            "is available. My causation opinion is stated independently of the presumption so "
+            "that it remains useful if the presumption does not apply.",
+        ),
+        legal_paragraphs=(
+            "Labor Code section 3212.1 establishes a rebuttable presumption that cancer "
+            "developing in a qualifying firefighter or peace officer arose out of and in the "
+            "course of employment, where the member demonstrates exposure to a known carcinogen "
+            "during the period of service. The presumption extends beyond the term of service by "
+            "three months for each year served, to a maximum of 120 months.",
+            "The employer may rebut the section 3212.1 presumption only with evidence that the "
+            "primary site carcinogen to which the member was exposed is not reasonably linked to "
+            "the disabling cancer. A general denial of causation, or an expert opinion that does "
+            "not address the specific carcinogen and the specific cancer, does not meet the "
+            "statutory standard.",
+            "The threshold facts under section 3212.1 — qualifying employment, demonstrated "
+            "exposure to a known carcinogen, and the timing of the diagnosis — are to be pleaded "
+            "and proved by the applicant, and the parties should address them separately from the "
+            "general causation dispute.",
+        ),
+        medical_targets=frozenset(
+            {
+                "QME_COMPREHENSIVE_REPORT",
+                "AME_COMPREHENSIVE_REPORT",
+                "MEDICAL_LEGAL_QME_AME_IME",
+            }
+        ),
+        legal_targets=_AOE_COE_DEFENSE | _BRIEFS,
+    ),
+    "imr_constitutionality": DoctrineContent(
+        hook="imr_constitutionality",
+        display="IMR due-process challenge",
+        marker="Stevens",
+        citation=(
+            "Stevens v. WCAB (2015) 241 Cal.App.4th 1074 and Ramirez v. WCAB (2017) "
+            "10 Cal.App.5th 205 (due-process challenges to independent medical review; "
+            "Labor Code section 4610.6, subdivision (h), appeal grounds)."
+        ),
+        medical_paragraphs=(
+            "The treatment at issue was denied on utilization review and the denial was upheld on "
+            "independent medical review. Stevens v. WCAB confirms that medical necessity is "
+            "determined in that forum rather than by an evaluator, so my opinion on the "
+            "reasonableness of the requested treatment is offered as medical evidence and not as "
+            "a review of the determination.",
+            "I note for the record that the reviewer's identity was not disclosed and the "
+            "determination does not identify the records reviewed. Stevens holds that anonymity "
+            "is permissible while recognizing that a determination founded on a plainly erroneous "
+            "factual premise may be challenged, and I have identified the factual errors visible "
+            "in the record supplied to me.",
+            "Where a determination rests on an incomplete record the appropriate medical step is "
+            "a renewed request supported by the omitted documentation. Stevens and the decisions "
+            "following it leave the substantive question of medical necessity with the review "
+            "process, so this addendum documents the deficiency rather than substituting my "
+            "judgment for the reviewer's.",
+        ),
+        legal_paragraphs=(
+            "Stevens v. WCAB rejected a facial due-process challenge to independent medical "
+            "review, holding that the Legislature may assign medical necessity determinations to "
+            "a non-judicial reviewer, while recognizing that a determination may be set aside on "
+            "the statutory grounds preserved in Labor Code section 4610.6, subdivision (h).",
+            "Ramirez v. WCAB followed Stevens in rejecting constitutional challenges to "
+            "independent medical review while confirming that the statutory appeal grounds are "
+            "real: fraud, conflict of interest, bias, a plainly erroneous material finding of "
+            "fact, and an act in excess of powers. An appeal that fits none of those grounds "
+            "fails however wrong the determination appears.",
+            "The remedy where such an appeal succeeds is a further review by a different "
+            "reviewer, not an award of the requested treatment. The parties should frame this "
+            "dispute in the terms Stevens and Ramirez leave open rather than as a merits review "
+            "of medical necessity.",
+        ),
+        medical_targets=_CORE_MEDLEGAL,
+        legal_targets=frozenset(
+            {
+                "INDEPENDENT_MEDICAL_REVIEW_DECISION",
+                "IMR_DETERMINATION_FORM",
+                "UR_APPEAL_LETTER",
+                "PETITION_RECONSIDERATION_FILED",
+                "TRIAL_BRIEF",
+            }
+        ),
+    ),
+    "ab5_dynamex": DoctrineContent(
+        hook="ab5_dynamex",
+        display="AB 5 / Dynamex — employee status",
+        marker="Dynamex",
+        citation=(
+            "Dynamex Operations West, Inc. v. Superior Court (2018) 4 Cal.5th 903, and "
+            "Labor Code section 2775 (ABC test for employee status)."
+        ),
+        medical_paragraphs=(
+            "The applicant's employment status is disputed under the standard described in "
+            "Dynamex Operations West, Inc. v. Superior Court. That dispute does not affect my "
+            "medical opinions, which address the injury, its cause in the medical sense and the "
+            "resulting impairment; I record the working relationship only as the applicant "
+            "described it.",
+            "For the record, the applicant described work that was directed and scheduled by the "
+            "hiring entity. Whether that description satisfies the test approved in Dynamex is a "
+            "legal question on which I express no opinion, and my causation opinion assumes only "
+            "that the described work activity occurred.",
+            "I have documented the applicant's account of who supplied the tools, who set the "
+            "hours and how the work was assigned, because those facts are relevant to the Dynamex "
+            "analysis even though the conclusion belongs to the trier of fact.",
+        ),
+        legal_paragraphs=(
+            "Dynamex Operations West, Inc. v. Superior Court adopted the ABC test for determining "
+            "whether a worker is an employee, since codified at Labor Code section 2775: the "
+            "hiring entity bears the burden of establishing that the worker is free from its "
+            "control, performs work outside the usual course of its business, and is customarily "
+            "engaged in an independently established trade of the same nature.",
+            "Each prong of the Dynamex test must be satisfied, and the failure of any one prong "
+            "establishes employee status. Because the burden rests on the hiring entity, an "
+            "incomplete record on any prong resolves against the party asserting independent "
+            "contractor status.",
+            "The statutory exemptions return the analysis to the multifactor common law standard "
+            "rather than establishing independent contractor status outright. The parties should "
+            "identify which test they contend applies and, where an exemption is claimed, the "
+            "specific statutory basis for it, before the Dynamex issue is submitted.",
+        ),
+        medical_targets=frozenset({"QME_COMPREHENSIVE_REPORT", "AME_COMPREHENSIVE_REPORT"}),
+        legal_targets=_AOE_COE_DEFENSE | _BRIEFS | {"INVESTIGATION_REPORT"},
+    ),
+    "lc4664_prior_award": DoctrineContent(
+        hook="lc4664_prior_award",
+        display="Labor Code 4664 — apportionment to a prior award",
+        marker="4664",
+        citation=(
+            "Labor Code section 4664, subdivision (b) (conclusive presumption that a prior "
+            "award of permanent disability still exists), and subdivision (c) (lifetime "
+            "accumulation cap by region of the body)."
+        ),
+        medical_paragraphs=(
+            "The applicant is the subject of a prior award of permanent disability affecting the "
+            "same region. Labor Code section 4664, subdivision (b), conclusively presumes that "
+            "the prior disability existed at the time of the subsequent injury, and this opinion "
+            "therefore addresses the current impairment and its overlap with the disability "
+            "previously awarded.",
+            "Apportionment under section 4664 differs from apportionment to nonindustrial "
+            "causation: it operates on the prior award rather than on medical causation, and it "
+            "requires that the prior and the current disability overlap in the same region. I "
+            "have described the overlap in functional terms so that the calculation can be "
+            "performed.",
+            "I have stated the current whole person impairment before any deduction. The "
+            "subtraction of the previously awarded disability required by section 4664 is a "
+            "rating and legal exercise rather than a medical one, and I have not performed it in "
+            "this report.",
+        ),
+        legal_paragraphs=(
+            "Labor Code section 4664, subdivision (b), provides that where a prior award of "
+            "permanent disability has issued, that disability is conclusively presumed to still "
+            "exist at the time of any subsequent injury. The presumption relieves the defendant "
+            "of proving that the prior disability continues; it does not relieve the defendant of "
+            "proving overlap.",
+            "A defendant asserting section 4664 must produce the prior award and must establish "
+            "that the prior and the current permanent disability overlap. Absent proof of "
+            "overlap the conclusive presumption reduces nothing, and the burden on both elements "
+            "rests with the defendant.",
+            "Section 4664 also caps the accumulation of permanent disability awards for the same "
+            "region of the body at one hundred percent over the employee's lifetime. The parties "
+            "should identify every prior award affecting the regions at issue so that the section "
+            "4664 analysis can be completed on a full record.",
+        ),
+        medical_targets=_CORE_MEDLEGAL | {"APPORTIONMENT_REPORT"},
+        legal_targets=_BRIEFS
+        | {
+            "APPORTIONMENT_WORKSHEET",
+            "ANSWER_TO_APPLICATION",
+            "PD_RATING_CALCULATION_WORKSHEET",
+        },
+    ),
+}
+"""Every doctrine hook's renderable content, keyed by hook name."""
+
+
+def content_flags_for(doctrine_hooks: Sequence[str], subtype: str) -> tuple[str, ...]:
+    """The hooks in *doctrine_hooks* that carry content for *subtype*.
+
+    Sorted and deduplicated, so the flag tuple on a planned document is a
+    function of the set of hooks rather than of the order a seed listed them —
+    two seeds naming the same hooks produce the same document.
+
+    Args:
+        doctrine_hooks: the seed's ``lifecycle.doctrine_hooks``.
+        subtype: canonical classifier subtype key.
+
+    Returns:
+        Sorted, deduplicated hook names. Empty when no hook targets *subtype*.
+    """
+    return tuple(
+        sorted(
+            {
+                hook
+                for hook in doctrine_hooks
+                if (content := DOCTRINE_CONTENT.get(hook)) is not None
+                and content.targets_subtype(subtype)
+            }
+        )
+    )
+
+
+def register_for_subtype(subtype: str) -> str:
+    """The register *subtype* is written in — medical addendum or authorities.
+
+    A subtype carries one register across every hook (asserted by
+    ``tests/test_doctrine_content.py``), so this can answer from the first hook
+    that claims it. A subtype no hook targets answers :data:`LEGAL_REGISTER`,
+    which is the conservative default: it is never reached through
+    :func:`content_flags_for`, and a caller that reaches it anyway gets a
+    heading rather than an exception.
+    """
+    for content in DOCTRINE_CONTENT.values():
+        register = content.register_for(subtype)
+        if register is not None:
+            return register
+    return LEGAL_REGISTER
+
+
+def heading_for_register(register: str) -> str:
+    """The section heading for *register*."""
+    return MEDICAL_HEADING if register == MEDICAL_REGISTER else LEGAL_HEADING
+
+
+def doctrine_markers() -> tuple[str, ...]:
+    """Every hook's marker, sorted — the grep surface of this module."""
+    return tuple(sorted(content.marker for content in DOCTRINE_CONTENT.values()))
+
+
+__all__ = [
+    "DOCTRINE_CONTENT",
+    "LEGAL_HEADING",
+    "LEGAL_REGISTER",
+    "MEDICAL_HEADING",
+    "MEDICAL_REGISTER",
+    "DoctrineContent",
+    "content_flags_for",
+    "doctrine_markers",
+    "heading_for_register",
+    "register_for_subtype",
+]

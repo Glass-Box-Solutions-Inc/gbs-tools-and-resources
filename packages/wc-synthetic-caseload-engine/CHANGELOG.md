@@ -9,6 +9,54 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+**KB-grounding: doctrine content injection** (ticket **AJC-34**, ISC-21.1–21.6) — seeded
+doctrine hooks now produce doctrine language in the rendered documents. ISC-21 shipped
+DEFERRED-VERIFY because only half of it was true: `lifecycle.doctrine_hooks` validated, forced
+the psych component and reached the manifest, while a caseload seeded `[kite, escobedo]`
+rendered a corpus in which neither word appeared anywhere. A classifier corpus built from it
+could not be used to measure whether a model finds doctrine language, because the language was
+not in it.
+
+- **New `doctrine.py`** — a content table covering all fourteen `DoctrineHook` values. Each
+  carries the controlling authority, a short **marker** chosen to survive PDF text extraction
+  (`Guzman`, `3208.3`, `personnel action`), three paragraphs written in the register of a
+  med-legal evaluator's discussion, three in the register of points and authorities, and the
+  canonical subtypes each register targets — 36 subtypes in all. Which register a document
+  draws from is decided by the document's own subtype, and a subtype has one register across
+  every hook, so a document flagged with two hooks carries one heading rather than two
+  contradictory ones.
+- **`PlannedDocument.content_flags`** — the sorted, deduplicated subset of the seed's hooks
+  that has content for that document's subtype. Order-independent, so two seeds naming the same
+  hooks produce the same document.
+- **Renderer injection by subclassing, not patching.** A flagged document's template class is
+  subclassed at render time and `build_story` extended: `super()` produces the document the
+  template would otherwise have produced, and a trailing authorities section is appended from
+  the base class's own style sheet. The appended flowables are plain `Paragraph`/`Spacer`/
+  `HRFlowable`, so the substrate's `_story_to_plaintext` and `_story_to_docx` carry them into
+  eml and docx with no further work. The paragraph is drawn from a **private** `random.Random`
+  seeded from `rng_seed` and the hook name — never the re-seeded global stream the substrate
+  templates draw from — so a flagged document's pre-existing content is bit-for-bit what it
+  would have been unflagged, and a flagged case still regenerates byte-identically.
+- **`contentFlags` in the manifest**, written per document and only when non-empty, so a
+  caseload that seeds no doctrines produces byte-identical manifests to the ones it produced
+  before the field existed.
+- **Unflagged is the original code path.** With no flags no wrapper class is built at all —
+  asserted by making the factory raise rather than by inspecting output, because bytes alone
+  cannot distinguish "the wrapper was never built" from "the wrapper was built and appended
+  nothing".
+- **110 new tests** (`tests/test_doctrine_content.py`), mapped to ISC-21.1–21.6: the table
+  (every hook has content; every paragraph carries its marker; every target is one of the 353
+  canonical subtypes), the plan (all fourteen hooks reach a planned document), the page (all
+  fourteen markers, in both registers, survive into extracted PDF text), the anti-criterion, and
+  determinism.
+- **Documented, not discovered later:** hook *count* has always fed the substrate's clinical
+  complexity — two or more hooks flip a case from `standard` to `complex`, which changes every
+  document in it, including documents no doctrine targets. That predates this change and is not
+  content injection, but it is what makes a naive "flagged case versus unflagged case" diff
+  misread. It is now pinned by a test and stated in the README.
+
 ### Fixed
 
 **Second release-review round** (ticket **AJC-34**) — three reproduced findings from a second

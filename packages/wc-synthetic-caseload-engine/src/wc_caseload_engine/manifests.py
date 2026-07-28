@@ -106,8 +106,9 @@ def build_manifest(
 ) -> dict[str, object]:
     """Assemble a case manifest from a plan and its rendered files."""
     seed = plan.seed
-    documents = [
-        {
+    documents: list[dict[str, object]] = []
+    for filename, render in renders:
+        entry: dict[str, object] = {
             "filename": filename,
             "subtype": render.subtype,
             "type": effective_taxonomy().parent_of(render.subtype),
@@ -119,8 +120,13 @@ def build_manifest(
             "template": render.template,
             "fallback": render.fallback,
         }
-        for filename, render in renders
-    ]
+        if render.content_flags:
+            # Present only when non-empty, so a hook-free caseload's manifests
+            # are byte-identical to the ones it produced before doctrine content
+            # existed. An empty list would be a silent diff on every document of
+            # every case that never asked for a doctrine.
+            entry["contentFlags"] = list(render.content_flags)
+        documents.append(entry)
 
     manifest: dict[str, object] = {
         "caseId": seed.case_id,
@@ -192,6 +198,7 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
             title=document.title,
             author_role=document.author_role,
             recipient_role=document.recipient_role,
+            content_flags=document.content_flags,
         )
         # A format fallback can change the extension; trust the written path.
         renders.append((result.path.name, result))

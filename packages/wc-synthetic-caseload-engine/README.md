@@ -105,6 +105,8 @@ lifecycle:
                                # going_and_coming, sibtf, death_dependency, lc3208_3_psych,
                                # gfpa, firefighter_presumption, imr_constitutionality,
                                # ab5_dynamex, lc4664_prior_award
+                               # -> each injects citation + argument into matching
+                               #    subtypes; see "Doctrine hooks" below
 documents:
   global_cap: 120
   format_mix: {pdf: 0.6, scanned_pdf: 0.25, eml: 0.1, docx: 0.05}
@@ -318,6 +320,72 @@ emits no recon documents and records a warning naming the fix.
 
 ---
 
+## Doctrine hooks — landmark authorities, in the paper
+
+`lifecycle.doctrine_hooks` names the doctrines a file turns on. Each hook does three things:
+
+1. **Shapes the case.** `lc3208_3_psych` forces the psych component; two or more hooks raise
+   the substrate's clinical complexity from `standard` to `complex`. Both predate content
+   injection, and the second is worth knowing about: because complexity feeds the whole case,
+   a two-hook seed produces different clinical content in *every* document, including
+   documents no doctrine targets.
+2. **Lands in the manifest.** `doctrineHooks` at case level; `contentFlags` per document, and
+   only on documents that actually carry the language (a hook-free caseload's manifests are
+   byte-identical to what they were before this existed).
+3. **Injects language.** Every hook carries a controlling-authority citation and two pools of
+   paragraphs — one in the register of a med-legal evaluator's discussion, one in the register
+   of points and authorities. Which pool a document draws from is decided by that document's
+   own subtype.
+
+The content table lives in `src/wc_caseload_engine/doctrine.py`. Each hook declares a
+**marker**: a short string chosen to survive PDF text extraction, so a generated corpus can be
+verified — or sampled by a classifier consumer — with a grep rather than a parser.
+
+| Hook | Marker | Controlling authority | Example targets (medical / legal) |
+|------|--------|----------------------|-----------------------------------|
+| `ogilvie` | `Ogilvie` | Ogilvie v. WCAB (2011) 197 Cal.App.4th 1262 | `VOCATIONAL_EXPERT_REPORT` / `TRIAL_BRIEF` |
+| `almaraz_guzman` | `Guzman` | Milpitas Unified School Dist. v. WCAB (Guzman) (2010) 187 Cal.App.4th 808 | `QME_COMPREHENSIVE_REPORT` / `PD_RATING_CALCULATION_WORKSHEET` |
+| `benson` | `Benson` | Benson v. WCAB (2009) 170 Cal.App.4th 1535 | `APPORTIONMENT_REPORT` / `MOTION_TO_CONSOLIDATE` |
+| `escobedo` | `Escobedo` | Escobedo v. Marshalls (2005) 70 Cal.Comp.Cases 604 (en banc) | `APPORTIONMENT_REPORT` / `APPORTIONMENT_WORKSHEET` |
+| `kite` | `Kite` | Athens Administrators v. WCAB (Kite) (2013) 78 Cal.Comp.Cases 213 (writ den.) | `IMPAIRMENT_RATING_WORKSHEET` / `PD_RATING_CONVERSION` |
+| `going_and_coming` | `going and coming` | Hinojosa v. WCAB (1972) 8 Cal.3d 150 | `QME_COMPREHENSIVE_REPORT` / `CLAIM_DENIAL_LETTER` |
+| `sibtf` | `4751` | Labor Code § 4751 | `IMPAIRMENT_RATING_WORKSHEET` / `MOTION_FOR_JOINDER` |
+| `death_dependency` | `3501` | Labor Code §§ 3501–3503, 4702 | `AME_COMPREHENSIVE_REPORT` / `APPLICATION_FOR_ADJUDICATION_DEATH` |
+| `lc3208_3_psych` | `3208.3` | Labor Code § 3208.3 | `PSYCH_EVAL_REPORT_QME_AME` / `ANSWER_TO_APPLICATION` |
+| `gfpa` | `personnel action` | Labor Code § 3208.3(h) | `PSYCH_EVAL_REPORT_QME_AME` / `DEFENSE_CASE_ANALYSIS` |
+| `firefighter_presumption` | `3212.1` | Labor Code § 3212.1 | `MEDICAL_LEGAL_QME_AME_IME` / `COMPENSABILITY_DETERMINATION` |
+| `imr_constitutionality` | `Stevens` | Stevens v. WCAB (2015) 241 Cal.App.4th 1074; Ramirez v. WCAB (2017) 10 Cal.App.5th 205 | `AME_COMPREHENSIVE_REPORT` / `IMR_DETERMINATION_FORM` |
+| `ab5_dynamex` | `Dynamex` | Dynamex Operations West, Inc. v. Superior Court (2018) 4 Cal.5th 903; LC § 2775 | `QME_COMPREHENSIVE_REPORT` / `ANSWER_TO_APPLICATION` |
+| `lc4664_prior_award` | `4664` | Labor Code § 4664(b) | `APPORTIONMENT_REPORT` / `APPORTIONMENT_WORKSHEET` |
+
+The full target sets are in `DOCTRINE_CONTENT`; 36 canonical subtypes are targeted in all, and
+`tests/test_doctrine_content.py` asserts every one of them against the 353-key taxonomy.
+
+### Honest limits
+
+**The section is appended, not interleaved.** A flagged document gets its doctrine content as a
+trailing section — `ADDENDUM — MEDICAL-LEGAL DISCUSSION OF CONTROLLING AUTHORITY` on a medical
+target, `POINTS AND AUTHORITIES — CONTROLLING DOCTRINE` on a legal one — after everything the
+substrate template produced. A real QME would weave the Guzman analysis through the impairment
+discussion rather than bolting it to the end. Interleaving would mean editing substrate
+templates, which this package does not do (the substrate is consumed as a read-only library and
+an anti-probe enforces it). What the addendum does guarantee is that the language is *present,
+attributable and locatable*, which is what a classifier corpus needs; what it does not claim is
+that the document reads exactly as a practitioner would have drafted it.
+
+**Scanned PDFs carry the section but yield no text.** A `scanned_pdf` is a raster of the same
+story, so the doctrine content is in the image and not extractable — the same blind spot every
+text probe in this suite has, and the reason the render assertions use native pdf.
+
+**Case citations are the one place real names appear.** Everything else in a generated file is
+coined or Faker-drawn and swept against a denylist; an authority is named by its case name or it
+is not a citation. Those surnames are checked against the denylist and the substrate's live
+organization pools, but they can still collide with a *seeded* applicant surname — the demo
+caseload already has a `Ramirez`. A collision is cosmetic rather than a leak, and the cross-case
+sweep in `tests/test_coherence.py` is what would surface it.
+
+---
+
 ## Outputs
 
 ```
@@ -334,6 +402,11 @@ emits no recon documents and records a warning naming the fix.
 `{filename, subtype, type, format, documentDate, md5Checksum, fileSize, mimeType, template,
 fallback}`, and a `provenance` block carrying a computed `zeroRealPii`, its `castProvenance`
 derivation, the generator version, the seed hash and `substrateSha`.
+
+A document that carries doctrine language gains one more field, `contentFlags` — the hooks
+whose paragraphs are in it (see [Doctrine hooks](#doctrine-hooks--landmark-authorities-in-the-paper)).
+It is written only when non-empty, so a caseload that seeds no doctrines produces exactly the
+manifests it produced before the field existed.
 
 **`template` and `fallback`.** `template` names the class and variant that produced the file
 (`CourtNotice/lien_filing`); `fallback` is `true` when the document did not render as

@@ -29,6 +29,7 @@ from wc_caseload_engine.doc_controls import (
     ControlResolution,
     resolve_document_controls,
 )
+from wc_caseload_engine.doctrine import content_flags_for
 from wc_caseload_engine.lien_machine import LienTrack, build_lien_tracks, lien_candidates
 from wc_caseload_engine.lifecycle_bridge import (
     CaseTimeline,
@@ -64,6 +65,15 @@ class PlannedDocument:
 
     Empty only for plans built before perspective existed; every plan this
     module builds sets it. See :func:`wc_caseload_engine.perspective.document_roles`.
+    """
+    content_flags: tuple[str, ...] = ()
+    """Doctrine hooks whose language this document carries.
+
+    Sorted and deduplicated — the subset of the seed's
+    ``lifecycle.doctrine_hooks`` that
+    :func:`~wc_caseload_engine.doctrine.content_flags_for` says has content for
+    this subtype. Empty for every document of a hook-free case, which is what
+    keeps the no-doctrine render path byte-identical to what it was.
     """
 
 
@@ -209,6 +219,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
                 author_role=roles.author_role,
                 title=taxonomy.label(subtype) or subtype.replace("_", " ").title(),
                 recipient_role=roles.recipient_role,
+                content_flags=content_flags_for(seed.lifecycle.doctrine_hooks, subtype),
             )
         )
 
