@@ -405,7 +405,7 @@
       <p class="dek">A user guide for generating complete, byte-reproducible synthetic California workers&rsquo; compensation attorney case files &mdash; for Adjudica demo accounts, classifier training corpora, and testing.</p>
       <div class="meta">
         <span><b>Package</b> <code class="inline">packages/wc-synthetic-caseload-engine</code></span>
-        <span><b>Version</b> 0.1.0</span>
+        <span><b>Version</b> 0.2.0</span>
         <span><b>Tickets</b> AJC-34, AJC-36</span>
         <span><b>CLI</b> <code class="inline">wc-caseload</code></span>
       </div>
@@ -416,7 +416,7 @@
       <span class="section-num">Section 1</span>
       <h2>What it is, and why</h2>
       <p class="lede">The engine turns a small YAML seed into a complete synthetic California workers&rsquo; compensation attorney case file &mdash; the kind that reads as if an applicant-side firm actually produced it, right down to lien conferences that end in executed lien resolution agreements and petitions for reconsideration that come back remanded and settled on remand.</p>
-      <p>Write one <code class="inline">CaseSeed</code> per case &mdash; who was hurt, how, how far the case went, which legal doctrines flavor it, and exactly which documents you want in what quantities and formats &mdash; run one command, and get back a folder of rendered documents plus a manifest describing every one of them. The same seed regenerates the same caseload forever, byte for byte.</p>
+      <p>Write one <code class="inline">CaseSeed</code> per case &mdash; who was hurt, how, how far the case went, which legal doctrines flavor it, and exactly which documents you want in what quantities and formats &mdash; run one command, and get back a folder of rendered documents plus a manifest describing every one of them. The same seed regenerates the same caseload byte for byte &mdash; on any machine and any day, for as long as the engine version and the substrate commit both hold still (see <a href="#determinism">Determinism</a>).</p>
 
       <h3>The problem it solves</h3>
       <p>Adjudica demo accounts held five document-free matters and one hand-populated case. The closest existing tool, <code class="inline">merus-test-data-generator</code>, generates documents at scale but takes only CLI flags: no per-case seed artifact to review, no reconsideration round-trips, thin lien modelling, and no fine-grained per-case document controls. Because nothing could generate targeted documents to specification, the classifier&rsquo;s accuracy corpus covered only 97 of its 353 subtypes.</p>
@@ -467,7 +467,7 @@
             <tr><td><code>wc-caseload validate --spec S</code></td><td>Schema, cross-field rules and document-control key validity for a spec file.</td></tr>
             <tr><td><code>wc-caseload validate --out D</code></td><td>Every manifest subtype canonical and parent-valid, every file present, every MD5 matching.</td></tr>
             <tr><td><code>wc-caseload taxonomy-check [--classifier-path DIR]</code></td><td>Diff the engine taxonomy against the classifier source; nonzero exit on drift. Classifier checkout defaults to <code>WC_CASELOAD_CLASSIFIER</code> or <code>~/projects</code>.</td></tr>
-            <tr><td><code>wc-caseload --version</code></td><td>Print the installed engine version (currently <code>0.1.0</code>).</td></tr>
+            <tr><td><code>wc-caseload --version</code></td><td>Print the installed engine version (currently <code>0.2.0</code>).</td></tr>
           </tbody>
         </table>
       </div>
@@ -986,11 +986,11 @@ Error: 1 document control key(s) are not valid taxonomy keys</code></pre>
       <p>A death-benefits argument in a living applicant&rsquo;s file is not a feature. Every hook therefore carries a <strong>prerequisite</strong> &mdash; a predicate over the seed&rsquo;s own fields &mdash; and the engine treats a failed prerequisite differently depending on who asked for the hook:</p>
       <div class="rank"><span class="n">1</span><span class="t"><strong>You named it &rarr; kept, and warned about.</strong> An explicit <code class="inline">doctrine_hooks</code> entry is a choice, and the same rule that governs document controls governs this: explicit control wins, loudly. The hook stays, the language renders, and the case records a warning.</span></div>
       <div class="rank"><span class="n">2</span><span class="t"><strong>The distribution drew it &rarr; filtered out silently.</strong> An auto-derived case (<code class="inline">auto:</code>) draws hooks from a pool that has already been filtered against the same prerequisites. A draw is nobody&rsquo;s choice, so there is nothing to respect and nothing to warn about.</span></div>
-      <p>The warning is verbatim from a live run of the demo caseload, whose <code class="inline">nguyen-cr-three-liens</code> case names <code class="inline">benson</code> on a single-body-part claim precisely to exercise this path:</p>
+      <p>Here is the warning from a live run of the demo caseload, whose <code class="inline">nguyen-cr-three-liens</code> case names <code class="inline">benson</code> on a single-body-part claim precisely to exercise this path. The wording is exact; the line breaks are this page&rsquo;s, since the engine emits it as one continuous string:</p>
       <pre><code>lifecycle.doctrine_hooks names benson on a case that cannot support it:
 apportioning between injuries needs a rating and more than one impaired
 region to argue about &mdash; lifecycle.eval_type must not be none and
-injury.body_parts must name at least two parts. The hook is kept and its
+injury.body_parts must name at least two distinct parts. The hook is kept and its
 language will be rendered (an explicit seed wins), but the argument will
 not match the rest of the file.</code></pre>
       <p>It is emitted twice: as a <code class="inline">WARN</code> on the console (<code class="inline">doctrine.unsupported_hook</code>) and as an entry in the case manifest&rsquo;s <code class="inline">warnings</code> array, so a caseload generated in CI can be checked without scraping logs. <code class="inline">generate</code> prints a run-level tally &mdash; <code class="inline">warnings : 2 (see per-case manifest 'warnings')</code> &mdash; and still exits zero, because a deliberately-unsupported hook is a legitimate thing to seed.</p>
@@ -1232,7 +1232,11 @@ not match the rest of the file.</code></pre>
 
       <h4><code>gfpa</code> &mdash; the good faith personnel action defence</h4>
       <p>Labor Code &sect; 3208.3(h) &mdash; a psychiatric injury substantially caused by a lawful, nondiscriminatory, good faith personnel action is not compensable.</p>
-      <p><strong>Needs:</strong> <code class="inline">psyche</code> named in <code class="inline">injury.body_parts</code>, or <code class="inline">lc3208_3_psych</code> seeded alongside it. This is the second gate the demo caseload deliberately fails.</p>
+      <p><strong>Needs:</strong> <code class="inline">psyche</code> named in <code class="inline">injury.body_parts</code>. This is the second gate the demo caseload deliberately fails.</p>
+      <div class="callout warn">
+        <span class="callout-label">Naming <code>lc3208_3_psych</code> no longer satisfies this gate</span>
+        The gate used to accept a second route &mdash; seeding <code class="inline">lc3208_3_psych</code> alongside <code class="inline">gfpa</code> &mdash; which was removed as incoherent. On a claim with no <code class="inline">psyche</code> body part, <code class="inline">lc3208_3_psych</code> fails its <em>own</em> gate and warns, so the defence was passing by pointing at a hook that had just failed on the same seed. A defence cannot be better supported than the claim it answers. Give the case a real psychiatric body part, as the fragment above does.
+      </div>
 <pre><code><span class="key">case_id:</span> <span class="val">gfpa-minimal</span>
 <span class="key">rng_seed:</span> <span class="val">424242</span>
 <span class="key">injury:</span>
@@ -1435,6 +1439,12 @@ result    : OK &mdash; every subtype canonical, every checksum matches,
       <span class="section-num">Section 11</span>
       <h2>Determinism guarantees</h2>
       <p>Same seed plus same engine version produces the same bytes &mdash; <strong>on any machine, in any timezone, on any day</strong> &mdash; including every MD5 in the manifest. Manifests carry no generation timestamp, precisely so this guarantee stays independently verifiable.</p>
+
+      <div class="callout warn">
+        <span class="callout-label">Two things have to match, not one</span>
+        <p>Every document&rsquo;s content ultimately comes from the substrate&rsquo;s templates and pools, and the substrate is a separate package on its own history. Comparability therefore requires the <strong>engine version</strong> and <strong><code class="inline">provenance.substrateSha</code></strong> to <em>both</em> agree. The pin in <code class="inline">substrate_pin.txt</code> only <code class="inline">WARN</code>s on a mismatch, because moving to a newer substrate deliberately is normal and only the operator can tell deliberate from accidental.</p>
+        <p style="margin-bottom:0;">So: a byte diff across differing engine versions is a release note &mdash; behavioural changes bump the version and are listed under a Compatibility heading in <code class="inline">CHANGELOG.md</code>. A byte diff across differing <code class="inline">substrateSha</code> values is expected, and that field exists precisely so you can see it. <strong>A byte diff with both matching is a bug</strong> &mdash; the one case with no innocent explanation.</p>
+      </div>
 
       <h3>Verify it yourself</h3>
       <pre><code><span class="cmdline">wc-caseload generate --spec examples/demo-caseload.yaml --out /tmp/run-a</span>

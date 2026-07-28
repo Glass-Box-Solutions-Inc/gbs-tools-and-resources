@@ -33,12 +33,25 @@ from typing import Any, Literal
 
 import structlog
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 # doctrine.py deliberately imports nothing from this module (its prerequisites
 # read a flat ``DoctrineFacts`` record rather than a CaseSeed), so this import
 # direction is the acyclic one.
-from wc_caseload_engine.doctrine import DoctrineFacts, hook_is_supported, supported_hooks
+from wc_caseload_engine.doctrine import (
+    DoctrineFacts,
+    distinct_body_part_count,
+    hook_is_supported,
+    supported_hooks,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -289,6 +302,19 @@ class BodyPart(_Model):
     detail: str | None = None
 
 
+def _repeated_part_message(first: str, second: str, *, case_id: str | None = None) -> str:
+    """The one wording for a repeated body part, with or without a case name."""
+    written = f"{first!r} and {second!r}" if first != second else repr(second)
+    prefix = f"case {case_id!r}: " if case_id else ""
+    return (
+        f"{prefix}injury.body_parts names the same region twice ({written}). "
+        "List each part once — a repeated entry is not a second impairment, and "
+        "doctrines that need two distinct parts (benson, kite) would be satisfied "
+        "by a part and itself. Use injury.body_parts[].detail to describe multiple "
+        "findings in one region."
+    )
+
+
 class InjurySpec(_Model):
     """What happened, when, and to which body parts."""
 
@@ -298,6 +324,44 @@ class InjurySpec(_Model):
     ct_end: date | None = None
     body_parts: list[BodyPart] = Field(min_length=1, max_length=5)
     mechanism: str = "auto"
+
+    @staticmethod
+    def find_repeated_part(body_parts: Iterable[Any]) -> tuple[str, str] | None:
+        """The first region named twice, as ``(first spelling, second)``.
+
+        A ``staticmethod`` over raw entries rather than a method on a built
+        instance, because :class:`CaseSeed` has to run this check *before* the
+        nested :class:`InjurySpec` is constructed — see
+        :meth:`CaseSeed._reject_repeated_body_parts`.
+        """
+        seen: dict[str, str] = {}
+        for entry in body_parts:
+            part = entry.get("part") if isinstance(entry, Mapping) else getattr(entry, "part", None)
+            if not isinstance(part, str):
+                continue  # a malformed entry is the type system's problem, not ours
+            key = part.strip().casefold()
+            if key in seen:
+                return seen[key], part
+            seen[key] = part
+        return None
+
+    def repeated_body_part(self) -> tuple[str, str] | None:
+        """This injury's first repeated region, or ``None``."""
+        return self.find_repeated_part(self.body_parts)
+
+    @model_validator(mode="after")
+    def _check_distinct_body_parts(self) -> InjurySpec:
+        """The invariant belongs to the injury, so the injury enforces it.
+
+        :class:`CaseSeed` runs the same check earlier to produce a message
+        naming the case, but ``InjurySpec`` is public API — it is in
+        ``__all__`` — and a bare construction must not be able to hold a state
+        the rest of the engine treats as impossible.
+        """
+        repeated = self.repeated_body_part()
+        if repeated is None:
+            return self
+        raise ValueError(_repeated_part_message(*repeated))
 
     @model_validator(mode="after")
     def _check_dates(self) -> InjurySpec:
@@ -638,6 +702,38 @@ class CaseSeed(_Model):
     lifecycle: LifecycleSpec = Field(default_factory=LifecycleSpec)
     documents: DocumentControls = Field(default_factory=DocumentControls)
     output: OutputSpec = Field(default_factory=OutputSpec)
+
+    @field_validator("injury", mode="before")
+    @classmethod
+    def _reject_repeated_body_parts(cls, value: Any, info: ValidationInfo) -> Any:
+        """One claim cannot injure the same region twice.
+
+        A repeated entry is not a second impairment, but ``benson`` and ``kite``
+        both gate on there being two — so ``[lumbar_spine, lumbar_spine]`` used
+        to satisfy Kite and put a synergistic-effect argument between a body
+        part and itself into the file, silently. The seed is where an impossible
+        story gets rejected (AJC-35 #25).
+
+        ``InjurySpec`` enforces the same invariant, so why here as well? Because
+        pydantic validates a nested model *before* the outer model's ``after``
+        validators run, so the injury's own error would win and the message
+        would lose the case name — and in a caseload of thirty, "some injury has
+        a duplicate" is not an actionable error. ``mode="before"`` runs ahead of
+        the nested construction, and ``case_id`` is declared above ``injury`` so
+        it is already validated and present in ``info.data``.
+        """
+        parts = (
+            value.get("body_parts")
+            if isinstance(value, Mapping)
+            else getattr(value, "body_parts", None)
+        )
+        if isinstance(parts, Sequence) and not isinstance(parts, str | bytes):
+            repeated = InjurySpec.find_repeated_part(parts)
+            if repeated is not None:
+                raise ValueError(
+                    _repeated_part_message(*repeated, case_id=info.data.get("case_id"))
+                )
+        return value
 
     @model_validator(mode="after")
     def _check_runway(self) -> CaseSeed:
@@ -1175,10 +1271,45 @@ def _weighted_choice(rng: random.Random, weights: Mapping[str, float]) -> str:
 
 
 def _derive_body_parts(rng: random.Random, category: str, count: int) -> list[BodyPart]:
-    """Pick *count* distinct body parts, starting in *category*."""
+    """Pick up to *count* distinct body parts, starting in *category*.
+
+    Distinctness is enforced by part name, not by catalog position.
+    ``BODY_PART_CATALOG`` lists several regions more than once *within* a single
+    category — ``psyche`` twice, ``head`` twice, ``internal`` three times, each
+    entry a different ICD-10 code and detail — so shuffling a category pool and
+    slicing it returned the same region repeatedly. About 8% of auto-derived
+    seeds carried a repeat, which ``benson`` and ``kite`` then counted as two
+    impairments (AJC-35 #25).
+
+    A narrow category can therefore yield fewer than *count* parts once the
+    other categories are exhausted too. That is the intended trade: a case with
+    one impairment is ordinary, whereas a case claiming the same region twice is
+    not a case at all.
+    """
+    chosen: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+
+    def take(entries: Iterable[tuple[str, str, str]]) -> None:
+        for part, icd10, detail in entries:
+            if len(chosen) == count:
+                return
+            key = part.strip().casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            chosen.append((part, icd10, detail))
+
     pool: list[tuple[str, str, str]] = list(BODY_PART_CATALOG[category])
     rng.shuffle(pool)
-    chosen: list[tuple[str, str, str]] = pool[:count]
+    take(pool)
+
+    # The second shuffle stays behind the same condition it has always been
+    # behind. Draining the category pool first and only reaching for other
+    # categories when it came up short means a seed whose category pool already
+    # held `count` distinct parts consumes exactly the RNG it used to, and so
+    # regenerates byte-identically. Only seeds that were previously served a
+    # repeat — the ones whose output had to change anyway — reach this branch
+    # newly.
     if len(chosen) < count:
         others = [
             entry
@@ -1187,7 +1318,8 @@ def _derive_body_parts(rng: random.Random, category: str, count: int) -> list[Bo
             for entry in entries
         ]
         rng.shuffle(others)
-        chosen.extend(others[: count - len(chosen)])
+        take(others)
+
     return [BodyPart(part=part, icd10=icd10, detail=detail) for part, icd10, detail in chosen]
 
 
@@ -1399,10 +1531,26 @@ def derive_case_seed(
 
     # The prerequisites read lifecycle facts, so they are assembled before the
     # hooks that depend on them rather than off a seed that does not exist yet.
+    #
+    # ``occupation`` and ``industry`` are deliberately absent, not forgotten: a
+    # derived seed carries no ``profile`` block at all (see the CaseSeed built
+    # below), because the cast is drawn later, in ``case_context``, and never
+    # written back. So there is nothing to pass, and the two fields keep their
+    # empty defaults.
+    #
+    # The consequence is that ``firefighter_presumption`` — the one hook gated
+    # on those two fields — can never be auto-drawn. Measured at 0 across 975
+    # derived seeds. That fails *closed*, so it is a coverage gap rather than an
+    # incoherent case, and closing it means giving derivation an occupation and
+    # industry distribution plus a profile in the materialized seed. Tracked as
+    # its own AJC-35 item; ``TestFirefighterPresumptionCannotBeAutoDrawn`` pins
+    # the current behaviour so the gap cannot close silently.
     doctrine_facts = DoctrineFacts(
         injury_type=injury.type,
-        body_part_count=len(injury.body_parts),
-        has_psych_body_part=any(part.part == "psyche" for part in injury.body_parts),
+        body_part_count=distinct_body_part_count(injury.body_parts),
+        has_psych_body_part=any(
+            part.part.strip().casefold() == "psyche" for part in injury.body_parts
+        ),
         eval_type=eval_type,
         claim_response=claim_response,
         imr_filed=bool(ur_dispute.enabled and ur_dispute.imr),

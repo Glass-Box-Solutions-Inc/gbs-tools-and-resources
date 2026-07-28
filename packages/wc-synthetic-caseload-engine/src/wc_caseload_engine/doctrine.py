@@ -70,6 +70,28 @@ LEGAL_HEADING = "POINTS AND AUTHORITIES — CONTROLLING DOCTRINE"
 """Section heading used on documents whose subtype is a legal target."""
 
 
+def _normalized_part(part: Any) -> str:
+    """A body part's identity for comparison — trimmed and case-folded.
+
+    ``Lumbar_Spine`` and ``lumbar_spine`` name one region written two ways.
+    """
+    return str(getattr(part, "part", part)).strip().casefold()
+
+
+def distinct_body_part_count(parts: Sequence[Any]) -> int:
+    """How many *different* regions a list of body parts names.
+
+    The gates for ``benson`` and ``kite`` both ask for two impairments, and
+    ``len(body_parts)`` answered that question wrongly whenever a part appeared
+    twice — letting Kite argue a synergistic effect between a region and itself.
+    :class:`~wc_caseload_engine.seeds.InjurySpec` now refuses such a seed
+    outright, so this is the second line of defence: :class:`DoctrineFacts` is
+    also built during ``auto:`` derivation, from lifecycle fields that exist
+    before any seed has been validated.
+    """
+    return len({_normalized_part(part) for part in parts})
+
+
 @dataclass(frozen=True, slots=True)
 class DoctrineFacts:
     """The case facts a doctrine prerequisite is allowed to consult.
@@ -79,6 +101,13 @@ class DoctrineFacts:
     ``auto:`` derivation, from lifecycle fields that exist before any seed does
     — and keeping it seed-shaped rather than seed-typed is what lets this module
     stay free of an import cycle with :mod:`wc_caseload_engine.seeds`.
+
+    Every field describes **the case**. There is deliberately no field carrying
+    the seed's own ``doctrine_hooks``: a ``seeded_hooks`` frozenset used to live
+    here so ``gfpa`` could accept ``lc3208_3_psych`` as a substitute for a
+    psychiatric claim, which made one hook's gate depend on which *other* hooks
+    were named (AJC-35 #24). Removing the field rather than the one branch that
+    read it is what keeps the next such gate from being written at all.
     """
 
     injury_type: str
@@ -87,7 +116,6 @@ class DoctrineFacts:
     eval_type: str
     claim_response: str
     imr_filed: bool
-    seeded_hooks: frozenset[str] = frozenset()
     occupation: str = ""
     industry: str = ""
 
@@ -98,12 +126,11 @@ class DoctrineFacts:
         parts = seed.injury.body_parts
         return cls(
             injury_type=seed.injury.type,
-            body_part_count=len(parts),
-            has_psych_body_part=any(part.part == "psyche" for part in parts),
+            body_part_count=distinct_body_part_count(parts),
+            has_psych_body_part=any(_normalized_part(part) == "psyche" for part in parts),
             eval_type=lifecycle.eval_type,
             claim_response=lifecycle.claim_response,
             imr_filed=bool(lifecycle.ur_dispute.enabled and lifecycle.ur_dispute.imr),
-            seeded_hooks=frozenset(lifecycle.doctrine_hooks),
             occupation=seed.profile.applicant.occupation or "",
             industry=seed.profile.employer.industry or "",
         )
@@ -144,7 +171,7 @@ def _needs_rating(facts: DoctrineFacts) -> bool:
 _RATING_PREREQUISITE = DoctrinePrerequisite(
     description=(
         "the case must reach a permanent disability rating, which requires "
-        "lifecycle.eval_type to be qme, ame or ime rather than none"
+        "lifecycle.eval_type to be qme or ame rather than none"
     ),
     predicate=_needs_rating,
 )
@@ -161,7 +188,7 @@ _BENSON_PREREQUISITE = DoctrinePrerequisite(
     description=(
         "apportioning between injuries needs a rating and more than one impaired "
         "region to argue about — lifecycle.eval_type must not be none and "
-        "injury.body_parts must name at least two parts"
+        "injury.body_parts must name at least two distinct parts"
     ),
     predicate=lambda facts: _needs_rating(facts) and facts.body_part_count >= 2,
 )
@@ -181,7 +208,7 @@ _KITE_PREREQUISITE = DoctrinePrerequisite(
     description=(
         "adding impairments instead of combining them needs two impairments to "
         "add — lifecycle.eval_type must not be none and injury.body_parts must "
-        "name at least two parts"
+        "name at least two distinct parts"
     ),
     predicate=lambda facts: _needs_rating(facts) and facts.body_part_count >= 2,
 )
@@ -217,10 +244,12 @@ ordinary QME with no warning. A satisfied prerequisite bypasses the
 kept-and-warned path, so a too-weak gate is worse than no gate: it launders the
 incoherence as approved.
 
-Deliberately the same shape as :data:`_GFPA_PREREQUISITE`, minus the escape
-hatch. ``gfpa`` accepts ``lc3208_3_psych`` alongside it as evidence of a
-psychiatric claim; this hook *is* that evidence, so it has to come from the
-injury itself.
+Now literally the same predicate as :data:`_GFPA_PREREQUISITE`, and that is the
+point: the threshold and the defence to it both stand or fall on whether a
+psychiatric injury was claimed, so they read the same fact from the same place.
+``gfpa`` briefly accepted ``lc3208_3_psych`` alongside it as a substitute for
+that fact; the substitution let a defence outlive the claim it answers and was
+removed in AJC-35 #24.
 
 The guarantee is that the hook cannot be **auto-drawn** onto a case with no
 psychiatric claim — not that it cannot reach one. Seeding it explicitly on an
@@ -232,12 +261,35 @@ overrules a seed author.
 _GFPA_PREREQUISITE = DoctrinePrerequisite(
     description=(
         "a defence to a psychiatric claim needs a psychiatric claim to defend "
-        "against — name psyche in injury.body_parts, or seed lc3208_3_psych "
-        "alongside it"
+        "against — name psyche in injury.body_parts"
     ),
-    predicate=lambda facts: facts.has_psych_body_part
-    or "lc3208_3_psych" in facts.seeded_hooks,
+    predicate=lambda facts: facts.has_psych_body_part,
 )
+"""The good faith personnel action defence, gated on the claim it answers.
+
+This used to accept a second branch, ``"lc3208_3_psych" in facts.seeded_hooks``:
+naming the psychiatric-threshold hook was treated as standing in for an actual
+psychiatric claim. It was removed as incoherent rather than merely weak.
+
+On a lumbar-only seed naming both hooks, ``lc3208_3_psych`` failed its own gate
+and warned while ``gfpa`` — whose entire subject is defending against the claim
+``lc3208_3_psych`` describes — passed silently by pointing at the hook that had
+just failed. A defence cannot be better supported than the claim it answers.
+
+The branch also read no case fact. ``doctrine_hooks`` records which arguments a
+file features; ``injury.body_parts`` records what was claimed, and it is what
+the manifest and every rendered document describe.
+
+The obvious defence of the branch was that ``lifecycle_bridge`` forces
+``has_psych_component=True`` when the hook is seeded, so the case really does
+acquire psychiatric content. Measured across 60 rng seeds: it does move content
+(psychiatric documents in 46/60, against 0/60 with no hook) — but a genuine
+``psyche`` body part scores identically, the same 46/60 on the same barren
+seeds, because the substrate's psych document rules are probabilistic either
+way. The branch bought no content capability the primary branch lacks. It only
+let a seed skip recording the claim, at the cost of a gate that answers
+differently depending on which *other* hooks were named.
+"""
 
 _SAFETY_MEMBER_PREREQUISITE = DoctrinePrerequisite(
     description=(

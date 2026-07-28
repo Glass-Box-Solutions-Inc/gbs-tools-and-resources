@@ -9,6 +9,139 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### ⚠️ Compatibility — version bumped to 0.2.0
+
+`0.1.0` → `0.2.0`. The reproducibility guarantee is *bytes are stable within a
+version*; three behavioural changes below cross that line, so the version moves
+with them. A caseload regenerated at `0.2.0` should be compared against a
+`0.2.0` baseline, not a `0.1.0` one.
+
+1. **Auto-derived output moves for 75 of 975 measured seeds — and only those.**
+   `_derive_body_parts` now rejects repeats, so any derived case that previously
+   received the same region twice gets a different part list, and everything
+   drawn after it shifts. The fix was deliberately written to shuffle the
+   fallback pool *behind the same condition it has always been behind*, so a
+   seed whose category pool already held enough distinct parts consumes exactly
+   the RNG it used to. Verified by deriving 975 seeds under the last released
+   behaviour — `seeds.py` and `doctrine.py` as of **`fefa3a4`**, the final
+   `0.1.0` tree — and again under this one: 900 byte-identical, and the 75 that
+   changed are exactly the 75 that previously carried a duplicate. (`fefa3a4`
+   rather than this commit's parent: the parent is the in-flight commit that
+   introduced the unconditional shuffle, so it is not a `0.1.0` baseline. The
+   comparison is clean because `seeded_hooks` was never populated during
+   derivation, which makes the `gfpa` gate change a no-op on that path.) An
+   earlier draft shuffled unconditionally and would have moved **all 975**; that
+   was measured and rejected rather than disclosed.
+
+   The two-revision probe cannot live in the test suite, but the property that
+   produced the result can: `TestTheCommonPathConsumesTheRngItAlwaysDid` counts
+   shuffle calls through a wrapping RNG and pins them at one when the category
+   pool suffices and two when it comes up short. Re-introducing the
+   unconditional shuffle fails all three of its cases.
+
+2. **Seeds that used to load are now refused.** `injury.body_parts` naming the
+   same region twice raises at load. Both shipped specs are clean, and a test
+   keeps them that way, but a hand-written seed relying on the old leniency will
+   now fail with an actionable error naming the case.
+
+3. **`psyche` is matched case- and whitespace-insensitively.** A seed spelling it
+   `Psyche` or `" psyche "` previously did *not* register as a psychiatric claim,
+   so `lc3208_3_psych` and `gfpa` warned as unsupported on it. Such a seed now
+   registers and stops warning. This is a correctness fix — the seed plainly
+   meant `psyche` — but it is a visible behaviour change for anyone whose
+   expected-warning fixtures encode the old spelling sensitivity.
+
+### Fixed — doctrine gate coherence (ticket **AJC-35**, items #23–#25)
+
+Three gates were letting through cases they describe as impossible. Each was
+reproduced as a failing test first.
+
+- **#23 — a warning named a value the schema rejects.** `_RATING_PREREQUISITE`
+  told users `lifecycle.eval_type` could be `qme, ame or ime`; `EvalType` is
+  `Literal["qme", "ame", "none"]`. Five hooks shared that description, so five
+  warnings advised a fix that fails validation. Corrected, and the existing
+  wording is now gated: a sweep reads each `Literal` alias and asserts that
+  every value a prerequisite description enumerates is legal for the field it
+  names. The defect had already escaped twice — here and in the user guide that
+  copied it — which is the signature of something needing a gate rather than
+  another correction.
+
+  Scope is narrow and documented as such: the matcher reads the one prose form
+  these descriptions actually use (`must be` / `must not be` / `to be` followed
+  by a comma-or-`or` list) against a hand-maintained map of three fields. It is
+  a regression gate on the current wording, **not** a general prose checker — a
+  description invented in a new phrasing, or naming a fourth field, is not
+  inspected. Two guards stop that from becoming silent vacuity: the exact set of
+  descriptions the matcher reaches is pinned, so lost coverage fails loudly
+  rather than passing on an empty match, and planted-bad-value cases in each
+  prose form prove the matcher can fail at all.
+
+- **#24 — `gfpa` could be satisfied by another hook.** Its predicate accepted
+  `"lc3208_3_psych" in facts.seeded_hooks` as a substitute for a psychiatric
+  claim. Removed as **incoherent**, not merely weak: on a lumbar-only seed
+  naming both hooks, `lc3208_3_psych` failed its own gate and warned while
+  `gfpa` — whose entire subject is defending against the claim `lc3208_3_psych`
+  describes — passed silently by pointing at the hook that had just failed. A
+  defence cannot be better supported than the claim it answers.
+
+  The branch's strongest defence was measured before removing it: `lifecycle_bridge`
+  does force `has_psych_component=True` when the hook is seeded, and that does move
+  content — psychiatric documents appeared for 46 of 60 rng seeds, against 0 of 60
+  with no hook. But a genuine `psyche` body part scores *identically*, the same
+  46/60 on the same barren seeds, because the substrate's psych document rules are
+  probabilistic either way. The branch bought no content capability the primary
+  branch lacks; it only let a seed skip recording the claim.
+
+  `DoctrineFacts.seeded_hooks` is deleted rather than merely unread, so a gate that
+  answers differently depending on which *other* doctrines were seeded is now
+  unrepresentable. The unsupported-`gfpa` warning no longer advises the removed
+  route.
+
+- **#25 — a body part could be claimed twice, and often was.** `[lumbar_spine,
+  lumbar_spine]` loaded fine and then counted as two for `benson` and `kite`,
+  whose premise is two *distinct* impairments — so Kite could argue a synergistic
+  effect between a region and itself, silently. Four layers now:
+  `CaseSeed` rejects a repeated part at load with an error naming the case;
+  `InjurySpec` enforces the same invariant on its own, because it is public API
+  (it is in `__all__`) and a bare construction must not hold a state the rest of
+  the engine treats as impossible; `DoctrineFacts.body_part_count` counts
+  distinct parts (case- and whitespace-insensitive) at both construction sites;
+  and `_derive_body_parts` now delivers the distinctness its docstring already
+  promised.
+
+  The two validators are not redundant. Pydantic validates a nested model before
+  the outer model's `after` validators, so an `InjurySpec`-only check would win
+  the race and produce a message without the case name — and in a caseload of
+  thirty, "some injury has a duplicate" is not actionable. The seed-level check
+  therefore runs `mode="before"`, ahead of the nested construction, and the
+  ordering is pinned by a test rather than left to be rediscovered.
+
+  That last one was a live bug, not a precaution: `BODY_PART_CATALOG` lists
+  `psyche` twice, `head` twice and `internal` three times *within their own
+  category*, so shuffling a category pool and slicing it returned repeats. About
+  8% of auto-derived seeds carried one (75 of 975 measured). Without this fix the
+  new validator would have turned a silent modelling error into a hard crash of
+  `auto:` derivation. A narrow category now yields fewer parts rather than
+  repeats.
+
+### Known gap — `firefighter_presumption` is never auto-drawn
+
+Found while fixing the above and **left unfixed deliberately**. `derive_case_seed`
+builds `DoctrineFacts` without `occupation` or `industry` because a derived seed
+carries no `profile` block at all — the cast is drawn later, in `case_context`,
+and never written back. `_SAFETY_MEMBER_PREREQUISITE` reads exactly those two
+fields, so the hook is filtered out of every draw: 0 occurrences across 975
+derived seeds, while the other thirteen appear between 6 and 60 times.
+
+This fails *closed* — derivation never produces a case arguing a presumption it
+cannot support — so it is a coverage gap rather than the incoherence class above.
+Closing it needs an occupation/industry distribution and a profile in the
+materialized seed, which changes the bytes of every auto-derived caseload; that is
+auto-derivation work, not gate work, and is tracked as its own AJC-35 item.
+`TestFirefighterPresumptionCannotBeAutoDrawn` pins the current behaviour so the gap
+cannot close or widen silently, and explicitly-seeded firefighter cases are
+unaffected.
+
 ### Added
 
 **Operator user guide and a doctrine showcase caseload** (ticket **AJC-36**).

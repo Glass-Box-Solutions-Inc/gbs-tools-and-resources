@@ -53,7 +53,10 @@ from wc_caseload_engine.doctrine import (
     MEDICAL_HEADING,
     MEDICAL_REGISTER,
     DoctrineContent,
+    DoctrineFacts,
     content_flags_for,
+    hook_is_supported,
+    unsupported_hook_warnings,
 )
 from wc_caseload_engine.lifecycle_bridge import build_timeline
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
@@ -64,7 +67,10 @@ from wc_caseload_engine.renderer import (
     render_document,
 )
 from wc_caseload_engine.seeds import (
+    ClaimResponse,
     DoctrineHook,
+    EvalType,
+    InjuryType,
     load_caseload_spec,
     parse_case_seed,
     resolve_caseload,
@@ -1287,3 +1293,261 @@ class TestManifestAndDeterminism:
             assert one_sums[subtype] != clean_sums[subtype], (
                 f"{subtype} rendered no doctrine content"
             )
+
+
+# ---------------------------------------------------------------------------
+# AJC-35 #23 — prerequisite descriptions must name real enum values
+# ---------------------------------------------------------------------------
+
+#: Seed field path -> the values that field legally accepts.
+#:
+#: Read from the ``Literal`` aliases rather than transcribed, so widening an
+#: enum cannot leave this table asserting the old vocabulary.
+FIELD_VOCABULARY: dict[str, frozenset[str]] = {
+    "lifecycle.eval_type": frozenset(typing.get_args(EvalType.__value__)),
+    "lifecycle.claim_response": frozenset(typing.get_args(ClaimResponse.__value__)),
+    "injury.type": frozenset(typing.get_args(InjuryType.__value__)),
+}
+
+#: Words a description may put inside a value list without them being values.
+_CONNECTIVES = frozenset({"or", "and", "rather", "than", "not", "be", "to", "must"})
+
+#: ``must be X, Y or Z`` / ``to be X, Y or Z`` — a bare comma/or-separated list.
+_VALUE_LIST = re.compile(
+    r"(?:must (?:not )?be|to be)\s+([a-z_]+(?:(?:,\s*|\s+or\s+)[a-z_]+)*)",
+)
+
+#: Any dotted seed field path, e.g. ``lifecycle.eval_type``.
+_FIELD_PATH = re.compile(r"\b(?:lifecycle|injury|profile)(?:\.[a-z_]+)+\b")
+
+
+class TestPrerequisiteDescriptionsNameRealEnumValues:
+    """AJC-35 #23: a warning that names a value the schema rejects is a lie.
+
+    ``_RATING_PREREQUISITE`` told users ``lifecycle.eval_type`` could be
+    ``ime``. ``EvalType`` is ``Literal["qme", "ame", "none"]`` — there is no
+    ``ime``, so five hooks' warnings advised a fix that fails validation.
+
+    The check is a sweep rather than a spot assertion because this class of
+    defect had already appeared twice — here, and in the user guide that copied
+    it — which is the signature of something that needs a gate rather than
+    another correction.
+
+    **What it does and does not cover.** It reads values out of the one prose
+    form the descriptions actually use — ``must be`` / ``must not be`` / ``to
+    be`` followed by a comma-or-``or`` list — and checks them against a
+    hand-maintained map of three fields. It is not a general natural-language
+    checker: a description inventing a new phrasing, or naming a field outside
+    :data:`FIELD_VOCABULARY`, is simply not inspected. Two guards keep that
+    honest instead of silently vacuous: :meth:`test_the_sweep_actually_inspects
+    _the_descriptions_it_claims_to` pins the exact set of descriptions the
+    matcher reaches, so losing coverage fails loudly rather than passing
+    emptily; and :meth:`test_the_matcher_catches_a_planted_bad_value` proves the
+    matcher can fail at all.
+    """
+
+    #: Hooks whose description the value-matcher is expected to inspect.
+    #:
+    #: Pinned, not derived — that is the point. If a description is reworded
+    #: into a form the matcher cannot read, this set shrinks and the test says
+    #: so, instead of the sweep quietly checking nothing.
+    INSPECTED: ClassVar[frozenset[str]] = frozenset(
+        {
+            "ogilvie",
+            "almaraz_guzman",
+            "escobedo",
+            "sibtf",
+            "lc4664_prior_award",
+            "benson",
+            "kite",
+            "going_and_coming",
+            "ab5_dynamex",
+            "death_dependency",
+        }
+    )
+
+    @staticmethod
+    def _inspect(description: str) -> list[tuple[str, str, frozenset[str]]]:
+        """``(field, value, legal)`` for every value the matcher can read."""
+        found: list[tuple[str, str, frozenset[str]]] = []
+        for match in _VALUE_LIST.finditer(description):
+            paths = _FIELD_PATH.findall(description[: match.start()])
+            if not paths or paths[-1] not in FIELD_VOCABULARY:
+                continue
+            legal = FIELD_VOCABULARY[paths[-1]]
+            for token in re.split(r",\s*|\s+or\s+|\s+", match.group(1)):
+                if token and token not in _CONNECTIVES:
+                    found.append((paths[-1], token, legal))
+        return found
+
+    def test_the_sweep_actually_inspects_the_descriptions_it_claims_to(self) -> None:
+        """Vacuity guard: a sweep that matches nothing passes for the wrong reason."""
+        reached = {
+            hook
+            for hook, content in DOCTRINE_CONTENT.items()
+            if content.requires is not None and self._inspect(content.requires.description)
+        }
+        assert reached == self.INSPECTED, (
+            "the set of descriptions the enum sweep can read changed. Gained: "
+            f"{sorted(reached - self.INSPECTED)}; lost: {sorted(self.INSPECTED - reached)}. "
+            "A lost description is coverage silently dropped — either reword it back "
+            "into a form the matcher reads, or extend the matcher and this set."
+        )
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "the case must reach a rating, which requires lifecycle.eval_type to be "
+            "qme, ame or ime rather than none",
+            "lifecycle.claim_response must be denied or rejected",
+            "death benefits require injury.type to be deceased",
+            "lifecycle.eval_type must not be nil",
+        ],
+        ids=["ime", "rejected", "deceased", "nil"],
+    )
+    def test_the_matcher_catches_a_planted_bad_value(self, description: str) -> None:
+        """Counterfactual: prove the matcher can fail, in each prose form it reads."""
+        illegal = [
+            (field, value)
+            for field, value, legal in self._inspect(description)
+            if value not in legal
+        ]
+        assert illegal, f"the matcher read nothing illegal out of: {description!r}"
+
+    def test_the_matcher_passes_prose_that_is_correct(self) -> None:
+        """The mirror of the above — no false positives on legal vocabulary."""
+        for description in (
+            "lifecycle.eval_type to be qme or ame rather than none",
+            "lifecycle.claim_response must be denied or delayed",
+            "death benefits require injury.type to be death",
+        ):
+            illegal = [
+                (field, value)
+                for field, value, legal in self._inspect(description)
+                if value not in legal
+            ]
+            assert not illegal, f"{description!r} flagged {illegal}"
+
+    def test_every_value_a_description_enumerates_is_legal_for_its_field(self) -> None:
+        offenders: list[str] = []
+        for hook, content in sorted(DOCTRINE_CONTENT.items()):
+            if content.requires is None:
+                continue
+            description = content.requires.description
+            for match in _VALUE_LIST.finditer(description):
+                # The field described is the nearest one named before the list.
+                paths = _FIELD_PATH.findall(description[: match.start()])
+                if not paths or paths[-1] not in FIELD_VOCABULARY:
+                    continue
+                field = paths[-1]
+                legal = FIELD_VOCABULARY[field]
+                for token in re.split(r",\s*|\s+or\s+|\s+", match.group(1)):
+                    if not token or token in _CONNECTIVES or token in legal:
+                        continue
+                    offenders.append(
+                        f"{hook}: {field} cannot be {token!r} — legal values are "
+                        f"{sorted(legal)}"
+                    )
+
+        assert not offenders, (
+            "a prerequisite description enumerates a value the seed schema would "
+            "reject, so the warning tells the user to write an invalid seed:\n  "
+            + "\n  ".join(offenders)
+        )
+
+
+# ---------------------------------------------------------------------------
+# AJC-35 #24 — a hook's gate may not be satisfied by another hook
+# ---------------------------------------------------------------------------
+
+
+class TestNoGateIsSatisfiedByAnotherHook:
+    """AJC-35 #24: ``gfpa`` accepted ``lc3208_3_psych in seeded_hooks``.
+
+    Two separate defects in one branch.
+
+    **It is incoherent.** On a lumbar-only seed naming both hooks,
+    ``lc3208_3_psych`` fails its own gate and warns, while ``gfpa`` — whose
+    entire subject is defending against the claim ``lc3208_3_psych`` describes —
+    passes silently by pointing at the hook that just failed. A defence cannot
+    be better supported than the claim it answers.
+
+    **It reads no case fact.** ``doctrine_hooks`` records which arguments a file
+    features; ``injury.body_parts`` records what was claimed. Naming an argument
+    is not making a claim, and such a case's manifest shows no psychiatric body
+    part at all.
+
+    Measured before removing it: forcing ``has_psych_component`` through
+    ``lifecycle_bridge`` does move content — psychiatric documents appear for
+    46/60 rng seeds versus 0/60 with no hook — but a real ``psyche`` body part
+    scores *identically*, the same 46/60 on the same barren seeds. The branch
+    bought no content capability the primary branch lacks; it only let a seed
+    skip recording the claim.
+    """
+
+    pytestmark = requires_substrate
+
+    @staticmethod
+    def _lumbar_only(hooks: tuple[str, ...]) -> Any:
+        return parse_case_seed(
+            {
+                "case_id": "gate-independence",
+                "rng_seed": 500001,
+                "injury": {
+                    "type": "specific",
+                    "date_of_injury": "2022-04-11",
+                    "body_parts": [{"part": "lumbar_spine", "icd10": "M54.5"}],
+                },
+                "lifecycle": {
+                    "target_stage": "medical_legal",
+                    "eval_type": "qme",
+                    "doctrine_hooks": list(hooks),
+                },
+            }
+        )
+
+    def test_gfpa_needs_a_psychiatric_claim_not_a_sibling_hook(self) -> None:
+        seed = self._lumbar_only(("lc3208_3_psych", "gfpa"))
+        assert not hook_is_supported("gfpa", seed), (
+            "gfpa passed its gate on a lumbar-only claim because lc3208_3_psych was "
+            "named alongside it. A defence to a psychiatric injury needs the injury, "
+            "not another hook's name."
+        )
+
+    def test_a_defence_is_never_better_supported_than_the_claim_it_answers(self) -> None:
+        seed = self._lumbar_only(("lc3208_3_psych", "gfpa"))
+        assert hook_is_supported("gfpa", seed) <= hook_is_supported("lc3208_3_psych", seed), (
+            "gfpa is supported on a seed where lc3208_3_psych is not. The defence "
+            "cannot stand on facts the claim itself cannot reach."
+        )
+
+    def test_a_gate_cannot_even_see_the_seeds_hook_list(self) -> None:
+        """Structural: the facts record carries no field naming other hooks.
+
+        Stronger than asserting no *current* predicate reads one — the field is
+        gone, so the next gate cannot be written this way either. Every field
+        below describes the case.
+        """
+        assert set(DoctrineFacts.__dataclass_fields__) == {
+            "injury_type",
+            "body_part_count",
+            "has_psych_body_part",
+            "eval_type",
+            "claim_response",
+            "imr_filed",
+            "occupation",
+            "industry",
+        }, (
+            "DoctrineFacts gained or lost a field. A prerequisite may consult only "
+            "case facts — never the seed's own doctrine_hooks, which is what let "
+            "gfpa be satisfied by naming lc3208_3_psych (AJC-35 #24)."
+        )
+
+    def test_the_warning_does_not_advise_the_removed_route(self) -> None:
+        (warning,) = unsupported_hook_warnings(["gfpa"], self._lumbar_only(("gfpa",)))
+        assert "seed lc3208_3_psych alongside" not in warning, (
+            "the warning still tells the user to seed lc3208_3_psych as a way to "
+            "satisfy gfpa. That route is gone, and advice inside a warning has to "
+            "stay true."
+        )
+        assert "psyche" in warning, "the warning must still name the fix that does work"
