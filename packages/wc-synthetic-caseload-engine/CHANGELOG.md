@@ -57,6 +57,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   points at it, holding no enumeration or count of its own.
   `BANNED_ASSERTIONS` already carried entries for all three additions, so the shipped prose was
   correct throughout; only the table was stale. No doctrine content changed.
+  Every cell is written against the predicate lambda rather than its human-readable
+  `description`, and the two **disjunctive** gates now spell out both branches. `gfpa` is
+  satisfied by `psyche` in `body_parts` **or** by `lc3208_3_psych` appearing in the same seed's
+  `doctrine_hooks` — a branch that establishes no case fact at all, since naming one hook
+  satisfies another hook's gate (confirmed live: `[lc3208_3_psych, gfpa]` on a lumbar-only claim
+  reports `gfpa` supported with zero warnings). `firefighter_presumption` is satisfied by
+  `industry == "government"` **or** a substring match of `fire`/`police`/`peace officer`/
+  `sheriff`/`deputy` against the occupation, so `Deputy Comptroller` passes. Both are documented
+  as defects of the gate, not of the prose; the `gfpa` weakness is ticketed on the merits in
+  AJC-35.
+- Corrected the guide's `distinctTemplates` description: the implementation counts
+  `template_label(class_name, variant)` strings, so it counts recorded **labels**, not template
+  classes. `LIEN_RESOLUTION` and `LIEN_STIPULATION_AGREEMENT` share the one `Stipulations` class
+  but record `Stipulations/lien_resolution` and `Stipulations/lien_stipulation` and count as two
+  — the opposite of what the row previously claimed.
 
 ### Fixed
 

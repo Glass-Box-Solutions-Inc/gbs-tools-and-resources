@@ -399,11 +399,18 @@ the gate is *exact*. If it can satisfy the gate while the predicate remains unkn
 | `sibtf` | A **preexisting labor-disabling PPD** combined with a subsequent industrial injury | `eval_type` ≠ `none` → the case reaches a PD rating | *approximation* |
 | `death_dependency` | An industrial death (dependency shares are the doctrine's subject, not its predicate) | `injury.type` is `death` | **exact** |
 | `lc3208_3_psych` | A psychiatric injury is claimed | `psyche` named in `injury.body_parts` | **exact** |
-| `gfpa` | A psychiatric claim **and a lawful good faith personnel action** contended to have substantially caused it | `psyche` named in `injury.body_parts` — the claim only, never the personnel action | *approximation* |
-| `firefighter_presumption` | A **qualifying safety member** with a **cancer diagnosis** and demonstrated carcinogen exposure | `employer.industry: government`, or an `applicant.occupation` matching a qualifying role | *approximation* |
+| `gfpa` | A psychiatric claim **and a lawful good faith personnel action** contended to have substantially caused it | Either branch of a disjunction: `psyche` named in `injury.body_parts`, **or** the string `lc3208_3_psych` present in the same seed's `lifecycle.doctrine_hooks`. The second branch establishes **no case fact whatsoever** — naming one hook satisfies another hook's gate, so `doctrine_hooks: [lc3208_3_psych, gfpa]` passes on a lumbar-only claim with no psychiatric component at all. Neither branch reaches the personnel action. | *approximation* |
+| `firefighter_presumption` | A **qualifying safety member** with a **cancer diagnosis** and demonstrated carcinogen exposure | Either branch of a disjunction: `employer.industry` lower-cased equals `government`, **or** `applicant.occupation` lower-cased *contains* any of `fire`, `police`, `peace officer`, `sheriff`, `deputy`. The second branch is a substring test, so `Fire Safety Inspector` and `Deputy Comptroller` both pass. Neither branch reaches a diagnosis. | *approximation* |
 | `imr_constitutionality` | An IMR determination happened and is being challenged | `ur_dispute.enabled` **and** `ur_dispute.imr` both true | **exact** |
 | `ab5_dynamex` | **Employment status is disputed** — the worker is contended to be an independent contractor | `claim_response` is `denied` or `delayed` → the claim is contested | *approximation* |
 | `lc4664_prior_award` | A **prior award of permanent disability** to an overlapping region | `eval_type` ≠ `none` → the case reaches a PD rating | *approximation* |
+
+Every cell above is written against the predicate lambda in `doctrine.py`, not against its
+human-readable `description`. Two gates are **disjunctions** and both branches are spelled out —
+`gfpa` and `firefighter_presumption`; the other twelve are a single condition or a conjunction
+with every conjunct stated. Both disjunctive branches were confirmed live: seeding
+`[lc3208_3_psych, gfpa]` on a lumbar-only claim makes `gfpa` report as supported with zero
+warnings, and an occupation of `Deputy Comptroller` satisfies the safety-member gate.
 
 **Seven exact, seven approximations.** The approximations fall into two shapes, and the second
 shape is what earlier versions of this table missed. Four are missing a discrete *entity* the seed

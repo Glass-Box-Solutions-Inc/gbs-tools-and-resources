@@ -1400,7 +1400,7 @@ result    : OK &mdash; every subtype canonical, every checksum matches,
         <table>
           <thead><tr><th>Field</th><th>What it tells you</th></tr></thead>
           <tbody>
-            <tr><td><code>distinctTemplates</code></td><td>How many distinct substrate template classes ran across the caseload &mdash; the render-side counterpart to <code>distinctSubtypes</code>. Two subtypes rendering through one template (see <a href="#limitations">Known limitations</a>) show up here as one.</td></tr>
+            <tr><td><code>distinctTemplates</code></td><td>How many distinct <strong>recorded template labels</strong> ran across the caseload &mdash; the render-side counterpart to <code>distinctSubtypes</code>. A label is <code>ClassName</code>, or <code>ClassName/variant</code> where the subtype selects a variant, and it is the same string each document carries in its own <code>template</code> field. So it counts labels, <em>not</em> classes: <code>LIEN_RESOLUTION</code> and <code>LIEN_STIPULATION_AGREEMENT</code> both render through the one <code>Stipulations</code> class (see <a href="#limitations">Known limitations</a>) but record <code>Stipulations/lien_resolution</code> and <code>Stipulations/lien_stipulation</code>, and so count as <strong>two</strong>.</td></tr>
             <tr><td><code>fallbackCount</code></td><td>Documents that fell through to the generic template because dispatch had nothing better. <strong>A healthy caseload reports <code>0</code></strong>, and <code>validate --out</code> fails on a nonzero count unless you pass <code>--allow-fallback</code>. Live-verified at <code>0</code> for both the demo and the doctrine showcase.</td></tr>
           </tbody>
         </table>
