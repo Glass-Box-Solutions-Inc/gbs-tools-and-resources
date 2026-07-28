@@ -4,8 +4,8 @@ project: wc-synthetic-caseload-engine
 slug: 20260727-143600_wc-synthetic-caseload-engine
 effort: E4
 effort_source: classifier
-phase: learn
-progress: 82/84
+phase: complete
+progress: 83/84
 mode: interactive
 started: 2026-07-27T14:36:00-07:00
 updated: 2026-07-27T19:30:00-07:00
@@ -157,7 +157,7 @@ A new installable package whose CLI turns a caseload spec (defaults + distributi
 - [x] ISC-80: Applicant-only material (client intake, advocacy letters to treaters, applicant client status letters) is absent from defense files by default, present only via explicit override
 - [x] ISC-81: Demo caseload gains a defense-perspective case; all gates stay green (pytest, ruff, double-run + TZ determinism, validate)
 - [x] ISC-82: Anti: flipping perspective never changes case facts — mirrored seeds (same rng_seed/injury/lifecycle) produce identical cast, ADJ number, and event dates (probe: manifest field diff)
-- [ ] ISC-83: README + user guide document perspective semantics and the defense-side docx letterhead limitation
+- [x] ISC-83: README + user guide document perspective semantics and the defense-side docx letterhead limitation
 - [x] ISC-84: Tests cover default, swap logic, applicant-only absence, and the mirrored-facts invariant
 
 ## Test Strategy
@@ -261,5 +261,5 @@ Evidence is grouped; every probe was run in the main checkout on the fast-forwar
 - ISC-65..68: manifest probes — per-doc fields incl. md5/fileSize/mimeType; provenance {zeroRealPii: true, substrateSha, seedHash}; caseload manifest carries stage/resolution/lien/recon summaries + subtypeCoverage {78, 353, 22.1%}.
 - ISC-70..74: 307 tests; ruff clean; anti-probes — no substrate file copied (content-hash test + Forge trace); ISC-73 denylist sweep clean over 256 text-bearing demo documents and all 7 manifests' cast fields, positive control fires, 400 engine-coined organization names checked against the list; `zeroRealPii` computed and provably falsifiable; ISC-74 sentinel `HOME`/`TMPDIR`/XDG tree shows 0 created, 0 modified, 0 removed files after a subprocess generate (test_anti_probes).
 - ISC-75..82, 84: perspective build (commit 217b6d2) — 257 tests (+32) incl. mirrored-facts invariant (identical cast/ADJ/dates across perspectives), work-product swap, applicant-only absence + forced-override WARN path, comparative frequency probe (defense CLAIMS_ADMINISTRATION=9, INVESTIGATION=3 vs applicant baseline), 7-case demo double-run + TZ run MD5-identical (346 files), validate OK (331 docs), six pre-existing cases byte-stable (only intended manifest deltas: perspective field + seedHash).
-- ISC-83: README/CHANGELOG done; HTML user guide perspective section pending — checked after guide refresh.
+- ISC-83: README/CHANGELOG + HTML user guide Section 4 (Case perspective) — guide live-verified against perspective.py and a 7-case run.
 - ISC-21: DEFERRED-VERIFY — doctrine_hooks accepted by schema and wired into the plan; content-depth probe (per-hook language in rendered docs) deferred to the KB-grounding follow-up under AJC-34.
