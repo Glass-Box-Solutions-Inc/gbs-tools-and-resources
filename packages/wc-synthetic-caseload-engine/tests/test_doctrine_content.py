@@ -63,7 +63,12 @@ from wc_caseload_engine.renderer import (
     doctrine_template_class,
     render_document,
 )
-from wc_caseload_engine.seeds import DoctrineHook, parse_case_seed
+from wc_caseload_engine.seeds import (
+    DoctrineHook,
+    load_caseload_spec,
+    parse_case_seed,
+    resolve_caseload,
+)
 from wc_caseload_engine.taxonomy import effective_taxonomy
 
 ENUM_HOOKS: tuple[str, ...] = tuple(sorted(typing.get_args(DoctrineHook.__value__)))
@@ -627,6 +632,78 @@ class TestTheDemoCaseloadsWarningsArePinned:
             "deliberately names a doctrine its case cannot support (see the inline YAML "
             "comments); a new one is either a real defect or a deliberate demonstration "
             "that belongs in this list."
+        )
+
+
+class TestTheDoctrineShowcaseSpecCoversEveryHookCleanly:
+    """AJC-36: the guide publishes this spec as the warning-free run.
+
+    Three separate claims, each asserted on its own so a break names itself:
+
+    1. Every one of the fourteen hooks is seeded somewhere in the spec.
+    2. Every seeded hook's prerequisite is satisfied — the whole run is warning
+       free, which is the property that distinguishes it from the demo.
+    3. Every hook actually reaches a document that targets it. A hook can be
+       supported and still land nothing (see the guide's "supported is not the
+       same as rendered"), and a showcase that demonstrates no content is not a
+       showcase — so the naturally-emitted flag is asserted rather than assumed.
+
+    Asserted against the plan rather than a render: the plan already carries the
+    content flags, and rendering six cases costs ~40 s for no extra signal.
+    """
+
+    pytestmark = requires_substrate
+
+    @staticmethod
+    def _seeds() -> list[Any]:
+        from conftest import SHOWCASE_SPEC
+
+        return list(resolve_caseload(load_caseload_spec(SHOWCASE_SPEC)))
+
+    def _plans(self) -> list[tuple[str, Any]]:
+        return [(seed.case_id, build_case_plan(seed)) for seed in self._seeds()]
+
+    def test_every_hook_is_seeded_somewhere(self) -> None:
+        seeded = {hook for seed in self._seeds() for hook in seed.lifecycle.doctrine_hooks}
+        assert seeded == set(DOCTRINE_CONTENT), (
+            "examples/doctrine-showcase.yaml is the guide's 'all fourteen doctrines' spec. "
+            f"Missing: {sorted(set(DOCTRINE_CONTENT) - seeded)}; "
+            f"unknown: {sorted(seeded - set(DOCTRINE_CONTENT))}."
+        )
+
+    def test_the_whole_run_is_warning_free(self) -> None:
+        warned = {case_id: plan.warnings for case_id, plan in self._plans() if plan.warnings}
+        assert warned == {}, (
+            "the doctrine showcase is published as a zero-warning run — every case's "
+            "facts are supposed to satisfy every hook it names. Either the seed drifted "
+            "or a prerequisite tightened; fix the seed, do not relax the assertion."
+        )
+
+    def test_every_hook_lands_on_a_document_without_being_forced(self) -> None:
+        flagged: dict[str, set[str]] = {}
+        for _case_id, plan in self._plans():
+            for document in plan.documents:
+                for hook in document.content_flags:
+                    flagged.setdefault(hook, set()).add(document.subtype)
+
+        missing = sorted(set(DOCTRINE_CONTENT) - set(flagged))
+        assert not missing, (
+            f"{missing} are supported by their showcase case but reach no document that "
+            "targets them, so the spec demonstrates nothing for them. Advance that case's "
+            "lifecycle until a target subtype is emitted naturally — do not add a "
+            "documents.overrides entry, which would itself warn."
+        )
+
+    def test_the_showcase_forces_no_subtypes(self) -> None:
+        """The zero-warning claim depends on this: a forced subtype is a WARN."""
+        forced = {
+            seed.case_id: [o.subtype or str(o.type) for o in seed.documents.overrides]
+            for seed in self._seeds()
+            if seed.documents.overrides
+        }
+        assert forced == {}, (
+            "the showcase reaches every hook through natural lifecycle emission on "
+            f"purpose; these cases now force subtypes instead: {forced}."
         )
 
 

@@ -1,7 +1,9 @@
 # wc-synthetic-caseload-engine — Developer Guide
 
 **Seed-driven generator of complete synthetic CA workers' compensation attorney case files.**
-Ticket: **AJC-34**. See `README.md` for the product surface and `ISA.md` for the criteria contract.
+Tickets: **AJC-34** (engine), **AJC-36** (docs). See `README.md` for the product surface,
+`docs/user-guide/index.html` for the operator guide — including the per-doctrine "needed seeds"
+reference — and `ISA.md` for the criteria contract.
 
 ---
 
@@ -174,7 +176,7 @@ If an import breaks, fix the bridge — not by copying files.
 
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/         # 501 tests, ~95s (pyproject already passes -q)
+.venv/bin/python -m pytest tests/         # 527 tests, ~95s (pyproject already passes -q)
 .venv/bin/ruff check .
 ```
 
@@ -195,7 +197,7 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_coherence.py` | Full-case identity sweep + cross-case contamination guard |
 | `test_format_mix.py` | Chi-square of realized vs seeded format distribution |
 | `test_entrypoint_parity.py` | `-m` and console-script output are byte-identical |
-| `test_doctrine_content.py` | Doctrine content table, prerequisites, plan flags, per-hook language on the page, hook-free anti-probe |
+| `test_doctrine_content.py` | Doctrine content table, prerequisites, plan flags, per-hook language on the page, hook-free anti-probe, and the `examples/doctrine-showcase.yaml` pins (every hook seeded, zero warnings, every hook landing, no forced subtypes) |
 | `test_manifest_integrity.py` | `zeroRealPii` vs the denylist, canonical control keys at generate, emitted-vs-proposed track counts |
 
 The demo caseload is generated **once per session** by the `demo_caseload` fixture in
@@ -230,8 +232,9 @@ Rendering is the slow part; the plan carries every subtype, date, track and form
 
 ## Ticket & branch
 
-- Linear: **AJC-34** (AJC, not ADJ — repo precedent for `gbs-tools-and-resources` packages).
-- Commits: conventional, scoped `feat(wc-synthetic-caseload-engine)` or `[AJC-34]`.
+- Linear: **AJC-34** (engine), **AJC-36** (user guide + doctrine showcase). AJC, not ADJ —
+  repo precedent for `gbs-tools-and-resources` packages.
+- Commits: conventional, scoped `feat(wc-synthetic-caseload-engine)` or `[AJC-NN]`.
 
 ---
 

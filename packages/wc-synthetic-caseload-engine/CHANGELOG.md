@@ -9,6 +9,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+**Operator user guide and a doctrine showcase caseload** (ticket **AJC-36**).
+
+- **`docs/user-guide/index.html`** — a 14-section operator guide, brought current with the
+  merged engine. New material: *Doctrine hooks* (the two registers and their headings, which
+  subtypes each hook targets, `contentFlags` provenance, the fourteen citations and markers,
+  prerequisite gating, and the determinism properties of injection); the *needed-seeds
+  reference*, one block per hook giving the doctrine, its citation, exactly what the seed must
+  establish, a minimal runnable seed and the subtypes that carry the language; *manifest
+  truthfulness* (`documentCount` vs `plannedDocumentCount`, `petitionDate`/`orderDate` vs their
+  `planned*` twins, the `warnings` array, and `zeroRealPii` as a computed measurement of
+  `castProvenance` rather than an asserted constant); and *control-key canonicalization*,
+  including the alias-collision check that catches one subtype written two ways.
+- **`examples/doctrine-showcase.yaml`** — six cases grouped by prerequisite that exercise all
+  fourteen hooks with **zero warnings** and no `documents.overrides` anywhere: every hook
+  reaches a target document through its case's own lifecycle. Verified at 210 documents,
+  `validate --out` clean with zero fallbacks, and every hook's marker present in a rendered PDF.
+  Four assertions in `tests/test_doctrine_content.py` pin it — every hook seeded, the run
+  warning-free, every hook landing on a document, and no forced subtypes — because a showcase
+  that silently stops showcasing is worse than none.
+
+### Changed
+
+- Corrected stale claims in the guide against the merged code: the *Doctrine-hook content depth*
+  limitation (content injection now ships and is verified end to end, replaced by the two limits
+  that are actually real — the prose is fixed text, and four gates approximate their doctrine);
+  the demo caseload totals (7 cases / 331 documents / 83 subtypes, not 6 / 276 / 78); and the
+  per-case manifest field lists, which omitted `contentFlags`, `template`, `fallback`,
+  `castProvenance`, `warnings` and every `planned*` field.
+- Scoped the README's doctrine-prose claim from "no paragraph anywhere asserts a fact its own
+  gate does not establish" to "no paragraph asserts the doctrinal predicate its gate
+  approximates" — the narrower statement is the one the tests actually enforce (AJC-35 #22).
+
 ### Fixed
 
 **Cross-model release review — six blocking findings** (ticket **AJC-34**). Each was reproduced

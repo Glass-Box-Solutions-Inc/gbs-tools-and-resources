@@ -393,8 +393,8 @@ claim, `kite` on two impairments to add. Closing the four above means modelling 
 injury, a prior award and a diagnosis in the seed schema; that is a schema change, not a content
 change.
 
-Because those four gates are approximations, **no paragraph anywhere asserts a fact its own gate
-does not establish** — the approximation is confined to the gate and never leaks into the prose.
+Because those four gates are approximations, **no paragraph asserts the doctrinal predicate its
+gate approximates** — the approximation is confined to the gate and never leaks into the prose.
 Where a hook argues about something the seed cannot model, the language raises it conditionally
 ("Where a prior award is produced...", "Where the records establish a prior condition..."), and
 `BANNED_ASSERTIONS` in `tests/test_doctrine_content.py` holds a positive control for every
@@ -686,6 +686,38 @@ never crosses the horizon, so the extension cannot leak into ordinary cases.
 Dates of injury are chosen to leave statutory runway: a case that petitions and then settles
 on remand needs roughly nine months after its award before the fixed anchor date
 (`2026-01-01`), or the whole post-award sequence compresses into a single day.
+
+The demo deliberately carries two doctrine hooks its cases cannot support — `benson` on
+`nguyen-cr-three-liens` and `gfpa` on `ramirez-death-dependency` — so a normal run demonstrates
+the kept-and-warned path rather than only the happy one.
+
+### `examples/doctrine-showcase.yaml` — the warning-free counterpart
+
+Six cases grouped by prerequisite, covering **all fourteen doctrine hooks with zero warnings**
+and no `documents.overrides` anywhere: every hook reaches a target document through its case's
+own lifecycle. Live-verified at 210 documents, `validate --out` clean with zero fallbacks, and
+every hook's marker findable in a rendered PDF.
+
+```bash
+wc-caseload generate --spec examples/doctrine-showcase.yaml --out /tmp/wcce-doctrine
+wc-caseload validate --out /tmp/wcce-doctrine
+```
+
+| Case | What its facts establish | Hooks |
+|------|--------------------------|-------|
+| `showcase-rating-doctrines` | `eval_type: qme`, two body parts, F&A, recon round trip | ogilvie, almaraz_guzman, benson, escobedo, kite, sibtf, lc4664_prior_award |
+| `showcase-threshold-defences` | `claim_response: denied` | going_and_coming, ab5_dynamex |
+| `showcase-death-dependency` | `injury.type: death` | death_dependency |
+| `showcase-psychiatric` | `psyche` in `body_parts` | lc3208_3_psych, gfpa |
+| `showcase-firefighter-presumption` | `employer.industry: government` | firefighter_presumption |
+| `showcase-imr-challenge` | `ur_dispute.enabled` + `imr: true` | imr_constitutionality |
+
+`tests/test_doctrine_content.py` pins all four claims — every hook seeded, zero warnings, every
+hook landing on a document, and no forced subtypes.
+
+For a per-hook reference — the doctrine, its citation, exactly what the seed must establish, a
+minimal runnable seed, and the subtypes that carry the language — see the user guide at
+[`docs/user-guide/index.html`](docs/user-guide/index.html).
 
 ---
 
