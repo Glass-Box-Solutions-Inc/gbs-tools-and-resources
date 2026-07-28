@@ -8,7 +8,8 @@ command, and get back case files that read like an applicant-side firm produced 
 through lien conferences and executed lien agreements, through a petition for
 reconsideration that came back remanded and settled on remand.
 
-The same seed regenerates the same caseload forever, byte for byte.
+The same seed regenerates the same caseload byte for byte, on any machine and any day, for as
+long as the engine version and the substrate commit both hold still.
 
 ```bash
 wc-caseload generate --spec examples/demo-caseload.yaml --out /tmp/wcce-demo
@@ -596,10 +597,16 @@ Compatibility heading in `CHANGELOG.md`**, naming what moved and how much. `prov
 records the version in every manifest, so a caseload always says which contract produced it, and
 two runs are only comparable when that string matches.
 
-The corollary matters more than the rule: a byte diff between two runs at the *same* version is a
-bug, never a release note. That is why fixes here are written to preserve the RNG stream on paths
-they are not fixing — `0.2.0` changed 75 of 975 auto-derived seeds, exactly the ones whose output
-had to change, rather than all 975.
+**Two things have to match, not one.** Every document's content ultimately comes from the
+substrate's templates and pools, and the substrate is a separate package on its own history. So
+comparability requires the engine version **and** `provenance.substrateSha` to agree; the pin in
+`substrate_pin.txt` only `WARN`s on a mismatch, because moving to a newer substrate deliberately
+is normal and only the operator can tell deliberate from accidental. A byte diff between two runs
+whose engine version differs is a release note. A byte diff between two runs whose substrate
+differs is expected, and `substrateSha` exists precisely so you can see it. **A byte diff with
+both matching is a bug** — that is the case with no innocent explanation, and it is why fixes here
+are written to preserve the RNG stream on paths they are not fixing: `0.2.0` changed 75 of 975
+auto-derived seeds, exactly the ones whose output had to change, rather than all 975.
 
 Six leaks had to be closed, all in substrate or library output, none by editing the substrate
 (see `src/wc_caseload_engine/determinism.py`):

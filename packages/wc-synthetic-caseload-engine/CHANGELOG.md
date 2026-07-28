@@ -22,11 +22,22 @@ with them. A caseload regenerated at `0.2.0` should be compared against a
    drawn after it shifts. The fix was deliberately written to shuffle the
    fallback pool *behind the same condition it has always been behind*, so a
    seed whose category pool already held enough distinct parts consumes exactly
-   the RNG it used to. Verified by deriving 975 seeds at the parent commit and
-   at this one: 900 byte-identical, and the 75 that changed are exactly the 75
-   that previously carried a duplicate. An earlier draft shuffled
-   unconditionally and would have moved **all 975**; that was measured and
-   rejected rather than disclosed.
+   the RNG it used to. Verified by deriving 975 seeds under the last released
+   behaviour — `seeds.py` and `doctrine.py` as of **`fefa3a4`**, the final
+   `0.1.0` tree — and again under this one: 900 byte-identical, and the 75 that
+   changed are exactly the 75 that previously carried a duplicate. (`fefa3a4`
+   rather than this commit's parent: the parent is the in-flight commit that
+   introduced the unconditional shuffle, so it is not a `0.1.0` baseline. The
+   comparison is clean because `seeded_hooks` was never populated during
+   derivation, which makes the `gfpa` gate change a no-op on that path.) An
+   earlier draft shuffled unconditionally and would have moved **all 975**; that
+   was measured and rejected rather than disclosed.
+
+   The two-revision probe cannot live in the test suite, but the property that
+   produced the result can: `TestTheCommonPathConsumesTheRngItAlwaysDid` counts
+   shuffle calls through a wrapping RNG and pins them at one when the category
+   pool suffices and two when it comes up short. Re-introducing the
+   unconditional shuffle fails all three of its cases.
 
 2. **Seeds that used to load are now refused.** `injury.body_parts` naming the
    same region twice raises at load. Both shipped specs are clean, and a test
@@ -89,11 +100,21 @@ reproduced as a failing test first.
 - **#25 — a body part could be claimed twice, and often was.** `[lumbar_spine,
   lumbar_spine]` loaded fine and then counted as two for `benson` and `kite`,
   whose premise is two *distinct* impairments — so Kite could argue a synergistic
-  effect between a region and itself, silently. Three layers now:
-  `InjurySpec` rejects a repeated part at load with an actionable error;
-  `DoctrineFacts.body_part_count` counts distinct parts (case- and
-  whitespace-insensitive) at both construction sites; and `_derive_body_parts`
-  now delivers the distinctness its docstring already promised.
+  effect between a region and itself, silently. Four layers now:
+  `CaseSeed` rejects a repeated part at load with an error naming the case;
+  `InjurySpec` enforces the same invariant on its own, because it is public API
+  (it is in `__all__`) and a bare construction must not hold a state the rest of
+  the engine treats as impossible; `DoctrineFacts.body_part_count` counts
+  distinct parts (case- and whitespace-insensitive) at both construction sites;
+  and `_derive_body_parts` now delivers the distinctness its docstring already
+  promised.
+
+  The two validators are not redundant. Pydantic validates a nested model before
+  the outer model's `after` validators, so an `InjurySpec`-only check would win
+  the race and produce a message without the case name — and in a caseload of
+  thirty, "some injury has a duplicate" is not actionable. The seed-level check
+  therefore runs `mode="before"`, ahead of the nested construction, and the
+  ordering is pinned by a test rather than left to be rediscovered.
 
   That last one was a live bug, not a precaution: `BODY_PART_CATALOG` lists
   `psyche` twice, `head` twice and `internal` three times *within their own

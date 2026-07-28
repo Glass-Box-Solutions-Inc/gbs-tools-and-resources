@@ -453,6 +453,36 @@ class TestDuplicateBodyPartsAreRejected:
             f"the error must say what to do about it, got: {message}"
         )
 
+    def test_a_bare_injuryspec_cannot_hold_a_duplicate_either(self) -> None:
+        """``InjurySpec`` is public API — it is in ``__all__``.
+
+        The case-aware check on ``CaseSeed`` gives the better message, but it
+        only fires when a seed is being built. A caller constructing an
+        ``InjurySpec`` directly must not be able to hold a state the rest of the
+        engine treats as impossible.
+        """
+        assert "InjurySpec" in seeds.__all__
+        with pytest.raises(ValueError, match="same region twice"):
+            seeds.InjurySpec(
+                type="specific",
+                date_of_injury=date(2022, 4, 11),
+                body_parts=[
+                    seeds.BodyPart(part="lumbar_spine"),
+                    seeds.BodyPart(part="lumbar_spine"),
+                ],
+            )
+
+    def test_the_seed_level_message_still_wins_over_the_injury_level_one(self) -> None:
+        """Both layers fire; the one naming the case has to be the one seen.
+
+        Pydantic validates a nested model before the outer model's ``after``
+        validators, so this ordering is a real property to pin rather than an
+        obvious one — it is why the seed check runs ``mode="before"``.
+        """
+        with pytest.raises(ValueError) as excinfo:
+            seeds.parse_case_seed(self._seed(["lumbar_spine", "lumbar_spine"]))
+        assert "dupe-parts" in str(excinfo.value)
+
     def test_the_case_is_named_even_inside_a_multi_case_spec(self) -> None:
         """The failure mode this guards: 'some case has a duplicate'."""
         spec = {
@@ -554,6 +584,76 @@ class TestAutoDerivationNeverRepeatsABodyPart:
         names = [part.part for part in parts]
         assert len(names) == len(set(names)), names
         assert names[0] == "psyche", "the requested category still leads"
+
+
+class TestTheCommonPathConsumesTheRngItAlwaysDid:
+    """The reproducibility guarantee, pinned as control flow rather than bytes.
+
+    Deduplicating ``_derive_body_parts`` had to not disturb seeds that never had
+    a duplicate. The draft that did the obvious thing — build both pools,
+    shuffle both, then dedupe across them — consumed an extra draw on the
+    *common* path, which shifts every subsequent draw (eval_type, resolution,
+    liens, doctrine hooks) for **every** auto-derived case. Measured against
+    0.1.0: that draft moved all 975 derived seeds; the shipped version moves 75,
+    exactly those that previously received a repeat.
+
+    That comparison needs two revisions checked out, so it cannot live in the
+    suite. What *can* live here is the property that produced the result: the
+    fallback pool is shuffled only when the category pool came up short. Pin the
+    control flow and the byte-level outcome follows.
+    """
+
+    class _CountingRandom:
+        """A ``random.Random`` that records how many times it was shuffled."""
+
+        def __init__(self, seed: int) -> None:
+            import random
+
+            self._rng = random.Random(seed)
+            self.shuffles = 0
+
+        def shuffle(self, seq: list[Any]) -> None:
+            self.shuffles += 1
+            self._rng.shuffle(seq)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._rng, name)
+
+    def test_a_sufficient_category_pool_shuffles_exactly_once(self) -> None:
+        """``spine`` holds enough distinct parts, so the fallback is never built."""
+        rng = self._CountingRandom(11)
+        parts = seeds._derive_body_parts(rng, "spine", 2)  # type: ignore[arg-type]
+
+        assert len(parts) == 2
+        assert rng.shuffles == 1, (
+            "the fallback pool was shuffled even though the category pool sufficed. "
+            "That extra draw shifts every subsequent value for every auto-derived "
+            "case, silently changing output for seeds this function did not need to "
+            "touch."
+        )
+
+    def test_a_short_category_pool_shuffles_twice(self) -> None:
+        """``psyche`` collapses to one distinct part, so the fallback is needed."""
+        rng = self._CountingRandom(11)
+        parts = seeds._derive_body_parts(rng, "psyche", 3)  # type: ignore[arg-type]
+
+        names = [part.part for part in parts]
+        assert names[0] == "psyche"
+        assert len(names) == len(set(names)) == 3, names
+        assert rng.shuffles == 2, (
+            "the fallback pool was not reached, so a category that cannot supply "
+            f"{len(names)} distinct parts returned repeats or came up short: {names}"
+        )
+
+    def test_the_category_pool_is_still_drawn_first_and_only_once(self) -> None:
+        """A count the category alone satisfies must not touch other categories."""
+        rng = self._CountingRandom(3)
+        parts = seeds._derive_body_parts(rng, "lower_extremity", 1)  # type: ignore[arg-type]
+
+        assert rng.shuffles == 1
+        assert parts[0].part in {
+            entry[0] for entry in seeds.BODY_PART_CATALOG["lower_extremity"]
+        }
 
 
 class TestFirefighterPresumptionCannotBeAutoDrawn:

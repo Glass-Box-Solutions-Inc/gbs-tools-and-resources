@@ -33,7 +33,15 @@ from typing import Any, Literal
 
 import structlog
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 # doctrine.py deliberately imports nothing from this module (its prerequisites
 # read a flat ``DoctrineFacts`` record rather than a CaseSeed), so this import
@@ -294,6 +302,19 @@ class BodyPart(_Model):
     detail: str | None = None
 
 
+def _repeated_part_message(first: str, second: str, *, case_id: str | None = None) -> str:
+    """The one wording for a repeated body part, with or without a case name."""
+    written = f"{first!r} and {second!r}" if first != second else repr(second)
+    prefix = f"case {case_id!r}: " if case_id else ""
+    return (
+        f"{prefix}injury.body_parts names the same region twice ({written}). "
+        "List each part once — a repeated entry is not a second impairment, and "
+        "doctrines that need two distinct parts (benson, kite) would be satisfied "
+        "by a part and itself. Use injury.body_parts[].detail to describe multiple "
+        "findings in one region."
+    )
+
+
 class InjurySpec(_Model):
     """What happened, when, and to which body parts."""
 
@@ -304,20 +325,43 @@ class InjurySpec(_Model):
     body_parts: list[BodyPart] = Field(min_length=1, max_length=5)
     mechanism: str = "auto"
 
-    def repeated_body_part(self) -> tuple[str, str] | None:
+    @staticmethod
+    def find_repeated_part(body_parts: Iterable[Any]) -> tuple[str, str] | None:
         """The first region named twice, as ``(first spelling, second)``.
 
-        Returned rather than raised so :class:`CaseSeed` can put its ``case_id``
-        in the message — in a caseload of thirty, "some injury has a duplicate"
-        is not an actionable error.
+        A ``staticmethod`` over raw entries rather than a method on a built
+        instance, because :class:`CaseSeed` has to run this check *before* the
+        nested :class:`InjurySpec` is constructed — see
+        :meth:`CaseSeed._reject_repeated_body_parts`.
         """
         seen: dict[str, str] = {}
-        for entry in self.body_parts:
-            key = entry.part.strip().casefold()
+        for entry in body_parts:
+            part = entry.get("part") if isinstance(entry, Mapping) else getattr(entry, "part", None)
+            if not isinstance(part, str):
+                continue  # a malformed entry is the type system's problem, not ours
+            key = part.strip().casefold()
             if key in seen:
-                return seen[key], entry.part
-            seen[key] = entry.part
+                return seen[key], part
+            seen[key] = part
         return None
+
+    def repeated_body_part(self) -> tuple[str, str] | None:
+        """This injury's first repeated region, or ``None``."""
+        return self.find_repeated_part(self.body_parts)
+
+    @model_validator(mode="after")
+    def _check_distinct_body_parts(self) -> InjurySpec:
+        """The invariant belongs to the injury, so the injury enforces it.
+
+        :class:`CaseSeed` runs the same check earlier to produce a message
+        naming the case, but ``InjurySpec`` is public API — it is in
+        ``__all__`` — and a bare construction must not be able to hold a state
+        the rest of the engine treats as impossible.
+        """
+        repeated = self.repeated_body_part()
+        if repeated is None:
+            return self
+        raise ValueError(_repeated_part_message(*repeated))
 
     @model_validator(mode="after")
     def _check_dates(self) -> InjurySpec:
@@ -659,8 +703,9 @@ class CaseSeed(_Model):
     documents: DocumentControls = Field(default_factory=DocumentControls)
     output: OutputSpec = Field(default_factory=OutputSpec)
 
-    @model_validator(mode="after")
-    def _check_distinct_body_parts(self) -> CaseSeed:
+    @field_validator("injury", mode="before")
+    @classmethod
+    def _reject_repeated_body_parts(cls, value: Any, info: ValidationInfo) -> Any:
         """One claim cannot injure the same region twice.
 
         A repeated entry is not a second impairment, but ``benson`` and ``kite``
@@ -669,23 +714,26 @@ class CaseSeed(_Model):
         part and itself into the file, silently. The seed is where an impossible
         story gets rejected (AJC-35 #25).
 
-        Raised here rather than on :class:`InjurySpec` so the message can name
-        the case: a caseload spec fails one case at a time, and the reader needs
-        to know which.
+        ``InjurySpec`` enforces the same invariant, so why here as well? Because
+        pydantic validates a nested model *before* the outer model's ``after``
+        validators run, so the injury's own error would win and the message
+        would lose the case name — and in a caseload of thirty, "some injury has
+        a duplicate" is not an actionable error. ``mode="before"`` runs ahead of
+        the nested construction, and ``case_id`` is declared above ``injury`` so
+        it is already validated and present in ``info.data``.
         """
-        repeated = self.injury.repeated_body_part()
-        if repeated is None:
-            return self
-        first, second = repeated
-        written = f"{first!r} and {second!r}" if first != second else repr(second)
-        raise ValueError(
-            f"case {self.case_id!r}: injury.body_parts names the same region "
-            f"twice ({written}). List each part once — a repeated entry is not a "
-            "second impairment, and doctrines that need two distinct parts "
-            "(benson, kite) would be satisfied by a part and itself. Use "
-            "injury.body_parts[].detail to describe multiple findings in one "
-            "region."
+        parts = (
+            value.get("body_parts")
+            if isinstance(value, Mapping)
+            else getattr(value, "body_parts", None)
         )
+        if isinstance(parts, Sequence) and not isinstance(parts, str | bytes):
+            repeated = InjurySpec.find_repeated_part(parts)
+            if repeated is not None:
+                raise ValueError(
+                    _repeated_part_message(*repeated, case_id=info.data.get("case_id"))
+                )
+        return value
 
     @model_validator(mode="after")
     def _check_runway(self) -> CaseSeed:

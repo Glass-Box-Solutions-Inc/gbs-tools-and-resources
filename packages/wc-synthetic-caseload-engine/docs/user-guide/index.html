@@ -416,7 +416,7 @@
       <span class="section-num">Section 1</span>
       <h2>What it is, and why</h2>
       <p class="lede">The engine turns a small YAML seed into a complete synthetic California workers&rsquo; compensation attorney case file &mdash; the kind that reads as if an applicant-side firm actually produced it, right down to lien conferences that end in executed lien resolution agreements and petitions for reconsideration that come back remanded and settled on remand.</p>
-      <p>Write one <code class="inline">CaseSeed</code> per case &mdash; who was hurt, how, how far the case went, which legal doctrines flavor it, and exactly which documents you want in what quantities and formats &mdash; run one command, and get back a folder of rendered documents plus a manifest describing every one of them. The same seed regenerates the same caseload forever, byte for byte.</p>
+      <p>Write one <code class="inline">CaseSeed</code> per case &mdash; who was hurt, how, how far the case went, which legal doctrines flavor it, and exactly which documents you want in what quantities and formats &mdash; run one command, and get back a folder of rendered documents plus a manifest describing every one of them. The same seed regenerates the same caseload byte for byte &mdash; on any machine and any day, for as long as the engine version and the substrate commit both hold still (see <a href="#determinism">Determinism</a>).</p>
 
       <h3>The problem it solves</h3>
       <p>Adjudica demo accounts held five document-free matters and one hand-populated case. The closest existing tool, <code class="inline">merus-test-data-generator</code>, generates documents at scale but takes only CLI flags: no per-case seed artifact to review, no reconsideration round-trips, thin lien modelling, and no fine-grained per-case document controls. Because nothing could generate targeted documents to specification, the classifier&rsquo;s accuracy corpus covered only 97 of its 353 subtypes.</p>
@@ -1439,6 +1439,12 @@ result    : OK &mdash; every subtype canonical, every checksum matches,
       <span class="section-num">Section 11</span>
       <h2>Determinism guarantees</h2>
       <p>Same seed plus same engine version produces the same bytes &mdash; <strong>on any machine, in any timezone, on any day</strong> &mdash; including every MD5 in the manifest. Manifests carry no generation timestamp, precisely so this guarantee stays independently verifiable.</p>
+
+      <div class="callout warn">
+        <span class="callout-label">Two things have to match, not one</span>
+        <p>Every document&rsquo;s content ultimately comes from the substrate&rsquo;s templates and pools, and the substrate is a separate package on its own history. Comparability therefore requires the <strong>engine version</strong> and <strong><code class="inline">provenance.substrateSha</code></strong> to <em>both</em> agree. The pin in <code class="inline">substrate_pin.txt</code> only <code class="inline">WARN</code>s on a mismatch, because moving to a newer substrate deliberately is normal and only the operator can tell deliberate from accidental.</p>
+        <p style="margin-bottom:0;">So: a byte diff across differing engine versions is a release note &mdash; behavioural changes bump the version and are listed under a Compatibility heading in <code class="inline">CHANGELOG.md</code>. A byte diff across differing <code class="inline">substrateSha</code> values is expected, and that field exists precisely so you can see it. <strong>A byte diff with both matching is a bug</strong> &mdash; the one case with no innocent explanation.</p>
+      </div>
 
       <h3>Verify it yourself</h3>
       <pre><code><span class="cmdline">wc-caseload generate --spec examples/demo-caseload.yaml --out /tmp/run-a</span>
