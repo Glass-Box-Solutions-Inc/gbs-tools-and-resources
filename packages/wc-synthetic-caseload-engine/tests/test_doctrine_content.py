@@ -1332,7 +1332,101 @@ class TestPrerequisiteDescriptionsNameRealEnumValues:
     defect had already appeared twice — here, and in the user guide that copied
     it — which is the signature of something that needs a gate rather than
     another correction.
+
+    **What it does and does not cover.** It reads values out of the one prose
+    form the descriptions actually use — ``must be`` / ``must not be`` / ``to
+    be`` followed by a comma-or-``or`` list — and checks them against a
+    hand-maintained map of three fields. It is not a general natural-language
+    checker: a description inventing a new phrasing, or naming a field outside
+    :data:`FIELD_VOCABULARY`, is simply not inspected. Two guards keep that
+    honest instead of silently vacuous: :meth:`test_the_sweep_actually_inspects
+    _the_descriptions_it_claims_to` pins the exact set of descriptions the
+    matcher reaches, so losing coverage fails loudly rather than passing
+    emptily; and :meth:`test_the_matcher_catches_a_planted_bad_value` proves the
+    matcher can fail at all.
     """
+
+    #: Hooks whose description the value-matcher is expected to inspect.
+    #:
+    #: Pinned, not derived — that is the point. If a description is reworded
+    #: into a form the matcher cannot read, this set shrinks and the test says
+    #: so, instead of the sweep quietly checking nothing.
+    INSPECTED: ClassVar[frozenset[str]] = frozenset(
+        {
+            "ogilvie",
+            "almaraz_guzman",
+            "escobedo",
+            "sibtf",
+            "lc4664_prior_award",
+            "benson",
+            "kite",
+            "going_and_coming",
+            "ab5_dynamex",
+            "death_dependency",
+        }
+    )
+
+    @staticmethod
+    def _inspect(description: str) -> list[tuple[str, str, frozenset[str]]]:
+        """``(field, value, legal)`` for every value the matcher can read."""
+        found: list[tuple[str, str, frozenset[str]]] = []
+        for match in _VALUE_LIST.finditer(description):
+            paths = _FIELD_PATH.findall(description[: match.start()])
+            if not paths or paths[-1] not in FIELD_VOCABULARY:
+                continue
+            legal = FIELD_VOCABULARY[paths[-1]]
+            for token in re.split(r",\s*|\s+or\s+|\s+", match.group(1)):
+                if token and token not in _CONNECTIVES:
+                    found.append((paths[-1], token, legal))
+        return found
+
+    def test_the_sweep_actually_inspects_the_descriptions_it_claims_to(self) -> None:
+        """Vacuity guard: a sweep that matches nothing passes for the wrong reason."""
+        reached = {
+            hook
+            for hook, content in DOCTRINE_CONTENT.items()
+            if content.requires is not None and self._inspect(content.requires.description)
+        }
+        assert reached == self.INSPECTED, (
+            "the set of descriptions the enum sweep can read changed. Gained: "
+            f"{sorted(reached - self.INSPECTED)}; lost: {sorted(self.INSPECTED - reached)}. "
+            "A lost description is coverage silently dropped — either reword it back "
+            "into a form the matcher reads, or extend the matcher and this set."
+        )
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "the case must reach a rating, which requires lifecycle.eval_type to be "
+            "qme, ame or ime rather than none",
+            "lifecycle.claim_response must be denied or rejected",
+            "death benefits require injury.type to be deceased",
+            "lifecycle.eval_type must not be nil",
+        ],
+        ids=["ime", "rejected", "deceased", "nil"],
+    )
+    def test_the_matcher_catches_a_planted_bad_value(self, description: str) -> None:
+        """Counterfactual: prove the matcher can fail, in each prose form it reads."""
+        illegal = [
+            (field, value)
+            for field, value, legal in self._inspect(description)
+            if value not in legal
+        ]
+        assert illegal, f"the matcher read nothing illegal out of: {description!r}"
+
+    def test_the_matcher_passes_prose_that_is_correct(self) -> None:
+        """The mirror of the above — no false positives on legal vocabulary."""
+        for description in (
+            "lifecycle.eval_type to be qme or ame rather than none",
+            "lifecycle.claim_response must be denied or delayed",
+            "death benefits require injury.type to be death",
+        ):
+            illegal = [
+                (field, value)
+                for field, value, legal in self._inspect(description)
+                if value not in legal
+            ]
+            assert not illegal, f"{description!r} flagged {illegal}"
 
     def test_every_value_a_description_enumerates_is_legal_for_its_field(self) -> None:
         offenders: list[str] = []

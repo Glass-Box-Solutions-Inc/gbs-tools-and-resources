@@ -9,6 +9,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### ⚠️ Compatibility — version bumped to 0.2.0
+
+`0.1.0` → `0.2.0`. The reproducibility guarantee is *bytes are stable within a
+version*; three behavioural changes below cross that line, so the version moves
+with them. A caseload regenerated at `0.2.0` should be compared against a
+`0.2.0` baseline, not a `0.1.0` one.
+
+1. **Auto-derived output moves for 75 of 975 measured seeds — and only those.**
+   `_derive_body_parts` now rejects repeats, so any derived case that previously
+   received the same region twice gets a different part list, and everything
+   drawn after it shifts. The fix was deliberately written to shuffle the
+   fallback pool *behind the same condition it has always been behind*, so a
+   seed whose category pool already held enough distinct parts consumes exactly
+   the RNG it used to. Verified by deriving 975 seeds at the parent commit and
+   at this one: 900 byte-identical, and the 75 that changed are exactly the 75
+   that previously carried a duplicate. An earlier draft shuffled
+   unconditionally and would have moved **all 975**; that was measured and
+   rejected rather than disclosed.
+
+2. **Seeds that used to load are now refused.** `injury.body_parts` naming the
+   same region twice raises at load. Both shipped specs are clean, and a test
+   keeps them that way, but a hand-written seed relying on the old leniency will
+   now fail with an actionable error naming the case.
+
+3. **`psyche` is matched case- and whitespace-insensitively.** A seed spelling it
+   `Psyche` or `" psyche "` previously did *not* register as a psychiatric claim,
+   so `lc3208_3_psych` and `gfpa` warned as unsupported on it. Such a seed now
+   registers and stops warning. This is a correctness fix — the seed plainly
+   meant `psyche` — but it is a visible behaviour change for anyone whose
+   expected-warning fixtures encode the old spelling sensitivity.
+
 ### Fixed — doctrine gate coherence (ticket **AJC-35**, items #23–#25)
 
 Three gates were letting through cases they describe as impossible. Each was
@@ -17,12 +48,22 @@ reproduced as a failing test first.
 - **#23 — a warning named a value the schema rejects.** `_RATING_PREREQUISITE`
   told users `lifecycle.eval_type` could be `qme, ame or ime`; `EvalType` is
   `Literal["qme", "ame", "none"]`. Five hooks shared that description, so five
-  warnings advised a fix that fails validation. Corrected, and the whole class
-  is now gated: a sweep reads each `Literal` alias and asserts that every value
-  a prerequisite description enumerates is legal for the field it names. The
-  defect had already escaped twice — here and in the user guide that copied it —
-  which is the signature of something needing a gate rather than another
-  correction.
+  warnings advised a fix that fails validation. Corrected, and the existing
+  wording is now gated: a sweep reads each `Literal` alias and asserts that
+  every value a prerequisite description enumerates is legal for the field it
+  names. The defect had already escaped twice — here and in the user guide that
+  copied it — which is the signature of something needing a gate rather than
+  another correction.
+
+  Scope is narrow and documented as such: the matcher reads the one prose form
+  these descriptions actually use (`must be` / `must not be` / `to be` followed
+  by a comma-or-`or` list) against a hand-maintained map of three fields. It is
+  a regression gate on the current wording, **not** a general prose checker — a
+  description invented in a new phrasing, or naming a fourth field, is not
+  inspected. Two guards stop that from becoming silent vacuity: the exact set of
+  descriptions the matcher reaches is pinned, so lost coverage fails loudly
+  rather than passing on an empty match, and planted-bad-value cases in each
+  prose form prove the matcher can fail at all.
 
 - **#24 — `gfpa` could be satisfied by another hook.** Its predicate accepted
   `"lc3208_3_psych" in facts.seeded_hooks` as a substitute for a psychiatric

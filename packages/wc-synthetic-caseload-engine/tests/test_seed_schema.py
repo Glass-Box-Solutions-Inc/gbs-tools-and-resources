@@ -445,9 +445,28 @@ class TestDuplicateBodyPartsAreRejected:
             seeds.parse_case_seed(self._seed(["lumbar_spine", "lumbar_spine"]))
         message = str(excinfo.value)
         assert "injury.body_parts" in message, "the error must name the offending field"
+        assert "dupe-parts" in message, (
+            "the error must name the case — a caseload spec fails one case at a "
+            f"time and the reader needs to know which. Got: {message}"
+        )
         assert "once" in message or "distinct" in message, (
             f"the error must say what to do about it, got: {message}"
         )
+
+    def test_the_case_is_named_even_inside_a_multi_case_spec(self) -> None:
+        """The failure mode this guards: 'some case has a duplicate'."""
+        spec = {
+            "caseload_id": "multi",
+            "cases": [
+                self._seed(["lumbar_spine"]) | {"case_id": "healthy-one"},
+                self._seed(["shoulder", "shoulder"]) | {"case_id": "the-broken-one"},
+            ],
+        }
+        with pytest.raises(ValueError) as excinfo:
+            seeds.resolve_caseload(seeds.parse_caseload_spec(spec))
+        message = str(excinfo.value)
+        assert "the-broken-one" in message, message
+        assert "healthy-one" not in message, "the innocent case must not be implicated"
 
     def test_the_check_is_case_and_whitespace_insensitive(self) -> None:
         """``Lumbar_Spine`` and ``lumbar_spine`` are the same part written twice."""

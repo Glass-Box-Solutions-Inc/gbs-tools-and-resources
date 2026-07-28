@@ -405,7 +405,7 @@
       <p class="dek">A user guide for generating complete, byte-reproducible synthetic California workers&rsquo; compensation attorney case files &mdash; for Adjudica demo accounts, classifier training corpora, and testing.</p>
       <div class="meta">
         <span><b>Package</b> <code class="inline">packages/wc-synthetic-caseload-engine</code></span>
-        <span><b>Version</b> 0.1.0</span>
+        <span><b>Version</b> 0.2.0</span>
         <span><b>Tickets</b> AJC-34, AJC-36</span>
         <span><b>CLI</b> <code class="inline">wc-caseload</code></span>
       </div>
@@ -467,7 +467,7 @@
             <tr><td><code>wc-caseload validate --spec S</code></td><td>Schema, cross-field rules and document-control key validity for a spec file.</td></tr>
             <tr><td><code>wc-caseload validate --out D</code></td><td>Every manifest subtype canonical and parent-valid, every file present, every MD5 matching.</td></tr>
             <tr><td><code>wc-caseload taxonomy-check [--classifier-path DIR]</code></td><td>Diff the engine taxonomy against the classifier source; nonzero exit on drift. Classifier checkout defaults to <code>WC_CASELOAD_CLASSIFIER</code> or <code>~/projects</code>.</td></tr>
-            <tr><td><code>wc-caseload --version</code></td><td>Print the installed engine version (currently <code>0.1.0</code>).</td></tr>
+            <tr><td><code>wc-caseload --version</code></td><td>Print the installed engine version (currently <code>0.2.0</code>).</td></tr>
           </tbody>
         </table>
       </div>
@@ -986,7 +986,7 @@ Error: 1 document control key(s) are not valid taxonomy keys</code></pre>
       <p>A death-benefits argument in a living applicant&rsquo;s file is not a feature. Every hook therefore carries a <strong>prerequisite</strong> &mdash; a predicate over the seed&rsquo;s own fields &mdash; and the engine treats a failed prerequisite differently depending on who asked for the hook:</p>
       <div class="rank"><span class="n">1</span><span class="t"><strong>You named it &rarr; kept, and warned about.</strong> An explicit <code class="inline">doctrine_hooks</code> entry is a choice, and the same rule that governs document controls governs this: explicit control wins, loudly. The hook stays, the language renders, and the case records a warning.</span></div>
       <div class="rank"><span class="n">2</span><span class="t"><strong>The distribution drew it &rarr; filtered out silently.</strong> An auto-derived case (<code class="inline">auto:</code>) draws hooks from a pool that has already been filtered against the same prerequisites. A draw is nobody&rsquo;s choice, so there is nothing to respect and nothing to warn about.</span></div>
-      <p>The warning is verbatim from a live run of the demo caseload, whose <code class="inline">nguyen-cr-three-liens</code> case names <code class="inline">benson</code> on a single-body-part claim precisely to exercise this path:</p>
+      <p>Here is the warning from a live run of the demo caseload, whose <code class="inline">nguyen-cr-three-liens</code> case names <code class="inline">benson</code> on a single-body-part claim precisely to exercise this path. The wording is exact; the line breaks are this page&rsquo;s, since the engine emits it as one continuous string:</p>
       <pre><code>lifecycle.doctrine_hooks names benson on a case that cannot support it:
 apportioning between injuries needs a rating and more than one impaired
 region to argue about &mdash; lifecycle.eval_type must not be none and

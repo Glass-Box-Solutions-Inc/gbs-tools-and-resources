@@ -244,10 +244,12 @@ ordinary QME with no warning. A satisfied prerequisite bypasses the
 kept-and-warned path, so a too-weak gate is worse than no gate: it launders the
 incoherence as approved.
 
-Deliberately the same shape as :data:`_GFPA_PREREQUISITE`, minus the escape
-hatch. ``gfpa`` accepts ``lc3208_3_psych`` alongside it as evidence of a
-psychiatric claim; this hook *is* that evidence, so it has to come from the
-injury itself.
+Now literally the same predicate as :data:`_GFPA_PREREQUISITE`, and that is the
+point: the threshold and the defence to it both stand or fall on whether a
+psychiatric injury was claimed, so they read the same fact from the same place.
+``gfpa`` briefly accepted ``lc3208_3_psych`` alongside it as a substitute for
+that fact; the substitution let a defence outlive the claim it answers and was
+removed in AJC-35 #24.
 
 The guarantee is that the hook cannot be **auto-drawn** onto a case with no
 psychiatric claim — not that it cannot reach one. Seeding it explicitly on an

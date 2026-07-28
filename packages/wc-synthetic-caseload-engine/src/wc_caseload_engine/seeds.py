@@ -304,36 +304,20 @@ class InjurySpec(_Model):
     body_parts: list[BodyPart] = Field(min_length=1, max_length=5)
     mechanism: str = "auto"
 
-    @model_validator(mode="after")
-    def _check_distinct_body_parts(self) -> InjurySpec:
-        """One claim cannot injure the same region twice.
+    def repeated_body_part(self) -> tuple[str, str] | None:
+        """The first region named twice, as ``(first spelling, second)``.
 
-        A repeated entry is not a second impairment, but ``benson`` and ``kite``
-        both gate on there being two — so ``[lumbar_spine, lumbar_spine]`` used
-        to satisfy Kite and put a synergistic-effect argument between a body
-        part and itself into the file, silently. The seed is where an impossible
-        story gets rejected (AJC-35 #25).
+        Returned rather than raised so :class:`CaseSeed` can put its ``case_id``
+        in the message — in a caseload of thirty, "some injury has a duplicate"
+        is not an actionable error.
         """
         seen: dict[str, str] = {}
         for entry in self.body_parts:
             key = entry.part.strip().casefold()
             if key in seen:
-                first = seen[key]
-                written = (
-                    f"{first!r} and {entry.part!r}"
-                    if first != entry.part
-                    else repr(entry.part)
-                )
-                raise ValueError(
-                    f"injury.body_parts names the same region twice ({written}). "
-                    "List each part once — a repeated entry is not a second "
-                    "impairment, and doctrines that need two distinct parts "
-                    "(benson, kite) would be satisfied by a part and itself. "
-                    "Use injury.body_parts[].detail to describe multiple "
-                    "findings in one region."
-                )
+                return seen[key], entry.part
             seen[key] = entry.part
-        return self
+        return None
 
     @model_validator(mode="after")
     def _check_dates(self) -> InjurySpec:
@@ -674,6 +658,34 @@ class CaseSeed(_Model):
     lifecycle: LifecycleSpec = Field(default_factory=LifecycleSpec)
     documents: DocumentControls = Field(default_factory=DocumentControls)
     output: OutputSpec = Field(default_factory=OutputSpec)
+
+    @model_validator(mode="after")
+    def _check_distinct_body_parts(self) -> CaseSeed:
+        """One claim cannot injure the same region twice.
+
+        A repeated entry is not a second impairment, but ``benson`` and ``kite``
+        both gate on there being two — so ``[lumbar_spine, lumbar_spine]`` used
+        to satisfy Kite and put a synergistic-effect argument between a body
+        part and itself into the file, silently. The seed is where an impossible
+        story gets rejected (AJC-35 #25).
+
+        Raised here rather than on :class:`InjurySpec` so the message can name
+        the case: a caseload spec fails one case at a time, and the reader needs
+        to know which.
+        """
+        repeated = self.injury.repeated_body_part()
+        if repeated is None:
+            return self
+        first, second = repeated
+        written = f"{first!r} and {second!r}" if first != second else repr(second)
+        raise ValueError(
+            f"case {self.case_id!r}: injury.body_parts names the same region "
+            f"twice ({written}). List each part once — a repeated entry is not a "
+            "second impairment, and doctrines that need two distinct parts "
+            "(benson, kite) would be satisfied by a part and itself. Use "
+            "injury.body_parts[].detail to describe multiple findings in one "
+            "region."
+        )
 
     @model_validator(mode="after")
     def _check_runway(self) -> CaseSeed:
@@ -1226,26 +1238,40 @@ def _derive_body_parts(rng: random.Random, category: str, count: int) -> list[Bo
     one impairment is ordinary, whereas a case claiming the same region twice is
     not a case at all.
     """
-    others = [
-        entry
-        for other, entries in sorted(BODY_PART_CATALOG.items())
-        if other != category
-        for entry in entries
-    ]
-    pool: list[tuple[str, str, str]] = list(BODY_PART_CATALOG[category])
-    rng.shuffle(pool)
-    rng.shuffle(others)
-
     chosen: list[tuple[str, str, str]] = []
     seen: set[str] = set()
-    for part, icd10, detail in (*pool, *others):
-        if len(chosen) == count:
-            break
-        key = part.strip().casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        chosen.append((part, icd10, detail))
+
+    def take(entries: Iterable[tuple[str, str, str]]) -> None:
+        for part, icd10, detail in entries:
+            if len(chosen) == count:
+                return
+            key = part.strip().casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            chosen.append((part, icd10, detail))
+
+    pool: list[tuple[str, str, str]] = list(BODY_PART_CATALOG[category])
+    rng.shuffle(pool)
+    take(pool)
+
+    # The second shuffle stays behind the same condition it has always been
+    # behind. Draining the category pool first and only reaching for other
+    # categories when it came up short means a seed whose category pool already
+    # held `count` distinct parts consumes exactly the RNG it used to, and so
+    # regenerates byte-identically. Only seeds that were previously served a
+    # repeat — the ones whose output had to change anyway — reach this branch
+    # newly.
+    if len(chosen) < count:
+        others = [
+            entry
+            for other, entries in sorted(BODY_PART_CATALOG.items())
+            if other != category
+            for entry in entries
+        ]
+        rng.shuffle(others)
+        take(others)
+
     return [BodyPart(part=part, icd10=icd10, detail=detail) for part, icd10, detail in chosen]
 
 

@@ -587,6 +587,20 @@ Same seed plus same version produces the same bytes — **on any machine, in any
 day** — including every MD5 in the manifest. Manifests carry **no generation timestamp**,
 precisely so the guarantee stays verifiable.
 
+### What "same version" is doing in that sentence
+
+The guarantee is bytes-stable *within* a version, and the version is how a deliberate change is
+announced. Any change to what a seed produces — a new lifecycle path, a corrected draw, a
+rejected input that used to be accepted — **bumps the minor version and is listed under a
+Compatibility heading in `CHANGELOG.md`**, naming what moved and how much. `provenance.generator`
+records the version in every manifest, so a caseload always says which contract produced it, and
+two runs are only comparable when that string matches.
+
+The corollary matters more than the rule: a byte diff between two runs at the *same* version is a
+bug, never a release note. That is why fixes here are written to preserve the RNG stream on paths
+they are not fixing — `0.2.0` changed 75 of 975 auto-derived seeds, exactly the ones whose output
+had to change, rather than all 975.
+
 Six leaks had to be closed, all in substrate or library output, none by editing the substrate
 (see `src/wc_caseload_engine/determinism.py`):
 
