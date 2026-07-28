@@ -260,6 +260,44 @@ BANNED_ASSERTIONS: tuple[tuple[str, str], ...] = (
     ("is degenerative pathology documented on imaging", "imaging findings as fact"),
     ("between the two injuries", "a second injury as an established fact"),
     ("The consequence of Benson in this matter", "the doctrine as applied rather than argued"),
+    # Found by the full 14-hook sweep. Every one asserted a fact its hook's
+    # prerequisite does not establish, and every one was reachable by
+    # auto-derivation with no warning — the same class as the entries above,
+    # in the hooks the earlier rounds' enumeration missed.
+    ("are placed at issue on these facts", "two specific commute exceptions as facts of record"),
+    ("The applicant's employment status is disputed", "an employment-status dispute as a fact"),
+    (
+        "I have stated the prior impairment as a whole person figure",
+        "a quantified preexisting impairment the seed cannot establish",
+    ),
+    (
+        "the combined effect of the prior condition and the current industrial injury exceeds",
+        "a preexisting condition as an established fact",
+    ),
+    (
+        "I have described the overlap in functional terms",
+        "overlap with a prior award that may not exist",
+    ),
+    (
+        "the diagnosis, its date, the applicant",
+        "a cancer diagnosis the prerequisite does not establish",
+    ),
+    (
+        "The service history and the date of diagnosis are set out above",
+        "a diagnosis date the prerequisite does not establish",
+    ),
+    (
+        "the denial was upheld on independent medical review",
+        "an IMR outcome the prerequisite does not establish (imr_outcome may be overturned)",
+    ),
+    (
+        "separated the applicant's reaction to personnel action events",
+        "personnel action events as facts of record",
+    ),
+    (
+        "personnel action events account for the percentage of causation stated above",
+        "personnel action events as facts of record",
+    ),
 )
 """Phrases that state extra-record facts as findings, with why each is banned.
 
@@ -422,6 +460,8 @@ class TestPrerequisitesGovernAutoDerivation:
         from wc_caseload_engine.seeds import CaseloadSpec, resolve_caseload
 
         offenders: list[str] = []
+        supported_draws: list[str] = []
+        psych_seeds = 0
         for rng_seed in (7, 11, 23):
             spec = CaseloadSpec.model_validate(
                 {
@@ -435,22 +475,43 @@ class TestPrerequisitesGovernAutoDerivation:
             )
             for seed in resolve_caseload(spec):
                 psych_parts = {part.part for part in seed.injury.body_parts}
+                has_psyche = "psyche" in psych_parts
+                psych_seeds += int(has_psyche)
                 for hook in ("lc3208_3_psych", "gfpa"):
-                    if hook in seed.lifecycle.doctrine_hooks and "psyche" not in psych_parts:
+                    if hook not in seed.lifecycle.doctrine_hooks:
+                        continue
+                    if has_psyche:
+                        supported_draws.append(f"{seed.case_id}: {hook}")
+                    else:
                         offenders.append(f"{seed.case_id}: {hook} on {sorted(psych_parts)}")
         assert not offenders, (
             f"{len(offenders)} auto-drawn psychiatric doctrine(s) on non-psych cases: "
             f"{offenders[:10]}"
         )
+        # Positive control. Without this the assertion above passes just as
+        # happily if the psychiatric hooks became unreachable altogether — a
+        # prerequisite tightened into "never" would read as a clean sweep.
+        assert psych_seeds >= 1, (
+            "the sweep drew no psych-bearing seeds at all; it cannot show the gate "
+            "admits anything"
+        )
+        assert supported_draws, (
+            "no supported psychiatric draw was observed across "
+            f"{psych_seeds} psych-bearing seed(s) — the gate may now reject every case, "
+            "which would make the offender check above vacuous"
+        )
 
-    def test_the_psychiatric_language_is_reachable_only_where_it_belongs(self) -> None:
+    def test_the_psychiatric_language_cannot_be_auto_drawn_onto_a_non_psych_case(self) -> None:
         """N1(b): these phrases are correct on a psych file, so they are not banned.
 
         "This psychiatric evaluation is framed by..." is exactly right in a
         psychiatric med-legal report and wrong everywhere else. Banning the text
         would delete a true sentence; the defect was the gate, not the wording.
-        So the assertion is about *reachability*: the phrases live in one hook's
-        pool, and that hook cannot be drawn onto a case with no psychiatric claim.
+
+        The claim is precisely "cannot be **auto-drawn**", not "cannot be
+        reached": an explicitly seeded hook is still kept and still renders its
+        language, with a warning. The prerequisite governs the draw, which is
+        the channel nobody chose; it does not overrule a seed author.
         """
         from wc_caseload_engine.doctrine import hook_is_supported
 

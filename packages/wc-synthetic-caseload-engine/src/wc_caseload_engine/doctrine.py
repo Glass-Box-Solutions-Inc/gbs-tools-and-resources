@@ -220,8 +220,13 @@ incoherence as approved.
 Deliberately the same shape as :data:`_GFPA_PREREQUISITE`, minus the escape
 hatch. ``gfpa`` accepts ``lc3208_3_psych`` alongside it as evidence of a
 psychiatric claim; this hook *is* that evidence, so it has to come from the
-injury itself. Seeding it explicitly on an orthopedic case still works and is
-still warned about.
+injury itself.
+
+The guarantee is that the hook cannot be **auto-drawn** onto a case with no
+psychiatric claim — not that it cannot reach one. Seeding it explicitly on an
+orthopedic case still works, still renders, and is still warned about: a
+prerequisite governs the draw, which is the channel nobody chose, and never
+overrules a seed author.
 """
 
 _GFPA_PREREQUISITE = DoctrinePrerequisite(
@@ -612,11 +617,11 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "suspended from the time the employee leaves work until the employee returns. The "
             "rule and its limits are described in Hinojosa v. WCAB, which cautions that it is "
             "riddled with exceptions and is not to be applied mechanically.",
-            "Two exceptions to the going and coming rule are placed at issue on these facts: the "
-            "special mission exception, which applies where the employee is engaged in an "
-            "extraordinary errand at the employer's request, and the required vehicle exception, "
-            "which applies where the employer expressly or impliedly requires the employee to "
-            "furnish a vehicle for work.",
+            "Two exceptions to the going and coming rule are the ones most often litigated. The "
+            "special mission exception applies where the employee is engaged in an extraordinary "
+            "errand at the employer's request; the required vehicle exception applies where the "
+            "employer expressly or impliedly requires the employee to furnish a vehicle for "
+            "work. Whether either is available here depends on facts still to be established.",
             "The party asserting an exception to the going and coming rule bears the burden of "
             "establishing the facts that trigger it. Discovery should therefore be directed to "
             "the purpose of the trip, the employer's expectations regarding use of a personal "
@@ -643,13 +648,13 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "4751 claim would still need.",
             "Section 4751 requires that the preexisting disability be labor disabling rather than "
             "merely present, and that the subsequent industrial injury combine with it to produce "
-            "a substantially greater disability. I have stated the prior impairment as a whole "
-            "person figure and explained the basis for it so the section 4751 threshold can be "
-            "tested against evidence.",
-            "In my opinion the combined effect of the prior condition and the current industrial "
-            "injury exceeds the sum of their separate effects, for the reasons stated above. "
-            "Whether that satisfies the thresholds of section 4751 is a legal determination that "
-            "I do not make.",
+            "a substantially greater disability. Where the records establish a prior condition I "
+            "have stated it as a whole person figure with the basis for it, so the section 4751 "
+            "threshold can be tested against evidence rather than asserted.",
+            "Where a prior labor-disabling condition is established, my opinion on whether its "
+            "combined effect with the current industrial injury exceeds the sum of their separate "
+            "effects is stated above with the reasoning. Whether that satisfies the thresholds of "
+            "section 4751 is a legal determination that I do not make.",
         ),
         legal_paragraphs=(
             "Labor Code section 4751 provides benefits from the Subsequent Injuries Benefits "
@@ -798,18 +803,18 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
         medical_paragraphs=(
             "Labor Code section 3208.3, subdivision (h), makes a psychiatric injury "
             "noncompensable where it is substantially caused by a lawful, nondiscriminatory, good "
-            "faith personnel action. I have therefore separated the applicant's reaction to "
-            "personnel action events from the reaction to other events of employment, and stated "
-            "approximate percentages for each.",
+            "faith personnel action. Where the employment events described include conduct of "
+            "that character, I have separated the reaction to it from the reaction to other "
+            "events of employment and stated approximate percentages for each.",
             "Whether the employment events the applicant describes were a lawful, "
             "nondiscriminatory and good faith personnel action is a question outside my role. "
             "What I can supply is the causation arithmetic the defense turns on: the percentage "
             "attributable to events of that character, stated separately, so the trier of fact "
             "can apply the defense to the medical opinion rather than infer it.",
-            "In my opinion, personnel action events account for the percentage of causation "
-            "stated above, and the remaining causation is attributable to the other employment "
-            "events described. I express no view on whether the employer's conduct was carried "
-            "out in good faith.",
+            "To the extent the employment events described qualify as personnel action, my "
+            "opinion assigns them the percentage of causation stated above, with the remainder "
+            "attributable to the other events described. I express no view on whether the "
+            "employer's conduct was lawful or carried out in good faith.",
         ),
         legal_paragraphs=(
             "Labor Code section 3208.3, subdivision (h), bars a psychiatric injury claim where "
@@ -847,16 +852,16 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "peace officers demonstrating exposure to a known carcinogen)."
         ),
         medical_paragraphs=(
-            "This evaluation addresses the medical questions raised by the cancer presumption in "
-            "Labor Code section 3212.1: the diagnosis, its date, the applicant's period of active "
-            "service, and whether the applicant was exposed to a known carcinogen during that "
-            "service. The presumption itself is applied by the trier of fact and not by the "
+            "This evaluation addresses the medical questions the cancer presumption in Labor Code "
+            "section 3212.1 would raise: any diagnosis relied on and its date, the period of "
+            "active service, and whether the record shows exposure to a known carcinogen during "
+            "that service. The presumption itself is applied by the trier of fact and not by the "
             "evaluator.",
             "Section 3212.1 permits rebuttal only by evidence that the carcinogen to which the "
             "member was exposed is not reasonably linked to the disabling cancer. I have "
             "identified the exposures documented in the record and the literature bearing on that "
             "link, without expressing an opinion on whether a rebuttal succeeds.",
-            "The service history and the date of diagnosis are set out above because together "
+            "Service history and the timing of any diagnosis are set out above because together "
             "they determine whether the extended post-service period described in section 3212.1 "
             "is available. My causation opinion is stated independently of the presumption so "
             "that it remains useful if the presumption does not apply.",
@@ -897,11 +902,11 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "Labor Code section 4610.6, subdivision (h), appeal grounds)."
         ),
         medical_paragraphs=(
-            "The treatment at issue was denied on utilization review and the denial was upheld on "
-            "independent medical review. Stevens v. WCAB confirms that medical necessity is "
-            "determined in that forum rather than by an evaluator, so my opinion on the "
-            "reasonableness of the requested treatment is offered as medical evidence and not as "
-            "a review of the determination.",
+            "The treatment at issue went to utilization review and from there to independent "
+            "medical review. Stevens v. WCAB confirms that medical necessity is determined in "
+            "that forum rather than by an evaluator, whatever the determination held, so my "
+            "opinion on the reasonableness of the requested treatment is offered as medical "
+            "evidence and not as a review of it.",
             "Stevens holds that the reviewer's anonymity is permissible, while recognizing that a "
             "determination founded on a plainly erroneous factual premise may be challenged. I "
             "have therefore checked the determination against the records supplied to me and "
@@ -948,10 +953,10 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "Labor Code section 2775 (ABC test for employee status)."
         ),
         medical_paragraphs=(
-            "The applicant's employment status is disputed under the standard described in "
-            "Dynamex Operations West, Inc. v. Superior Court. That dispute does not affect my "
-            "medical opinions, which address the injury, its cause in the medical sense and the "
-            "resulting impairment; I record the working relationship only as the applicant "
+            "Where employment status is contested under the standard described in Dynamex "
+            "Operations West, Inc. v. Superior Court, that contest does not affect my medical "
+            "opinions, which address the injury, its cause in the medical sense and the "
+            "resulting impairment. I record the working relationship only as the applicant "
             "described it.",
             "Whether the working relationship described to me satisfies the test approved in "
             "Dynamex is a legal question on which I express no opinion. My causation opinion "
@@ -998,9 +1003,9 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "proved.",
             "Apportionment under section 4664 differs from apportionment to nonindustrial "
             "causation: it operates on the prior award rather than on medical causation, and it "
-            "requires that the prior and the current disability overlap in the same region. I "
-            "have described the overlap in functional terms so that the calculation can be "
-            "performed.",
+            "requires that the prior and the current disability overlap in the same region. "
+            "Where a prior award is produced, I have described in functional terms what would "
+            "overlap the impairment found here, so that the calculation can be performed.",
             "I have stated the current whole person impairment before any deduction. The "
             "subtraction of the previously awarded disability required by section 4664 is a "
             "rating and legal exercise rather than a medical one, and I have not performed it in "

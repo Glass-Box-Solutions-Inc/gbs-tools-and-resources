@@ -393,6 +393,14 @@ claim, `kite` on two impairments to add. Closing the four above means modelling 
 injury, a prior award and a diagnosis in the seed schema; that is a schema change, not a content
 change.
 
+Because those four gates are approximations, **no paragraph anywhere asserts a fact its own gate
+does not establish** — the approximation is confined to the gate and never leaks into the prose.
+Where a hook argues about something the seed cannot model, the language raises it conditionally
+("Where a prior award is produced...", "Where the records establish a prior condition..."), and
+`BANNED_ASSERTIONS` in `tests/test_doctrine_content.py` holds a positive control for every
+sentence that once did otherwise. A prerequisite also governs only the **draw**: a hook you seed
+by name is always kept and always renders, warning and all.
+
 **The section is appended, not interleaved.** A flagged document gets its doctrine content as a
 trailing section — `ADDENDUM — MEDICAL-LEGAL DISCUSSION OF CONTROLLING AUTHORITY` on a medical
 target, `POINTS AND AUTHORITIES — CONTROLLING DOCTRINE` on a legal one — after everything the
