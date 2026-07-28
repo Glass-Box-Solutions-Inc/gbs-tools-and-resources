@@ -35,7 +35,7 @@ from wc_caseload_engine.determinism import pin_substrate_clock
 from wc_caseload_engine.lifecycle_bridge import CaseTimeline, seed_to_case_parameters
 from wc_caseload_engine.name_denylist import warn_if_denylisted
 from wc_caseload_engine.seeds import ANCHOR_DATE, CaseSeed, derive_seed
-from wc_caseload_engine.substrate import import_substrate
+from wc_caseload_engine.substrate import SubstrateUnavailableError, import_substrate
 
 log = structlog.get_logger(__name__)
 
@@ -328,17 +328,98 @@ def synthetic_facility_name(seed: CaseSeed, salt: str) -> str:
 
 
 def _industry_key(case: Any) -> str:
-    """Recover the substrate's industry key from the employer it generated.
+    """Recover the industry key from the employer as it currently stands.
 
     ``FakeDataGenerator`` stores the industry as ``department``, title-cased
     with underscores expanded (``warehouse_logistics`` -> ``Warehouse
     Logistics``). Reversing that is enough to pick a coherent coined suffix, and
-    an unrecognized value simply falls through to the neutral pool. This runs
-    *before* ``_apply_profile_overrides``, which is what overwrites
-    ``department`` with the seed's own industry string.
+    an unrecognized value simply falls through to the neutral pool.
+
+    Reads ``department`` deliberately rather than taking the key as an argument:
+    :func:`_apply_seed_industry` has already written the seed's industry there
+    if the seed named one, so there is exactly one place the industry lives and
+    one answer to what it is.
     """
     department = str(getattr(case.employer, "department", "") or "")
     return department.strip().lower().replace(" ", "_")
+
+
+def employer_suffixes_for_industry(industry: str) -> tuple[str, ...]:
+    """The coined-name suffixes that keep an employer coherent with *industry*.
+
+    Exposed because the coherence regression has to assert against the same
+    table the coining uses; a test carrying its own copy would pass while the
+    two drifted apart.
+    """
+    return _EMPLOYER_SUFFIXES_BY_INDUSTRY.get(
+        _normalize_industry(industry), _EMPLOYER_SUFFIXES_DEFAULT
+    )
+
+
+def _normalize_industry(industry: str) -> str:
+    """``profile.employer.industry`` in the substrate's own key form."""
+    return industry.strip().lower().replace(" ", "_")
+
+
+def _substrate_positions_for(industry_key: str) -> tuple[str, ...]:
+    """Job titles the substrate associates with *industry_key*, in file order.
+
+    Read live from ``data.wc_constants`` rather than copied here, for the same
+    reason the denylist reads the organization pools live: a copy is a snapshot
+    that stops matching the substrate the moment the substrate is updated, and
+    nothing would report the drift.
+
+    Ordering is the pool's own list order — never a ``set``, whose iteration
+    order is salted per process (see :mod:`wc_caseload_engine.determinism`).
+    """
+    try:
+        constants = import_substrate("data.wc_constants")
+    except SubstrateUnavailableError:  # pragma: no cover - cast needs the substrate
+        return ()
+    entries = getattr(constants, "EMPLOYER_TEMPLATES", {}).get(industry_key, ())
+    return tuple(position for _company, position in entries)
+
+
+def _apply_seed_industry(case: Any, seed: CaseSeed) -> None:
+    """Apply the seed's employer industry *before* anything derives from it.
+
+    The substrate draws ``(industry, company, position)`` from one pool row, so
+    the trio is coherent by construction — until something replaces one member
+    of it. The seed's ``profile.employer.industry`` did, and it landed too late:
+    the coined company suffix and the position were both derived from the
+    substrate's *pre-override* industry while only ``department`` carried the
+    seed's. ``rng_seed=2`` with ``industry: healthcare`` produced a construction
+    company name, a healthcare department and a construction job title — one
+    employer, two industries, and a document set that reads as three different
+    people's files.
+
+    Applying the industry first is the whole fix: the department is the seed's,
+    the position is re-drawn from the *seeded* industry's titles, and
+    :func:`_replace_real_organizations` then coins a name from the same
+    industry because :func:`_industry_key` reads what this wrote.
+
+    The re-drawn position is a job title, never a company, so nothing here
+    reintroduces a pooled organization name — the coining sweep still owns every
+    organization on the case. A seed naming ``applicant.occupation`` outranks
+    this: ``_apply_profile_overrides`` runs afterwards, and the more specific
+    field wins.
+    """
+    industry = seed.profile.employer.industry
+    if not industry:
+        return
+
+    case.employer.department = industry
+    positions = _substrate_positions_for(_normalize_industry(industry))
+    if not positions:
+        # A free-text industry the substrate has no titles for. The department
+        # is still the seed's and the name still falls through to the neutral
+        # suffix pool; inventing a job title would be worse than keeping the
+        # substrate's, which is at least a real occupation.
+        log.debug("cast.industry_positions_unknown", industry=industry, case_id=seed.case_id)
+        return
+    case.employer.position = seed.rng(f"position:{_normalize_industry(industry)}").choice(
+        positions
+    )
 
 
 def _contact_email(person: str, organization: str) -> str:
@@ -477,8 +558,10 @@ def _apply_profile_overrides(case: Any, seed: CaseSeed, timeline: CaseTimeline) 
 
     if profile.employer.name:
         case.employer.company_name = profile.employer.name
-    if profile.employer.industry:
-        case.employer.department = profile.employer.industry
+    # ``profile.employer.industry`` is deliberately *not* applied here — it is
+    # applied by ``_apply_seed_industry`` before the coining sweep, because the
+    # coined name and the position both derive from it. Setting it here as well
+    # was the bug: by this point the derivations had already happened.
     if profile.employer.county:
         case.venue = profile.employer.county
 
@@ -583,6 +666,11 @@ def build_case_cast(seed: CaseSeed, timeline: CaseTimeline, case_number: int = 1
 
     adj_number = _adj_number(seed)
     _warn_on_seed_declared_real_names(seed)
+    # Order is load-bearing: the industry decides the coined employer suffix and
+    # the position, so the seed's industry has to land before the coining sweep
+    # reads it. Applying it afterwards (with the rest of the overrides) left the
+    # name and the position derived from the industry the *substrate* drew.
+    _apply_seed_industry(case, seed)
     engine_owned = _replace_real_organizations(case, seed)
     _apply_profile_overrides(case, seed, timeline)
     _apply_injury_overrides(case, seed, adj_number)

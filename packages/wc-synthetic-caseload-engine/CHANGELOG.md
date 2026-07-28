@@ -11,6 +11,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+**Second release-review round** (ticket **AJC-34**) — three reproduced findings from a second
+independent GPT-5.6-Sol release review. Each is the previous round's fix examined one level
+up, and each is closed with the exact reproduction kept as a regression.
+
+- **The eval and UR/IMR chains are fitted, not clamped** (blocker). The first round added
+  runway floors that reject a seed too short for its branch, and fixed the denial chain
+  structurally — but the evaluation and UR/IMR chains were still built with independent
+  per-date clamping, so a seed sitting *exactly* on its floor still collapsed. 84 of 90
+  boundary-valid seeds produced a non-increasing chain, most with every document on the
+  anchor: a QME panel request, the order appointing the panel and the report all 2026-01-01;
+  an RFA, the UR decision answering it and the denial issuing from it likewise. Both chains now
+  build unclamped and pass through `fit_track` in legal order (RFA < UR decision < IMR
+  application < IMR determination; panel request < panel issuance < report), the same
+  treatment the denial, lien and reconsideration chains already had. `MEDICAL_TREATMENT_DENIAL_UR`
+  also stopped being dated *on* the UR decision — an unconditional two-document collapse
+  independent of runway — and now follows it by the one to two working days LC 4610(g)(3)(A)
+  allows.
+- **A pre-set `WC_CASELOAD_HASH_PINNED` no longer waives the hash-seed check** (major). The
+  previous round made `PYTHONHASHSEED=0` the only accepted value; the guard still read its own
+  re-exec sentinel *first*, so anything that pre-set that variable — a wrapper script, a CI job
+  copying a child's environment — reinstated the bypass, and `=1` versus `=2` again produced
+  two different caseloads. The seed is now checked before the sentinel, and the sentinel is
+  demoted from a certificate of stability to a hop counter bounded by `MAX_REEXEC_HOPS` (2),
+  past which the run fails with an error naming the variable rather than exec-looping.
+- **A seeded employer industry now reaches the whole employer** (medium). `profile.employer.industry`
+  was applied *after* the coined-name substitution and the substrate's position draw, so it
+  changed the department and nothing else: `rng_seed=2` with `industry: healthcare` produced a
+  construction-suffixed company name, a healthcare department and a construction job title. The
+  industry is applied before anything derives from it, and the position is re-drawn from the
+  seeded industry's own titles (read live from the substrate's `EMPLOYER_TEMPLATES`). A seed
+  naming `applicant.occupation` still outranks it, and a free-text industry the substrate has
+  no titles for degrades to the neutral suffix pool rather than raising.
+
 **Release-review round** (ticket **AJC-34**) — five reproduced findings from an independent
 GPT-5.6-Sol release review, each closed with a regression test using the exact reproduction.
 

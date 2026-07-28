@@ -139,11 +139,18 @@ If an import breaks, fix the bridge — not by copying files.
 1. **Floors before ceilings.** Bound a date with `max(floor, min(proposed, ceiling))`, never a
    bare `min(...)`. A bare clamp is what dated a reconsideration petition 80 days before the
    Application it appealed from.
-2. **A sequenced chain is fitted, not clamped.** Lien tracks and the recon round trip build
-   their intended dates unclamped and pass the whole list through
+2. **A sequenced chain is fitted, not clamped.** Every chain whose documents cause each other —
+   lien tracks, the recon round trip, the denial response, the QME/AME evaluation, the UR/IMR
+   appeal — builds its intended dates unclamped and passes the whole list through
    `lifecycle_bridge.fit_track()`, which compresses in order with strictly increasing dates.
    Clamping a chain date-by-date stacks it on the horizon. `CaseTimeline.clamp` is only for the
    parallel core track, whose documents have no ordering relationship.
+
+   **A floor is not a substitute for a fit.** The runway floors (rule 4) reject a seed too short
+   for its chain; they say nothing about a seed sitting *on* the floor, where the chain fills
+   the window exactly and per-date clamping still collapses it. Both rounds of this defect were
+   found the same way — boundary-valid seeds, one per branch, asserting strict ordering — so a
+   new chain needs that test, not just a floor. Two documents dated the same day is the smell.
 3. **Impossible seeds are rejected, not absorbed.** `CaseSeed._check_runway` fails loudly when
    the injury sits too close to the anchor for the seeded story. Adding a lifecycle feature that
    consumes calendar time means adding its floor to `seeds.STAGE_RUNWAY_DAYS` (or the
@@ -167,7 +174,7 @@ If an import breaks, fix the bridge — not by copying files.
 
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/ -q      # 307 tests, ~4 min
+.venv/bin/python -m pytest tests/         # 352 tests, ~25 min (pyproject already passes -q)
 .venv/bin/ruff check .
 ```
 
@@ -204,12 +211,18 @@ Rendering is the slow part; the plan carries every subtype, date, track and form
 ## Adding a lifecycle path
 
 1. Add the seed fields to `seeds.py` with cross-field validation.
-2. Emit `DatedCandidate`s from the owning machine — dates clamped through `timeline.clamp`.
-3. If the substrate also emits those subtypes, add them to the machine's `*_OWNED_SUBTYPES`
+2. Emit `DatedCandidate`s from the owning machine. Decide first which kind of path it is: a
+   **sequence** (documents that cause each other) builds unclamped and goes through
+   `fit_track`; only a **parallel** set with no ordering relationship uses `timeline.clamp`.
+   When in doubt it is a sequence — that is the assumption that fails safely.
+3. If the path consumes calendar time, add its floor per date-spine rule 4.
+4. If the substrate also emits those subtypes, add them to the machine's `*_OWNED_SUBTYPES`
    so the walk stops competing.
-4. Confirm every new subtype is canonical (`effective_taxonomy().is_canonical`) — a
+5. Confirm every new subtype is canonical (`effective_taxonomy().is_canonical`) — a
    non-canonical key must be mapped or dropped, never written to a manifest.
-5. Add a path test asserting the subtypes appear and the dates order correctly.
+6. Add a path test asserting the subtypes appear, plus a **boundary** test: an injury sitting
+   exactly on the new floor, asserting strict ordering across ~30 `rng_seed` draws. A single
+   draw of an `rng.randint` chain proves nothing about the chain.
 
 ---
 

@@ -99,7 +99,25 @@ from the same seed; :func:`ensure_stable_hashing` re-execs on every one of them.
 """
 
 REEXEC_GUARD_VAR = "WC_CASELOAD_HASH_PINNED"
-"""Set after re-exec so the process can never loop."""
+"""Hop counter carried across the re-exec so the process can never loop.
+
+Deliberately a *counter*, not a flag. As a flag it was a bypass: anything that
+pre-set it — a wrapper script, a CI job that copied a child's environment, a
+developer who read the variable name and set it — suppressed the guard while
+salted hashing stayed live, and ``PYTHONHASHSEED=1`` versus ``=2`` produced two
+different caseloads under a variable whose name promises the opposite. The
+value now says how many re-execs have been spent, and nothing else; whether
+hashing is stable is answered only by :func:`hashing_is_stable`.
+"""
+
+MAX_REEXEC_HOPS = 2
+"""Re-execs allowed before :func:`ensure_stable_hashing` gives up and raises.
+
+A healthy environment needs exactly one: the child is launched with
+``PYTHONHASHSEED=0`` and settles. A second means the value did not survive —
+something in the launch path is overwriting it — and the only alternatives left
+are an unbounded exec loop or an error. An error is the one that can be fixed.
+"""
 
 DISABLE_REEXEC_VAR = "WC_CASELOAD_NO_REEXEC"
 """Set to any non-empty value to suppress the re-exec (debuggers, profilers)."""
@@ -123,6 +141,24 @@ def hashing_is_stable() -> bool:
     return os.environ.get("PYTHONHASHSEED") == STABLE_HASH_SEED
 
 
+def _reexec_hops() -> int:
+    """How many re-execs :data:`REEXEC_GUARD_VAR` says have already been spent.
+
+    A value this function did not write — ``true``, ``yes``, anything a human
+    set by hand — counts as one hop rather than zero. The variable was set by
+    *something*, and assuming the more conservative of the two readings keeps a
+    hand-set value from buying extra hops while still allowing the one honest
+    re-exec that fixes the seed.
+    """
+    raw = os.environ.get(REEXEC_GUARD_VAR)
+    if not raw:
+        return 0
+    try:
+        return max(int(raw), 0)
+    except ValueError:
+        return 1
+
+
 def ensure_stable_hashing() -> None:
     """Re-execute this process unless ``PYTHONHASHSEED`` is exactly ``"0"``.
 
@@ -138,29 +174,50 @@ def ensure_stable_hashing() -> None:
     behaviour spelled out explicitly, which the old guard read as a deliberate
     determinism choice. Only ``0`` disables salting, so only ``0`` is accepted.
 
+    The second release review found the same defect one level up: the *sentinel*
+    was read before ``PYTHONHASHSEED`` was, so pre-setting
+    :data:`REEXEC_GUARD_VAR` reinstated exactly the bypass the value check had
+    just closed. Order is the whole fix — the seed is checked first, and the
+    sentinel is demoted to a hop counter whose only job is bounding the loop
+    (:data:`MAX_REEXEC_HOPS`). Past the cap this raises rather than exec-ing
+    again: a seed that will not stick is a broken launch path, and looping
+    silently is the worst of the three ways to react to it.
+
     :data:`DISABLE_REEXEC_VAR` still opts out for debuggers and profilers, now
     with a warning: opting out is opting out of the reproducibility guarantee,
     and that is worth one line of log output.
+
+    Raises:
+        RuntimeError: when ``PYTHONHASHSEED`` is still not ``0`` after
+            :data:`MAX_REEXEC_HOPS` re-execs.
     """
-    if os.environ.get(REEXEC_GUARD_VAR):
-        return
-    if os.environ.get(DISABLE_REEXEC_VAR):
-        if not hashing_is_stable():
-            log.warning(
-                "determinism.reexec_disabled",
-                hash_seed=os.environ.get("PYTHONHASHSEED", "<unset>"),
-                consequence=(
-                    "byte-identical output is NOT guaranteed — the substrate orders "
-                    "content-pool strings through set(), which is salted per process"
-                ),
-            )
-        return
     if hashing_is_stable():
         return
+    if os.environ.get(DISABLE_REEXEC_VAR):
+        log.warning(
+            "determinism.reexec_disabled",
+            hash_seed=os.environ.get("PYTHONHASHSEED", "<unset>"),
+            consequence=(
+                "byte-identical output is NOT guaranteed — the substrate orders "
+                "content-pool strings through set(), which is salted per process"
+            ),
+        )
+        return
+
+    hops = _reexec_hops()
+    if hops >= MAX_REEXEC_HOPS:
+        raise RuntimeError(
+            f"PYTHONHASHSEED is {os.environ.get('PYTHONHASHSEED', '<unset>')!r} after "
+            f"{hops} re-exec(s); it must be {STABLE_HASH_SEED!r} for byte-identical "
+            f"output. Something in the launch path is overwriting it — check any "
+            f"wrapper that sets PYTHONHASHSEED or {REEXEC_GUARD_VAR}. Set "
+            f"{DISABLE_REEXEC_VAR}=1 to run anyway without the reproducibility "
+            f"guarantee."
+        )
 
     env = dict(os.environ)
     env["PYTHONHASHSEED"] = STABLE_HASH_SEED
-    env[REEXEC_GUARD_VAR] = "1"
+    env[REEXEC_GUARD_VAR] = str(hops + 1)
     # Carried through the re-exec: the child is a fresh interpreter and would
     # otherwise start writing ``__pycache__`` into the package and substrate
     # source trees, which are outside ``--out``.
@@ -448,6 +505,7 @@ __all__ = [
     "CLOCK_PINNED_CALLABLES",
     "DISABLE_REEXEC_VAR",
     "FIXED_CLOCK",
+    "MAX_REEXEC_HOPS",
     "REEXEC_GUARD_VAR",
     "REEXEC_MODULE",
     "STABLE_HASH_SEED",

@@ -31,6 +31,8 @@ import pytest
 from conftest import requires_substrate
 from wc_caseload_engine.determinism import (
     DISABLE_REEXEC_VAR,
+    MAX_REEXEC_HOPS,
+    REEXEC_GUARD_VAR,
     REEXEC_MODULE,
     SYNTHETIC_EML_HEADER,
     SYNTHETIC_MARKER,
@@ -301,13 +303,19 @@ class TestSyntheticMarkers:
 # ---------------------------------------------------------------------------
 
 
-def _generate_in_subprocess(spec: Path, out: Path, hash_seed: str | None) -> None:
+def _generate_in_subprocess(
+    spec: Path,
+    out: Path,
+    hash_seed: str | None,
+    extra_env: dict[str, str] | None = None,
+) -> None:
     """Run one full generation in a fresh interpreter under *hash_seed*."""
     env = dict(os.environ)
     if hash_seed is None:
         env.pop("PYTHONHASHSEED", None)
     else:
         env["PYTHONHASHSEED"] = hash_seed
+    env.update(extra_env or {})
     completed = subprocess.run(
         [
             sys.executable,
@@ -400,6 +408,65 @@ class TestHashSeedGuard:
                 os.environ.pop("PYTHONHASHSEED", None)
             else:
                 os.environ["PYTHONHASHSEED"] = previous
+
+    def test_a_pre_set_sentinel_does_not_buy_a_bypass(self, tmp_path: Path) -> None:
+        """The second review's reproduction: the sentinel outranked the seed.
+
+        ``ensure_stable_hashing`` read :data:`REEXEC_GUARD_VAR` *before* it read
+        ``PYTHONHASHSEED``, so anything that pre-set the sentinel — a wrapper
+        script, a CI job copying the child's environment, a developer who saw
+        the variable and set it — returned early with salted hashing still live.
+        Combined with ``PYTHONHASHSEED=1`` versus ``=2`` that is the same drift
+        the guard exists to stop, wearing the guard's own badge.
+
+        The sentinel is a loop counter, not a certificate. Only
+        ``PYTHONHASHSEED=0`` is a certificate.
+        """
+        spec = _hash_seed_spec(tmp_path / "spec.yaml")
+        one, two = tmp_path / "sentinel-one", tmp_path / "sentinel-two"
+        sentinel = {REEXEC_GUARD_VAR: "1"}
+
+        _generate_in_subprocess(spec, one, "1", sentinel)
+        _generate_in_subprocess(spec, two, "2", sentinel)
+
+        first, second = digest_tree(one), digest_tree(two)
+        assert first, "nothing was generated — the probe proves nothing"
+        assert set(first) == set(second), "the two runs wrote different files"
+        drifted = sorted(name for name in first if first[name] != second[name])
+        assert not drifted, (
+            f"{len(drifted)} file(s) drifted with {REEXEC_GUARD_VAR} pre-set "
+            f"and PYTHONHASHSEED=1 vs =2: {drifted[:10]}"
+        )
+
+    def test_a_sentinel_at_the_hop_cap_fails_loudly_instead_of_looping(self) -> None:
+        """Re-execing unconditionally needs a stop, and the stop must be audible.
+
+        One hop is all a correct environment needs: the child gets
+        ``PYTHONHASHSEED=0`` and settles. A second hop means the value did not
+        stick — a wrapper is overwriting it, or the platform is ignoring it — and
+        the only two options left are an infinite exec loop or an error. The
+        error names the variable so the wrapper can be found.
+        """
+        env = dict(os.environ)
+        env[REEXEC_GUARD_VAR] = str(MAX_REEXEC_HOPS)
+        env["PYTHONHASHSEED"] = "1"
+        completed = subprocess.run(
+            [sys.executable, "-m", REEXEC_MODULE, "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        assert completed.returncode != 0, "a wedged hash seed must not exit clean"
+        combined = completed.stdout + completed.stderr
+        assert "PYTHONHASHSEED" in combined
+        assert REEXEC_GUARD_VAR in combined
+
+    def test_one_hop_is_enough_for_a_healthy_environment(self, tmp_path: Path) -> None:
+        """The cap must not fire on the ordinary path, or every run breaks."""
+        spec = _hash_seed_spec(tmp_path / "spec.yaml")
+        _generate_in_subprocess(spec, tmp_path / "healthy", "1")
+        assert digest_tree(tmp_path / "healthy"), "the ordinary re-exec path stopped working"
 
     def test_opting_out_of_the_reexec_warns_that_determinism_is_lost(self) -> None:
         """An opt-out that is silent is an opt-out nobody knows they took."""

@@ -262,3 +262,129 @@ def test_every_case_manifest_agrees_with_itself(
     surnames = [manifest["applicant"].split()[-1] for manifest in demo_manifests.values()]
     assert len(set(adjs)) == len(adjs), f"duplicate ADJ numbers: {adjs}"
     assert len(set(surnames)) == len(surnames), f"duplicate applicant surnames: {surnames}"
+
+
+# ---------------------------------------------------------------------------
+# The employer trio
+# ---------------------------------------------------------------------------
+
+
+class TestSeededIndustryIsCoherent:
+    """A seeded industry has to reach everything the industry decides.
+
+    The substrate draws ``(industry, company, position)`` as one unit, so the
+    trio is coherent until something changes one member of it. The seed's
+    ``profile.employer.industry`` did exactly that, and too late: the coined
+    company name and the position were both derived from the substrate's
+    *pre-override* industry, and only ``department`` carried the seed's.
+
+    The second release review's reproduction is ``rng_seed=2`` with
+    ``industry: healthcare`` — a coined name from another industry's suffix
+    pool, a healthcare department, and a position from that other industry
+    again. Three fields, two industries, one employer.
+
+    The fix applies the seed's industry *before* anything derives from it, so
+    "industry" means one thing for the whole cast.
+    """
+
+    INDUSTRIES = ("healthcare", "construction", "government", "retail_service")
+
+    @staticmethod
+    def _cast_employer(rng_seed: int, industry: str) -> Any:
+        from wc_caseload_engine.case_context import build_case_cast
+        from wc_caseload_engine.lifecycle_bridge import build_timeline
+        from wc_caseload_engine.seeds import parse_case_seed
+
+        seed = parse_case_seed(
+            {
+                "case_id": "industry-coherence",
+                "rng_seed": rng_seed,
+                "injury": {
+                    "type": "specific",
+                    "date_of_injury": "2024-03-04",
+                    "body_parts": [{"part": "lumbar_spine", "icd10": "M54.5"}],
+                },
+                "lifecycle": {"target_stage": "discovery", "eval_type": "none"},
+                "profile": {"employer": {"industry": industry}},
+            }
+        )
+        return build_case_cast(seed, build_timeline(seed)).case.employer
+
+    def test_the_reproduction_seed_produces_one_coherent_trio(self) -> None:
+        """rng_seed=2 + healthcare — name, department and position must agree."""
+        from wc_caseload_engine.case_context import employer_suffixes_for_industry
+        from wc_caseload_engine.substrate import import_substrate
+
+        employer = self._cast_employer(2, "healthcare")
+        suffixes = employer_suffixes_for_industry("healthcare")
+        positions = import_substrate("data.wc_constants").EMPLOYER_TEMPLATES["healthcare"]
+
+        assert any(employer.company_name.endswith(suffix) for suffix in suffixes), (
+            f"{employer.company_name!r} carries no healthcare suffix — "
+            f"expected one of {suffixes}"
+        )
+        assert employer.department == "healthcare"
+        assert employer.position in {position for _company, position in positions}, (
+            f"{employer.position!r} is not a healthcare position"
+        )
+
+    @pytest.mark.parametrize("industry", INDUSTRIES)
+    def test_every_seeded_industry_reaches_all_three_fields(self, industry: str) -> None:
+        """The class, not the instance — four industries, ten draws each."""
+        from wc_caseload_engine.case_context import employer_suffixes_for_industry
+        from wc_caseload_engine.substrate import import_substrate
+
+        suffixes = employer_suffixes_for_industry(industry)
+        templates = import_substrate("data.wc_constants").EMPLOYER_TEMPLATES[industry]
+        positions = {position for _company, position in templates}
+
+        for rng_seed in range(1, 11):
+            employer = self._cast_employer(rng_seed, industry)
+            assert any(employer.company_name.endswith(suffix) for suffix in suffixes), (
+                f"rng_seed={rng_seed}: {employer.company_name!r} is not a {industry} name"
+            )
+            assert employer.department == industry
+            assert employer.position in positions, (
+                f"rng_seed={rng_seed}: {employer.position!r} is not a {industry} position"
+            )
+
+    def test_a_seeded_occupation_still_outranks_the_industry(self) -> None:
+        """The seed is the contract, and the more specific field wins.
+
+        Re-deriving the position from the industry must not overwrite a position
+        the seeder named outright.
+        """
+        from wc_caseload_engine.case_context import build_case_cast
+        from wc_caseload_engine.lifecycle_bridge import build_timeline
+        from wc_caseload_engine.seeds import parse_case_seed
+
+        seed = parse_case_seed(
+            {
+                "case_id": "occupation-wins",
+                "rng_seed": 2,
+                "injury": {
+                    "type": "specific",
+                    "date_of_injury": "2024-03-04",
+                    "body_parts": [{"part": "lumbar_spine", "icd10": "M54.5"}],
+                },
+                "lifecycle": {"target_stage": "discovery", "eval_type": "none"},
+                "profile": {
+                    "employer": {"industry": "healthcare"},
+                    "applicant": {"occupation": "Surgical Technologist"},
+                },
+            }
+        )
+        employer = build_case_cast(seed, build_timeline(seed)).case.employer
+        assert employer.position == "Surgical Technologist"
+
+    def test_an_unknown_industry_falls_through_without_breaking(self) -> None:
+        """A free-text industry is legal; it just cannot be made coherent.
+
+        ``profile.employer.industry`` is an open string, so a seed may name an
+        industry the substrate has no positions for. That must degrade to the
+        neutral suffix pool and the substrate's own position, not raise.
+        """
+        employer = self._cast_employer(5, "aerospace")
+        assert employer.department == "aerospace"
+        assert employer.company_name
+        assert employer.position

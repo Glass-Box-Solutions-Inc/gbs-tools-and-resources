@@ -380,6 +380,15 @@ but it checks it against the denylist and emits a `cast.seed_name_on_denylist` w
 hit. `castProvenance` already records the field as `seed` rather than `engine`, so a reviewer
 can see whose choice it was.
 
+**The coined employer stays coherent with its industry.** The substrate draws
+`(industry, company, position)` as one pool row, so replacing only the company would leave a
+Sheriff's Deputy at a coined retail chain. The coined suffix is therefore chosen from the
+industry's own family, and `profile.employer.industry` is applied *before* that choice is made
+— along with a position re-drawn from the seeded industry's titles — so a seed that names an
+industry gets an employer name, a department and a job title that agree. Naming
+`profile.applicant.occupation` outranks the re-draw; naming an industry the substrate has no
+titles for keeps the substrate's position and falls through to the neutral suffix pool.
+
 **`provenance.substrateSha`.** Every document's content ultimately comes from the substrate's
 templates and content pools, so "same seed, same version" is only half the provenance story —
 a manifest that does not name the substrate cannot be reproduced from itself. The recorded
@@ -420,7 +429,7 @@ Six leaks had to be closed, all in substrate or library output, none by editing 
 
 | Leak | Fix |
 |------|-----|
-| `list(set(items))` in the substrate's content pools — salted string hashing reordered document content per process | The CLI re-executes once with `PYTHONHASHSEED=0`, which stabilizes every set-of-strings ordering at once. **Only `0` is accepted**: `1`, `2` and `random` are all valid settings that leave hashing salted, so each produces a different caseload from one seed |
+| `list(set(items))` in the substrate's content pools — salted string hashing reordered document content per process | The CLI re-executes once with `PYTHONHASHSEED=0`, which stabilizes every set-of-strings ordering at once. **Only `0` is accepted**: `1`, `2` and `random` are all valid settings that leave hashing salted, so each produces a different caseload from one seed. No environment variable waives that check — the re-exec sentinel `WC_CASELOAD_HASH_PINNED` is a hop counter (capped at 2, hard error past it), never a declaration that hashing is already stable |
 | `.docx` ZIP entries stamped with wall-clock times | Repacked with a stamp built from the document date's own fields — never via `localtime`/`mktime` |
 | ReportLab's wall-clock `/CreationDate` and random `/ID`; PyMuPDF's `/ID` on scanned rewrites | `rl_config.invariant` (a fixed `gmtime` epoch, so the date string carries an explicit `+00'00'`) plus a length-preserving `/ID` rewrite that keeps xref offsets valid |
 | Four substrate sites compute document *content* from `date.today()` — applicant age, years employed, deponent age, a settlement-memo age line | `pin_substrate_clock()` rebinds those names to `ANCHOR_DATE` |

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from itertools import pairwise
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -293,6 +293,138 @@ class TestBranchRunwayFloors:
             f"denial chain is not strictly ordered: {denial} / {application} / {readiness}"
         )
         assert readiness <= timeline.horizon
+
+
+@requires_substrate
+class TestBranchChainsAreFittedNotClamped:
+    """The floors alone were only half the fix, and the second review found it.
+
+    ``TestBranchRunwayFloors`` proves a too-short seed is *rejected*. It says
+    nothing about a seed that sits exactly on its floor, and those seeds were
+    still building their chains with per-date clamping — so a boundary-valid
+    QME seed produced a panel request, the order appointing the panel and the
+    report all dated 2026-01-01, and a boundary-valid UR seed did the same to
+    the RFA, the decision answering it and the denial issuing from it.
+
+    The denial chain was fixed structurally (fitted as one track); these two
+    were not. The evaluation and the UR/IMR appeal are sequences with a legal
+    order — an order appointing a panel cannot precede the request for one, and
+    an IMR determination cannot precede the application for it — so they get the
+    same treatment.
+    """
+
+    EVAL_CHAIN = (
+        "QME_PANEL_REQUEST_FORM_105",
+        "ORDER_APPOINTING_QME_PANEL",
+        "QME_REPORT_INITIAL",
+    )
+    """Panel request -> panel issuance -> report, in the only order 8 CCR 30-31.5 allows."""
+
+    UR_CHAIN = (
+        "MEDICAL_TREATMENT_AUTHORIZATION_RFA",
+        "UTILIZATION_REVIEW_DECISION_REGULAR",
+        "MEDICAL_TREATMENT_DENIAL_UR",
+    )
+    """RFA -> UR decision -> the written denial that issues from it (LC 4610)."""
+
+    IMR_CHAIN = (*UR_CHAIN, "IMR_APPLICATION_FORM", "IMR_DETERMINATION_FORM")
+    """The UR chain plus the appeal it feeds (LC 4610.5)."""
+
+    @staticmethod
+    def _boundary_seed(days: int, rng_seed: int, **lifecycle: Any) -> Any:
+        """A seed whose injury sits *exactly* on the floor the branch demands."""
+        return parse_case_seed(
+            {
+                "case_id": "branch-chain",
+                "rng_seed": rng_seed,
+                "injury": {
+                    "type": "specific",
+                    "date_of_injury": latest_valid(days).isoformat(),
+                    "body_parts": [{"part": "knee", "icd10": "M23.51"}],
+                },
+                "lifecycle": {
+                    "target_stage": "intake",
+                    "claim_response": "accepted",
+                    "eval_type": "none",
+                    **lifecycle,
+                },
+            }
+        )
+
+    @staticmethod
+    def _chain_dates(seed: Any, subtypes: tuple[str, ...]) -> list[tuple[str, date]]:
+        """The first emitted date for each subtype, in the chain's legal order."""
+        timeline = build_timeline(seed)
+        found: dict[str, date] = {}
+        for candidate in build_core_candidates(seed, timeline):
+            if candidate.subtype in subtypes and candidate.subtype not in found:
+                found[candidate.subtype] = candidate.doc_date
+        missing = [name for name in subtypes if name not in found]
+        assert not missing, f"chain incomplete: {missing}"
+        return [(name, found[name]) for name in subtypes]
+
+    def _assert_strict(self, seed: Any, subtypes: tuple[str, ...]) -> None:
+        pairs = self._chain_dates(seed, subtypes)
+        rendered = ", ".join(f"{name}={value}" for name, value in pairs)
+        for (_, earlier), (later_name, later) in pairwise(pairs):
+            assert earlier < later, f"{later_name} does not follow its predecessor: {rendered}"
+        assert pairs[-1][1] <= build_timeline(seed).horizon
+
+    LIFECYCLES: ClassVar[dict[str, tuple[int, dict[str, Any], tuple[str, ...]]]] = {
+        "qme": (EVAL_RUNWAY_DAYS, {"eval_type": "qme"}, EVAL_CHAIN),
+        "ur": (
+            UR_DISPUTE_RUNWAY_DAYS,
+            {"ur_dispute": {"enabled": True, "decision": "upheld"}},
+            UR_CHAIN,
+        ),
+        "imr": (
+            IMR_RUNWAY_DAYS,
+            {
+                "ur_dispute": {
+                    "enabled": True,
+                    "decision": "upheld",
+                    "imr": True,
+                    "imr_outcome": "upheld",
+                }
+            },
+            IMR_CHAIN,
+        ),
+    }
+    """Each branch at its own floor, with the chain its machine emits there."""
+
+    @pytest.mark.parametrize("branch", sorted(LIFECYCLES))
+    def test_a_boundary_valid_seed_orders_its_chain_strictly(self, branch: str) -> None:
+        """The reproduction: injury exactly on the floor, chain must still order."""
+        days, lifecycle, chain = self.LIFECYCLES[branch]
+        self._assert_strict(self._boundary_seed(days, 4242, **lifecycle), chain)
+
+    def test_an_overturned_ur_orders_its_authorization_after_the_decision(self) -> None:
+        """The other UR branch — approval instead of denial — is a chain too."""
+        seed = self._boundary_seed(
+            UR_DISPUTE_RUNWAY_DAYS,
+            17,
+            ur_dispute={"enabled": True, "decision": "overturned"},
+        )
+        self._assert_strict(
+            seed,
+            (
+                "MEDICAL_TREATMENT_AUTHORIZATION_RFA",
+                "UTILIZATION_REVIEW_DECISION_REGULAR",
+                "MEDICAL_TREATMENT_AUTHORIZATION",
+            ),
+        )
+
+    @pytest.mark.parametrize("branch", sorted(LIFECYCLES))
+    def test_thirty_boundary_seeds_all_order_strictly(self, branch: str) -> None:
+        """One passing seed is an anecdote; the property has to hold across draws.
+
+        Every date in these chains comes from an ``rng.randint``, so a single
+        seed proves only that one set of draws survived. Thirty different
+        ``rng_seed`` values at the same boundary injury date is the property.
+        """
+        days, lifecycle, chain = self.LIFECYCLES[branch]
+        for rng_seed in range(1, 31):
+            self._assert_strict(self._boundary_seed(days, rng_seed, **lifecycle), chain)
 
 
 class TestAutoDerivedSeedsAreCompliant:

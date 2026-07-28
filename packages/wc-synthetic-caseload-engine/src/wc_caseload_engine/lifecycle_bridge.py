@@ -816,13 +816,35 @@ def _guaranteed_denial_documents(
 def _guaranteed_ur_documents(
     seed: CaseSeed, timeline: CaseTimeline, rng: random.Random
 ) -> list[DatedCandidate]:
-    """RFA -> UR decision -> (optional) IMR application + determination, in order."""
+    """RFA -> UR decision -> (optional) IMR application + determination, in order.
+
+    A **sequenced** chain, and one the statute orders explicitly: a utilization
+    review decides a request that already exists, the written denial issues from
+    that decision (LC 4610(g)), the IMR application appeals that denial and the
+    IMR determination answers the application (LC 4610.5). None of those can
+    share a date, let alone precede its cause.
+
+    Per-date clamping could not express that, which is the second release
+    review's reproduction: a seed sitting exactly on
+    :data:`~wc_caseload_engine.seeds.UR_DISPUTE_RUNWAY_DAYS` had every date in
+    the chain overrun the horizon independently and be pinned to it
+    independently, so the RFA, the decision answering it and the denial issuing
+    from it all came out 2026-01-01. The runway floors added in the first round
+    reject a seed too short for the chain; they say nothing about a seed sitting
+    *on* the floor, and those were still collapsing.
+
+    So the chain is fitted as one track — the treatment lien chains, the
+    reconsideration round trip and the denial chain already get it — and
+    :func:`fit_track` raises rather than returns a collapsed chain whenever the
+    window had room. See :meth:`CaseTimeline.clamp` for why clamping is sound
+    only on the parallel core track.
+    """
     ur = seed.lifecycle.ur_dispute
     if not ur.enabled:
         return []
-    rfa_date = timeline.clamp(timeline.injury_date + timedelta(days=rng.randint(60, 240)))
+    rfa_date = timeline.injury_date + timedelta(days=rng.randint(60, 240))
     # LC 4610: a non-expedited UR decision is due within five working days.
-    ur_date = timeline.clamp(rfa_date + timedelta(days=rng.randint(3, 5)))
+    ur_date = rfa_date + timedelta(days=rng.randint(3, 5))
     # Priorities sit near the resolution band: a seeded UR dispute is part of
     # the case's story, so a global_cap must eat filler before it eats this.
     docs = [
@@ -844,8 +866,12 @@ def _guaranteed_ur_documents(
     if ur.decision == "upheld":
         docs.append(
             DatedCandidate(
+                # LC 4610(g)(3)(A): written notice of a denial goes out within
+                # two working days of the decision. Dating it *on* the decision
+                # was an unconditional collapse — two documents, one date, on
+                # every seed with room to spare — rather than a runway symptom.
                 subtype="MEDICAL_TREATMENT_DENIAL_UR",
-                doc_date=ur_date,
+                doc_date=ur_date + timedelta(days=rng.randint(1, 2)),
                 priority=12,
                 author_role=ROLE_CARRIER,
                 stage="ur_dispute",
@@ -855,7 +881,7 @@ def _guaranteed_ur_documents(
         docs.append(
             DatedCandidate(
                 subtype="MEDICAL_TREATMENT_AUTHORIZATION",
-                doc_date=timeline.clamp(ur_date + timedelta(days=rng.randint(1, 10))),
+                doc_date=ur_date + timedelta(days=rng.randint(1, 10)),
                 priority=16,
                 author_role=ROLE_CARRIER,
                 stage="ur_decision",
@@ -863,7 +889,7 @@ def _guaranteed_ur_documents(
         )
     if ur.imr:
         # LC 4610.5: the IMR application is due within 30 days of the UR denial.
-        imr_app = timeline.clamp(ur_date + timedelta(days=rng.randint(10, 30)))
+        imr_app = ur_date + timedelta(days=rng.randint(10, 30))
         docs.append(
             DatedCandidate(
                 subtype="IMR_APPLICATION_FORM",
@@ -876,13 +902,18 @@ def _guaranteed_ur_documents(
         docs.append(
             DatedCandidate(
                 subtype="IMR_DETERMINATION_FORM",
-                doc_date=timeline.clamp(imr_app + timedelta(days=rng.randint(30, 60))),
+                doc_date=imr_app + timedelta(days=rng.randint(30, 60)),
                 priority=12,
                 author_role=ROLE_CARRIER,
                 stage="imr_appeal",
             )
         )
-    return docs
+    return fit_track(
+        docs,
+        floor=timeline.injury_date + timedelta(days=1),
+        ceiling=timeline.horizon,
+        label=f"ur:{seed.case_id}",
+    )
 
 
 def _guaranteed_death_documents(
@@ -1017,45 +1048,74 @@ def _guaranteed_resolution_documents(
 def _guaranteed_eval_documents(
     seed: CaseSeed, timeline: CaseTimeline, rng: random.Random
 ) -> list[DatedCandidate]:
-    """The seeded evaluation type always produces its panel paperwork and report."""
+    """The seeded evaluation type always produces its panel paperwork and report.
+
+    A QME evaluation is a **sequenced** chain like the UR appeal: the parties
+    request a panel, the Medical Unit issues one in answer to that request, and
+    the evaluator's report follows the examination the panel made possible (8
+    CCR 30-31.5). An order appointing a panel that predates the request for it
+    is not a document that can exist.
+
+    Clamping each date to the horizon independently produced exactly that on a
+    seed sitting on :data:`~wc_caseload_engine.seeds.EVAL_RUNWAY_DAYS` — panel
+    request, panel order and report all dated 2026-01-01 — so the chain is
+    fitted as one track instead. The proposed offsets are unchanged; only the
+    way they are bounded is, which keeps the 240-day floor derived from them
+    still true.
+    """
     eval_type = seed.lifecycle.eval_type
     if eval_type == "none":
         return []
-    panel_date = timeline.clamp(timeline.injury_date + timedelta(days=rng.randint(180, 365)))
-    report_date = timeline.clamp(panel_date + timedelta(days=rng.randint(60, 180)))
+    panel_date = timeline.injury_date + timedelta(days=rng.randint(180, 365))
+    panel_order_date = panel_date + timedelta(days=rng.randint(10, 30))
+    report_date = panel_date + timedelta(days=rng.randint(60, 180))
+    floor = timeline.injury_date + timedelta(days=1)
     if eval_type == "qme":
-        return [
+        return fit_track(
+            [
+                DatedCandidate(
+                    subtype="QME_PANEL_REQUEST_FORM_105",
+                    doc_date=panel_date,
+                    priority=18,
+                    author_role=ROLE_APPLICANT_ATTORNEY,
+                    stage="qme_evaluation",
+                ),
+                DatedCandidate(
+                    subtype="ORDER_APPOINTING_QME_PANEL",
+                    doc_date=panel_order_date,
+                    priority=18,
+                    author_role=ROLE_COURT,
+                    stage="qme_evaluation",
+                ),
+                DatedCandidate(
+                    subtype="QME_REPORT_INITIAL",
+                    doc_date=report_date,
+                    priority=15,
+                    author_role=ROLE_PHYSICIAN,
+                    stage="qme_evaluation",
+                ),
+            ],
+            floor=floor,
+            ceiling=timeline.horizon,
+            label=f"qme:{seed.case_id}",
+        )
+    # An AME is one agreed evaluator, so it emits one document — fitted through
+    # the same path anyway, because a single-document track still has to land
+    # inside the window and the caller should not have to know which is which.
+    return fit_track(
+        [
             DatedCandidate(
-                subtype="QME_PANEL_REQUEST_FORM_105",
-                doc_date=panel_date,
-                priority=18,
-                author_role=ROLE_APPLICANT_ATTORNEY,
-                stage="qme_evaluation",
-            ),
-            DatedCandidate(
-                subtype="ORDER_APPOINTING_QME_PANEL",
-                doc_date=timeline.clamp(panel_date + timedelta(days=rng.randint(10, 30))),
-                priority=18,
-                author_role=ROLE_COURT,
-                stage="qme_evaluation",
-            ),
-            DatedCandidate(
-                subtype="QME_REPORT_INITIAL",
+                subtype="AME_REPORT",
                 doc_date=report_date,
                 priority=15,
                 author_role=ROLE_PHYSICIAN,
-                stage="qme_evaluation",
-            ),
-        ]
-    return [
-        DatedCandidate(
-            subtype="AME_REPORT",
-            doc_date=report_date,
-            priority=15,
-            author_role=ROLE_PHYSICIAN,
-            stage="ame_evaluation",
-        )
-    ]
+                stage="ame_evaluation",
+            )
+        ],
+        floor=floor,
+        ceiling=timeline.horizon,
+        label=f"ame:{seed.case_id}",
+    )
 
 
 def _enforce_singletons(candidates: list[DatedCandidate]) -> list[DatedCandidate]:
