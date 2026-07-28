@@ -35,13 +35,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Corrected stale claims in the guide against the merged code: the *Doctrine-hook content depth*
   limitation (content injection now ships and is verified end to end, replaced by the two limits
-  that are actually real — the prose is fixed text, and four gates approximate their doctrine);
+  that are actually real — the prose is fixed text, and some gates approximate their doctrine);
   the demo caseload totals (7 cases / 331 documents / 83 subtypes, not 6 / 276 / 78); and the
   per-case manifest field lists, which omitted `contentFlags`, `template`, `fallback`,
   `castProvenance`, `warnings` and every `planned*` field.
 - Scoped the README's doctrine-prose claim from "no paragraph anywhere asserts a fact its own
   gate does not establish" to "no paragraph asserts the doctrinal predicate its gate
   approximates" — the narrower statement is the one the tests actually enforce (AJC-35 #22).
+- **Derived the exact/approximation split for all 14 doctrine gates instead of counting it.**
+  The README table named four (`benson`, `sibtf`, `lc4664_prior_award`,
+  `firefighter_presumption`) and explicitly grouped `gfpa` with `lc3208_3_psych` as "gated on
+  exactly what it needs" — but `gfpa`'s doctrine needs a good faith personnel action while its
+  gate establishes only a psychiatric claim. Reclassified by one stated test, applied to all
+  fourteen: **does the truth of the gate entail the truth of the doctrinal predicate?** The
+  answer is **seven exact, seven approximations**, the three additions being `gfpa`,
+  `going_and_coming` and `ab5_dynamex`. The approximations turn out to have two shapes, and the
+  second is what three successive versions of this table missed: four are missing a discrete
+  *entity* the seed has no field for, three are missing the *nature of the dispute*
+  (`claim_response: denied` says a claim is contested but never why). The README now carries one
+  authoritative 14-row table — predicate, gate, verdict — and the guide describes the class and
+  points at it, holding no enumeration or count of its own.
+  `BANNED_ASSERTIONS` already carried entries for all three additions, so the shipped prose was
+  correct throughout; only the table was stale. No doctrine content changed.
 
 ### Fixed
 
