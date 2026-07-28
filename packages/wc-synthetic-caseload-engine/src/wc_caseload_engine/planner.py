@@ -111,6 +111,13 @@ class CasePlan:
     """
     recon_document_count: int = 0
     """Documents actually emitted from the reconsideration track, for the same reason."""
+    recon_emitted_subtypes: frozenset[str] = frozenset()
+    """Which of the reconsideration track's subtypes survived to the plan.
+
+    Lets the manifest report a date only for a document that was written: a
+    suppressed petition must not leave a ``petitionDate`` behind beside a
+    ``documentCount`` of zero.
+    """
     warnings: tuple[str, ...] = ()
     perspective_notes: tuple[str, ...] = ()
     """Every swap, rescale and suppression the case's perspective applied.
@@ -214,9 +221,48 @@ def normalize_control_keys(controls: DocumentControls, *, case_id: str) -> Docum
     if not renamed:
         return controls
 
-    # Two substrate keys can share one canonical equivalent, and the schema
-    # forbids duplicate override entries. Collapsing them silently would make a
-    # count mean something the seed did not say.
+    # Aliasing creates collisions the schema could not have seen. Three
+    # substrate keys canonicalize to CLIENT_CORRESPONDENCE_INFORMATIONAL and two
+    # more pairs exist, so `include_only: [CLIENT_CORRESPONDENCE_INFORMATIONAL]`
+    # with `exclude: [CLIENT_REPORT_ANALYSIS_LETTER]` is one subtype written two
+    # ways — the schema validator compares raw strings, sees no overlap, and the
+    # resolver then drops the include the seed explicitly asked for. Every check
+    # the schema runs on raw keys is therefore re-run on canonical ones, and the
+    # error names the original aliases because those are what the author wrote.
+    def _aliases_for(canonical: str, keys: Sequence[str]) -> str:
+        written = sorted({key for key in keys if renamed.get(key, key) == canonical})
+        return ", ".join(repr(key) for key in written)
+
+    overlap = sorted(set(include_only) & set(exclude))
+    if overlap:
+        detail = "; ".join(
+            f"{canonical} (include_only: {_aliases_for(canonical, controls.include_only)}, "
+            f"exclude: {_aliases_for(canonical, controls.exclude)})"
+            for canonical in overlap
+        )
+        raise ControlKeyError(
+            f"case {case_id!r}: documents.include_only and documents.exclude name the same "
+            f"subtype under different substrate aliases — {detail}. Name it once, canonically."
+        )
+
+    for field, keys in (
+        ("documents.include_only", (include_only, controls.include_only)),
+        ("documents.exclude", (exclude, controls.exclude)),
+    ):
+        canonical_keys, original_keys = keys
+        duplicated = sorted({key for key in canonical_keys if canonical_keys.count(key) > 1})
+        if duplicated:
+            detail = "; ".join(
+                f"{canonical} ({_aliases_for(canonical, original_keys)})"
+                for canonical in duplicated
+            )
+            raise ControlKeyError(
+                f"case {case_id!r}: {field} names the same subtype more than once under "
+                f"different substrate aliases — {detail}. Name it once, canonically."
+            )
+
+    # The schema forbids duplicate override entries; collapsing two aliases into
+    # one silently would make a count mean something the seed did not say.
     collided = sorted(
         {
             entry.subtype
@@ -226,9 +272,20 @@ def normalize_control_keys(controls: DocumentControls, *, case_id: str) -> Docum
         }
     )
     if collided:
+        detail = "; ".join(
+            f"{canonical} ("
+            + ", ".join(
+                repr(override.subtype)
+                for override in controls.overrides
+                if override.subtype is not None
+                and renamed.get(override.subtype, override.subtype) == canonical
+            )
+            + ")"
+            for canonical in collided
+        )
         raise ControlKeyError(
             f"case {case_id!r}: documents.overrides entries collapse onto the same "
-            f"canonical subtype(s) {collided} after normalization; name the canonical "
+            f"canonical subtype(s) after normalization — {detail}; name the canonical "
             "key once with the count you want"
         )
 
@@ -394,6 +451,10 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         documents, [track.documents for track in lien_tracks] + [recon.documents]
     )
     lien_counts, recon_count = emitted[: len(lien_tracks)], emitted[len(lien_tracks)]
+    emitted_subtypes = {document.subtype for document in documents}
+    recon_subtypes = frozenset(
+        candidate.subtype for candidate in recon.documents if candidate.subtype in emitted_subtypes
+    )
 
     warnings = (
         *control.warnings,
@@ -421,6 +482,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         control=control,
         lien_document_counts=lien_counts,
         recon_document_count=recon_count,
+        recon_emitted_subtypes=recon_subtypes,
         warnings=warnings,
         perspective_notes=pov.notes,
     )

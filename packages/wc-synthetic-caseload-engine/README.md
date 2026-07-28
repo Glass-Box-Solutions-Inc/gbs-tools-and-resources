@@ -374,9 +374,23 @@ The full target sets are in `DOCTRINE_CONTENT`; 36 canonical subtypes are target
 and no disciplinary history, so a paragraph asserting a second date of injury or a prior award
 as fact would describe a case the generator did not produce. The paragraphs therefore raise the
 doctrine as a contention ("Where a prior award is established...") rather than as a finding, and
-a test enumerates the banned factual assertions so they cannot creep back. The one prerequisite
-that is weaker than its doctrine is `benson`, which really needs two injuries and settles for
-two impaired regions; modelling a second date of injury is a seed-schema change, not a content
+a test enumerates the banned factual assertions so they cannot creep back.
+
+**Four prerequisites ask for less than their doctrine does**, because the seed schema cannot
+express the real predicate. Each is an approximation, chosen as the closest thing a seed *can*
+establish, and the paragraphs are written so the gap is a contention rather than a false claim:
+
+| Hook | What the doctrine needs | What the prerequisite can ask for |
+|------|------------------------|-----------------------------------|
+| `benson` | two distinct industrial injuries | a rating and two impaired regions |
+| `sibtf` | a preexisting labor-disabling disability | a rating |
+| `lc4664_prior_award` | a prior award of permanent disability | a rating |
+| `firefighter_presumption` | a cancer diagnosis in a qualifying member | a qualifying occupation or industry |
+
+Everything else is gated on exactly what it needs — `death_dependency` on a death claim,
+`imr_constitutionality` on an IMR that happened, `lc3208_3_psych` and `gfpa` on a psychiatric
+claim, `kite` on two impairments to add. Closing the four above means modelling a second date of
+injury, a prior award and a diagnosis in the seed schema; that is a schema change, not a content
 change.
 
 **The section is appended, not interleaved.** A flagged document gets its doctrine content as a

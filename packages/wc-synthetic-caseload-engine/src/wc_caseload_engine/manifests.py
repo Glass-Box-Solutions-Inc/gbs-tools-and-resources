@@ -147,7 +147,10 @@ def build_manifest(
             )
             for index, track in enumerate(plan.lien_tracks)
         ],
-        "recon": plan.recon.summary(emitted=plan.recon_document_count),
+        "recon": plan.recon.summary(
+            emitted=plan.recon_document_count,
+            emitted_subtypes=plan.recon_emitted_subtypes,
+        ),
         "documents": documents,
         "provenance": {
             "zeroRealPii": plan.cast.zero_real_pii,

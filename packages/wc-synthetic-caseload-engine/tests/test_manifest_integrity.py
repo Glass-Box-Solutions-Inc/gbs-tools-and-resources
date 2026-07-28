@@ -181,6 +181,51 @@ class TestControlKeysAreCanonicalAtGenerate:
         assert MAPPED_SUBSTRATE_ONLY not in subtypes, "substrate-only vocabulary reached a manifest"
         assert MAPPED_SUBSTRATE_ONLY_CANONICAL in subtypes, "the mapped key emitted nothing"
 
+    def test_an_alias_that_collides_with_an_exclusion_is_rejected(self) -> None:
+        """N2: the schema's overlap check runs on raw keys, before aliasing.
+
+        ``CLIENT_REPORT_ANALYSIS_LETTER`` canonicalizes to
+        ``CLIENT_CORRESPONDENCE_INFORMATIONAL``, so this pair is an explicit
+        include and an explicit exclude of the *same* subtype written two ways.
+        The schema validator sees two different strings and passes; the resolver
+        then applies the exclude and silently drops the include the seed author
+        asked for. Aliasing created the collision, so aliasing has to re-check.
+        """
+        seed = _seed(
+            "alias-collision",
+            documents={
+                "include_only": ["CLIENT_CORRESPONDENCE_INFORMATIONAL"],
+                "exclude": ["CLIENT_REPORT_ANALYSIS_LETTER"],
+            },
+        )
+        with pytest.raises(ValueError) as excinfo:
+            build_case_plan(seed)
+        message = str(excinfo.value)
+        assert "CLIENT_REPORT_ANALYSIS_LETTER" in message, "the original alias is not named"
+        assert "CLIENT_CORRESPONDENCE_INFORMATIONAL" in message
+
+    def test_two_aliases_of_one_subtype_in_one_list_are_rejected(self) -> None:
+        """The duplicate half of the same problem, within a single control."""
+        seed = _seed(
+            "alias-duplicate",
+            documents={
+                "exclude": ["CLIENT_REPORT_ANALYSIS_LETTER", "CLIENT_CASE_VALUATION_LETTER"],
+            },
+        )
+        with pytest.raises(ValueError, match="CLIENT_CORRESPONDENCE_INFORMATIONAL"):
+            build_case_plan(seed)
+
+    def test_distinct_canonical_keys_are_left_alone(self) -> None:
+        """Guards the check: it must not fire on keys that merely look similar."""
+        seed = _seed(
+            "alias-clean",
+            documents={
+                "include_only": ["CLIENT_CORRESPONDENCE_INFORMATIONAL", "TRIAL_BRIEF"],
+                "exclude": ["DEFENSE_TRIAL_BRIEF"],
+            },
+        )
+        build_case_plan(seed)
+
     def test_the_planner_refuses_to_build_a_non_canonical_document(self) -> None:
         """Fail closed at the last line of defence, not only at the front door.
 
@@ -338,3 +383,73 @@ class TestTrackSummariesCountEmittedDocuments:
         assert recon["documentCount"] < recon["plannedDocumentCount"], (
             "the recon summary counts a document the controls removed"
         )
+
+    def test_a_suppressed_recon_document_leaves_no_date_behind(self, tmp_path: Path) -> None:
+        """F4-residual: the dates have to agree with the count beside them.
+
+        ``documentCount: 0`` next to a concrete ``petitionDate`` reads as "the
+        petition was filed on this date and is not in the folder", which is not
+        what happened — the control removed it before anything was written. The
+        date the machine proposed is still worth keeping, so it moves to
+        ``plannedPetitionDate``, exactly as the counts did.
+        """
+        seed = _seed(
+            "recon-dates",
+            lifecycle={
+                "target_stage": "post_recon",
+                "claim_response": "accepted",
+                "eval_type": "qme",
+                "resolution": {"type": "findings_award"},
+                "reconsideration": {
+                    "enabled": True,
+                    "outcome": "denied",
+                    "post_recon": "affirmed_final",
+                },
+            },
+            injury={
+                "type": "specific",
+                "date_of_injury": "2021-03-08",
+                "body_parts": [{"part": "lumbar_spine", "icd10": "M54.5"}],
+            },
+            documents={
+                "format_mix": {"pdf": 1.0},
+                "exclude": ["PETITION_RECONSIDERATION_FILED"],
+                "global_cap": 40,
+            },
+        )
+        recon = _manifest(generate_case(seed, tmp_path))["recon"]
+
+        assert recon["petitionDate"] is None, (
+            "a petition the controls suppressed still reports the date it would have had"
+        )
+        assert recon["plannedPetitionDate"] is not None, "the proposed date was discarded"
+
+    def test_an_emitted_recon_document_keeps_its_date(self, tmp_path: Path) -> None:
+        """Guards the above: nulling dates unconditionally would also pass it."""
+        seed = _seed(
+            "recon-dates-kept",
+            lifecycle={
+                "target_stage": "post_recon",
+                "claim_response": "accepted",
+                "eval_type": "qme",
+                "resolution": {"type": "findings_award"},
+                "reconsideration": {
+                    "enabled": True,
+                    "outcome": "denied",
+                    "post_recon": "affirmed_final",
+                },
+            },
+            injury={
+                "type": "specific",
+                "date_of_injury": "2021-03-08",
+                "body_parts": [{"part": "lumbar_spine", "icd10": "M54.5"}],
+            },
+            documents={"format_mix": {"pdf": 1.0}, "global_cap": 60},
+        )
+        manifest = _manifest(generate_case(seed, tmp_path))
+        recon = manifest["recon"]
+        emitted = {entry["subtype"] for entry in manifest["documents"]}
+
+        assert "PETITION_RECONSIDERATION_FILED" in emitted, "the petition was not emitted"
+        assert recon["petitionDate"] is not None, "an emitted petition lost its date"
+        assert recon["petitionDate"] == recon["plannedPetitionDate"]

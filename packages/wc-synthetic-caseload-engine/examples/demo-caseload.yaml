@@ -80,6 +80,12 @@ cases:
         claimants: [medical_provider, hospital, pharmacy]
         resolution: lien_resolution_agreement
         post_resolution_litigation: true
+      # `benson` is deliberately unsupported here and generates a warning on
+      # every run. Benson apportions between two injuries; this case models one,
+      # to a single region — so the seed exercises the "explicit control wins,
+      # loudly" path (ISC-29) rather than the happy one. Pinned by
+      # tests/test_doctrine_content.py::TestTheDemoCaseloadsWarningsArePinned;
+      # add a second body part or remove the hook for a warning-free demo.
       doctrine_hooks: [benson]
     output:
       filename_style: corpus
@@ -139,6 +145,12 @@ cases:
         count: 1
         claimants: [hospital]
         resolution: lien_stipulation
+      # `gfpa` is deliberately unsupported here and generates a warning on every
+      # run. The good-faith personnel action defence answers a *psychiatric*
+      # claim, and this case has none — so the seed exercises the "explicit
+      # control wins, loudly" path (ISC-29) rather than the happy one. Pinned by
+      # tests/test_doctrine_content.py::TestTheDemoCaseloadsWarningsArePinned;
+      # remove the hook if you want a warning-free demo.
       doctrine_hooks: [death_dependency, gfpa]
     documents:
       global_cap: 40

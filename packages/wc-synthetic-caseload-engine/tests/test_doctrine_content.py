@@ -40,7 +40,7 @@ import re
 import typing
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -79,7 +79,14 @@ DOCTRINE_HEADINGS: tuple[str, ...] = (MEDICAL_HEADING, LEGAL_HEADING)
 SAMPLE_INJURY = {
     "type": "specific",
     "date_of_injury": "2022-02-02",
-    "body_parts": [{"part": "lumbar_spine", "icd10": "M54.5"}],
+    "body_parts": [
+        {"part": "lumbar_spine", "icd10": "M54.5"},
+        # Two impaired regions, deliberately: ``kite`` argues that impairments
+        # should be added rather than combined, which needs two impairments to
+        # add. A single-region seed makes ``kite`` an unsupported hook and every
+        # case built here would carry a doctrine warning.
+        {"part": "shoulder", "icd10": "M75.100"},
+    ],
 }
 
 FLAGGED_HOOKS = ("kite", "escobedo")
@@ -251,6 +258,8 @@ BANNED_ASSERTIONS: tuple[tuple[str, str], ...] = (
     ("The applicant attributes the psychiatric condition primarily to a disciplinary sequence",
      "a specific disciplinary history"),
     ("is degenerative pathology documented on imaging", "imaging findings as fact"),
+    ("between the two injuries", "a second injury as an established fact"),
+    ("The consequence of Benson in this matter", "the doctrine as applied rather than argued"),
 )
 """Phrases that state extra-record facts as findings, with why each is banned.
 
@@ -286,10 +295,31 @@ class TestParagraphsDoNotAssertUnrepresentableFacts:
         ]
         assert not offenders, f"{offenders} assert {reason} ({phrase!r})"
 
-    def test_every_hook_declares_whether_it_has_a_prerequisite(self) -> None:
-        """An explicit ``None`` is a decision; a missing attribute is an oversight."""
-        for hook, content in sorted(DOCTRINE_CONTENT.items()):
-            assert hasattr(content, "requires"), f"{hook} declares no prerequisite field"
+    def test_every_hook_declares_a_prerequisite_or_is_listed_as_exempt(self) -> None:
+        """A deliberate decision per hook, not an attribute that is always there.
+
+        The previous version of this asserted ``hasattr(content, "requires")``,
+        which a slots dataclass with a defaulted field satisfies unconditionally
+        — it could not fail, so it did not check that anyone had *thought* about
+        the new hook. The allowlist below is the thinking: adding a hook without
+        a prerequisite now means editing this list and saying why.
+        """
+        exempt: frozenset[str] = frozenset()
+        missing = sorted(
+            hook
+            for hook, content in DOCTRINE_CONTENT.items()
+            if content.requires is None and hook not in exempt
+        )
+        assert not missing, (
+            f"{missing} declare no prerequisite and are not listed as deliberately exempt; "
+            "either give them one or add them to `exempt` with a reason"
+        )
+        stale = sorted(
+            hook
+            for hook in exempt
+            if hook not in DOCTRINE_CONTENT or DOCTRINE_CONTENT[hook].requires is not None
+        )
+        assert not stale, f"{stale} are exempt but no longer need to be"
 
     def test_a_prerequisite_states_what_the_seed_must_show(self) -> None:
         for hook, content in sorted(DOCTRINE_CONTENT.items()):
@@ -322,6 +352,133 @@ class TestPrerequisitesGovernAutoDerivation:
         )
         assert hook_is_supported("death_dependency", death)
         assert not hook_is_supported("death_dependency", living)
+
+    def test_a_psychiatric_doctrine_needs_a_psychiatric_injury(self) -> None:
+        """N1: the prerequisite that blessed a psych argument in an orthopedic file.
+
+        ``lc3208_3_psych`` used to ask only that the claim not be a death claim,
+        so a lumbar-only case satisfied it and auto-derivation could draw it as
+        *supported* — injecting "This psychiatric evaluation is framed by..."
+        into an ordinary orthopedic QME with no warning at all. That is the A1
+        class of defect recurring inside the layer built to prevent it, which is
+        worse than the original: the warning path was the safety net, and a
+        satisfied prerequisite bypasses it.
+        """
+        from wc_caseload_engine.doctrine import hook_is_supported
+
+        lumbar = parse_case_seed(
+            {"case_id": "lumbar-only", "rng_seed": 4, "injury": dict(SAMPLE_INJURY)}
+        )
+        psych = parse_case_seed(
+            {
+                "case_id": "psych-seed",
+                "rng_seed": 4,
+                "injury": {
+                    "type": "specific",
+                    "date_of_injury": "2022-02-02",
+                    "body_parts": [
+                        {"part": "lumbar_spine", "icd10": "M54.5"},
+                        {"part": "psyche", "icd10": "F43.10"},
+                    ],
+                },
+            }
+        )
+        assert not hook_is_supported("lc3208_3_psych", lumbar), (
+            "a lumbar-only case supports a psychiatric-threshold argument"
+        )
+        assert hook_is_supported("lc3208_3_psych", psych)
+
+    def test_adding_impairments_needs_two_impairments(self) -> None:
+        """The same defect as N1, found in ``kite`` while auditing the README claim.
+
+        ``kite`` asked only for a rating, so a single-region case satisfied it
+        and auto-derivation could draw "impairments may be added rather than
+        combined where they have a synergistic effect" into a file with one
+        impairment. Unlike Benson's second *injury*, a second impaired region is
+        something a seed can express, so this is a real gate rather than a
+        documented approximation.
+        """
+        from wc_caseload_engine.doctrine import hook_is_supported
+
+        one_region = parse_case_seed(
+            {
+                "case_id": "one-region",
+                "rng_seed": 6,
+                "injury": {
+                    "type": "specific",
+                    "date_of_injury": "2022-02-02",
+                    "body_parts": [{"part": "lumbar_spine", "icd10": "M54.5"}],
+                },
+            }
+        )
+        two_regions = parse_case_seed(
+            {"case_id": "two-regions", "rng_seed": 6, "injury": dict(SAMPLE_INJURY)}
+        )
+        assert not hook_is_supported("kite", one_region)
+        assert hook_is_supported("kite", two_regions)
+
+    def test_no_auto_drawn_psych_doctrine_lands_on_a_case_without_a_psyche_claim(self) -> None:
+        """The sweep the unit assertion above cannot make: the draw itself."""
+        from wc_caseload_engine.seeds import CaseloadSpec, resolve_caseload
+
+        offenders: list[str] = []
+        for rng_seed in (7, 11, 23):
+            spec = CaseloadSpec.model_validate(
+                {
+                    "caseload_id": f"auto-psych-{rng_seed}",
+                    "auto": {
+                        "count": 60,
+                        "distribution": "complex_litigation",
+                        "rng_seed": rng_seed,
+                    },
+                }
+            )
+            for seed in resolve_caseload(spec):
+                psych_parts = {part.part for part in seed.injury.body_parts}
+                for hook in ("lc3208_3_psych", "gfpa"):
+                    if hook in seed.lifecycle.doctrine_hooks and "psyche" not in psych_parts:
+                        offenders.append(f"{seed.case_id}: {hook} on {sorted(psych_parts)}")
+        assert not offenders, (
+            f"{len(offenders)} auto-drawn psychiatric doctrine(s) on non-psych cases: "
+            f"{offenders[:10]}"
+        )
+
+    def test_the_psychiatric_language_is_reachable_only_where_it_belongs(self) -> None:
+        """N1(b): these phrases are correct on a psych file, so they are not banned.
+
+        "This psychiatric evaluation is framed by..." is exactly right in a
+        psychiatric med-legal report and wrong everywhere else. Banning the text
+        would delete a true sentence; the defect was the gate, not the wording.
+        So the assertion is about *reachability*: the phrases live in one hook's
+        pool, and that hook cannot be drawn onto a case with no psychiatric claim.
+        """
+        from wc_caseload_engine.doctrine import hook_is_supported
+
+        phrases = ("This psychiatric evaluation is framed by", "The diagnosis is stated")
+        for phrase in phrases:
+            carriers = sorted(
+                hook
+                for hook, content in DOCTRINE_CONTENT.items()
+                if any(
+                    phrase in paragraph
+                    for paragraph in (*content.medical_paragraphs, *content.legal_paragraphs)
+                )
+            )
+            assert carriers == ["lc3208_3_psych"], (
+                f"{phrase!r} appears in {carriers}; it is only defensible under lc3208_3_psych"
+            )
+
+        content = DOCTRINE_CONTENT["lc3208_3_psych"]
+        assert content.requires is not None
+        assert "psyche" in content.requires.description, (
+            "the gate on this language no longer mentions the psyche body part"
+        )
+        assert not hook_is_supported(
+            "lc3208_3_psych",
+            parse_case_seed(
+                {"case_id": "ortho-only", "rng_seed": 9, "injury": dict(SAMPLE_INJURY)}
+            ),
+        )
 
     def test_auto_derived_caseloads_never_carry_an_unsupported_hook(self) -> None:
         """The draw is the channel a seed author does not control."""
@@ -367,6 +524,49 @@ class TestPrerequisitesGovernAutoDerivation:
         """Guards the probe: a warning on every case would be noise, not signal."""
         plan = build_case_plan(_case_seed("supported-hooks", FLAGGED_HOOKS))
         assert not [w for w in plan.warnings if "doctrine" in w.lower()], plan.warnings
+
+
+class TestTheDemoCaseloadsWarningsArePinned:
+    """Caveat-2: two demo seeds exercise the warning path deliberately.
+
+    ``nguyen-cr-three-liens`` names ``benson`` on a single-region case and
+    ``ramirez-death-dependency`` names ``gfpa`` on a death claim with no
+    psychiatric component. Both are kept-and-warned, which is the point — the
+    shipped demo demonstrates the loud path rather than only the happy one.
+
+    Pinning the exact set is what keeps that demonstration from swallowing a
+    real regression: without this, a third demo case starting to warn would look
+    exactly like the two that are supposed to.
+    """
+
+    pytestmark = requires_substrate
+
+    EXPECTED: ClassVar[dict[str, tuple[str, ...]]] = {
+        "nguyen-cr-three-liens": ("benson",),
+        "ramirez-death-dependency": ("gfpa",),
+    }
+
+    def test_exactly_the_documented_demo_seeds_warn(self) -> None:
+        from conftest import DEMO_SPEC
+        from wc_caseload_engine.doctrine import unsupported_hook_warnings
+        from wc_caseload_engine.seeds import load_caseload_spec, resolve_caseload
+
+        actual: dict[str, tuple[str, ...]] = {}
+        for seed in resolve_caseload(load_caseload_spec(DEMO_SPEC)):
+            warned = tuple(
+                hook
+                for hook in seed.lifecycle.doctrine_hooks
+                if unsupported_hook_warnings([hook], seed)
+            )
+            if warned:
+                actual[seed.case_id] = warned
+
+        assert actual == self.EXPECTED, (
+            "the demo caseload's doctrine warnings changed. Each entry is a seed that "
+            "deliberately names a doctrine its case cannot support (see the inline YAML "
+            "comments); a new one is either a real defect or a deliberate demonstration "
+            "that belongs in this list."
+        )
 
 
 # ---------------------------------------------------------------------------

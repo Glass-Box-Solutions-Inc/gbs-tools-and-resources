@@ -177,6 +177,25 @@ raise the second injury as a contention rather than to assert it as a finding.
 Modelling a second date of injury is the real fix and belongs in the seed schema.
 """
 
+_KITE_PREREQUISITE = DoctrinePrerequisite(
+    description=(
+        "adding impairments instead of combining them needs two impairments to "
+        "add — lifecycle.eval_type must not be none and injury.body_parts must "
+        "name at least two parts"
+    ),
+    predicate=lambda facts: _needs_rating(facts) and facts.body_part_count >= 2,
+)
+"""Kite, gated on there being something to add.
+
+Found while correcting the README claim that ``benson`` was the only
+prerequisite weaker than its doctrine. It was not: ``kite`` asked only for a
+rating, so a single-region case satisfied it and auto-derivation could draw an
+argument about the synergistic effect of two impairments into a file with one.
+That is the same defect as N1 in a different hook, and unlike Benson's second
+*injury*, a second impaired region is something a seed can express — so this is
+a real gate rather than a documented approximation.
+"""
+
 _DEATH_PREREQUISITE = DoctrinePrerequisite(
     description="death benefits require injury.type to be death",
     predicate=lambda facts: facts.injury_type == "death",
@@ -184,11 +203,26 @@ _DEATH_PREREQUISITE = DoctrinePrerequisite(
 
 _PSYCH_CLAIM_PREREQUISITE = DoctrinePrerequisite(
     description=(
-        "the psychiatric-injury threshold presupposes a living claimant's "
-        "psychiatric claim — injury.type must not be death"
+        "the section 3208.3 threshold presupposes a psychiatric injury claim — "
+        "name psyche in injury.body_parts"
     ),
-    predicate=lambda facts: facts.injury_type != "death",
+    predicate=lambda facts: facts.has_psych_body_part,
 )
+"""The psychiatric threshold, gated on an actual psychiatric claim.
+
+This asked only that the claim not be a death claim, which every orthopedic case
+satisfies — so auto-derivation could draw the hook onto a lumbar-only file as
+*supported*, injecting "This psychiatric evaluation is framed by..." into an
+ordinary QME with no warning. A satisfied prerequisite bypasses the
+kept-and-warned path, so a too-weak gate is worse than no gate: it launders the
+incoherence as approved.
+
+Deliberately the same shape as :data:`_GFPA_PREREQUISITE`, minus the escape
+hatch. ``gfpa`` accepts ``lc3208_3_psych`` alongside it as evidence of a
+psychiatric claim; this hook *is* that evidence, so it has to come from the
+injury itself. Seeding it explicitly on an orthopedic case still works and is
+still warned about.
+"""
 
 _GFPA_PREREQUISITE = DoctrinePrerequisite(
     description=(
@@ -443,14 +477,15 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "them are required rather than a single combined award. The exception recognized in "
             "Benson is narrow: a combined award is permissible only where the evaluator cannot "
             "parcel out the causation between the injuries.",
-            "The consequence of Benson in this matter is immediate and practical. It affects the "
-            "applicability of the multiple-disability rating, the permanent disability rate "
-            "payable for each injury, and the reach of any prior award, and the parties should "
-            "address the Benson issue separately from general apportionment.",
+            "Where Benson applies, its consequences are immediate and practical: it affects the "
+            "availability of the multiple-disability rating, the permanent disability rate "
+            "payable for each injury, and the reach of any prior award. The Benson issue should "
+            "therefore be framed separately from general apportionment rather than argued as "
+            "part of it.",
             "A medical opinion offered to defeat separate awards under Benson must state, with "
-            "reasoning, why the disabilities cannot be parceled out between the two injuries. An "
-            "evaluator's silence on the question is not a finding that the injuries are "
-            "inextricably intertwined, and Benson is not satisfied by silence.",
+            "reasoning, why the disabilities cannot be parceled out. An evaluator's silence on "
+            "the question is not a finding that the injuries are inextricably intertwined, and "
+            "Benson is not satisfied by silence.",
         ),
         medical_targets=_CORE_MEDLEGAL | {"APPORTIONMENT_REPORT"},
         legal_targets=_BRIEFS
@@ -546,7 +581,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
         medical_targets=_CORE_MEDLEGAL | {"IMPAIRMENT_RATING_WORKSHEET"},
         legal_targets=_BRIEFS
         | {"PD_RATING_CALCULATION_WORKSHEET", "PD_RATING_CONVERSION"},
-        requires=_RATING_PREREQUISITE,
+        requires=_KITE_PREREQUISITE,
     ),
     "going_and_coming": DoctrineContent(
         hook="going_and_coming",

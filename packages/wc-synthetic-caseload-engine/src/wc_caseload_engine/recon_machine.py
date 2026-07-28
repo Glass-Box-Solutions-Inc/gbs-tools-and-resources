@@ -82,7 +82,17 @@ class ReconTrack:
     documents: tuple[DatedCandidate, ...]
     warnings: tuple[str, ...] = ()
 
-    def summary(self, emitted: int | None = None) -> dict[str, object]:
+    PETITION_SUBTYPE = "PETITION_RECONSIDERATION_FILED"
+    """The document ``petition_date`` is the date *of*."""
+
+    ORDER_SUBTYPE = "ORDER_ON_RECONSIDERATION"
+    """The document ``order_date`` is the date *of*."""
+
+    def summary(
+        self,
+        emitted: int | None = None,
+        emitted_subtypes: frozenset[str] | None = None,
+    ) -> dict[str, object]:
         """Manifest-shaped summary of the recon round trip.
 
         Args:
@@ -90,15 +100,37 @@ class ReconTrack:
                 ``len(self.documents)`` is what the machine proposed, before
                 perspective and the document controls trimmed it — see
                 :meth:`wc_caseload_engine.lien_machine.LienTrack.summary`.
+            emitted_subtypes: which of this track's subtypes survived. A date is
+                only reported when the document it is the date *of* was written:
+                ``documentCount: 0`` beside a concrete ``petitionDate`` reads as
+                "filed on this date, absent from the folder", which is not what
+                happened. The proposed dates are kept under ``planned*`` for the
+                same reason the proposed count is.
+
+        ``awardDate`` is deliberately not gated. It comes from
+        :class:`~wc_caseload_engine.lifecycle_bridge.CaseTimeline`, not from a
+        document this track owns — the award is the core track's, and the
+        reconsideration is dated *from* it.
         """
         planned = len(self.documents)
+        petition = self.petition_date
+        order = self.order_date
+        if emitted_subtypes is not None:
+            petition = petition if self.PETITION_SUBTYPE in emitted_subtypes else None
+            order = order if self.ORDER_SUBTYPE in emitted_subtypes else None
+
+        def _iso(value: date | None) -> str | None:
+            return value.isoformat() if value else None
+
         return {
             "enabled": self.enabled,
             "outcome": self.outcome,
             "postRecon": self.post_recon,
-            "awardDate": self.award_date.isoformat() if self.award_date else None,
-            "petitionDate": self.petition_date.isoformat() if self.petition_date else None,
-            "orderDate": self.order_date.isoformat() if self.order_date else None,
+            "awardDate": _iso(self.award_date),
+            "petitionDate": _iso(petition),
+            "orderDate": _iso(order),
+            "plannedPetitionDate": _iso(self.petition_date),
+            "plannedOrderDate": _iso(self.order_date),
             "documentCount": planned if emitted is None else emitted,
             "plannedDocumentCount": planned,
         }
