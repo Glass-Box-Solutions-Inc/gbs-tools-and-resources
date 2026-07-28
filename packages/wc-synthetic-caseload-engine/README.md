@@ -329,6 +329,13 @@ emits no recon documents and records a warning naming the fix.
    injection, and the second is worth knowing about: because complexity feeds the whole case,
    a two-hook seed produces different clinical content in *every* document, including
    documents no doctrine targets.
+
+   Each hook also declares a **prerequisite** — what the case must be able to show for the
+   argument to belong in it (a death claim for `death_dependency`, an IMR that actually happened
+   for `imr_constitutionality`, a psychiatric claim for `gfpa`). `auto:` derivation draws only
+   hooks whose prerequisite passes. A hook you name yourself is always kept — the seed is the
+   contract — but a failing prerequisite is reported in `manifest.warnings`, because a doctrine
+   argued in a file that cannot support it is worth seeing rather than shipping quietly.
 2. **Lands in the manifest.** `doctrineHooks` at case level; `contentFlags` per document, and
    only on documents that actually carry the language (a hook-free caseload's manifests are
    byte-identical to what they were before this existed).
@@ -362,6 +369,15 @@ The full target sets are in `DOCTRINE_CONTENT`; 36 canonical subtypes are target
 `tests/test_doctrine_content.py` asserts every one of them against the 353-key taxonomy.
 
 ### Honest limits
+
+**The doctrine is contended, not adjudicated.** A `CaseSeed` models one injury, no prior award
+and no disciplinary history, so a paragraph asserting a second date of injury or a prior award
+as fact would describe a case the generator did not produce. The paragraphs therefore raise the
+doctrine as a contention ("Where a prior award is established...") rather than as a finding, and
+a test enumerates the banned factual assertions so they cannot creep back. The one prerequisite
+that is weaker than its doctrine is `benson`, which really needs two injuries and settles for
+two impaired regions; modelling a second date of injury is a seed-schema change, not a content
+change.
 
 **The section is appended, not interleaved.** A flagged document gets its doctrine content as a
 trailing section — `ADDENDUM — MEDICAL-LEGAL DISCUSSION OF CONTROLLING AUTHORITY` on a medical
@@ -406,7 +422,20 @@ derivation, the generator version, the seed hash and `substrateSha`.
 A document that carries doctrine language gains one more field, `contentFlags` — the hooks
 whose paragraphs are in it (see [Doctrine hooks](#doctrine-hooks--landmark-authorities-in-the-paper)).
 It is written only when non-empty, so a caseload that seeds no doctrines produces exactly the
-manifests it produced before the field existed.
+manifests it produced before the field existed. It records the hooks that were *applied*, not
+the ones requested: a hook with no content for that subtype leaves no flag behind.
+
+`liens[]` and `recon{}` each carry two counts. `documentCount` is what the case actually emitted
+after perspective and the document controls had their say; `plannedDocumentCount` is what the
+machine proposed. They differ whenever a control removed part of a track, and the difference is
+the point — it distinguishes "this case had no liens" from "this case had liens and the controls
+removed them".
+
+`provenance.zeroRealPii` is computed, and a seed that names an organization on the
+real-entity denylist makes it **false**. The name is kept (the seed is the contract), the field
+is recorded as `seed_denylisted`, and `manifest.warnings` names it. `validate --out` fails such a
+tree, which is the intended behaviour: a corpus asserting zero real PII over a detected real name
+is worse than one that admits it.
 
 **`template` and `fallback`.** `template` names the class and variant that produced the file
 (`CourtNotice/lien_filing`); `fallback` is `true` when the document did not render as

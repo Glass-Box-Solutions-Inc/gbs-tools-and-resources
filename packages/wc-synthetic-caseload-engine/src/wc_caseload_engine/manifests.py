@@ -137,8 +137,17 @@ def build_manifest(
         "claimResponse": seed.lifecycle.claim_response,
         "evalType": seed.lifecycle.eval_type,
         "doctrineHooks": list(seed.lifecycle.doctrine_hooks),
-        "liens": [track.summary() for track in plan.lien_tracks],
-        "recon": plan.recon.summary(),
+        # Emitted counts, not proposed ones: these summaries sit beside the
+        # documents[] array and are read as facts about the folder.
+        "liens": [
+            track.summary(
+                emitted=plan.lien_document_counts[index]
+                if index < len(plan.lien_document_counts)
+                else None
+            )
+            for index, track in enumerate(plan.lien_tracks)
+        ],
+        "recon": plan.recon.summary(emitted=plan.recon_document_count),
         "documents": documents,
         "provenance": {
             "zeroRealPii": plan.cast.zero_real_pii,

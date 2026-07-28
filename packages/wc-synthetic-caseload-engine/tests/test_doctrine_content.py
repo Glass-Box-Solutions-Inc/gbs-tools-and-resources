@@ -235,6 +235,141 @@ class TestContentTableIsComplete:
 
 
 # ---------------------------------------------------------------------------
+# A1 — paragraphs may not assert facts the seed cannot establish
+# ---------------------------------------------------------------------------
+
+BANNED_ASSERTIONS: tuple[tuple[str, str], ...] = (
+    ("two distinct industrial injuries, Benson requires", "a second injury the seed cannot model"),
+    ("more than one claimed date of injury", "a second date of injury"),
+    ("the two dates of injury", "a second date of injury"),
+    ("bracketing the two dates", "a second date of injury"),
+    ("The applicant is the subject of a prior award", "a prior award as fact"),
+    ("employment predates the claimed psychiatric injury by more than six months",
+     "a tenure figure the paragraph cannot know"),
+    ("The applicant's account places the event during a commute", "commute specifics"),
+    ("the applicant described work that was directed and scheduled", "control facts as findings"),
+    ("The applicant attributes the psychiatric condition primarily to a disciplinary sequence",
+     "a specific disciplinary history"),
+    ("is degenerative pathology documented on imaging", "imaging findings as fact"),
+)
+"""Phrases that state extra-record facts as findings, with why each is banned.
+
+Every entry is a phrase that shipped in the first cut of ``DOCTRINE_CONTENT``.
+A ``CaseSeed`` models exactly one ``InjurySpec`` with one date of injury, no
+prior award, and no disciplinary history, so a paragraph asserting any of them
+describes a case the generator did not produce — and a corpus built from it
+teaches a classifier to associate the doctrine with facts that are not in the
+document.
+
+The fix is register, not omission: the doctrine is *raised as a contention*
+("Defendant contends...", "Where a prior award is established...") rather than
+adjudicated, which is how these paragraphs read in a real file anyway.
+"""
+
+
+class TestParagraphsDoNotAssertUnrepresentableFacts:
+    """A1: content must be true of the case the seed can actually describe."""
+
+    @pytest.mark.parametrize(("phrase", "reason"), BANNED_ASSERTIONS, ids=lambda v: str(v)[:40])
+    def test_no_shipped_paragraph_contains_a_banned_assertion(
+        self, phrase: str, reason: str
+    ) -> None:
+        offenders = [
+            f"{hook}.{register}[{index}]"
+            for hook, content in sorted(DOCTRINE_CONTENT.items())
+            for register, pool in (
+                (MEDICAL_REGISTER, content.medical_paragraphs),
+                (LEGAL_REGISTER, content.legal_paragraphs),
+            )
+            for index, paragraph in enumerate(pool)
+            if phrase in paragraph
+        ]
+        assert not offenders, f"{offenders} assert {reason} ({phrase!r})"
+
+    def test_every_hook_declares_whether_it_has_a_prerequisite(self) -> None:
+        """An explicit ``None`` is a decision; a missing attribute is an oversight."""
+        for hook, content in sorted(DOCTRINE_CONTENT.items()):
+            assert hasattr(content, "requires"), f"{hook} declares no prerequisite field"
+
+    def test_a_prerequisite_states_what_the_seed_must_show(self) -> None:
+        for hook, content in sorted(DOCTRINE_CONTENT.items()):
+            if content.requires is not None:
+                assert content.requires.description.strip(), f"{hook} prerequisite has no reason"
+
+
+class TestPrerequisitesGovernAutoDerivation:
+    """A1: an auto-drawn hook must fit the case it lands on."""
+
+    pytestmark = requires_substrate
+
+    def test_death_dependency_needs_a_death_claim(self) -> None:
+        from wc_caseload_engine.doctrine import hook_is_supported
+
+        death = parse_case_seed(
+            {
+                "case_id": "death-seed",
+                "rng_seed": 3,
+                "injury": {
+                    "type": "death",
+                    "date_of_injury": "2022-02-02",
+                    "body_parts": [{"part": "head", "icd10": "S06.0X0A"}],
+                },
+                "lifecycle": {"resolution": {"type": "stipulations"}},
+            }
+        )
+        living = parse_case_seed(
+            {"case_id": "living-seed", "rng_seed": 3, "injury": dict(SAMPLE_INJURY)}
+        )
+        assert hook_is_supported("death_dependency", death)
+        assert not hook_is_supported("death_dependency", living)
+
+    def test_auto_derived_caseloads_never_carry_an_unsupported_hook(self) -> None:
+        """The draw is the channel a seed author does not control."""
+        from wc_caseload_engine.doctrine import hook_is_supported
+        from wc_caseload_engine.seeds import CaseloadSpec, resolve_caseload
+
+        spec = CaseloadSpec.model_validate(
+            {
+                "caseload_id": "auto-doctrine",
+                "auto": {"count": 60, "distribution": "complex_litigation", "rng_seed": 7},
+            }
+        )
+        offenders = [
+            f"{seed.case_id}: {hook}"
+            for seed in resolve_caseload(spec)
+            for hook in seed.lifecycle.doctrine_hooks
+            if not hook_is_supported(hook, seed)
+        ]
+        assert not offenders, (
+            f"{len(offenders)} auto-drawn hook(s) do not fit their case: {offenders[:10]}"
+        )
+
+    def test_an_explicitly_seeded_unsupported_hook_is_kept_and_warned(self) -> None:
+        """ISC-29's rule: the seed is the contract, and the engine says so loudly."""
+        seed = parse_case_seed(
+            {
+                "case_id": "explicit-unsupported",
+                "rng_seed": 5,
+                "injury": dict(SAMPLE_INJURY),
+                "lifecycle": {"doctrine_hooks": ["death_dependency"]},
+                "documents": {"global_cap": 6},
+            }
+        )
+        plan = build_case_plan(seed)
+        assert seed.lifecycle.doctrine_hooks == ["death_dependency"], (
+            "the hook was silently dropped"
+        )
+        assert any("death_dependency" in warning for warning in plan.warnings), (
+            f"no warning for an unsupported explicit hook; got {plan.warnings}"
+        )
+
+    def test_a_supported_explicit_hook_warns_about_nothing(self) -> None:
+        """Guards the probe: a warning on every case would be noise, not signal."""
+        plan = build_case_plan(_case_seed("supported-hooks", FLAGGED_HOOKS))
+        assert not [w for w in plan.warnings if "doctrine" in w.lower()], plan.warnings
+
+
+# ---------------------------------------------------------------------------
 # ISC-21.2 — every target is classifier vocabulary
 # ---------------------------------------------------------------------------
 
@@ -683,6 +818,7 @@ class TestManifestAndDeterminism:
         """
         seed, cast = render_context
         checksums: dict[str, str] = {}
+        results: dict[str, Any] = {}
         for label, flags in (("clean", ()), ("mismatched", FLAGGED_HOOKS)):
             result = render_document(
                 seed=seed,
@@ -695,9 +831,79 @@ class TestManifestAndDeterminism:
                 content_flags=flags,
             )
             checksums[label] = result.md5
+            results[label] = result
         assert checksums["clean"] == checksums["mismatched"], (
             "a hook with no content for this subtype still changed the file"
         )
+        # ...and the recorded provenance must agree with the file. Storing the
+        # requested flags verbatim would have this document claim two doctrines
+        # it does not contain a word of.
+        assert results["mismatched"].content_flags == (), (
+            "the render recorded flags whose language it did not inject"
+        )
+
+    @pytest.mark.parametrize(
+        ("requested", "expected"),
+        [
+            pytest.param(("kite",), ("kite",), id="applied"),
+            pytest.param(("kite", "kite"), ("kite",), id="duplicate-collapsed"),
+            pytest.param(("kite", "escobedo"), ("escobedo", "kite"), id="reordered-sorted"),
+            pytest.param(("escobedo", "kite"), ("escobedo", "kite"), id="already-sorted"),
+            pytest.param(("not_a_hook",), (), id="unknown-dropped"),
+            pytest.param(("kite", "not_a_hook"), ("kite",), id="unknown-dropped-partially"),
+            # A hook that targets nothing on this subtype is covered by
+            # ``test_a_flag_whose_hook_does_not_target_the_subtype_appends_nothing``
+            # above: every one of the fourteen targets AME_COMPREHENSIVE_REPORT,
+            # so the skip case cannot be expressed against this subtype.
+        ],
+    )
+    def test_recorded_flags_are_the_applied_flags(
+        self,
+        requested: tuple[str, ...],
+        expected: tuple[str, ...],
+        render_context: tuple[Any, Any],
+        tmp_path: Path,
+    ) -> None:
+        """``RenderResult.content_flags`` is provenance, so it states what happened.
+
+        ``render_document`` is public and takes whatever a caller passes:
+        duplicates, arbitrary order, hooks that do not exist, and hooks with no
+        content for this subtype. Every one of those has to canonicalize the
+        same way the planner's own flags do, or the manifest describes a
+        document that was never rendered.
+        """
+        seed, cast = render_context
+        result = render_document(
+            seed=seed,
+            cast=cast,
+            subtype=MULTI_HOOK_SUBTYPE,
+            doc_date=date(2023, 6, 1),
+            doc_format="pdf",
+            index=8,
+            out_path=tmp_path / "probe.pdf",
+            content_flags=requested,
+        )
+        assert result.content_flags == expected
+
+    def test_a_document_with_no_applied_flags_is_byte_identical_to_an_unflagged_one(
+        self, render_context: tuple[Any, Any], tmp_path: Path
+    ) -> None:
+        """An unknown hook must not build a wrapper that appends an empty section."""
+        seed, cast = render_context
+        checksums = []
+        for label, flags in (("clean", ()), ("unknown", ("not_a_hook",))):
+            result = render_document(
+                seed=seed,
+                cast=cast,
+                subtype=MULTI_HOOK_SUBTYPE,
+                doc_date=date(2023, 6, 1),
+                doc_format="pdf",
+                index=9,
+                out_path=tmp_path / f"{label}.pdf",
+                content_flags=flags,
+            )
+            checksums.append(result.md5)
+        assert checksums[0] == checksums[1]
 
     def test_only_the_hook_count_changes_an_untargeted_document(
         self, tmp_path: Path, unflagged_case: dict[str, Any]

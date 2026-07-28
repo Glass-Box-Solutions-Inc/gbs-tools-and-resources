@@ -24,7 +24,7 @@ before it.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
@@ -59,6 +59,17 @@ PROVENANCE_SEED = "seed"
 
 PROVENANCE_ENGINE = "engine"
 """Cast field coined here, replacing a substrate constant that names a real organization."""
+
+PROVENANCE_SEED_DENYLISTED = "seed_denylisted"
+"""Cast field declared in the seed that matches the real-organization denylist.
+
+Deliberately *outside* :data:`SYNTHETIC_PROVENANCE`. The name is still kept —
+the seed is the contract and a seeder naming a party may mean it — but the
+engine has identified it as real, and a manifest that went on asserting
+``zeroRealPii: true`` over the engine's own detection would be asserting
+something the engine knows to be false. The warning used to live only in the
+log; a corpus does not ship with the log.
+"""
 
 SYNTHETIC_PROVENANCE: frozenset[str] = frozenset(
     {PROVENANCE_FAKER, PROVENANCE_SEED, PROVENANCE_ENGINE}
@@ -234,6 +245,14 @@ class CaseCast:
 
     Recorded so ``manifest.provenance.zeroRealPii`` can be *computed*. A literal
     ``true`` asserts the one thing a generator cannot know about itself.
+    """
+    warnings: tuple[str, ...] = ()
+    """Anything the cast build found worth surfacing to the manifest.
+
+    Today that is exactly one thing: a seed-declared name that matched the
+    real-organization denylist. It travels to ``plan.warnings`` and from there
+    into ``manifest.warnings``, because a finding that lives only in a log is
+    not shipped with the corpus the log describes.
     """
 
     @property
@@ -516,14 +535,30 @@ def _facility_bearers(case: Any) -> list[tuple[str, Any]]:
     return bearers
 
 
-def _warn_on_seed_declared_real_names(seed: CaseSeed) -> None:
-    """Check every seed-declared organization against the denylist, and warn.
+_DENYLIST_FIELD_TO_PROVENANCE: Mapping[str, str] = {
+    "profile.employer.name": "employer",
+    "profile.carrier.name": "carrier",
+    "profile.attorneys.applicant_firm": "applicantFirm",
+    "profile.attorneys.defense_firm": "defenseFirm",
+    "profile.applicant.name": "applicant",
+}
+"""Seed field path -> the ``castProvenance`` key a hit on it must demote."""
+
+
+def _warn_on_seed_declared_real_names(seed: CaseSeed) -> tuple[tuple[str, ...], frozenset[str]]:
+    """Check every seed-declared organization against the denylist.
 
     Seed-declared names are kept: the seed is the contract, and a seeder naming
     a party is the one channel where a real name could be intentional. What the
-    engine owes is visibility — ``castProvenance`` records these fields as
-    ``seed`` rather than ``engine``, and this makes a collision audible at
-    generation time.
+    engine owes is visibility, and the previous version of that debt was paid in
+    the log alone — the return value was discarded, so a detected hit left
+    ``castProvenance`` reading ``seed`` and the manifest went on claiming
+    ``zeroRealPii: true`` about a name the engine had just identified as real.
+
+    Returns:
+        ``(warnings, provenance keys to demote)``. The warnings reach
+        ``plan.warnings`` and from there the manifest; the keys are recorded as
+        :data:`PROVENANCE_SEED_DENYLISTED`, which computes ``zeroRealPii`` false.
     """
     profile = seed.profile
     declared = (
@@ -533,9 +568,21 @@ def _warn_on_seed_declared_real_names(seed: CaseSeed) -> None:
         ("profile.attorneys.defense_firm", profile.attorneys.defense_firm),
         ("profile.applicant.name", profile.applicant.name),
     )
+    warnings: list[str] = []
+    demoted: set[str] = set()
     for field_path, value in declared:
-        if value:
-            warn_if_denylisted(value, field=field_path, case_id=seed.case_id)
+        if not value:
+            continue
+        hits = warn_if_denylisted(value, field=field_path, case_id=seed.case_id)
+        if not hits:
+            continue
+        demoted.add(_DENYLIST_FIELD_TO_PROVENANCE[field_path])
+        warnings.append(
+            f"{field_path} = {value!r} matches the real-organization denylist "
+            f"({', '.join(sorted(hits))}); the seed-declared name is kept, and "
+            "provenance.zeroRealPii is therefore false for this case"
+        )
+    return tuple(warnings), frozenset(demoted)
 
 
 def _apply_profile_overrides(case: Any, seed: CaseSeed, timeline: CaseTimeline) -> None:
@@ -605,7 +652,11 @@ def _apply_injury_overrides(case: Any, seed: CaseSeed, adj_number: str) -> None:
     case.timeline.date_of_injury = injury.onset_date
 
 
-def _cast_provenance(seed: CaseSeed, engine_owned: Mapping[str, str]) -> dict[str, str]:
+def _cast_provenance(
+    seed: CaseSeed,
+    engine_owned: Mapping[str, str],
+    denylisted: Collection[str] = (),
+) -> dict[str, str]:
     """Classify where every identity-bearing cast field came from.
 
     Three channels, and the distinction is the whole content of the
@@ -637,6 +688,11 @@ def _cast_provenance(seed: CaseSeed, engine_owned: Mapping[str, str]) -> dict[st
     provenance["adjuster"] = PROVENANCE_FAKER
     provenance["dateOfBirth"] = PROVENANCE_SEED if profile.applicant.age else PROVENANCE_FAKER
     provenance.update(engine_owned)
+    # Last word, deliberately: a seed-declared name the denylist matched is not
+    # vouched for by anything, so it overrides both the ``seed`` classification
+    # above and any coining recorded in ``engine_owned``.
+    for field_name in sorted(denylisted):
+        provenance[field_name] = PROVENANCE_SEED_DENYLISTED
     return provenance
 
 
@@ -665,7 +721,7 @@ def build_case_cast(seed: CaseSeed, timeline: CaseTimeline, case_number: int = 1
     case = generator.generate_case_from_params(case_number, params)
 
     adj_number = _adj_number(seed)
-    _warn_on_seed_declared_real_names(seed)
+    denylist_warnings, denylisted_fields = _warn_on_seed_declared_real_names(seed)
     # Order is load-bearing: the industry decides the coined employer suffix and
     # the position, so the seed's industry has to land before the coining sweep
     # reads it. Applying it afterwards (with the rest of the overrides) left the
@@ -676,7 +732,7 @@ def build_case_cast(seed: CaseSeed, timeline: CaseTimeline, case_number: int = 1
     _apply_injury_overrides(case, seed, adj_number)
 
     applicant_firm = seed.profile.attorneys.applicant_firm or DEFAULT_APPLICANT_FIRM
-    provenance = _cast_provenance(seed, engine_owned)
+    provenance = _cast_provenance(seed, engine_owned, denylisted_fields)
 
     cast = CaseCast(
         case=case,
@@ -692,6 +748,7 @@ def build_case_cast(seed: CaseSeed, timeline: CaseTimeline, case_number: int = 1
         treating_physician=case.treating_physician.full_name,
         qme_physician=case.qme_physician.full_name if case.qme_physician else None,
         provenance=provenance,
+        warnings=denylist_warnings,
     )
     log.debug(
         "cast.built",
@@ -707,6 +764,7 @@ __all__ = [
     "PROVENANCE_ENGINE",
     "PROVENANCE_FAKER",
     "PROVENANCE_SEED",
+    "PROVENANCE_SEED_DENYLISTED",
     "SYNTHETIC_PROVENANCE",
     "CaseCast",
     "build_case_cast",

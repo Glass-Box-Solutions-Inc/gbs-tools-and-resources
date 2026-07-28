@@ -411,6 +411,7 @@ jobs:
       - phileas
       - spectacles
       - squeegee
+      - wc-synthetic-caseload-engine
       - yevrah-terminal
     steps:
       - name: Check results
@@ -430,6 +431,7 @@ jobs:
             "${{ needs.phileas.result }}"
             "${{ needs.spectacles.result }}"
             "${{ needs.squeegee.result }}"
+            "${{ needs.wc-synthetic-caseload-engine.result }}"
             "${{ needs.yevrah-terminal.result }}"
           )
           for r in "${results[@]}"; do

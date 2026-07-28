@@ -49,8 +49,13 @@ anyone adding a hook to a case whose neighbours share a citation's name.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
+
+import structlog
+
+log = structlog.get_logger(__name__)
 
 MEDICAL_REGISTER = "medical"
 """Register of a QME/AME/PTP discussion addendum."""
@@ -63,6 +68,158 @@ MEDICAL_HEADING = "ADDENDUM — MEDICAL-LEGAL DISCUSSION OF CONTROLLING AUTHORIT
 
 LEGAL_HEADING = "POINTS AND AUTHORITIES — CONTROLLING DOCTRINE"
 """Section heading used on documents whose subtype is a legal target."""
+
+
+@dataclass(frozen=True, slots=True)
+class DoctrineFacts:
+    """The case facts a doctrine prerequisite is allowed to consult.
+
+    Deliberately a small, flat record rather than the seed itself. It is built
+    both from a finished :class:`~wc_caseload_engine.seeds.CaseSeed` and, during
+    ``auto:`` derivation, from lifecycle fields that exist before any seed does
+    — and keeping it seed-shaped rather than seed-typed is what lets this module
+    stay free of an import cycle with :mod:`wc_caseload_engine.seeds`.
+    """
+
+    injury_type: str
+    body_part_count: int
+    has_psych_body_part: bool
+    eval_type: str
+    claim_response: str
+    imr_filed: bool
+    seeded_hooks: frozenset[str] = frozenset()
+    occupation: str = ""
+    industry: str = ""
+
+    @classmethod
+    def from_seed(cls, seed: Any) -> DoctrineFacts:
+        """Read the facts off a :class:`~wc_caseload_engine.seeds.CaseSeed`."""
+        lifecycle = seed.lifecycle
+        parts = seed.injury.body_parts
+        return cls(
+            injury_type=seed.injury.type,
+            body_part_count=len(parts),
+            has_psych_body_part=any(part.part == "psyche" for part in parts),
+            eval_type=lifecycle.eval_type,
+            claim_response=lifecycle.claim_response,
+            imr_filed=bool(lifecycle.ur_dispute.enabled and lifecycle.ur_dispute.imr),
+            seeded_hooks=frozenset(lifecycle.doctrine_hooks),
+            occupation=seed.profile.applicant.occupation or "",
+            industry=seed.profile.employer.industry or "",
+        )
+
+
+def _as_facts(subject: Any) -> DoctrineFacts:
+    """Accept either a seed or an already-built :class:`DoctrineFacts`."""
+    return subject if isinstance(subject, DoctrineFacts) else DoctrineFacts.from_seed(subject)
+
+
+@dataclass(frozen=True, slots=True)
+class DoctrinePrerequisite:
+    """What a case must be able to show before a doctrine belongs in it.
+
+    A doctrine hook is not decoration: it puts an argument in the file. An
+    argument about apportioning between two injuries in a file that models one
+    injury is not a hard document to generate — it is a document that describes
+    a case the generator did not produce, and a corpus of those teaches a
+    classifier to associate the doctrine with facts that are not on the page.
+
+    ``description`` is the sentence a warning quotes, so it is written for the
+    seed author who has to act on it.
+    """
+
+    description: str
+    predicate: Callable[[DoctrineFacts], bool]
+
+    def satisfied_by(self, subject: Any) -> bool:
+        """``True`` when *subject* (a seed or facts) can support the doctrine."""
+        return self.predicate(_as_facts(subject))
+
+
+def _needs_rating(facts: DoctrineFacts) -> bool:
+    """A permanent-disability rating exists only after a med-legal evaluation."""
+    return facts.eval_type != "none"
+
+
+_RATING_PREREQUISITE = DoctrinePrerequisite(
+    description=(
+        "the case must reach a permanent disability rating, which requires "
+        "lifecycle.eval_type to be qme, ame or ime rather than none"
+    ),
+    predicate=_needs_rating,
+)
+
+_CONTESTED_PREREQUISITE = DoctrinePrerequisite(
+    description=(
+        "a threshold defence to compensability presupposes a contested claim — "
+        "lifecycle.claim_response must be denied or delayed"
+    ),
+    predicate=lambda facts: facts.claim_response in {"denied", "delayed"},
+)
+
+_BENSON_PREREQUISITE = DoctrinePrerequisite(
+    description=(
+        "apportioning between injuries needs a rating and more than one impaired "
+        "region to argue about — lifecycle.eval_type must not be none and "
+        "injury.body_parts must name at least two parts"
+    ),
+    predicate=lambda facts: _needs_rating(facts) and facts.body_part_count >= 2,
+)
+"""Benson, and the one prerequisite that had to be weakened to stay honest.
+
+Benson is about two *injuries*, and a ``CaseSeed`` models exactly one
+``InjurySpec``. A predicate demanding what the doctrine really needs would
+therefore reject every case the engine can generate, which is a way of deleting
+the hook rather than governing it. The seed *can* establish multiple impaired
+regions, which is what makes a multi-injury contention arguable rather than
+absurd — so that is what this asks for, and the paragraphs were rewritten to
+raise the second injury as a contention rather than to assert it as a finding.
+Modelling a second date of injury is the real fix and belongs in the seed schema.
+"""
+
+_DEATH_PREREQUISITE = DoctrinePrerequisite(
+    description="death benefits require injury.type to be death",
+    predicate=lambda facts: facts.injury_type == "death",
+)
+
+_PSYCH_CLAIM_PREREQUISITE = DoctrinePrerequisite(
+    description=(
+        "the psychiatric-injury threshold presupposes a living claimant's "
+        "psychiatric claim — injury.type must not be death"
+    ),
+    predicate=lambda facts: facts.injury_type != "death",
+)
+
+_GFPA_PREREQUISITE = DoctrinePrerequisite(
+    description=(
+        "a defence to a psychiatric claim needs a psychiatric claim to defend "
+        "against — name psyche in injury.body_parts, or seed lc3208_3_psych "
+        "alongside it"
+    ),
+    predicate=lambda facts: facts.has_psych_body_part
+    or "lc3208_3_psych" in facts.seeded_hooks,
+)
+
+_SAFETY_MEMBER_PREREQUISITE = DoctrinePrerequisite(
+    description=(
+        "the section 3212.1 presumption runs to firefighters and peace officers — "
+        "profile.employer.industry must be government, or profile.applicant."
+        "occupation must name a qualifying role"
+    ),
+    predicate=lambda facts: facts.industry.lower() == "government"
+    or any(
+        word in facts.occupation.lower()
+        for word in ("fire", "police", "peace officer", "sheriff", "deputy")
+    ),
+)
+
+_IMR_PREREQUISITE = DoctrinePrerequisite(
+    description=(
+        "a challenge to independent medical review presupposes one happened — "
+        "lifecycle.ur_dispute.enabled and lifecycle.ur_dispute.imr must both be true"
+    ),
+    predicate=lambda facts: facts.imr_filed,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +240,15 @@ class DoctrineContent:
     legal_paragraphs: tuple[str, ...]
     medical_targets: frozenset[str]
     legal_targets: frozenset[str]
+    requires: DoctrinePrerequisite | None = None
+    """What the case must show for this doctrine to belong in it.
+
+    ``None`` is a decision, not an omission: the doctrine fits any case the
+    engine can generate. Auto-derivation never draws a hook whose prerequisite
+    fails; an explicitly seeded one is kept and warned about, because the seed
+    is the contract (ISC-29) and the engine's job is to be loud rather than
+    silently disobedient.
+    """
 
     @property
     def targets(self) -> frozenset[str]:
@@ -156,8 +322,8 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "rebuttable starting point, and this evaluation addresses the Ogilvie question "
             "directly: whether the applicant's diminished future earning capacity departs from "
             "the adjustment the schedule assumes for an impairment of this kind. The vocational "
-            "history, the residual functional capacity documented on examination and the absence "
-            "of any offer of modified work are the data on which an Ogilvie analysis would rest.",
+            "history, the residual functional capacity documented on examination and whatever the "
+            "record shows about modified work are the data on which an Ogilvie analysis rests.",
             "For purposes of an Ogilvie rebuttal I have described the applicant's residual "
             "capacity in vocational rather than purely clinical terms: sitting, standing, lifting "
             "and pace tolerances are stated in ranges an evaluator of employability can use. "
@@ -195,6 +361,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
         },
         legal_targets=_BRIEFS
         | {"PD_RATING_CALCULATION_WORKSHEET", "PETITION_RECONSIDERATION_FILED"},
+        requires=_RATING_PREREQUISITE,
     ),
     "almaraz_guzman": DoctrineContent(
         hook="almaraz_guzman",
@@ -245,6 +412,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
         },
         legal_targets=_BRIEFS
         | {"PD_RATING_CALCULATION_WORKSHEET", "PETITION_RECONSIDERATION_FILED"},
+        requires=_RATING_PREREQUISITE,
     ),
     "benson": DoctrineContent(
         hook="benson",
@@ -255,20 +423,19 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "(separate awards for distinct industrial injuries; apportionment between them)."
         ),
         medical_paragraphs=(
-            "Where an applicant sustains two distinct industrial injuries, Benson requires the "
-            "evaluator to apportion the permanent disability between them rather than to issue "
-            "one combined rating. I have therefore addressed each injury separately and stated "
-            "the percentage of the current impairment attributable to each, to the extent the "
-            "medical record permits that separation.",
-            "I am able to make the Benson apportionment for the orthopedic impairment on the "
-            "basis of the imaging and the treatment history bracketing the two dates of injury. "
-            "Where the record does not permit a separation I say so rather than dividing the "
-            "disability arbitrarily, because an unsupported Benson split is no more useful to the "
-            "trier of fact than no split at all.",
-            "This addendum reaches the Benson question because the file contains more than one "
-            "claimed date of injury involving the same region. My opinion on whether the "
-            "disability from the two injuries is inextricably intertwined, and therefore not "
-            "susceptible to a Benson apportionment, is stated with the reasoning that supports it.",
+            "I am asked to address the Benson question: if a separate industrial injury to this "
+            "region is established, whether the permanent disability can be apportioned between "
+            "it and the injury evaluated here. I have stated what portion of the current "
+            "impairment I could attribute to a separate event on this record, and where the "
+            "record does not let me answer, I say so.",
+            "A Benson apportionment has to rest on something datable — imaging, a treatment "
+            "history, a change in function around a claimed event. I have set out which of those "
+            "this file contains and which it does not, so the Benson question can be argued on "
+            "the evidence rather than on my willingness to divide a number.",
+            "Where the disabilities are inextricably intertwined, Benson permits a combined "
+            "award; where they can be parceled out, it does not. My opinion on which of those "
+            "this record supports is stated above, with the reasoning, and it is offered on the "
+            "assumption that the separate injury is proved rather than as a finding that it was.",
         ),
         legal_paragraphs=(
             "Benson v. WCAB holds that where an employee suffers two or more distinct industrial "
@@ -292,6 +459,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "MOTION_TO_CONSOLIDATE",
             "STIPULATIONS_WITH_REQUEST_FOR_AWARD",
         },
+        requires=_BENSON_PREREQUISITE,
     ),
     "escobedo": DoctrineContent(
         hook="escobedo",
@@ -307,11 +475,11 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "standard this opinion must meet: I must state what approximate percentage of the "
             "permanent disability is caused by the industrial injury and what percentage is "
             "caused by other factors, and I must explain how and why I reached those percentages.",
-            "The nonindustrial contribution described above is degenerative pathology documented "
-            "on imaging that predates the industrial event. Escobedo requires more than the "
-            "recitation of a preexisting condition: the pathology must be shown to be causing "
-            "permanent disability now, and I have set out the findings on which that conclusion "
-            "rests.",
+            "Escobedo requires more than the recitation of a preexisting condition: any "
+            "nonindustrial pathology I apportion to must be shown to be causing permanent "
+            "disability now, not merely to be visible or to predate the injury. Where I have "
+            "apportioned, the findings supporting that conclusion are set out above; where the "
+            "record shows only the presence of a condition, I have not apportioned to it.",
             "Where I cannot apportion to a reasonable medical probability, Escobedo requires that "
             "I say so rather than supply a number. This addendum distinguishes the portion of the "
             "disability I can allocate with the necessary certainty from the portion I cannot.",
@@ -335,6 +503,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
         | {"APPORTIONMENT_REPORT", "QME_REPORT_SUPPLEMENTAL"},
         legal_targets=_BRIEFS
         | {"APPORTIONMENT_WORKSHEET", "PETITION_RECONSIDERATION_FILED"},
+        requires=_RATING_PREREQUISITE,
     ),
     "kite": DoctrineContent(
         hook="kite",
@@ -350,11 +519,10 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "understates the resulting disability, and Kite permits the impairments to be added "
             "instead. I have addressed that question expressly rather than defaulting to the "
             "chart.",
-            "My opinion that the impairments in this case should be added under Kite rests on the "
-            "overlapping effect the injuries have on the same activities: gait, standing "
-            "tolerance, and the ability to compensate with the contralateral limb. Addition under "
-            "Kite is not automatic and I do not apply it merely because two body parts are "
-            "involved.",
+            "An opinion that impairments should be added under Kite has to identify the shared "
+            "activities the impairments both degrade, and say how the second compounds the first "
+            "rather than merely accompanying it. Addition under Kite is not automatic, and I do "
+            "not apply it merely because more than one body part is involved.",
             "Where the synergy Kite describes is absent I say so and use the Combined Values "
             "Chart. In this file I have stated which impairments I would add and which I would "
             "combine, with the functional reasoning for each, so that the rating can be "
@@ -378,6 +546,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
         medical_targets=_CORE_MEDLEGAL | {"IMPAIRMENT_RATING_WORKSHEET"},
         legal_targets=_BRIEFS
         | {"PD_RATING_CALCULATION_WORKSHEET", "PD_RATING_CONVERSION"},
+        requires=_RATING_PREREQUISITE,
     ),
     "going_and_coming": DoctrineContent(
         hook="going_and_coming",
@@ -393,10 +562,10 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "direction and for what purpose. Those facts bear on the going and coming rule, which "
             "is a legal question I do not decide; I report the history and state whether the "
             "mechanism described is consistent with the injuries found on examination.",
-            "The applicant's account places the event during a commute. Whether the going and "
-            "coming rule bars the claim is outside my role as a medical evaluator, and my opinion "
-            "is confined to industrial causation in the medical sense: whether the described "
-            "mechanism could produce the pathology documented, which in my opinion it could.",
+            "Whether the going and coming rule bars this claim is outside my role as a medical "
+            "evaluator. My opinion is confined to industrial causation in the medical sense — "
+            "whether the mechanism described could produce the pathology documented — and it "
+            "stands or falls independently of where the trip is ultimately held to have begun.",
             "For completeness I note the facts a going and coming analysis would turn on, as the "
             "applicant related them at the time of the evaluation: the origin and destination of "
             "the trip, whether a work vehicle or a personal vehicle was used, and whether the "
@@ -420,6 +589,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
         ),
         medical_targets=frozenset({"QME_COMPREHENSIVE_REPORT", "AME_COMPREHENSIVE_REPORT"}),
         legal_targets=_AOE_COE_DEFENSE | _BRIEFS | {"INVESTIGATION_REPORT"},
+        requires=_CONTESTED_PREREQUISITE,
     ),
     "sibtf": DoctrineContent(
         hook="sibtf",
@@ -431,10 +601,11 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "industrial injury)."
         ),
         medical_paragraphs=(
-            "This addendum addresses the preexisting labor-disabling impairment relevant to Labor "
-            "Code section 4751. I have described the prior condition, its effect on the "
-            "applicant's ability to compete in the open labor market before the industrial "
-            "injury, and the combined effect of the prior and the current impairments.",
+            "This addendum addresses what Labor Code section 4751 asks of a medical evaluator: "
+            "whether a preexisting condition, if established, was labor disabling before the "
+            "industrial injury, and what the combined effect of it and the current impairment "
+            "would be. I have answered on the records provided and identified what a section "
+            "4751 claim would still need.",
             "Section 4751 requires that the preexisting disability be labor disabling rather than "
             "merely present, and that the subsequent industrial injury combine with it to produce "
             "a substantially greater disability. I have stated the prior impairment as a whole "
@@ -475,6 +646,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
                 "SETTLEMENT_VALUATION_MEMO",
             }
         ),
+        requires=_RATING_PREREQUISITE,
     ),
     "death_dependency": DoctrineContent(
         hook="death_dependency",
@@ -526,6 +698,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
                 "TRIAL_BRIEF",
             }
         ),
+        requires=_DEATH_PREREQUISITE,
     ),
     "lc3208_3_psych": DoctrineContent(
         hook="lc3208_3_psych",
@@ -546,10 +719,10 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "approximate percentages with the reasoning for each. Section 3208.3 makes causation "
             "a threshold question rather than an apportionment question, and this opinion "
             "addresses it in those terms.",
-            "The applicant's employment predates the claimed psychiatric injury by more than six "
-            "months, so the employment-duration bar in section 3208.3 is not implicated on the "
-            "facts as reported to me. I note the sudden and extraordinary employment condition "
-            "exception in the event the duration facts are disputed.",
+            "Section 3208.3 also carries an employment-duration bar, which is a question of "
+            "personnel records rather than of psychiatry; I note it because it is dispositive if "
+            "it applies, and because the sudden and extraordinary employment condition exception "
+            "to it turns on the same events of employment I have weighed above.",
         ),
         legal_paragraphs=(
             "Labor Code section 3208.3 imposes a heightened threshold for psychiatric injury: the "
@@ -576,6 +749,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             }
         ),
         legal_targets=_BRIEFS | {"CLAIM_DENIAL_LETTER", "ANSWER_TO_APPLICATION"},
+        requires=_PSYCH_CLAIM_PREREQUISITE,
     ),
     "gfpa": DoctrineContent(
         hook="gfpa",
@@ -592,11 +766,11 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "faith personnel action. I have therefore separated the applicant's reaction to "
             "personnel action events from the reaction to other events of employment, and stated "
             "approximate percentages for each.",
-            "The applicant attributes the psychiatric condition primarily to a disciplinary "
-            "sequence and a change in assignment. Whether those events were a lawful, "
-            "nondiscriminatory and good faith personnel action is a question outside my role; I "
-            "have assigned the causation percentages so that the trier of fact can apply the "
-            "defense to the medical opinion.",
+            "Whether the employment events the applicant describes were a lawful, "
+            "nondiscriminatory and good faith personnel action is a question outside my role. "
+            "What I can supply is the causation arithmetic the defense turns on: the percentage "
+            "attributable to events of that character, stated separately, so the trier of fact "
+            "can apply the defense to the medical opinion rather than infer it.",
             "In my opinion, personnel action events account for the percentage of causation "
             "stated above, and the remaining causation is attributable to the other employment "
             "events described. I express no view on whether the employer's conduct was carried "
@@ -612,10 +786,11 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "must be a substantial cause of the psychiatric injury, which is at least "
             "thirty-five to forty percent of the causation from all sources combined. Medical "
             "evidence that does not quantify that contribution cannot establish the defense.",
-            "The conduct asserted here — criticism of performance, a change in assignment and the "
-            "initiation of a disciplinary process — is personnel action within the meaning of the "
-            "statute. What remains disputed is its lawfulness and the good faith with which it "
-            "was carried out, and the parties should address both.",
+            "Conduct of the kind ordinarily asserted under this defence — criticism of "
+            "performance, a change in assignment, the initiation of a disciplinary process — is "
+            "personnel action within the meaning of the statute; that much is rarely the "
+            "battleground. What is disputed is lawfulness and good faith, and the parties should "
+            "come prepared to try both.",
         ),
         medical_targets=frozenset(
             {
@@ -626,6 +801,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
         ),
         legal_targets=_BRIEFS
         | {"CLAIM_DENIAL_LETTER", "ANSWER_TO_APPLICATION", "DEFENSE_CASE_ANALYSIS"},
+        requires=_GFPA_PREREQUISITE,
     ),
     "firefighter_presumption": DoctrineContent(
         hook="firefighter_presumption",
@@ -674,6 +850,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             }
         ),
         legal_targets=_AOE_COE_DEFENSE | _BRIEFS,
+        requires=_SAFETY_MEMBER_PREREQUISITE,
     ),
     "imr_constitutionality": DoctrineContent(
         hook="imr_constitutionality",
@@ -690,11 +867,10 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "determined in that forum rather than by an evaluator, so my opinion on the "
             "reasonableness of the requested treatment is offered as medical evidence and not as "
             "a review of the determination.",
-            "I note for the record that the reviewer's identity was not disclosed and the "
-            "determination does not identify the records reviewed. Stevens holds that anonymity "
-            "is permissible while recognizing that a determination founded on a plainly erroneous "
-            "factual premise may be challenged, and I have identified the factual errors visible "
-            "in the record supplied to me.",
+            "Stevens holds that the reviewer's anonymity is permissible, while recognizing that a "
+            "determination founded on a plainly erroneous factual premise may be challenged. I "
+            "have therefore checked the determination against the records supplied to me and "
+            "identified any factual premise in it that those records do not support.",
             "Where a determination rests on an incomplete record the appropriate medical step is "
             "a renewed request supported by the omitted documentation. Stevens and the decisions "
             "following it leave the substantive question of medical necessity with the review "
@@ -726,6 +902,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
                 "TRIAL_BRIEF",
             }
         ),
+        requires=_IMR_PREREQUISITE,
     ),
     "ab5_dynamex": DoctrineContent(
         hook="ab5_dynamex",
@@ -741,10 +918,10 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "medical opinions, which address the injury, its cause in the medical sense and the "
             "resulting impairment; I record the working relationship only as the applicant "
             "described it.",
-            "For the record, the applicant described work that was directed and scheduled by the "
-            "hiring entity. Whether that description satisfies the test approved in Dynamex is a "
-            "legal question on which I express no opinion, and my causation opinion assumes only "
-            "that the described work activity occurred.",
+            "Whether the working relationship described to me satisfies the test approved in "
+            "Dynamex is a legal question on which I express no opinion. My causation opinion "
+            "assumes only that the work activity described occurred, and it does not depend on "
+            "how that relationship is ultimately characterized.",
             "I have documented the applicant's account of who supplied the tools, who set the "
             "hours and how the work was assigned, because those facts are relevant to the Dynamex "
             "analysis even though the conclusion belongs to the trier of fact.",
@@ -766,6 +943,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
         ),
         medical_targets=frozenset({"QME_COMPREHENSIVE_REPORT", "AME_COMPREHENSIVE_REPORT"}),
         legal_targets=_AOE_COE_DEFENSE | _BRIEFS | {"INVESTIGATION_REPORT"},
+        requires=_CONTESTED_PREREQUISITE,
     ),
     "lc4664_prior_award": DoctrineContent(
         hook="lc4664_prior_award",
@@ -777,11 +955,12 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "accumulation cap by region of the body)."
         ),
         medical_paragraphs=(
-            "The applicant is the subject of a prior award of permanent disability affecting the "
-            "same region. Labor Code section 4664, subdivision (b), conclusively presumes that "
-            "the prior disability existed at the time of the subsequent injury, and this opinion "
-            "therefore addresses the current impairment and its overlap with the disability "
-            "previously awarded.",
+            "Where a prior award of permanent disability affecting the same region is "
+            "established, Labor Code section 4664, subdivision (b), conclusively presumes that "
+            "the prior disability existed at the time of the subsequent injury. This opinion "
+            "therefore addresses the current impairment and the extent to which it would overlap "
+            "a previously awarded disability, without assuming that such an award has been "
+            "proved.",
             "Apportionment under section 4664 differs from apportionment to nonindustrial "
             "causation: it operates on the prior award rather than on medical causation, and it "
             "requires that the prior and the current disability overlap in the same region. I "
@@ -814,6 +993,7 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "ANSWER_TO_APPLICATION",
             "PD_RATING_CALCULATION_WORKSHEET",
         },
+        requires=_RATING_PREREQUISITE,
     ),
 }
 """Every doctrine hook's renderable content, keyed by hook name."""
@@ -843,6 +1023,65 @@ def content_flags_for(doctrine_hooks: Sequence[str], subtype: str) -> tuple[str,
             }
         )
     )
+
+
+def hook_is_supported(hook: str, subject: Any) -> bool:
+    """``True`` when *subject* can support *hook*'s argument.
+
+    Args:
+        hook: a ``DoctrineHook`` value.
+        subject: a :class:`~wc_caseload_engine.seeds.CaseSeed` or a
+            :class:`DoctrineFacts`.
+
+    An unknown hook answers ``False`` — it has no content, so nothing it could
+    support exists. A hook with no prerequisite answers ``True``.
+    """
+    content = DOCTRINE_CONTENT.get(hook)
+    if content is None:
+        return False
+    if content.requires is None:
+        return True
+    return content.requires.satisfied_by(subject)
+
+
+def supported_hooks(hooks: Sequence[str], subject: Any) -> tuple[str, ...]:
+    """The subset of *hooks* that fits *subject*, order preserved.
+
+    This is the filter ``auto:`` derivation draws through: a hook nobody asked
+    for by name has no claim to be in a case it does not fit.
+    """
+    facts = _as_facts(subject)
+    return tuple(hook for hook in hooks if hook_is_supported(hook, facts))
+
+
+def unsupported_hook_warnings(hooks: Sequence[str], subject: Any) -> tuple[str, ...]:
+    """One warning per explicitly seeded hook whose prerequisite fails.
+
+    The hook is *kept* — ISC-29's rule is that an explicit control wins, and it
+    wins loudly. What the case gets is a warning naming the doctrine, what the
+    seed would have to say for it to fit, and the fact that the document will
+    argue it anyway.
+    """
+    facts = _as_facts(subject)
+    warnings: list[str] = []
+    for hook in hooks:
+        content = DOCTRINE_CONTENT.get(hook)
+        if content is None or content.requires is None:
+            continue
+        if content.requires.satisfied_by(facts):
+            continue
+        warnings.append(
+            f"lifecycle.doctrine_hooks names {hook} on a case that cannot support it: "
+            f"{content.requires.description}. The hook is kept and its language will be "
+            "rendered (an explicit seed wins), but the argument will not match the rest "
+            "of the file."
+        )
+        log.warning(
+            "doctrine.unsupported_hook",
+            hook=hook,
+            requirement=content.requires.description,
+        )
+    return tuple(warnings)
 
 
 def register_for_subtype(subtype: str) -> str:
@@ -879,8 +1118,13 @@ __all__ = [
     "MEDICAL_HEADING",
     "MEDICAL_REGISTER",
     "DoctrineContent",
+    "DoctrineFacts",
+    "DoctrinePrerequisite",
     "content_flags_for",
     "doctrine_markers",
     "heading_for_register",
+    "hook_is_supported",
     "register_for_subtype",
+    "supported_hooks",
+    "unsupported_hook_warnings",
 ]

@@ -338,12 +338,21 @@ def test_a_seed_declared_denylisted_name_is_kept_but_warned_about() -> None:
     Two assertions that pull in opposite directions, which is the whole point:
     the engine must *not* override a name the seed author chose (overriding it
     would make the seed stop being the contract), and it must *not* stay quiet
-    about it either. ``castProvenance`` records ``seed`` rather than ``engine``,
-    so a reviewer can see whose choice it was.
+    about it either.
+
+    The second half of that used to be paid in the log alone: provenance was
+    recorded as plain ``seed``, a value inside ``SYNTHETIC_PROVENANCE``, so the
+    manifest went on asserting ``zeroRealPii: true`` over a name the engine had
+    just identified as real — and this test asserted that as correct. It is now
+    ``seed_denylisted``, which is outside that set and therefore computes the
+    flag false, and the finding travels to ``plan.warnings`` and the manifest.
     """
     from structlog.testing import capture_logs
 
-    from wc_caseload_engine.case_context import PROVENANCE_SEED, build_case_cast
+    from wc_caseload_engine.case_context import (
+        PROVENANCE_SEED_DENYLISTED,
+        build_case_cast,
+    )
     from wc_caseload_engine.lifecycle_bridge import build_timeline
 
     seed = parse_case_seed(
@@ -362,7 +371,13 @@ def test_a_seed_declared_denylisted_name_is_kept_but_warned_about() -> None:
         cast = build_case_cast(seed, build_timeline(seed))
 
     assert cast.employer_name == "Costco Wholesale", "the seed's own input was overridden"
-    assert cast.provenance["employer"] == PROVENANCE_SEED
+    assert cast.provenance["employer"] == PROVENANCE_SEED_DENYLISTED
+    assert cast.zero_real_pii is False, (
+        "a detected real name must defeat the zeroRealPii claim, not inherit it"
+    )
+    assert any("Costco Wholesale" in warning for warning in cast.warnings), (
+        f"the hit did not reach the cast warnings that become manifest warnings: {cast.warnings}"
+    )
 
     warnings = [
         entry

@@ -82,8 +82,16 @@ class ReconTrack:
     documents: tuple[DatedCandidate, ...]
     warnings: tuple[str, ...] = ()
 
-    def summary(self) -> dict[str, object]:
-        """Manifest-shaped summary of the recon round trip."""
+    def summary(self, emitted: int | None = None) -> dict[str, object]:
+        """Manifest-shaped summary of the recon round trip.
+
+        Args:
+            emitted: documents this track actually contributed to the plan.
+                ``len(self.documents)`` is what the machine proposed, before
+                perspective and the document controls trimmed it — see
+                :meth:`wc_caseload_engine.lien_machine.LienTrack.summary`.
+        """
+        planned = len(self.documents)
         return {
             "enabled": self.enabled,
             "outcome": self.outcome,
@@ -91,7 +99,8 @@ class ReconTrack:
             "awardDate": self.award_date.isoformat() if self.award_date else None,
             "petitionDate": self.petition_date.isoformat() if self.petition_date else None,
             "orderDate": self.order_date.isoformat() if self.order_date else None,
-            "documentCount": len(self.documents),
+            "documentCount": planned if emitted is None else emitted,
+            "plannedDocumentCount": planned,
         }
 
 

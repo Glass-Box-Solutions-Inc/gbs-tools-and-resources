@@ -35,6 +35,11 @@ import structlog
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+# doctrine.py deliberately imports nothing from this module (its prerequisites
+# read a flat ``DoctrineFacts`` record rather than a CaseSeed), so this import
+# direction is the acyclic one.
+from wc_caseload_engine.doctrine import DoctrineFacts, hook_is_supported, supported_hooks
+
 log = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -1329,17 +1334,35 @@ def _derive_doctrine_hooks(
     rng: random.Random,
     profile: DistributionProfile,
     injury: InjurySpec,
+    facts: Any,
 ) -> list[str]:
-    """Derive doctrine hooks, honouring injury-driven implications."""
+    """Derive doctrine hooks that fit the case being derived.
+
+    The draw used to run over the whole pool, so an auto-derived caseload could
+    put a death-benefits argument in a living applicant's file or an IMR
+    due-process challenge in a case that never went to IMR. A seed author naming
+    a hook is making a choice the engine respects loudly (see
+    :func:`~wc_caseload_engine.doctrine.unsupported_hook_warnings`); a *draw* is
+    nobody's choice, so it is filtered against the same prerequisites.
+
+    Args:
+        facts: :class:`~wc_caseload_engine.doctrine.DoctrineFacts` for the case
+            under construction — the lifecycle fields exist here before the
+            :class:`CaseSeed` that will hold them does.
+    """
     hooks: list[str] = []
     if injury.type == "death":
         hooks.append("death_dependency")
     if rng.random() < profile.doctrine_hook_rate:
-        pool = [hook for hook in _DOCTRINE_POOL if hook not in hooks]
+        pool = [
+            hook
+            for hook in _DOCTRINE_POOL
+            if hook not in hooks and hook_is_supported(hook, facts)
+        ]
         rng.shuffle(pool)
         extra = 1 if rng.random() > profile.complex_rate else 2
         hooks.extend(pool[:extra])
-    return hooks
+    return supported_hooks(hooks, facts)
 
 
 def derive_case_seed(
@@ -1372,16 +1395,30 @@ def derive_case_seed(
         msa=rng.random() < profile.msa_rate,
     )
     recon = _derive_reconsideration(rng, profile, stage, resolution)
+    ur_dispute = _derive_ur_dispute(rng, profile, stage)
+
+    # The prerequisites read lifecycle facts, so they are assembled before the
+    # hooks that depend on them rather than off a seed that does not exist yet.
+    doctrine_facts = DoctrineFacts(
+        injury_type=injury.type,
+        body_part_count=len(injury.body_parts),
+        has_psych_body_part=any(part.part == "psyche" for part in injury.body_parts),
+        eval_type=eval_type,
+        claim_response=claim_response,
+        imr_filed=bool(ur_dispute.enabled and ur_dispute.imr),
+    )
 
     lifecycle = LifecycleSpec(
         target_stage=stage,  # type: ignore[arg-type]
         claim_response=claim_response,  # type: ignore[arg-type]
         eval_type=eval_type,  # type: ignore[arg-type]
-        ur_dispute=_derive_ur_dispute(rng, profile, stage),
+        ur_dispute=ur_dispute,
         resolution=resolution,
         reconsideration=recon,
         liens=_derive_liens(rng, profile, stage),
-        doctrine_hooks=_derive_doctrine_hooks(rng, profile, injury),  # type: ignore[arg-type]
+        doctrine_hooks=_derive_doctrine_hooks(  # type: ignore[arg-type]
+            rng, profile, injury, doctrine_facts
+        ),
     )
 
     return CaseSeed(

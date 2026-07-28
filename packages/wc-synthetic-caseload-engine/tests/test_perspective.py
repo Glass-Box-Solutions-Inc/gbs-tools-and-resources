@@ -493,7 +493,13 @@ def defense_seed() -> CaseSeed:
             "perspective": "defense",
             "profile": {
                 "applicant": {"name": "Dana Whitaker", "age": 41},
-                "attorneys": {"defense_firm": "Grancell, Stander & Kinsey"},
+                # Coined, not real. The previous value here was a real California
+                # defense firm, which now (correctly) computes zeroRealPii false
+                # and fails `validate --out` — a seed-declared denylist hit is no
+                # longer allowed to inherit the synthetic claim. The fixture is
+                # about perspective, not about the denylist, so it gets a
+                # synthetic firm and leaves that probe to test_anti_probes.py.
+                "attorneys": {"defense_firm": "Prentiss, Norcross & Tremaine LLP"},
             },
             "injury": {
                 "type": "specific",

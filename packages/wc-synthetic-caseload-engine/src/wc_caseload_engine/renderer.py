@@ -79,6 +79,7 @@ from wc_caseload_engine.determinism import (
 )
 from wc_caseload_engine.doctrine import (
     DOCTRINE_CONTENT,
+    content_flags_for,
     heading_for_register,
     register_for_subtype,
 )
@@ -395,7 +396,14 @@ def render_document(
     template_class, variant, class_name = _load_template(subtype)
     output_format = models.OutputFormat(doc_format if doc_format != "scanned_pdf" else "pdf")
 
-    flags = tuple(content_flags)
+    # Canonicalize before anything is decided by it. ``render_document`` is
+    # public and takes whatever it is handed — duplicates, arbitrary order,
+    # hooks that do not exist, hooks with no content for *this* subtype — while
+    # ``doctrine_flowables`` silently skips the last two. Storing the request
+    # rather than what was applied would let a document's own provenance claim
+    # doctrines it does not contain a word of, which is the same class of
+    # untrue-manifest bug as a fallback that does not say so.
+    flags = content_flags_for(content_flags, subtype)
     if flags:
         # Wrap once, before every construction below (including the format
         # fallback's second attempt), so a flagged document cannot lose its

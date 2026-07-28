@@ -174,7 +174,7 @@ If an import breaks, fix the bridge — not by copying files.
 
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/         # 462 tests, ~90s (pyproject already passes -q)
+.venv/bin/python -m pytest tests/         # 501 tests, ~95s (pyproject already passes -q)
 .venv/bin/ruff check .
 ```
 
@@ -195,7 +195,8 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_coherence.py` | Full-case identity sweep + cross-case contamination guard |
 | `test_format_mix.py` | Chi-square of realized vs seeded format distribution |
 | `test_entrypoint_parity.py` | `-m` and console-script output are byte-identical |
-| `test_doctrine_content.py` | Doctrine content table, plan flags, per-hook language on the page, hook-free anti-probe |
+| `test_doctrine_content.py` | Doctrine content table, prerequisites, plan flags, per-hook language on the page, hook-free anti-probe |
+| `test_manifest_integrity.py` | `zeroRealPii` vs the denylist, canonical control keys at generate, emitted-vs-proposed track counts |
 
 The demo caseload is generated **once per session** by the `demo_caseload` fixture in
 `conftest.py` (~70 s, 331 documents) and shared by four modules. Add demo-based assertions to

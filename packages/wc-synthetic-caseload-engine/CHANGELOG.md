@@ -9,6 +9,59 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+**Cross-model release review — six blocking findings** (ticket **AJC-34**). Each was reproduced
+as a failing test before it was fixed.
+
+- **A denylist hit no longer inherits `zeroRealPii: true`.** `case_context` called
+  `warn_if_denylisted(...)` and discarded the return, so a seed naming a real organization was
+  recorded as provenance `seed` — a value inside `SYNTHETIC_PROVENANCE` — and the manifest went
+  on asserting zero real PII about a name the engine had itself just identified as real. The
+  only evidence was a log line, and a corpus does not ship with the log. Such a field is now
+  `seed_denylisted`, which is outside that set and therefore computes the flag false, and the
+  finding travels through `CaseCast.warnings` into `plan.warnings` and the manifest. Retention
+  is unchanged: the seed is still the contract, now loudly. The pre-existing test asserting the
+  old behaviour asserted the bug, and was rewritten.
+- **A non-canonical control key can no longer reach a manifest.** Control keys were checked only
+  by `wc-caseload validate --spec`, which `generate` never calls, and the check admitted
+  substrate-only vocabulary. `planner.normalize_control_keys` now runs at plan time:
+  substrate keys with an unambiguous equivalent are translated through `SUBSTRATE_TO_CANONICAL`
+  (so `FAX_COVER_SHEET` emits as `FAX_CORRESPONDENCE`), and anything else — an unmapped
+  substrate key, a typo — raises `ControlKeyError` naming every offending key and the control
+  that holds it. `build_case_plan` additionally fails closed before constructing any
+  `PlannedDocument`, so a future path that skips normalization still cannot write a
+  non-canonical subtype.
+- **Lien and reconsideration summaries count emitted documents, not proposals.** Both machines
+  run before perspective suppression and control resolution, and the manifest wrote
+  `len(track.documents)` — so a case that excluded every lien document still reported a lien
+  track full of them. `documentCount` is now what the plan actually emitted, matched back to
+  each track by `(subtype, date)`; the proposal is kept as `plannedDocumentCount`, because the
+  difference between "no liens" and "liens the controls removed" is worth having.
+- **`RenderResult.content_flags` records what was applied, not what was requested.**
+  `render_document` is public and stored its `content_flags` argument verbatim, while the
+  injection itself skips hooks with no content for the subtype — so a document containing no
+  doctrine language could carry flags claiming two. Flags are now canonicalized through
+  `content_flags_for` before anything is decided by them: unknown hooks dropped, duplicates
+  collapsed, order normalized, non-targeting hooks removed.
+- **Doctrine paragraphs no longer assert facts the seed cannot establish.** The first cut had
+  Benson paragraphs asserting "two distinct industrial injuries" and "the two dates of injury"
+  when a `CaseSeed` models exactly one `InjurySpec`, a section 4664 paragraph asserting a prior
+  award as fact, and paragraphs asserting tenure, commute specifics, imaging findings and a
+  disciplinary history — none of which the generator produces. Every one was rewritten into
+  contention framing ("Where a prior award is established...", "if a separate industrial injury
+  is established"), which is how these read in a real file anyway, and a test enumerates the
+  banned phrases so they cannot return. Alongside it, each hook now declares a
+  `DoctrinePrerequisite`: `auto:` derivation draws only hooks whose prerequisite the case
+  satisfies (a living applicant no longer draws death benefits; a case that never went to IMR no
+  longer draws an IMR due-process challenge), while an explicitly seeded hook is kept and warned
+  about, per ISC-29. Benson's prerequisite is deliberately weaker than the doctrine — multiple
+  impaired regions rather than multiple injuries — because a seed cannot express a second date
+  of injury at all; modelling one is the real fix and belongs in the seed schema.
+- **`ci.yml` gates on this package.** The `wc-synthetic-caseload-engine` job was missing from
+  both `ci-gate.needs` and its `results` array, so the package's own suite could fail without
+  failing CI. All sixteen package jobs are now in both.
+
 ### Added
 
 **KB-grounding: doctrine content injection** (ticket **AJC-34**, ISC-21.1–21.6) — seeded

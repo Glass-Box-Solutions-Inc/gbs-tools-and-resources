@@ -124,13 +124,40 @@ def test_output_is_byte_identical_across_timezones(tmp_path: Path) -> None:
     )
 
 
+ALL_FORMATS: frozenset[str] = frozenset({"pdf", "scanned_pdf", "eml", "docx"})
+"""Every format the engine emits — each has its own timezone-sensitive surface.
+
+``eml`` carries a Date header, ``docx`` a ZIP entry time and a core-properties
+date, ``pdf`` a creation date, ``scanned_pdf`` all of the above plus a rewrite.
+A drift probe that exercised three of the four would report a guarantee it had
+not tested.
+"""
+
+
 @requires_substrate
 def test_every_format_is_actually_exercised_by_the_probe(tmp_path: Path) -> None:
-    """A TZ test that renders only PDFs would have passed before the fix."""
-    seed = parse_case_seed(small_case("tz-formats"))
-    result = generate_case(seed, tmp_path, case_number=1)
-    formats = {entry["format"] for entry in result.manifest["documents"]}  # type: ignore[union-attr]
-    assert "eml" in formats, "the .eml Date header was the widest drift source"
+    """A TZ test that renders only PDFs would have passed before the fix.
+
+    Previously asserted ``"eml" in formats`` alone, which is true of any case
+    that happens to draw one eml — it said nothing about the other three, and
+    nothing at all about the two runs the byte-identity test actually compares.
+    """
+    west_result = None
+    east_result = None
+    with timezone_set(ZONE_WEST):
+        west_result = generate_case(parse_case_seed(small_case("tz-formats")), tmp_path / "west")
+    with timezone_set(ZONE_EAST):
+        east_result = generate_case(parse_case_seed(small_case("tz-formats")), tmp_path / "east")
+
+    per_run = {
+        ZONE_WEST: {entry["format"] for entry in west_result.manifest["documents"]},  # type: ignore[union-attr]
+        ZONE_EAST: {entry["format"] for entry in east_result.manifest["documents"]},  # type: ignore[union-attr]
+    }
+    for zone, formats in per_run.items():
+        assert formats == ALL_FORMATS, (
+            f"the {zone} run rendered {sorted(formats)}; the drift comparison only covers "
+            f"what it renders, so {sorted(ALL_FORMATS - formats)} would go untested"
+        )
 
 
 # ---------------------------------------------------------------------------

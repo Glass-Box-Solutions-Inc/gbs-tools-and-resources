@@ -97,8 +97,19 @@ class LienTrack:
     conference: bool
     documents: tuple[DatedCandidate, ...]
 
-    def summary(self) -> dict[str, object]:
-        """Manifest-shaped summary of this track."""
+    def summary(self, emitted: int | None = None) -> dict[str, object]:
+        """Manifest-shaped summary of this track.
+
+        Args:
+            emitted: documents this track actually contributed to the plan. The
+                lien machine runs *before* perspective suppression and control
+                resolution, so ``len(self.documents)`` is a proposal — a case
+                that excluded every lien document still reported a track full of
+                them. The caller that knows the resolved plan passes the real
+                number; ``None`` (a direct caller with no plan in hand) falls
+                back to the proposal and says so in ``plannedDocumentCount``.
+        """
+        planned = len(self.documents)
         return {
             "index": self.index,
             "claimant": self.claimant,
@@ -106,7 +117,8 @@ class LienTrack:
             "resolution": self.resolution,
             "resolutionSubtype": self.resolution_subtype,
             "conference": self.conference,
-            "documentCount": len(self.documents),
+            "documentCount": planned if emitted is None else emitted,
+            "plannedDocumentCount": planned,
         }
 
 
