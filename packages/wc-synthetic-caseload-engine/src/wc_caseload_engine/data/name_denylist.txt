@@ -1,0 +1,115 @@
+# Real-world organizations that must never appear in generated case files.
+#
+# A synthetic claim file is only safely synthetic if it cannot be mistaken for,
+# or attributed to, a real body. Names below are actual California workers'
+# compensation carriers and defense firms; a fabricated WCAB filing naming one
+# of them is a real-world collision whatever the folder says about being
+# synthetic.
+#
+# Most of this list is not hypothetical. It is the literal contents of the
+# substrate's `data/wc_constants.py` pools (INSURANCE_CARRIERS, DEFENSE_FIRMS,
+# ALL_EMPLOYERS), which the substrate draws from whenever a seed does not name
+# its own carrier, defense firm or employer. The engine substitutes coined names
+# on every one of those paths (`case_context._replace_real_organizations`)
+# precisely so this list stays at zero hits.
+#
+# This file is package data, not test data: the engine reads it at generation
+# time to warn when a *seed-declared* name matches (see
+# `name_denylist.warn_if_denylisted`), and the anti-probes read the same file to
+# sweep rendered output. One safety list, one location.
+#
+# The list is curated and therefore fallible. The structural guarantee is
+# `name_denylist.substrate_organization_pools()`, which reads the substrate's
+# pools live, so a pool that grows upstream is swept without anyone editing
+# this file.
+#
+# Format:
+#   <name>          a substring that must NOT appear in any generated document
+#   ALLOW <name>    a known, accepted exception — checked, but never a failure
+#   # comment
+#
+# Matching is case-insensitive substring. Keep entries distinctive enough not
+# to fire on ordinary prose: "EMPLOYERS" as a bare word would match the phrase
+# "the employers", so the carrier is listed by its full corporate name.
+
+# --- Allowed ---------------------------------------------------------------
+# The substrate hard-codes this firm on its docx letterhead (data/docx_styles.py)
+# and it cannot be changed from this package. Documented as a known limitation
+# in the README rather than silently tolerated here.
+ALLOW Martinez & Associates
+
+# --- Carriers and claims administrators (substrate INSURANCE_CARRIERS) ------
+State Compensation Insurance Fund
+Zenith Insurance Company
+Republic Indemnity
+ICW Group
+Gallagher Bassett
+Applied Underwriters
+Employers Holdings
+AmTrust Financial
+Kinsale Insurance
+Hartford Financial
+Travelers Insurance
+Liberty Mutual
+Sedgwick Claims Management
+Broadspire Services
+
+# --- Carriers previously named by the demo caseload -------------------------
+# Each was a real insurer; the demo now uses coined names instead. Listed so
+# a future edit cannot quietly reintroduce them.
+Pacific Compensation Insurance
+Berkshire Hathaway Homestate
+Travelers Property Casualty
+Employers Compensation Insurance
+
+# --- Defense firms (substrate DEFENSE_FIRMS) --------------------------------
+Bradford & Barthel
+Laughlin, Falbo
+Shaw, Jacobsmeyer
+Adelson, Testan
+Hanna, Brophy
+LaFollette, Johnson
+Manning & Kass
+Pollak, Vida
+Downs, Ward
+
+# --- Employers (substrate ALL_EMPLOYERS) ------------------------------------
+# The employer pool mixes invented companies with real ones. Every real entry
+# is listed here; the invented entries are still substituted, because the pool
+# as a whole is a substrate draw and `zeroRealPii` has to mean the cast came
+# from a channel this engine can vouch for.
+City of Los Angeles
+County of San Bernardino
+City of San Diego
+County of Sacramento
+City of Fresno
+Turner Construction
+Webcor Builders
+Swinerton
+DPR Construction
+Kaiser Permanente
+Dignity Health
+Sutter Health
+UCLA Health
+Amazon Fulfillment
+FedEx Ground
+UPS Supply Chain
+Safeway Inc
+Home Depot
+Costco Wholesale
+Caltrans
+# "State of California — Caltrans" is the pool entry; the bare jurisdiction is
+# deliberately NOT listed. Every DWC form is captioned "STATE OF CALIFORNIA /
+# DIVISION OF WORKERS' COMPENSATION", so denying that string would fire on the
+# letterhead of almost every document in every case file. "Caltrans" is the part
+# that identifies the employer, and it is the part listed.
+
+# --- Further real California workers' compensation firms --------------------
+Grancell, Stander
+Lenahan, Lee, Slater
+Michael Sullivan & Associates
+Stockwell, Harris
+Floyd, Skeren
+Goldman, Magdalin
+Boehm & Associates
+Mullen & Filippi

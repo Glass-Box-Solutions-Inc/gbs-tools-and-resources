@@ -1,0 +1,300 @@
+"""Document-control precedence matrix (ISC-22..29). No substrate required.
+
+@Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from wc_caseload_engine.doc_controls import (
+    TRACK_CORE,
+    TRACK_FILLER,
+    TRACK_LIEN,
+    TRACK_SUPPORTING,
+    DocumentCandidate,
+    resolve_document_controls,
+)
+from wc_caseload_engine.seeds import DocumentControls
+
+# A miniature lifecycle proposal: two parent types, three tracks, mixed priority.
+PARENTS: dict[str, str] = {
+    "APPLICATION_FOR_ADJUDICATION": "PLEADINGS_FILINGS",
+    "DECLARATION_OF_READINESS": "PLEADINGS_FILINGS",
+    "PROOF_OF_SERVICE": "PLEADINGS_FILINGS",
+    "PTP_PR2_PROGRESS_REPORT": "MEDICAL_CLINICAL",
+    "MRI_REPORT": "MEDICAL_CLINICAL",
+    "DEPOSITION_TRANSCRIPT": "DISCOVERY",
+    "NOTICE_OF_LIEN_FILING": "LIENS",
+}
+
+
+def parent_of(subtype: str) -> str | None:
+    return PARENTS.get(subtype)
+
+
+def candidates() -> list[DocumentCandidate]:
+    return [
+        DocumentCandidate("APPLICATION_FOR_ADJUDICATION", priority=0, track=TRACK_CORE),
+        DocumentCandidate("DECLARATION_OF_READINESS", priority=20, track=TRACK_CORE),
+        DocumentCandidate("PROOF_OF_SERVICE", priority=80, track=TRACK_FILLER, count=4),
+        DocumentCandidate("PTP_PR2_PROGRESS_REPORT", priority=30, track=TRACK_CORE, count=6),
+        DocumentCandidate("MRI_REPORT", priority=60, track=TRACK_SUPPORTING, count=2),
+        DocumentCandidate("DEPOSITION_TRANSCRIPT", priority=40, track=TRACK_CORE),
+        DocumentCandidate("NOTICE_OF_LIEN_FILING", priority=10, track=TRACK_LIEN, count=2),
+    ]
+
+
+def resolve(controls: dict[str, Any], **kwargs: Any) -> Any:
+    return resolve_document_controls(
+        candidates(),
+        DocumentControls.model_validate(controls),
+        parent_type_of=parent_of,
+        **kwargs,
+    )
+
+
+BASELINE_TOTAL = 17
+
+
+# 1 — lifecycle defaults pass straight through
+def test_no_controls_emits_the_lifecycle_defaults() -> None:
+    result = resolve({})
+    assert result.total == BASELINE_TOTAL
+    assert result.count_for("PROOF_OF_SERVICE") == 4
+    assert result.warnings == ()
+
+
+# 2 — include_only whitelist by subtype and by parent type (ISC-22)
+def test_include_only_restricts_to_named_subtypes_and_types() -> None:
+    result = resolve({"include_only": ["MEDICAL_CLINICAL", "DEPOSITION_TRANSCRIPT"]})
+    assert set(result.counts()) == {
+        "PTP_PR2_PROGRESS_REPORT",
+        "MRI_REPORT",
+        "DEPOSITION_TRANSCRIPT",
+    }
+    assert result.dropped["APPLICATION_FOR_ADJUDICATION"] == "not in documents.include_only"
+
+
+# 3 — exclude blacklist (ISC-23)
+def test_exclude_suppresses_named_subtypes_and_types() -> None:
+    result = resolve({"exclude": ["PLEADINGS_FILINGS", "MRI_REPORT"]})
+    assert "APPLICATION_FOR_ADJUDICATION" not in result.counts()
+    assert "PROOF_OF_SERVICE" not in result.counts()
+    assert "MRI_REPORT" not in result.counts()
+    assert result.count_for("PTP_PR2_PROGRESS_REPORT") == 6
+
+
+# 4 — exact per-subtype count (ISC-24)
+def test_subtype_override_sets_an_exact_count() -> None:
+    result = resolve({"overrides": [{"subtype": "DEPOSITION_TRANSCRIPT", "count": 3}]})
+    assert result.count_for("DEPOSITION_TRANSCRIPT") == 3
+    assert result.total == BASELINE_TOTAL + 2
+
+
+def test_subtype_override_to_zero_removes_the_subtype() -> None:
+    result = resolve({"overrides": [{"subtype": "PROOF_OF_SERVICE", "count": 0}]})
+    assert result.count_for("PROOF_OF_SERVICE") == 0
+    assert "PROOF_OF_SERVICE" not in result.counts()
+
+
+# 5 — per-parent-type max and min (ISC-25)
+def test_type_max_trims_the_type_lowest_priority_first() -> None:
+    result = resolve({"overrides": [{"type": "MEDICAL_CLINICAL", "max": 5}]})
+    assert result.type_totals()["MEDICAL_CLINICAL"] == 5
+    # MRI_REPORT is supporting/priority-60, so it gives way before the PR-2s.
+    assert result.count_for("MRI_REPORT") == 0
+    assert result.count_for("PTP_PR2_PROGRESS_REPORT") == 5
+
+
+def test_type_min_grows_the_type_most_essential_first() -> None:
+    result = resolve({"overrides": [{"type": "DISCOVERY", "min": 4}]})
+    assert result.type_totals()["DISCOVERY"] == 4
+    assert result.count_for("DEPOSITION_TRANSCRIPT") == 4
+
+
+def test_type_min_without_candidates_warns_instead_of_inventing() -> None:
+    result = resolve({"overrides": [{"type": "INVESTIGATION", "min": 3}]})
+    assert result.total == BASELINE_TOTAL
+    assert any("INVESTIGATION" in warning for warning in result.warnings)
+
+
+# 6 — global cap (ISC-26)
+def test_global_cap_trims_filler_before_core() -> None:
+    result = resolve({"global_cap": 14})
+    assert result.total == 14
+    assert result.count_for("PROOF_OF_SERVICE") == 1  # filler absorbs all 3 cuts
+    assert result.count_for("APPLICATION_FOR_ADJUDICATION") == 1
+    assert result.count_for("NOTICE_OF_LIEN_FILING") == 2
+
+
+def test_global_cap_falls_through_to_supporting_then_core() -> None:
+    result = resolve({"global_cap": 8})
+    assert result.total == 8
+    assert result.count_for("PROOF_OF_SERVICE") == 0  # filler drained first
+    assert result.count_for("MRI_REPORT") == 0  # then supporting
+    assert result.count_for("NOTICE_OF_LIEN_FILING") == 2  # lien track survives
+
+
+def test_global_cap_above_the_plan_changes_nothing() -> None:
+    assert resolve({"global_cap": 500}).total == BASELINE_TOTAL
+
+
+# 7 — precedence: subtype override beats exclude (ISC-28/29)
+def test_subtype_override_beats_exclude_and_warns() -> None:
+    result = resolve(
+        {
+            "exclude": ["DISCOVERY"],
+            "overrides": [{"subtype": "DEPOSITION_TRANSCRIPT", "count": 2}],
+        }
+    )
+    assert result.count_for("DEPOSITION_TRANSCRIPT") == 2
+    assert "DEPOSITION_TRANSCRIPT" in result.forced_subtypes()
+    assert any("documents.exclude" in w for w in result.warnings)
+
+
+# 8 — precedence: subtype override beats include_only
+def test_subtype_override_beats_include_only() -> None:
+    result = resolve(
+        {
+            "include_only": ["MEDICAL_CLINICAL"],
+            "overrides": [{"subtype": "DEPOSITION_TRANSCRIPT", "count": 1}],
+        }
+    )
+    assert result.count_for("DEPOSITION_TRANSCRIPT") == 1
+    assert result.count_for("PTP_PR2_PROGRESS_REPORT") == 6
+    assert "APPLICATION_FOR_ADJUDICATION" not in result.counts()
+
+
+# 9 — precedence: subtype override beats a per-type bound
+def test_subtype_override_beats_type_max() -> None:
+    result = resolve(
+        {
+            "overrides": [
+                {"type": "MEDICAL_CLINICAL", "max": 3},
+                {"subtype": "PTP_PR2_PROGRESS_REPORT", "count": 9},
+            ]
+        }
+    )
+    assert result.count_for("PTP_PR2_PROGRESS_REPORT") == 9
+    assert result.type_totals()["MEDICAL_CLINICAL"] == 9
+
+
+# 10 — precedence: subtype override beats the global cap
+def test_subtype_override_is_never_trimmed_by_the_cap() -> None:
+    result = resolve(
+        {"global_cap": 6, "overrides": [{"subtype": "PROOF_OF_SERVICE", "count": 6}]}
+    )
+    assert result.count_for("PROOF_OF_SERVICE") == 6
+    assert result.total == 6
+
+
+def test_cap_below_pinned_overrides_warns_and_keeps_the_overrides() -> None:
+    result = resolve(
+        {"global_cap": 2, "overrides": [{"subtype": "PROOF_OF_SERVICE", "count": 6}]}
+    )
+    assert result.count_for("PROOF_OF_SERVICE") == 6
+    assert result.total == 6
+    assert any("cannot be met" in warning for warning in result.warnings)
+
+
+# 11 — lifecycle-invalid forced subtype still emits, loudly (ISC-29)
+def test_lifecycle_invalid_subtype_is_emitted_with_a_warning() -> None:
+    warnings: list[dict[str, Any]] = []
+
+    class _Recorder:
+        def warning(self, event: str, **kwargs: Any) -> None:
+            warnings.append({"event": event, **kwargs})
+
+    result = resolve(
+        {"overrides": [{"subtype": "SURVEILLANCE_REPORT", "count": 2}]},
+        logger=_Recorder(),
+    )
+    assert result.count_for("SURVEILLANCE_REPORT") == 2
+    assert "SURVEILLANCE_REPORT" in result.forced_subtypes()
+    assert warnings[0]["event"] == "doc_controls.forced_subtype"
+    assert warnings[0]["subtype"] == "SURVEILLANCE_REPORT"
+    assert any("never emits it" in warning for warning in result.warnings)
+
+
+# 12 — full composition: whitelist + type bound + override + cap
+def test_full_control_stack_resolves_deterministically() -> None:
+    controls = {
+        "include_only": ["MEDICAL_CLINICAL", "PLEADINGS_FILINGS"],
+        "exclude": ["PROOF_OF_SERVICE"],
+        "overrides": [
+            {"type": "MEDICAL_CLINICAL", "max": 4},
+            {"subtype": "DEPOSITION_TRANSCRIPT", "count": 2},
+        ],
+        "global_cap": 7,
+    }
+    first = resolve(controls)
+    second = resolve(controls)
+    assert first.counts() == second.counts()
+    assert first.count_for("DEPOSITION_TRANSCRIPT") == 2  # forced back in
+    # The type max is an upper bound; the cap may legitimately trim below it.
+    assert first.type_totals()["MEDICAL_CLINICAL"] <= 4
+    assert "PROOF_OF_SERVICE" not in first.counts()  # blacklist honoured
+    assert first.total == 7  # cap honoured
+
+
+# 14 — the cap never breaks a higher-precedence type minimum
+def test_global_cap_respects_a_type_minimum_floor() -> None:
+    result = resolve(
+        {"global_cap": 5, "overrides": [{"type": "MEDICAL_CLINICAL", "min": 6}]}
+    )
+    assert result.type_totals()["MEDICAL_CLINICAL"] == 6
+    assert result.total == 6  # cap yields to the min floor
+    assert any("cannot be met" in warning for warning in result.warnings)
+
+
+def test_global_cap_trims_types_that_have_slack_above_their_minimum() -> None:
+    result = resolve(
+        {"global_cap": 12, "overrides": [{"type": "MEDICAL_CLINICAL", "min": 6}]}
+    )
+    assert result.total == 12
+    assert result.type_totals()["MEDICAL_CLINICAL"] >= 6
+
+
+# 13 — plumbing details
+def test_duplicate_candidates_for_one_subtype_are_summed() -> None:
+    result = resolve_document_controls(
+        [
+            DocumentCandidate("MRI_REPORT", priority=60, track=TRACK_SUPPORTING),
+            DocumentCandidate("MRI_REPORT", priority=20, track=TRACK_CORE, count=2),
+        ],
+        DocumentControls(),
+        parent_type_of=parent_of,
+    )
+    assert result.count_for("MRI_REPORT") == 3  # counts sum
+    entry = result.planned[0]
+    # Merged metadata is the most protective of the two proposals.
+    assert entry.priority == 20  # most essential priority wins
+    assert entry.track == TRACK_CORE  # least trimmable track wins
+
+
+def test_parent_resolution_prefers_the_candidate_declaration() -> None:
+    result = resolve_document_controls(
+        [DocumentCandidate("MRI_REPORT", parent_type="CUSTOM_TYPE")],
+        DocumentControls(),
+        parent_type_of=parent_of,
+    )
+    assert result.planned[0].parent_type == "CUSTOM_TYPE"
+
+
+def test_resolver_works_without_any_taxonomy_at_all() -> None:
+    """Pure function: no substrate, no taxonomy, no I/O."""
+    result = resolve_document_controls(
+        [DocumentCandidate("ANY_SUBTYPE", count=2)], DocumentControls(global_cap=1)
+    )
+    assert result.total == 1
+    assert result.planned[0].parent_type is None
+
+
+def test_negative_candidate_count_is_rejected() -> None:
+    with pytest.raises(ValueError, match="negative count"):
+        resolve_document_controls(
+            [DocumentCandidate("X", count=-1)], DocumentControls()
+        )

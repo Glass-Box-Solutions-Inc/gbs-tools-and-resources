@@ -1,0 +1,17 @@
+# Python build + tooling artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Generated caseloads (never commit synthetic output trees)
+out/
+output/
