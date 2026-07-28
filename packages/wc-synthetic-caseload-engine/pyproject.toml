@@ -63,4 +63,5 @@ addopts = "-q --strict-markers"
 markers = [
   "substrate: requires the merus-test-data-generator substrate on disk",
   "classifier: requires the Adjudica-classifier source tree on disk",
+  "slow: renders a large corpus (tens of seconds); still runs by default",
 ]

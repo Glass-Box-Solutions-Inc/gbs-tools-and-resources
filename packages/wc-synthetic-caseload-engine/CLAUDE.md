@@ -71,6 +71,8 @@ If an import breaks, fix the bridge — not by copying files.
 | `generate_case_from_params` rejects unresolved `"random"` fields | `params.resolve_random(seed.rng("params"))` before use |
 | `load_template_class` falls back through `orchestration.pipeline`, which needs `dotenv` | `GenericDocumentTemplate` is imported directly |
 | Registry `variant` is never wired into the spec | The renderer sets `context["variant"]` itself |
+| `get_template_for_subtype` returns `GenericDocumentTemplate` for keys it does not know, so "missing" and "generic" are the same answer | `RenderResult.template` / `.fallback` record which ran; `renderer.OVERLAY_TEMPLATES` resolves the three overlay subtypes the substrate enum lacks |
+| `INSURANCE_CARRIERS` / `DEFENSE_FIRMS` in `data/wc_constants.py` are **real** companies | `case_context._replace_real_organizations` substitutes coined names whenever the seed does not name its own, and rebuilds the derived adjuster/defense emails |
 | Templates draw from the **global** `random` module | Re-seeded per document from `rng_seed` + index |
 
 ### Known substrate limitations (documented, not worked around)
@@ -153,7 +155,7 @@ If an import breaks, fix the bridge — not by copying files.
 
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/ -q      # 225 tests
+.venv/bin/python -m pytest tests/ -q      # 307 tests, ~4 min
 .venv/bin/ruff check .
 ```
 
@@ -168,6 +170,16 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_date_spine.py` | Runway validation, timeline invariants, ordering-preserving track fitting |
 | `test_timezone_determinism.py` | Cross-timezone byte identity, clock pinning, synthetic markers, `-m` re-exec |
 | `test_rendering.py` | Four formats open in their own readers, manifests, determinism |
+| `test_render_coverage.py` | **All 353 subtypes forced through the dispatch path** — zero fallbacks, zero stubs (~25 s) |
+| `test_template_provenance.py` | `template` / `fallback` manifest fields, `validate --allow-fallback` gating |
+| `test_anti_probes.py` | Real-entity denylist sweep, computed `zeroRealPii`, sentinel-tree write check |
+| `test_coherence.py` | Full-case identity sweep + cross-case contamination guard |
+| `test_format_mix.py` | Chi-square of realized vs seeded format distribution |
+| `test_entrypoint_parity.py` | `-m` and console-script output are byte-identical |
+
+The demo caseload is generated **once per session** by the `demo_caseload` fixture in
+`conftest.py` (~70 s, 331 documents) and shared by four modules. Add demo-based assertions to
+that fixture rather than regenerating.
 
 Tests requiring the substrate or the classifier checkout skip cleanly when absent — CI has the
 substrate (same monorepo) but not `Adjudica-classifier`.

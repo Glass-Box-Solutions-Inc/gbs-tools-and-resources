@@ -24,7 +24,8 @@ before it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
@@ -49,6 +50,87 @@ global state across cases.
 
 _ADJ_DIGITS = 8
 
+PROVENANCE_FAKER = "faker"
+"""Cast field drawn from the seeded Faker/substrate generator — synthetic by construction."""
+
+PROVENANCE_SEED = "seed"
+"""Cast field declared literally in the seed YAML — synthetic by the author's word."""
+
+PROVENANCE_ENGINE = "engine"
+"""Cast field coined here, replacing a substrate constant that names a real organization."""
+
+SYNTHETIC_PROVENANCE: frozenset[str] = frozenset(
+    {PROVENANCE_FAKER, PROVENANCE_SEED, PROVENANCE_ENGINE}
+)
+"""Provenance values that support a ``zeroRealPii`` claim.
+
+The flag is only worth carrying if something can make it false. Every channel
+into a cast is enumerated here, so a future channel that is *not* provably
+synthetic — an imported real file, a scraped roster — flips the manifest
+instead of inheriting a hardcoded ``true``.
+"""
+
+_CARRIER_STEMS: tuple[str, ...] = (
+    "Alderwyn",
+    "Brackenridge",
+    "Calderport",
+    "Draymoor",
+    "Fernhollow",
+    "Glasspoint",
+    "Harrowgate",
+    "Innsmere",
+    "Kelbrook",
+    "Larkfield Reach",
+    "Marrowdale",
+    "Northwick",
+    "Orrinbay",
+    "Pellworth",
+    "Quarrymede",
+    "Ravensgate",
+    "Sablecrest",
+    "Thornbury Vale",
+)
+"""Coined place-stems for synthetic carrier names.
+
+Deliberately invented rather than drawn from a real-place list: a synthetic
+claim file that names a real insurer is a real-world collision, and a plausible
+Californian place name is exactly how a real insurer is named.
+"""
+
+_CARRIER_SUFFIXES: tuple[str, ...] = (
+    "Compensation Insurance Company",
+    "Indemnity Company",
+    "Mutual Insurance Company",
+    "Casualty & Indemnity Company",
+    "Workers' Compensation Insurance Company",
+)
+
+_FIRM_SURNAMES: tuple[str, ...] = (
+    "Ashgrove",
+    "Brendell",
+    "Corradine",
+    "Delacroix",
+    "Ellsworth",
+    "Fairbanks",
+    "Grimaldi",
+    "Havelock",
+    "Ingersoll",
+    "Jarrow",
+    "Kessendale",
+    "Lindqvist",
+    "Merriweather",
+    "Norcross",
+    "Ospina",
+    "Prentiss",
+    "Quillane",
+    "Rothwell",
+    "Sandoval",
+    "Tremaine",
+)
+"""Coined surnames for synthetic law-firm names — same reasoning as the carriers."""
+
+_FIRM_SUFFIXES: tuple[str, ...] = ("LLP", "APC", "& Associates, APC", "LLP")
+
 
 @dataclass(frozen=True, slots=True)
 class CaseCast:
@@ -66,6 +148,22 @@ class CaseCast:
     judge_name: str
     treating_physician: str
     qme_physician: str | None
+    provenance: Mapping[str, str] = field(default_factory=dict)
+    """Where each identity-bearing cast field came from — see :data:`SYNTHETIC_PROVENANCE`.
+
+    Recorded so ``manifest.provenance.zeroRealPii`` can be *computed*. A literal
+    ``true`` asserts the one thing a generator cannot know about itself.
+    """
+
+    @property
+    def zero_real_pii(self) -> bool:
+        """``True`` when every identity in this cast came from a synthetic channel.
+
+        False the moment a cast field arrives by a route the engine cannot
+        vouch for. Nothing in the current engine produces that, which is the
+        point: the flag now states a checked fact rather than an intention.
+        """
+        return all(source in SYNTHETIC_PROVENANCE for source in self.provenance.values())
 
     def manifest_fields(self) -> dict[str, object]:
         """The cast facts a manifest records for cross-document verification."""
@@ -119,6 +217,72 @@ def _date_of_birth(seed: CaseSeed) -> date:
     return ANCHOR_DATE - timedelta(days=rng.randint(low * 365, high * 365) + rng.randint(0, 364))
 
 
+def synthetic_carrier_name(seed: CaseSeed) -> str:
+    """A coined insurance carrier name, stable for a given seed."""
+    rng = seed.rng("carrier")
+    return f"{rng.choice(_CARRIER_STEMS)} {rng.choice(_CARRIER_SUFFIXES)}"
+
+
+def synthetic_firm_name(seed: CaseSeed, salt: str) -> str:
+    """A coined law-firm name, stable for a given seed and *salt*."""
+    rng = seed.rng(salt)
+    first, second = rng.sample(_FIRM_SURNAMES, 2)
+    suffix = rng.choice(_FIRM_SUFFIXES)
+    if suffix.startswith("&"):
+        return f"{first} {suffix}"
+    return f"{first} & {second} {suffix}"
+
+
+def _contact_email(person: str, organization: str) -> str:
+    """Rebuild a contact email so it matches the organization actually named.
+
+    ``FakeDataGenerator`` derives adjuster and defense emails from the pool name
+    it drew, so replacing the organization without replacing the address leaves
+    a defense attorney at ``@laughlin.com`` writing on another firm's
+    letterhead — the leak surviving in the one field nobody rereads.
+    """
+    parts = [part for part in person.replace(",", " ").split() if part and part != "Esq."]
+    local = ".".join(part.lower() for part in parts[:2]) or "contact"
+    domain = "".join(char for char in organization.split()[0].lower() if char.isalpha())
+    return f"{local}@{domain or 'example'}.com"
+
+
+def _replace_real_organizations(case: Any, seed: CaseSeed) -> dict[str, str]:
+    """Swap the substrate's real carrier and defense-firm draws for coined names.
+
+    ``data/wc_constants.py`` seeds ``INSURANCE_CARRIERS`` and ``DEFENSE_FIRMS``
+    with **actual** California workers' compensation insurers and defense firms
+    — State Fund, Zenith, Bradford & Barthel, Laughlin Falbo. Realistic, and
+    exactly the wrong kind of realistic: a fabricated claim file naming a real
+    carrier or a real firm is a real-world collision, whatever the folder says
+    about being synthetic.
+
+    The substrate is a library we do not edit, so the substitution happens here,
+    on the generated case object, before any template reads it. A seed that
+    names its own carrier or firm is untouched — the seed is the contract.
+
+    Returns:
+        The provenance entries for the fields this function owned.
+    """
+    provenance: dict[str, str] = {}
+
+    if not seed.profile.carrier.name:
+        case.insurance.carrier_name = synthetic_carrier_name(seed)
+        case.insurance.adjuster_email = _contact_email(
+            case.insurance.adjuster_name, case.insurance.carrier_name
+        )
+        provenance["carrier"] = PROVENANCE_ENGINE
+
+    if not seed.profile.attorneys.defense_firm:
+        case.insurance.defense_firm = synthetic_firm_name(seed, "defense_firm")
+        case.insurance.defense_email = _contact_email(
+            case.insurance.defense_attorney, case.insurance.defense_firm
+        )
+        provenance["defenseFirm"] = PROVENANCE_ENGINE
+
+    return provenance
+
+
 def _apply_profile_overrides(case: Any, seed: CaseSeed, timeline: CaseTimeline) -> None:
     """Overwrite the generated cast with everything the seed specifies."""
     profile = seed.profile
@@ -146,8 +310,14 @@ def _apply_profile_overrides(case: Any, seed: CaseSeed, timeline: CaseTimeline) 
 
     if profile.carrier.name:
         case.insurance.carrier_name = profile.carrier.name
+        case.insurance.adjuster_email = _contact_email(
+            case.insurance.adjuster_name, profile.carrier.name
+        )
     if profile.attorneys.defense_firm:
         case.insurance.defense_firm = profile.attorneys.defense_firm
+        case.insurance.defense_email = _contact_email(
+            case.insurance.defense_attorney, profile.attorneys.defense_firm
+        )
 
     if profile.physicians.ptp_specialty:
         case.treating_physician.specialty = profile.physicians.ptp_specialty
@@ -178,6 +348,36 @@ def _apply_injury_overrides(case: Any, seed: CaseSeed, adj_number: str) -> None:
     case.timeline.date_of_injury = injury.onset_date
 
 
+def _cast_provenance(seed: CaseSeed, engine_owned: Mapping[str, str]) -> dict[str, str]:
+    """Classify where every identity-bearing cast field came from.
+
+    Two channels, and the distinction is the whole content of the
+    ``zeroRealPii`` claim: a field the seed states is synthetic on the seed
+    author's word, a field Faker drew is synthetic by construction, and a field
+    this module coined replaced a substrate constant that named a real body.
+    """
+    profile = seed.profile
+    declared = {
+        "applicant": bool(profile.applicant.name),
+        "employer": bool(profile.employer.name),
+        "carrier": bool(profile.carrier.name),
+        "applicantFirm": bool(profile.attorneys.applicant_firm),
+        "defenseFirm": bool(profile.attorneys.defense_firm),
+    }
+    provenance = {
+        field_name: PROVENANCE_SEED if is_declared else PROVENANCE_FAKER
+        for field_name, is_declared in declared.items()
+    }
+    # Physicians, judges and adjusters are never seed-declared; the seed only
+    # picks their specialty.
+    provenance["treatingPhysician"] = PROVENANCE_FAKER
+    provenance["judge"] = PROVENANCE_FAKER
+    provenance["adjuster"] = PROVENANCE_FAKER
+    provenance["dateOfBirth"] = PROVENANCE_SEED if profile.applicant.age else PROVENANCE_FAKER
+    provenance.update(engine_owned)
+    return provenance
+
+
 def build_case_cast(seed: CaseSeed, timeline: CaseTimeline, case_number: int = 1) -> CaseCast:
     """Build the one canonical cast for a case.
 
@@ -203,10 +403,12 @@ def build_case_cast(seed: CaseSeed, timeline: CaseTimeline, case_number: int = 1
     case = generator.generate_case_from_params(case_number, params)
 
     adj_number = _adj_number(seed)
+    engine_owned = _replace_real_organizations(case, seed)
     _apply_profile_overrides(case, seed, timeline)
     _apply_injury_overrides(case, seed, adj_number)
 
     applicant_firm = seed.profile.attorneys.applicant_firm or DEFAULT_APPLICANT_FIRM
+    provenance = _cast_provenance(seed, engine_owned)
 
     cast = CaseCast(
         case=case,
@@ -221,6 +423,7 @@ def build_case_cast(seed: CaseSeed, timeline: CaseTimeline, case_number: int = 1
         judge_name=case.judge_name,
         treating_physician=case.treating_physician.full_name,
         qme_physician=case.qme_physician.full_name if case.qme_physician else None,
+        provenance=provenance,
     )
     log.debug(
         "cast.built",
@@ -231,4 +434,14 @@ def build_case_cast(seed: CaseSeed, timeline: CaseTimeline, case_number: int = 1
     return cast
 
 
-__all__ = ["DEFAULT_APPLICANT_FIRM", "CaseCast", "build_case_cast"]
+__all__ = [
+    "DEFAULT_APPLICANT_FIRM",
+    "PROVENANCE_ENGINE",
+    "PROVENANCE_FAKER",
+    "PROVENANCE_SEED",
+    "SYNTHETIC_PROVENANCE",
+    "CaseCast",
+    "build_case_cast",
+    "synthetic_carrier_name",
+    "synthetic_firm_name",
+]

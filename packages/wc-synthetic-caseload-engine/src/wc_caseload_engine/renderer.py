@@ -32,6 +32,15 @@ regenerates byte-for-byte:
 Format assignment honours ``seed.effective_format_mix()``; when a subtype and
 format cannot be paired the renderer falls back to pdf and says so.
 
+Dispatch has one trap worth naming: ``registry.get_template_for_subtype``
+answers ``GenericDocumentTemplate`` for keys it does not know, so a missing
+template and a deliberate one are the same return value. Every render therefore
+records the template it actually used (:attr:`RenderResult.template`) and flags
+a degraded dispatch (:attr:`RenderResult.fallback`), and the three overlay
+subtypes the substrate enum lacks are resolved here rather than left to fall
+through. Silent degradation is the failure mode this module is built to make
+impossible.
+
 @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 """
 
@@ -75,6 +84,24 @@ MIME_TYPES: Mapping[str, str] = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 """Output format -> MIME type recorded in the manifest."""
+
+OVERLAY_TEMPLATES: Mapping[str, tuple[str, str]] = {
+    # The three classifier subtypes the substrate enum lacks (see
+    # ``taxonomy.OVERLAY_SUBTYPES``) reach the registry as unknown keys, and an
+    # unknown key silently resolves to ``GenericDocumentTemplate``. The engine
+    # invented these keys to reach 353-subtype parity, so the engine owes them a
+    # real template. Each maps to the class the substrate already uses for its
+    # nearest neighbour — ``PETITION_FOR_PENALTIES`` to the very entry the
+    # substrate registers for its own ``PETITION_FOR_PENALTIES_LC_5814``, and
+    # the two penalty notices to the class every other ``NOTICE_OF_*`` uses.
+    "PETITION_FOR_PENALTIES": ("ApplicationForAdjudication", "Petition for Penalties (LC 5814)"),
+    "NOTICE_OF_PENALTY_5814": ("CourtNotice", "penalty_5814"),
+    "NOTICE_OF_PENALTY_5814_5": ("CourtNotice", "penalty_5814_5"),
+}
+"""Engine-owned template resolution for subtypes the substrate registry misses."""
+
+GENERIC_TEMPLATE_CLASS = "GenericDocumentTemplate"
+"""The substrate's catch-all — resolving to it is a fallback, not a dispatch."""
 
 _INVARIANT_SET = False
 
@@ -128,6 +155,23 @@ class RenderResult:
     md5: str
     mime_type: str
     fallback_reason: str | None = None
+    template: str = ""
+    """Resolved template, ``ClassName`` or ``ClassName/variant``.
+
+    Recorded per document so a manifest states *which* template produced a file
+    rather than leaving it to be re-derived. A caseload whose dispatch quietly
+    degrades is otherwise indistinguishable from one that did not.
+    """
+
+    @property
+    def fallback(self) -> bool:
+        """``True`` when this document did not render as dispatched.
+
+        Covers both degradations: the requested format failed and the document
+        fell back to pdf, or the subtype had no registry template and fell
+        through to :data:`GENERIC_TEMPLATE_CLASS`.
+        """
+        return self.fallback_reason is not None
 
 
 def choose_format(seed: CaseSeed, index: int) -> str:
@@ -152,13 +196,34 @@ def scan_seed_for(seed: CaseSeed, index: int) -> int:
     return derive_seed(seed.rng_seed, f"scan:{index}")
 
 
-def _load_template(subtype: str) -> tuple[type, str | None, str]:
-    """Resolve a subtype to (template class, variant, class name)."""
+def resolve_template(subtype: str) -> tuple[str, str | None]:
+    """Resolve a subtype to its ``(class name, variant)`` without loading it.
+
+    The registry returns :data:`GENERIC_TEMPLATE_CLASS` for any key it does not
+    know, so "unknown subtype" and "deliberately generic" are the same answer.
+    :data:`OVERLAY_TEMPLATES` is consulted first, which is what keeps the
+    engine's own overlay subtypes from landing in that indistinguishable bucket.
+    """
+    overlay = OVERLAY_TEMPLATES.get(subtype)
+    if overlay is not None:
+        return overlay
     registry = import_substrate("pdf_templates.registry")
     class_name, variant = registry.get_template_for_subtype(subtype)
-    if class_name == "GenericDocumentTemplate":
+    return class_name, variant
+
+
+def template_label(class_name: str, variant: str | None) -> str:
+    """``ClassName`` or ``ClassName/variant`` — the manifest's provenance string."""
+    return f"{class_name}/{variant}" if variant else class_name
+
+
+def _load_template(subtype: str) -> tuple[type, str | None, str]:
+    """Resolve a subtype to (template class, variant, class name)."""
+    class_name, variant = resolve_template(subtype)
+    if class_name == GENERIC_TEMPLATE_CLASS:
         generic = import_substrate("pdf_templates.generic_template")
         return generic.GenericDocumentTemplate, variant, class_name
+    registry = import_substrate("pdf_templates.registry")
     return registry.load_template_class(class_name), variant, class_name
 
 
@@ -242,6 +307,13 @@ def render_document(
     fallback_reason: str | None = None
     effective_format = doc_format
 
+    if class_name == GENERIC_TEMPLATE_CLASS:
+        # Not an error — the generic template renders a real document — but it
+        # is a *degraded* dispatch, and the manifest says so rather than
+        # presenting it as the subtype's own template.
+        fallback_reason = f"no registry template for {subtype}; rendered by {class_name}"
+        log.warning("render.generic_fallback", case_id=seed.case_id, subtype=subtype)
+
     # Re-pin the global stream the substrate templates draw from.
     random.seed(derive_seed(seed.rng_seed, f"render:{index}"))
 
@@ -251,9 +323,14 @@ def render_document(
     except Exception as exc:
         if doc_format == "pdf":
             raise
-        fallback_reason = (
+        format_reason = (
             f"{class_name} could not render {subtype} as {doc_format} "
             f"({type(exc).__name__}: {exc}); fell back to pdf"
+        )
+        # A generic-template dispatch that then loses its format is two
+        # degradations, not one; keep both reasons.
+        fallback_reason = (
+            f"{fallback_reason}; {format_reason}" if fallback_reason else format_reason
         )
         log.warning(
             "render.format_fallback",
@@ -302,15 +379,20 @@ def render_document(
         md5=_md5(payload),
         mime_type=MIME_TYPES[effective_format],
         fallback_reason=fallback_reason,
+        template=template_label(class_name, variant),
     )
 
 
 __all__ = [
     "FORMAT_EXTENSIONS",
+    "GENERIC_TEMPLATE_CLASS",
     "MIME_TYPES",
+    "OVERLAY_TEMPLATES",
     "RenderResult",
     "choose_format",
     "normalize_pdf_id",
     "render_document",
+    "resolve_template",
     "scan_seed_for",
+    "template_label",
 ]

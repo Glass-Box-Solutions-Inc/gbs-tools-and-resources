@@ -120,7 +120,7 @@ A new installable package whose CLI turns a caseload spec (defaults + distributi
 - [x] ISC-53: Recon document dates honor the 20/25-day petition window and sequence (petition ≤ 25 days after F&A service; probe manifest dates)
 
 ### Rendering & realism
-- [x] ISC-54: Renderer bridge resolves every emitted subtype through the substrate template registry (0 unresolved subtypes on a full-range test caseload)
+- [x] ISC-54: Every canonical subtype renders without fallback — all-353 forced-render test drives each subtype through this engine's dispatch path and asserts zero `GenericDocumentTemplate` resolutions, zero `RenderResult.fallback`, and non-trivial output (>500 B, PDF parses with ≥1 page)
 - [x] ISC-55: All four output formats are produced when seeded (pdf, scanned_pdf, eml, docx) — probe file magic bytes
 - [x] ISC-56: Every generated PDF exceeds 500 bytes and opens (pymupdf page count ≥ 1)
 - [x] ISC-57: Scan-simulation seeding is derived from `rng_seed` + doc index, not `hash()`/wall clock (fixes the substrate's PYTHONHASHSEED leak within this engine's calls)
@@ -130,14 +130,14 @@ A new installable package whose CLI turns a caseload spec (defaults + distributi
 ### Taxonomy & classifier integration
 - [x] ISC-60: Engine taxonomy import matches Adjudica-classifier at exactly 353 subtypes (probe: count + set-diff test = ∅)
 - [x] ISC-61: `wc-caseload taxonomy-check` compares against the classifier source tree and exits nonzero on drift
-- [x] ISC-62: `wc-caseload validate --out <dir>` verifies every manifest subtype is a valid classifier key with valid parent mapping
+- [x] ISC-62: `wc-caseload validate --out <dir>` verifies every manifest subtype is a valid classifier key with valid parent mapping, and fails on any `fallback: true` document unless `--allow-fallback` is passed
 - [x] ISC-63: Optional corpus filename mode emits `TC-###_###_<SUBTYPE>_<YYYY-MM-DD>.pdf` names accepted by the classifier's sampling regex
 - [x] ISC-64: Default filename mode is neutral (no subtype leak) for honest classification measurement
 
 ### Outputs & manifests
 - [x] ISC-65: Per-case output folder contains rendered documents + `seed.yaml` + `manifest.json`
-- [x] ISC-66: `manifest.json` carries per-document `{filename, subtype, type, format, documentDate, md5Checksum, fileSize, mimeType}`
-- [x] ISC-67: Manifest carries a `provenance` block with `zeroRealPii: true` and generator version + seed hash
+- [x] ISC-66: `manifest.json` carries per-document `{filename, subtype, type, format, documentDate, md5Checksum, fileSize, mimeType, template, fallback}`
+- [x] ISC-67: Manifest carries a `provenance` block with a computed `zeroRealPii`, its `castProvenance` derivation, and generator version + seed hash
 - [x] ISC-68: Caseload-level `caseload_manifest.json` aggregates cases with stage/resolution/lien/recon summary fields
 - [x] ISC-69: Example caseload spec in `examples/` regenerates deterministically (committed spec, verified hashes)
 
@@ -145,8 +145,8 @@ A new installable package whose CLI turns a caseload spec (defaults + distributi
 - [x] ISC-70: `pytest` suite passes with ≥ 25 tests covering seeds, controls, lifecycle paths, determinism
 - [x] ISC-71: `ruff check` passes clean on the package
 - [x] ISC-72: Anti: no module from merus-test-data-generator is copied into this package (probe: no duplicated file contents; bridge imports only)
-- [x] ISC-73: Anti: no real names/PHI patterns in generated output (Faker-sourced only; probe: generated names absent from CONTACTS/known-person list)
-- [x] ISC-74: Anti: generation never writes outside `--out` (probe: strace-free check via before/after tree diff of cwd)
+- [x] ISC-73: Anti: no real names/PHI patterns in generated output (probe: `tests/data/name_denylist.txt` swept against extracted text of every text-bearing demo document **and** every manifest cast field; `zeroRealPii` computed from `CaseCast.provenance`, not asserted)
+- [x] ISC-74: Anti: generation never writes outside `--out` (probe: sentinel `HOME`/`TMPDIR`/XDG tree snapshotted before and after a subprocess generate — created, modified and removed files all fail)
 
 ### Perspective (applicant vs defense files — added 2026-07-27 evening)
 - [x] ISC-75: `CaseSeed.perspective` accepts `applicant | defense`, defaults to `applicant`; all pre-existing seeds load unchanged
@@ -169,11 +169,11 @@ A new installable package whose CLI turns a caseload spec (defaults + distributi
 | 12, 69 | determinism | manifest hash equality across runs | identical | Bash sha256 |
 | 22–29 | unit+integration | control matrix cases | exact counts | pytest |
 | 30–53 | integration | one seed per path; manifest assertions | subtype presence + date order | pytest + jq |
-| 54–59 | integration | full-range render + sampled text grep | 0 unresolved; coherent fields | pytest/Bash |
+| 54–59 | integration | all-353 forced render + full-case text sweep | 0 fallbacks; 0 cross-case intrusions | pytest |
 | 60–64 | cross-repo | set-diff vs classifier source | ∅ drift | pytest + Bash |
 | 65–69 | integration | manifest schema validation | schema-valid | pytest |
 | 70–71 | gate | pytest, ruff | pass | Bash |
-| 72–74 | anti | negative probes | zero hits | Bash |
+| 72–74 | anti | denylist sweep over output; sentinel-tree diff | zero hits; zero files outside `--out` | pytest |
 
 ## Features
 
@@ -215,6 +215,19 @@ A new installable package whose CLI turns a caseload spec (defaults + distributi
 - 2026-07-27 18:50 — Faker deliberately **not** patched. Rebinding `faker.providers.date_time.datetime`/`dtdate` breaks the `isinstance` checks in Faker's own date parser (`ParseError: Invalid format for date`). Since `date_of_birth` is the substrate's only clock-relative Faker call, the field is owned in `case_context._date_of_birth` and derived from `seed.rng("dob")` instead.
 - 2026-07-27 18:55 — Empirics beat the fix plan: the CLI-level TZ gate reported 0 drift while an in-process two-zone probe still found 3 files drifting (a DOB one day apart). The in-process regression test was kept as the sharper instrument; the CLI gate alone would have shipped the Faker leak.
 - 2026-07-27 19:05 — `substrate_git_sha()` scoped to the substrate **path** (`git log -1 -- .`) rather than the briefed bare `rev-parse HEAD`. In a monorepo bare HEAD moves on every unrelated commit, so the pin would warn constantly — an alarm that always fires is an alarm nobody reads. Deviation surfaced in the handoff.
+- 2026-07-27 late — **Cato remediation round.** One line per change:
+  - ISC-54 rewritten to its honest scope and evidenced by `test_render_coverage.py`, which drives all 353 canonical subtypes through `render_document` directly (~25 s, kept in the default suite) rather than inferring coverage from a caseload.
+  - The audit's predicted exceptions list came back with exactly three entries — `PETITION_FOR_PENALTIES`, `NOTICE_OF_PENALTY_5814`, `NOTICE_OF_PENALTY_5814_5` — and they were **fixed rather than recorded**: they are the engine's own `OVERLAY_SUBTYPES`, invented here to reach classifier parity, so `renderer.OVERLAY_TEMPLATES` now owns their dispatch (`ApplicationForAdjudication` for the petition, mirroring the substrate's own `PETITION_FOR_PENALTIES_LC_5814` entry; `CourtNotice` variants for the two notices). `KNOWN_UNRENDERABLE_SUBTYPES` ships empty with an assertion that it never grows.
+  - `registry.get_template_for_subtype` returns `GenericDocumentTemplate` for unknown keys, so "no template" and "generic on purpose" were the same value; `RenderResult.template` and `.fallback` now separate them, and both reach every manifest document entry.
+  - `validate --out` fails on any `fallback: true` and gained `--allow-fallback`; the report line `fallbacks : N` is always printed. The caseload manifest gained `distinctTemplates` and `fallbackCount`.
+  - ISC-74 upgraded from a `git status` observation to a sentinel-tree diff: `HOME`, `TMPDIR`, `TMP`, `TEMP` and the three XDG dirs are redirected into one monitored sandbox, seeded with sentinel files, and diffed on size+mtime after a subprocess generate. Zero creations, modifications or deletions — no font-cache or temp-spool leak.
+  - ISC-73 upgraded from an assertion about the generator to a sweep of its output: `tests/data/name_denylist.txt` (real CA WC carriers and defense firms, with `Martinez & Associates` explicitly ALLOWed as the substrate letterhead) is checked against extracted text from all 256 text-bearing demo documents and against every manifest cast field, with a positive control proving the probe fires.
+  - **Real-entity leak found and closed at source.** The substrate's `data/wc_constants.py` pools `INSURANCE_CARRIERS` and `DEFENSE_FIRMS` are *actual* companies (State Fund, Zenith, Bradford & Barthel, Laughlin Falbo…), drawn whenever a seed does not name its own. `case_context._replace_real_organizations` substitutes coined names on that path and rebuilds the derived adjuster/defense emails, which carried the old domain even when the name was overridden. The demo's seven real carriers and two real defense firms were renamed to coined equivalents. Substrate untouched.
+  - `zeroRealPii` is now computed from `CaseCast.provenance` (`faker` | `seed` | `engine`) instead of being a hardcoded `true`, with the derivation published as `provenance.castProvenance` and a test that constructs an unvouched cast to prove the flag can be false.
+  - ISC-58 upgraded from a 3-document sample to a full-case sweep with a cross-contamination guard against the other six casts. **Scope correction found by the sweep:** an ADJ number does not exist before the Application for Adjudication is filed, so 10 of the 11 documents lacking it are correctly pre-filing. The assertion is keyed to the filing date; `MEDICAL_CHRONOLOGY_TIMELINE` is the single documented uncaptioned exception.
+  - ISC-27 evidenced by a chi-square test over a 120-document case (α = 0.001, computed inline — SciPy is not worth a dependency for six lines), with a positive control that rejects a skewed draw, plus the same statistic applied to the shipped demo.
+  - ISC-12 gained entrypoint parity: `python -m wc_caseload_engine`, `-m wc_caseload_engine.cli` and the `wc-caseload` console script produce byte-identical trees, closing Forge's note that the `-m` form is not preserved across the `PYTHONHASHSEED` re-exec.
+  - Rider: `perspective` added to both shipped seed templates (`seed --template`, `--kind caseload`).
 - 2026-07-27 19:20 — Harness deviation: the agent was fenced into a git worktree that predates this package, so the briefed "work in the main checkout" was impossible (Edit and git both refused shared-checkout paths). Worktree fast-forwarded to the `ajc-34` tip, the four uncommitted review fixes carried across by content, and the result committed as a cleanly cherry-pickable delta.
 
 ## Changelog
@@ -226,7 +239,11 @@ A new installable package whose CLI turns a caseload spec (defaults + distributi
 - **conjectured:** a "full-range render test" (ISC-54 as one probe) covers the per-subtype render surface, justifying the ISC-floor waiver.
   **refuted by:** Cato audit — the probe ran over the 78 subtypes the demo emits (22.1% of 353); 275 subtypes have never been rendered; no automated no-fallback assertion exists.
   **learned:** a scope-limiting qualifier ("full-range" = full range of the demo) reads as total coverage to both executor and same-family reviewers; the waiver reasoning rationalized away exactly the probe that would have caught it.
-  **criterion now:** ISC-54 honest scope recorded; proposed follow-up (Alex to approve): an all-353 forced-render test via include_only + fallback_reason surfaced in manifests + a zero-fallback assertion in the suite.
+  **criterion now:** ISC-54 states the all-353 scope and is evidenced by `test_render_coverage.py`; template provenance and a fallback flag reach every manifest entry; `validate --out` refuses a fallback by default. **Resolved 2026-07-27 late** — the forced render found exactly 3 fall-throughs (the engine's own overlay subtypes) and they were fixed at dispatch rather than recorded as exceptions.
+- **conjectured:** `zeroRealPii: true` and "generation writes nothing outside `--out`" are properties the generator can assert about itself.
+  **refuted by:** Cato audit + this round's probes — the PII flag was a hardcoded literal that no input could falsify, and the write check watched `git status` on a repository working tree, which is the one place a stray temp file, font cache or dotfile would never land. Sweeping the *output* then found the leak both had missed: the substrate draws carrier and defense-firm names from pools of real California companies, so every seed that did not name its own carrier shipped a real organization on a fabricated claim file.
+  **learned:** an anti-criterion has to be measured on the artifact, not asserted about the process that made it — and it must be able to fail, which means building the input that makes it fail and keeping that as a test.
+  **criterion now:** ISC-73 is a denylist sweep over extracted document text plus every manifest cast field, with a positive control; `zeroRealPii` is computed from `CaseCast.provenance` and published with its derivation; ISC-74 diffs a sentinel `HOME`/`TMPDIR`/XDG tree around a subprocess generate.
 
 ## Verification
 
@@ -234,14 +251,15 @@ Evidence is grouped; every probe was run in the main checkout on the fast-forwar
 
 - ISC-1..10: Bash — `wc-caseload --help` lists all four commands; venv install clean; root README/CLAUDE rows + ci.yml paths-filter and quality-gate job present (rg probe); docs quartet on disk with GBS footers.
 - ISC-11..20, 22..29: pytest — 225-test suite covers schema, validation errors, deep-merge, auto-derivation determinism, distribution presets, full control-precedence matrix; `seed --template` round-trips through the loader.
-- ISC-12/69: Bash — demo caseload double-run: 289 files md5-identical; cross-process and cross-TZ (`TZ=Australia/Sydney`) runs also identical (initially FAILED with 55-60 drifting files; fixed in dac1d8a; re-probed clean).
+- ISC-12/69: Bash — demo caseload double-run: 289 files md5-identical; cross-process and cross-TZ (`TZ=Australia/Sydney`) runs also identical (initially FAILED with 55-60 drifting files; fixed in dac1d8a; re-probed clean). Entrypoint parity added: `python -m wc_caseload_engine`, `-m wc_caseload_engine.cli` and the `wc-caseload` console script write byte-identical trees (test_entrypoint_parity).
+- ISC-27: chi-square over a 120-document case against a 0.5/0.25/0.15/0.10 seeded mix, α = 0.001; positive control rejects an all-pdf draw; the shipped demo's 331 documents pass the same test against its own 0.6/0.25/0.1/0.05 mix (test_format_mix).
 - ISC-30..38: pytest test_lifecycle_paths + test_date_spine; live manifest probes: denial path docs present; recon windows 23d/18d (≤25) and 42d/49d (≤60).
 - ISC-39..46: live probe — nguyen case: 3 lien tracks (medical/hospital/pharmacy), 3× LIEN_RESOLUTION agreements, conference + lien pretrial statement docs, 17/17 distinct lien dates after the ordering fix.
 - ISC-47..53: live probes above + tests per recon outcome (denied/granted_remand×settled/further_litigation).
-- ISC-54..59: test_rendering (four formats open in native readers; PDFs >500B, ≥1 page); zero generic-template fallbacks (all lien/recon subtypes resolve to real template variants); coherence probe: applicant surname + ADJ number present in ER records, QME report, and Stipulations of the same case (3/3).
+- ISC-54..59: test_render_coverage — **all 353 canonical subtypes forced through `render_document`: 0 raised, 0 `GenericDocumentTemplate` resolutions, 0 fallbacks, 0 under 500 B, 353/353 PDFs parse with ≥1 page; `KNOWN_UNRENDERABLE_SUBTYPES` is empty** (~25 s). test_rendering (four formats open in native readers). ISC-58 by full-case sweep: 40/40 text-bearing documents of `alvarez-denied-recon-remand` name the applicant; every post-filing captioned document carries the ADJ number; 0 intrusions from the other six casts (test_coherence).
 - ISC-60..64: Bash — `taxonomy-check` exit 0 at 353/353 parity; `validate --out` OK (276 docs canonical, checksums match); corpus filename regex 0 failures on 50 PDFs; neutral naming is default.
 - ISC-65..68: manifest probes — per-doc fields incl. md5/fileSize/mimeType; provenance {zeroRealPii: true, substrateSha, seedHash}; caseload manifest carries stage/resolution/lien/recon summaries + subtypeCoverage {78, 353, 22.1%}.
-- ISC-70..74: 225 tests; ruff clean; anti-probes — no substrate file copied (content-hash test + Forge trace), Faker-sourced cast only with synthetic markers in PDF/docx/EML metadata, `git status` shows no writes outside `--out` after repeated generation runs.
+- ISC-70..74: 307 tests; ruff clean; anti-probes — no substrate file copied (content-hash test + Forge trace); ISC-73 denylist sweep clean over 256 text-bearing demo documents and all 7 manifests' cast fields, positive control fires, 400 engine-coined organization names checked against the list; `zeroRealPii` computed and provably falsifiable; ISC-74 sentinel `HOME`/`TMPDIR`/XDG tree shows 0 created, 0 modified, 0 removed files after a subprocess generate (test_anti_probes).
 - ISC-75..82, 84: perspective build (commit 217b6d2) — 257 tests (+32) incl. mirrored-facts invariant (identical cast/ADJ/dates across perspectives), work-product swap, applicant-only absence + forced-override WARN path, comparative frequency probe (defense CLAIMS_ADMINISTRATION=9, INVESTIGATION=3 vs applicant baseline), 7-case demo double-run + TZ run MD5-identical (346 files), validate OK (331 docs), six pre-existing cases byte-stable (only intended manifest deltas: perspective field + seedHash).
 - ISC-83: README/CHANGELOG done; HTML user guide perspective section pending — checked after guide refresh.
 - ISC-21: DEFERRED-VERIFY — doctrine_hooks accepted by schema and wired into the plan; content-depth probe (per-hook language in rendered docs) deferred to the KB-grounding follow-up under AJC-34.

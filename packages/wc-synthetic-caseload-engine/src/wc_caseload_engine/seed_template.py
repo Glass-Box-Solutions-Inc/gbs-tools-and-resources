@@ -27,6 +27,17 @@ case_id: martinez-001
 # Master seed. Same rng_seed + same engine version => identical case, forever.
 rng_seed: 12345
 
+# Whose file this is: applicant | defense (default applicant).
+#
+# Perspective changes the FOLDER, never the CLAIM. Flipping it keeps the cast,
+# the ADJ number and every event date identical; what changes is who owns the
+# file, who authors the privileged work product (applicant memos vs defense
+# trial briefs and case analyses), who the client correspondence is addressed
+# to, and how much claims-administration and investigation paper the file
+# carries. Applicant-only material (client intake, advocacy letters to
+# treaters) is absent from a defense file unless an override demands it.
+perspective: applicant
+
 # ---------------------------------------------------------------------------
 # profile — the cast. Every field is optional; anything omitted is derived
 # deterministically from rng_seed (Faker, seeded). Set fields to pin them.
@@ -238,8 +249,10 @@ cases:
         claimants: [medical_provider, edd]
         resolution: lien_resolution_agreement
 
+  # The same claim from the other chair. Only the file owner changes.
   - case_id: nguyen-002
     rng_seed: 20260727
+    perspective: defense
     injury:
       type: cumulative_trauma
       ct_start: 2021-02-01

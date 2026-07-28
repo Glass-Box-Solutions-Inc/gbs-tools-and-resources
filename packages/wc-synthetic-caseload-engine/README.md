@@ -52,7 +52,7 @@ package. Override discovery with `WC_CASELOAD_SUBSTRATE=/abs/path` if it lives e
 | `wc-caseload generate ... --seed N` | Override `auto.rng_seed` for this run (explicit case seeds untouched) |
 | `wc-caseload seed --template [--kind case\|caseload]` | Print an annotated seed covering every controllable field |
 | `wc-caseload validate --spec S` | Schema, cross-field rules and document-control key validity |
-| `wc-caseload validate --out D` | Every manifest subtype canonical + parent-valid, every file present, every MD5 matching |
+| `wc-caseload validate --out D` | Every manifest subtype canonical + parent-valid, every file present, every MD5 matching, every document rendered by its own template (`--allow-fallback` to permit fallbacks) |
 | `wc-caseload taxonomy-check` | Diff the engine taxonomy against the classifier source; nonzero exit on drift |
 
 Generation never touches the network and never writes outside `--out`.
@@ -331,9 +331,32 @@ emits no recon documents and records a warning naming the fix.
 `manifest.json` carries the case facts (`caseId`, `adjNumber`, `applicant`, `employer`,
 `carrier`, `dateOfInjury`, `venue`, `judge`, `stage`, `resolution`), a `liens[]` summary, a
 `recon{}` summary, a `documents[]` array of
-`{filename, subtype, type, format, documentDate, md5Checksum, fileSize, mimeType}`, and a
-`provenance` block asserting `zeroRealPii: true` with the generator version, the seed hash and
-`substrateSha`.
+`{filename, subtype, type, format, documentDate, md5Checksum, fileSize, mimeType, template,
+fallback}`, and a `provenance` block carrying a computed `zeroRealPii`, its `castProvenance`
+derivation, the generator version, the seed hash and `substrateSha`.
+
+**`template` and `fallback`.** `template` names the class and variant that produced the file
+(`CourtNotice/lien_filing`); `fallback` is `true` when the document did not render as
+dispatched — the requested format failed, or the subtype had no template and fell through to
+`GenericDocumentTemplate`. The substrate's registry returns the generic template for keys it
+does not recognise, so without these two fields a caseload whose dispatch had silently
+degraded is indistinguishable from one that had not. `validate --out` fails on any
+`fallback: true` unless `--allow-fallback` is passed, because a document rendered by the wrong
+template is mislabelled classifier training data.
+
+**`provenance.zeroRealPii` is computed, not asserted.** It is derived from
+`castProvenance`, which records where each identity-bearing field came from: `faker` (drawn
+from the seeded generator), `seed` (declared in the YAML) or `engine` (coined here to replace
+a substrate constant naming a real company). A flag that no input can falsify says nothing;
+this one goes false the moment an identity arrives by a channel the engine cannot vouch for.
+
+**Real organizations never reach a document.** The substrate's `INSURANCE_CARRIERS` and
+`DEFENSE_FIRMS` pools are *actual* California carriers and defense firms, drawn whenever a
+seed does not name its own. A fabricated claim file naming a real carrier is a real-world
+collision whatever the folder says, so the engine substitutes coined names on that path and
+rebuilds the derived adjuster and defense email addresses, which otherwise kept the original
+company's domain. `tests/data/name_denylist.txt` is swept against every text-bearing demo
+document and every manifest cast field to keep it that way.
 
 **`provenance.substrateSha`.** Every document's content ultimately comes from the substrate's
 templates and content pools, so "same seed, same version" is only half the provenance story —

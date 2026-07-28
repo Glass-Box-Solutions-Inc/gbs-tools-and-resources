@@ -45,6 +45,8 @@ MANIFEST_DOCUMENT_FIELDS = {
     "md5Checksum",
     "fileSize",
     "mimeType",
+    "template",
+    "fallback",
 }
 
 

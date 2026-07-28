@@ -116,6 +116,8 @@ def build_manifest(
             "md5Checksum": render.md5,
             "fileSize": render.size,
             "mimeType": render.mime_type,
+            "template": render.template,
+            "fallback": render.fallback,
         }
         for filename, render in renders
     ]
@@ -133,7 +135,8 @@ def build_manifest(
         "recon": plan.recon.summary(),
         "documents": documents,
         "provenance": {
-            "zeroRealPii": True,
+            "zeroRealPii": plan.cast.zero_real_pii,
+            "castProvenance": dict(sorted(plan.cast.provenance.items())),
             "generator": GENERATOR,
             "substrateSha": substrate_git_sha(),
             "seedHash": seed.seed_hash(),
@@ -236,6 +239,8 @@ def build_caseload_manifest(caseload_id: str, results: Sequence[CaseResult]) -> 
     formats: dict[str, int] = {}
     subtypes: set[str] = set()
     perspectives: dict[str, int] = {}
+    templates: set[str] = set()
+    fallbacks = 0
     total = 0
     cases: list[dict[str, object]] = []
 
@@ -244,6 +249,8 @@ def build_caseload_manifest(caseload_id: str, results: Sequence[CaseResult]) -> 
         for render in result.renders:
             formats[render.doc_format] = formats.get(render.doc_format, 0) + 1
             subtypes.add(render.subtype)
+            templates.add(render.template)
+            fallbacks += int(render.fallback)
         plan = result.plan
         perspective = plan.seed.perspective
         perspectives[perspective] = perspectives.get(perspective, 0) + 1
@@ -275,8 +282,10 @@ def build_caseload_manifest(caseload_id: str, results: Sequence[CaseResult]) -> 
         "perspectiveCounts": dict(sorted(perspectives.items())),
         "distinctSubtypes": len(subtypes),
         "subtypeCoverage": subtype_coverage(subtypes),
+        "distinctTemplates": len(templates),
+        "fallbackCount": fallbacks,
         "provenance": {
-            "zeroRealPii": True,
+            "zeroRealPii": all(result.plan.cast.zero_real_pii for result in results),
             "generator": GENERATOR,
             "substrateSha": substrate_git_sha(),
         },
@@ -308,6 +317,7 @@ class ValidationReport:
 
     manifests: int = 0
     documents: int = 0
+    fallbacks: int = 0
     problems: list[str] = field(default_factory=list)
 
     @property
@@ -320,21 +330,33 @@ class ValidationReport:
         lines = [
             f"manifests : {self.manifests}",
             f"documents : {self.documents}",
+            f"fallbacks : {self.fallbacks}",
         ]
         if self.ok:
-            lines.append("result    : OK — every subtype canonical, every checksum matches")
+            lines.append(
+                "result    : OK — every subtype canonical, every checksum matches, "
+                "every document rendered by its own template"
+            )
         else:
             lines.append(f"result    : FAILED ({len(self.problems)} problem(s))")
             lines.extend(f"  {problem}" for problem in self.problems)
         return "\n".join(lines)
 
 
-def validate_output_tree(out_dir: Path) -> ValidationReport:
+def validate_output_tree(out_dir: Path, allow_fallback: bool = False) -> ValidationReport:
     """Validate every manifest under *out_dir*.
 
     Checks, per document: the subtype is classifier vocabulary (and not a
     substrate-only realism subtype), the recorded parent type matches the
-    taxonomy, the file exists, and its MD5 and size match the manifest.
+    taxonomy, the file exists, its MD5 and size match the manifest, and it was
+    rendered by its own template rather than a fallback.
+
+    Args:
+        out_dir: a generated caseload root.
+        allow_fallback: downgrade ``fallback: true`` documents from a failure to
+            a counted observation. A corpus built for classifier training wants
+            the failure; someone deliberately exercising the generic template
+            wants the flag.
     """
     report = ValidationReport()
     taxonomy = effective_taxonomy()
@@ -368,6 +390,19 @@ def validate_output_tree(out_dir: Path) -> ValidationReport:
             report.documents += 1
             subtype = entry.get("subtype")
             filename = entry.get("filename", "<unnamed>")
+
+            if entry.get("fallback") is True:
+                report.fallbacks += 1
+                if not allow_fallback:
+                    report.problems.append(
+                        f"{case_label}/{filename}: rendered by fallback template "
+                        f"{entry.get('template')!r} instead of a template for {subtype!r} "
+                        "(pass --allow-fallback to permit)"
+                    )
+            if not entry.get("template"):
+                report.problems.append(
+                    f"{case_label}/{filename}: manifest records no template provenance"
+                )
 
             if not taxonomy.is_canonical(subtype):
                 report.problems.append(

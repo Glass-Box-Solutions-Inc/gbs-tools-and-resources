@@ -200,7 +200,12 @@ def seed_cmd(template: bool, kind: str, out_path: Path | None) -> None:
     default=None,
     help="Validate generated manifests in an output directory (Phase B).",
 )
-def validate(spec_path: Path | None, out_dir: Path | None) -> None:
+@click.option(
+    "--allow-fallback",
+    is_flag=True,
+    help="Permit documents rendered by a fallback template (still reported).",
+)
+def validate(spec_path: Path | None, out_dir: Path | None, allow_fallback: bool) -> None:
     """Validate a spec (schema + taxonomy keys) or a generated output tree."""
     if spec_path is None and out_dir is None:
         raise click.UsageError("pass --spec and/or --out")
@@ -220,7 +225,7 @@ def validate(spec_path: Path | None, out_dir: Path | None) -> None:
 
     if out_dir is not None:
         try:
-            report = validate_output_tree(out_dir)
+            report = validate_output_tree(out_dir, allow_fallback=allow_fallback)
         except SubstrateUnavailableError as exc:
             raise click.ClickException(str(exc)) from exc
         click.echo(report.render())

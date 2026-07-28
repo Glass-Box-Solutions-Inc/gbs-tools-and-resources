@@ -33,7 +33,7 @@ cases:
     profile:
       applicant: {name: Rosa Alvarez, age: 47, occupation: Warehouse Associate, tenure_years: 6.5}
       employer: {name: Inland Valley Distribution, industry: Warehousing, county: San Bernardino}
-      carrier: {name: Pacific Compensation Insurance}
+      carrier: {name: Calderport Compensation Insurance Company}
     injury:
       type: specific
       date_of_injury: 2022-03-14
@@ -62,8 +62,8 @@ cases:
     profile:
       applicant: {name: David Nguyen, age: 39, occupation: Line Cook, tenure_years: 3.0}
       employer: {name: Golden State Hospitality Group, industry: Food Service, county: Alameda}
-      carrier: {name: State Compensation Insurance Fund}
-      attorneys: {defense_firm: "Laughlin, Falbo, Levy & Moresi"}
+      carrier: {name: Northwick Mutual Insurance Company}
+      attorneys: {defense_firm: "Corradine & Havelock LLP"}
     injury:
       type: specific
       date_of_injury: 2022-08-02
@@ -93,7 +93,7 @@ cases:
     profile:
       applicant: {name: Grace Okafor, age: 52, occupation: Medical Assistant, tenure_years: 11.0}
       employer: {name: Sierra Health Partners, industry: Healthcare, county: Sacramento}
-      carrier: {name: Zenith Insurance Company}
+      carrier: {name: Fernhollow Indemnity Company}
     injury:
       type: cumulative_trauma
       ct_start: 2020-09-01
@@ -123,7 +123,7 @@ cases:
     profile:
       applicant: {name: Miguel Ramirez, age: 44, occupation: Roofing Foreman, tenure_years: 14.0}
       employer: {name: Coastline Roofing Contractors, industry: Construction, county: Orange}
-      carrier: {name: Berkshire Hathaway Homestate}
+      carrier: {name: Marrowdale Casualty & Indemnity Company}
     injury:
       type: death
       date_of_injury: 2023-01-19
@@ -149,7 +149,7 @@ cases:
     profile:
       applicant: {name: Tara Whitfield, age: 29, occupation: Delivery Driver, tenure_years: 1.5}
       employer: {name: Metro Parcel Express, industry: Transportation, county: Los Angeles}
-      carrier: {name: Travelers Property Casualty}
+      carrier: {name: Sablecrest Mutual Insurance Company}
     injury:
       type: specific
       date_of_injury: 2025-10-06
@@ -171,7 +171,7 @@ cases:
     profile:
       applicant: {name: Hector Castellanos, age: 58, occupation: Machine Operator, tenure_years: 22.0}
       employer: {name: Central Valley Manufacturing, industry: Manufacturing, county: Fresno}
-      carrier: {name: Republic Indemnity Company}
+      carrier: {name: Quarrymede Indemnity Company}
     injury:
       type: specific
       date_of_injury: 2022-11-08
@@ -207,8 +207,8 @@ cases:
     profile:
       applicant: {name: Dana Whitaker, age: 41, occupation: Warehouse Picker, tenure_years: 4.5}
       employer: {name: Harborline Logistics, industry: Warehousing, county: San Joaquin}
-      carrier: {name: Employers Compensation Insurance}
-      attorneys: {defense_firm: "Grancell, Stander, Reubens, Thomas & Kinsey"}
+      carrier: {name: Innsmere Compensation Insurance Company}
+      attorneys: {defense_firm: "Prentiss, Norcross & Tremaine LLP"}
     injury:
       type: specific
       date_of_injury: 2022-06-21

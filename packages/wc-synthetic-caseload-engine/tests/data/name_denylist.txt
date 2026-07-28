@@ -1,0 +1,74 @@
+# Real-world organizations that must never appear in generated case files.
+#
+# A synthetic claim file is only safely synthetic if it cannot be mistaken for,
+# or attributed to, a real body. Names below are actual California workers'
+# compensation carriers and defense firms; a fabricated WCAB filing naming one
+# of them is a real-world collision whatever the folder says about being
+# synthetic.
+#
+# Most of this list is not hypothetical. It is the literal contents of the
+# substrate's `data/wc_constants.py` pools (INSURANCE_CARRIERS, DEFENSE_FIRMS),
+# which the substrate draws from whenever a seed does not name its own carrier
+# or defense firm. The engine substitutes coined names on that path
+# (`case_context._replace_real_organizations`) precisely so this list stays at
+# zero hits.
+#
+# Format:
+#   <name>          a substring that must NOT appear in any generated document
+#   ALLOW <name>    a known, accepted exception — checked, but never a failure
+#   # comment
+#
+# Matching is case-insensitive substring. Keep entries distinctive enough not
+# to fire on ordinary prose: "EMPLOYERS" as a bare word would match the phrase
+# "the employers", so the carrier is listed by its full corporate name.
+
+# --- Allowed ---------------------------------------------------------------
+# The substrate hard-codes this firm on its docx letterhead (data/docx_styles.py)
+# and it cannot be changed from this package. Documented as a known limitation
+# in the README rather than silently tolerated here.
+ALLOW Martinez & Associates
+
+# --- Carriers and claims administrators (substrate INSURANCE_CARRIERS) ------
+State Compensation Insurance Fund
+Zenith Insurance Company
+Republic Indemnity
+ICW Group
+Gallagher Bassett
+Applied Underwriters
+Employers Holdings
+AmTrust Financial
+Kinsale Insurance
+Hartford Financial
+Travelers Insurance
+Liberty Mutual
+Sedgwick Claims Management
+Broadspire Services
+
+# --- Carriers previously named by the demo caseload -------------------------
+# Each was a real insurer; the demo now uses coined names instead. Listed so
+# a future edit cannot quietly reintroduce them.
+Pacific Compensation Insurance
+Berkshire Hathaway Homestate
+Travelers Property Casualty
+Employers Compensation Insurance
+
+# --- Defense firms (substrate DEFENSE_FIRMS) --------------------------------
+Bradford & Barthel
+Laughlin, Falbo
+Shaw, Jacobsmeyer
+Adelson, Testan
+Hanna, Brophy
+LaFollette, Johnson
+Manning & Kass
+Pollak, Vida
+Downs, Ward
+
+# --- Further real California workers' compensation firms --------------------
+Grancell, Stander
+Lenahan, Lee, Slater
+Michael Sullivan & Associates
+Stockwell, Harris
+Floyd, Skeren
+Goldman, Magdalin
+Boehm & Associates
+Mullen & Filippi
