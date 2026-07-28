@@ -4,7 +4,7 @@ project: wc-synthetic-caseload-engine
 slug: 20260727-143600_wc-synthetic-caseload-engine
 effort: E4
 effort_source: classifier
-phase: verify
+phase: learn
 progress: 82/84
 mode: interactive
 started: 2026-07-27T14:36:00-07:00
@@ -219,7 +219,14 @@ A new installable package whose CLI turns a caseload spec (defaults + distributi
 
 ## Changelog
 
-- (pending first LEARN entry)
+- **conjectured:** same-machine double-run md5 comparison proves generation determinism (Phase B gate design).
+  **refuted by:** advisor-demanded clock-shift probe — TZ=Australia/Sydney drifted 55-60 of 289 files (EML Date offsets, PDF/docx timestamp normalization, substrate date.today() content, Faker clock-relative date_of_birth); the CLI-level gate also masked an in-process leak the two-zone test caught.
+  **learned:** determinism gates must vary the environment axes the guarantee spans — process, hash seed, timezone, entrypoint — not just repeat the run; a passing gate that shares the leak's precondition proves nothing about the class.
+  **criterion now:** ISC-12 evidence requires cross-process AND cross-timezone md5 identity (test_timezone_determinism.py + CI-runnable probes), and every new output format must add a container-timestamp normalization with its own test.
+- **conjectured:** a "full-range render test" (ISC-54 as one probe) covers the per-subtype render surface, justifying the ISC-floor waiver.
+  **refuted by:** Cato audit — the probe ran over the 78 subtypes the demo emits (22.1% of 353); 275 subtypes have never been rendered; no automated no-fallback assertion exists.
+  **learned:** a scope-limiting qualifier ("full-range" = full range of the demo) reads as total coverage to both executor and same-family reviewers; the waiver reasoning rationalized away exactly the probe that would have caught it.
+  **criterion now:** ISC-54 honest scope recorded; proposed follow-up (Alex to approve): an all-353 forced-render test via include_only + fallback_reason surfaced in manifests + a zero-fallback assertion in the suite.
 
 ## Verification
 
