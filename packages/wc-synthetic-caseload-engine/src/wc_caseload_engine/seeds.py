@@ -38,7 +38,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 # doctrine.py deliberately imports nothing from this module (its prerequisites
 # read a flat ``DoctrineFacts`` record rather than a CaseSeed), so this import
 # direction is the acyclic one.
-from wc_caseload_engine.doctrine import DoctrineFacts, hook_is_supported, supported_hooks
+from wc_caseload_engine.doctrine import (
+    DoctrineFacts,
+    distinct_body_part_count,
+    hook_is_supported,
+    supported_hooks,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -298,6 +303,37 @@ class InjurySpec(_Model):
     ct_end: date | None = None
     body_parts: list[BodyPart] = Field(min_length=1, max_length=5)
     mechanism: str = "auto"
+
+    @model_validator(mode="after")
+    def _check_distinct_body_parts(self) -> InjurySpec:
+        """One claim cannot injure the same region twice.
+
+        A repeated entry is not a second impairment, but ``benson`` and ``kite``
+        both gate on there being two — so ``[lumbar_spine, lumbar_spine]`` used
+        to satisfy Kite and put a synergistic-effect argument between a body
+        part and itself into the file, silently. The seed is where an impossible
+        story gets rejected (AJC-35 #25).
+        """
+        seen: dict[str, str] = {}
+        for entry in self.body_parts:
+            key = entry.part.strip().casefold()
+            if key in seen:
+                first = seen[key]
+                written = (
+                    f"{first!r} and {entry.part!r}"
+                    if first != entry.part
+                    else repr(entry.part)
+                )
+                raise ValueError(
+                    f"injury.body_parts names the same region twice ({written}). "
+                    "List each part once — a repeated entry is not a second "
+                    "impairment, and doctrines that need two distinct parts "
+                    "(benson, kite) would be satisfied by a part and itself. "
+                    "Use injury.body_parts[].detail to describe multiple "
+                    "findings in one region."
+                )
+            seen[key] = entry.part
+        return self
 
     @model_validator(mode="after")
     def _check_dates(self) -> InjurySpec:
@@ -1175,19 +1211,41 @@ def _weighted_choice(rng: random.Random, weights: Mapping[str, float]) -> str:
 
 
 def _derive_body_parts(rng: random.Random, category: str, count: int) -> list[BodyPart]:
-    """Pick *count* distinct body parts, starting in *category*."""
+    """Pick up to *count* distinct body parts, starting in *category*.
+
+    Distinctness is enforced by part name, not by catalog position.
+    ``BODY_PART_CATALOG`` lists several regions more than once *within* a single
+    category — ``psyche`` twice, ``head`` twice, ``internal`` three times, each
+    entry a different ICD-10 code and detail — so shuffling a category pool and
+    slicing it returned the same region repeatedly. About 8% of auto-derived
+    seeds carried a repeat, which ``benson`` and ``kite`` then counted as two
+    impairments (AJC-35 #25).
+
+    A narrow category can therefore yield fewer than *count* parts once the
+    other categories are exhausted too. That is the intended trade: a case with
+    one impairment is ordinary, whereas a case claiming the same region twice is
+    not a case at all.
+    """
+    others = [
+        entry
+        for other, entries in sorted(BODY_PART_CATALOG.items())
+        if other != category
+        for entry in entries
+    ]
     pool: list[tuple[str, str, str]] = list(BODY_PART_CATALOG[category])
     rng.shuffle(pool)
-    chosen: list[tuple[str, str, str]] = pool[:count]
-    if len(chosen) < count:
-        others = [
-            entry
-            for other, entries in sorted(BODY_PART_CATALOG.items())
-            if other != category
-            for entry in entries
-        ]
-        rng.shuffle(others)
-        chosen.extend(others[: count - len(chosen)])
+    rng.shuffle(others)
+
+    chosen: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for part, icd10, detail in (*pool, *others):
+        if len(chosen) == count:
+            break
+        key = part.strip().casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        chosen.append((part, icd10, detail))
     return [BodyPart(part=part, icd10=icd10, detail=detail) for part, icd10, detail in chosen]
 
 
@@ -1399,10 +1457,26 @@ def derive_case_seed(
 
     # The prerequisites read lifecycle facts, so they are assembled before the
     # hooks that depend on them rather than off a seed that does not exist yet.
+    #
+    # ``occupation`` and ``industry`` are deliberately absent, not forgotten: a
+    # derived seed carries no ``profile`` block at all (see the CaseSeed built
+    # below), because the cast is drawn later, in ``case_context``, and never
+    # written back. So there is nothing to pass, and the two fields keep their
+    # empty defaults.
+    #
+    # The consequence is that ``firefighter_presumption`` — the one hook gated
+    # on those two fields — can never be auto-drawn. Measured at 0 across 975
+    # derived seeds. That fails *closed*, so it is a coverage gap rather than an
+    # incoherent case, and closing it means giving derivation an occupation and
+    # industry distribution plus a profile in the materialized seed. Tracked as
+    # its own AJC-35 item; ``TestFirefighterPresumptionCannotBeAutoDrawn`` pins
+    # the current behaviour so the gap cannot close silently.
     doctrine_facts = DoctrineFacts(
         injury_type=injury.type,
-        body_part_count=len(injury.body_parts),
-        has_psych_body_part=any(part.part == "psyche" for part in injury.body_parts),
+        body_part_count=distinct_body_part_count(injury.body_parts),
+        has_psych_body_part=any(
+            part.part.strip().casefold() == "psyche" for part in injury.body_parts
+        ),
         eval_type=eval_type,
         claim_response=claim_response,
         imr_filed=bool(ur_dispute.enabled and ur_dispute.imr),

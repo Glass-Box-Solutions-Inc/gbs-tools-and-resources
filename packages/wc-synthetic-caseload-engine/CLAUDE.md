@@ -1,7 +1,7 @@
 # wc-synthetic-caseload-engine — Developer Guide
 
 **Seed-driven generator of complete synthetic CA workers' compensation attorney case files.**
-Tickets: **AJC-34** (engine), **AJC-36** (docs). See `README.md` for the product surface,
+Tickets: **AJC-34** (engine), **AJC-36** (docs), **AJC-35** (review remediation). See `README.md` for the product surface,
 `docs/user-guide/index.html` for the operator guide — including the per-doctrine "needed seeds"
 reference — and `ISA.md` for the criteria contract.
 
@@ -176,7 +176,7 @@ If an import breaks, fix the bridge — not by copying files.
 
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/         # 527 tests, ~95s (pyproject already passes -q)
+.venv/bin/python -m pytest tests/         # 543 tests, ~160s (pyproject already passes -q)
 .venv/bin/ruff check .
 ```
 
@@ -232,7 +232,8 @@ Rendering is the slow part; the plan carries every subtype, date, track and form
 
 ## Ticket & branch
 
-- Linear: **AJC-34** (engine), **AJC-36** (user guide + doctrine showcase). AJC, not ADJ —
+- Linear: **AJC-34** (engine), **AJC-36** (user guide + doctrine showcase), **AJC-35**
+  (review remediation — doctrine gate coherence). AJC, not ADJ —
   repo precedent for `gbs-tools-and-resources` packages.
 - Commits: conventional, scoped `feat(wc-synthetic-caseload-engine)` or `[AJC-NN]`.
 

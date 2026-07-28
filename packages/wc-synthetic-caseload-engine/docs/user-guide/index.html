@@ -990,7 +990,7 @@ Error: 1 document control key(s) are not valid taxonomy keys</code></pre>
       <pre><code>lifecycle.doctrine_hooks names benson on a case that cannot support it:
 apportioning between injuries needs a rating and more than one impaired
 region to argue about &mdash; lifecycle.eval_type must not be none and
-injury.body_parts must name at least two parts. The hook is kept and its
+injury.body_parts must name at least two distinct parts. The hook is kept and its
 language will be rendered (an explicit seed wins), but the argument will
 not match the rest of the file.</code></pre>
       <p>It is emitted twice: as a <code class="inline">WARN</code> on the console (<code class="inline">doctrine.unsupported_hook</code>) and as an entry in the case manifest&rsquo;s <code class="inline">warnings</code> array, so a caseload generated in CI can be checked without scraping logs. <code class="inline">generate</code> prints a run-level tally &mdash; <code class="inline">warnings : 2 (see per-case manifest 'warnings')</code> &mdash; and still exits zero, because a deliberately-unsupported hook is a legitimate thing to seed.</p>
@@ -1232,7 +1232,11 @@ not match the rest of the file.</code></pre>
 
       <h4><code>gfpa</code> &mdash; the good faith personnel action defence</h4>
       <p>Labor Code &sect; 3208.3(h) &mdash; a psychiatric injury substantially caused by a lawful, nondiscriminatory, good faith personnel action is not compensable.</p>
-      <p><strong>Needs:</strong> <code class="inline">psyche</code> named in <code class="inline">injury.body_parts</code>, or <code class="inline">lc3208_3_psych</code> seeded alongside it. This is the second gate the demo caseload deliberately fails.</p>
+      <p><strong>Needs:</strong> <code class="inline">psyche</code> named in <code class="inline">injury.body_parts</code>. This is the second gate the demo caseload deliberately fails.</p>
+      <div class="callout warn">
+        <span class="callout-label">Naming <code>lc3208_3_psych</code> no longer satisfies this gate</span>
+        The gate used to accept a second route &mdash; seeding <code class="inline">lc3208_3_psych</code> alongside <code class="inline">gfpa</code> &mdash; which was removed as incoherent. On a claim with no <code class="inline">psyche</code> body part, <code class="inline">lc3208_3_psych</code> fails its <em>own</em> gate and warns, so the defence was passing by pointing at a hook that had just failed on the same seed. A defence cannot be better supported than the claim it answers. Give the case a real psychiatric body part, as the fragment above does.
+      </div>
 <pre><code><span class="key">case_id:</span> <span class="val">gfpa-minimal</span>
 <span class="key">rng_seed:</span> <span class="val">424242</span>
 <span class="key">injury:</span>

@@ -9,6 +9,77 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — doctrine gate coherence (ticket **AJC-35**, items #23–#25)
+
+Three gates were letting through cases they describe as impossible. Each was
+reproduced as a failing test first.
+
+- **#23 — a warning named a value the schema rejects.** `_RATING_PREREQUISITE`
+  told users `lifecycle.eval_type` could be `qme, ame or ime`; `EvalType` is
+  `Literal["qme", "ame", "none"]`. Five hooks shared that description, so five
+  warnings advised a fix that fails validation. Corrected, and the whole class
+  is now gated: a sweep reads each `Literal` alias and asserts that every value
+  a prerequisite description enumerates is legal for the field it names. The
+  defect had already escaped twice — here and in the user guide that copied it —
+  which is the signature of something needing a gate rather than another
+  correction.
+
+- **#24 — `gfpa` could be satisfied by another hook.** Its predicate accepted
+  `"lc3208_3_psych" in facts.seeded_hooks` as a substitute for a psychiatric
+  claim. Removed as **incoherent**, not merely weak: on a lumbar-only seed
+  naming both hooks, `lc3208_3_psych` failed its own gate and warned while
+  `gfpa` — whose entire subject is defending against the claim `lc3208_3_psych`
+  describes — passed silently by pointing at the hook that had just failed. A
+  defence cannot be better supported than the claim it answers.
+
+  The branch's strongest defence was measured before removing it: `lifecycle_bridge`
+  does force `has_psych_component=True` when the hook is seeded, and that does move
+  content — psychiatric documents appeared for 46 of 60 rng seeds, against 0 of 60
+  with no hook. But a genuine `psyche` body part scores *identically*, the same
+  46/60 on the same barren seeds, because the substrate's psych document rules are
+  probabilistic either way. The branch bought no content capability the primary
+  branch lacks; it only let a seed skip recording the claim.
+
+  `DoctrineFacts.seeded_hooks` is deleted rather than merely unread, so a gate that
+  answers differently depending on which *other* doctrines were seeded is now
+  unrepresentable. The unsupported-`gfpa` warning no longer advises the removed
+  route.
+
+- **#25 — a body part could be claimed twice, and often was.** `[lumbar_spine,
+  lumbar_spine]` loaded fine and then counted as two for `benson` and `kite`,
+  whose premise is two *distinct* impairments — so Kite could argue a synergistic
+  effect between a region and itself, silently. Three layers now:
+  `InjurySpec` rejects a repeated part at load with an actionable error;
+  `DoctrineFacts.body_part_count` counts distinct parts (case- and
+  whitespace-insensitive) at both construction sites; and `_derive_body_parts`
+  now delivers the distinctness its docstring already promised.
+
+  That last one was a live bug, not a precaution: `BODY_PART_CATALOG` lists
+  `psyche` twice, `head` twice and `internal` three times *within their own
+  category*, so shuffling a category pool and slicing it returned repeats. About
+  8% of auto-derived seeds carried one (75 of 975 measured). Without this fix the
+  new validator would have turned a silent modelling error into a hard crash of
+  `auto:` derivation. A narrow category now yields fewer parts rather than
+  repeats.
+
+### Known gap — `firefighter_presumption` is never auto-drawn
+
+Found while fixing the above and **left unfixed deliberately**. `derive_case_seed`
+builds `DoctrineFacts` without `occupation` or `industry` because a derived seed
+carries no `profile` block at all — the cast is drawn later, in `case_context`,
+and never written back. `_SAFETY_MEMBER_PREREQUISITE` reads exactly those two
+fields, so the hook is filtered out of every draw: 0 occurrences across 975
+derived seeds, while the other thirteen appear between 6 and 60 times.
+
+This fails *closed* — derivation never produces a case arguing a presumption it
+cannot support — so it is a coverage gap rather than the incoherence class above.
+Closing it needs an occupation/industry distribution and a profile in the
+materialized seed, which changes the bytes of every auto-derived caseload; that is
+auto-derivation work, not gate work, and is tracked as its own AJC-35 item.
+`TestFirefighterPresumptionCannotBeAutoDrawn` pins the current behaviour so the gap
+cannot close or widen silently, and explicitly-seeded firefighter cases are
+unaffected.
+
 ### Added
 
 **Operator user guide and a doctrine showcase caseload** (ticket **AJC-36**).
