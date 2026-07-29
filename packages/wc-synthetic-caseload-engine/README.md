@@ -1034,6 +1034,17 @@ the same seed shape with `negligent` produces the penalty paper and with `attent
 none. The engine guarantees that structurally rather than statistically — an attentive
 administrator's window fractions top out at 0.55, so it cannot overrun a window.
 
+**What the delay chain does and does not yet show.** The countable half is real and is the
+feature: the number of `DEMAND_LETTER_FORMAL` files equals
+`caseFacts.adjuster.lateBenefitEvents`, each is dated after the delay it answers, and the
+petition post-dates all of them. The rendered *prose* is not there yet —
+`DEMAND_LETTER_FORMAL` dispatches to the substrate's `DefenseCounselLetter/formal_demand`,
+which writes a defense-side discovery demand under LC 5710 rather than applicant counsel
+chasing a late benefit, because the substrate template does not read the `author_role` the
+engine plans the document with. Same class as the lien and reconsideration templates already
+documented above as variants rather than bespoke: correct-looking documents in the wrong
+register. The fix is an engine-owned subclass, not a seed change.
+
 ---
 
 ## Taxonomy

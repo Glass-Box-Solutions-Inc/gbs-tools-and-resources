@@ -60,10 +60,24 @@ cases:
   #    (LC 5401(a) claim form, LC 4650(a)/(b) first TD and PD payments,
   #    CCR 9812(f) delay notice, LC 5402(b) 90-day decision). Each overrun is
   #    recorded on the ledger as a late benefit event with the days counted, and
-  #    each late event draws one DEMAND_LETTER_FORMAL — counsel chasing the
-  #    payment, dated after the delay it chases. The LC 5814 petition then
-  #    appears because the ledger earned it, dated after *every* late event it
-  #    punishes.
+  #    each late event draws exactly one DEMAND_LETTER_FORMAL, dated after the
+  #    delay it answers. The LC 5814 petition then appears because the ledger
+  #    earned it, dated after *every* late event it punishes.
+  #
+  #    What is checkable here is the arithmetic, and it is checkable from the
+  #    manifest alone: count the DEMAND_LETTER_FORMAL files in the folder and
+  #    they equal caseFacts.adjuster.lateBenefitEvents, with the petition dated
+  #    after the last of them. That correspondence is the feature.
+  #
+  #    Known limitation — the demand letter's *content* is not yet the delay
+  #    chain's. `DEMAND_LETTER_FORMAL` dispatches to the substrate's
+  #    `DefenseCounselLetter/formal_demand`, which renders a defense-side
+  #    discovery demand under LC 5710, addressed from defense counsel to the
+  #    applicant's attorney. The engine plans the document as applicant counsel
+  #    chasing a late benefit, and the substrate template does not read that
+  #    role. So the count, the dates and the ordering are true of the rendered
+  #    file; the register of the prose inside it is not. Stated here rather
+  #    than glossed, because this spec exists to be read against its output.
   #
   #    `claim_response: delayed` is the coherent partner to the persona: a file
   #    whose administrator sat on the decision is the file where the delay
