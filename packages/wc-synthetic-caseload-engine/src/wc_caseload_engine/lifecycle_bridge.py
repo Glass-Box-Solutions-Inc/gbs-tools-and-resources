@@ -189,6 +189,21 @@ RECON_OWNED_SUBTYPES: frozenset[str] = frozenset(
 )
 """Owned by :mod:`wc_caseload_engine.recon_machine` — stripped from the walk."""
 
+PENALTY_OWNED_SUBTYPES: frozenset[str] = frozenset({"PETITION_FOR_PENALTIES_LC_5814"})
+"""Owned by the planner's penalty gate — stripped from the walk.
+
+The substrate emits this on a flat 10% coin with no condition
+(``lifecycle_engine.py``, the ``application_filed`` node), so one file in ten
+carried a petition alleging an unreasonable delay in payment regardless of
+whether any benefit had ever been late. The pleading is the *consequence* of a
+fact, and the fact now lives in the ledger: the planner emits it when — and
+only when — ``CaseFacts.late_benefit_events`` is non-empty.
+
+Note the vocabulary hop. The walk filter runs on the raw substrate key above,
+before ``normalize_subtype`` maps it to the canonical
+``PETITION_FOR_PENALTIES``; filtering on the canonical name would never match.
+"""
+
 # Subtypes whose realism value is low enough that the cap should eat them first.
 _FILLER_SUBTYPES: frozenset[str] = frozenset(
     {"FAX_CORRESPONDENCE", "CLAIMS_DIARY_NOTE", "PROOF_OF_SERVICE", "COURT_DISTRICT_NOTICE"}
@@ -733,7 +748,11 @@ def walk_core_track(seed: CaseSeed, timeline: CaseTimeline) -> list[DatedCandida
 
     out: list[DatedCandidate] = []
     for subtype, rule, stage in raw:
-        if subtype in LIEN_OWNED_SUBTYPES or subtype in RECON_OWNED_SUBTYPES:
+        if (
+            subtype in LIEN_OWNED_SUBTYPES
+            or subtype in RECON_OWNED_SUBTYPES
+            or subtype in PENALTY_OWNED_SUBTYPES
+        ):
             continue
         canonical = normalize_subtype(subtype)
         if canonical is None:
@@ -1190,6 +1209,7 @@ __all__ = [
     "DROPPED_SUBSTRATE_ONLY",
     "LIEN_OWNED_SUBTYPES",
     "MIN_RESOLUTION_LAG_DAYS",
+    "PENALTY_OWNED_SUBTYPES",
     "RECON_OWNED_SUBTYPES",
     "RESOLUTION_MAP",
     "ROLE_APPLICANT_ATTORNEY",

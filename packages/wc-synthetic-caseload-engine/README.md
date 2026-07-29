@@ -666,6 +666,37 @@ substrate's own coin and can *become* an approval, so the contradiction would
 appear on some seeds and not others. (The seed speaks from the dispute's point of
 view, so `upheld` means the UR denial was upheld — the surgery did not happen.)
 
+### The adjuster block
+
+```yaml
+scenario:
+  adjuster:
+    diligence: negligent      # attentive | ordinary | negligent; omit to derive
+```
+
+Diligence decides how much of each statutory window the claims administrator
+consumed. `attentive` acts early, `ordinary` uses most of the window,
+`negligent` overruns it — and an overrun is recorded on the ledger as a late
+benefit event with the days counted.
+
+That is what gates the LC 5814 penalty petition. The substrate emitted one on a
+flat 10% coin regardless of whether anything had been delayed; the petition now
+appears if and only if the ledger records a late event, and is dated after the
+delay it complains about. `validate` rejects a case that pleads penalties with
+no late event behind it.
+
+Windows are in `BENEFIT_NOTICE_WINDOWS`, each with its citation: LC 5401(a) for
+the claim form, LC 4650(a)/(b) for first TD and PD payments, CCR 9812(f) for the
+delay notice, LC 5402(b) for the 90-day decision.
+
+### Accepted but not yet rendered
+
+`scenario.attorney.cadence` and `scenario.discovery` load and validate, and
+resolve onto the ledger, but **no template honours them yet** — client letters
+are not re-dated and subpoena volume is not driven from the seed. They are
+deliberately absent from the published `caseFacts` for that reason: a published
+fact reads as a verified one. See the CHANGELOG's "Not yet honoured" list.
+
 ### The treatment block
 
 ```yaml

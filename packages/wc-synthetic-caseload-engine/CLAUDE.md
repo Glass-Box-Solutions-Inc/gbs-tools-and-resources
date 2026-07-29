@@ -176,7 +176,7 @@ If an import breaks, fix the bridge — not by copying files.
 
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/         # 715 tests, ~155s (pyproject already passes -q)
+.venv/bin/python -m pytest tests/         # 741 tests, ~150s (pyproject already passes -q)
 .venv/bin/ruff check .
 ```
 

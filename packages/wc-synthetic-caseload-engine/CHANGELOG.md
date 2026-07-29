@@ -9,6 +9,119 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — adjuster persona and earned penalties (ticket **AJC-37**, Phase 3, partial)
+
+**Scope warning, first because it matters most.** This release lands the adjuster
+half of Phase 3 and the ISC-128 audit reconciliation. The attorney-cadence
+dating, the adjuster-letter type governance, the delay-chain density and the
+discovery volume wiring are **schema-only** — the seed accepts the fields, the
+ledger resolves them, and no template honours them yet. They are listed under
+"Not yet honoured" below and deliberately not published in the manifest, on the
+Phase-2 rule that a published fact reads as a verified one.
+
+- **`scenario.adjuster.diligence`** — `attentive | ordinary | negligent`,
+  resolved once on the `facts:` namespace. It drives benefit-notice timing
+  against a statutory-window table (`BENEFIT_NOTICE_WINDOWS`, each entry
+  carrying its own citation), and where a draw overruns its window the overrun
+  becomes a `LateBenefitEvent` on the ledger with the days recorded.
+
+- **The LC 5814 penalty petition is earned, not coin-flipped.** The substrate
+  emits `PETITION_FOR_PENALTIES_LC_5814` on a flat 10% probability with no
+  condition, so one file in ten pleaded an unreasonable delay in payment whether
+  or not anything had ever been delayed — a pleading with no facts under it. The
+  subtype is now stripped from the walk (`PENALTY_OWNED_SUBTYPES`, the same
+  suppress-and-own pattern the recon machine uses) and emitted by the planner if
+  and only if the ledger records a late benefit event. It is also dated after
+  the delay it complains about, which the uniform 60-365 day draw did not
+  guarantee.
+
+- **`scenario.attorney.cadence` and `scenario.discovery`** accepted and
+  validated, including an actionable error for an inverted `pages_per_set`
+  range. Resolved onto the ledger; not yet rendered.
+
+### ⚠️ Compatibility — version bumped to 0.5.0
+
+`0.4.0` → `0.5.0`.
+
+1. **Zero bytes moved in the demo — and that is weaker evidence than it looks.**
+   331 documents, none added, none removed, **331 byte-identical**. But the demo
+   contains zero penalty petitions at 0.4.0 *and* at 0.5.0, so the diff says
+   nothing about whether the suppression works; it only says the rule was never
+   drawn there. The suppression is proved directly instead, by toggling
+   `PENALTY_OWNED_SUBTYPES` off: across 100 seeds the walk emits 3 petitions
+   unsuppressed and 0 suppressed. A zero that is not earned is not evidence.
+
+2. **The gate fires in both directions.** 20 of 20 stated-negligent cases plead
+   penalties and every one has a recorded late event; 0 of 20 stated-attentive
+   cases do. Across 100 derived seeds the diligence distribution is 32
+   attentive / 48 ordinary / 20 negligent and 19 cases plead penalties — the
+   derived path earns its petitions exactly as the stated path does, which is
+   the declared-vs-resolved class this phase was told to design out.
+
+3. **The modality audit pattern is now case-insensitive.** It matched `EMG` but
+   not `emg`, `MRI` but not `mri`. Six real sites were invisible to it,
+   including `diagnostic_report.py:69` — a line inside a template this package
+   already governs. All six are reconciled into the table.
+
+4. **A starved imaging report can no longer invent a modality.** Phase 1 handed
+   `DIAGNOSTICS_IMAGING` straight back to the substrate when the ledger had no
+   performed *imaging* study, and the substrate then drew freely — so a case
+   whose ledger marks X-Ray deliberately absent could still render a
+   radiographic examination. It now forces an imaging modality the ledger does
+   not deny, and logs loudly when all three are denied.
+
+5. **The ledger publishes `caseFacts.adjuster`** — diligence, late-event count,
+   and maximum days late. All three are honoured: `validate` rejects a case that
+   pleads LC 5814 penalties with no late event behind it.
+
+6. **One derivation per plan — genuinely, this time.** The first attempt claimed
+   this and did not achieve it: two derivations still ran per case and
+   *disagreed*, because the planning copy had no cast and saw one provider while
+   the published copy had a cast and saw five. Building the cast before the
+   candidates lets a single cast-bearing derivation serve everything. That was
+   also the runtime regression — the suite is back to **~150s from ~570s**.
+
+7. **Document controls now reach the penalty petition.** It was appended *after*
+   `resolve_document_controls` ran, so `documents.exclude` and `include_only`
+   silently did not apply to the one subtype this phase added — the control
+   contract covered everything except the new thing. It is now an ordinary
+   candidate, resolved with the rest.
+
+   Precedence follows ISC-29: the explicit control wins. But it wins **loudly** —
+   suppressing a petition the ledger earned lands in `manifest.warnings`, the
+   mirror of the emit-with-warning cases. A file recording four late benefit
+   notices and holding no penalty petition is coherent only if somebody meant it.
+
+8. **`caseFacts.adjuster.diligence` is no longer published.** It is a persona
+   *input* that no rendered document reflects, so a reader cannot check it
+   against anything. This is the governed-facts rule — the same one used to
+   withhold `attorney_cadence` — which had not been applied to its own author.
+   `lateBenefitEvents` and `maxDaysLate` stay: they gate the petition and are
+   recoverable from the notice dates in the file.
+
+9. **The penalty petition post-dates every delay it punishes.** The invariant
+   was tested against the *earliest* late event with equality permitted, so a
+   petition filed between two late notices passed — pleading a delay that had
+   not happened yet on the day of filing. Asserted strictly against the latest
+   event now, and the horizon clamp can no longer pull the date below that floor.
+
+### Not yet honoured (Phase 3, remaining)
+
+Stated plainly because the seed accepts these fields and a reader is entitled to
+know they do nothing yet:
+
+- `scenario.attorney.cadence` — resolved on the ledger; client letters are not
+  re-dated and do not reference their anchoring event.
+- `scenario.discovery.subpoena_sets` / `pages_per_set` — validated; packet count
+  and page volume are not yet driven from them.
+- Adjuster-letter type coherence — `adjuster_letter_types_allowed` is resolved
+  but no template consumes it, so the "three initial acceptance letters" defect
+  is still present.
+- Delay-chain correspondence density is not scaled by diligence.
+
+None of these are published in `caseFacts`, so the manifest makes no claim the
+documents do not keep.
+
 ### Added — treatment trajectory and diagnostics depth (ticket **AJC-37**, Phase 2)
 
 Phase 1 gave the case a ledger. It could say what was imaged and whether an

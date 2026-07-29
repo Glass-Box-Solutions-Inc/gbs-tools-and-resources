@@ -19,7 +19,12 @@ from typing import Any
 
 import structlog
 
-from wc_caseload_engine.case_facts import SUBSTRATE_STATUS_PHRASES, CaseFacts
+from wc_caseload_engine.case_facts import (
+    IMAGING_MODALITIES,
+    MODALITY_DISPLAY,
+    SUBSTRATE_STATUS_PHRASES,
+    CaseFacts,
+)
 from wc_caseload_engine.substrate import import_substrate
 
 log = structlog.get_logger(__name__)
@@ -170,6 +175,39 @@ def build_fact_aware_templates() -> dict[str, type]:
         def build_story(self, doc_spec: Any) -> list[Any]:
             facts = _facts_of(self)
             fact = facts.diagnostic_for(_index_of(self)) if facts else None
+
+            if fact is None and facts is not None:
+                # ISC-128. The ledger has no *performed imaging* study to report
+                # — the case may have had only an EMG, or nothing. Phase 1
+                # handed the document straight back to the substrate here, which
+                # then drew freely from MRI/CT/X-Ray and could name a modality
+                # the ledger explicitly marks absent. Rare, because a case with
+                # no imaging rarely carries an imaging report, but reachable
+                # through an explicit document override — and "rare" is not the
+                # standard this ledger holds itself to.
+                #
+                # Force to an imaging modality the ledger does not deny. If it
+                # denies all three the document is unsatisfiable, so say so
+                # rather than picking the least-wrong lie.
+                absent = facts.absent_modalities()
+                available = [m for m in IMAGING_MODALITIES if m not in absent]
+                if not available:
+                    log.warning(
+                        "fact_templates.imaging_report_unsatisfiable",
+                        absent=sorted(absent),
+                    )
+                else:
+                    forced = _ForcedChoice(
+                        MODALITY_DISPLAY[available[0]],
+                        lambda seq: tuple(seq) == _SUBSTRATE_MODALITY_CHOICES,
+                    )
+                    original = diagnostic_module.random
+                    diagnostic_module.random = forced
+                    try:
+                        return list(super().build_story(doc_spec))
+                    finally:
+                        diagnostic_module.random = original
+
             if fact is None:
                 return list(super().build_story(doc_spec))
 

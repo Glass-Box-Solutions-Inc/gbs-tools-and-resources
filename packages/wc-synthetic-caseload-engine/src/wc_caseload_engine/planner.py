@@ -409,9 +409,101 @@ POST_DISCHARGE_FORBIDDEN: frozenset[str] = frozenset(
 OPERATIVE_SUBTYPES: frozenset[str] = frozenset({"OPERATIVE_HOSPITAL_RECORDS"})
 
 
+def _penalty_candidates(facts: CaseFacts, timeline: CaseTimeline) -> list[DatedCandidate]:
+    """The LC 5814 penalty petition, emitted only when a benefit was late.
+
+    The substrate's own rule is a flat 10% coin with no condition, so one file
+    in ten pleaded an unreasonable delay in payment whether or not anything had
+    been delayed — a pleading with no facts under it. The subtype is stripped
+    from the walk (``PENALTY_OWNED_SUBTYPES``) and emitted here instead, gated
+    on the ledger.
+
+    The gate reads ``CaseFacts.late_benefit_events``, which is the *resolved*
+    lateness — derived from the resolved diligence, not from whatever the seed
+    happened to declare. A seed that says nothing about the adjuster still gets
+    a derived diligence, and a derived-negligent file earns its petition exactly
+    as a stated one does.
+
+    Returned as an ordinary candidate rather than appended to the dated list,
+    so it passes through perspective suppression and ``resolve_document_controls``
+    like everything else. Appending it afterwards made it invisible to
+    ``documents.exclude`` and ``include_only`` — the controls silently did not
+    apply to the one subtype this phase added.
+
+    Dated after **every** late event it punishes, not merely the first. A
+    petition filed between two late notices would be pleading a delay that had
+    not happened yet at the time of filing, and the horizon clamp must never
+    pull it back below that floor — better a petition on the last day of the
+    file than one that predates its own grievance.
+    """
+    if not facts.late_benefit_events:
+        return []
+
+    latest = max(event.actual_date for event in facts.late_benefit_events)
+    filed = getattr(timeline, "application_filed_date", None)
+    when = max(latest, filed) if filed is not None else latest
+    when = when + timedelta(days=30)
+
+    horizon = getattr(timeline, "resolution_date", None) or filed
+    if horizon is not None and when > horizon:
+        # Clamp to the horizon, but never past the floor the invariant needs.
+        when = max(horizon, latest + timedelta(days=1))
+
+    return [
+        DatedCandidate(
+            subtype="PETITION_FOR_PENALTIES",
+            doc_date=when,
+            track=TRACK_CORE,
+            author_role="applicant_attorney",
+        )
+    ]
+
+
+def _penalty_control_warnings(
+    facts: CaseFacts,
+    dated: list[tuple[date, str, str, str]],
+    controls: DocumentControls,
+) -> tuple[str, ...]:
+    """Note when document controls suppressed a petition the facts had earned.
+
+    The precedence question is which wins when an explicit control contradicts
+    the case story. It is the control — the seed is the contract, and ISC-29
+    settles that an explicit document control beats a derived rule. But it wins
+    *loudly*: a file whose ledger records four late benefit notices and holds no
+    penalty petition is a coherent artifact only if somebody meant it, and the
+    warning is how the manifest says so.
+
+    This is the mirror of the emit-with-warning cases. There the seed asked for
+    something the substrate's rules exclude and got it with a note; here the
+    seed refused something the facts support, and gets that with a note too.
+    """
+    if not facts.late_benefit_events:
+        return ()
+    if any(subtype == "PETITION_FOR_PENALTIES" for _date, subtype, _track, _role in dated):
+        return ()
+
+    named = "PETITION_FOR_PENALTIES" in set(controls.exclude) | set(controls.include_only)
+    if not named and not controls.include_only:
+        # Not a control decision — perspective suppression or a zero override.
+        return ()
+
+    reason = (
+        "documents.exclude names it"
+        if "PETITION_FOR_PENALTIES" in set(controls.exclude)
+        else "documents.include_only does not name it"
+    )
+    return (
+        f"scenario: the ledger records {len(facts.late_benefit_events)} late benefit "
+        f"event(s), which earns a PETITION_FOR_PENALTIES, but {reason} — the control "
+        "wins and the petition is suppressed. Drop the control if the delay should be "
+        "pleaded.",
+    )
+
+
 def _shape_for_scenario(
     seed: CaseSeed,
     timeline: CaseTimeline,
+    facts: CaseFacts,
     dated: list[tuple[date, str, str, str]],
 ) -> tuple[list[tuple[date, str, str, str]], tuple[str, ...]]:
     """Apply the seed's treatment and surgery scenario to the candidate set.
@@ -455,7 +547,6 @@ def _shape_for_scenario(
         shaped = kept
 
     if status == "discharged":
-        facts = derive_case_facts(seed, timeline)
         discharge = facts.discharge_date
         if discharge is not None:
             after = [
@@ -478,7 +569,6 @@ def _shape_for_scenario(
     if scenario.surgery == "performed" and not any(
         entry[1] in OPERATIVE_SUBTYPES for entry in shaped
     ):
-        facts = derive_case_facts(seed, timeline)
         when = facts.surgery.date or timeline.injury_date + timedelta(days=210)
         shaped.append((when, "OPERATIVE_HOSPITAL_RECORDS", TRACK_CORE, "treating_physician"))
 
@@ -525,11 +615,25 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     controls = normalize_control_keys(seed.documents, case_id=seed.case_id)
     timeline = build_timeline(seed)
 
+    # The cast is built here rather than after the document loop so the ledger
+    # can be derived *once*, with the cast, and used everywhere. Deriving a
+    # cast-free copy for planning and a cast-bearing copy for publication meant
+    # two derivations per case that disagreed with each other — the planner saw
+    # one provider, the manifest published five.
+    cast = build_case_cast(seed, timeline, case_number=case_number)
+    case_facts = derive_case_facts(seed, timeline, cast)
+
     core = build_core_candidates(seed, timeline)
     lien_tracks = build_lien_tracks(seed, timeline)
     recon = build_recon_track(seed, timeline)
 
-    candidates: list[DatedCandidate] = [*core, *lien_candidates(lien_tracks), *recon.documents]
+    candidates: list[DatedCandidate] = [
+        *core,
+        *lien_candidates(lien_tracks),
+        *recon.documents,
+        # Through the same gate as everything else — see _penalty_candidates.
+        *_penalty_candidates(case_facts, timeline),
+    ]
 
     # Whose file is this? The three machines above are perspective-blind on
     # purpose — they model the *claim*, which both sides share. Only here does
@@ -568,7 +672,8 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
             for extra in _synthesize_dates(seed, timeline, entry.subtype, available, shortfall):
                 dated.append((extra, entry.subtype, track, role))
 
-    dated, scenario_warnings = _shape_for_scenario(seed, timeline, dated)
+    dated, scenario_warnings = _shape_for_scenario(seed, timeline, case_facts, dated)
+    penalty_warnings = _penalty_control_warnings(case_facts, dated, controls)
     dated.sort(key=lambda item: (item[0], item[1], item[2]))
 
     documents: list[PlannedDocument] = []
@@ -600,7 +705,6 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
             )
         )
 
-    cast = build_case_cast(seed, timeline, case_number=case_number)
 
     emitted = _emitted_per_track(
         documents, [track.documents for track in lien_tracks] + [recon.documents]
@@ -616,6 +720,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         *recon.warnings,
         *cast.warnings,
         *scenario_warnings,
+        *penalty_warnings,
         *unsupported_hook_warnings(seed.lifecycle.doctrine_hooks, seed),
     )
 
@@ -641,7 +746,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         recon_emitted_subtypes=recon_subtypes,
         warnings=warnings,
         perspective_notes=pov.notes,
-        case_facts=derive_case_facts(seed, timeline, cast),
+        case_facts=case_facts,
     )
 
 
