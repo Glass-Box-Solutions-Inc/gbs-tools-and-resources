@@ -85,23 +85,16 @@ _DISCOVERY_LIFECYCLE = {"target_stage": "discovery", "eval_type": "qme"}
 #: with no probe would otherwise pass by never being tested, which is the
 #: vacuous-assertion class this suite has hit three times.
 INERT_PROBES: dict[str, InertProbe] = {
-    "DiscoveryScenario.subpoena_sets": InertProbe(
-        plain={},
-        varied={"discovery": {"subpoena_sets": 6}},
-        lifecycle=_DISCOVERY_LIFECYCLE,
-        witness=SUBPOENAED_RECORDS_SUBTYPES,
-    ),
-    "DiscoveryScenario.pages_per_set": InertProbe(
-        plain={},
-        varied={"discovery": {"pages_per_set": {"min": 300, "max": 400}}},
-        lifecycle=_DISCOVERY_LIFECYCLE,
-        witness=SUBPOENAED_RECORDS_SUBTYPES,
-    ),
-    # AttorneyScenario.cadence had a probe here until ISC-123/124 honoured it.
-    # The guard removed it: the byte-inertness run reported that varying the
-    # field moved 35 documents and named the docstring to correct. That is the
-    # meta-guard's whole purpose, and it fired without anyone remembering to
-    # look.
+    # Empty as of ISC-126, and that is the intended end state rather than a
+    # gap. Every field this table ever guarded is now honoured:
+    #   AttorneyScenario.cadence          honoured by ISC-123/124
+    #   DiscoveryScenario.subpoena_sets   honoured by ISC-126
+    #   DiscoveryScenario.pages_per_set   honoured by ISC-126
+    # Each was removed only after the byte-inertness run went red on it, which
+    # is the meta-guard doing its job in every case. The machinery stays: the
+    # moment a new field is documented as unhonoured, the completeness pair
+    # below demands a probe for it, and InertProbe demands that probe stand
+    # where its consumer exists.
 }
 
 
@@ -166,19 +159,6 @@ class TestTheMarkerSweepIsWellFormed:
             f"inertness probes for fields that no longer claim to be inert: {stale}. "
             "The field is honoured now — delete its probe."
         )
-
-    def test_the_sweep_currently_finds_something(self) -> None:
-        """Guard against a regex that silently stops matching.
-
-        This assertion is expected to *fail* once Phase 3b honours the last
-        marked field, at which point it should be deleted along with the
-        markers. That is the intended lifecycle, not a defect.
-        """
-        assert marked_fields(scenario_source(), SCENARIO_CLASSES), (
-            "no field carries the marker — if that is genuinely true, delete this "
-            "test and the INERT_PROBES table with it"
-        )
-
 
 class TestEveryProbeStandsOnGround:
     """F1. An inertness result is only worth what its case can consume.

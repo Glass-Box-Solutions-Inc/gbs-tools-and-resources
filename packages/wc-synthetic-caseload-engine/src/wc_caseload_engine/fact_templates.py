@@ -225,6 +225,25 @@ def _split_pages(body: list[Any]) -> list[list[Any]]:
 #: a future substrate edit ever returns nothing.
 _MAX_RECORD_BLOCKS = 40
 
+#: Measure-then-adjust rounds allowed per packet. Each is a full render, so this
+#: is a real cost; in practice the first correction lands because the residual
+#: between sections and pages is small and stable.
+_MAX_FIT_ATTEMPTS = 6
+
+
+def _page_count(path: Any) -> int:
+    """Physical pages in a rendered PDF.
+
+    The measurement the whole of ISC-126 turns on: a PageBreak-delimited section
+    is what the *story* contains, and a page is what the *paper* contains, and
+    the substrate's cover sheet was describing the former while claiming the
+    latter.
+    """
+    import fitz
+
+    with fitz.open(path) as document:
+        return document.page_count
+
 
 def _fit_pages(pages: list[list[Any]], wanted: int, more: Any) -> list[list[Any]]:
     """Exactly *wanted* pages, trimming or asking *more* for further content.
@@ -877,6 +896,16 @@ def build_fact_aware_templates() -> dict[str, type]:
         reads ``_cellvalues`` at draw time, so the mutation reaches the page.
         """
 
+        #: Sections the current render should use; ``None`` means "take what the
+        #: substrate produced". Set by the measure-then-adjust loop.
+        _wc_sections: int | None = None
+        #: Page count the cover sheet should state, once one has been measured.
+        _wc_toc_total: int | None = None
+        #: Sections the last render actually used, which is what the loop steers.
+        _wc_last_sections: int = 0
+        #: Blank continuation pages appended to reach the budget exactly.
+        _wc_pad: int = 0
+
         def _page_budget(self, facts: Any) -> int | None:
             pages = getattr(facts, "packet_pages", ())
             if not pages:
@@ -893,8 +922,8 @@ def build_fact_aware_templates() -> dict[str, type]:
                 return story
 
             head, body = _split_at_first_break(story)
-            pages = _split_pages(body)
-            if not pages:
+            sections = _split_pages(body)
+            if not sections:
                 return story
 
             provider, facility = self._select_provider(doc_spec)
@@ -905,11 +934,95 @@ def build_fact_aware_templates() -> dict[str, type]:
                 else (lambda: self._build_medical_records(doc_spec, provider, facility))
             )
 
-            # Content pages only: the cover sheet is page 1 of the packet.
-            wanted = max(1, budget - 1)
-            realised = _fit_pages(pages, wanted, build_more)
-            _rewrite_page_table(head, len(realised) + 1)
-            return head + _join_pages(realised, records_module.PageBreak)
+            # A section is a PageBreak-delimited block, which is NOT a physical
+            # page — a long one overflows. ``_generate_pdf`` measures the
+            # rendered result and drives this number until the paper agrees;
+            # the first pass just asks for the budget and lets it correct.
+            wanted = self._wc_sections
+            if wanted is None:
+                wanted = max(1, budget - 1)
+            realised = _fit_pages(sections, wanted, build_more)
+            self._wc_last_sections = len(realised)
+            # Written from the MEASURED page count once one exists, so the cover
+            # sheet describes the packet as printed rather than as intended.
+            _rewrite_page_table(head, self._wc_toc_total or len(realised) + 1)
+            body_out = _join_pages(realised, records_module.PageBreak)
+            # Sections are atomic and one can overflow, so section count alone
+            # cannot hit an arbitrary page total. The loop undershoots and the
+            # remainder is made up in whole continuation pages, which a real
+            # records production contains anyway.
+            for _ in range(self._wc_pad):
+                body_out.append(records_module.PageBreak())
+                body_out.append(
+                    Paragraph(
+                        "[This page intentionally contains no further records.]",
+                        self.styles["BodyText"],
+                    )
+                )
+            return head + body_out
+
+        def _generate_pdf(self, output_path: Any, doc_spec: Any) -> Any:
+            """Render, count the pages that came out, adjust, render again.
+
+            The only honest way to make ``pages_per_set`` mean *pages*. Section
+            count is a proxy the layout is free to ignore, so it is measured
+            rather than assumed, and the table of contents is written from the
+            measurement.
+
+            Every attempt restores the RNG state it started from. Without that
+            each re-render draws different clinical content, so the page count
+            that was measured would not be the page count finally written — the
+            measurement would describe a document that no longer exists.
+            """
+            facts = _facts_of(self)
+            budget = self._page_budget(facts) if facts is not None else None
+            if budget is None:
+                return super()._generate_pdf(output_path, doc_spec)
+
+            entry_state = random.getstate()
+            self._wc_sections = None
+            self._wc_toc_total = None
+            self._wc_pad = 0
+
+            result = super()._generate_pdf(output_path, doc_spec)
+            pages = _page_count(output_path)
+            sections = self._wc_last_sections
+
+            # Walk down to the largest section count that fits inside the
+            # budget. Down rather than towards, because overshoot cannot be
+            # repaired -- there is no way to remove part of a page -- while an
+            # undershoot is made up exactly by padding.
+            for _ in range(_MAX_FIT_ATTEMPTS):
+                if pages <= budget:
+                    break
+                adjusted = max(1, sections - max(1, pages - budget))
+                if adjusted == sections:
+                    break
+                sections = adjusted
+                random.setstate(entry_state)
+                self._wc_sections = sections
+                result = super()._generate_pdf(output_path, doc_spec)
+                pages = _page_count(output_path)
+                sections = self._wc_last_sections
+
+            # Final pass: same content, remainder padded, table restated from
+            # the number the paper will actually carry.
+            random.setstate(entry_state)
+            self._wc_sections = sections
+            self._wc_pad = max(0, budget - pages)
+            self._wc_toc_total = pages + self._wc_pad
+            result = super()._generate_pdf(output_path, doc_spec)
+            pages = self._wc_toc_total
+            if _page_count(output_path) != pages:
+                # Restating the table changed the pagination, which would leave
+                # the cover sheet describing the previous render. Say so rather
+                # than ship a packet whose own first page is wrong.
+                log.warning(
+                    "fact_templates.packet_page_table_unstable",
+                    expected=pages,
+                    actual=_page_count(output_path),
+                )
+            return result
 
     client_module = import_substrate("pdf_templates.correspondence.client_intake")
 

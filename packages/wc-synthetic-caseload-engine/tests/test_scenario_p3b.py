@@ -35,6 +35,7 @@ from wc_caseload_engine.planner import (
     CADENCE_ANCHOR_SUBTYPES,
     CADENCE_MIN_LETTERS,
     DELAY_CHAIN_SUBTYPE,
+    DISCOVERY_PACKET_SUBTYPES,
     EVENT_DRIVEN_LAG_DAYS,
     build_case_plan,
     event_driven_max_lag_days,
@@ -467,6 +468,72 @@ class TestAttorneyCadenceMovesTheDates:
             "two cadences produced identical letter dates: "
             f"{ {name: [str(d) for d in v] for name, v in rhythms.items()} }"
         )
+
+
+# ---------------------------------------------------------------------------
+# ISC-126 — the ledger, the table of contents and the paper are one number
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoveryVolumesAgree:
+    """What replaces the two inertness probes ISC-126 retired.
+
+    The probes asked "does this field change nothing?"; now that it changes
+    something, the question becomes "do all three readings of it match?" — and
+    that is a far stronger guard than the one it replaces.
+    """
+
+    def _case(self, tmp_path: Path) -> tuple[Any, dict[str, Any], Path]:
+        seed = _seed(
+            "vol",
+            rng_seed=9900,
+            lifecycle={"target_stage": "discovery", "eval_type": "qme"},
+            scenario={
+                "discovery": {
+                    "subpoena_sets": 4,
+                    "pages_per_set": {"min": 12, "max": 18},
+                }
+            },
+        )
+        plan = build_case_plan(seed)
+        manifest, _ = _render(seed, tmp_path)
+        return plan, manifest, tmp_path / seed.case_id / "documents"
+
+    def test_the_file_holds_the_packet_count_the_seed_asked_for(
+        self, tmp_path: Path
+    ) -> None:
+        _, manifest, _ = self._case(tmp_path)
+        packets = [
+            entry
+            for entry in manifest["documents"]
+            if entry["subtype"] in DISCOVERY_PACKET_SUBTYPES
+        ]
+        assert len(packets) == 4, f"asked for 4 packets, got {len(packets)}"
+
+    def test_ledger_table_of_contents_and_paper_all_state_one_number(
+        self, tmp_path: Path
+    ) -> None:
+        import fitz
+
+        plan, manifest, documents = self._case(tmp_path)
+        budgets = plan.case_facts.packet_pages
+        assert budgets, "the ledger drew no page budget; the probe is vacuous"
+
+        seen = 0
+        for entry in manifest["documents"]:
+            if entry["subtype"] not in DISCOVERY_PACKET_SUBTYPES:
+                continue
+            with fitz.open(documents / entry["filename"]) as document:
+                paper = document.page_count
+                text = _flat("".join(page.get_text() for page in document))
+            stated = re.search(r"total pages:.{0,14}?(\d+)", text)
+            assert stated, f"packet {seen + 1} states no page total at all"
+            assert budgets[seen] == paper == int(stated.group(1)), (
+                f"packet {seen + 1} disagrees with itself: ledger "
+                f"{budgets[seen]}, paper {paper}, cover sheet {stated.group(1)}"
+            )
+            seen += 1
+        assert seen == len(budgets)
 
 
 # ---------------------------------------------------------------------------

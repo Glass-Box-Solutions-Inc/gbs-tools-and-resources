@@ -821,17 +821,26 @@ class DiscoveryScenario(_Model):
     subpoena_sets: int | None = Field(default=None, ge=0, le=24)
     """Records packets to emit.
 
-    **Accepted and validated, not yet honoured** — the packet count still comes
-    from the lifecycle walk. ISC-126.
+    Honoured: the plan is trimmed or extended to exactly this many packets
+    (ISC-126). ``None`` keeps whatever the lifecycle walk proposed, which is
+    what leaves every pre-0.7.0 seed byte-identical.
+
+    A stage that proposes no packets at all is warned about rather than silently
+    ignored — the count has nothing to act on before ``target_stage:
+    discovery``.
     """
 
     pages_per_set: PageRange = Field(default_factory=PageRange)
     """Declared page volume per packet.
 
-    **Accepted and validated, not yet honoured.** No template reads this: the
-    subpoenaed-records table of contents and the rendered body still draw their
-    page counts independently. Unifying them is ISC-126, and until it lands this
-    field changes nothing about the output.
+    Honoured, and *pages* means physical pages. One count is drawn per packet on
+    the ``facts:`` stream; the renderer measures what actually came out, adjusts,
+    and writes the cover sheet's table from the measurement — so the ledger, the
+    table of contents and the paper are three readings of one number.
+
+    Before ISC-126 the table of contents summed its own ``random.randint`` draws
+    while the body drew separately, so a cover sheet could promise 23 pages in
+    front of a packet holding 6.
     """
 
 
