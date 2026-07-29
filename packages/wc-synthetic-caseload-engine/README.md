@@ -712,9 +712,13 @@ scenario:
 How often counsel wrote to the client, and it moves the letter dates:
 
 - **`every_30_days`** — the diligent practice. Letters walk a thirty-day clock.
-- **`event_driven`** — counsel writes when something happened. Each letter lands
-  about five days behind a report or milestone **already in the file**, so a
-  reader can hold the letter beside the document that prompted it.
+- **`event_driven`** — counsel writes when something happened. Each letter is
+  *intended* to land five days behind a report or milestone **already in the
+  file**, so a reader can hold the letter beside the document that prompted it.
+  Measured over 404 letters across four stages, 82% land exactly there; the fit
+  below accounts for the rest, and a file with more letters than events laps the
+  list, adding 45 days per pass. A file with fewer than two client letters has
+  no rhythm to impose and is left where the walk put it.
 - **`sporadic`** — the file with a three-month hole in it that opposing counsel
   will notice. At least one gap over ninety days.
 

@@ -605,6 +605,44 @@ def _penalty_control_warnings(
 #: The 120 is what makes the three-month hole a certainty rather than a hope.
 _SPORADIC_GAPS: tuple[int, ...] = (24, 120, 41, 96, 33)
 
+#: Below this, a file has no rhythm to impose: one client letter cannot be
+#: early or late relative to anything, so the cadence leaves it alone.
+CADENCE_MIN_LETTERS = 2
+
+#: How long after an event counsel writes about it — the time to read a report
+#: and dictate a letter.
+EVENT_DRIVEN_LAG_DAYS = 5
+
+#: Added per extra pass through the anchor list, when a file holds more letters
+#: than events worth writing about.
+EVENT_DRIVEN_LAP_DAYS = 45
+
+def event_driven_max_lag_days(letters: int, anchors: int) -> int:
+    """Widest gap an ``event_driven`` letter may sit behind a preceding event.
+
+    A *function of the case*, not a constant, and getting that wrong is the
+    second half of F2. The first attempt at this repair asserted a fixed ceiling
+    of ``LAG + LAP`` — one lap — because a 38-seed sample topped out at 50 days.
+    A twelve-seed sample at ``discovery`` stage, which carries more letters per
+    anchor, immediately produced 100. The sample had not been wide enough to
+    show the shape, and a constant fitted to it would have been a magic number
+    with better manners.
+
+    The real bound falls out of the cycle: with more letters than anchors the
+    walk laps the anchor list, and the last lap is
+    ``ceil(letters / anchors) - 1``.
+
+    F2 in one line: the CHANGELOG claimed "1-5 days" while the guard allowed
+    0-60. Measured over 38 cases / 218 letters, 179 land at exactly
+    :data:`EVENT_DRIVEN_LAG_DAYS`, the fit pulls a few as close as 0, and the
+    lap tail runs as far as the case's own shape allows. "1-5" was false at both
+    ends; 60 was arbitrary.
+    """
+    if anchors <= 0:
+        return 0
+    laps = max(0, -(-letters // anchors) - 1)  # ceil division, zero-based
+    return EVENT_DRIVEN_LAG_DAYS + EVENT_DRIVEN_LAP_DAYS * laps
+
 #: What counts as an "event" worth writing to the client about. Medical reports
 #: and the case's own milestones — the documents that change what counsel can
 #: tell the client. Correspondence is excluded on purpose: letters answering
@@ -673,7 +711,9 @@ def _cadence_dates(
     for step in range(count):
         anchor = anchors[step % len(anchors)]
         lap = step // len(anchors)
-        dates.append(anchor + timedelta(days=5 + 45 * lap))
+        dates.append(
+            anchor + timedelta(days=EVENT_DRIVEN_LAG_DAYS + EVENT_DRIVEN_LAP_DAYS * lap)
+        )
     return sorted(dates)
 
 
@@ -699,7 +739,7 @@ def _apply_attorney_cadence(
         (entry for entry in dated if entry[1] in ATTORNEY_CADENCE_SUBTYPES),
         key=lambda entry: entry[0],
     )
-    if len(letters) < 2:
+    if len(letters) < CADENCE_MIN_LETTERS:
         # One letter has no rhythm, and zero letters have nothing to re-date.
         return dated, ()
 

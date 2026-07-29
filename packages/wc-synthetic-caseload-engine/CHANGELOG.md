@@ -91,9 +91,13 @@ the substrate calls without a spec — and the substrate is unchanged.
    anchor, the lap offset became fixed, and it rendered as a tidy 90-day
    metronome — which still *differed* from the other two cadences and so passed
    the three-cadences-differ test. It now anchors to the report and milestone
-   documents in the file itself: 8 anchors, every letter 1–5 days behind a real
-   one. `test_every_event_driven_letter_follows_a_real_event` is the assertion
-   that would have failed.
+   documents in the file itself: 8 anchors, every letter following a real one.
+   `test_every_event_driven_letter_follows_a_real_event` is the assertion that
+   would have failed.
+
+   *Corrected in 0.7.0 (F2).* This originally read "1–5 days behind", which was
+   false at both ends and tighter than the test guarding it. See 0.7.0's notice
+   on the measured distribution.
 
 4. **One guard was narrowed, which needs saying plainly.**
    `test_neither_output_carries_an_ungoverned_field` scanned serialized JSON for
