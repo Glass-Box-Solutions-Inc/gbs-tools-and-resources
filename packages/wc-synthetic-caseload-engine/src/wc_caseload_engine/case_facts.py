@@ -133,15 +133,17 @@ class DiagnosticFact(BaseModel):
 class SurgeryFact(BaseModel):
     """Whether an operation happened, and if so which one.
 
-    Phase 1 carries ``none`` and ``performed`` only. The ticket's fuller
-    vocabulary (``recommended``, ``denied_by_ur``) needs UR-dispute wiring that
-    belongs with the treatment phase, and admitting a status no template can
-    render would reintroduce exactly the gap this ledger closes.
+    Four states, and only one of them puts a knife anywhere near the applicant.
+    ``recommended`` and ``denied_by_ur`` both describe a *proposed* procedure —
+    one pending, one refused — so both name a CPT and neither emits an
+    operative document. Keeping them distinct from ``none`` is what lets a
+    treating report say "surgical consultation obtained, authorization denied"
+    without the file also containing an operation.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    status: Literal["none", "performed"] = "none"
+    status: Literal["none", "performed", "recommended", "denied_by_ur"] = "none"
     body_part: str | None = None
     cpt_code: str | None = None
     cpt_description: str | None = None
@@ -150,6 +152,16 @@ class SurgeryFact(BaseModel):
     @property
     def performed(self) -> bool:
         return self.status == "performed"
+
+    @property
+    def proposed(self) -> bool:
+        """A procedure was named but never done."""
+        return self.status in ("recommended", "denied_by_ur")
+
+    @property
+    def names_a_procedure(self) -> bool:
+        """Any state in which a CPT belongs in the ledger."""
+        return self.status != "none"
 
 
 class ProviderFact(BaseModel):
@@ -191,9 +203,44 @@ class CaseFacts(BaseModel):
     surgery: SurgeryFact = Field(default_factory=SurgeryFact)
     providers: tuple[ProviderFact, ...] = ()
     visits: tuple[VisitFact, ...] = ()
+    treatment_status: Literal["ongoing", "discharged", "gap", "never_treated"] = "ongoing"
+    trajectory: Literal["improving", "plateau", "worsening"] = "plateau"
     mmi_date: dt.date | None = None
     wpi: int | None = None
     pd: int | None = None
+
+    @property
+    def discharge_date(self) -> dt.date | None:
+        """When care ended, for a discharged file. ``None`` otherwise."""
+        if self.treatment_status != "discharged":
+            return None
+        final = [v for v in self.visits if v.kind == "final"]
+        return final[-1].date if final else None
+
+    @property
+    def treatment_gap(self) -> tuple[dt.date, dt.date] | None:
+        """The largest hole in the visit series, when the seed asked for one.
+
+        Computed from the dates rather than stored beside them, so the fact the
+        documents describe and the fact the ledger publishes cannot drift.
+        """
+        if self.treatment_status != "gap" or len(self.visits) < 2:
+            return None
+        pairs = list(zip(self.visits, self.visits[1:], strict=False))
+        start, end = max(pairs, key=lambda pair: (pair[1].date - pair[0].date).days)
+        return (start.date, end.date)
+
+    def phrase_for(self, index: int) -> str:
+        """The status phrase for the *index*-th treating report in the case.
+
+        Monotone within the arc: consecutive reports move forward through the
+        phrase list and hold at the last one rather than wrapping. Wrapping
+        would put "approaching maximum medical improvement" before "showing
+        steady improvement" in a later report, which is the zig-zag this
+        replaces.
+        """
+        phrases = TRAJECTORY_PHRASES[self.trajectory]
+        return phrases[min(index, len(phrases) - 1)]
 
     @property
     def performed_diagnostics(self) -> tuple[DiagnosticFact, ...]:
@@ -312,6 +359,68 @@ def _derive_diagnostics(seed: CaseSeed, timeline: Any) -> tuple[DiagnosticFact, 
     return tuple(facts)
 
 
+#: The substrate's own per-document status phrases, drawn inline at
+#: ``treating_physician_report.py:127``. Matched exactly so the override can
+#: recognise the draw it is replacing; if this list moves upstream, the shim
+#: stops firing and says so rather than silently reverting to random.
+SUBSTRATE_STATUS_PHRASES: tuple[str, ...] = (
+    "unchanged since last visit",
+    "slowly improving",
+    "fluctuating with activity",
+    "worsening despite treatment",
+)
+
+#: Trajectory phrases, earliest-to-latest within each arc.
+#:
+#: Ordered on purpose. The substrate drew one phrase per document from a flat
+#: list, so a three-report case could read worsening, improving, worsening — a
+#: file that contradicts itself in the only dimension a reader is tracking. The
+#: ledger picks an arc and walks it monotonically, which is what a trajectory
+#: is.
+#:
+#: Each phrase completes the substrate's own sentence frame, "Patient reports
+#: that symptoms are ___." Written to fit it, because the override replaces the
+#: drawn value inside that sentence rather than rewriting the sentence.
+TRAJECTORY_PHRASES: dict[str, tuple[str, ...]] = {
+    "improving": (
+        "improving steadily with conservative care",
+        "continuing to improve, with increasing range of motion",
+        "much improved and approaching maximum medical improvement",
+    ),
+    "plateau": (
+        "stable, with residual pain at the injury site",
+        "unchanged since the prior evaluation",
+        "at a functional plateau despite continued treatment",
+    ),
+    "worsening": (
+        "increased since the prior visit",
+        "declining despite conservative measures",
+        "substantially worse, warranting further diagnostic workup",
+    ),
+}
+
+TRAJECTORIES: tuple[str, ...] = ("improving", "plateau", "worsening")
+
+#: The treatment arcs a seed may state, and the ledger may publish.
+TREATMENT_STATUSES: tuple[str, ...] = ("ongoing", "discharged", "gap", "never_treated")
+
+
+def resolve_treatment_status(seed: CaseSeed) -> str:
+    """The treatment arc this case tells. **The** answer, for every consumer.
+
+    Resolved once for the same reason surgery is: the planner decides which
+    documents exist from it, the ledger decides what they say, and two
+    independent answers would let a case suppress its treating reports while
+    its QME described ongoing care.
+
+    Unspecified derives ``ongoing`` rather than drawing. There is nothing to
+    supersede here — the substrate had no notion of a trajectory at all — so a
+    draw would invent variance where v0.3.0 had none and move bytes on every
+    existing seed. Derivation that changes nothing is the honest default.
+    """
+    return seed.scenario.treatment.status or "ongoing"
+
+
 def resolve_has_surgery(seed: CaseSeed) -> bool:
     """Whether this case was operated on. **The** answer, for every consumer.
 
@@ -334,29 +443,49 @@ def resolve_has_surgery(seed: CaseSeed) -> bool:
     silently would be the same defect this function exists to remove — a knob
     that does not reach.
     """
+    return resolve_surgery_status(seed) == "performed"
+
+
+def resolve_surgery_status(seed: CaseSeed) -> str:
+    """The full four-state surgery answer behind :func:`resolve_has_surgery`.
+
+    ``recommended`` and ``denied_by_ur`` are *not* operations, so they resolve
+    ``has_surgery`` false and emit no operative document — but they are also not
+    ``none``, because a procedure was named and the file has to say so.
+    """
     parts = _body_parts(seed)
     coin = seed.rng("clinical").random() < 0.35
 
-    if seed.scenario.surgery == "performed":
-        return True
-    if seed.scenario.surgery == "none":
-        return False
+    if seed.scenario.surgery is not None:
+        return seed.scenario.surgery
 
     # Unspecified: the substrate's original rule, term for term, including its
     # treatment of ``lc3208_3_psych`` as a psychiatric component.
     psych = any(part == "psyche" for part in parts) or (
         "lc3208_3_psych" in seed.lifecycle.doctrine_hooks
     )
-    return seed.injury.type != "death" and not psych and coin
+    return "performed" if (seed.injury.type != "death" and not psych and coin) else "none"
 
 
 def _derive_surgery(seed: CaseSeed, timeline: Any) -> SurgeryFact:
     """Ledger entry for the surgery, off the one shared resolution."""
     parts = _body_parts(seed)
     part = parts[0] if parts else "lumbar_spine"
+    status = resolve_surgery_status(seed)
 
-    if not resolve_has_surgery(seed):
+    if status == "none":
         return SurgeryFact(status="none")
+
+    if status != "performed":
+        # Proposed, not done: the CPT is what the RFA asked for, and there is no
+        # operative date because there was no operation.
+        code, description = _pick_cpt(seed, parts, part)
+        return SurgeryFact(
+            status=status,  # type: ignore[arg-type]
+            body_part=part,
+            cpt_code=code,
+            cpt_description=description,
+        )
 
     code, description = _pick_cpt(seed, parts, part)
     onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
@@ -425,27 +554,101 @@ def _derive_providers(seed: CaseSeed, cast: Any) -> tuple[ProviderFact, ...]:
                 facility=str(getattr(treating, "facility", "") or ""),
             )
         )
-    return tuple(providers)
+
+    wanted = seed.scenario.treatment.providers
+    if wanted is None:
+        return tuple(providers)
+
+    # A stated roster size trims or repeats the substrate's own people rather
+    # than inventing new ones, because the round-robin indexes into the list the
+    # template renders from. Repeating is honest for a small roster: two
+    # subpoenas answered by the same custodian is a real filing pattern; a name
+    # the template cannot produce is not.
+    if wanted <= len(providers):
+        return tuple(providers[:wanted])
+    return tuple(providers[index % len(providers)] for index in range(wanted))
 
 
-def _derive_visits(seed: CaseSeed, timeline: Any, surgery: SurgeryFact) -> tuple[VisitFact, ...]:
-    """A dated visit series consistent with the timeline it hangs off."""
+def _derive_visits(
+    seed: CaseSeed, timeline: Any, surgery: SurgeryFact, status: str
+) -> tuple[VisitFact, ...]:
+    """A dated visit series consistent with the timeline it hangs off.
+
+    The trajectory shapes the series rather than being narrated over the top of
+    it: ``never_treated`` produces the initial visit and nothing after it,
+    ``gap`` opens a seeded hole in the middle, and ``discharged`` ends the
+    series at a final visit. A document that describes a gap the visit dates do
+    not contain is the same class of incoherence as a QME citing an MRI nobody
+    ordered.
+    """
     onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
     horizon = getattr(timeline, "resolution_date", None) or getattr(
         timeline, "application_filed_date", None
     )
     visits: list[VisitFact] = [VisitFact(date=onset + timedelta(days=3), kind="initial")]
 
+    if status == "never_treated":
+        # The initial report exists because an injury was reported; nothing
+        # follows it, because nobody treated.
+        return tuple(visits)
+
     step = 45
-    for position in range(1, 6):
-        moment = onset + timedelta(days=3 + step * position)
+    gap_after = 1
+    # A gap case has fewer visits, because that is what a gap is — and the
+    # visits it does not have are the runway the gap occupies. Five follow-ups
+    # at 45 days already consume more than some cases have between injury and
+    # the horizon, so a gap appended to a full schedule falls past the horizon
+    # and vanishes. The first version of this did exactly that and produced
+    # gap-status cases with no gap in them.
+    follow_ups = 2 if status == "gap" else 5
+
+    gap_days = 0
+    if status == "gap":
+        # Drawn on the facts stream, so it can never perturb a draw an existing
+        # document consumes, then clamped to what the timeline can hold. Short
+        # cases get a shorter gap rather than none: a file that settles four
+        # months after injury cannot contain a seven-month hole, and the
+        # trajectory it *can* show is still a gap.
+        wanted = _rng(seed, "treatment").choice((120, 150, 180, 210))
+        room = (
+            (horizon - onset).days - (3 + step * follow_ups) if horizon is not None else wanted
+        )
+        gap_days = max(0, min(wanted, room))
+
+    offset = 0
+    for position in range(1, follow_ups + 1):
+        if status == "gap" and position == gap_after + 1:
+            offset += gap_days
+        moment = onset + timedelta(days=3 + step * position + offset)
         if horizon is not None and moment > horizon:
             break
         kind: Literal["initial", "follow_up", "post_operative", "final"] = "follow_up"
         if surgery.performed and surgery.date is not None and moment > surgery.date:
             kind = "post_operative"
         visits.append(VisitFact(date=moment, kind=kind))
+
+    if status == "discharged" and len(visits) > 1:
+        last = visits[-1]
+        visits[-1] = VisitFact(date=last.date, kind="final")
+
     return tuple(visits)
+
+
+def _derive_trajectory(seed: CaseSeed, status: str) -> str:
+    """Which arc the treating reports walk.
+
+    Drawn on the ``facts:`` namespace, never on a stream a document reads, and
+    constrained by the trajectory the seed already implies: a discharged file
+    improved its way to discharge, and a file built around a treatment gap is
+    not a file where the applicant was steadily getting better.
+    """
+    if status == "discharged":
+        return "improving"
+    if status == "never_treated":
+        return "plateau"
+    if status == "gap":
+        return _rng(seed, "trajectory").choice(("plateau", "worsening"))
+    return _rng(seed, "trajectory").choice(TRAJECTORIES)
 
 
 def derive_case_facts(seed: CaseSeed, timeline: Any, cast: Any = None) -> CaseFacts:
@@ -461,10 +664,12 @@ def derive_case_facts(seed: CaseSeed, timeline: Any, cast: Any = None) -> CaseFa
     Returns:
         A frozen :class:`CaseFacts`. Derivation is pure: same seed, same facts.
     """
+    status = resolve_treatment_status(seed)
     diagnostics = _derive_diagnostics(seed, timeline)
     surgery = _derive_surgery(seed, timeline)
     providers = _derive_providers(seed, cast)
-    visits = _derive_visits(seed, timeline, surgery)
+    visits = _derive_visits(seed, timeline, surgery, status)
+    trajectory = _derive_trajectory(seed, status)
 
     rng = _rng(seed, "rating")
     mmi = getattr(timeline, "resolution_date", None)
@@ -479,6 +684,8 @@ def derive_case_facts(seed: CaseSeed, timeline: Any, cast: Any = None) -> CaseFa
         surgery=surgery,
         providers=providers,
         visits=visits,
+        treatment_status=status,  # type: ignore[arg-type]
+        trajectory=trajectory,  # type: ignore[arg-type]
         mmi_date=mmi,
         wpi=wpi,
         pd=pd,
@@ -524,6 +731,15 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
     ]
 
     return {
+        "treatment": {
+            "status": facts.treatment_status,
+            "trajectory": facts.trajectory,
+            "dischargeDate": (
+                facts.discharge_date.isoformat() if facts.discharge_date else None
+            ),
+            "gapStart": facts.treatment_gap[0].isoformat() if facts.treatment_gap else None,
+            "gapEnd": facts.treatment_gap[1].isoformat() if facts.treatment_gap else None,
+        },
         "diagnostics": diagnostics,
         "surgery": {
             "status": facts.surgery.status,
@@ -547,6 +763,7 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
 #: out of the output, because publishing them would let the manifest state
 #: things its own documents contradict.
 GOVERNED_LEDGER_FIELDS: dict[str, tuple[str, ...]] = {
+    "treatment": ("status", "trajectory", "dischargeDate", "gapStart", "gapEnd"),
     "diagnostics": ("modality", "display", "performed"),
     "surgery": ("status", "cptCode", "cptDescription"),
     "providers": ("name", "specialty", "facility"),
@@ -558,7 +775,11 @@ __all__ = [
     "IMAGING_MODALITIES",
     "MODALITIES",
     "MODALITY_DISPLAY",
+    "SUBSTRATE_STATUS_PHRASES",
     "SURGERY_CPT_CODES",
+    "TRAJECTORIES",
+    "TRAJECTORY_PHRASES",
+    "TREATMENT_STATUSES",
     "CaseFacts",
     "DiagnosticFact",
     "Modality",
@@ -567,4 +788,6 @@ __all__ = [
     "VisitFact",
     "derive_case_facts",
     "facts_manifest_block",
+    "resolve_surgery_status",
+    "resolve_treatment_status",
 ]

@@ -9,6 +9,134 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — treatment trajectory and diagnostics depth (ticket **AJC-37**, Phase 2)
+
+Phase 1 gave the case a ledger. It could say what was imaged and whether an
+operation happened, and the documents agreed with it. What it could not say was
+what the *course of care* looked like — and that is the axis most real files
+turn on. A defense file is usually built around a treatment gap; an applicant
+file is usually built around continuity. The engine could render neither,
+because it had no notion of either.
+
+- **`scenario.treatment {status, providers}`.** `ongoing`, `discharged`, `gap`,
+  `never_treated`. The status is resolved once at plan time, like surgery, and
+  both the planner and the ledger read that one answer.
+
+  `never_treated` suppresses at the *planner*, filtering candidates rather than
+  making the seed author write thirty `exclude:` keys. What survives is named
+  explicitly in `NEVER_TREATED_TIER` — the first-report tier, because an
+  applicant who never treated still generated an injury report and a claim form,
+  and may well have gone to an emergency department once. An allowlist rather
+  than a denylist: a subtype missing from a denylist silently survives and
+  contradicts the seed, whereas one missing from an allowlist is merely absent
+  from a file the seed already says is sparse.
+
+  `gap` opens a hole in the ledger's visit series, drawn on the `facts:`
+  namespace and **clamped to the runway the timeline actually has**. A case that
+  settles four months after injury cannot hold a seven-month gap; it gets a
+  shorter one rather than none. The first version of this appended a gap to a
+  full visit schedule, and every gap fell past the horizon and vanished —
+  producing gap-status cases with no gap in them.
+
+  `discharged` emits a discharge summary at the discharge date and drops any
+  treating document that post-dates it.
+
+- **Trajectory instead of per-document mood.** The substrate drew a status
+  phrase per report from a flat list, so a three-PR case could read "worsening
+  despite treatment", then "slowly improving", then "worsening" again — each
+  document plausible, the sequence incoherent. The ledger picks an arc and walks
+  it monotonically, holding at the end rather than wrapping.
+
+- **`surgery: recommended | denied_by_ur`.** Both mean no operation happened and
+  both still name a CPT, because a procedure was requested. `denied_by_ur`
+  requires a `lifecycle.ur_dispute` and is **refused with an actionable error**
+  when one is absent rather than auto-enabling it: a UR dispute pulls in an RFA,
+  a determination and an IMR window, and the seed is the contract.
+
+- **The UR chain names the procedure.** `UtilizationReview._build_request_details`
+  drew one to three CPTs from the whole code table, so a determination on a
+  lumbar case could adjudicate a cervical MRI. When the ledger names a
+  procedure, the RFA, the determination and the treating report all name that
+  one.
+
+- **Per-study body-part attribution (ISC-110).** The imaging report now prints
+  the region *this* study covered. The ISC-90 body-part clause, deferred in
+  Phase 1 because the substrate prints every injured region and attributes the
+  study to none of them, is closed by adding the line rather than intercepting a
+  draw — there was no draw to intercept.
+
+- **The QME history is governed (ISC-111).** A third independent modality draw,
+  in the history narrative, which is how a QME could announce an MRI in
+  paragraph two and review only X-rays four pages later.
+
+- **A modality audit table (`modality_audit.py`).** Every substrate site that
+  names a modality, each either governed by an override or documented with the
+  reason it is left alone — and a test that greps the substrate and fails if it
+  finds a site the table does not list. Phase 1 governed the diagnostic report
+  and believed the job done; the QME turned out to name modalities in three
+  other places, each found one failing test at a time. This is the alternative
+  to discovering the fourth the same way.
+
+### ⚠️ Compatibility — version bumped to 0.4.0
+
+`0.3.0` → `0.4.0`.
+
+1. **Two newly-governed subtypes move; nothing else does.** Regenerating the
+   demo at 0.3.0 and at this commit: 331 documents both times, identical
+   filenames, no documents added or removed, **307 byte-identical and 24
+   changed**. All 24 are registry-covered: `QME_REPORT_INITIAL` (16) and
+   `QME_REPORT_SUPPLEMENTAL` (5) from the history override, and
+   `TREATING_PHYSICIAN_REPORT_PR2` (3) from the trajectory override. **Zero
+   unexplained.**
+
+   No demo seed carries a `scenario` block, so this measures exactly what it
+   should: the byte cost of the new *governance*, with none of the new knobs
+   engaged.
+
+2. **The registry grew from nine subtypes to fifteen.** Added:
+   `DISCHARGE_SUMMARY`, `MEDICAL_TREATMENT_AUTHORIZATION`,
+   `MEDICAL_TREATMENT_DENIAL_UR`, `UTILIZATION_REVIEW_DECISION`,
+   `UTILIZATION_REVIEW_DECISION_REGULAR`,
+   `UTILIZATION_REVIEW_DECISION_EXPEDITED`.
+
+3. **`DISCHARGE_SUMMARY` no longer renders as an operative report.** The
+   substrate maps it to `OperativeRecord` with a `discharge` variant the
+   template never reads, so every discharge summary was headed "OPERATIVE
+   REPORT". On a discharged case with no surgery that is not a cosmetic problem:
+   it is an operation appearing in a file whose ledger denies one.
+
+4. **The operative-document floor applies to *stated* surgery only.**
+   `scenario.surgery: performed` now guarantees at least one operative document
+   (closing ISC-92.1, and with it the validator's forward direction). A
+   *derived* surgery keeps the substrate's probabilistic emission untouched,
+   which is precisely what leaves 0.3.0 bytes alone for every seed that states
+   nothing. `validate` tells the two apart by reading the seed beside the
+   manifest.
+
+5. **The ledger publishes a `treatment` block** — status, trajectory, discharge
+   date, gap bounds — all governed, all rendered somewhere.
+
+6. **Overriding a substrate exclusion now warns.** Stating surgery on a death or
+   psych claim is still honoured, but it lands in `manifest.warnings` with the
+   denylist and doctrine-hook warnings. The demo is unaffected: no demo seed
+   states surgery, and its warning count is unchanged at 2.
+
+### Known scope limits (Phase 2)
+
+- **A gap is clamped by the timeline.** Every lifecycle this engine builds has a
+  runway shorter than the largest gap in the pool, so seed-level gaps are
+  routinely shortened. The unclamped path is tested directly against
+  `_derive_visits` with a long horizon, because no seed can reach it.
+- **Shared content pools are still ungoverned.** `content_pools.py`,
+  `ama_guides_content.py` and `deposition_exchanges.py` name modalities inside
+  narrative and rating text drawn by many templates. Governing them needs a
+  per-draw ledger channel rather than a template override — Phase 3. Every one
+  of those sites is listed in the audit table with that reason.
+- **Prior-provider records are deliberately ungoverned.** Subpoenaed records
+  describe medical history predating the claim, which the ledger does not model.
+  Forcing them would assert that the applicant's entire medical past agrees with
+  one injury's imaging.
+
 ### Added — the CaseFacts ledger (ticket **AJC-37**, Phase 1)
 
 Before this, every template that wanted a clinical detail invented one. A QME

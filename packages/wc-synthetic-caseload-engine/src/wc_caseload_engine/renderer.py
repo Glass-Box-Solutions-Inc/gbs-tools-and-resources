@@ -388,6 +388,7 @@ def render_document(
     content_flags: Sequence[str] = (),
     case_facts: Any = None,
     packet_index: int | None = None,
+    report_ordinal: int | None = None,
 ) -> RenderResult:
     """Render one planned document to *out_path*, reproducibly.
 
@@ -465,6 +466,9 @@ def render_document(
         packet = packet_index if packet_index is not None else index
         if case_facts.providers:
             context["provider_index"] = packet % len(case_facts.providers)
+        # Same reasoning, different axis: the trajectory advances per treating
+        # report, so it needs a report ordinal rather than a document index.
+        context["report_ordinal"] = report_ordinal if report_ordinal is not None else 0
     context["perspective"] = seed.perspective
     context["file_owner_firm"] = file_owner_firm(
         seed.perspective, cast.applicant_firm, cast.defense_firm
