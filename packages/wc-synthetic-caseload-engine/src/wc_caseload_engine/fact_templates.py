@@ -20,6 +20,7 @@ from typing import Any
 import structlog
 
 from wc_caseload_engine.case_facts import (
+    ADJUSTER_LETTER_TYPES,
     IMAGING_MODALITIES,
     MODALITY_DISPLAY,
     SUBSTRATE_STATUS_PHRASES,
@@ -132,6 +133,21 @@ def _after_examination_line(story: list[Any]) -> int:
     for position, element in enumerate(story):
         if "EXAMINATION:" in str(getattr(element, "text", "")):
             return position + 1
+    return 0
+
+
+def _letter_ordinal(template: Any) -> int:
+    """Which adjuster letter this is within its own case, zero-based.
+
+    Its own counter for the same reason the treating report has one: the type
+    sequence has to advance per *letter*, not per document, or two letters at
+    document indices 3 and 27 would land on unrelated points of the sequence.
+    """
+    context = getattr(getattr(template, "doc_spec", None), "context", None)
+    if isinstance(context, dict):
+        value = context.get("letter_ordinal")
+        if isinstance(value, int):
+            return value
     return 0
 
 
@@ -590,9 +606,87 @@ def build_fact_aware_templates() -> dict[str, type]:
             )
             return story
 
+    adjuster_module = import_substrate("pdf_templates.correspondence.adjuster_letter")
+
+    class FactAwareAdjusterLetter(adjuster_module.AdjusterLetter):  # type: ignore[misc,name-defined]
+        """Writes a letter this case could actually have produced.
+
+        The substrate drew one of five letter bodies per document, independently
+        — so a file with three adjuster letters could open the claim for the
+        first time three separate times, and a case with no UR dispute could
+        receive a determination letter about a review that never happened.
+
+        Two rules, both from the lifecycle rather than from a draw:
+
+        * the type must be one the case can support
+          (``CaseFacts.adjuster_letter_types_allowed``), and
+        * the case walks *through* the allowed types rather than sampling them,
+          so the once-only ones happen once.
+
+        Ordered so the chronology reads correctly: a case accepts the claim
+        before it discusses settling it.
+        """
+
+        #: Allowed types in the order a file would produce them.
+        ORDER = (
+            "initial_acceptance",
+            "medical_records_request",
+            "ur_decision",
+            "pd_advance_offer",
+            "settlement_discussion",
+        )
+
+        #: Types a file can legitimately repeat. A claim is accepted once.
+        REPEATABLE = ("medical_records_request", "settlement_discussion", "pd_advance_offer")
+
+        def _letter_type_for(self, facts: Any, ordinal: int) -> str:
+            allowed = [name for name in self.ORDER if name in facts.adjuster_letter_types_allowed]
+            if not allowed:
+                return "medical_records_request"
+            if ordinal < len(allowed):
+                return allowed[ordinal]
+            # Past the one-time types, cycle only what can honestly recur.
+            repeatable = [name for name in allowed if name in self.REPEATABLE] or allowed
+            return repeatable[(ordinal - len(allowed)) % len(repeatable)]
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            facts = _facts_of(self)
+            if facts is None or not facts.adjuster_letter_types_allowed:
+                return list(super().build_story(doc_spec))
+
+            wanted = self._letter_type_for(facts, _letter_ordinal(self))
+            target = getattr(self, f"_{wanted}", None)
+            if target is None:
+                log.warning("fact_templates.adjuster_letter_method_missing", wanted=wanted)
+                return list(super().build_story(doc_spec))
+
+            forced = _ForcedChoice(
+                target,
+                lambda seq: len(seq) == len(ADJUSTER_LETTER_TYPES)
+                and all(callable(item) for item in seq),
+            )
+            original = adjuster_module.random
+            adjuster_module.random = forced
+            try:
+                story = list(super().build_story(doc_spec))
+            finally:
+                adjuster_module.random = original
+
+            if not forced.fired:
+                log.warning(
+                    "fact_templates.adjuster_letter_type_not_forced",
+                    wanted=wanted,
+                    expected=len(ADJUSTER_LETTER_TYPES),
+                )
+            return story
+
     _ = Paragraph  # imported for subclasses that grow to need it
 
     return {
+        "ADJUSTER_LETTER": FactAwareAdjusterLetter,
+        "ADJUSTER_LETTER_INFORMATIONAL": FactAwareAdjusterLetter,
+        "ADJUSTER_LETTER_REQUEST": FactAwareAdjusterLetter,
+        "ADJUSTER_DEMANDS_REQUESTS": FactAwareAdjusterLetter,
         "DISCHARGE_SUMMARY": FactAwareDischargeSummary,
         "MEDICAL_TREATMENT_AUTHORIZATION": FactAwareUtilizationReview,
         "MEDICAL_TREATMENT_DENIAL_UR": FactAwareUtilizationReview,
