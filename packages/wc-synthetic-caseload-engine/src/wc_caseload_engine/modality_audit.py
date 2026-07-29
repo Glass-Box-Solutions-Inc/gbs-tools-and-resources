@@ -40,12 +40,20 @@ class ModalitySite(NamedTuple):
     """The override that governs it, or the reason it is left alone."""
 
 
-#: File suffixes the audit does not consider rendered content.
+#: Path fragments the audit does not consider rendered content.
 #:
 #: ``tests/`` is the substrate's own test suite, ``batch*.py`` are standalone
 #: corpus-generation scripts this engine never calls, and ``data/taxonomy.py``
 #: holds subtype *vocabulary* — ``EMG_NCV_STUDY`` is the name of a document
 #: kind, not a clinical assertion about a case.
+#:
+#: ``site-packages`` and the virtualenv directories matter more than they look.
+#: A substrate checkout with its own venv puts third-party code *inside* the
+#: tree the audit walks, and faker ships the job title "Diagnostic
+#: radiographer" — so the audit failed on a dependency this package never
+#: renders, and only on checkouts that happened to have a venv. That is the
+#: worst kind of gate: one whose result depends on the reviewer's directory
+#: layout rather than on the code.
 EXCLUDED_PATHS: tuple[str, ...] = (
     "tests/",
     "batch1_",
@@ -53,6 +61,9 @@ EXCLUDED_PATHS: tuple[str, ...] = (
     "batch3_",
     "batch4_",
     "data/taxonomy.py",
+    "site-packages/",
+    ".venv/",
+    "venv/",
 )
 
 MODALITY_SITES: tuple[ModalitySite, ...] = (
@@ -175,12 +186,6 @@ MODALITY_SITES: tuple[ModalitySite, ...] = (
     ),
     ModalitySite(
         "data/content_pools.py",
-        "electrodiagnostic",
-        "documented",
-        "same shared pools",
-    ),
-    ModalitySite(
-        "data/content_pools.py",
         "nerve conduction",
         "documented",
         "same shared pools",
@@ -213,18 +218,6 @@ MODALITY_SITES: tuple[ModalitySite, ...] = (
     ),
     ModalitySite(
         "data/ama_guides_content.py",
-        "nerve conduction",
-        "documented",
-        "same: quoted rating criteria",
-    ),
-    ModalitySite(
-        "data/ama_guides_content.py",
-        "MRI",
-        "documented",
-        "same: quoted rating criteria",
-    ),
-    ModalitySite(
-        "data/ama_guides_content.py",
         "radiograph",
         "documented",
         "same: quoted rating criteria",
@@ -243,22 +236,10 @@ MODALITY_SITES: tuple[ModalitySite, ...] = (
         "same deposition transcript content",
     ),
     ModalitySite(
-        "data/deposition_exchanges.py",
-        "EMG",
-        "documented",
-        "same deposition transcript content",
-    ),
-    ModalitySite(
         "data/wc_constants.py",
         "MRI",
         "documented",
         "facility and body-part constant tables — vocabulary, not case facts",
-    ),
-    ModalitySite(
-        "data/wc_constants.py",
-        "EMG",
-        "documented",
-        "same constant tables",
     ),
     ModalitySite(
         "data/wc_constants.py",

@@ -644,18 +644,27 @@ in the file, and it now **guarantees** at least one operative document.
 happen — both still name a CPT, because a request names what it asks for, and
 `validate` rejects an operative document in either case.
 
-`denied_by_ur` requires a UR dispute and is refused without one:
+`denied_by_ur` requires a UR dispute **whose denial stands**, and is refused
+otherwise:
 
 ```yaml
 scenario:
   surgery: denied_by_ur
 lifecycle:
-  ur_dispute: {enabled: true, decision: upheld}   # required — not auto-enabled
+  ur_dispute: {enabled: true, decision: upheld}   # both fields required
 ```
 
 The seed is the contract, so the engine will not quietly switch UR on for you: a
 dispute pulls in an RFA, a determination and an IMR window, and silently adding
 them would change the shape of the file you asked for.
+
+`decision` must be stated and must be `upheld`. `overturned` approves the request
+the ledger says was refused — the file would hold an authorization next to a
+treating report describing the denial under appeal. Leaving it unset is refused
+for the same reason one step removed: an unset decision resolves through the
+substrate's own coin and can *become* an approval, so the contradiction would
+appear on some seeds and not others. (The seed speaks from the dispute's point of
+view, so `upheld` means the UR denial was upheld — the surgery did not happen.)
 
 ### The treatment block
 
@@ -673,10 +682,17 @@ scenario:
   reference it. The gap is **clamped to the runway the timeline has**: a case
   that resolves four months after injury gets a shorter gap rather than none.
 - **`never_treated`** — everything past the first-report tier is suppressed at
-  the planner. Incompatible with any surgery value other than `none`, and with
-  medical, hospital or pharmacy lien claimants — a provider only holds a lien
-  for treatment it gave. Both are refused at load with the conflicting field
-  named. EDD, ambulance, attorney-cost and self-procured liens are fine.
+  the planner, and the ledger publishes an empty provider roster and no visits.
+  Incompatible with any surgery value other than `none`, and with medical,
+  hospital or pharmacy lien claimants — a provider only holds a lien for
+  treatment it gave. EDD, ambulance, attorney-cost and self-procured liens are
+  fine.
+
+  The lien rule binds on both paths, and differently on each. Naming a treatment
+  claimant is an **error**; leaving `claimants` empty and letting the engine fill
+  `liens.count` **drops** them from the pool it draws from. Same split as
+  surgery: a stated conflict is the author's to fix, a derived one is the
+  engine's not to create.
 
 Treating reports follow one trajectory (improving, plateau or worsening) across
 the case rather than re-rolling a mood per document, so a three-report file reads
@@ -707,11 +723,18 @@ because the provider round-robin sets a context key the substrate template has
 always read and the engine never supplied (see the CHANGELOG). A probe fails on
 any change it cannot attribute to a declared source.
 
-Two caveats worth stating. The demo spec happens to emit only three of the nine
-registry subtypes, so the byte probe exercises the rest only through the
-coherence suite. And stating `scenario:` in a seed is expected to change that
-seed's bytes — it is a content knob; the guarantee is that seeds which say
-nothing keep exactly what they had.
+Two caveats worth stating precisely, because the loose version of the second one
+is false.
+
+The demo spec emits only a subset of the registry subtypes, so the byte probe
+exercises the rest only through the coherence suite.
+
+And the guarantee for a seed that states no `scenario:` block is **not** that its
+bytes never move — the 24 changed documents above are exactly such seeds. It is
+narrower: a scenario-free seed keeps its bytes *outside the subtypes this version
+newly governs*. Bringing a template under the ledger changes what it renders, and
+that is the point; what must never happen is an ungoverned document drifting, and
+the probe fails on any change it cannot attribute to a declared source.
 
 Ledger draws are namespaced under `facts:` so they cannot perturb an existing
 stream, and the renderer re-seeds per document, so a fact-aware template cannot

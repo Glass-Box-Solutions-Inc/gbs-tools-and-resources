@@ -41,7 +41,7 @@ from wc_caseload_engine.planner import (
     POST_DISCHARGE_FORBIDDEN,
     build_case_plan,
 )
-from wc_caseload_engine.seeds import parse_case_seed
+from wc_caseload_engine.seeds import TREATMENT_LIEN_CLAIMANTS, parse_case_seed
 from wc_caseload_engine.substrate import import_substrate
 
 
@@ -222,12 +222,19 @@ class TestNeverTreatedEmptiesTheTreatmentRecord:
         ]
         assert kept, "the control case has no treatment documents; suppression proves nothing"
 
-    def test_the_ledger_records_a_single_visit(self) -> None:
+    def test_the_ledger_records_no_visits(self) -> None:
+        """A reported injury is not a treatment visit.
+
+        This asserted a single "initial" visit until the PR #24 review: the
+        first-report tier still emits documents, but publishing a visit behind
+        them made the ledger claim a clinical encounter in a file whose whole
+        premise is that none happened.
+        """
         facts = build_case_plan(
             _seed("nt-ledger", rng_seed=7211, scenario={"treatment": {"status": "never_treated"}})
         ).case_facts
         assert facts is not None
-        assert [v.kind for v in facts.visits] == ["initial"]
+        assert facts.visits == ()
 
     def test_the_suppression_is_warned_about(self) -> None:
         plan = build_case_plan(
@@ -648,3 +655,276 @@ class TestTheModalityAuditTableIsComplete:
         governed = {site.path for site in MODALITY_SITES if site.disposition == "governed"}
         assert "pdf_templates/medical/diagnostic_report.py" in governed
         assert "pdf_templates/medical/qme_ame_report.py" in governed
+
+    def test_every_row_marker_matches_a_real_line(self) -> None:
+        """Row-level, not file-level. A marker that matches nothing is a lie.
+
+        Without this, a row could claim to govern a site that no longer exists
+        — or never did — and the file-level tests above would still pass,
+        because some *other* row covers the file. The table would read as
+        complete while quietly not being.
+        """
+        hits = _substrate_modality_hits()
+        vacuous: list[str] = []
+        for site in MODALITY_SITES:
+            lines = hits.get(site.path, [])
+            if not any(site.marker in text for _, text in lines):
+                vacuous.append(f"{site.path} :: {site.marker!r}")
+        assert not vacuous, "MODALITY_SITES rows match no substrate line:\n" + "\n".join(vacuous)
+
+    def test_third_party_code_is_excluded_from_the_walk(self) -> None:
+        """A substrate tree with a venv must not drag site-packages into the audit.
+
+        The reviewer's checkout had one, and faker's "Diagnostic radiographer"
+        made the audit fail on code this package does not render — which is
+        also why their run did not reproduce our green suite.
+        """
+        for path in (
+            ".venv/lib/python3.12/site-packages/faker/providers/job/__init__.py",
+            "venv/lib/site-packages/anything.py",
+            "some/nested/site-packages/mod.py",
+        ):
+            assert is_excluded(path), f"{path} would be walked as substrate content"
+
+
+# ---------------------------------------------------------------------------
+# The guards bind on the derived path too (PR #24 review)
+# ---------------------------------------------------------------------------
+#
+# Every failure below was the same shape: the explicit path rejects actionably
+# and the adjacent path passes in silence. A guard that only fires when the
+# author already spelled out the problem is a guard against typing, not against
+# incoherence.
+
+
+class TestNeverTreatedBindsOnDerivedLiens:
+    def test_an_auto_filled_roster_cannot_smuggle_a_treatment_lien(self) -> None:
+        """The proven seed: no claimants named, six drawn, treatment liens land."""
+        seed = _seed(
+            "nt-derived-liens",
+            rng_seed=8101,
+            scenario={"treatment": {"status": "never_treated"}},
+            lifecycle={
+                "target_stage": "medical_legal",
+                "eval_type": "qme",
+                "liens": {"count": 6, "claimants": []},
+            },
+        )
+        plan = build_case_plan(seed)
+        offenders = sorted(
+            {
+                track.claimant
+                for track in plan.lien_tracks
+                if track.claimant in TREATMENT_LIEN_CLAIMANTS
+            }
+        )
+        assert not offenders, (
+            f"never_treated case resolved treatment lien claimants {offenders} — "
+            "a provider only holds a lien for treatment it gave"
+        )
+
+    def test_the_derived_roster_still_fills_to_the_requested_count(self) -> None:
+        """Filtering the pool must not quietly shrink the case."""
+        seed = _seed(
+            "nt-derived-count",
+            rng_seed=8102,
+            scenario={"treatment": {"status": "never_treated"}},
+            lifecycle={
+                "target_stage": "medical_legal",
+                "eval_type": "qme",
+                "liens": {"count": 4, "claimants": []},
+            },
+        )
+        assert len(build_case_plan(seed).lien_tracks) == 4
+
+    def test_an_ordinary_case_still_draws_treatment_claimants(self) -> None:
+        """Opposite-draw: the filter is scoped to never_treated, not global."""
+        seen: set[str] = set()
+        for rng_seed in range(8110, 8120):
+            seed = _seed(
+                f"ord-liens-{rng_seed}",
+                rng_seed=rng_seed,
+                lifecycle={
+                    "target_stage": "medical_legal",
+                    "eval_type": "qme",
+                    "liens": {"count": 6, "claimants": []},
+                },
+            )
+            seen.update(track.claimant for track in build_case_plan(seed).lien_tracks)
+        assert seen & set(TREATMENT_LIEN_CLAIMANTS), (
+            "no ordinary case drew a treatment claimant; the filter is too wide"
+        )
+
+    def test_an_explicit_treatment_claimant_is_still_rejected(self) -> None:
+        """Stated beats derived, in both directions: name it and it is an error."""
+        with pytest.raises(ValueError, match="never_treated"):
+            _seed(
+                "nt-explicit",
+                scenario={"treatment": {"status": "never_treated"}},
+                lifecycle={
+                    "target_stage": "medical_legal",
+                    "eval_type": "qme",
+                    "liens": {"count": 2, "claimants": ["hospital"]},
+                },
+            )
+
+
+class TestDeniedByUrRequiresTheDenialToStand:
+    def test_an_overturned_decision_is_refused(self) -> None:
+        """The proven seed: UR overturned, surgery 'denied_by_ur', both rendered."""
+        with pytest.raises(ValueError) as exc:
+            _seed(
+                "ur-overturned",
+                scenario={"surgery": "denied_by_ur"},
+                lifecycle={
+                    "target_stage": "medical_legal",
+                    "eval_type": "qme",
+                    "ur_dispute": {"enabled": True, "decision": "overturned"},
+                },
+            )
+        message = str(exc.value)
+        assert "overturned" in message
+        assert "upheld" in message
+
+    def test_an_unstated_decision_is_refused(self) -> None:
+        """The same bug one level down.
+
+        ``decision: None`` maps to the substrate's ``"random"``, which resolves
+        via ``rng.choice(["approved", "denied"])`` — so it can land on approved
+        and produce the identical contradiction, non-deterministically from the
+        seed author's point of view. ``denied_by_ur`` therefore requires the
+        decision to be stated, not merely for a dispute to exist.
+        """
+        with pytest.raises(ValueError) as exc:
+            _seed(
+                "ur-unstated",
+                scenario={"surgery": "denied_by_ur"},
+                lifecycle={
+                    "target_stage": "medical_legal",
+                    "eval_type": "qme",
+                    "ur_dispute": {"enabled": True},
+                },
+            )
+        assert "upheld" in str(exc.value)
+
+    def test_the_substrate_really_can_draw_approved(self) -> None:
+        """Evidence for the docstring above, not an assumption."""
+        source = inspect.getsource(import_substrate("data.lifecycle_engine"))
+        assert 'rng.choice(["approved", "denied"])' in source
+
+    def test_upheld_is_accepted(self) -> None:
+        seed = _seed(
+            "ur-upheld",
+            scenario={"surgery": "denied_by_ur"},
+            lifecycle={
+                "target_stage": "medical_legal",
+                "eval_type": "qme",
+                "ur_dispute": {"enabled": True, "decision": "upheld"},
+            },
+        )
+        assert seed.scenario.surgery == "denied_by_ur"
+
+
+class TestNeverTreatedPublishesAnEmptyRecord:
+    def test_the_provider_roster_is_empty(self) -> None:
+        facts = build_case_plan(
+            _seed("nt-roster", rng_seed=8201, scenario={"treatment": {"status": "never_treated"}})
+        ).case_facts
+        assert facts is not None
+        assert facts.providers == (), (
+            "never_treated publishes a treating roster; the manifest asserts "
+            "providers for a case whose documents say nobody treated"
+        )
+
+    def test_there_are_no_visits(self) -> None:
+        facts = build_case_plan(
+            _seed("nt-visits", rng_seed=8202, scenario={"treatment": {"status": "never_treated"}})
+        ).case_facts
+        assert facts is not None
+        assert facts.visits == ()
+
+    def test_the_published_outputs_agree(self, tmp_path: Path) -> None:
+        seed = _seed(
+            "nt-published", rng_seed=8203, scenario={"treatment": {"status": "never_treated"}}
+        )
+        manifest, _ = _render(seed, tmp_path)
+        assert manifest["caseFacts"]["providers"] == []
+        yaml_text = (tmp_path / seed.case_id / "case_facts.yaml").read_text()
+        assert "providers: []" in yaml_text
+
+    def test_subpoena_attribution_degrades_to_the_treating_physician(
+        self, tmp_path: Path
+    ) -> None:
+        """An empty roster must not crash or index into nothing.
+
+        The renderer only sets ``provider_index`` when the roster is non-empty,
+        so the substrate takes the fallback it has always had. Asserted rather
+        than assumed, because the alternative is a modulo by zero.
+        """
+        seed = _seed(
+            "nt-subpoena",
+            rng_seed=8204,
+            scenario={"treatment": {"status": "never_treated"}},
+            documents={
+                "overrides": [{"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 2}],
+                "format_mix": {"pdf": 1.0},
+            },
+        )
+        _, texts = _render(seed, tmp_path)
+        assert texts.get("SUBPOENAED_RECORDS_MEDICAL"), "rendering failed on an empty roster"
+
+    def test_an_ordinary_case_still_has_providers(self) -> None:
+        """Opposite-draw: the emptying is scoped to never_treated."""
+        facts = build_case_plan(_seed("ord-roster", rng_seed=8201)).case_facts
+        assert facts is not None
+        assert facts.providers
+
+
+class TestEveryActionableMessageResolvesWhenFollowed:
+    """The meta-guard: an actionable error must actually be actionable.
+
+    The ``denied_by_ur`` message told authors to add ``decision: denied``, which
+    is not a legal enum value — following it verbatim produced a second error.
+    A message that sends the reader somewhere that also fails is worse than a
+    terse one, because it costs a round trip to discover.
+    """
+
+    def test_the_denied_by_ur_message_names_a_legal_value(self) -> None:
+        with pytest.raises(ValueError) as exc:
+            _seed("msg-ur", scenario={"surgery": "denied_by_ur"})
+        message = str(exc.value)
+        assert "decision: denied" not in message, "the suggested value is not in the enum"
+        assert "upheld" in message
+
+    def test_following_the_ur_message_produces_a_valid_seed(self) -> None:
+        """Apply the suggested edit; the seed must now load."""
+        seed = _seed(
+            "msg-ur-fixed",
+            scenario={"surgery": "denied_by_ur"},
+            lifecycle={
+                "target_stage": "medical_legal",
+                "eval_type": "qme",
+                "ur_dispute": {"enabled": True, "decision": "upheld"},
+            },
+        )
+        assert seed.scenario.surgery == "denied_by_ur"
+
+    def test_following_the_never_treated_surgery_message_works(self) -> None:
+        seed = _seed(
+            "msg-nt-surg",
+            scenario={"treatment": {"status": "never_treated"}, "surgery": "none"},
+        )
+        assert seed.scenario.surgery == "none"
+
+    def test_following_the_never_treated_lien_message_works(self) -> None:
+        """The message names edd/ambulance/attorney_costs/self_procured as safe."""
+        seed = _seed(
+            "msg-nt-lien",
+            scenario={"treatment": {"status": "never_treated"}},
+            lifecycle={
+                "target_stage": "medical_legal",
+                "eval_type": "qme",
+                "liens": {"count": 2, "claimants": ["edd", "attorney_costs"]},
+            },
+        )
+        assert seed.scenario.treatment.status == "never_treated"

@@ -121,6 +121,52 @@ because it had no notion of either.
    denylist and doctrine-hook warnings. The demo is unaffected: no demo seed
    states surgery, and its warning count is unchanged at 2.
 
+### Fixed — guards that bound on one path only (PR #24 review)
+
+Three defects of one shape: the explicit path rejected actionably and the
+adjacent path passed in silence. A guard that fires only when the author already
+spelled out the problem is a guard against typing, not against incoherence.
+
+7. **`never_treated` now binds on derived liens.** Naming a hospital claimant was
+   rejected; leaving `claimants: []` with `count: 6` loaded cleanly and planned
+   `LIEN_HOSPITAL` and `LIEN_PHARMACY` into a file whose ledger says nobody
+   treated. The derived pool now drops treatment claimants — dropped rather than
+   rejected, because nobody *asked* for a hospital lien, the engine was about to
+   invent one. Stated conflicts stay errors.
+
+8. **`denied_by_ur` now requires the denial to stand.** The guard checked
+   `ur_dispute.enabled` and not `decision`, so `decision: overturned` loaded with
+   zero warnings and produced a file holding an authorization *and* a treating
+   report describing the same request as denied and under appeal. `overturned` is
+   now refused — and so is an unset decision, which maps to the substrate's
+   `rng.choice(["approved", "denied"])` and can therefore become an approval on
+   some seeds and not others. The same contradiction, one level down and
+   non-deterministic.
+
+9. **`never_treated` publishes an empty record.** It was publishing a
+   four-provider treating roster and an initial visit as governed ledger facts. A
+   reported injury is not a treatment visit, and a published fact reads as a
+   verified one. Subpoena attribution degrades to the substrate's own
+   treating-physician fallback, which the renderer already took whenever the
+   roster is empty.
+
+10. **The `denied_by_ur` error suggested a value outside the enum.** It said to
+    add `decision: denied`; the legal values are `upheld` and `overturned`, so
+    following the message produced a second error. An error that sends the reader
+    somewhere that also fails is worse than a terse one. A test now *follows*
+    each actionable message's suggested edit and asserts the seed then loads.
+
+11. **The modality audit walked third-party code.** `EXCLUDED_PATHS` lacked
+    `site-packages/` and the virtualenv directories, so a substrate checkout with
+    its own venv dragged faker's "Diagnostic radiographer" into the audit — a
+    gate whose result depended on the reviewer's directory layout rather than on
+    the code, and the reason a clean local run did not reproduce for them.
+
+12. **Audit rows are no longer vacuous.** Nothing asserted that a row's marker
+    matched any real line, so a row could claim to govern a site that did not
+    exist while the file-level checks still passed. Adding the per-row assertion
+    immediately found five such rows, which have been removed.
+
 ### Known scope limits (Phase 2)
 
 - **A gap is clamped by the timeline.** Every lifecycle this engine builds has a

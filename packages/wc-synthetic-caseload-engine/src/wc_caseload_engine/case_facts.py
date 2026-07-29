@@ -521,7 +521,9 @@ def _pick_cpt(seed: CaseSeed, parts: list[str], primary: str) -> tuple[str, str]
     return SURGERY_CPT_CODES.get(primary, _DEFAULT_CPT)
 
 
-def _derive_providers(seed: CaseSeed, cast: Any) -> tuple[ProviderFact, ...]:
+def _derive_providers(
+    seed: CaseSeed, cast: Any, status: str = "ongoing"
+) -> tuple[ProviderFact, ...]:
     """The providers a records subpoena can be answered by.
 
     Read off the substrate case's own ``prior_providers`` rather than invented
@@ -533,6 +535,17 @@ def _derive_providers(seed: CaseSeed, cast: Any) -> tuple[ProviderFact, ...]:
     Falls back to the treating physician when the case has no prior providers,
     which is the same degradation the substrate template already applies.
     """
+    if status == "never_treated":
+        # Nobody treated, so there is nobody to subpoena. Publishing the
+        # substrate's four prior providers here asserted a treating roster for a
+        # case whose documents say the applicant never went — and a published
+        # fact reads as a verified one.
+        #
+        # The renderer only sets ``provider_index`` when the roster is
+        # non-empty, so subpoena attribution falls back to the substrate's own
+        # treating-physician default rather than dividing by zero.
+        return ()
+
     case = getattr(cast, "case", None)
     providers: list[ProviderFact] = []
 
@@ -585,12 +598,16 @@ def _derive_visits(
     horizon = getattr(timeline, "resolution_date", None) or getattr(
         timeline, "application_filed_date", None
     )
-    visits: list[VisitFact] = [VisitFact(date=onset + timedelta(days=3), kind="initial")]
-
     if status == "never_treated":
-        # The initial report exists because an injury was reported; nothing
-        # follows it, because nobody treated.
-        return tuple(visits)
+        # No visits at all. An earlier version kept an "initial" visit here on
+        # the reasoning that somebody reported the injury — but a *reported*
+        # injury is not a *treatment* visit, and publishing one made the ledger
+        # assert a clinical encounter in a file whose whole premise is that
+        # none happened. The first-report tier still emits its documents; it
+        # just no longer claims a visit behind them.
+        return ()
+
+    visits: list[VisitFact] = [VisitFact(date=onset + timedelta(days=3), kind="initial")]
 
     step = 45
     gap_after = 1
@@ -667,7 +684,7 @@ def derive_case_facts(seed: CaseSeed, timeline: Any, cast: Any = None) -> CaseFa
     status = resolve_treatment_status(seed)
     diagnostics = _derive_diagnostics(seed, timeline)
     surgery = _derive_surgery(seed, timeline)
-    providers = _derive_providers(seed, cast)
+    providers = _derive_providers(seed, cast, status)
     visits = _derive_visits(seed, timeline, surgery, status)
     trajectory = _derive_trajectory(seed, status)
 

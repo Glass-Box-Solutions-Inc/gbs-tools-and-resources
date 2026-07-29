@@ -39,7 +39,7 @@ from wc_caseload_engine.lifecycle_bridge import (
     DatedCandidate,
     fit_track,
 )
-from wc_caseload_engine.seeds import CaseSeed
+from wc_caseload_engine.seeds import TREATMENT_LIEN_CLAIMANTS, CaseSeed
 
 log = structlog.get_logger(__name__)
 
@@ -123,15 +123,32 @@ class LienTrack:
 
 
 def _claimants_for(seed: CaseSeed, rng: random.Random) -> list[str]:
-    """Resolve ``liens.count`` claimant types, honouring those named in the seed."""
+    """Resolve ``liens.count`` claimant types, honouring those named in the seed.
+
+    Under ``treatment.status: never_treated`` the *derived* pool drops medical,
+    hospital and pharmacy claimants. The seed-level validator already rejects
+    those when an author names them, but rejecting is the wrong answer here:
+    nobody asked for a hospital lien, the engine was about to invent one. Same
+    stated-vs-derived split as surgery — a stated conflict is an error, a
+    derived one is simply not drawn.
+
+    Without this, ``{status: never_treated, liens: {count: 6, claimants: []}}``
+    loaded cleanly and planned LIEN_HOSPITAL and LIEN_PHARMACY into a file whose
+    ledger says nobody ever treated.
+    """
     liens = seed.lifecycle.liens
     chosen = list(liens.claimants)
     if len(chosen) >= liens.count:
         return chosen[: liens.count]
-    pool = [c for c in CLAIMANT_POOL if c not in chosen]
+
+    allowed = CLAIMANT_POOL
+    if seed.scenario.treatment.status == "never_treated":
+        allowed = tuple(c for c in CLAIMANT_POOL if c not in TREATMENT_LIEN_CLAIMANTS)
+
+    pool = [c for c in allowed if c not in chosen]
     rng.shuffle(pool)
     while len(chosen) < liens.count:
-        chosen.append(pool.pop(0) if pool else rng.choice(CLAIMANT_POOL))
+        chosen.append(pool.pop(0) if pool else rng.choice(allowed))
     return chosen
 
 

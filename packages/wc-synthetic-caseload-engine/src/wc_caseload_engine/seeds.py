@@ -891,15 +891,42 @@ class CaseSeed(_Model):
                     "self_procured are compatible), or change the treatment status."
                 )
 
-        if scenario.surgery == "denied_by_ur" and not self.lifecycle.ur_dispute.enabled:
-            raise ValueError(
-                "scenario.surgery is 'denied_by_ur' but lifecycle.ur_dispute.enabled is "
-                "false — a denial needs the utilization review that issued it. Add "
-                "'lifecycle: {ur_dispute: {enabled: true, decision: denied}}' to this "
-                "seed, or use scenario.surgery: 'recommended' for a request that was "
-                "never adjudicated. This is not auto-enabled: a UR dispute pulls in an "
-                "RFA, a determination and an IMR window, and the seed is the contract."
-            )
+        if scenario.surgery == "denied_by_ur":
+            ur = self.lifecycle.ur_dispute
+            if not ur.enabled:
+                raise ValueError(
+                    "scenario.surgery is 'denied_by_ur' but lifecycle.ur_dispute.enabled "
+                    "is false — a denial needs the utilization review that issued it. Add "
+                    "'lifecycle: {ur_dispute: {enabled: true, decision: upheld}}' to this "
+                    "seed, or use scenario.surgery: 'recommended' for a request that was "
+                    "never adjudicated. This is not auto-enabled: a UR dispute pulls in "
+                    "an RFA, a determination and an IMR window, and the seed is the "
+                    "contract."
+                )
+            if ur.decision != "upheld":
+                # ``overturned`` contradicts the surgery outright, and an unstated
+                # decision resolves through the substrate's
+                # ``rng.choice(["approved", "denied"])`` — so it can *become*
+                # overturned, non-deterministically from the author's point of view.
+                # Both produce the same file: a treating report saying the request was
+                # denied and under appeal, next to the authorization that approved it.
+                # An explicit ``upheld`` is the only state in which the denial stands.
+                stated = f"is {ur.decision!r}" if ur.decision else "is unset"
+                consequence = (
+                    "which approves the request the ledger says was refused"
+                    if ur.decision == "overturned"
+                    else "which resolves at random and can approve the request the "
+                    "ledger says was refused"
+                )
+                raise ValueError(
+                    f"scenario.surgery is 'denied_by_ur' but lifecycle.ur_dispute."
+                    f"decision {stated}, {consequence}. Set "
+                    "'lifecycle: {ur_dispute: {decision: upheld}}' so the denial stands, "
+                    "or use scenario.surgery: 'recommended' if the request is still "
+                    "pending. ('upheld' and 'overturned' are the only values; the seed "
+                    "speaks from the dispute's point of view, so 'upheld' means the UR "
+                    "denial was upheld.)"
+                )
 
         return self
 
