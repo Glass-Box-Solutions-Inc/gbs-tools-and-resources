@@ -44,6 +44,8 @@ package is built on. Flagged and accepted as an explicit stack decision.
 | `renderer.py` | Template dispatch, format assignment, per-document reproducibility. |
 | `determinism.py` | The three reproducibility fixes (hash seed, docx ZIP times, PDF `/ID`). |
 | `manifests.py` | Output tree, manifests, `validate --out`. |
+| `schema_audit.py` | The "not yet honoured" docstring marker sweep (ISC-137). Parses `seeds.py` from the syntax tree, never from `model_fields`. |
+| `message_audit.py` | The actionable-message sweep (ISC-129). Every message `seeds.py` can raise, one level of helper indirection resolved, classified into *instructs* vs *reports*. |
 | `cli.py` | Click commands. |
 
 Data flow: `seed → timeline → {core, liens, recon} candidates → doc_controls → dated plan → renderer → manifest`.
@@ -176,7 +178,7 @@ If an import breaks, fix the bridge — not by copying files.
 
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/         # 741 tests, ~150s (pyproject already passes -q)
+.venv/bin/python -m pytest tests/         # 844 tests, ~180s (pyproject already passes -q)
 .venv/bin/ruff check .
 ```
 
@@ -199,6 +201,15 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_entrypoint_parity.py` | `-m` and console-script output are byte-identical |
 | `test_doctrine_content.py` | Doctrine content table, prerequisites, plan flags, per-hook language on the page, hook-free anti-probe, and the `examples/doctrine-showcase.yaml` pins (every hook seeded, zero warnings, every hook landing, no forced subtypes) |
 | `test_manifest_integrity.py` | `zeroRealPii` vs the denylist, canonical control keys at generate, emitted-vs-proposed track counts |
+| `test_schema_honesty.py` | The "not yet honoured" marker sweep, its inertness probes, and the planted control (ISC-137) |
+| `test_message_registry.py` | Every actionable seed message paired with the edit that resolves it, completeness both ways, and the planted control (ISC-129) |
+
+Two meta-guards police the docs from inside the suite, and both fail in the
+direction that matters. Wiring up a field marked "not yet honoured" turns
+`test_schema_honesty.py` red until the marker goes; writing a new imperative
+into a seed error turns `test_message_registry.py` red until somebody proves
+that following it works. Neither checks that documentation *was* updated — they
+make stale documentation impossible to leave behind.
 
 The demo caseload is generated **once per session** by the `demo_caseload` fixture in
 `conftest.py` (~70 s, 331 documents) and shared by four modules. Add demo-based assertions to

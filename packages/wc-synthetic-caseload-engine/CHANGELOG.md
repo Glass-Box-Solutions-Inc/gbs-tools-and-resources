@@ -9,6 +9,125 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — discovery volumes, anchored letters, and a registry for advice (**AJC-37**, Phase 3c)
+
+- **The ledger, the table of contents and the paper are one number (ISC-126).**
+  `scenario.discovery.subpoena_sets` and `scenario.discovery.pages_per_set` are
+  **honoured**. They loaded and validated in 0.5.0 and 0.6.0 and drove nothing,
+  which the schema said in as many words.
+
+  The defect underneath was worse than the missing knob. The substrate's
+  subpoenaed-records template summed a per-record-type `random.randint` for its
+  cover-sheet table of contents and drew the body pages *independently* further
+  down the same file, so a packet could promise 23 pages in front of six. One
+  count is now drawn per packet on the `facts:` stream; the renderer measures
+  what came out, adjusts, and writes the table of contents from the measurement.
+  `test_ledger_table_of_contents_and_paper_all_state_one_number` opens the
+  rendered PDFs with `fitz` and asserts all three readings agree.
+
+- **An event-driven letter names the event it answers (ISC-125).** 0.6.0 put the
+  letters on the right dates and left the reader to infer why. The rendered
+  letter now cites the document that prompted it, and the cited date is checked
+  against the manifest rather than merely counted — a letter citing a plausible
+  report the folder does not contain is worse than one citing nothing.
+  `test_a_non_event_driven_file_makes_no_such_reference` is the control that
+  keeps the assertion from passing on an unconditional string.
+
+- **Actionable messages are a table now (ISC-129).** The follows-the-message
+  meta-guard proved three seed messages by hand. Hand-written proofs cover the
+  messages someone remembered, which are never the ones that rot — the
+  `decision: denied` suggestion that named a value outside its own enum was
+  found by reading, not by running.
+
+  `message_audit.py` scans `seeds.py` for every message it can put in front of
+  an author, resolving one level of helper indirection so the two message
+  *builders* are not blind spots, and marks the ones that instruct.
+  `tests/test_message_registry.py` pairs all **11** with a seed that trips them
+  and the edit they prescribe. Writing a new actionable message turns the
+  registry red until somebody proves that following it works.
+
+  Two details worth the words. The runway message names a *computed* date, so
+  its registry entry reads that date back out of the message and applies it
+  verbatim — proving the boundary the message states is one the validator
+  accepts, which a comfortably-older date would not. And the guard's own
+  limitation is executable rather than merely written down:
+  `test_the_vocabulary_is_the_limit_and_the_limit_is_stated` asserts that an
+  imperative opening with an unrecognised verb is invisible to the sweep, so the
+  boundary is discoverable by running the suite.
+
+### Fixed — two proof-tightness findings from the PR #26 review (**AJC-37**, Phase 3c)
+
+- **F1 — an inertness probe must stand where its consumer exists.** ISC-137's
+  discovery-field probes ran at `target_stage: medical_legal`, which plans
+  **zero** subpoena packets. Inertness was being proven on a case containing
+  nothing that could consume the field: our own "a zero that is not earned is
+  not evidence" standard, broken by the guard written to enforce it. Every probe
+  now names the stage where its consumer exists *and* the documents that must be
+  present, and `test_every_probe_runs_where_its_consumer_exists` checks the
+  second against the first. Repaired **before** ISC-126 made the guard
+  load-bearing, which is the whole value of the ordering.
+
+- **F2 — the CHANGELOG was tighter than the test guarding it.** 0.6.0's notice 3
+  claimed event-driven letters land "1–5 days behind" their anchor while the
+  named test allowed 0–60. Prose tighter than its guard is the code-vs-prose
+  class one level up from docstrings, where no meta-guard reaches. The claim is
+  now the measured distribution, and
+  `test_most_event_driven_letters_land_on_the_stated_lag` asserts the property
+  rather than only the ceiling.
+
+### ⚠️ Compatibility — version bumped to 0.7.0
+
+`0.6.0` → `0.7.0`.
+
+1. **331 → 331 documents. 0 added, 0 removed, 325 byte-identical, 6 changed, and
+   all six are one cause.** Five `SUBPOENAED_RECORDS_MEDICAL` and one
+   `SUBPOENAED_RECORDS_EMPLOYMENT`, every one of them in
+   `nguyen-cr-three-liens` — the only demo case that reaches a stage emitting
+   subpoena packets. That is ISC-126 and nothing else. Nothing unexplained.
+
+2. **`subpoena_sets` and `pages_per_set` stop being inert, which is a byte
+   change for seeds that never mentioned them.** A seed that omits
+   `scenario.discovery` still gets the walk's own packet count — that part is
+   unchanged — but the *pages inside each packet* are now drawn from the ledger
+   rather than by the template, so any case containing a subpoenaed-records
+   document moves. Pin a page range explicitly if you need the old volumes back;
+   there is no flag to restore the disagreement, because the disagreement was
+   the bug.
+
+3. **The demo's zero on cadence and delay chains is no longer the only evidence,
+   and it is still a zero.** 0.6.0's notice 2 reported that no demo case draws a
+   late benefit or carries enough client letters to have a rhythm. That is
+   unchanged and measured again here: across all seven demo cases,
+   `lateBenefitEvents` is 0 seven times out of seven and the whole caseload holds
+   **one** client letter, below the two-letter threshold at which a cadence is
+   imposed at all.
+
+   What changed is that `examples/personas-showcase.yaml` now witnesses those
+   features directly (PR #27). Regenerating it against 0.6.0 and against this
+   commit moves **34 of 391** documents: 17 client letters carrying the new
+   anchor references and 17 subpoenaed-records packets carrying the unified page
+   counts. The two explicitly non-event-driven cases moved **zero** client
+   letters, which is the natural control for ISC-125 — the reference follows the
+   cadence rather than being emitted unconditionally.
+
+4. **Three hand-written tests were deleted, deliberately.** ISC-129's registry
+   subsumes `test_following_the_ur_message_produces_a_valid_seed`,
+   `test_following_the_never_treated_surgery_message_works` and
+   `test_following_the_never_treated_lien_message_works`, and does strictly more
+   than each: it proves the trigger raises *that* message before applying the
+   edit, where the hand-written version only showed that some edited seed loaded.
+   Left in place they would read as a supplement, and the next author would write
+   a fourth proof by hand instead of adding the row that turns the sweep green.
+   What stays in `test_scenario_p2.py` is what the table does not cover — the
+   negative assertion that a message must not *name* a value outside its own
+   enum, and the package-wide CLI-invocation sweep.
+
+5. **That CLI sweep failed on the first draft of ISC-129's own docstring**, which
+   quoted the dead `taxonomy --list` invocation in full while explaining why dead
+   invocations are dangerous. The prose was fixed, not the guard. Recorded here
+   because it is the cheapest available evidence that the meta-guard is live
+   rather than decorative — and it is the same class ISC-129 generalizes.
+
 ### Fixed — the ordinal seam, and what it had been hiding (ticket **AJC-37**, Phase 3b)
 
 **A defect that shipped in 0.4.0 and passed every test written for it.** The

@@ -730,16 +730,50 @@ compressed.
 Published on `caseFacts.attorney.cadence`, because the letter dates in the
 manifest are what a reader checks it against.
 
-### Accepted but not yet rendered
+**An `event_driven` letter names the event it answers (0.7.0, ISC-125).** A date
+alone is not a reference: 0.6.0 put the letters on the right days and left the
+reader to infer why. The rendered letter now opens by citing the document that
+prompted it — subtype and date — and the cited date is checked against the
+manifest rather than merely counted, because a letter citing a plausible report
+the folder does not contain is worse than one citing nothing. The other two
+cadences emit no such reference, which is what makes the assertion mean
+something: `test_a_non_event_driven_file_makes_no_such_reference` is the control.
 
-`scenario.discovery.subpoena_sets` and `scenario.discovery.pages_per_set` load,
-validate and resolve onto the ledger, but **no template honours them yet**:
-packet count still comes from the lifecycle walk, and the subpoenaed-records
-table of contents still draws its page counts independently of the body it
-fronts, so the declared and actual volumes are unrelated (ISC-126). They are
-deliberately absent from the published `caseFacts` for that reason — a published
-fact reads as a verified one — and their docstrings say so under a guard that
-fails the build if the code ever outruns the claim.
+### The discovery block
+
+```yaml
+scenario:
+  discovery:
+    subpoena_sets: 4              # records packets to emit; omit to keep the walk's own count
+    pages_per_set: {min: 12, max: 18}
+```
+
+Both fields are **honoured** as of 0.7.0 (ISC-126). They were accepted and
+validated but inert in 0.5.0 and 0.6.0, and this section said so.
+
+- **`subpoena_sets`** — the plan is trimmed or extended to exactly this many
+  subpoenaed-records packets. Omitting it keeps whatever the lifecycle walk
+  proposed, which is what leaves every pre-0.7.0 seed byte-identical outside the
+  packets themselves. A stage that proposes no packets at all — anything before
+  `target_stage: discovery` — is **warned about rather than silently ignored**:
+  the count has nothing to act on there.
+- **`pages_per_set`** — declared page volume per packet, and *pages* means
+  physical pages. One count is drawn per packet on the `facts:` stream, the
+  renderer measures what actually came out, adjusts, and writes the cover
+  sheet's table of contents from the measurement.
+
+The point is the agreement, not the number. Before 0.7.0 the table of contents
+summed its own `random.randint` draws while the body drew separately, so a cover
+sheet could promise 23 pages in front of a packet holding 6. The ledger's
+`CaseFacts.packet_pages`, the table of contents and the paper are now three
+readings of one value, and
+`test_ledger_table_of_contents_and_paper_all_state_one_number` opens the
+rendered PDFs and counts them.
+
+`packet_pages` is **not** published in the manifest's `caseFacts` block, and
+deliberately so: the governed-fields rule publishes a fact only where a reader
+needs the manifest to check it, and here the packet itself states the number on
+its own cover sheet. Counting the pages is the check.
 
 ### The treatment block
 
