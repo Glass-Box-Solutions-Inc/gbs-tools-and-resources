@@ -408,6 +408,24 @@ POST_DISCHARGE_FORBIDDEN: frozenset[str] = frozenset(
 #: Documents that assert an operation happened.
 OPERATIVE_SUBTYPES: frozenset[str] = frozenset({"OPERATIVE_HOSPITAL_RECORDS"})
 
+#: The applicant attorney's letters to the client — the correspondence whose
+#: *rhythm* ``scenario.attorney.cadence`` describes. ``CLIENT_INTAKE_
+#: CORRESPONDENCE`` is deliberately absent: the retainer letter is anchored to
+#: the start of the representation, not to the reporting habit that follows it.
+ATTORNEY_CADENCE_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "CLIENT_CORRESPONDENCE_INFORMATIONAL",
+        "CLIENT_CORRESPONDENCE_REQUEST",
+        "CLIENT_STATUS_LETTERS",
+        "STATUS_UPDATE_INFORMATIONAL",
+    }
+)
+
+#: What counsel sends when a benefit ran late. One per late benefit event, which
+#: is what makes correspondence density a *consequence* of the adjuster persona
+#: rather than a second, independently drawn knob that could contradict it.
+DELAY_CHAIN_SUBTYPE = "DEMAND_LETTER_FORMAL"
+
 
 def _penalty_candidates(facts: CaseFacts, timeline: CaseTimeline) -> list[DatedCandidate]:
     """The LC 5814 penalty petition, emitted only when a benefit was late.

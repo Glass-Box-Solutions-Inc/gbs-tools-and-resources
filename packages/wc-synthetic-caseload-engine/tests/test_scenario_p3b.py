@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,11 @@ import wc_caseload_engine.fact_templates as fact_templates
 from conftest import extract_text, requires_substrate
 from wc_caseload_engine.case_facts import TRAJECTORY_PHRASES
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
-from wc_caseload_engine.planner import build_case_plan
+from wc_caseload_engine.planner import (
+    ATTORNEY_CADENCE_SUBTYPES,
+    DELAY_CHAIN_SUBTYPE,
+    build_case_plan,
+)
 from wc_caseload_engine.seeds import parse_case_seed
 from wc_caseload_engine.substrate import import_substrate
 
@@ -256,4 +261,111 @@ class TestAdjusterLetterLifecycle:
         assert body, "no adjuster letter text extracted"
         assert LETTER_MARKERS["initial_acceptance"] not in body, (
             "the carrier accepted liability on a denied claim"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ISC-119 — a delay chain: late benefits draw correspondence after them
+# ---------------------------------------------------------------------------
+
+
+def _plan_for(case_id: str, **overrides: Any) -> Any:
+    plan = build_case_plan(_seed(case_id, **overrides))
+    assert plan.case_facts is not None
+    return plan
+
+
+def _dates_of(plan: Any, subtype: str) -> list[Any]:
+    return sorted(d.doc_date for d in plan.documents if d.subtype == subtype)
+
+
+class TestDelayChains:
+    def test_each_late_benefit_draws_its_own_demand_letter(self) -> None:
+        plan = _plan_for(
+            "chain-neg",
+            rng_seed=8100,
+            scenario={"adjuster": {"diligence": "negligent"}},
+        )
+        facts = plan.case_facts
+        letters = _dates_of(plan, DELAY_CHAIN_SUBTYPE)
+        assert facts.late_benefit_events, "seed drew no late benefits; probe is vacuous"
+        assert len(letters) >= len(facts.late_benefit_events), (
+            f"{len(facts.late_benefit_events)} late benefit(s), "
+            f"{len(letters)} demand letter(s) — the delay went unanswered"
+        )
+
+    def test_every_demand_letter_post_dates_the_delay_it_chases(self) -> None:
+        plan = _plan_for(
+            "chain-order",
+            rng_seed=8101,
+            scenario={"adjuster": {"diligence": "negligent"}},
+        )
+        facts = plan.case_facts
+        assert facts.late_benefit_events
+        earliest = min(e.actual_date for e in facts.late_benefit_events)
+        chain = _dates_of(plan, DELAY_CHAIN_SUBTYPE)
+        # Without this the loop below is a no-op on a file with no chain in it,
+        # and a passing test would mean "the feature is absent".
+        assert chain, "no demand letters planned; the ordering assertion is vacuous"
+        for when in chain:
+            assert when >= earliest, (
+                f"a demand letter dated {when} chases a delay that had not "
+                f"happened yet (first late benefit {earliest})"
+            )
+
+    def test_an_attentive_adjuster_draws_a_shorter_chain(self) -> None:
+        """The opposite draw of the same knob, on one seed."""
+        negligent = _plan_for(
+            "chain-cf", rng_seed=8102, scenario={"adjuster": {"diligence": "negligent"}}
+        )
+        attentive = _plan_for(
+            "chain-cf", rng_seed=8102, scenario={"adjuster": {"diligence": "attentive"}}
+        )
+        assert len(negligent.case_facts.late_benefit_events) > len(
+            attentive.case_facts.late_benefit_events
+        ), "the two personas drew the same lateness; the counterfactual proves nothing"
+        assert len(_dates_of(negligent, DELAY_CHAIN_SUBTYPE)) > len(
+            _dates_of(attentive, DELAY_CHAIN_SUBTYPE)
+        ), "correspondence density did not follow the persona"
+
+
+# ---------------------------------------------------------------------------
+# ISC-123/124 — the cadence decides when counsel wrote
+# ---------------------------------------------------------------------------
+
+
+class TestAttorneyCadenceMovesTheDates:
+    def _letters(self, cadence: str, case_id: str, rng_seed: int = 8200) -> list[Any]:
+        plan = _plan_for(
+            case_id, rng_seed=rng_seed, scenario={"attorney": {"cadence": cadence}}
+        )
+        assert plan.case_facts.attorney_cadence == cadence
+        return sorted(
+            doc.doc_date
+            for doc in plan.documents
+            if doc.subtype in ATTORNEY_CADENCE_SUBTYPES
+        )
+
+    def test_thirty_day_cadence_sits_on_a_thirty_day_clock(self) -> None:
+        dates = self._letters("every_30_days", "cad-30")
+        assert len(dates) >= 3, f"only {len(dates)} letters; the rhythm is untestable"
+        gaps = [(b - a).days for a, b in pairwise(dates)]
+        assert max(gaps) <= 45, f"a 30-day cadence left a {max(gaps)}-day hole: {gaps}"
+
+    def test_sporadic_opens_a_hole_a_reviewer_would_notice(self) -> None:
+        dates = self._letters("sporadic", "cad-sp")
+        assert len(dates) >= 3, f"only {len(dates)} letters; the rhythm is untestable"
+        gaps = [(b - a).days for a, b in pairwise(dates)]
+        assert max(gaps) >= 90, f"sporadic never went quiet: {gaps}"
+
+    def test_the_three_cadences_do_not_agree(self) -> None:
+        """Opposite draws of one knob: if the dates match, nothing is honoured."""
+        rhythms = {
+            name: self._letters(name, "cad-cf")
+            for name in ("every_30_days", "event_driven", "sporadic")
+        }
+        distinct = {tuple(dates) for dates in rhythms.values()}
+        assert len(distinct) == 3, (
+            "two cadences produced identical letter dates: "
+            f"{ {name: [str(d) for d in v] for name, v in rhythms.items()} }"
         )
