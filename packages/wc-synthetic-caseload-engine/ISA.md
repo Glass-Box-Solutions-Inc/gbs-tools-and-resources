@@ -4,8 +4,8 @@ project: wc-synthetic-caseload-engine
 slug: 20260727-143600_wc-synthetic-caseload-engine
 effort: E4
 effort_source: classifier
-phase: verify
-progress: 106/107
+phase: execute
+progress: 106/123
 iteration: 3
 mode: interactive
 started: 2026-07-27T14:36:00-07:00
@@ -177,6 +177,24 @@ A new installable package whose CLI turns a caseload spec (defaults + distributi
 - [x] ISC-91: QME/AME report imaging citations name only ledger-performed diagnostics; a ledger-absent modality never appears (probe: extraction grep + positive control seeding `absent: [emg]`)
 - [x] ISC-92: `scenario.surgery` drives `has_surgery` and every rendered characterization: `performed` → PR/QME text references the surgery and any emitted operative document names the ledger CPT; `none` → zero surgical language and `validate` rejects an operative document outright (probe: opposite-coin tests in both directions + validator reverse rule; refined 2026-07-28 — guaranteed operative-document *emission* is a substrate emission-rule property the ledger cannot honestly promise today, split to ISC-92.1)
 - [ ] ISC-92.1: [DEFERRED — Phase 2] A scenario-stated `surgery: performed` guarantees ≥1 operative document in the plan via a planner-level floor (the ISC-29 explicit-control philosophy applied to emission), closing the validator's forward direction
+
+### Scenario seed v2, Phase 2 — treatment trajectory + diagnostics depth (AJC-37, added 2026-07-28)
+- [ ] ISC-101: `scenario.treatment.status` accepted: `ongoing | discharged | gap | never_treated`; loader cross-validates incompatibilities (never_treated rejects surgery ≠ none and medical/hospital/pharmacy lien claimants) with actionable errors (probe: bad-seed pytest)
+- [ ] ISC-102: `never_treated` → no treating reports, diagnostics, or billing beyond the first-report tier in the plan; a seeded QME notes the sparse record in rendered text (probe: plan assertion + extraction grep with positive control)
+- [ ] ISC-103: `gap` → the ledger's visit series contains the seeded gap and rendered PR/QME text references the treatment gap; visits before/after remain date-coherent (probe: ledger + extraction)
+- [ ] ISC-104: `discharged` → a discharge summary is emitted and no treating report post-dates the discharge date (probe: plan dates assertion)
+- [ ] ISC-105: Treating-report status phrases follow the seeded trajectory (improving / plateau / worsening) across the case's PRs instead of independent per-document draws (probe: multi-PR extraction, trajectory-coherence assertion + counterfactual)
+- [ ] ISC-106: `scenario.treatment.providers: N` sets the ledger roster size; manifest `caseFacts.providers` count matches and subpoena round-robin spans it (probe: manifest + extraction)
+- [ ] ISC-107: `surgery: recommended` → PR/QME text references the recommendation, zero operative documents, `validate` enforces their absence (probe: extraction + validator rule, positive control)
+- [ ] ISC-108: `surgery: denied_by_ur` → requires (or actionably rejects absent) a UR dispute; the RFA/UR-denial chain names the procedure; zero operative documents; `validate` rule (probe: chain extraction + validator)
+- [ ] ISC-109: ISC-92.1 closed — a scenario-stated `performed` guarantees ≥1 operative document via a planner floor; `validate` forward direction enforced (probe: plan floor test + validator biconditional)
+- [ ] ISC-110: `DIAGNOSTICS_IMAGING` attributes each study to its ledger body part in rendered text — the ISC-90 body-part clause rejoins (probe: per-study extraction)
+- [ ] ISC-111: The QME imaging-history section is governed — no invented modality anywhere in QME rendered text, including the history narrative (probe: extraction sweep with absent-modality control)
+- [ ] ISC-112: Every substrate content site that names a modality is enumerated in an audit table: each either governed by an override or documented-with-reason (probe: table-vs-grep test so a new site fails loudly)
+- [ ] ISC-113: Anti: seeds without `scenario.treatment`/new surgery values render byte-identical to v0.3.0 outside newly-governed subtypes; full byte accounting has 0 unexplained changes (probe: full-demo diff)
+- [ ] ISC-114: A scenario value overriding a substrate exclusion (death/psych surgery) emits a plan warning — keep-and-warn parity with denylist and doctrine-hook handling (probe: warning assertion; demo unaffected)
+- [ ] ISC-115: Version 0.4.0 with numbered compatibility notices; README + needed-seeds documentation cover the treatment block (probe: --version + doc grep)
+- [ ] ISC-116: Full suite + ruff green; substrate diff 0 files; demo determinism ×3; every new knob carries an opposite-draw counterfactual with a red-proven control (probe: suite + harness audit)
 - [x] ISC-93: The chosen surgical CPT is recorded in CaseFacts and named consistently in the operative record and every referencing document (probe: cross-document grep)
 - [x] ISC-94: Subpoenaed-records provider attribution round-robins over `CaseFacts.providers` (restores the substrate `provider_index` behavior the engine path dropped) (probe: multi-packet case, distinct providers in extracted text)
 - [x] ISC-95: A coherence harness sweeps ledger-vs-extracted-text for every rule above with ≥1 positive control per rule (probe: harness pytest, controls fail red when planted)
