@@ -29,6 +29,7 @@ from wc_caseload_engine.case_context import CaseCast, build_case_cast
 from wc_caseload_engine.case_facts import (
     CaseFacts,
     derive_case_facts,
+    derive_packet_pages,
     resolve_surgery_status,
     resolve_treatment_status,
 )
@@ -605,11 +606,49 @@ def _penalty_control_warnings(
 #: The 120 is what makes the three-month hole a certainty rather than a hope.
 _SPORADIC_GAPS: tuple[int, ...] = (24, 120, 41, 96, 33)
 
+#: Below this, a file has no rhythm to impose: one client letter cannot be
+#: early or late relative to anything, so the cadence leaves it alone.
+CADENCE_MIN_LETTERS = 2
+
+#: How long after an event counsel writes about it — the time to read a report
+#: and dictate a letter.
+EVENT_DRIVEN_LAG_DAYS = 5
+
+#: Added per extra pass through the anchor list, when a file holds more letters
+#: than events worth writing about.
+EVENT_DRIVEN_LAP_DAYS = 45
+
+def event_driven_max_lag_days(letters: int, anchors: int) -> int:
+    """Widest gap an ``event_driven`` letter may sit behind a preceding event.
+
+    A *function of the case*, not a constant, and getting that wrong is the
+    second half of F2. The first attempt at this repair asserted a fixed ceiling
+    of ``LAG + LAP`` — one lap — because a 38-seed sample topped out at 50 days.
+    A twelve-seed sample at ``discovery`` stage, which carries more letters per
+    anchor, immediately produced 100. The sample had not been wide enough to
+    show the shape, and a constant fitted to it would have been a magic number
+    with better manners.
+
+    The real bound falls out of the cycle: with more letters than anchors the
+    walk laps the anchor list, and the last lap is
+    ``ceil(letters / anchors) - 1``.
+
+    F2 in one line: the CHANGELOG claimed "1-5 days" while the guard allowed
+    0-60. Measured over 38 cases / 218 letters, 179 land at exactly
+    :data:`EVENT_DRIVEN_LAG_DAYS`, the fit pulls a few as close as 0, and the
+    lap tail runs as far as the case's own shape allows. "1-5" was false at both
+    ends; 60 was arbitrary.
+    """
+    if anchors <= 0:
+        return 0
+    laps = max(0, -(-letters // anchors) - 1)  # ceil division, zero-based
+    return EVENT_DRIVEN_LAG_DAYS + EVENT_DRIVEN_LAP_DAYS * laps
+
 #: What counts as an "event" worth writing to the client about. Medical reports
 #: and the case's own milestones — the documents that change what counsel can
 #: tell the client. Correspondence is excluded on purpose: letters answering
 #: letters is a rhythm of its own, not an event-driven one.
-_CADENCE_ANCHOR_SUBTYPES: frozenset[str] = frozenset(
+CADENCE_ANCHOR_SUBTYPES: frozenset[str] = frozenset(
     {
         "TREATING_PHYSICIAN_REPORT",
         "TREATING_PHYSICIAN_REPORT_PR2",
@@ -658,7 +697,7 @@ def _cadence_dates(
     # takes to read a report and dictate a letter about it.
     #
     # The anchors are the *other documents in this file* (see
-    # ``_CADENCE_ANCHOR_SUBTYPES``), not the timeline's four milestones. That
+    # ``CADENCE_ANCHOR_SUBTYPES``), not the timeline's four milestones. That
     # started as the obvious choice and was wrong: after filtering to milestones
     # at or after the first letter, most cases had one anchor left, the cycle
     # below degenerated into a fixed lap offset, and "event driven" rendered as
@@ -673,7 +712,9 @@ def _cadence_dates(
     for step in range(count):
         anchor = anchors[step % len(anchors)]
         lap = step // len(anchors)
-        dates.append(anchor + timedelta(days=5 + 45 * lap))
+        dates.append(
+            anchor + timedelta(days=EVENT_DRIVEN_LAG_DAYS + EVENT_DRIVEN_LAP_DAYS * lap)
+        )
     return sorted(dates)
 
 
@@ -699,7 +740,7 @@ def _apply_attorney_cadence(
         (entry for entry in dated if entry[1] in ATTORNEY_CADENCE_SUBTYPES),
         key=lambda entry: entry[0],
     )
-    if len(letters) < 2:
+    if len(letters) < CADENCE_MIN_LETTERS:
         # One letter has no rhythm, and zero letters have nothing to re-date.
         return dated, ()
 
@@ -708,7 +749,7 @@ def _apply_attorney_cadence(
     # The events counsel would actually write *about*, taken from the file
     # itself so a reader can hold the letter beside the report that prompted it.
     anchors = sorted(
-        {entry[0] for entry in dated if entry[1] in _CADENCE_ANCHOR_SUBTYPES}
+        {entry[0] for entry in dated if entry[1] in CADENCE_ANCHOR_SUBTYPES}
     )
     intended = _cadence_dates(cadence, len(letters), first, anchors)
 
@@ -735,6 +776,63 @@ def _apply_attorney_cadence(
                 "visible break in the record"
             )
     return shaped, tuple(warnings)
+
+
+#: The records-packet subtypes ``scenario.discovery.subpoena_sets`` counts.
+#: Kept beside the planner rather than imported from ``manifests`` to avoid a
+#: cycle; ``test_the_discovery_tables_agree`` asserts the two stay identical.
+DISCOVERY_PACKET_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "SUBPOENAED_RECORDS",
+        "SUBPOENAED_RECORDS_MEDICAL",
+        "SUBPOENAED_RECORDS_EMPLOYMENT",
+        "SUBPOENAED_RECORDS_OTHER",
+    }
+)
+
+
+def _shape_discovery(
+    seed: CaseSeed,
+    timeline: CaseTimeline,
+    dated: list[tuple[date, str, str, str]],
+) -> tuple[list[tuple[date, str, str, str]], tuple[str, ...]]:
+    """ISC-126. Make the file hold the number of packets the seed asked for.
+
+    Trims from the end and extends by repeating the last packet's shape on a
+    later date, which keeps the added packets inside the file's own runway
+    rather than inventing a discovery phase that never happened.
+
+    Gated on a *stated* count. A seed that says nothing keeps whatever the walk
+    proposed, byte for byte — the same rule ISC-109 set for surgery, and what
+    keeps every pre-0.7.0 seed identical.
+    """
+    declared = seed.scenario.discovery.subpoena_sets
+    if declared is None:
+        return dated, ()
+
+    packets = [entry for entry in dated if entry[1] in DISCOVERY_PACKET_SUBTYPES]
+    if len(packets) == declared:
+        return dated, ()
+
+    if not packets:
+        return dated, (
+            f"scenario.discovery.subpoena_sets is {declared} but this file's "
+            "lifecycle stage proposes no records packets at all; the count has "
+            "nothing to act on — try target_stage 'discovery' or later",
+        )
+
+    shaped = [entry for entry in dated if entry[1] not in DISCOVERY_PACKET_SUBTYPES]
+    packets.sort(key=lambda entry: entry[0])
+    if len(packets) > declared:
+        kept = packets[:declared]
+    else:
+        kept = list(packets)
+        last_date, subtype, track, role = packets[-1]
+        ceiling = timeline.horizon
+        for step in range(declared - len(packets)):
+            when = min(last_date + timedelta(days=14 * (step + 1)), ceiling)
+            kept.append((when, subtype, track, role))
+    return shaped + kept, ()
 
 
 def _shape_for_scenario(
@@ -914,6 +1012,14 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # After shaping: `never_treated` and `discharged` both drop documents, and
     # re-dating a set that is about to lose members would leave gaps the cadence
     # never intended.
+    dated, discovery_warnings = _shape_discovery(seed, timeline, dated)
+    # ISC-126. The page budget is drawn only once the packet count is final, so
+    # the ledger, the cover sheet and the rendered pages are three readings of
+    # one number rather than three independent draws.
+    packet_count = sum(1 for entry in dated if entry[1] in DISCOVERY_PACKET_SUBTYPES)
+    case_facts = case_facts.model_copy(
+        update={"packet_pages": derive_packet_pages(seed, packet_count)}
+    )
     dated, cadence_warnings = _apply_attorney_cadence(case_facts, timeline, dated)
     penalty_warnings = _penalty_control_warnings(case_facts, dated, controls)
     dated.sort(key=lambda item: (item[0], item[1], item[2]))
@@ -962,6 +1068,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         *recon.warnings,
         *cast.warnings,
         *scenario_warnings,
+        *discovery_warnings,
         *cadence_warnings,
         *penalty_warnings,
         *unsupported_hook_warnings(seed.lifecycle.doctrine_hooks, seed),

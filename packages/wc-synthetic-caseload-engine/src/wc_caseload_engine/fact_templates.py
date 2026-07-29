@@ -27,6 +27,7 @@ from wc_caseload_engine.case_facts import (
     CaseFacts,
 )
 from wc_caseload_engine.substrate import import_substrate
+from wc_caseload_engine.taxonomy import effective_taxonomy
 
 log = structlog.get_logger(__name__)
 
@@ -177,6 +178,169 @@ def _letter_ordinal(template: Any) -> int:
         if isinstance(value, int):
             return value
     return 0
+
+
+#: The phrase an ``event_driven`` client letter opens its status paragraph
+#: with. Owned beside the template that writes it so the guard and the
+#: renderer read ONE string: a marker the test spells independently is a
+#: marker that can drift out of the document while the test still passes.
+ANCHOR_REFERENCE_MARKER = "further to the"
+
+
+def _packet_ordinal(template: Any) -> int:
+    """Which records packet this is within its case, zero-based."""
+    context = getattr(getattr(template, "doc_spec", None), "context", None)
+    if isinstance(context, dict):
+        value = context.get("packet_ordinal")
+        if isinstance(value, int):
+            return value
+    return 0
+
+
+def _is_page_break(element: Any) -> bool:
+    return type(element).__name__ == "PageBreak"
+
+
+def _split_at_first_break(story: list[Any]) -> tuple[list[Any], list[Any]]:
+    """Cover sheet, then everything behind it."""
+    for position, element in enumerate(story):
+        if _is_page_break(element):
+            return story[: position + 1], story[position + 1 :]
+    return story, []
+
+
+def _split_pages(body: list[Any]) -> list[list[Any]]:
+    """The body's flowables grouped into pages, page breaks removed."""
+    pages: list[list[Any]] = [[]]
+    for element in body:
+        if _is_page_break(element):
+            pages.append([])
+        else:
+            pages[-1].append(element)
+    return [page for page in pages if page]
+
+
+#: How many times we may ask the substrate for another records block before
+#: giving up and reporting a short packet. A guard against an unbounded loop if
+#: a future substrate edit ever returns nothing.
+_MAX_RECORD_BLOCKS = 40
+
+#: Measure-then-adjust rounds allowed per packet. Each is a full render, so this
+#: is a real cost; in practice the first correction lands because the residual
+#: between sections and pages is small and stable.
+_MAX_FIT_ATTEMPTS = 6
+
+
+def _page_count(path: Any) -> int:
+    """Physical pages in a rendered PDF.
+
+    The measurement the whole of ISC-126 turns on: a PageBreak-delimited section
+    is what the *story* contains, and a page is what the *paper* contains, and
+    the substrate's cover sheet was describing the former while claiming the
+    latter.
+    """
+    import fitz
+
+    with fitz.open(path) as document:
+        return document.page_count
+
+
+def _fit_pages(pages: list[list[Any]], wanted: int, more: Any) -> list[list[Any]]:
+    """Exactly *wanted* pages, trimming or asking *more* for further content.
+
+    Trimming is lossless: a records packet is an arbitrary-length excerpt, so
+    dropping the tail leaves a shorter but coherent packet.
+
+    Growth calls ``more()`` for a freshly built block rather than repeating the
+    pages already in hand. Repetition was the first implementation and reportlab
+    rejected it outright — ``LayoutError: Flowable ... too large on page 10`` —
+    because a flowable carries layout state and cannot appear twice in one
+    document. The error was the good outcome: repeating pages would also have
+    produced a packet containing the same office visit on the same date several
+    times over, which is precisely the kind of incoherence this ticket exists to
+    remove. Fresh blocks carry their own drawn dates and findings.
+    """
+    if wanted <= len(pages):
+        return pages[:wanted]
+    grown = list(pages)
+    for _ in range(_MAX_RECORD_BLOCKS):
+        if len(grown) >= wanted:
+            break
+        extra = _split_pages(list(more()))
+        if not extra:
+            break
+        grown.extend(extra)
+    return grown[:wanted]
+
+
+def _join_pages(pages: list[list[Any]], page_break: Any) -> list[Any]:
+    joined: list[Any] = []
+    for position, page in enumerate(pages):
+        if position:
+            joined.append(page_break())
+        joined.extend(page)
+    return joined
+
+
+def _rewrite_page_table(head: list[Any], total: int) -> None:
+    """Restate the cover sheet's page table so its rows sum to *total*.
+
+    Scales the substrate's own per-record-type counts rather than replacing
+    them, so the mix of record types stays whatever the substrate decided; only
+    the arithmetic is corrected. Any rounding residue lands on the first row,
+    which is what guarantees the column sums exactly rather than approximately.
+    """
+    for element in head:
+        values = getattr(element, "_cellvalues", None)
+        if not values or len(values) < 3:
+            continue
+        header = [str(cell) for cell in values[0]]
+        if "Pages" not in header:
+            continue
+        column = header.index("Pages")
+        rows = values[1:-1]
+        counts = []
+        for row in rows:
+            try:
+                counts.append(int(str(row[column])))
+            except (TypeError, ValueError):
+                counts.append(1)
+        current = sum(counts) or 1
+        scaled = [max(1, round(count * total / current)) for count in counts]
+        scaled[0] = max(1, scaled[0] + (total - sum(scaled)))
+        for row, count in zip(rows, scaled, strict=True):
+            row[column] = str(count)
+        values[-1][column] = f"<b>{sum(scaled)}</b>"
+        return
+
+
+def _preceding_anchor(template: Any, when: Any) -> tuple[str, Any] | None:
+    """The most recent anchor document dated at or before ``when``.
+
+    Chosen here rather than in the planner so the reference can never name a
+    document dated *after* the letter citing it — the letter's own date is the
+    only thing that decides, and it is right here.
+    """
+    context = getattr(getattr(template, "doc_spec", None), "context", None)
+    if not isinstance(context, dict) or when is None:
+        return None
+    anchors = context.get("cadence_anchors") or ()
+    prior = [entry for entry in anchors if entry[1] <= when]
+    return max(prior, key=lambda entry: entry[1]) if prior else None
+
+
+def _before_closing(story: list[Any]) -> int:
+    """Insertion point above the letter's sign-off.
+
+    Located by text so a substrate edit that adds a flowable moves the insertion
+    with it. Falls back to the end of the story, which is visible on the page
+    rather than silently dropped.
+    """
+    for position, element in enumerate(story):
+        text = str(getattr(element, "text", ""))
+        if text.startswith("Sincerely") or text.startswith("Very truly"):
+            return position
+    return len(story)
 
 
 def _report_ordinal(template: Any) -> int:
@@ -710,7 +874,207 @@ def build_fact_aware_templates() -> dict[str, type]:
 
     _ = Paragraph  # imported for subclasses that grow to need it
 
+    records_module = import_substrate("pdf_templates.discovery.subpoenaed_records")
+
+    class FactAwareSubpoenaedRecords(_SpecCapture, records_module.SubpoenaedRecords):  # type: ignore[misc,name-defined]
+        """ISC-126. Makes the cover sheet tell the truth about the packet it fronts.
+
+        The substrate built its table of contents from one set of
+        ``random.randint`` draws (``subpoenaed_records.py:163-186``) and then
+        generated the body from an entirely separate set (``264+``). Neither
+        number was wrong on its own — they were simply strangers, so a cover
+        sheet could promise 23 pages in front of a packet holding 6.
+
+        One number now decides both. ``CaseFacts.packet_pages`` is drawn once on
+        the ``facts:`` stream at plan time; the body is cut to it and the table
+        of contents is rewritten to sum to what the body actually holds.
+
+        The rewrite mutates ``Table._cellvalues`` rather than rebuilding the
+        flowable, which preserves the substrate's column widths and style
+        commands. Verified deliberately: unlike ``Paragraph``, which parses its
+        markup in ``__init__`` and ignores later edits to ``.text``, ``Table``
+        reads ``_cellvalues`` at draw time, so the mutation reaches the page.
+        """
+
+        #: Sections the current render should use; ``None`` means "take what the
+        #: substrate produced". Set by the measure-then-adjust loop.
+        _wc_sections: int | None = None
+        #: Page count the cover sheet should state, once one has been measured.
+        _wc_toc_total: int | None = None
+        #: Sections the last render actually used, which is what the loop steers.
+        _wc_last_sections: int = 0
+        #: Blank continuation pages appended to reach the budget exactly.
+        _wc_pad: int = 0
+
+        def _page_budget(self, facts: Any) -> int | None:
+            pages = getattr(facts, "packet_pages", ())
+            if not pages:
+                return None
+            return pages[_packet_ordinal(self) % len(pages)]
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            story = list(super().build_story(doc_spec))
+            facts = _facts_of(self)
+            if facts is None:
+                return story
+            budget = self._page_budget(facts)
+            if budget is None:
+                return story
+
+            head, body = _split_at_first_break(story)
+            sections = _split_pages(body)
+            if not sections:
+                return story
+
+            provider, facility = self._select_provider(doc_spec)
+            subtype = str(getattr(doc_spec, "subtype", ""))
+            build_more = (
+                (lambda: self._build_employment_records(doc_spec))
+                if "EMPLOYMENT" in subtype
+                else (lambda: self._build_medical_records(doc_spec, provider, facility))
+            )
+
+            # A section is a PageBreak-delimited block, which is NOT a physical
+            # page — a long one overflows. ``_generate_pdf`` measures the
+            # rendered result and drives this number until the paper agrees;
+            # the first pass just asks for the budget and lets it correct.
+            wanted = self._wc_sections
+            if wanted is None:
+                wanted = max(1, budget - 1)
+            realised = _fit_pages(sections, wanted, build_more)
+            self._wc_last_sections = len(realised)
+            # Written from the MEASURED page count once one exists, so the cover
+            # sheet describes the packet as printed rather than as intended.
+            _rewrite_page_table(head, self._wc_toc_total or len(realised) + 1)
+            body_out = _join_pages(realised, records_module.PageBreak)
+            # Sections are atomic and one can overflow, so section count alone
+            # cannot hit an arbitrary page total. The loop undershoots and the
+            # remainder is made up in whole continuation pages, which a real
+            # records production contains anyway.
+            for _ in range(self._wc_pad):
+                body_out.append(records_module.PageBreak())
+                body_out.append(
+                    Paragraph(
+                        "[This page intentionally contains no further records.]",
+                        self.styles["BodyText"],
+                    )
+                )
+            return head + body_out
+
+        def _generate_pdf(self, output_path: Any, doc_spec: Any) -> Any:
+            """Render, count the pages that came out, adjust, render again.
+
+            The only honest way to make ``pages_per_set`` mean *pages*. Section
+            count is a proxy the layout is free to ignore, so it is measured
+            rather than assumed, and the table of contents is written from the
+            measurement.
+
+            Every attempt restores the RNG state it started from. Without that
+            each re-render draws different clinical content, so the page count
+            that was measured would not be the page count finally written — the
+            measurement would describe a document that no longer exists.
+            """
+            facts = _facts_of(self)
+            budget = self._page_budget(facts) if facts is not None else None
+            if budget is None:
+                return super()._generate_pdf(output_path, doc_spec)
+
+            entry_state = random.getstate()
+            self._wc_sections = None
+            self._wc_toc_total = None
+            self._wc_pad = 0
+
+            result = super()._generate_pdf(output_path, doc_spec)
+            pages = _page_count(output_path)
+            sections = self._wc_last_sections
+
+            # Walk down to the largest section count that fits inside the
+            # budget. Down rather than towards, because overshoot cannot be
+            # repaired -- there is no way to remove part of a page -- while an
+            # undershoot is made up exactly by padding.
+            for _ in range(_MAX_FIT_ATTEMPTS):
+                if pages <= budget:
+                    break
+                adjusted = max(1, sections - max(1, pages - budget))
+                if adjusted == sections:
+                    break
+                sections = adjusted
+                random.setstate(entry_state)
+                self._wc_sections = sections
+                result = super()._generate_pdf(output_path, doc_spec)
+                pages = _page_count(output_path)
+                sections = self._wc_last_sections
+
+            # Final pass: same content, remainder padded, table restated from
+            # the number the paper will actually carry.
+            random.setstate(entry_state)
+            self._wc_sections = sections
+            self._wc_pad = max(0, budget - pages)
+            self._wc_toc_total = pages + self._wc_pad
+            result = super()._generate_pdf(output_path, doc_spec)
+            pages = self._wc_toc_total
+            if _page_count(output_path) != pages:
+                # Restating the table changed the pagination, which would leave
+                # the cover sheet describing the previous render. Say so rather
+                # than ship a packet whose own first page is wrong.
+                log.warning(
+                    "fact_templates.packet_page_table_unstable",
+                    expected=pages,
+                    actual=_page_count(output_path),
+                )
+            return result
+
+    client_module = import_substrate("pdf_templates.correspondence.client_intake")
+
+    class FactAwareClientIntake(_SpecCapture, client_module.ClientIntake):  # type: ignore[misc,name-defined]
+        """ISC-125. Names the event that prompted the letter.
+
+        ISC-123/124 put ``event_driven`` letters on the right dates; a reader
+        still had to recompute the cadence to see *why* a letter was written
+        when it was. The reference makes it checkable on the page: the letter
+        cites a document that is in the same folder, dated before it.
+
+        Only ``event_driven``. Under the other two cadences the letter is not
+        responding to anything — a thirty-day letter is written because thirty
+        days passed — so a reference would be a claim the file does not support.
+        That distinction is also what makes the guard meaningful: an
+        unconditional sentence would prove the string exists and nothing else.
+        """
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            story = list(super().build_story(doc_spec))
+            facts = _facts_of(self)
+            if facts is None or facts.attorney_cadence != "event_driven":
+                return story
+
+            anchor = _preceding_anchor(self, getattr(doc_spec, "doc_date", None))
+            if anchor is None:
+                # Nothing precedes this letter, so there is nothing to answer.
+                # Silence is the honest rendering.
+                return story
+
+            subtype, when = anchor
+            label = effective_taxonomy().label(subtype) or subtype.replace("_", " ").title()
+            sentence = (
+                f"{ANCHOR_REFERENCE_MARKER.capitalize()} {label} of "
+                f"{when.strftime('%B %d, %Y')}, we are writing to update you on "
+                "the status of your claim and what happens next."
+            )
+            story.insert(
+                _before_closing(story),
+                Paragraph(sentence, self.styles["BodyText14"]),
+            )
+            return story
+
     return {
+        "SUBPOENAED_RECORDS": FactAwareSubpoenaedRecords,
+        "SUBPOENAED_RECORDS_MEDICAL": FactAwareSubpoenaedRecords,
+        "SUBPOENAED_RECORDS_EMPLOYMENT": FactAwareSubpoenaedRecords,
+        "SUBPOENAED_RECORDS_OTHER": FactAwareSubpoenaedRecords,
+        "CLIENT_CORRESPONDENCE_INFORMATIONAL": FactAwareClientIntake,
+        "CLIENT_CORRESPONDENCE_REQUEST": FactAwareClientIntake,
+        "CLIENT_STATUS_LETTERS": FactAwareClientIntake,
+        "STATUS_UPDATE_INFORMATIONAL": FactAwareClientIntake,
         "ADJUSTER_LETTER": FactAwareAdjusterLetter,
         "ADJUSTER_LETTER_INFORMATIONAL": FactAwareAdjusterLetter,
         "ADJUSTER_LETTER_REQUEST": FactAwareAdjusterLetter,

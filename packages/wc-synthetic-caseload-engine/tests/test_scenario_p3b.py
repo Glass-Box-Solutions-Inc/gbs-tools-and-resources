@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -27,12 +28,17 @@ import pytest
 import wc_caseload_engine.fact_templates as fact_templates
 from conftest import extract_text, requires_substrate
 from wc_caseload_engine.case_facts import TRAJECTORY_PHRASES
+from wc_caseload_engine.fact_templates import ANCHOR_REFERENCE_MARKER
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
 from wc_caseload_engine.planner import (
-    _CADENCE_ANCHOR_SUBTYPES,
     ATTORNEY_CADENCE_SUBTYPES,
+    CADENCE_ANCHOR_SUBTYPES,
+    CADENCE_MIN_LETTERS,
     DELAY_CHAIN_SUBTYPE,
+    DISCOVERY_PACKET_SUBTYPES,
+    EVENT_DRIVEN_LAG_DAYS,
     build_case_plan,
+    event_driven_max_lag_days,
 )
 from wc_caseload_engine.seeds import parse_case_seed
 from wc_caseload_engine.substrate import import_substrate
@@ -372,7 +378,7 @@ class TestAttorneyCadenceMovesTheDates:
             "cad-ev", rng_seed=8200, scenario={"attorney": {"cadence": "event_driven"}}
         )
         anchors = sorted(
-            {d.doc_date for d in plan.documents if d.subtype in _CADENCE_ANCHOR_SUBTYPES}
+            {d.doc_date for d in plan.documents if d.subtype in CADENCE_ANCHOR_SUBTYPES}
         )
         assert anchors, "no anchor documents in the file; the probe is vacuous"
         letters = sorted(
@@ -380,9 +386,64 @@ class TestAttorneyCadenceMovesTheDates:
         )
         assert len(letters) >= 2
         for when in letters:
-            assert any(0 <= (when - anchor).days <= 60 for anchor in anchors), (
+            ceiling = event_driven_max_lag_days(len(letters), len(anchors))
+            assert any(0 <= (when - anchor).days <= ceiling for anchor in anchors), (
                 f"a letter dated {when} follows no event in the file; nearest "
                 f"anchors {[str(a) for a in anchors]}"
+            )
+
+    def test_most_event_driven_letters_land_on_the_stated_lag(self) -> None:
+        """F2. The bound above is a ceiling; this is the *property*.
+
+        A ceiling alone would be satisfied by letters scattered anywhere in a
+        fifty-day band, which is not what ``event_driven`` claims to do. The
+        CHANGELOG said "1-5 days" while the guard allowed 0-60 — prose tighter
+        than its guard, which is the class this repair closes. Measured across
+        38 cases, 179 of 218 letters land at exactly the lag; the fit accounts
+        for the short tail and the lap for the long one.
+        """
+        lags: list[int] = []
+        ceilings: list[int] = []
+        for rng_seed in range(9000, 9012):
+            plan = build_case_plan(
+                _seed(
+                    f"lag-{rng_seed}",
+                    rng_seed=rng_seed,
+                    lifecycle={"target_stage": "discovery", "eval_type": "qme"},
+                    scenario={"attorney": {"cadence": "event_driven"}},
+                )
+            )
+            anchors = sorted(
+                {d.doc_date for d in plan.documents if d.subtype in CADENCE_ANCHOR_SUBTYPES}
+            )
+            letters = [
+                d for d in plan.documents if d.subtype in ATTORNEY_CADENCE_SUBTYPES
+            ]
+            # The same threshold `_apply_attorney_cadence` uses. A file with one
+            # client letter has no rhythm to impose, so the cadence leaves it
+            # where the walk put it — and seed 9003 is exactly that case: one
+            # letter, 100 days behind its nearest anchor, entirely correct.
+            # Sampling it was my error, not the code's, and stating the coupling
+            # here is what stops the sample drifting away from the guard again.
+            if len(letters) < CADENCE_MIN_LETTERS:
+                continue
+            ceiling = event_driven_max_lag_days(len(letters), len(anchors))
+            for doc in letters:
+                prior = [a for a in anchors if a <= doc.doc_date]
+                if prior:
+                    lags.append((doc.doc_date - max(prior)).days)
+                    ceilings.append(ceiling)
+        assert len(lags) >= 30, f"only {len(lags)} letters sampled; too few to characterise"
+        on_lag = sum(1 for lag in lags if lag == EVENT_DRIVEN_LAG_DAYS)
+        assert on_lag > len(lags) // 2, (
+            f"only {on_lag} of {len(lags)} letters sit at the stated "
+            f"{EVENT_DRIVEN_LAG_DAYS}-day lag; 'event driven' is not describing "
+            "what the dates actually do"
+        )
+        for lag, ceiling in zip(lags, ceilings, strict=True):
+            assert lag <= ceiling, (
+                f"a letter sat {lag} days behind its nearest event, past the "
+                f"{ceiling}-day ceiling its own case shape allows"
             )
 
     def test_the_anchor_and_cadence_tables_name_real_subtypes(self) -> None:
@@ -390,7 +451,7 @@ class TestAttorneyCadenceMovesTheDates:
         cadence built on it would silently do nothing at all."""
         taxonomy = effective_taxonomy()
         for label, table in (
-            ("_CADENCE_ANCHOR_SUBTYPES", _CADENCE_ANCHOR_SUBTYPES),
+            ("CADENCE_ANCHOR_SUBTYPES", CADENCE_ANCHOR_SUBTYPES),
             ("ATTORNEY_CADENCE_SUBTYPES", ATTORNEY_CADENCE_SUBTYPES),
         ):
             unknown = sorted(k for k in table if not taxonomy.is_canonical(k))
@@ -406,4 +467,157 @@ class TestAttorneyCadenceMovesTheDates:
         assert len(distinct) == 3, (
             "two cadences produced identical letter dates: "
             f"{ {name: [str(d) for d in v] for name, v in rhythms.items()} }"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ISC-126 — the ledger, the table of contents and the paper are one number
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoveryVolumesAgree:
+    """What replaces the two inertness probes ISC-126 retired.
+
+    The probes asked "does this field change nothing?"; now that it changes
+    something, the question becomes "do all three readings of it match?" — and
+    that is a far stronger guard than the one it replaces.
+    """
+
+    def _case(self, tmp_path: Path) -> tuple[Any, dict[str, Any], Path]:
+        seed = _seed(
+            "vol",
+            rng_seed=9900,
+            lifecycle={"target_stage": "discovery", "eval_type": "qme"},
+            scenario={
+                "discovery": {
+                    "subpoena_sets": 4,
+                    "pages_per_set": {"min": 12, "max": 18},
+                }
+            },
+        )
+        plan = build_case_plan(seed)
+        manifest, _ = _render(seed, tmp_path)
+        return plan, manifest, tmp_path / seed.case_id / "documents"
+
+    def test_the_file_holds_the_packet_count_the_seed_asked_for(
+        self, tmp_path: Path
+    ) -> None:
+        _, manifest, _ = self._case(tmp_path)
+        packets = [
+            entry
+            for entry in manifest["documents"]
+            if entry["subtype"] in DISCOVERY_PACKET_SUBTYPES
+        ]
+        assert len(packets) == 4, f"asked for 4 packets, got {len(packets)}"
+
+    def test_ledger_table_of_contents_and_paper_all_state_one_number(
+        self, tmp_path: Path
+    ) -> None:
+        import fitz
+
+        plan, manifest, documents = self._case(tmp_path)
+        budgets = plan.case_facts.packet_pages
+        assert budgets, "the ledger drew no page budget; the probe is vacuous"
+
+        seen = 0
+        for entry in manifest["documents"]:
+            if entry["subtype"] not in DISCOVERY_PACKET_SUBTYPES:
+                continue
+            with fitz.open(documents / entry["filename"]) as document:
+                paper = document.page_count
+                text = _flat("".join(page.get_text() for page in document))
+            stated = re.search(r"total pages:.{0,14}?(\d+)", text)
+            assert stated, f"packet {seen + 1} states no page total at all"
+            assert budgets[seen] == paper == int(stated.group(1)), (
+                f"packet {seen + 1} disagrees with itself: ledger "
+                f"{budgets[seen]}, paper {paper}, cover sheet {stated.group(1)}"
+            )
+            seen += 1
+        assert seen == len(budgets)
+
+
+# ---------------------------------------------------------------------------
+# ISC-125 — an event-driven letter names the event it follows
+# ---------------------------------------------------------------------------
+
+
+class TestEventDrivenLettersNameTheirAnchor:
+    """A date alone is not a reference.
+
+    ISC-123/124 put the letters on the right dates; a reader still had to infer
+    *why*. The rendered letter now says which document prompted it, which is the
+    part a reviewer can check without recomputing the cadence.
+    """
+
+    def _rendered(
+        self, case_id: str, cadence: str, tmp_path: Path
+    ) -> tuple[dict[str, Any], str]:
+        seed = _seed(
+            case_id,
+            rng_seed=8300,
+            lifecycle={"target_stage": "discovery", "eval_type": "qme"},
+            scenario={"attorney": {"cadence": cadence}},
+        )
+        manifest, texts = _render(seed, tmp_path)
+        body = _flat(
+            "\n".join(
+                text
+                for subtype, text in texts.items()
+                if subtype in ATTORNEY_CADENCE_SUBTYPES
+            )
+        )
+        return manifest, body
+
+    def _letter_text(self, case_id: str, cadence: str, tmp_path: Path) -> str:
+        return self._rendered(case_id, cadence, tmp_path)[1]
+
+    def test_the_cited_event_is_a_document_that_is_really_in_the_file(
+        self, tmp_path: Path
+    ) -> None:
+        """Naming *an* event is not the property; naming a *real* one is.
+
+        A letter that cites a plausible-looking report the folder does not
+        contain is worse than one that cites nothing, so the cited dates are
+        checked against the manifest rather than merely counted.
+        """
+        manifest, body = self._rendered("anchor-real", "event_driven", tmp_path)
+        cited = re.findall(rf"{ANCHOR_REFERENCE_MARKER} .+? of ([a-z]+ \d{{1,2}}, \d{{4}})", body)
+        assert cited, "no citation parsed; the assertion below would be vacuous"
+        real = {
+            datetime.strptime(entry["documentDate"], "%Y-%m-%d").strftime("%B %d, %Y").lower()
+            for entry in manifest["documents"]
+            if entry["subtype"] in CADENCE_ANCHOR_SUBTYPES
+        }
+        assert real, "no anchor documents in the manifest; the probe proves nothing"
+        unknown = sorted(set(cited) - real)
+        assert not unknown, (
+            f"letters cite events with no matching document in the folder: {unknown}. "
+            f"Anchor documents present: {sorted(real)}"
+        )
+
+    def test_the_letter_names_the_document_that_prompted_it(
+        self, tmp_path: Path
+    ) -> None:
+        body = self._letter_text("anchor-ref", "event_driven", tmp_path)
+        assert body, "no client-letter text extracted; the grep would be vacuous"
+        assert ANCHOR_REFERENCE_MARKER.lower() in body, (
+            f"no event-driven letter carries {ANCHOR_REFERENCE_MARKER!r}; the "
+            "letter is on the right date but says nothing about why"
+        )
+
+    def test_a_non_event_driven_file_makes_no_such_reference(
+        self, tmp_path: Path
+    ) -> None:
+        """The positive control that makes the grep above mean something.
+
+        Without it the assertion would pass on a marker the engine emitted
+        unconditionally — proving the string exists, not that the cadence drives
+        it.
+        """
+        body = self._letter_text("anchor-none", "every_30_days", tmp_path)
+        assert body, "no client-letter text extracted; the control is vacuous"
+        assert ANCHOR_REFERENCE_MARKER.lower() not in body, (
+            "a thirty-day-cadence letter references an anchoring event; the "
+            "reference is unconditional, so the event_driven assertion proves "
+            "nothing"
         )

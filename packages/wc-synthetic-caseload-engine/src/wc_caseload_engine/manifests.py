@@ -29,6 +29,7 @@ import json
 import re
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +43,12 @@ from wc_caseload_engine.case_facts import (
     CaseFacts,
     facts_manifest_block,
 )
-from wc_caseload_engine.planner import CasePlan, PlannedDocument, build_case_plan
+from wc_caseload_engine.planner import (
+    CADENCE_ANCHOR_SUBTYPES,
+    CasePlan,
+    PlannedDocument,
+    build_case_plan,
+)
 from wc_caseload_engine.renderer import FORMAT_EXTENSIONS, RenderResult, render_document
 from wc_caseload_engine.seeds import CaseSeed, write_case_seed
 from wc_caseload_engine.substrate import check_substrate_pin, substrate_git_sha
@@ -255,6 +261,20 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
     # twentieth.
     report_counter = 0
     letter_counter = 0
+    # ISC-125. The events an event_driven client letter may refer back to, taken
+    # from the finished plan so the letter cites a document that is genuinely in
+    # the folder. Built once: it is the same list for every letter, and each
+    # letter picks the most recent entry preceding its own date.
+    cadence_anchors: tuple[tuple[str, date], ...] = tuple(
+        sorted(
+            {
+                (doc.subtype, doc.doc_date)
+                for doc in plan.documents
+                if doc.subtype in CADENCE_ANCHOR_SUBTYPES
+            },
+            key=lambda item: (item[1], item[0]),
+        )
+    )
     for document in plan.documents:
         filename = filename_for(seed, case_number, document)
         result = render_document(
@@ -273,6 +293,7 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
             packet_index=packet_counter,
             report_ordinal=report_counter,
             letter_ordinal=letter_counter,
+            cadence_anchors=cadence_anchors,
         )
         if document.subtype in SUBPOENAED_RECORDS_SUBTYPES:
             packet_counter += 1

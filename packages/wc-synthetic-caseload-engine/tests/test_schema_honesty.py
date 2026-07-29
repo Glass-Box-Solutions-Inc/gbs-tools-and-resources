@@ -15,13 +15,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from conftest import requires_substrate
-from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
+from wc_caseload_engine.manifests import (
+    MANIFEST_NAME,
+    SUBPOENAED_RECORDS_SUBTYPES,
+    generate_case,
+)
+from wc_caseload_engine.planner import build_case_plan
 from wc_caseload_engine.schema_audit import (
     carries_marker,
     field_docstrings,
@@ -29,6 +35,7 @@ from wc_caseload_engine.schema_audit import (
     scenario_source,
 )
 from wc_caseload_engine.seeds import parse_case_seed
+from wc_caseload_engine.taxonomy import effective_taxonomy
 
 pytestmark = requires_substrate
 
@@ -44,26 +51,59 @@ SCENARIO_CLASSES = (
     "DiagnosticEntry",
 )
 
+@dataclass(frozen=True)
+class InertProbe:
+    """One marked field's inertness probe, and the ground it has to stand on.
+
+    ``lifecycle`` and ``witness`` exist because of F1, and the failure they fix
+    is worth stating plainly: every probe ran at ``target_stage: medical_legal``,
+    which emits **zero** subpoenaed-records documents. The discovery fields were
+    therefore proven inert on a case containing nothing that could consume them.
+    That is our own "a zero that is not earned is not evidence" standard, broken
+    by the very guard written to enforce it.
+
+    So a probe now names the stage where its consumer exists *and* the documents
+    that must be present for its result to mean anything, and
+    ``test_every_probe_runs_where_its_consumer_exists`` checks the second against
+    the first. A probe that cannot witness its consumer fails rather than
+    quietly reporting inertness.
+    """
+
+    plain: dict[str, Any]
+    varied: dict[str, Any]
+    lifecycle: dict[str, Any]
+    witness: frozenset[str]
+
+
+#: The lifecycle block the discovery probes need. ``medical_legal`` — the
+#: previous default — plans 0 subpoena packets at this seed; ``discovery`` plans
+#: 3. Measured, not assumed: see ``test_the_probe_stage_is_the_one_that_yields``.
+_DISCOVERY_LIFECYCLE = {"target_stage": "discovery", "eval_type": "qme"}
+
 #: Two scenario blocks per marked field: one plain, one exercising the field.
 #:
 #: Hand-written, so it carries its own liveness guard below — a marked field
 #: with no probe would otherwise pass by never being tested, which is the
 #: vacuous-assertion class this suite has hit three times.
-INERT_PROBES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
-    "DiscoveryScenario.subpoena_sets": ({}, {"discovery": {"subpoena_sets": 6}}),
-    "DiscoveryScenario.pages_per_set": (
-        {},
-        {"discovery": {"pages_per_set": {"min": 300, "max": 400}}},
-    ),
-    # AttorneyScenario.cadence had a probe here until ISC-123/124 honoured it.
-    # The guard removed it: the byte-inertness run reported that varying the
-    # field moved 35 documents and named the docstring to correct. That is the
-    # meta-guard's whole purpose, and it fired without anyone remembering to
-    # look.
+INERT_PROBES: dict[str, InertProbe] = {
+    # Empty as of ISC-126, and that is the intended end state rather than a
+    # gap. Every field this table ever guarded is now honoured:
+    #   AttorneyScenario.cadence          honoured by ISC-123/124
+    #   DiscoveryScenario.subpoena_sets   honoured by ISC-126
+    #   DiscoveryScenario.pages_per_set   honoured by ISC-126
+    # Each was removed only after the byte-inertness run went red on it, which
+    # is the meta-guard doing its job in every case. The machinery stays: the
+    # moment a new field is documented as unhonoured, the completeness pair
+    # below demands a probe for it, and InertProbe demands that probe stand
+    # where its consumer exists.
 }
 
 
-def _body(case_id: str, scenario: dict[str, Any]) -> dict[str, Any]:
+def _body(
+    case_id: str,
+    scenario: dict[str, Any],
+    lifecycle: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "case_id": case_id,
         "rng_seed": 9900,
@@ -72,20 +112,24 @@ def _body(case_id: str, scenario: dict[str, Any]) -> dict[str, Any]:
             "date_of_injury": "2022-04-11",
             "body_parts": [{"part": "lumbar_spine"}, {"part": "shoulder"}],
         },
-        "lifecycle": {"target_stage": "medical_legal", "eval_type": "qme"},
+        "lifecycle": lifecycle or {"target_stage": "medical_legal", "eval_type": "qme"},
         "scenario": scenario,
         "documents": {"format_mix": {"pdf": 1.0}},
         "output": {"formats": ["pdf"]},
     }
 
 
-def _fingerprint(scenario: dict[str, Any], out_dir: Path) -> tuple[str, ...]:
+def _fingerprint(
+    scenario: dict[str, Any],
+    out_dir: Path,
+    lifecycle: dict[str, Any] | None = None,
+) -> tuple[str, ...]:
     """Every rendered document's checksum, keyed by filename.
 
     Compared as a whole rather than by tree digest so a failure names which
     documents moved, not merely that something did.
     """
-    seed = parse_case_seed(_body("inert-probe", scenario))
+    seed = parse_case_seed(_body("inert-probe", scenario, lifecycle))
     generate_case(seed, out_dir, case_number=1)
     manifest = json.loads((out_dir / seed.case_id / MANIFEST_NAME).read_text())
     return tuple(
@@ -117,17 +161,99 @@ class TestTheMarkerSweepIsWellFormed:
             "The field is honoured now — delete its probe."
         )
 
-    def test_the_sweep_currently_finds_something(self) -> None:
-        """Guard against a regex that silently stops matching.
+def assert_probe_stands_on_ground(field: str, probe: InertProbe) -> None:
+    """F1's check, as a function so the planted control can run the real thing.
 
-        This assertion is expected to *fail* once Phase 3b honours the last
-        marked field, at which point it should be deleted along with the
-        markers. That is the intended lifecycle, not a defect.
-        """
-        assert marked_fields(scenario_source(), SCENARIO_CLASSES), (
-            "no field carries the marker — if that is genuinely true, delete this "
-            "test and the INERT_PROBES table with it"
+    Inlining it in the parametrized test would leave the control re-implementing
+    the assertion it is supposed to validate, which proves only that two pieces
+    of code agree.
+    """
+    plan = build_case_plan(parse_case_seed(_body("witness", probe.plain, probe.lifecycle)))
+    present = sum(1 for doc in plan.documents if doc.subtype in probe.witness)
+    assert present, (
+        f"{field}'s probe plans no document from {sorted(probe.witness)}. "
+        "Inertness proven on a case with nothing to consume the field is "
+        "the unearned zero this suite exists to reject — move the probe to "
+        "a stage that emits its consumer."
+    )
+
+
+#: A subtype no discovery-stage case can plan: it asserts an operation happened,
+#: and the probe body seeds no surgery. Canonical, so the control cannot pass by
+#: naming a key the taxonomy has never heard of — which would make it a typo
+#: test rather than a witness test.
+UNREACHABLE_WITNESS = "OPERATIVE_HOSPITAL_RECORDS"
+
+
+class TestEveryProbeStandsOnGround:
+    """F1. An inertness result is only worth what its case can consume.
+
+    These are the guards that would have caught the original defect, and they
+    are deliberately cheap plan-level checks so they run on every field rather
+    than only the ones someone remembered to look at.
+
+    ``INERT_PROBES`` is empty, which is the intended end state — so the
+    parametrized check below runs **zero times**, and on its own its
+    red-capability would rest on reading it. That is exactly the class F1
+    existed to replace, one level up. The planted control underneath executes
+    the real function against a probe whose consumer cannot appear.
+    """
+
+    @pytest.mark.parametrize("field", sorted(INERT_PROBES))
+    def test_every_probe_runs_where_its_consumer_exists(self, field: str) -> None:
+        assert_probe_stands_on_ground(field, INERT_PROBES[field])
+
+    def test_the_witness_check_fails_on_a_probe_that_cannot_witness(self) -> None:
+        """The planted control. Zero parametrized runs must not mean zero proof."""
+        assert effective_taxonomy().is_canonical(UNREACHABLE_WITNESS), (
+            f"{UNREACHABLE_WITNESS} is not a canonical subtype; the control would "
+            "pass on a typo rather than on an absent consumer"
         )
+        planted = InertProbe(
+            plain={},
+            varied={"discovery": {"subpoena_sets": 2}},
+            lifecycle=_DISCOVERY_LIFECYCLE,
+            witness=frozenset({UNREACHABLE_WITNESS}),
+        )
+        with pytest.raises(AssertionError, match="plans no document from"):
+            assert_probe_stands_on_ground("planted.field", planted)
+
+    def test_the_same_check_passes_on_a_probe_that_can(self) -> None:
+        """The other half: the control's failure must come from the witness.
+
+        Without this, a check that raised for any input at all would satisfy the
+        test above and prove nothing about what it is measuring.
+        """
+        reachable = InertProbe(
+            plain={},
+            varied={"discovery": {"subpoena_sets": 2}},
+            lifecycle=_DISCOVERY_LIFECYCLE,
+            witness=SUBPOENAED_RECORDS_SUBTYPES,
+        )
+        assert_probe_stands_on_ground("reachable.field", reachable)
+
+    def test_the_probe_stage_is_the_one_that_yields(self) -> None:
+        """The measurement behind ``_DISCOVERY_LIFECYCLE``, kept executable.
+
+        ``medical_legal`` was the old default and plans zero packets. If that
+        ever stops being true the comment explaining this repair goes stale, so
+        it is asserted rather than written down.
+        """
+        def packets(stage: str) -> int:
+            plan = build_case_plan(
+                parse_case_seed(
+                    _body("stage", {}, {"target_stage": stage, "eval_type": "qme"})
+                )
+            )
+            return sum(
+                1 for d in plan.documents if d.subtype in SUBPOENAED_RECORDS_SUBTYPES
+            )
+
+        assert packets("medical_legal") == 0, (
+            "medical_legal now emits subpoena packets; the F1 repair's premise "
+            "has changed and its comment is now wrong"
+        )
+        assert packets("discovery") > 0
 
 
 class TestMarkedFieldsAreByteInert:
@@ -135,9 +261,10 @@ class TestMarkedFieldsAreByteInert:
     def test_varying_a_marked_field_changes_no_output_byte(
         self, field: str, tmp_path: Path
     ) -> None:
-        plain, varied = INERT_PROBES[field]
-        before = _fingerprint(plain, tmp_path / "before")
-        after = _fingerprint(varied, tmp_path / "after")
+        probe = INERT_PROBES[field]
+        plain, varied, lifecycle = probe.plain, probe.varied, probe.lifecycle
+        before = _fingerprint(plain, tmp_path / "before", lifecycle)
+        after = _fingerprint(varied, tmp_path / "after", lifecycle)
         assert before == after, (
             f"{field} is documented as 'not yet honoured' but changing it moved "
             f"{sum(1 for a, b in zip(before, after, strict=False) if a != b)} document(s). "

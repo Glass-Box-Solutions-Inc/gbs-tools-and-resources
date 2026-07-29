@@ -914,6 +914,21 @@ class TestEveryActionableMessageResolvesWhenFollowed:
     is not a legal enum value — following it verbatim produced a second error.
     A message that sends the reader somewhere that also fails is worse than a
     terse one, because it costs a round trip to discover.
+
+    **The seed half of this guard now lives in ``test_message_registry.py``
+    (ISC-129).** Three hand-written proofs stood here — the UR message, the
+    ``never_treated`` surgery message and the ``never_treated`` lien message —
+    and each is subsumed by a registry entry that does strictly more: it proves
+    the trigger raises *that* message before applying the edit, where the
+    hand-written versions only showed that some edited seed loaded. Deleting
+    them is the point rather than a side effect. Leaving them would say the
+    table is a supplement, and the next author would write a fourth proof by
+    hand instead of adding the row that makes the sweep go green.
+
+    What stays here is what the table does not cover: the negative assertion
+    below (a message must not *name* a value outside its own enum) and the
+    static CLI sweep, which is the other half of the class and ranges over the
+    whole package rather than over ``seeds.py``.
     """
 
     def test_the_denied_by_ur_message_names_a_legal_value(self) -> None:
@@ -922,26 +937,6 @@ class TestEveryActionableMessageResolvesWhenFollowed:
         message = str(exc.value)
         assert "decision: denied" not in message, "the suggested value is not in the enum"
         assert "upheld" in message
-
-    def test_following_the_ur_message_produces_a_valid_seed(self) -> None:
-        """Apply the suggested edit; the seed must now load."""
-        seed = _seed(
-            "msg-ur-fixed",
-            scenario={"surgery": "denied_by_ur"},
-            lifecycle={
-                "target_stage": "medical_legal",
-                "eval_type": "qme",
-                "ur_dispute": {"enabled": True, "decision": "upheld"},
-            },
-        )
-        assert seed.scenario.surgery == "denied_by_ur"
-
-    def test_following_the_never_treated_surgery_message_works(self) -> None:
-        seed = _seed(
-            "msg-nt-surg",
-            scenario={"treatment": {"status": "never_treated"}, "surgery": "none"},
-        )
-        assert seed.scenario.surgery == "none"
 
     def test_every_cli_invocation_in_the_source_is_real(self) -> None:
         """A message that tells the author to run a command that does not exist.
@@ -996,19 +991,6 @@ class TestEveryActionableMessageResolvesWhenFollowed:
         assert not problems, "source text names CLI surface that does not exist:\n" + "\n".join(
             problems
         )
-
-    def test_following_the_never_treated_lien_message_works(self) -> None:
-        """The message names edd/ambulance/attorney_costs/self_procured as safe."""
-        seed = _seed(
-            "msg-nt-lien",
-            scenario={"treatment": {"status": "never_treated"}},
-            lifecycle={
-                "target_stage": "medical_legal",
-                "eval_type": "qme",
-                "liens": {"count": 2, "claimants": ["edd", "attorney_costs"]},
-            },
-        )
-        assert seed.scenario.treatment.status == "never_treated"
 
 
 # ---------------------------------------------------------------------------

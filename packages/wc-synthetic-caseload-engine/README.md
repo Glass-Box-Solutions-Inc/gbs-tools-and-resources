@@ -712,9 +712,13 @@ scenario:
 How often counsel wrote to the client, and it moves the letter dates:
 
 - **`every_30_days`** — the diligent practice. Letters walk a thirty-day clock.
-- **`event_driven`** — counsel writes when something happened. Each letter lands
-  about five days behind a report or milestone **already in the file**, so a
-  reader can hold the letter beside the document that prompted it.
+- **`event_driven`** — counsel writes when something happened. Each letter is
+  *intended* to land five days behind a report or milestone **already in the
+  file**, so a reader can hold the letter beside the document that prompted it.
+  Measured over 404 letters across four stages, 82% land exactly there; the fit
+  below accounts for the rest, and a file with more letters than events laps the
+  list, adding 45 days per pass. A file with fewer than two client letters has
+  no rhythm to impose and is left where the walk put it.
 - **`sporadic`** — the file with a three-month hole in it that opposing counsel
   will notice. At least one gap over ninety days.
 
@@ -726,16 +730,80 @@ compressed.
 Published on `caseFacts.attorney.cadence`, because the letter dates in the
 manifest are what a reader checks it against.
 
-### Accepted but not yet rendered
+**An `event_driven` letter names the event it answers (0.7.0, ISC-125).** A date
+alone is not a reference: 0.6.0 put the letters on the right days and left the
+reader to infer why. The rendered letter now opens by citing the document that
+prompted it — subtype and date — and the cited date is checked against the
+manifest rather than merely counted, because a letter citing a plausible report
+the folder does not contain is worse than one citing nothing. The other two
+cadences emit no such reference, which is what makes the assertion mean
+something: `test_a_non_event_driven_file_makes_no_such_reference` is the control.
 
-`scenario.discovery.subpoena_sets` and `scenario.discovery.pages_per_set` load,
-validate and resolve onto the ledger, but **no template honours them yet**:
-packet count still comes from the lifecycle walk, and the subpoenaed-records
-table of contents still draws its page counts independently of the body it
-fronts, so the declared and actual volumes are unrelated (ISC-126). They are
-deliberately absent from the published `caseFacts` for that reason — a published
-fact reads as a verified one — and their docstrings say so under a guard that
-fails the build if the code ever outruns the claim.
+### The discovery block
+
+```yaml
+scenario:
+  discovery:
+    subpoena_sets: 4              # records packets to emit; omit to keep the walk's own count
+    pages_per_set: {min: 12, max: 18}
+```
+
+Both fields are **honoured** as of 0.7.0 (ISC-126). They were accepted and
+validated but inert in 0.5.0 and 0.6.0, and this section said so.
+
+- **`subpoena_sets`** — the plan is trimmed or extended to this many
+  subpoenaed-records packets. Omitting it keeps whatever the lifecycle walk
+  proposed, which is what leaves every pre-0.7.0 seed byte-identical outside the
+  packets themselves. A stage that proposes no packets at all — anything before
+  `target_stage: discovery` — is **warned about rather than silently ignored**:
+  the count has nothing to act on there.
+- **`pages_per_set`** — declared page volume per packet, and *pages* means
+  physical pages. One count is drawn per packet on the `facts:` stream, the
+  renderer measures what actually came out, adjusts, and writes the cover
+  sheet's table of contents from the measurement.
+
+The point is the agreement, not the number. Before 0.7.0 the table of contents
+summed its own `random.randint` draws while the body drew separately, so a cover
+sheet could promise 23 pages in front of a packet holding 6. The ledger's
+`CaseFacts.packet_pages`, the table of contents and the paper are three readings
+of one value, and
+`test_ledger_table_of_contents_and_paper_all_state_one_number` opens the
+rendered PDFs and counts them.
+
+`packet_pages` is **not** published in the manifest's `caseFacts` block, and
+deliberately so: the governed-fields rule publishes a fact only where a reader
+needs the manifest to check it, and here the packet itself states the number on
+its own cover sheet. Counting the pages is the check.
+
+#### Two limits on this block, stated because they are real
+
+**The packet count currently outranks a document control.** Everywhere else in
+this engine an explicit `exclude`, a zero-count override or a `global_cap` wins
+and lands a `manifest.warnings` entry saying so (ISC-29, ISC-135). Packet shaping
+runs *after* the control resolver, so a stated `subpoena_sets` re-extends the
+count using whichever packet subtype survived. Measured at
+`target_stage: discovery`, `subpoena_sets: 4`:
+
+| Seed | Packets planned | Warning |
+|---|---|---|
+| no controls | 4 (2 medical + 2 employment) | none |
+| `exclude: [SUBPOENAED_RECORDS_MEDICAL]` | **4, all employment** | **none** |
+| `overrides: [{subtype: SUBPOENAED_RECORDS_MEDICAL, count: 0}]` | **4, all employment** | **none** |
+| `exclude` every packet subtype | 0 | yes — but it blames the lifecycle stage, not the control that removed them |
+
+The count is honoured and the control is silently overridden, which inverts the
+house contract. Until it is reconciled, do not combine `subpoena_sets` with a
+packet-subtype control and expect the control to win.
+
+**The three readings agree within a validated range, not at every budget.** The
+guarantee above is proven packet by packet at `pages_per_set: {min: 12, max: 18}`
+— the range the shipped test uses and the range an independent reviewer
+re-measured. Below a packet's structural floor of roughly four pages the
+measure-then-adjust loop cannot reach the budget at all: across 27 packets
+spanning budgets 1–120, **six** carried a ledger figure the paper did not match
+(a requested 2 delivering 4), and the engine emitted **no warning of any kind** —
+its `packet_page_table_unstable` log line fired zero times. Seed `min` at 12 or
+above for volumes you intend to rely on.
 
 ### The treatment block
 
