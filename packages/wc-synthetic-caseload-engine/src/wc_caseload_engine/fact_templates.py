@@ -79,6 +79,34 @@ class _ForcedChoice:
         return getattr(random, name)
 
 
+class _SpecCapture:
+    """Binds the rendering spec to the instance so the helpers below can read it.
+
+    The substrate threads ``doc_spec`` as a *parameter* — ``generate`` hands it
+    to ``_generate_pdf``, which hands it to ``build_story`` — and never assigns
+    ``self.doc_spec``. Every helper here that reached for
+    ``template.doc_spec.context`` therefore got ``None`` and fell through to its
+    default, silently and forever.
+
+    :func:`_facts_of` escaped because the renderer also sets
+    ``_wc_case_facts`` on the instance, so the ledger arrived by the second
+    route. :func:`_index_of` and :func:`_report_ordinal` had no second route:
+    the treatment trajectory read ordinal 0 for every report in every case from
+    the day it shipped, and the suite passed because "the first phrase of the
+    arc" satisfies "some phrase of the arc".
+
+    Capturing in ``generate`` rather than in each ``build_story`` covers the
+    helpers called from ``_build_diagnostic_review`` and friends, which the
+    substrate invokes without the spec, and means a subclass that overrides
+    nothing still gets the seam. This is our class, not the substrate's — the
+    substrate is unchanged.
+    """
+
+    def generate(self, output_path: Any, doc_spec: Any) -> Any:
+        self.doc_spec = doc_spec
+        return super().generate(output_path, doc_spec)  # type: ignore[misc]
+
+
 def _facts_of(template: Any) -> CaseFacts | None:
     """The ledger for the document being rendered, if the context carries one."""
     context = getattr(getattr(template, "doc_spec", None), "context", None)
@@ -180,7 +208,7 @@ def build_fact_aware_templates() -> dict[str, type]:
 
     from reportlab.platypus import Paragraph
 
-    class FactAwareDiagnosticReport(diagnostic_module.DiagnosticReport):  # type: ignore[misc,name-defined]
+    class FactAwareDiagnosticReport(_SpecCapture, diagnostic_module.DiagnosticReport):  # type: ignore[misc,name-defined]
         """Reports the study the ledger says was performed.
 
         The substrate drew ``MRI``/``CT``/``X-Ray`` per document, independently
@@ -261,7 +289,7 @@ def build_fact_aware_templates() -> dict[str, type]:
             )
             return story
 
-    class FactAwareQmeAmeReport(qme_module.QmeAmeReport):  # type: ignore[misc,name-defined]
+    class FactAwareQmeAmeReport(_SpecCapture, qme_module.QmeAmeReport):  # type: ignore[misc,name-defined]
         """Cites only studies the ledger says happened, and says what did not.
 
         The substrate drew an imaging type *per body part* and asserted a
@@ -324,7 +352,7 @@ def build_fact_aware_templates() -> dict[str, type]:
                 )
             return elements
 
-    class FactAwareTreatingPhysicianReport(tpr_module.TreatingPhysicianReport):  # type: ignore[misc,name-defined]
+    class FactAwareTreatingPhysicianReport(_SpecCapture, tpr_module.TreatingPhysicianReport):  # type: ignore[misc,name-defined]
         """Describes post-operative care when the ledger says surgery happened.
 
         ``treatment_type`` drew from ``conservative`` / ``physical_therapy`` /
@@ -433,7 +461,7 @@ def build_fact_aware_templates() -> dict[str, type]:
 
     operative_module = import_substrate("pdf_templates.medical.operative_record")
 
-    class FactAwareOperativeRecord(operative_module.OperativeRecord):  # type: ignore[misc,name-defined]
+    class FactAwareOperativeRecord(_SpecCapture, operative_module.OperativeRecord):  # type: ignore[misc,name-defined]
         """Performs the operation the ledger says was performed.
 
         The substrate already narrows CPTs to the case's body parts and then
@@ -521,7 +549,7 @@ def build_fact_aware_templates() -> dict[str, type]:
 
     ur_module = import_substrate("pdf_templates.medical.utilization_review")
 
-    class FactAwareUtilizationReview(ur_module.UtilizationReview):  # type: ignore[misc,name-defined]
+    class FactAwareUtilizationReview(_SpecCapture, ur_module.UtilizationReview):  # type: ignore[misc,name-defined]
         """Reviews the procedure the case is actually about.
 
         ``_build_request_details`` drew one to three CPTs at random from the
@@ -561,7 +589,7 @@ def build_fact_aware_templates() -> dict[str, type]:
                 log.warning("fact_templates.ur_procedure_not_forced", cpt=surgery.cpt_code)
             return story
 
-    class FactAwareDischargeSummary(operative_module.OperativeRecord):  # type: ignore[misc,name-defined]
+    class FactAwareDischargeSummary(_SpecCapture, operative_module.OperativeRecord):  # type: ignore[misc,name-defined]
         """A discharge summary that does not call itself an operative report.
 
         ``DISCHARGE_SUMMARY`` is mapped to ``OperativeRecord`` with a
@@ -608,7 +636,7 @@ def build_fact_aware_templates() -> dict[str, type]:
 
     adjuster_module = import_substrate("pdf_templates.correspondence.adjuster_letter")
 
-    class FactAwareAdjusterLetter(adjuster_module.AdjusterLetter):  # type: ignore[misc,name-defined]
+    class FactAwareAdjusterLetter(_SpecCapture, adjuster_module.AdjusterLetter):  # type: ignore[misc,name-defined]
         """Writes a letter this case could actually have produced.
 
         The substrate drew one of five letter bodies per document, independently
