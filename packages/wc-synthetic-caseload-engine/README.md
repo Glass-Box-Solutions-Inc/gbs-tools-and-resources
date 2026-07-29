@@ -622,19 +622,43 @@ load, as is listing the same study as both performed and absent — though the
 overlap check is body-part aware, because a study performed on one region and
 absent on another is coherent.
 
-Omitting `surgery` derives it, and derivation deliberately reproduces the
-substrate's prior 35% coin off the same stream, so every seed written before this
-block existed keeps its surgery status exactly.
+All five are ledger facts, but only `mri`, `ct` and `xray` are ever assigned to a
+`DIAGNOSTICS_IMAGING` document, and only those three are drawn when you say
+nothing. The imaging template picks its technique paragraph off the exam type —
+pulse sequences for MRI, slice thickness for CT, projections for anything else —
+so handing it an EMG produces a nerve conduction study written up in radiographic
+language. A stated EMG or lab panel still governs the QME, which cites it when
+performed and records its absence when not.
+
+Omitting `surgery` derives it, and derivation reproduces the substrate's prior
+35% coin off the same stream, so every seed written before this block existed
+keeps its surgery status exactly. Stating it wins over the coin — and over the
+substrate's own exclusions, so a seed that asks for surgery on a psych claim gets
+it. The coin is still drawn either way and its result discarded, so stating
+`surgery:` cannot shift any other draw in the case.
 
 ### What is fact-aware, and what that costs
 
-Eight subtypes dispatch to engine-owned subclasses that read the ledger:
-`DIAGNOSTICS_IMAGING`, the five QME/AME report flavours, and
-`TREATING_PHYSICIAN_REPORT_PR2`/`_PR4`. Each overrides the narrowest method that
-rolled the offending draw and delegates the rest to the substrate, which stays
-read-only. **Everything else takes the original path byte for byte** — verified
-by regenerating the demo at 0.2.0 and at 0.3.0: 308 of 331 documents identical,
-and all 23 that moved are registry-covered.
+Nine subtypes dispatch to engine-owned subclasses that read the ledger:
+`DIAGNOSTICS_IMAGING`, `OPERATIVE_HOSPITAL_RECORDS`, the five QME/AME report
+flavours, and `TREATING_PHYSICIAN_REPORT_PR2`/`_PR4`. Each overrides the
+narrowest method that rolled the offending draw and delegates the rest to the
+substrate, which stays read-only.
+
+**Every byte that moves is accounted for.** Regenerating the demo at 0.2.0 and
+at 0.3.0 gives 331 documents both times with identical filenames, **303
+byte-identical and 28 changed**. All 28 trace to one of two declared sources: 23
+are registry-covered subtypes, and 5 are `SUBPOENAED_RECORDS_MEDICAL`, which the
+registry does *not* cover — those moved because the provider round-robin now
+sets a context key the substrate template has always read and the engine never
+supplied (see the CHANGELOG). Nothing else moved, and a probe fails on any
+change it cannot attribute.
+
+Two caveats worth stating. The demo spec happens to emit only three of the nine
+registry subtypes, so the byte probe exercises the rest only through the
+coherence suite. And stating `scenario:` in a seed is expected to change that
+seed's bytes — it is a content knob; the guarantee is that seeds which say
+nothing keep exactly what they had.
 
 Ledger draws are namespaced under `facts:` so they cannot perturb an existing
 stream, and the renderer re-seeds per document, so a fact-aware template cannot

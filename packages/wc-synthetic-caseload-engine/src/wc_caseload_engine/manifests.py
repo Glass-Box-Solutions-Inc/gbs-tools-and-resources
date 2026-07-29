@@ -30,11 +30,17 @@ import re
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import structlog
 
 from wc_caseload_engine import __version__
-from wc_caseload_engine.case_facts import CaseFacts, facts_manifest_block
+from wc_caseload_engine.case_facts import (
+    GOVERNED_LEDGER_FIELDS,
+    MODALITIES,
+    CaseFacts,
+    facts_manifest_block,
+)
 from wc_caseload_engine.planner import CasePlan, PlannedDocument, build_case_plan
 from wc_caseload_engine.renderer import FORMAT_EXTENSIONS, RenderResult, render_document
 from wc_caseload_engine.seeds import CaseSeed, write_case_seed
@@ -391,6 +397,135 @@ class ValidationReport:
         return "\n".join(lines)
 
 
+#: Subtypes that constitute proof an operation happened.
+OPERATIVE_SUBTYPES = frozenset({"OPERATIVE_HOSPITAL_RECORDS"})
+
+
+def _validate_case_facts(
+    manifest: dict[str, Any],
+    case_dir: Path,
+    documents: list[Any],
+    case_label: str,
+) -> list[str]:
+    """Check the published ledger against itself, its artifact, and the folder.
+
+    The ledger is the case's claim about what happened. Publishing it and never
+    checking it is worse than not publishing it: a reader is entitled to assume
+    a stated fact was verified. This enforces the part a validator can see from
+    the output alone — no substrate, no regeneration, just the manifest, the
+    YAML beside it, and the filenames on disk.
+    """
+    problems: list[str] = []
+    block = manifest.get("caseFacts")
+
+    if block is None:
+        return [f"{case_label}: manifest has no caseFacts block"]
+    if not isinstance(block, dict):
+        return [f"{case_label}: caseFacts is {type(block).__name__}, expected a mapping"]
+
+    # Shape. A missing key here means a consumer reading the ledger would get
+    # None and quietly conclude the case had no surgery, no imaging, no one.
+    for key in GOVERNED_LEDGER_FIELDS:
+        if key not in block:
+            problems.append(f"{case_label}: caseFacts is missing {key!r}")
+    if problems:
+        return problems
+
+    diagnostics = block.get("diagnostics")
+    if not isinstance(diagnostics, list):
+        return [f"{case_label}: caseFacts.diagnostics is not a list"]
+
+    seen: dict[str, bool] = {}
+    for entry in diagnostics:
+        if not isinstance(entry, dict):
+            problems.append(f"{case_label}: caseFacts.diagnostics holds a non-mapping entry")
+            continue
+        modality = entry.get("modality")
+        if modality not in MODALITIES:
+            problems.append(
+                f"{case_label}: caseFacts names modality {modality!r}, which is not one of "
+                f"{', '.join(MODALITIES)}"
+            )
+            continue
+        extra = set(entry) - set(GOVERNED_LEDGER_FIELDS["diagnostics"])
+        if extra:
+            problems.append(
+                f"{case_label}: caseFacts.diagnostics[{modality}] publishes ungoverned "
+                f"field(s) {sorted(extra)} — no template renders them"
+            )
+        performed = entry.get("performed")
+        if not isinstance(performed, bool):
+            problems.append(
+                f"{case_label}: caseFacts.diagnostics[{modality}].performed is "
+                f"{performed!r}, expected a boolean"
+            )
+        elif modality in seen and seen[modality] != performed:
+            problems.append(
+                f"{case_label}: caseFacts calls {modality!r} both performed and absent"
+            )
+        else:
+            seen[modality] = performed
+
+    surgery = block.get("surgery")
+    if not isinstance(surgery, dict):
+        problems.append(f"{case_label}: caseFacts.surgery is not a mapping")
+    else:
+        status = surgery.get("status")
+        has_operative = any(
+            isinstance(d, dict) and d.get("subtype") in OPERATIVE_SUBTYPES for d in documents
+        )
+        if status == "performed":
+            if not surgery.get("cptCode"):
+                problems.append(
+                    f"{case_label}: caseFacts says surgery was performed but names no CPT"
+                )
+            # Deliberately *not* asserting that an operative document exists.
+            # The implication only runs one way in this system: the substrate's
+            # lifecycle walk gates several rules on ``has_surgery`` but does not
+            # guarantee an OPERATIVE_HOSPITAL_RECORDS document, and two of the
+            # seven demo cases resolve surgery true while emitting none. Failing
+            # them here would make ``validate`` red on the package's own
+            # examples for a defect in the substrate's document set, not in the
+            # ledger. Tracked for Phase 2 — see CHANGELOG "Known scope limits".
+        elif status == "none":
+            if surgery.get("cptCode"):
+                problems.append(
+                    f"{case_label}: caseFacts says no surgery but still names CPT "
+                    f"{surgery.get('cptCode')!r}"
+                )
+            if has_operative:
+                problems.append(
+                    f"{case_label}: the case holds an operative document but caseFacts "
+                    "says no surgery was performed"
+                )
+        else:
+            problems.append(f"{case_label}: caseFacts.surgery.status is {status!r}")
+
+    # The artifact and the manifest are two publications of one ledger. They are
+    # written from the same call, so any drift means the folder was edited after
+    # generation — which is exactly what a reader needs to be told.
+    facts_path = case_dir / CASE_FACTS_NAME
+    if not facts_path.is_file():
+        problems.append(f"{case_label}: {CASE_FACTS_NAME} is missing")
+        return problems
+
+    import yaml
+
+    try:
+        artifact = yaml.safe_load(facts_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        problems.append(f"{case_label}: {CASE_FACTS_NAME} is not valid YAML — {exc}")
+        return problems
+
+    if artifact != block:
+        problems.append(
+            f"{case_label}: {CASE_FACTS_NAME} and manifest caseFacts disagree — "
+            "the two published copies of the ledger have drifted"
+        )
+
+    return problems
+
+
 def validate_output_tree(out_dir: Path, allow_fallback: bool = False) -> ValidationReport:
     """Validate every manifest under *out_dir*.
 
@@ -433,6 +568,10 @@ def validate_output_tree(out_dir: Path, allow_fallback: bool = False) -> Validat
         if not isinstance(documents, list):
             report.problems.append(f"{case_label}: manifest has no documents[] array")
             continue
+
+        report.problems.extend(
+            _validate_case_facts(manifest, manifest_path.parent, documents, case_label)
+        )
 
         for entry in documents:
             report.documents += 1

@@ -70,12 +70,24 @@ for these strings — two spellings would make "no document names an absent
 modality" unenforceable.
 """
 
+#: Modalities a ``DIAGNOSTICS_IMAGING`` document can actually render.
+#:
+#: The substrate's diagnostic report picks its TECHNIQUE paragraph off the exam
+#: type — MRI gets pulse sequences, CT gets slice thickness, and **anything
+#: else falls through to radiographic projections**. Handing that template an
+#: EMG produces a nerve conduction study described in X-ray language, which is
+#: worse than the incoherence the ledger exists to remove.
+IMAGING_MODALITIES: tuple[str, ...] = ("mri", "ct", "xray")
+
 #: Modalities the derivation may draw when the seed does not say.
 #:
-#: ``labs`` is excluded on purpose: it is orderable in the schema so a seed can
-#: state it, but drawing it unprompted would put lab studies in orthopedic files
-#: that have no reason to hold them.
-_DERIVABLE_MODALITIES: tuple[str, ...] = ("mri", "ct", "xray", "emg")
+#: ``labs`` and ``emg`` are both excluded on purpose, for the same reason and
+#: with the same consequence: they are orderable in the schema so a seed can
+#: state them, and the QME governs their presence and absence, but neither can
+#: be *assigned to an imaging report*. Drawing them unprompted would either put
+#: lab studies in orthopedic files that have no reason to hold them, or route
+#: an EMG into the radiographic template above.
+_DERIVABLE_MODALITIES: tuple[str, ...] = IMAGING_MODALITIES
 
 SURGERY_CPT_CODES: dict[str, tuple[str, str]] = {
     "lumbar_spine": ("63030", "Lumbar laminotomy with decompression"),
@@ -207,13 +219,18 @@ class CaseFacts(BaseModel):
         ) - self.performed_modalities()
 
     def diagnostic_for(self, index: int) -> DiagnosticFact | None:
-        """The performed study a document at *index* should report.
+        """The performed study the imaging report at *index* should report.
 
         Round-robin rather than modulo-with-repeats-first so that a case with
         three performed studies and three imaging reports emits one of each,
         which is what makes "one document per performed diagnostic" checkable.
+
+        Filtered to :data:`IMAGING_MODALITIES`: a seed may state a performed
+        EMG or lab panel, and the QME governs whether it is cited or noted
+        absent, but neither can be handed to the imaging template — it would
+        render a nerve conduction study in radiographic language.
         """
-        performed = self.performed_diagnostics
+        performed = [f for f in self.performed_diagnostics if f.modality in IMAGING_MODALITIES]
         if not performed:
             return None
         return performed[index % len(performed)]
@@ -295,38 +312,50 @@ def _derive_diagnostics(seed: CaseSeed, timeline: Any) -> tuple[DiagnosticFact, 
     return tuple(facts)
 
 
-def _derive_surgery(seed: CaseSeed, timeline: Any) -> SurgeryFact:
-    """Surgery status, absorbing the substrate's 35% coin without moving it.
+def resolve_has_surgery(seed: CaseSeed) -> bool:
+    """Whether this case was operated on. **The** answer, for every consumer.
 
-    ``lifecycle_bridge`` drew ``rng.random() < 0.35`` off the ``clinical``
-    stream to set ``has_surgery``. That draw still happens there and still gates
-    the same document rules; this reads the *same* stream at the same point so
-    the two agree, rather than flipping a second coin that could disagree with
-    the document set already planned.
+    Two things need it and must never disagree: the substrate's
+    ``CaseParameters.has_surgery``, which gates whether operative documents are
+    planned at all, and :class:`CaseFacts`, which decides what those documents
+    say. When they were computed independently, ``scenario.surgery: performed``
+    could produce a ledger asserting an operation with no operative record
+    behind it, and ``none`` could leave an operation rendered that the ledger
+    denied. So it is resolved once, here, and both read the result.
+
+    The 35% coin is drawn **unconditionally**, even when the scenario already
+    decides the answer. Skipping the draw would shift every later consumer of
+    the ``clinical`` stream the moment a seed stated ``surgery:``, turning a
+    content knob into a silent byte change across unrelated documents. Drawing
+    and discarding costs nothing and keeps the stream where it was.
+
+    A stated scenario beats the substrate's own exclusions too: a seed that
+    explicitly asks for surgery on a psych or death claim gets it. Refusing
+    silently would be the same defect this function exists to remove — a knob
+    that does not reach.
     """
+    parts = _body_parts(seed)
+    coin = seed.rng("clinical").random() < 0.35
+
+    if seed.scenario.surgery == "performed":
+        return True
+    if seed.scenario.surgery == "none":
+        return False
+
+    # Unspecified: the substrate's original rule, term for term, including its
+    # treatment of ``lc3208_3_psych`` as a psychiatric component.
+    psych = any(part == "psyche" for part in parts) or (
+        "lc3208_3_psych" in seed.lifecycle.doctrine_hooks
+    )
+    return seed.injury.type != "death" and not psych and coin
+
+
+def _derive_surgery(seed: CaseSeed, timeline: Any) -> SurgeryFact:
+    """Ledger entry for the surgery, off the one shared resolution."""
     parts = _body_parts(seed)
     part = parts[0] if parts else "lumbar_spine"
 
-    if seed.scenario.surgery == "performed":
-        performed = True
-    elif seed.scenario.surgery == "none":
-        performed = False
-    else:
-        # Parity path. Reproduces ``lifecycle_bridge.seed_to_case_parameters``
-        # term for term — including its psych rule, where naming
-        # ``lc3208_3_psych`` counts as a psychiatric component — and reads the
-        # same ``clinical`` stream at the same position (``seed.rng`` builds a
-        # fresh Random per call, and that draw is its first). Any divergence
-        # here would put a surgery in the ledger that the planned document set
-        # does not contain, or the reverse.
-        psych = any(part == "psyche" for part in parts) or (
-            "lc3208_3_psych" in seed.lifecycle.doctrine_hooks
-        )
-        performed = (
-            seed.injury.type != "death" and not psych and seed.rng("clinical").random() < 0.35
-        )
-
-    if not performed:
+    if not resolve_has_surgery(seed):
         return SurgeryFact(status="none")
 
     code, description = _pick_cpt(seed, parts, part)
@@ -471,37 +500,62 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
     Published so the ledger is auditable from the output alone: a reader with
     the manifest and the documents can check every coherence claim this package
     makes without rerunning the generator.
+
+    Restricted to :data:`GOVERNED_LEDGER_FIELDS`, which is what keeps that
+    sentence true. A field no template renders cannot be checked against the
+    documents, so publishing it would let the manifest assert things the case
+    file contradicts — the exact failure the ledger was built to remove.
     """
+    # One entry per modality, not per study. Body parts are not published (no
+    # template renders a per-study body part), and without them two entries for
+    # the same modality with opposite ``performed`` flags would read as a
+    # contradiction rather than as "scanned one region, not the other". Collapse
+    # to the claim the documents actually make: performed *somewhere* means the
+    # QME may cite it, absent everywhere means it must be recorded as absent.
+    performed_modalities = {f.modality for f in facts.diagnostics if f.performed}
+    diagnostics = [
+        {
+            "modality": modality,
+            "display": MODALITY_DISPLAY[modality],
+            "performed": modality in performed_modalities,
+        }
+        for modality in MODALITIES
+        if any(f.modality == modality for f in facts.diagnostics)
+    ]
+
     return {
-        "diagnostics": [
-            {
-                "modality": fact.modality,
-                "display": fact.display,
-                "bodyPart": fact.body_part,
-                "date": fact.date.isoformat() if fact.date else None,
-                "performed": fact.performed,
-            }
-            for fact in facts.diagnostics
-        ],
+        "diagnostics": diagnostics,
         "surgery": {
             "status": facts.surgery.status,
-            "bodyPart": facts.surgery.body_part,
             "cptCode": facts.surgery.cpt_code,
             "cptDescription": facts.surgery.cpt_description,
-            "date": facts.surgery.date.isoformat() if facts.surgery.date else None,
         },
         "providers": [
             {"name": p.name, "specialty": p.specialty, "facility": p.facility}
             for p in facts.providers
         ],
-        "visits": [{"date": v.date.isoformat(), "kind": v.kind} for v in facts.visits],
-        "mmiDate": facts.mmi_date.isoformat() if facts.mmi_date else None,
-        "wpi": facts.wpi,
-        "pd": facts.pd,
     }
 
 
+#: The only ledger fields that may be published, and the template that renders each.
+#:
+#: A published fact is a promise the documents keep. Every field below is read
+#: by a registry template and appears in rendered text, so a reader holding the
+#: manifest and the documents can check one against the other. Fields the ledger
+#: derives but nothing renders — ``wpi``, ``pd``, ``mmi_date``, ``visits``, and
+#: the per-fact body parts and dates — stay on the model for later phases and
+#: out of the output, because publishing them would let the manifest state
+#: things its own documents contradict.
+GOVERNED_LEDGER_FIELDS: dict[str, tuple[str, ...]] = {
+    "diagnostics": ("modality", "display", "performed"),
+    "surgery": ("status", "cptCode", "cptDescription"),
+    "providers": ("name", "specialty", "facility"),
+}
+
+
 __all__ = [
+    "GOVERNED_LEDGER_FIELDS",
+    "IMAGING_MODALITIES",
     "MODALITIES",
     "MODALITY_DISPLAY",
     "SURGERY_CPT_CODES",

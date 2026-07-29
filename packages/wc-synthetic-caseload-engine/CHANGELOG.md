@@ -87,12 +87,25 @@ case to agree with itself.
    `SUPPLEMENTAL_QME_AME_REPORT`, `TREATING_PHYSICIAN_REPORT_PR2`,
    `TREATING_PHYSICIAN_REPORT_PR4`.
 
-3. **Surgery parity is preserved, deliberately.** A seed that says nothing about
-   surgery still gets the substrate's 35% coin, read off the same `clinical`
-   stream at the same position, reproducing `lifecycle_bridge`'s psych rule term
-   for term. A test asserts ledger and bridge agree across 20 seeds — a ledger
-   that flipped its own coin could describe surgery the planned document set
-   does not contain, or the reverse.
+3. **Surgery is resolved once, and `scenario.surgery` actually reaches the
+   plan.** `case_facts.resolve_has_surgery` is the single answer; both
+   `CaseParameters.has_surgery` (which gates whether operative documents are
+   planned) and the ledger (which decides what documents say) read it.
+
+   They used to be computed independently, and the review caught what that
+   allows: `performed` plus a false coin produced a ledger asserting an
+   operation with no operative record behind it, and `none` plus a true coin
+   left an operation rendered that the ledger denied. The headline knob reached
+   the prose and not the plan.
+
+   A seed that says nothing still gets the substrate's 35% coin off the same
+   `clinical` stream at the same position, reproducing the psych rule term for
+   term, so unspecified seeds keep their bytes. The coin is drawn even when the
+   scenario decides the answer, and discarded — skipping it would move every
+   later draw on that stream the moment a seed stated `surgery:`, turning a
+   content knob into a silent byte change across unrelated documents. A stated
+   value also beats the substrate's death/psych exclusions: refusing silently
+   would be the same defect in a different place.
 
 4. **Subpoenaed-records packets are now answered by different providers.**
    Each packet takes `provider_index = packet_ordinal % len(providers)` over
@@ -108,6 +121,35 @@ case to agree with itself.
    and treating report are all pinned to that choice. Previously each drew
    independently, so a case could be operated on at one spinal level and
    followed up at another.
+
+6. **The manifest publishes only facts a document renders.** `caseFacts` used to
+   carry `wpi`, `pd`, `mmiDate`, `visits`, and a body part and date per
+   diagnostic — all derived, none rendered anywhere. A published fact reads as a
+   verified one, so publishing unrendered ones let the manifest state things its
+   own documents contradicted. The governed set is now declared in
+   `case_facts.GOVERNED_LEDGER_FIELDS` and asserted by test; the rest stay on
+   the model for later phases.
+
+   Diagnostics are also published one entry per *modality* rather than per
+   study, since without body parts two entries for the same modality with
+   opposite `performed` flags would read as a contradiction rather than as
+   "scanned one region, not the other".
+
+7. **`validate --out` now checks the ledger.** It requires `caseFacts` and
+   `case_facts.yaml`, cross-compares the two published copies, and enforces what
+   is visible from the output alone: modalities are legal vocabulary, no
+   modality is both performed and absent, no ungoverned field is published, a
+   performed surgery names a CPT, and no operative document sits in a case whose
+   ledger denies surgery. Malformed, missing and self-contradictory ledgers fail
+   rather than being skipped.
+
+8. **EMG is no longer assignable to an imaging report.** The imaging template
+   selects its technique paragraph from the exam type and falls through to
+   radiographic projections for anything it does not recognise, so a forced EMG
+   rendered a nerve conduction study in X-ray language. Derivation and
+   assignment are now restricted to `IMAGING_MODALITIES` (`mri`, `ct`, `xray`) —
+   the same treatment `labs` already had. EMG remains a ledger fact and the QME
+   still governs its presence and absence.
 
 ### Known scope limits (Phase 1)
 
@@ -135,6 +177,16 @@ nothing wider.
   planned date so filename, manifest and content stay consistent; the ledger
   entry's date is informational until the planner learns to place imaging
   documents on ledger dates.
+- **A performed surgery does not guarantee an operative document.** The
+  validator enforces the rule one way only — an operative record in a case whose
+  ledger denies surgery is a failure — because the converse is not a property of
+  this system. The substrate's lifecycle walk gates several rules on
+  `has_surgery` without ever guaranteeing an `OPERATIVE_HOSPITAL_RECORDS`
+  document, and two of the seven demo cases resolve surgery true while emitting
+  none, with no document controls and nothing unusual in the seed. That is a
+  real coherence gap and it belongs to the document set rather than the ledger;
+  asserting the biconditional here would only make `validate` red on this
+  package's own examples. Phase 2.
 - Phase 1 carries `surgery: none|performed` only. The ticket's `recommended` and
   `denied_by_ur` need UR wiring that belongs with the treatment phase.
 - No adjuster/attorney personas, discovery-volume knobs, or treatment-gap

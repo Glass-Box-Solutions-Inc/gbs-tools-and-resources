@@ -60,6 +60,12 @@ class _ForcedChoice:
     def choice(self, seq: Any) -> Any:
         if self._matches(seq):
             self.fired = True
+            # Draw and discard. The substrate would have consumed one value
+            # here, and everything it renders afterwards reads the stream from
+            # wherever that left it. Returning the ledger's answer without
+            # drawing would shift every later draw in the document, so pinning
+            # one line would silently rewrite the rest of the page.
+            random.choice(seq)
             return self._answer
         return random.choice(seq)
 
@@ -148,7 +154,9 @@ def build_fact_aware_templates() -> dict[str, type]:
 
             elements: list[Any] = []
             findings: list[str] = []
-            rng = random.Random(len(facts.diagnostics))
+            # No RNG here at all. This method builds its text from the ledger,
+            # in ledger order, so it touches no stream — which is what lets it
+            # replace the substrate's version without moving any later draw.
             observations = [
                 "disc herniation with moderate foraminal narrowing",
                 "degenerative change without significant neural compression",
@@ -174,7 +182,6 @@ def build_fact_aware_templates() -> dict[str, type]:
             if not findings:
                 return list(super()._build_diagnostic_review(injury))
 
-            rng.shuffle([])  # keep this method free of stream side effects
             elements.extend(self.make_section("DIAGNOSTIC REVIEW", "\n".join(findings)))
 
             if facts.surgery.performed and facts.surgery.cpt_code:

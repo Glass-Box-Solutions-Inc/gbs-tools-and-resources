@@ -22,12 +22,21 @@ import pytest
 
 from conftest import extract_text, requires_substrate
 from wc_caseload_engine.case_facts import (
+    GOVERNED_LEDGER_FIELDS,
+    IMAGING_MODALITIES,
     MODALITIES,
     MODALITY_DISPLAY,
     CaseFacts,
     derive_case_facts,
+    facts_manifest_block,
 )
-from wc_caseload_engine.manifests import CASE_FACTS_NAME, MANIFEST_NAME, generate_case
+from wc_caseload_engine.lifecycle_bridge import seed_to_case_parameters
+from wc_caseload_engine.manifests import (
+    CASE_FACTS_NAME,
+    MANIFEST_NAME,
+    generate_case,
+    validate_output_tree,
+)
 from wc_caseload_engine.planner import build_case_plan
 from wc_caseload_engine.seeds import MODALITIES as SEED_MODALITIES
 from wc_caseload_engine.seeds import parse_case_seed
@@ -599,3 +608,289 @@ class TestASeedWithNoScenarioBlockIsStillDeterministic:
         assert first is not None and second is not None
         assert first.model_dump() == second.model_dump()
         assert first.diagnostics, "derivation produced no diagnostics at all"
+
+
+# ---------------------------------------------------------------------------
+# The scenario knob reaching the plan (AJC-37 review, item 1)
+# ---------------------------------------------------------------------------
+#
+# Every test above this line used rng_seed 4242, which is exactly why the knob
+# could be broken without any of them noticing: on that seed the coin happened
+# to agree with the scenario. The pattern below is the fix, and it generalizes —
+# for each scenario knob, one case where the underlying draw *disagrees* with
+# the value the seed asked for. A knob that is never contradicted is never
+# actually tested.
+
+#: rng_seeds whose bare 35% clinical coin is known to land each way.
+COIN_TRUE_SEED = 1000
+COIN_FALSE_SEED = 1001
+
+
+def _bare_coin(seed: Any) -> bool:
+    """The substrate's 35% surgery coin, read off an otherwise untouched stream."""
+    return seed.rng("clinical").random() < 0.35
+
+
+def _has_surgery(seed: Any) -> bool:
+    """What the planner will tell the substrate about this case."""
+    return bool(seed_to_case_parameters(seed).has_surgery)
+
+
+class TestScenarioSurgeryBeatsTheCoin:
+    def test_the_counterfactual_fixtures_really_do_disagree(self) -> None:
+        """Guard the guard: if these drift, the two tests below prove nothing."""
+        assert _bare_coin(_seed("coin-t", {}, rng_seed=COIN_TRUE_SEED)) is True
+        assert _bare_coin(_seed("coin-f", {}, rng_seed=COIN_FALSE_SEED)) is False
+
+    def test_none_beats_a_coin_that_says_surgery(self) -> None:
+        """Opposite-coin: coin says operate, seed says no. The seed wins."""
+        seed = _seed("scenario-none", {"surgery": "none"}, rng_seed=COIN_TRUE_SEED)
+        plan = build_case_plan(seed)
+        assert plan.case_facts is not None
+        assert plan.case_facts.surgery.status == "none"
+        assert _has_surgery(seed) is False, (
+            "the ledger says no surgery but the substrate parameters still say yes — "
+            "operative documents will be planned for a case the ledger denies"
+        )
+        operative = [d.subtype for d in plan.documents if "OPERATIVE" in d.subtype]
+        assert not operative, f"planned operative documents on a no-surgery case: {operative}"
+
+    def test_performed_beats_a_coin_that_says_no_surgery(self) -> None:
+        """Opposite-coin, the other direction: coin says no, seed says operate."""
+        seed = _seed("scenario-performed", {"surgery": "performed"}, rng_seed=COIN_FALSE_SEED)
+        plan = build_case_plan(seed)
+        assert plan.case_facts is not None
+        assert plan.case_facts.surgery.status == "performed"
+        assert _has_surgery(seed) is True, (
+            "the ledger asserts a surgery the substrate parameters do not — "
+            "no operative document will be planned to back it up"
+        )
+
+    @pytest.mark.parametrize("rng_seed", [1000, 1001, 1002, 1003, 1004, 1005, 4242, 8123])
+    def test_ledger_and_parameters_never_disagree(self, rng_seed: int) -> None:
+        """The invariant behind both directions, swept over varied seeds."""
+        for scenario in ({}, {"surgery": "none"}, {"surgery": "performed"}):
+            seed = _seed(f"agree-{rng_seed}", scenario, rng_seed=rng_seed)
+            facts = build_case_plan(seed).case_facts
+            assert facts is not None
+            assert (facts.surgery.status == "performed") == _has_surgery(seed), (
+                f"rng_seed={rng_seed} scenario={scenario}: ledger says "
+                f"{facts.surgery.status!r}, parameters say has_surgery={_has_surgery(seed)}"
+            )
+
+    def test_an_unspecified_seed_still_takes_the_coin(self) -> None:
+        """The override must not become a silent default in either direction."""
+        assert _has_surgery(_seed("bare-t", {}, rng_seed=COIN_TRUE_SEED)) is True
+        assert _has_surgery(_seed("bare-f", {}, rng_seed=COIN_FALSE_SEED)) is False
+
+
+# ---------------------------------------------------------------------------
+# The manifest publishes only facts a template renders (review item 3)
+# ---------------------------------------------------------------------------
+
+
+class TestOnlyGovernedFactsArePublished:
+    """A published fact is a promise the documents keep.
+
+    ``wpi``, ``pd``, ``mmiDate``, ``visits``, and the per-fact body parts and
+    dates are all derived and all currently unrendered, so publishing them lets
+    the manifest state things its own documents contradict. They stay on the
+    model for later phases; they do not reach the output.
+    """
+
+    def test_the_published_block_carries_exactly_the_governed_fields(self) -> None:
+        facts = build_case_plan(_seed("governed", {"surgery": "performed"})).case_facts
+        assert facts is not None
+        block = facts_manifest_block(facts)
+        assert set(block) == set(GOVERNED_LEDGER_FIELDS)
+        for entry in block["diagnostics"]:
+            assert set(entry) == set(GOVERNED_LEDGER_FIELDS["diagnostics"])
+        assert set(block["surgery"]) == set(GOVERNED_LEDGER_FIELDS["surgery"])
+        for provider in block["providers"]:
+            assert set(provider) == set(GOVERNED_LEDGER_FIELDS["providers"])
+
+    def test_ungoverned_facts_survive_on_the_model(self) -> None:
+        """Unpublished is not underived — Phase 2 needs these."""
+        facts = build_case_plan(_seed("internal", {"surgery": "performed"})).case_facts
+        assert facts is not None
+        assert facts.mmi_date is not None
+        assert facts.visits, "visit series was dropped rather than unpublished"
+
+    def test_neither_output_carries_an_ungoverned_field(self, tmp_path: Path) -> None:
+        seed = _seed("no-leak", {"surgery": "performed"})
+        manifest, _ = _render(seed, tmp_path)
+        yaml_text = (tmp_path / seed.case_id / CASE_FACTS_NAME).read_text()
+        for banned in ("wpi", "pd", "mmiDate", "visits", "bodyPart"):
+            assert banned not in json.dumps(manifest["caseFacts"]), f"manifest leaks {banned}"
+            assert banned not in yaml_text, f"case_facts.yaml leaks {banned}"
+
+
+# ---------------------------------------------------------------------------
+# An imaging report only ever reports an imaging modality (review item 4)
+# ---------------------------------------------------------------------------
+
+
+class TestImagingReportsOnlyCarryImagingModalities:
+    def test_emg_is_not_an_assignable_imaging_modality(self) -> None:
+        assert "emg" not in IMAGING_MODALITIES
+        assert "labs" not in IMAGING_MODALITIES
+        assert set(IMAGING_MODALITIES) <= set(MODALITIES)
+
+    def test_a_forced_emg_never_reaches_the_imaging_template(self) -> None:
+        """The ledger may hold an EMG; the imaging report must not be handed one."""
+        seed = _seed(
+            "emg-ledger",
+            {"diagnostics": {"performed": [{"modality": "emg", "body_part": "lumbar_spine"}]}},
+            rng_seed=5150,
+        )
+        facts = build_case_plan(seed).case_facts
+        assert facts is not None
+        assert any(f.modality == "emg" for f in facts.performed_diagnostics), (
+            "fixture no longer plants an EMG; the test proves nothing"
+        )
+        for index in range(6):
+            chosen = facts.diagnostic_for(index)
+            if chosen is not None:
+                assert chosen.modality in IMAGING_MODALITIES, (
+                    f"imaging report {index} would be told to report {chosen.modality!r}, "
+                    "which the template can only render with radiographic technique"
+                )
+
+    @pytest.mark.parametrize("modality", ["mri", "ct", "xray"])
+    def test_every_accepted_modality_renders_its_own_technique(
+        self, modality: str, tmp_path: Path
+    ) -> None:
+        """The reason emg is excluded: technique text is chosen by modality."""
+        seed = _seed(
+            f"tech-{modality}",
+            {"diagnostics": {"performed": [{"modality": modality, "body_part": "lumbar_spine"}]}},
+            rng_seed=6000 + MODALITIES.index(modality),
+        )
+        _, texts = _render(seed, tmp_path)
+        body = _flat(texts.get("DIAGNOSTICS_IMAGING", ""))
+        assert "technique" in body, "no TECHNIQUE section rendered at all"
+        display = MODALITY_DISPLAY[modality].lower()
+        assert display in body, f"{display} never named in a report the ledger says is {display}"
+
+
+# ---------------------------------------------------------------------------
+# The validator sees the ledger (review item 5)
+# ---------------------------------------------------------------------------
+
+
+def _tamper(path: Path, mutate: Any) -> None:
+    """Rewrite a JSON file through *mutate*, leaving everything else intact."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mutate(payload)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+class TestValidateChecksTheLedger:
+    """``validate --out`` treated the ledger as decoration. A fact nobody
+    validates is a fact that can rot silently — the whole point of publishing
+    it is that a reader can check the case against itself.
+    """
+
+    def test_a_clean_tree_passes(self, tmp_path: Path) -> None:
+        seed = _seed("valid-clean", {"surgery": "performed"})
+        _render(seed, tmp_path)
+        report = validate_output_tree(tmp_path)
+        assert report.ok, report.problems
+
+    def test_a_missing_case_facts_block_fails(self, tmp_path: Path) -> None:
+        seed = _seed("valid-noblock", {"surgery": "performed"})
+        _render(seed, tmp_path)
+        _tamper(tmp_path / seed.case_id / MANIFEST_NAME, lambda m: m.pop("caseFacts"))
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("caseFacts" in p for p in report.problems), report.problems
+
+    def test_a_missing_yaml_artifact_fails(self, tmp_path: Path) -> None:
+        seed = _seed("valid-noyaml", {"surgery": "performed"})
+        _render(seed, tmp_path)
+        (tmp_path / seed.case_id / CASE_FACTS_NAME).unlink()
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any(CASE_FACTS_NAME in p for p in report.problems), report.problems
+
+    def test_a_yaml_that_disagrees_with_the_manifest_fails(self, tmp_path: Path) -> None:
+        """Two published copies of one ledger must not drift apart."""
+        seed = _seed("valid-drift", {"surgery": "performed"})
+        _render(seed, tmp_path)
+        path = tmp_path / seed.case_id / CASE_FACTS_NAME
+        path.write_text(path.read_text().replace("performed", "none"), encoding="utf-8")
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("disagree" in p for p in report.problems), report.problems
+
+    def test_an_operative_document_the_ledger_denies_fails(self, tmp_path: Path) -> None:
+        """The direction of the surgery rule that actually holds.
+
+        Only one way round is enforceable from the output. An operative record
+        sitting in a case whose ledger says no surgery is unambiguously wrong.
+        The converse — surgery performed, therefore an operative document must
+        exist — is *not* a property of this system: the substrate's walk gates
+        rules on ``has_surgery`` without guaranteeing the document, and two of
+        the seven demo cases resolve surgery true while emitting none. Asserting
+        it would make ``validate`` red on the package's own examples.
+        """
+        seed = _seed(
+            "valid-phantom-op",
+            {"surgery": "performed"},
+            documents={
+                "overrides": [{"subtype": "OPERATIVE_HOSPITAL_RECORDS", "count": 1}],
+                "format_mix": {"pdf": 1.0},
+            },
+        )
+        _render(seed, tmp_path)
+        manifest_path = tmp_path / seed.case_id / MANIFEST_NAME
+        assert any(
+            d["subtype"] == "OPERATIVE_HOSPITAL_RECORDS"
+            for d in json.loads(manifest_path.read_text())["documents"]
+        ), "fixture emitted no operative document; the tamper below proves nothing"
+
+        def deny_surgery(manifest: dict[str, Any]) -> None:
+            manifest["caseFacts"]["surgery"] = {
+                "status": "none",
+                "cptCode": None,
+                "cptDescription": None,
+            }
+
+        _tamper(manifest_path, deny_surgery)
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("operative" in p.lower() for p in report.problems), report.problems
+
+    def test_a_performed_surgery_with_no_cpt_fails(self, tmp_path: Path) -> None:
+        seed = _seed("valid-nocpt", {"surgery": "performed"})
+        _render(seed, tmp_path)
+
+        def strip_cpt(manifest: dict[str, Any]) -> None:
+            manifest["caseFacts"]["surgery"]["cptCode"] = None
+
+        _tamper(tmp_path / seed.case_id / MANIFEST_NAME, strip_cpt)
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("CPT" in p for p in report.problems), report.problems
+
+    def test_an_illegal_modality_fails(self, tmp_path: Path) -> None:
+        seed = _seed("valid-badmod", {"surgery": "none"})
+        _render(seed, tmp_path)
+
+        def corrupt(manifest: dict[str, Any]) -> None:
+            manifest["caseFacts"]["diagnostics"][0]["modality"] = "tricorder"
+
+        _tamper(tmp_path / seed.case_id / MANIFEST_NAME, corrupt)
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("tricorder" in p for p in report.problems), report.problems
+
+    def test_a_malformed_ledger_fails_rather_than_crashing(self, tmp_path: Path) -> None:
+        seed = _seed("valid-malformed", {"surgery": "none"})
+        _render(seed, tmp_path)
+        _tamper(
+            tmp_path / seed.case_id / MANIFEST_NAME,
+            lambda m: m.__setitem__("caseFacts", "not a mapping"),
+        )
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
