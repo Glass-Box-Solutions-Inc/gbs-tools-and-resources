@@ -187,6 +187,114 @@ def _letter_ordinal(template: Any) -> int:
 ANCHOR_REFERENCE_MARKER = "further to the"
 
 
+def _packet_ordinal(template: Any) -> int:
+    """Which records packet this is within its case, zero-based."""
+    context = getattr(getattr(template, "doc_spec", None), "context", None)
+    if isinstance(context, dict):
+        value = context.get("packet_ordinal")
+        if isinstance(value, int):
+            return value
+    return 0
+
+
+def _is_page_break(element: Any) -> bool:
+    return type(element).__name__ == "PageBreak"
+
+
+def _split_at_first_break(story: list[Any]) -> tuple[list[Any], list[Any]]:
+    """Cover sheet, then everything behind it."""
+    for position, element in enumerate(story):
+        if _is_page_break(element):
+            return story[: position + 1], story[position + 1 :]
+    return story, []
+
+
+def _split_pages(body: list[Any]) -> list[list[Any]]:
+    """The body's flowables grouped into pages, page breaks removed."""
+    pages: list[list[Any]] = [[]]
+    for element in body:
+        if _is_page_break(element):
+            pages.append([])
+        else:
+            pages[-1].append(element)
+    return [page for page in pages if page]
+
+
+#: How many times we may ask the substrate for another records block before
+#: giving up and reporting a short packet. A guard against an unbounded loop if
+#: a future substrate edit ever returns nothing.
+_MAX_RECORD_BLOCKS = 40
+
+
+def _fit_pages(pages: list[list[Any]], wanted: int, more: Any) -> list[list[Any]]:
+    """Exactly *wanted* pages, trimming or asking *more* for further content.
+
+    Trimming is lossless: a records packet is an arbitrary-length excerpt, so
+    dropping the tail leaves a shorter but coherent packet.
+
+    Growth calls ``more()`` for a freshly built block rather than repeating the
+    pages already in hand. Repetition was the first implementation and reportlab
+    rejected it outright — ``LayoutError: Flowable ... too large on page 10`` —
+    because a flowable carries layout state and cannot appear twice in one
+    document. The error was the good outcome: repeating pages would also have
+    produced a packet containing the same office visit on the same date several
+    times over, which is precisely the kind of incoherence this ticket exists to
+    remove. Fresh blocks carry their own drawn dates and findings.
+    """
+    if wanted <= len(pages):
+        return pages[:wanted]
+    grown = list(pages)
+    for _ in range(_MAX_RECORD_BLOCKS):
+        if len(grown) >= wanted:
+            break
+        extra = _split_pages(list(more()))
+        if not extra:
+            break
+        grown.extend(extra)
+    return grown[:wanted]
+
+
+def _join_pages(pages: list[list[Any]], page_break: Any) -> list[Any]:
+    joined: list[Any] = []
+    for position, page in enumerate(pages):
+        if position:
+            joined.append(page_break())
+        joined.extend(page)
+    return joined
+
+
+def _rewrite_page_table(head: list[Any], total: int) -> None:
+    """Restate the cover sheet's page table so its rows sum to *total*.
+
+    Scales the substrate's own per-record-type counts rather than replacing
+    them, so the mix of record types stays whatever the substrate decided; only
+    the arithmetic is corrected. Any rounding residue lands on the first row,
+    which is what guarantees the column sums exactly rather than approximately.
+    """
+    for element in head:
+        values = getattr(element, "_cellvalues", None)
+        if not values or len(values) < 3:
+            continue
+        header = [str(cell) for cell in values[0]]
+        if "Pages" not in header:
+            continue
+        column = header.index("Pages")
+        rows = values[1:-1]
+        counts = []
+        for row in rows:
+            try:
+                counts.append(int(str(row[column])))
+            except (TypeError, ValueError):
+                counts.append(1)
+        current = sum(counts) or 1
+        scaled = [max(1, round(count * total / current)) for count in counts]
+        scaled[0] = max(1, scaled[0] + (total - sum(scaled)))
+        for row, count in zip(rows, scaled, strict=True):
+            row[column] = str(count)
+        values[-1][column] = f"<b>{sum(scaled)}</b>"
+        return
+
+
 def _preceding_anchor(template: Any, when: Any) -> tuple[str, Any] | None:
     """The most recent anchor document dated at or before ``when``.
 
@@ -747,6 +855,62 @@ def build_fact_aware_templates() -> dict[str, type]:
 
     _ = Paragraph  # imported for subclasses that grow to need it
 
+    records_module = import_substrate("pdf_templates.discovery.subpoenaed_records")
+
+    class FactAwareSubpoenaedRecords(_SpecCapture, records_module.SubpoenaedRecords):  # type: ignore[misc,name-defined]
+        """ISC-126. Makes the cover sheet tell the truth about the packet it fronts.
+
+        The substrate built its table of contents from one set of
+        ``random.randint`` draws (``subpoenaed_records.py:163-186``) and then
+        generated the body from an entirely separate set (``264+``). Neither
+        number was wrong on its own — they were simply strangers, so a cover
+        sheet could promise 23 pages in front of a packet holding 6.
+
+        One number now decides both. ``CaseFacts.packet_pages`` is drawn once on
+        the ``facts:`` stream at plan time; the body is cut to it and the table
+        of contents is rewritten to sum to what the body actually holds.
+
+        The rewrite mutates ``Table._cellvalues`` rather than rebuilding the
+        flowable, which preserves the substrate's column widths and style
+        commands. Verified deliberately: unlike ``Paragraph``, which parses its
+        markup in ``__init__`` and ignores later edits to ``.text``, ``Table``
+        reads ``_cellvalues`` at draw time, so the mutation reaches the page.
+        """
+
+        def _page_budget(self, facts: Any) -> int | None:
+            pages = getattr(facts, "packet_pages", ())
+            if not pages:
+                return None
+            return pages[_packet_ordinal(self) % len(pages)]
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            story = list(super().build_story(doc_spec))
+            facts = _facts_of(self)
+            if facts is None:
+                return story
+            budget = self._page_budget(facts)
+            if budget is None:
+                return story
+
+            head, body = _split_at_first_break(story)
+            pages = _split_pages(body)
+            if not pages:
+                return story
+
+            provider, facility = self._select_provider(doc_spec)
+            subtype = str(getattr(doc_spec, "subtype", ""))
+            build_more = (
+                (lambda: self._build_employment_records(doc_spec))
+                if "EMPLOYMENT" in subtype
+                else (lambda: self._build_medical_records(doc_spec, provider, facility))
+            )
+
+            # Content pages only: the cover sheet is page 1 of the packet.
+            wanted = max(1, budget - 1)
+            realised = _fit_pages(pages, wanted, build_more)
+            _rewrite_page_table(head, len(realised) + 1)
+            return head + _join_pages(realised, records_module.PageBreak)
+
     client_module = import_substrate("pdf_templates.correspondence.client_intake")
 
     class FactAwareClientIntake(_SpecCapture, client_module.ClientIntake):  # type: ignore[misc,name-defined]
@@ -790,6 +954,10 @@ def build_fact_aware_templates() -> dict[str, type]:
             return story
 
     return {
+        "SUBPOENAED_RECORDS": FactAwareSubpoenaedRecords,
+        "SUBPOENAED_RECORDS_MEDICAL": FactAwareSubpoenaedRecords,
+        "SUBPOENAED_RECORDS_EMPLOYMENT": FactAwareSubpoenaedRecords,
+        "SUBPOENAED_RECORDS_OTHER": FactAwareSubpoenaedRecords,
         "CLIENT_CORRESPONDENCE_INFORMATIONAL": FactAwareClientIntake,
         "CLIENT_CORRESPONDENCE_REQUEST": FactAwareClientIntake,
         "CLIENT_STATUS_LETTERS": FactAwareClientIntake,

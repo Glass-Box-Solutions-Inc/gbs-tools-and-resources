@@ -29,6 +29,7 @@ from wc_caseload_engine.case_context import CaseCast, build_case_cast
 from wc_caseload_engine.case_facts import (
     CaseFacts,
     derive_case_facts,
+    derive_packet_pages,
     resolve_surgery_status,
     resolve_treatment_status,
 )
@@ -777,6 +778,63 @@ def _apply_attorney_cadence(
     return shaped, tuple(warnings)
 
 
+#: The records-packet subtypes ``scenario.discovery.subpoena_sets`` counts.
+#: Kept beside the planner rather than imported from ``manifests`` to avoid a
+#: cycle; ``test_the_discovery_tables_agree`` asserts the two stay identical.
+DISCOVERY_PACKET_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "SUBPOENAED_RECORDS",
+        "SUBPOENAED_RECORDS_MEDICAL",
+        "SUBPOENAED_RECORDS_EMPLOYMENT",
+        "SUBPOENAED_RECORDS_OTHER",
+    }
+)
+
+
+def _shape_discovery(
+    seed: CaseSeed,
+    timeline: CaseTimeline,
+    dated: list[tuple[date, str, str, str]],
+) -> tuple[list[tuple[date, str, str, str]], tuple[str, ...]]:
+    """ISC-126. Make the file hold the number of packets the seed asked for.
+
+    Trims from the end and extends by repeating the last packet's shape on a
+    later date, which keeps the added packets inside the file's own runway
+    rather than inventing a discovery phase that never happened.
+
+    Gated on a *stated* count. A seed that says nothing keeps whatever the walk
+    proposed, byte for byte — the same rule ISC-109 set for surgery, and what
+    keeps every pre-0.7.0 seed identical.
+    """
+    declared = seed.scenario.discovery.subpoena_sets
+    if declared is None:
+        return dated, ()
+
+    packets = [entry for entry in dated if entry[1] in DISCOVERY_PACKET_SUBTYPES]
+    if len(packets) == declared:
+        return dated, ()
+
+    if not packets:
+        return dated, (
+            f"scenario.discovery.subpoena_sets is {declared} but this file's "
+            "lifecycle stage proposes no records packets at all; the count has "
+            "nothing to act on — try target_stage 'discovery' or later",
+        )
+
+    shaped = [entry for entry in dated if entry[1] not in DISCOVERY_PACKET_SUBTYPES]
+    packets.sort(key=lambda entry: entry[0])
+    if len(packets) > declared:
+        kept = packets[:declared]
+    else:
+        kept = list(packets)
+        last_date, subtype, track, role = packets[-1]
+        ceiling = timeline.horizon
+        for step in range(declared - len(packets)):
+            when = min(last_date + timedelta(days=14 * (step + 1)), ceiling)
+            kept.append((when, subtype, track, role))
+    return shaped + kept, ()
+
+
 def _shape_for_scenario(
     seed: CaseSeed,
     timeline: CaseTimeline,
@@ -954,6 +1012,14 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # After shaping: `never_treated` and `discharged` both drop documents, and
     # re-dating a set that is about to lose members would leave gaps the cadence
     # never intended.
+    dated, discovery_warnings = _shape_discovery(seed, timeline, dated)
+    # ISC-126. The page budget is drawn only once the packet count is final, so
+    # the ledger, the cover sheet and the rendered pages are three readings of
+    # one number rather than three independent draws.
+    packet_count = sum(1 for entry in dated if entry[1] in DISCOVERY_PACKET_SUBTYPES)
+    case_facts = case_facts.model_copy(
+        update={"packet_pages": derive_packet_pages(seed, packet_count)}
+    )
     dated, cadence_warnings = _apply_attorney_cadence(case_facts, timeline, dated)
     penalty_warnings = _penalty_control_warnings(case_facts, dated, controls)
     dated.sort(key=lambda item: (item[0], item[1], item[2]))
@@ -1002,6 +1068,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         *recon.warnings,
         *cast.warnings,
         *scenario_warnings,
+        *discovery_warnings,
         *cadence_warnings,
         *penalty_warnings,
         *unsupported_hook_warnings(seed.lifecycle.doctrine_hooks, seed),

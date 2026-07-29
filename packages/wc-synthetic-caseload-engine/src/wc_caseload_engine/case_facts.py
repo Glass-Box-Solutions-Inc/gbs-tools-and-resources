@@ -229,6 +229,13 @@ class CaseFacts(BaseModel):
     attorney_cadence: Literal["every_30_days", "event_driven", "sporadic"] = "event_driven"
     late_benefit_events: tuple[LateBenefitEvent, ...] = ()
     adjuster_letter_types_allowed: frozenset[str] = frozenset()
+    packet_pages: tuple[int, ...] = ()
+    """Pages in each subpoenaed-records packet, in plan order (ISC-126).
+
+    Empty until the planner knows how many packets survived its controls,
+    which is why it is attached rather than derived in ``derive_case_facts``:
+    the count is a property of the finished plan, not of the seed alone.
+    """
     """Letter contents this case's lifecycle can support — see ``ADJUSTER_LETTER_TYPES``."""
     mmi_date: dt.date | None = None
     wpi: int | None = None
@@ -523,6 +530,36 @@ def resolve_adjuster_diligence(seed: CaseSeed) -> str:
 def resolve_attorney_cadence(seed: CaseSeed) -> str:
     """How often counsel wrote to the client. **The** answer."""
     return seed.scenario.attorney.cadence or _weighted(_rng(seed, "attorney"), CADENCE_WEIGHTS)
+
+
+def resolve_subpoena_sets(seed: CaseSeed, proposed: int) -> int:
+    """How many records packets this file holds. **The** answer.
+
+    ``proposed`` is what the lifecycle walk came up with. A seed that states
+    nothing keeps it — that is what leaves every pre-0.7.0 seed byte-identical
+    — and a seed that states a count gets exactly that count.
+    """
+    declared = seed.scenario.discovery.subpoena_sets
+    return proposed if declared is None else declared
+
+
+def derive_packet_pages(seed: CaseSeed, packets: int) -> tuple[int, ...]:
+    """Page count for each records packet, drawn once on the ``facts:`` namespace.
+
+    The single draw path ISC-126 is about. The substrate drew a table of
+    contents from one set of ``random.randint`` calls and then generated the
+    body from an entirely separate set, so a cover sheet could promise 23 pages
+    and front a packet of 6. Neither number was wrong on its own; they were
+    simply strangers.
+
+    Drawing here means the manifest, the cover sheet and the rendered pages are
+    three readings of one number rather than three independent guesses.
+    """
+    if packets <= 0:
+        return ()
+    bounds = seed.scenario.discovery.pages_per_set
+    rng = _rng(seed, "discovery")
+    return tuple(rng.randint(bounds.min, bounds.max) for _ in range(packets))
 
 
 def _derive_late_benefit_events(

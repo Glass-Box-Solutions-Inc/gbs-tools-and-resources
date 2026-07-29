@@ -466,6 +466,9 @@ def render_document(
         # four times by one clinic. ``packet_index`` counts packets, not
         # documents, so consecutive packets land on different providers.
         packet = packet_index if packet_index is not None else index
+        # ISC-126. Which records packet this is, so the template can read its
+        # own page budget off the ledger instead of drawing one.
+        context["packet_ordinal"] = packet
         if case_facts.providers:
             context["provider_index"] = packet % len(case_facts.providers)
         # Same reasoning, different axis: the trajectory advances per treating
