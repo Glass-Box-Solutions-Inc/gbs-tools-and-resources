@@ -25,7 +25,8 @@ from typing import Any
 import pytest
 
 from conftest import extract_text, requires_substrate
-from wc_caseload_engine import lifecycle_bridge
+from wc_caseload_engine import lifecycle_bridge, planner
+from wc_caseload_engine.case_facts import facts_manifest_block
 from wc_caseload_engine.lifecycle_bridge import build_core_candidates, build_timeline
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
 from wc_caseload_engine.planner import build_case_plan
@@ -314,8 +315,17 @@ class TestEveryPersonaGuardReadsTheResolvedValue:
             assert not plan.case_facts.late_benefit_events
             assert not [d for d in plan.documents if d.subtype == "PETITION_FOR_PENALTIES"]
 
-    def test_the_petition_never_predates_the_delay_it_alleges(self) -> None:
-        for rng_seed in range(100, 116):
+    def test_the_petition_post_dates_every_delay_it_punishes(self) -> None:
+        """Against the *latest* late event, not the earliest.
+
+        The first version of this compared against ``min(...)`` and allowed
+        equality, so a petition filed between two late notices passed — it would
+        have been pleading a delay that had not happened yet on the day it was
+        filed. The invariant is that the pleading follows every event it
+        complains about, strictly.
+        """
+        checked = 0
+        for rng_seed in range(100, 140):
             plan = build_case_plan(
                 _seed(f"date-{rng_seed}", rng_seed=rng_seed,
                       scenario={"adjuster": {"diligence": "negligent"}})
@@ -324,13 +334,147 @@ class TestEveryPersonaGuardReadsTheResolvedValue:
             petitions = [d for d in plan.documents if d.subtype == "PETITION_FOR_PENALTIES"]
             if not petitions:
                 continue
-            earliest_late = min(e.actual_date for e in plan.case_facts.late_benefit_events)
-            assert petitions[0].doc_date >= earliest_late, (
-                "the penalty petition predates the delay it complains about"
+            checked += 1
+            latest_late = max(e.actual_date for e in plan.case_facts.late_benefit_events)
+            assert petitions[0].doc_date > latest_late, (
+                f"rng_seed={rng_seed}: petition dated {petitions[0].doc_date} does not "
+                f"follow its latest punished event {latest_late}"
             )
+        assert checked >= 10, f"only {checked} cases exercised the invariant"
 
-    def test_cadence_dating_reads_the_resolved_cadence(self) -> None:
-        """ISC-124 + ISC-127. A derived event_driven case anchors too."""
+    def test_document_controls_reach_the_penalty_petition(self) -> None:
+        """The petition is a candidate like any other, not a late append.
+
+        It was appended to the dated list *after* ``resolve_document_controls``
+        ran, so `documents.exclude` and `include_only` silently did not apply to
+        it — the one subtype this phase added was the one the control contract
+        did not cover. Both proven seeds are below.
+        """
+        base = {"adjuster": {"diligence": "negligent"}}
+
+        uncontrolled = build_case_plan(_seed("ctl-none", rng_seed=100, scenario=base))
+        assert any(d.subtype == "PETITION_FOR_PENALTIES" for d in uncontrolled.documents), (
+            "the fixture no longer earns a petition; the controls below prove nothing"
+        )
+
+        excluded = build_case_plan(
+            _seed(
+                "ctl-exclude",
+                rng_seed=100,
+                scenario=base,
+                documents={
+                    "exclude": ["PETITION_FOR_PENALTIES"],
+                    "format_mix": {"pdf": 1.0},
+                },
+            )
+        )
+        assert not [d for d in excluded.documents if d.subtype == "PETITION_FOR_PENALTIES"]
+
+        included = build_case_plan(
+            _seed(
+                "ctl-include",
+                rng_seed=100,
+                scenario=base,
+                documents={
+                    "include_only": ["FIRST_REPORT_OF_INJURY_PHYSICIAN"],
+                    "format_mix": {"pdf": 1.0},
+                },
+            )
+        )
+        assert not [d for d in included.documents if d.subtype == "PETITION_FOR_PENALTIES"]
+
+    def test_suppressing_an_earned_petition_is_loud(self) -> None:
+        """Explicit control wins — and says so.
+
+        The precedence follows ISC-29: an explicit document control beats a
+        derived rule. But a file whose ledger records late benefit notices and
+        holds no penalty petition is only coherent if somebody meant it, so the
+        suppression lands in ``manifest.warnings`` — the mirror of the
+        emit-with-warning cases, where the seed asked for something the
+        substrate excludes and got it with a note.
+        """
+        plan = build_case_plan(
+            _seed(
+                "ctl-warn",
+                rng_seed=100,
+                scenario={"adjuster": {"diligence": "negligent"}},
+                documents={
+                    "exclude": ["PETITION_FOR_PENALTIES"],
+                    "format_mix": {"pdf": 1.0},
+                },
+            )
+        )
+        assert plan.case_facts is not None
+        assert plan.case_facts.late_benefit_events
+        warned = [w for w in plan.warnings if "PETITION_FOR_PENALTIES" in w]
+        assert warned, plan.warnings
+        assert "documents.exclude" in warned[0]
+
+    def test_an_attentive_case_excluding_the_petition_warns_about_nothing(self) -> None:
+        """Opposite draw: no earned petition, no suppression, no noise."""
+        plan = build_case_plan(
+            _seed(
+                "ctl-quiet",
+                rng_seed=100,
+                scenario={"adjuster": {"diligence": "attentive"}},
+                documents={
+                    "exclude": ["PETITION_FOR_PENALTIES"],
+                    "format_mix": {"pdf": 1.0},
+                },
+            )
+        )
+        assert not [w for w in plan.warnings if "PETITION_FOR_PENALTIES" in w]
+
+    def test_the_ledger_is_derived_exactly_once_per_plan(self) -> None:
+        """One derivation, cast-bearing.
+
+        Two derivations ran per case and disagreed: the planning copy had no
+        cast and saw one provider, the published copy had a cast and saw five.
+        Threading one cast-bearing derivation is both the truth fix and the
+        cheaper path.
+        """
+        calls: list[bool] = []
+        original = planner.derive_case_facts
+
+        def spy(seed: Any, timeline: Any, cast: Any = None) -> Any:
+            calls.append(cast is not None)
+            return original(seed, timeline, cast)
+
+        planner.derive_case_facts = spy  # type: ignore[assignment]
+        try:
+            plan = build_case_plan(_seed("once", rng_seed=100))
+        finally:
+            planner.derive_case_facts = original  # type: ignore[assignment]
+
+        assert calls == [True], f"derivations per plan: {calls}"
+        assert plan.case_facts is not None
+        assert plan.case_facts.providers, "the surviving derivation lost the cast"
+
+    def test_diligence_is_not_published(self) -> None:
+        """m5. A persona input no rendered document reflects.
+
+        Published while ``attorney_cadence`` was withheld for precisely that
+        reason — the governed-facts rule applied inconsistently to its own
+        author.
+        """
+        facts = build_case_plan(_seed("m5", rng_seed=100)).case_facts
+        assert facts is not None
+        block = facts_manifest_block(facts)
+        assert "diligence" not in block["adjuster"]
+        assert set(block["adjuster"]) == {"lateBenefitEvents", "maxDaysLate"}
+        assert facts.adjuster_diligence, "still resolved on the ledger, just unpublished"
+
+    def test_cadence_derivation_reaches_event_driven(self) -> None:
+        """Only checks that derivation *reaches* the value — nothing more.
+
+        Named for what it does. It was called
+        ``test_cadence_dating_reads_the_resolved_cadence`` with an ISC-124
+        docstring about anchoring, and asserted no letter, date or anchor: it
+        passed with cadence entirely unwired, which is the actual state. A test
+        whose name promises what a later phase will deliver is worse than no
+        test, because the suite reads as covering it. The real ISC-124 assertion
+        arrives with the feature.
+        """
         anchored = 0
         for rng_seed in range(9600, 9640):
             plan = build_case_plan(_seed(f"cad-{rng_seed}", rng_seed=rng_seed))

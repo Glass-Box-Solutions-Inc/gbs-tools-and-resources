@@ -936,14 +936,17 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
     return {
         # Published because a document honours it: the LC 5814 petition exists
         # if and only if ``lateBenefitEvents`` is non-zero, so a reader holding
-        # the manifest can check the pleading against the fact behind it.
+        # the manifest can check the pleading against the fact behind it. The
+        # day counts are recoverable from the notice dates in the file.
         #
-        # ``attorney_cadence`` and ``adjuster_letter_types_allowed`` are
-        # deliberately *not* here. They are resolved on the ledger but no
-        # template consumes them yet, and a published fact reads as a verified
-        # one — the Phase-2 rule, applied to this phase's own new fields.
+        # ``adjuster_diligence`` is deliberately *not* here, and that took a
+        # review to see. It is a persona *input*: no rendered document reflects
+        # it, so a reader cannot check it against anything. Publishing it while
+        # withholding ``attorney_cadence`` for exactly that reason was the rule
+        # applied inconsistently to its own author. ``attorney_cadence`` and
+        # ``adjuster_letter_types_allowed`` stay unpublished for the same
+        # reason — resolved on the ledger, honoured by nothing yet.
         "adjuster": {
-            "diligence": facts.adjuster_diligence,
             "lateBenefitEvents": len(facts.late_benefit_events),
             "maxDaysLate": (
                 max(event.days_late for event in facts.late_benefit_events)
@@ -983,7 +986,7 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
 #: out of the output, because publishing them would let the manifest state
 #: things its own documents contradict.
 GOVERNED_LEDGER_FIELDS: dict[str, tuple[str, ...]] = {
-    "adjuster": ("diligence", "lateBenefitEvents", "maxDaysLate"),
+    "adjuster": ("lateBenefitEvents", "maxDaysLate"),
     "treatment": ("status", "trajectory", "dischargeDate", "gapStart", "gapEnd"),
     "diagnostics": ("modality", "display", "performed"),
     "surgery": ("status", "cptCode", "cptDescription"),

@@ -74,10 +74,36 @@ Phase-2 rule that a published fact reads as a verified one.
    and maximum days late. All three are honoured: `validate` rejects a case that
    pleads LC 5814 penalties with no late event behind it.
 
-6. **One derivation per plan, threaded.** Three helpers each derived their own
-   copy of the ledger, putting four full derivations on every plan build. Output
-   is identical either way — derivation is pure — so this was cost, not
-   correctness.
+6. **One derivation per plan — genuinely, this time.** The first attempt claimed
+   this and did not achieve it: two derivations still ran per case and
+   *disagreed*, because the planning copy had no cast and saw one provider while
+   the published copy had a cast and saw five. Building the cast before the
+   candidates lets a single cast-bearing derivation serve everything. That was
+   also the runtime regression — the suite is back to **~150s from ~570s**.
+
+7. **Document controls now reach the penalty petition.** It was appended *after*
+   `resolve_document_controls` ran, so `documents.exclude` and `include_only`
+   silently did not apply to the one subtype this phase added — the control
+   contract covered everything except the new thing. It is now an ordinary
+   candidate, resolved with the rest.
+
+   Precedence follows ISC-29: the explicit control wins. But it wins **loudly** —
+   suppressing a petition the ledger earned lands in `manifest.warnings`, the
+   mirror of the emit-with-warning cases. A file recording four late benefit
+   notices and holding no penalty petition is coherent only if somebody meant it.
+
+8. **`caseFacts.adjuster.diligence` is no longer published.** It is a persona
+   *input* that no rendered document reflects, so a reader cannot check it
+   against anything. This is the governed-facts rule — the same one used to
+   withhold `attorney_cadence` — which had not been applied to its own author.
+   `lateBenefitEvents` and `maxDaysLate` stay: they gate the petition and are
+   recoverable from the notice dates in the file.
+
+9. **The penalty petition post-dates every delay it punishes.** The invariant
+   was tested against the *earliest* late event with equality permitted, so a
+   petition filed between two late notices passed — pleading a delay that had
+   not happened yet on the day of filing. Asserted strictly against the latest
+   event now, and the horizon clamp can no longer pull the date below that floor.
 
 ### Not yet honoured (Phase 3, remaining)
 

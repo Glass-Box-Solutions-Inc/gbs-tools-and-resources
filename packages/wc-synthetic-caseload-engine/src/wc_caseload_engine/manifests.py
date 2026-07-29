@@ -36,7 +36,6 @@ import structlog
 
 from wc_caseload_engine import __version__
 from wc_caseload_engine.case_facts import (
-    DILIGENCES,
     GOVERNED_LEDGER_FIELDS,
     MODALITIES,
     TREATMENT_STATUSES,
@@ -496,11 +495,10 @@ def _validate_case_facts(
                 f"{case_label}: caseFacts.adjuster publishes ungoverned field(s) "
                 f"{sorted(extra)}"
             )
-        if adjuster.get("diligence") not in DILIGENCES:
-            problems.append(
-                f"{case_label}: caseFacts.adjuster.diligence is "
-                f"{adjuster.get('diligence')!r}, not one of {', '.join(DILIGENCES)}"
-            )
+        # No ``diligence`` check: it is resolved on the ledger but deliberately
+        # unpublished, because no rendered document reflects it and a reader
+        # could not check it against anything.
+        #
         # The rule the penalty petition is gated on, checkable from the output
         # alone: a pleading alleging unreasonable delay needs a delay behind it.
         late = adjuster.get("lateBenefitEvents") or 0

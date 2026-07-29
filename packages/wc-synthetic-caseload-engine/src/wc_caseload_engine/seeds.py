@@ -784,7 +784,13 @@ class AttorneyScenario(_Model):
     """
 
     cadence: Literal["every_30_days", "event_driven", "sporadic"] | None = None
-    """``None`` means *derive it* on the ``facts:`` namespace."""
+    """``None`` means *derive it* on the ``facts:`` namespace.
+
+    **Resolved onto the ledger, not yet honoured.** Client letters are not
+    re-dated onto the cadence and do not reference their anchoring event
+    (ISC-123/124/125). Deliberately absent from the published ``caseFacts`` for
+    that reason.
+    """
 
 
 class PageRange(_Model):
@@ -808,11 +814,20 @@ class DiscoveryScenario(_Model):
     """How much paper the discovery phase produced."""
 
     subpoena_sets: int | None = Field(default=None, ge=0, le=24)
-    """Records packets to emit. ``None`` leaves the lifecycle walk's own count."""
+    """Records packets to emit.
+
+    **Accepted and validated, not yet honoured** — the packet count still comes
+    from the lifecycle walk. ISC-126.
+    """
 
     pages_per_set: PageRange = Field(default_factory=PageRange)
-    """Declared page volume per packet, drawn once and used by both the table of
-    contents and the rendered body — see ``fact_templates``."""
+    """Declared page volume per packet.
+
+    **Accepted and validated, not yet honoured.** No template reads this: the
+    subpoenaed-records table of contents and the rendered body still draw their
+    page counts independently. Unifying them is ISC-126, and until it lands this
+    field changes nothing about the output.
+    """
 
 
 class ScenarioSpec(_Model):
