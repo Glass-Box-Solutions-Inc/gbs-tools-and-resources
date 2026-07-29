@@ -446,7 +446,26 @@ def _penalty_candidates(facts: CaseFacts, timeline: CaseTimeline) -> list[DatedC
 
     horizon = getattr(timeline, "resolution_date", None) or filed
     if horizon is not None and when > horizon:
-        # Clamp to the horizon, but never past the floor the invariant needs.
+        # ISC-136. Two invariants collide here and only one can hold:
+        #
+        #   A. the petition post-dates every late event it punishes
+        #   B. the petition does not outlast the file's horizon
+        #
+        # **A wins, explicitly.** A pleading dated before the delay it complains
+        # about is incoherent on its face — a reader opens the file and finds a
+        # petition alleging a delay that had not happened yet. A petition dated
+        # a little past the horizon is not incoherent at all: the horizon is
+        # where the *case-in-chief* resolves, and penalty petitions are
+        # collateral proceedings that routinely outlive it.
+        #
+        # So this is not a clamp, despite its shape, and calling it one was the
+        # confusion ISC-136 was raised to settle. It is a clamp *subject to a
+        # floor*, and where the two disagree the floor is the one that holds.
+        #
+        # Reachable, narrowly. ``_derive_late_benefit_events`` drops any event
+        # past the horizon, so ``latest <= horizon`` always — the conflict needs
+        # ``latest == horizon`` exactly, and then the petition lands one day
+        # past it. Rare, not impossible, and asserted rather than assumed.
         when = max(horizon, latest + timedelta(days=1))
 
     return [
@@ -464,39 +483,52 @@ def _penalty_control_warnings(
     dated: list[tuple[date, str, str, str]],
     controls: DocumentControls,
 ) -> tuple[str, ...]:
-    """Note when document controls suppressed a petition the facts had earned.
+    """Note when a petition the ledger earned is absent from the final plan.
 
-    The precedence question is which wins when an explicit control contradicts
-    the case story. It is the control — the seed is the contract, and ISC-29
-    settles that an explicit document control beats a derived rule. But it wins
-    *loudly*: a file whose ledger records four late benefit notices and holds no
-    penalty petition is a coherent artifact only if somebody meant it, and the
-    warning is how the manifest says so.
+    Keyed off the **outcome**, not off which control name matched. The first
+    version asked "did ``exclude`` or ``include_only`` name this subtype?", and
+    so stayed silent for a zero-count override, a ``global_cap`` that ate the
+    petition, a parent-type exclude, and perspective suppression — four routes to
+    the same missing document, three of them undetected. Enumerating suppression
+    mechanisms is a losing game; the next one added would have been silent too.
 
-    This is the mirror of the emit-with-warning cases. There the seed asked for
-    something the substrate's rules exclude and got it with a note; here the
-    seed refused something the facts support, and gets that with a note too.
+    Asking instead "the ledger earned this and the plan does not contain it" is
+    one question with one answer, and it cannot go stale when a new control
+    lands.
+
+    The precedence itself is unchanged and follows ISC-29: the control wins, the
+    seed is the contract. It wins *loudly*, because a file whose ledger records
+    four late benefit notices and holds no penalty petition is a coherent
+    artifact only if somebody meant it. This is the mirror of the
+    emit-with-warning cases — there the seed asked for something the substrate
+    excludes and got it with a note; here the seed refused something the facts
+    support, and gets that with a note too.
     """
     if not facts.late_benefit_events:
         return ()
     if any(subtype == "PETITION_FOR_PENALTIES" for _date, subtype, _track, _role in dated):
         return ()
 
-    named = "PETITION_FOR_PENALTIES" in set(controls.exclude) | set(controls.include_only)
-    if not named and not controls.include_only:
-        # Not a control decision — perspective suppression or a zero override.
-        return ()
+    # Name the likely route when one is identifiable — an author who wrote the
+    # control wants to know which line to change — but warn either way.
+    if "PETITION_FOR_PENALTIES" in set(controls.exclude):
+        because = "documents.exclude names it"
+    elif any(
+        override.subtype == "PETITION_FOR_PENALTIES" and override.count == 0
+        for override in controls.overrides
+    ):
+        because = "a documents.overrides entry sets its count to 0"
+    elif controls.include_only:
+        because = "documents.include_only does not name it"
+    elif controls.global_cap is not None:
+        because = f"documents.global_cap of {controls.global_cap} excluded it"
+    else:
+        because = "a document control or the file's perspective excluded it"
 
-    reason = (
-        "documents.exclude names it"
-        if "PETITION_FOR_PENALTIES" in set(controls.exclude)
-        else "documents.include_only does not name it"
-    )
     return (
         f"scenario: the ledger records {len(facts.late_benefit_events)} late benefit "
-        f"event(s), which earns a PETITION_FOR_PENALTIES, but {reason} — the control "
-        "wins and the petition is suppressed. Drop the control if the delay should be "
-        "pleaded.",
+        f"event(s), which earns a PETITION_FOR_PENALTIES, but the plan holds none — "
+        f"{because}. The control wins; drop it if the delay should be pleaded.",
     )
 
 
