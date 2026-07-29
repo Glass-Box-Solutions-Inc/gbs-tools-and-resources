@@ -1,0 +1,536 @@
+"""ISC-129 — the follows-the-message meta-guard, made table-driven.
+
+Phase 2 proved three seed messages by hand: apply the edit the message names,
+assert the seed then loads. Hand-written proofs cover the messages someone
+remembered, which are never the ones that rot — the ``decision: denied``
+suggestion that named a value outside its own enum was found by reading, not by
+running, and the dead ``wc-caseload taxonomy --list`` invocation survived a
+review for the same reason.
+
+The CLI half of that class is already mechanical
+(``test_every_cli_invocation_in_the_source_is_real`` in ``test_scenario_p2.py``
+scans the whole package). This module makes the seed half mechanical too:
+
+* :mod:`wc_caseload_engine.message_audit` scans ``seeds.py`` for every message
+  it can put in front of an author and marks the ones that *instruct*;
+* :data:`REGISTRY` pairs each instruction with a seed that trips it and the edit
+  the instruction prescribes;
+* the completeness pair below fails red on an instruction with no entry, and on
+  an entry whose instruction no longer exists.
+
+Writing a new actionable message therefore turns this file red until somebody
+proves that following it works. That is the direction that matters, and it is
+the same shape as the ISC-137 marker sweep next door.
+
+@Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import Any
+
+import pytest
+
+from wc_caseload_engine.message_audit import (
+    DIRECTIVE_VERBS,
+    actionable_messages,
+    directives,
+    is_actionable,
+    longest_literal_run,
+    normalize,
+    raised_messages,
+    seed_source,
+    unresolved_raises,
+)
+from wc_caseload_engine.seeds import deep_merge, parse_case_seed
+
+#: The shortest literal stretch a message must keep through interpolation.
+#:
+#: A trigger proves it hit *its* message by substring-matching this run against
+#: the raised text. Too short a run matches by luck, so the well-formedness
+#: check below refuses to accept one.
+MIN_MATCHABLE_RUN = 16
+
+
+@dataclass(frozen=True)
+class RegisteredMessage:
+    """One actionable message, the seed that trips it, and the edit it prescribes.
+
+    ``directives`` is the identity. Not the line number, which moves on every
+    edit above it; not the whole message, which would churn this table every
+    time somebody improves a comma. The instruction *is* the thing under test:
+    reword it and the proof that following it works has to be re-run, which is
+    exactly what going red here forces.
+    """
+
+    where: str
+    """``Class.validator`` (or bare function) in ``seeds.py`` that raises it."""
+
+    directives: tuple[str, ...]
+    """The clauses the author is told to follow, verbatim from the source."""
+
+    trigger: dict[str, Any]
+    """Seed patch that provokes the message."""
+
+    resolution: dict[str, Any] | Callable[[str], dict[str, Any]]
+    """The edit the directives prescribe, applied on top of ``trigger``.
+
+    A callable receives the raised message text, which is how a directive that
+    names a *computed* value gets followed verbatim rather than approximately —
+    the runway message names a date, and reading it back is the only way to
+    prove the date it names is one the validator accepts.
+    """
+
+    drop: tuple[str, ...] = ()
+    """Dotted seed paths the resolution removes — "drop it" is a real edit."""
+
+    note: str = ""
+    """Why this resolution is the one the message asked for, where not obvious."""
+
+
+def _base() -> dict[str, Any]:
+    """A seed that loads, for every trigger to break in exactly one way."""
+    return {
+        "case_id": "msg-registry",
+        "rng_seed": 4200,
+        "injury": {
+            "type": "specific",
+            "date_of_injury": "2022-04-11",
+            "body_parts": [{"part": "lumbar_spine"}, {"part": "shoulder"}],
+        },
+        "lifecycle": {"target_stage": "medical_legal", "eval_type": "qme"},
+    }
+
+
+def _drop(body: dict[str, Any], path: str) -> None:
+    """Remove a dotted path from *body*, if it is there."""
+    head, _, tail = path.partition(".")
+    if not tail:
+        body.pop(head, None)
+        return
+    nested = body.get(head)
+    if isinstance(nested, dict):
+        _drop(nested, tail)
+
+
+def _applied(*patches: Mapping[str, Any], drop: tuple[str, ...] = ()) -> dict[str, Any]:
+    body = _base()
+    for patch in patches:
+        body = dict(deep_merge(body, patch))
+    for path in drop:
+        _drop(body, path)
+    return body
+
+
+def _message_from(body: Mapping[str, Any]) -> str:
+    """The text ``parse_case_seed`` puts in front of an author for *body*."""
+    # Deliberately broad: seeds.py raises ValueError, SeedError and
+    # SeedValidationError depending on which layer caught the mistake, and the
+    # registry is about the text, not the class.
+    with pytest.raises(Exception) as raised:
+        parse_case_seed(dict(body))
+    return str(raised.value)
+
+
+# ---------------------------------------------------------------------------
+# The registry
+# ---------------------------------------------------------------------------
+
+
+_RUNWAY_DATE = re.compile(r"Move \S+ to (\d{4}-\d{2}-\d{2}) or earlier")
+
+
+def _follow_the_runway_date(message: str) -> dict[str, Any]:
+    """Take the message at its word: move the injury to the date it names.
+
+    The alternative — picking some comfortably older date — would prove that
+    moving the injury back works, which nobody doubted. It would not prove the
+    boundary the message *states* is one the validator accepts, and an
+    off-by-one there is precisely the ``decision: denied`` defect wearing a
+    different hat.
+    """
+    found = _RUNWAY_DATE.search(normalize(message))
+    assert found, f"the runway message stopped naming a date to move to: {message!r}"
+    return {"injury": {"date_of_injury": found.group(1)}}
+
+
+#: Every actionable seed message, keyed by a short name for readability.
+#:
+#: Hand-maintained on purpose — a machine can find the messages but only a
+#: person can say what following one means. The completeness pair keeps the hand
+#: and the machine in agreement.
+REGISTRY: dict[str, RegisteredMessage] = {
+    "repeated_body_part": RegisteredMessage(
+        where="_repeated_part_message",
+        directives=(
+            "List each part once",
+            "Use injury.body_parts[].detail to describe multiple findings in one region",
+        ),
+        trigger={
+            "injury": {"body_parts": [{"part": "lumbar_spine"}, {"part": "lumbar_spine"}]}
+        },
+        resolution={
+            "injury": {"body_parts": [{"part": "lumbar_spine", "detail": "L4-5 and L5-S1"}]}
+        },
+        note="Both clauses at once: one entry for the region, the second finding in detail.",
+    ),
+    "short_runway": RegisteredMessage(
+        where="CaseSeed._check_runway",
+        directives=("Move {} to {} or earlier, or seed a lifecycle that reaches less far",),
+        trigger={"injury": {"date_of_injury": "2025-12-01"}},
+        resolution=_follow_the_runway_date,
+    ),
+    "unknown_field": RegisteredMessage(
+        where="_format_errors",
+        directives=("remove it or fix the spelling",),
+        trigger={"lifecycle_": {"target_stage": "discovery"}},
+        resolution={},
+        drop=("lifecycle_",),
+        note="The typo the message is written for — a trailing underscore on 'lifecycle'.",
+    ),
+    "liens_without_count": RegisteredMessage(
+        where="LienSpec._check_consistency",
+        directives=("raise count or drop the claimants",),
+        trigger={"lifecycle": {"liens": {"count": 0, "claimants": ["edd"]}}},
+        resolution={"lifecycle": {"liens": {"count": 1}}},
+        note="The first of the two offered edits; the second drops the claimants.",
+    ),
+    "unknown_modality": RegisteredMessage(
+        where="DiagnosticEntry._known_modality",
+        directives=("Use one of: {}",),
+        trigger={"scenario": {"diagnostics": {"performed": ["ultrasound"]}}},
+        resolution={"scenario": {"diagnostics": {"performed": ["mri"]}}},
+    ),
+    "study_both_ways": RegisteredMessage(
+        where="DiagnosticsScenario._no_study_is_both",
+        directives=("name it once, in whichever list is true",),
+        trigger={"scenario": {"diagnostics": {"performed": ["mri"], "absent": ["mri"]}}},
+        resolution={"scenario": {"diagnostics": {"absent": []}}},
+    ),
+    "pages_per_set_inverted": RegisteredMessage(
+        where="PageRange._min_does_not_exceed_max",
+        directives=("Swap the two values, or raise max to at least the min",),
+        trigger={"scenario": {"discovery": {"pages_per_set": {"min": 40, "max": 12}}}},
+        resolution={"scenario": {"discovery": {"pages_per_set": {"min": 12, "max": 40}}}},
+    ),
+    "never_treated_surgery": RegisteredMessage(
+        where="ScenarioSpec._never_treated_implies_no_surgery",
+        directives=(
+            "Set scenario.surgery to 'none' (or drop it), or change "
+            "scenario.treatment.status",
+        ),
+        trigger={
+            "scenario": {"treatment": {"status": "never_treated"}, "surgery": "performed"}
+        },
+        resolution={"scenario": {"surgery": "none"}},
+    ),
+    "never_treated_liens": RegisteredMessage(
+        where="CaseSeed._check_scenario_against_the_lifecycle",
+        directives=(
+            "Drop those claimants (edd, ambulance, attorney_costs and self_procured "
+            "are compatible), or change the treatment status",
+        ),
+        trigger={
+            "scenario": {"treatment": {"status": "never_treated"}},
+            "lifecycle": {"liens": {"count": 2, "claimants": ["medical_provider", "edd"]}},
+        },
+        resolution={"lifecycle": {"liens": {"claimants": ["edd", "attorney_costs"]}}},
+        note="The message names these four as compatible; the test takes it at its word.",
+    ),
+    "denied_by_ur_without_dispute": RegisteredMessage(
+        where="CaseSeed._check_scenario_against_the_lifecycle",
+        directives=(
+            "Add 'lifecycle: {ur_dispute: {enabled: true, decision: upheld}}' to this "
+            "seed, or use scenario.surgery: 'recommended' for a request that was never "
+            "adjudicated",
+        ),
+        trigger={"scenario": {"surgery": "denied_by_ur"}},
+        resolution={"lifecycle": {"ur_dispute": {"enabled": True, "decision": "upheld"}}},
+        note="Copied verbatim from the message, which is the point of the exercise.",
+    ),
+    "denied_by_ur_without_decision": RegisteredMessage(
+        where="CaseSeed._check_scenario_against_the_lifecycle",
+        directives=(
+            "Set 'lifecycle: {ur_dispute: {decision: upheld}}' so the denial stands, "
+            "or use scenario.surgery: 'recommended' if the request is still pending",
+        ),
+        trigger={
+            "scenario": {"surgery": "denied_by_ur"},
+            "lifecycle": {"ur_dispute": {"enabled": True}},
+        },
+        resolution={"lifecycle": {"ur_dispute": {"decision": "upheld"}}},
+        note="The original defect: this message used to name 'denied', which is not "
+        "in the enum. Following it verbatim is now a test.",
+    ),
+}
+
+
+REGISTERED = sorted(REGISTRY)
+
+
+# ---------------------------------------------------------------------------
+# The sweep can see what it claims to see
+# ---------------------------------------------------------------------------
+
+
+class TestTheSweepIsWellFormed:
+    def test_no_raise_site_is_invisible_to_the_scan(self) -> None:
+        """A message the scan cannot read is where an unproven directive hides.
+
+        Two helpers build their text away from the ``raise`` — and both really
+        do carry directives — so this is asserted rather than hoped for.
+        """
+        opaque = unresolved_raises(seed_source())
+        assert not opaque, (
+            f"raise sites whose message the registry sweep cannot see: {list(opaque)}. "
+            "Build the text from string literals in a module-level helper, or the "
+            "directive inside it is unguarded."
+        )
+
+    def test_the_scan_finds_messages_at_all(self) -> None:
+        """Anti-vacuity: an empty scan would register nothing and pass everything."""
+        assert len(raised_messages(seed_source())) > 20
+
+    def test_the_scan_finds_actionable_messages(self) -> None:
+        assert actionable_messages(seed_source())
+
+
+# ---------------------------------------------------------------------------
+# ISC-129 — the completeness pair
+# ---------------------------------------------------------------------------
+
+
+def _scanned(source: str | None = None) -> dict[tuple[str, tuple[str, ...]], Any]:
+    return {
+        (m.where, m.directives): m
+        for m in actionable_messages(source if source is not None else seed_source())
+    }
+
+
+def unregistered(source: str) -> list[tuple[str, tuple[str, ...]]]:
+    """Actionable messages in *source* with no entry in :data:`REGISTRY`.
+
+    A function rather than an inline expression because the planted control runs
+    the very same check against a doctored source. A control that re-implements
+    the check it is validating proves only that two pieces of code agree.
+    """
+    registered = {(e.where, e.directives) for e in REGISTRY.values()}
+    return sorted(set(_scanned(source)) - registered)
+
+
+class TestTheRegistryIsComplete:
+    def test_every_actionable_message_is_registered(self) -> None:
+        missing = unregistered(seed_source())
+        assert not missing, (
+            "actionable seed messages with no registry entry:\n"
+            + "\n".join(f"  {where}: {list(d)}" for where, d in missing)
+            + "\n\nAdd a RegisteredMessage naming the seed that trips it and the edit "
+            "the message tells the author to make. A message nothing follows is a "
+            "message nobody has checked."
+        )
+
+    def test_every_registry_entry_names_a_live_message(self) -> None:
+        scanned = set(_scanned())
+        stale = sorted(
+            (name, entry.where) for name, entry in REGISTRY.items()
+            if (entry.where, entry.directives) not in scanned
+        )
+        assert not stale, (
+            f"registry entries matching no message in seeds.py: {stale}. The message "
+            "was reworded, moved or deleted — re-copy its directives from the source "
+            "and re-prove the resolution, or delete the entry."
+        )
+
+    def test_every_entry_is_matchable(self) -> None:
+        """A pin too short to be distinctive would match a message by accident."""
+        scanned = _scanned()
+        for name, entry in REGISTRY.items():
+            message = scanned.get((entry.where, entry.directives))
+            assert message is not None, f"{name}: no live message (see the stale check)"
+            run = longest_literal_run(message.template)
+            assert len(run) >= MIN_MATCHABLE_RUN, (
+                f"{name}: the longest interpolation-free run of its message is "
+                f"{run!r} ({len(run)} chars). Too short to prove a trigger hit this "
+                "message rather than some other one."
+            )
+
+
+# ---------------------------------------------------------------------------
+# ISC-129 — following the message resolves it
+# ---------------------------------------------------------------------------
+
+
+class TestFollowingEveryMessageWorks:
+    @pytest.mark.parametrize("name", REGISTERED)
+    def test_the_trigger_raises_the_registered_message(self, name: str) -> None:
+        entry = REGISTRY[name]
+        message = _scanned()[(entry.where, entry.directives)]
+        raised = _message_from(_applied(entry.trigger))
+        run = longest_literal_run(message.template)
+        assert run in normalize(raised), (
+            f"{name}: the trigger raised something else, so the proof below would be "
+            f"about the wrong message.\n  expected to contain: {run!r}\n  got: {raised!r}"
+        )
+
+    @pytest.mark.parametrize("name", REGISTERED)
+    def test_following_the_message_produces_a_seed_that_loads(self, name: str) -> None:
+        """The whole point. Apply the edit the message names; the seed must load.
+
+        The failure is caught and re-raised as an assertion because the useful
+        report is "following *this* advice left *that* error behind", not a
+        pydantic traceback: a message that sends the reader to a second error is
+        the defect this registry exists to make impossible.
+        """
+        entry = REGISTRY[name]
+        raised = _message_from(_applied(entry.trigger))
+        resolution = (
+            entry.resolution(raised) if callable(entry.resolution) else entry.resolution
+        )
+        try:
+            seed = parse_case_seed(_applied(entry.trigger, resolution, drop=entry.drop))
+        except Exception as still_broken:
+            pytest.fail(
+                f"{name}: following {list(entry.directives)} left the seed invalid.\n"
+                f"  the message said: {normalize(raised)}\n"
+                f"  after the edit:   {normalize(str(still_broken))}"
+            )
+        assert seed.case_id == "msg-registry"
+
+    @pytest.mark.parametrize("name", REGISTERED)
+    def test_the_registered_directives_are_the_ones_the_author_reads(
+        self, name: str
+    ) -> None:
+        """The pin is the *rendered* instruction, not merely the source template.
+
+        A directive assembled from a format string could read differently once
+        interpolated — that is how ``decision: denied`` looked reasonable in
+        source and was wrong on screen.
+        """
+        entry = REGISTRY[name]
+        raised = normalize(_message_from(_applied(entry.trigger)))
+        for clause in entry.directives:
+            literal = longest_literal_run(clause)
+            assert literal in raised, (
+                f"{name}: registered directive {clause!r} does not appear in the "
+                f"message the author actually sees:\n  {raised}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# The planted controls — proof the guard can fail
+# ---------------------------------------------------------------------------
+
+
+#: An actionable message planted into a copy of ``seeds.py``.
+_PLANT_ANCHOR = '            raise ValueError("injury.ct_end must be on or after injury.ct_start")'
+_PLANTED = (
+    '            raise ValueError("injury.ct_end must be on or after injury.ct_start. '
+    'Set injury.ct_end to a later date.")'
+)
+
+
+class TestThePlantedControlGoesRed:
+    """Without these the completeness check could be green by never looking."""
+
+    def test_the_completeness_check_fails_on_an_unregistered_message(self) -> None:
+        """The criterion, run against a source that violates it.
+
+        ``unregistered`` is the function
+        ``test_every_actionable_message_is_registered`` asserts on, so this is
+        the real check meeting a real violation — not a second implementation
+        agreeing with the first.
+        """
+        source = seed_source()
+        assert _PLANT_ANCHOR in source, "the planted control's anchor moved; update it"
+        assert not unregistered(source), "the registry is already incomplete"
+
+        planted = source.replace(_PLANT_ANCHOR, _PLANTED, 1)
+        assert planted != source, "the plant did not apply; update its anchor"
+
+        caught = unregistered(planted)
+        assert caught, (
+            "an unregistered actionable message passed the completeness check. The "
+            "sweep is not reading raise sites, so nothing here can ever fail."
+        )
+        assert any(
+            "Set injury.ct_end to a later date" in clause
+            for _, clauses in caught
+            for clause in clauses
+        ), f"the check went red on something other than the planted message: {caught}"
+
+    def test_the_message_the_control_plants_on_is_not_actionable_already(self) -> None:
+        """The half of the control that makes the other half mean something."""
+        assert not is_actionable("injury.ct_end must be on or after injury.ct_start")
+        assert is_actionable(
+            "injury.ct_end must be on or after injury.ct_start. "
+            "Set injury.ct_end to a later date."
+        )
+
+
+class TestTheDirectiveDetector:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Set scenario.surgery to 'none'.",
+            "the count is 0 — raise count or drop the claimants",
+            "A study happened or it did not. Name it once.",
+            "unknown field — remove it or fix the spelling",
+            "Use one of: mri, ct, xray.",
+        ],
+    )
+    def test_it_reads_a_real_instruction(self, text: str) -> None:
+        assert is_actionable(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "lifecycle.ur_dispute.imr requires ur_dispute.enabled: true",
+            "documents.format_mix must have at least one positive weight",
+            "output.formats has duplicates: pdf",
+            "caseload needs at least one entry in 'cases' or an 'auto' block",
+            "lifecycle.reconsideration.outcome is required when enabled; allowed: denied",
+        ],
+    )
+    def test_it_does_not_read_a_finding_as_an_instruction(self, text: str) -> None:
+        assert not is_actionable(text)
+
+    def test_a_field_path_survives_clause_splitting(self) -> None:
+        """A bare split on '.' would shred every message in this module."""
+        assert directives("Set lifecycle.ur_dispute.decision to upheld.") == (
+            "Set lifecycle.ur_dispute.decision to upheld",
+        )
+
+    def test_the_vocabulary_is_the_limit_and_the_limit_is_stated(self) -> None:
+        """The known blind spot, executable rather than merely written down.
+
+        Directive detection is a curated verb list, so an imperative opening
+        with a verb the list does not carry is invisible. That is a real gap and
+        pretending otherwise would be the same dishonesty this module exists to
+        stop. It is asserted here so the boundary is discoverable from the suite:
+        the fix for a missed directive is to add its verb to
+        ``DIRECTIVE_VERBS``, and this test says so.
+        """
+        assert "nudge" not in DIRECTIVE_VERBS
+        assert not is_actionable("the value is wrong. Nudge it upwards.")
+        assert is_actionable("the value is wrong. Raise it upwards.")
+
+
+class TestTheRegistryTableIsWellFormed:
+    def test_every_entry_names_a_verb_the_vocabulary_knows(self) -> None:
+        for name, entry in REGISTRY.items():
+            for clause in entry.directives:
+                verb = clause.split(" ", 1)[0].strip("\"'`([{").casefold()
+                assert verb in DIRECTIVE_VERBS, (
+                    f"{name}: directive {clause!r} opens with {verb!r}, which the "
+                    "sweep does not recognise — the entry cannot have come from it"
+                )
+
+    def test_no_two_entries_claim_the_same_message(self) -> None:
+        seen: dict[tuple[str, tuple[str, ...]], str] = {}
+        for name, entry in REGISTRY.items():
+            key = (entry.where, entry.directives)
+            assert key not in seen, f"{name} duplicates {seen[key]}"
+            seen[key] = name
