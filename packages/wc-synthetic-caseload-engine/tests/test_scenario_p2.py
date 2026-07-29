@@ -19,13 +19,14 @@ from datetime import date
 from itertools import pairwise
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
 from conftest import extract_text, requires_substrate
 from wc_caseload_engine.case_facts import (
     SUBSTRATE_STATUS_PHRASES,
+    SURGERY_CPT_CODES,
     TRAJECTORY_PHRASES,
     SurgeryFact,
     _derive_visits,
@@ -33,7 +34,16 @@ from wc_caseload_engine.case_facts import (
 from wc_caseload_engine.fact_templates import (
     _SUBSTRATE_HISTORY_IMAGING as SUBSTRATE_HISTORY_IMAGING,
 )
-from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
+from wc_caseload_engine.fact_templates import _SUBSTRATE_MODALITY_CHOICES, fact_aware_templates
+from wc_caseload_engine.manifests import (
+    MANIFEST_NAME,
+    SUBPOENAED_RECORDS_SUBTYPES,
+    TREATING_REPORT_SUBTYPES,
+    generate_case,
+)
+from wc_caseload_engine.manifests import (
+    OPERATIVE_SUBTYPES as MANIFEST_OPERATIVE_SUBTYPES,
+)
 from wc_caseload_engine.modality_audit import MODALITY_SITES, is_excluded, sites_for
 from wc_caseload_engine.planner import (
     NEVER_TREATED_SUPPRESSED_TYPES,
@@ -41,8 +51,17 @@ from wc_caseload_engine.planner import (
     POST_DISCHARGE_FORBIDDEN,
     build_case_plan,
 )
-from wc_caseload_engine.seeds import TREATMENT_LIEN_CLAIMANTS, parse_case_seed
+from wc_caseload_engine.planner import (
+    OPERATIVE_SUBTYPES as PLANNER_OPERATIVE_SUBTYPES,
+)
+from wc_caseload_engine.seeds import (
+    BODY_PART_CATALOG,
+    TREATMENT_LIEN_CLAIMANTS,
+    LienClaimant,
+    parse_case_seed,
+)
 from wc_caseload_engine.substrate import import_substrate
+from wc_caseload_engine.taxonomy import effective_taxonomy
 
 
 def _flat(text: str) -> str:
@@ -928,3 +947,92 @@ class TestEveryActionableMessageResolvesWhenFollowed:
             },
         )
         assert seed.scenario.treatment.status == "never_treated"
+
+
+# ---------------------------------------------------------------------------
+# Hand-written lists name things that exist
+# ---------------------------------------------------------------------------
+
+
+#: Every hand-maintained subtype list this phase added or relies on.
+SUBTYPE_LISTS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("planner.NEVER_TREATED_TIER", NEVER_TREATED_TIER),
+    ("planner.POST_DISCHARGE_FORBIDDEN", POST_DISCHARGE_FORBIDDEN),
+    ("planner.OPERATIVE_SUBTYPES", PLANNER_OPERATIVE_SUBTYPES),
+    ("manifests.OPERATIVE_SUBTYPES", MANIFEST_OPERATIVE_SUBTYPES),
+    ("manifests.SUBPOENAED_RECORDS_SUBTYPES", SUBPOENAED_RECORDS_SUBTYPES),
+    ("manifests.TREATING_REPORT_SUBTYPES", TREATING_REPORT_SUBTYPES),
+)
+
+
+class TestHandWrittenListsNameLiveKeys:
+    """A list whose members do not exist is a rule that never fires.
+
+    This generalizes the lesson from the modality audit table, where five rows
+    of mine claimed to govern substrate lines that did not exist and every
+    file-level check still passed. The table read as complete while being partly
+    fiction, and nothing would have caught it.
+
+    The same failure is available to every hand-written subtype list here.
+    ``NEVER_TREATED_TIER`` is the sharpest case: a typo in an allowlist member
+    does not raise, it silently suppresses a document the seed meant to keep,
+    and the resulting case looks plausible. These lists are all correct today —
+    the point is that they stay correct after a taxonomy rename.
+    """
+
+    @pytest.mark.parametrize(("name", "keys"), SUBTYPE_LISTS, ids=[n for n, _ in SUBTYPE_LISTS])
+    def test_every_member_is_a_canonical_subtype(self, name: str, keys: frozenset[str]) -> None:
+        taxonomy = effective_taxonomy()
+        dead = sorted(key for key in keys if not taxonomy.is_canonical(key))
+        assert not dead, f"{name} names subtypes the taxonomy does not have: {dead}"
+
+    @pytest.mark.parametrize(("name", "keys"), SUBTYPE_LISTS, ids=[n for n, _ in SUBTYPE_LISTS])
+    def test_no_member_is_substrate_only_vocabulary(
+        self, name: str, keys: frozenset[str]
+    ) -> None:
+        """Canonical is not enough — a substrate-only key never reaches a manifest."""
+        taxonomy = effective_taxonomy()
+        offenders = sorted(key for key in keys if key in taxonomy.substrate_only)
+        assert not offenders, f"{name} names substrate-only subtypes: {offenders}"
+
+    @pytest.mark.parametrize(("name", "keys"), SUBTYPE_LISTS, ids=[n for n, _ in SUBTYPE_LISTS])
+    def test_no_list_is_empty(self, name: str, keys: frozenset[str]) -> None:
+        """An emptied list is a silently disabled rule."""
+        assert keys, f"{name} is empty; the rule it drives no longer does anything"
+
+    def test_the_fact_aware_registry_names_live_renderable_subtypes(self) -> None:
+        taxonomy = effective_taxonomy()
+        registry = set(fact_aware_templates())
+        dead = sorted(key for key in registry if not taxonomy.is_canonical(key))
+        assert not dead, f"FACT_AWARE_TEMPLATES maps subtypes the taxonomy lacks: {dead}"
+        unrenderable = sorted(key for key in registry if not taxonomy.is_renderable(key))
+        assert not unrenderable, (
+            f"FACT_AWARE_TEMPLATES maps subtypes nothing can render: {unrenderable}"
+        )
+
+    def test_the_suppressed_types_are_live_parent_types(self) -> None:
+        """``never_treated`` filters on parent type, not subtype — same exposure."""
+        taxonomy = effective_taxonomy()
+        dead = sorted(name for name in NEVER_TREATED_SUPPRESSED_TYPES if name not in taxonomy.types)
+        assert not dead, f"NEVER_TREATED_SUPPRESSED_TYPES names unknown types: {dead}"
+
+    def test_treatment_lien_claimants_are_legal_claimant_values(self) -> None:
+        """The never_treated lien rule filters a pool it does not own."""
+        legal = set(get_args(LienClaimant.__value__))
+        unknown = sorted(set(TREATMENT_LIEN_CLAIMANTS) - legal)
+        assert not unknown, f"TREATMENT_LIEN_CLAIMANTS names non-claimants: {unknown}"
+
+    def test_surgery_cpt_body_parts_are_real_body_parts(self) -> None:
+        """A CPT keyed to a body part the seed cannot name is unreachable."""
+        parts = {part for entries in BODY_PART_CATALOG.values() for part, _icd, _detail in entries}
+        unknown = sorted(set(SURGERY_CPT_CODES) - parts)
+        assert not unknown, f"SURGERY_CPT_CODES is keyed by unknown body parts: {unknown}"
+
+    def test_the_substrate_modality_pool_still_exists(self) -> None:
+        """The last unpinned substrate list — the imaging shim's match target."""
+        source = inspect.getsource(import_substrate("pdf_templates.medical.diagnostic_report"))
+        missing = [choice for choice in _SUBSTRATE_MODALITY_CHOICES if f'"{choice}"' not in source]
+        assert not missing, (
+            f"{missing} are no longer in the substrate's exam-type list; the imaging "
+            "override is silently reverting to a random draw"
+        )
