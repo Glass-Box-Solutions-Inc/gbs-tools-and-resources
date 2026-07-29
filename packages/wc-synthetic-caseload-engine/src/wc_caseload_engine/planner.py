@@ -25,7 +25,12 @@ from datetime import date, timedelta
 import structlog
 
 from wc_caseload_engine.case_context import CaseCast, build_case_cast
-from wc_caseload_engine.case_facts import CaseFacts, derive_case_facts
+from wc_caseload_engine.case_facts import (
+    CaseFacts,
+    derive_case_facts,
+    resolve_surgery_status,
+    resolve_treatment_status,
+)
 from wc_caseload_engine.doc_controls import (
     TRACK_CORE,
     ControlResolution,
@@ -194,8 +199,10 @@ def normalize_control_keys(controls: DocumentControls, *, case_id: str) -> Docum
             problems.append(
                 f"{field}: {key!r} is not a classifier subtype or document type. "
                 "Only the 353 canonical subtypes, the 15 parent types, and substrate "
-                "keys with an unambiguous canonical equivalent may be named — "
-                "run `wc-caseload taxonomy --list` to see the vocabulary."
+                "keys with an unambiguous canonical equivalent may be named — run "
+                "`wc-caseload validate --spec <spec.yaml>` to see every offending key "
+                "in one pass, and `wc-caseload seed --template --kind caseload` for a "
+                "worked example of the controls."
             )
             return key
         if canonical != key:
@@ -360,6 +367,146 @@ def _synthesize_dates(
     return sorted(out)
 
 
+#: What survives ``treatment: never_treated``.
+#:
+#: An applicant who never treated still generates paper. Somebody reported the
+#: injury, a claim form was filed, and if they went to an emergency department
+#: once and never returned, that visit exists. What does not exist is a course
+#: of care: no progress reports, no imaging ordered by a treater, no bills for
+#: visits that never happened.
+#:
+#: Stated as an explicit allowlist rather than a denylist because the failure
+#: modes point opposite ways. A subtype missing from a denylist silently
+#: survives and quietly contradicts the seed; a subtype missing from this list
+#: is merely absent from a file the seed already says is sparse.
+NEVER_TREATED_TIER: frozenset[str] = frozenset(
+    {
+        "FIRST_REPORT_OF_INJURY_PHYSICIAN",
+        "CLAIM_FORM",
+        "CLAIM_FORM_DWC1",
+        "EMERGENCY_ROOM_RECORDS",
+        "FACE_SHEET",
+    }
+)
+
+#: Types whose documents imply a course of treatment.
+NEVER_TREATED_SUPPRESSED_TYPES: frozenset[str] = frozenset(
+    {"MEDICAL_CLINICAL", "BILLING_FINANCIAL", "UTILIZATION_MANAGEMENT"}
+)
+
+#: Documents that must not post-date a discharge from care.
+POST_DISCHARGE_FORBIDDEN: frozenset[str] = frozenset(
+    {
+        "TREATING_PHYSICIAN_REPORT",
+        "TREATING_PHYSICIAN_REPORT_PR2",
+        "TREATING_PHYSICIAN_REPORT_PR4",
+        "TREATING_PHYSICIAN_REPORT_FINAL",
+        "ONGOING_TREATMENT_RECORDS",
+    }
+)
+
+#: Documents that assert an operation happened.
+OPERATIVE_SUBTYPES: frozenset[str] = frozenset({"OPERATIVE_HOSPITAL_RECORDS"})
+
+
+def _shape_for_scenario(
+    seed: CaseSeed,
+    timeline: CaseTimeline,
+    dated: list[tuple[date, str, str, str]],
+) -> tuple[list[tuple[date, str, str, str]], tuple[str, ...]]:
+    """Apply the seed's treatment and surgery scenario to the candidate set.
+
+    Shaping happens *here*, on candidates, rather than through the document
+    controls a seed author writes by hand. ``never_treated`` means the file has
+    no course of care in it, which is a statement about the case — expressing it
+    as thirty ``exclude:`` keys would make the seed unreadable and would drift
+    the moment the taxonomy grew.
+
+    Returns the shaped candidate list and any warnings, which ride the same
+    channel as denylist and doctrine-hook warnings: keep what the seed asked
+    for, and say what was unusual about it.
+    """
+    scenario = seed.scenario
+    if scenario.treatment.status is None and scenario.surgery is None:
+        # Nothing stated: identical to v0.3.0, candidate for candidate. Every
+        # byte guarantee for scenario-free seeds rests on this early return.
+        return dated, ()
+
+    taxonomy = effective_taxonomy()
+    status = resolve_treatment_status(seed)
+    surgery_status = resolve_surgery_status(seed)
+    warnings: list[str] = []
+    shaped = list(dated)
+
+    if status == "never_treated":
+        kept = [
+            entry
+            for entry in shaped
+            if entry[1] in NEVER_TREATED_TIER
+            or taxonomy.parent_of(entry[1]) not in NEVER_TREATED_SUPPRESSED_TYPES
+        ]
+        dropped = len(shaped) - len(kept)
+        if dropped:
+            warnings.append(
+                f"scenario.treatment.status is 'never_treated': suppressed {dropped} "
+                "treatment, diagnostic and billing document(s); the first-report tier "
+                "is retained"
+            )
+        shaped = kept
+
+    if status == "discharged":
+        facts = derive_case_facts(seed, timeline)
+        discharge = facts.discharge_date
+        if discharge is not None:
+            after = [
+                entry
+                for entry in shaped
+                if entry[1] in POST_DISCHARGE_FORBIDDEN and entry[0] > discharge
+            ]
+            if after:
+                shaped = [entry for entry in shaped if entry not in after]
+                warnings.append(
+                    f"scenario.treatment.status is 'discharged': dropped {len(after)} "
+                    f"treating document(s) dated after the discharge of {discharge}"
+                )
+            if not any(entry[1] == "DISCHARGE_SUMMARY" for entry in shaped):
+                shaped.append((discharge, "DISCHARGE_SUMMARY", TRACK_CORE, "treating_physician"))
+
+    # ISC-109. A *stated* surgery floors the operative document; a derived one
+    # keeps the substrate's probabilistic emission untouched, which is what
+    # leaves v0.3.0 bytes alone for every seed that states nothing.
+    if scenario.surgery == "performed" and not any(
+        entry[1] in OPERATIVE_SUBTYPES for entry in shaped
+    ):
+        facts = derive_case_facts(seed, timeline)
+        when = facts.surgery.date or timeline.injury_date + timedelta(days=210)
+        shaped.append((when, "OPERATIVE_HOSPITAL_RECORDS", TRACK_CORE, "treating_physician"))
+
+    if surgery_status in ("none", "recommended", "denied_by_ur"):
+        operative = [entry for entry in shaped if entry[1] in OPERATIVE_SUBTYPES]
+        if operative:
+            shaped = [entry for entry in shaped if entry not in operative]
+            warnings.append(
+                f"scenario.surgery is {surgery_status!r}: dropped {len(operative)} "
+                "operative document(s) the walk proposed"
+            )
+
+    # ISC-114. Keep-and-warn parity: the seed wins, and the file says so.
+    if scenario.surgery in ("performed", "recommended", "denied_by_ur"):
+        psych = any(part.part == "psyche" for part in seed.injury.body_parts) or (
+            "lc3208_3_psych" in seed.lifecycle.doctrine_hooks
+        )
+        if seed.injury.type == "death" or psych:
+            excluded = "a death claim" if seed.injury.type == "death" else "a psychiatric claim"
+            warnings.append(
+                f"scenario.surgery is {scenario.surgery!r} on {excluded}, which the "
+                "substrate's own rule excludes from surgery — the seed is the "
+                "contract, so it is honoured, but check this is intended"
+            )
+
+    return shaped, tuple(warnings)
+
+
 def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     """Turn one seed into a fully decided case plan.
 
@@ -421,6 +568,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
             for extra in _synthesize_dates(seed, timeline, entry.subtype, available, shortfall):
                 dated.append((extra, entry.subtype, track, role))
 
+    dated, scenario_warnings = _shape_for_scenario(seed, timeline, dated)
     dated.sort(key=lambda item: (item[0], item[1], item[2]))
 
     documents: list[PlannedDocument] = []
@@ -467,6 +615,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         *control.warnings,
         *recon.warnings,
         *cast.warnings,
+        *scenario_warnings,
         *unsupported_hook_warnings(seed.lifecycle.doctrine_hooks, seed),
     )
 

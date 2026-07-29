@@ -38,6 +38,7 @@ from wc_caseload_engine import __version__
 from wc_caseload_engine.case_facts import (
     GOVERNED_LEDGER_FIELDS,
     MODALITIES,
+    TREATMENT_STATUSES,
     CaseFacts,
     facts_manifest_block,
 )
@@ -68,6 +69,16 @@ SUBPOENAED_RECORDS_SUBTYPES: frozenset[str] = frozenset(
      "SUBPOENAED_RECORDS_OTHER"}
 )
 """The subtypes whose packets the provider round-robin advances over."""
+
+TREATING_REPORT_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "TREATING_PHYSICIAN_REPORT",
+        "TREATING_PHYSICIAN_REPORT_PR2",
+        "TREATING_PHYSICIAN_REPORT_PR4",
+        "TREATING_PHYSICIAN_REPORT_FINAL",
+    }
+)
+"""The subtypes whose ordinal advances the ledger's treatment trajectory."""
 
 CASE_FACTS_NAME = "case_facts.yaml"
 """The resolved clinical ledger, written beside the seed.
@@ -228,6 +239,11 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
     # Packets are counted separately from documents so the provider round-robin
     # advances once per records packet rather than once per file in the case.
     packet_counter = 0
+    # Treating reports are counted separately again, because a trajectory has to
+    # advance per *report*, not per document: two PRs at document indices 4 and
+    # 19 must read as the first and second visit in the arc, not the fifth and
+    # twentieth.
+    report_counter = 0
     for document in plan.documents:
         filename = filename_for(seed, case_number, document)
         result = render_document(
@@ -244,9 +260,12 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
             content_flags=document.content_flags,
             case_facts=plan.case_facts,
             packet_index=packet_counter,
+            report_ordinal=report_counter,
         )
         if document.subtype in SUBPOENAED_RECORDS_SUBTYPES:
             packet_counter += 1
+        if document.subtype in TREATING_REPORT_SUBTYPES:
+            report_counter += 1
         # A format fallback can change the extension; trust the written path.
         renders.append((result.path.name, result))
 
@@ -466,6 +485,48 @@ def _validate_case_facts(
         else:
             seen[modality] = performed
 
+    treatment = block.get("treatment")
+    if not isinstance(treatment, dict):
+        problems.append(f"{case_label}: caseFacts.treatment is not a mapping")
+    else:
+        extra = set(treatment) - set(GOVERNED_LEDGER_FIELDS["treatment"])
+        if extra:
+            problems.append(
+                f"{case_label}: caseFacts.treatment publishes ungoverned field(s) "
+                f"{sorted(extra)}"
+            )
+        if treatment.get("status") not in TREATMENT_STATUSES:
+            problems.append(
+                f"{case_label}: caseFacts.treatment.status is "
+                f"{treatment.get('status')!r}, not one of {', '.join(TREATMENT_STATUSES)}"
+            )
+        if (treatment.get("status") == "discharged") != bool(treatment.get("dischargeDate")):
+            problems.append(
+                f"{case_label}: caseFacts.treatment has status "
+                f"{treatment.get('status')!r} and dischargeDate "
+                f"{treatment.get('dischargeDate')!r} — a discharge date exists exactly "
+                "when the file says care ended"
+            )
+        if (treatment.get("status") == "gap") != bool(treatment.get("gapStart")):
+            problems.append(
+                f"{case_label}: caseFacts.treatment has status "
+                f"{treatment.get('status')!r} but gapStart "
+                f"{treatment.get('gapStart')!r}"
+            )
+
+    # Whether the *seed* stated the surgery, which decides how strict the
+    # operative-document rule below can honestly be.
+    scenario_stated = False
+    seed_path = case_dir / SEED_NAME
+    if seed_path.is_file():
+        import yaml as _yaml
+
+        try:
+            seed_body = _yaml.safe_load(seed_path.read_text(encoding="utf-8")) or {}
+            scenario_stated = bool((seed_body.get("scenario") or {}).get("surgery"))
+        except _yaml.YAMLError:
+            pass
+
     surgery = block.get("surgery")
     if not isinstance(surgery, dict):
         problems.append(f"{case_label}: caseFacts.surgery is not a mapping")
@@ -479,14 +540,29 @@ def _validate_case_facts(
                 problems.append(
                     f"{case_label}: caseFacts says surgery was performed but names no CPT"
                 )
-            # Deliberately *not* asserting that an operative document exists.
-            # The implication only runs one way in this system: the substrate's
-            # lifecycle walk gates several rules on ``has_surgery`` but does not
-            # guarantee an OPERATIVE_HOSPITAL_RECORDS document, and two of the
-            # seven demo cases resolve surgery true while emitting none. Failing
-            # them here would make ``validate`` red on the package's own
-            # examples for a defect in the substrate's document set, not in the
-            # ledger. Tracked for Phase 2 — see CHANGELOG "Known scope limits".
+            # The forward direction, closed in 0.4.0 by the planner floor. It is
+            # still only asserted for a *stated* surgery: a derived one keeps
+            # the substrate's probabilistic emission, where surgery can resolve
+            # true with no operative document, and failing that here would make
+            # ``validate`` red on this package's own demo. ``surgeryStated``
+            # records which case this is, so the rule can tell them apart from
+            # the output alone.
+            if scenario_stated and not has_operative:
+                problems.append(
+                    f"{case_label}: the seed states surgery was performed but the case "
+                    "holds no operative document to support it"
+                )
+        elif status in ("recommended", "denied_by_ur"):
+            if not surgery.get("cptCode"):
+                problems.append(
+                    f"{case_label}: caseFacts says surgery was {status} but names no CPT — "
+                    "a request names the procedure it asks for"
+                )
+            if has_operative:
+                problems.append(
+                    f"{case_label}: caseFacts says surgery was {status}, which means it did "
+                    "not happen, but the case holds an operative document"
+                )
         elif status == "none":
             if surgery.get("cptCode"):
                 problems.append(

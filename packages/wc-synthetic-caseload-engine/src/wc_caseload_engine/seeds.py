@@ -732,19 +732,65 @@ class DiagnosticsScenario(_Model):
         return self
 
 
+#: Lien claimants whose existence implies somebody treated the applicant.
+#:
+#: EDD, attorney costs, self-procured and ambulance liens do not: a benefits
+#: overpayment or a cost bill can exist in a file where no provider was ever
+#: seen, so ``never_treated`` tolerates them.
+TREATMENT_LIEN_CLAIMANTS: tuple[str, ...] = ("medical_provider", "hospital", "pharmacy")
+
+
+class TreatmentScenario(_Model):
+    """The shape of the treatment record, before any document is planned.
+
+    ``status`` is the trajectory the file tells:
+
+    - ``ongoing`` — the default arc: visits continue through evaluation.
+    - ``discharged`` — care ended; a discharge summary exists and no treating
+      report post-dates it.
+    - ``gap`` — a stretch with no visits, which is the fact a defense file is
+      usually built around.
+    - ``never_treated`` — the applicant did not treat. Everything past the
+      first-report tier is suppressed at the planner.
+    """
+
+    status: Literal["ongoing", "discharged", "gap", "never_treated"] | None = None
+    """``None`` means *derive it*, preserving whatever the substrate did before."""
+
+    providers: int | None = Field(default=None, ge=1, le=8)
+    """Ledger roster size. ``None`` takes the substrate case's own provider list."""
+
+
 class ScenarioSpec(_Model):
-    """Seed-surfaced case facts (Phase 1 subset).
+    """Seed-surfaced case facts.
 
     The axes of real-file variability this engine can currently *render*
     coherently. Deliberately small: an axis in the schema that no template
     honours is worse than an absent one, because it reads as a promise.
-    Treatment trajectory, adjuster diligence, attorney cadence and discovery
-    volume are named in AJC-37 and land in later phases.
+    Adjuster diligence, attorney cadence and discovery volume are named in
+    AJC-37 and land in later phases.
     """
 
     diagnostics: DiagnosticsScenario = Field(default_factory=DiagnosticsScenario)
-    surgery: Literal["none", "performed"] | None = None
-    """``None`` means *derive it* — preserving the substrate's 35% coin exactly."""
+    treatment: TreatmentScenario = Field(default_factory=TreatmentScenario)
+    surgery: Literal["none", "performed", "recommended", "denied_by_ur"] | None = None
+    """``None`` means *derive it* — preserving the substrate's 35% coin exactly.
+
+    ``recommended`` and ``denied_by_ur`` both mean no operation happened: one
+    was proposed and is pending, the other was proposed and refused. Neither
+    emits an operative document, and ``validate`` enforces their absence.
+    """
+
+    @model_validator(mode="after")
+    def _never_treated_implies_no_surgery(self) -> ScenarioSpec:
+        if self.treatment.status == "never_treated" and self.surgery not in (None, "none"):
+            raise ValueError(
+                "scenario.treatment.status is 'never_treated' but scenario.surgery is "
+                f"{self.surgery!r} — an applicant who never treated did not have surgery "
+                "proposed, denied or performed. Set scenario.surgery to 'none' (or drop "
+                "it), or change scenario.treatment.status."
+            )
+        return self
 
 
 class OutputSpec(_Model):
@@ -819,6 +865,70 @@ class CaseSeed(_Model):
                     _repeated_part_message(*repeated, case_id=info.data.get("case_id"))
                 )
         return value
+
+    @model_validator(mode="after")
+    def _check_scenario_against_the_lifecycle(self) -> CaseSeed:
+        """Cross-validate the scenario against fields it cannot see from inside.
+
+        ``ScenarioSpec`` can police itself, but ``never_treated`` contradicts a
+        lien block and ``denied_by_ur`` depends on one, and both of those live
+        under ``lifecycle``. Every message names both sides and the edit that
+        resolves it: an error that says only "incompatible" leaves the author
+        guessing which field to change.
+        """
+        scenario = self.scenario
+
+        if scenario.treatment.status == "never_treated":
+            offenders = sorted(
+                {c for c in self.lifecycle.liens.claimants if c in TREATMENT_LIEN_CLAIMANTS}
+            )
+            if offenders:
+                raise ValueError(
+                    "scenario.treatment.status is 'never_treated' but "
+                    f"lifecycle.liens.claimants includes {', '.join(offenders)} — a "
+                    "provider, hospital or pharmacy only holds a lien for treatment it "
+                    "gave. Drop those claimants (edd, ambulance, attorney_costs and "
+                    "self_procured are compatible), or change the treatment status."
+                )
+
+        if scenario.surgery == "denied_by_ur":
+            ur = self.lifecycle.ur_dispute
+            if not ur.enabled:
+                raise ValueError(
+                    "scenario.surgery is 'denied_by_ur' but lifecycle.ur_dispute.enabled "
+                    "is false — a denial needs the utilization review that issued it. Add "
+                    "'lifecycle: {ur_dispute: {enabled: true, decision: upheld}}' to this "
+                    "seed, or use scenario.surgery: 'recommended' for a request that was "
+                    "never adjudicated. This is not auto-enabled: a UR dispute pulls in "
+                    "an RFA, a determination and an IMR window, and the seed is the "
+                    "contract."
+                )
+            if ur.decision != "upheld":
+                # ``overturned`` contradicts the surgery outright, and an unstated
+                # decision resolves through the substrate's
+                # ``rng.choice(["approved", "denied"])`` — so it can *become*
+                # overturned, non-deterministically from the author's point of view.
+                # Both produce the same file: a treating report saying the request was
+                # denied and under appeal, next to the authorization that approved it.
+                # An explicit ``upheld`` is the only state in which the denial stands.
+                stated = f"is {ur.decision!r}" if ur.decision else "is unset"
+                consequence = (
+                    "which approves the request the ledger says was refused"
+                    if ur.decision == "overturned"
+                    else "which resolves at random and can approve the request the "
+                    "ledger says was refused"
+                )
+                raise ValueError(
+                    f"scenario.surgery is 'denied_by_ur' but lifecycle.ur_dispute."
+                    f"decision {stated}, {consequence}. Set "
+                    "'lifecycle: {ur_dispute: {decision: upheld}}' so the denial stands, "
+                    "or use scenario.surgery: 'recommended' if the request is still "
+                    "pending. ('upheld' and 'overturned' are the only values; the seed "
+                    "speaks from the dispute's point of view, so 'upheld' means the UR "
+                    "denial was upheld.)"
+                )
+
+        return self
 
     @model_validator(mode="after")
     def _check_runway(self) -> CaseSeed:
@@ -1721,6 +1831,7 @@ __all__ = [
     "POST_RESOLUTION_RUNWAY_DAYS",
     "RESOLVED_RUNWAY_DAYS",
     "STAGE_RUNWAY_DAYS",
+    "TREATMENT_LIEN_CLAIMANTS",
     "ApplicantProfile",
     "AttorneyProfile",
     "AutoSpec",
@@ -1745,6 +1856,7 @@ __all__ = [
     "ScenarioSpec",
     "SeedError",
     "SeedValidationError",
+    "TreatmentScenario",
     "UrDispute",
     "apply_defaults",
     "deep_merge",

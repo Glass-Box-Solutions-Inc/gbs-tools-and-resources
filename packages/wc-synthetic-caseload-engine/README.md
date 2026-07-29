@@ -634,31 +634,107 @@ Omitting `surgery` derives it, and derivation reproduces the substrate's prior
 35% coin off the same stream, so every seed written before this block existed
 keeps its surgery status exactly. Stating it wins over the coin — and over the
 substrate's own exclusions, so a seed that asks for surgery on a psych claim gets
-it. The coin is still drawn either way and its result discarded, so stating
-`surgery:` cannot shift any other draw in the case.
+it, with a warning in `manifest.warnings`. The coin is still drawn either way and
+its result discarded, so stating `surgery:` cannot shift any other draw in the
+case.
+
+`surgery` takes four values. `performed` is the only one that puts an operation
+in the file, and it now **guarantees** at least one operative document.
+`recommended` and `denied_by_ur` both mean a procedure was requested and did not
+happen — both still name a CPT, because a request names what it asks for, and
+`validate` rejects an operative document in either case.
+
+`denied_by_ur` requires a UR dispute **whose denial stands**, and is refused
+otherwise:
+
+```yaml
+scenario:
+  surgery: denied_by_ur
+lifecycle:
+  ur_dispute: {enabled: true, decision: upheld}   # both fields required
+```
+
+The seed is the contract, so the engine will not quietly switch UR on for you: a
+dispute pulls in an RFA, a determination and an IMR window, and silently adding
+them would change the shape of the file you asked for.
+
+`decision` must be stated and must be `upheld`. `overturned` approves the request
+the ledger says was refused — the file would hold an authorization next to a
+treating report describing the denial under appeal. Leaving it unset is refused
+for the same reason one step removed: an unset decision resolves through the
+substrate's own coin and can *become* an approval, so the contradiction would
+appear on some seeds and not others. (The seed speaks from the dispute's point of
+view, so `upheld` means the UR denial was upheld — the surgery did not happen.)
+
+### The treatment block
+
+```yaml
+scenario:
+  treatment:
+    status: gap          # ongoing | discharged | gap | never_treated
+    providers: 3         # ledger roster size; omit to take the case's own list
+```
+
+- **`ongoing`** — the default arc, and what every pre-0.4.0 seed gets.
+- **`discharged`** — a discharge summary is emitted and no treating report
+  post-dates it.
+- **`gap`** — a hole opens in the visit series, and the treating and QME text
+  reference it. The gap is **clamped to the runway the timeline has**: a case
+  that resolves four months after injury gets a shorter gap rather than none.
+- **`never_treated`** — everything past the first-report tier is suppressed at
+  the planner, and the ledger publishes an empty provider roster and no visits.
+  Incompatible with any surgery value other than `none`, and with medical,
+  hospital or pharmacy lien claimants — a provider only holds a lien for
+  treatment it gave. EDD, ambulance, attorney-cost and self-procured liens are
+  fine.
+
+  The lien rule binds on both paths, and differently on each. Naming a treatment
+  claimant is an **error**; leaving `claimants` empty and letting the engine fill
+  `liens.count` **drops** them from the pool it draws from. Same split as
+  surgery: a stated conflict is the author's to fix, a derived one is the
+  engine's not to create.
+
+Treating reports follow one trajectory (improving, plateau or worsening) across
+the case rather than re-rolling a mood per document, so a three-report file reads
+as one story instead of three.
 
 ### What is fact-aware, and what that costs
 
-Nine subtypes dispatch to engine-owned subclasses that read the ledger:
-`DIAGNOSTICS_IMAGING`, `OPERATIVE_HOSPITAL_RECORDS`, the five QME/AME report
-flavours, and `TREATING_PHYSICIAN_REPORT_PR2`/`_PR4`. Each overrides the
-narrowest method that rolled the offending draw and delegates the rest to the
-substrate, which stays read-only.
+Fifteen subtypes dispatch to engine-owned subclasses that read the ledger:
+`DIAGNOSTICS_IMAGING`, `OPERATIVE_HOSPITAL_RECORDS`, `DISCHARGE_SUMMARY`, the
+five QME/AME report flavours, `TREATING_PHYSICIAN_REPORT_PR2`/`_PR4`, and the
+five UR/RFA subtypes. Each overrides the narrowest method that rolled the
+offending draw and delegates the rest to the substrate, which stays read-only.
 
-**Every byte that moves is accounted for.** Regenerating the demo at 0.2.0 and
-at 0.3.0 gives 331 documents both times with identical filenames, **303
-byte-identical and 28 changed**. All 28 trace to one of two declared sources: 23
-are registry-covered subtypes, and 5 are `SUBPOENAED_RECORDS_MEDICAL`, which the
-registry does *not* cover — those moved because the provider round-robin now
-sets a context key the substrate template has always read and the engine never
-supplied (see the CHANGELOG). Nothing else moved, and a probe fails on any
-change it cannot attribute.
+Which substrate sites are governed, and which are deliberately not, is
+enumerated in `modality_audit.py` — with a test that greps the substrate and
+fails if it finds a modality-naming site the table does not list.
 
-Two caveats worth stating. The demo spec happens to emit only three of the nine
-registry subtypes, so the byte probe exercises the rest only through the
-coherence suite. And stating `scenario:` in a seed is expected to change that
-seed's bytes — it is a content knob; the guarantee is that seeds which say
-nothing keep exactly what they had.
+**Every byte that moves is accounted for.** Regenerating the demo at 0.3.0 and
+at 0.4.0 gives 331 documents both times with identical filenames and none added
+or removed: **307 byte-identical and 24 changed**, all of them registry-covered
+subtypes whose governance is new in this version, **zero unexplained**. No demo
+seed carries a `scenario` block, so that measures the cost of the new governance
+with none of the new knobs engaged.
+
+The equivalent 0.2.0 → 0.3.0 measurement was 303 identical / 28 changed, where
+23 were registry-covered and 5 were `SUBPOENAED_RECORDS_MEDICAL` — those moved
+because the provider round-robin sets a context key the substrate template has
+always read and the engine never supplied (see the CHANGELOG). A probe fails on
+any change it cannot attribute to a declared source.
+
+Two caveats worth stating precisely, because the loose version of the second one
+is false.
+
+The demo spec emits only a subset of the registry subtypes, so the byte probe
+exercises the rest only through the coherence suite.
+
+And the guarantee for a seed that states no `scenario:` block is **not** that its
+bytes never move — the 24 changed documents above are exactly such seeds. It is
+narrower: a scenario-free seed keeps its bytes *outside the subtypes this version
+newly governs*. Bringing a template under the ledger changes what it renders, and
+that is the point; what must never happen is an ungoverned document drifting, and
+the probe fails on any change it cannot attribute to a declared source.
 
 Ledger draws are namespaced under `facts:` so they cannot perturb an existing
 stream, and the renderer re-seeds per document, so a fact-aware template cannot
