@@ -25,6 +25,7 @@ from datetime import date, timedelta
 import structlog
 
 from wc_caseload_engine.case_context import CaseCast, build_case_cast
+from wc_caseload_engine.case_facts import CaseFacts, derive_case_facts
 from wc_caseload_engine.doc_controls import (
     TRACK_CORE,
     ControlResolution,
@@ -112,6 +113,12 @@ class CasePlan:
     recon_document_count: int = 0
     """Documents actually emitted from the reconsideration track, for the same reason."""
     recon_emitted_subtypes: frozenset[str] = frozenset()
+    case_facts: CaseFacts | None = None
+    """The clinical ledger every fact-aware template reads.
+
+    Derived once, here, so the planner, the renderer and the manifest
+    cannot reach three different answers about what happened in the case.
+    """
     """Which of the reconsideration track's subtypes survived to the plan.
 
     Lets the manifest report a date only for a document that was written: a
@@ -485,6 +492,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         recon_emitted_subtypes=recon_subtypes,
         warnings=warnings,
         perspective_notes=pov.notes,
+        case_facts=derive_case_facts(seed, timeline, cast),
     )
 
 

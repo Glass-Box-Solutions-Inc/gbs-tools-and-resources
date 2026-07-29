@@ -34,6 +34,7 @@ from pathlib import Path
 import structlog
 
 from wc_caseload_engine import __version__
+from wc_caseload_engine.case_facts import CaseFacts, facts_manifest_block
 from wc_caseload_engine.planner import CasePlan, PlannedDocument, build_case_plan
 from wc_caseload_engine.renderer import FORMAT_EXTENSIONS, RenderResult, render_document
 from wc_caseload_engine.seeds import CaseSeed, write_case_seed
@@ -55,6 +56,15 @@ CORPUS_FILENAME_RE = re.compile(r"^(TC-\d{3})_(\d{3})_(.+)_(\d{4}-\d{2}-\d{2})\.
 MANIFEST_NAME = "manifest.json"
 CASELOAD_MANIFEST_NAME = "caseload_manifest.json"
 SEED_NAME = "seed.yaml"
+
+CASE_FACTS_NAME = "case_facts.yaml"
+"""The resolved clinical ledger, written beside the seed.
+
+The seed states what was *asked for*; this states what was *decided*, including
+every fact the seed left to derivation. Surfacing it makes the ledger reviewable
+without rerunning the generator — the same reason auto-derived seeds are always
+materialized rather than left implicit.
+"""
 DOCUMENTS_DIR = "documents"
 
 
@@ -170,6 +180,10 @@ def build_manifest(
     ordered.update(manifest)
     if plan.warnings:
         ordered["warnings"] = list(plan.warnings)
+    if plan.case_facts is not None:
+        # Published so a reader can check every coherence claim this
+        # package makes against the documents, from the output alone.
+        ordered["caseFacts"] = facts_manifest_block(plan.case_facts)
     return ordered
 
 
@@ -195,6 +209,8 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
     documents_dir.mkdir(parents=True, exist_ok=True)
 
     write_case_seed(seed, case_dir / SEED_NAME)
+    if plan.case_facts is not None:
+        _write_case_facts(plan.case_facts, case_dir / CASE_FACTS_NAME)
 
     renders: list[tuple[str, RenderResult]] = []
     for document in plan.documents:
@@ -211,6 +227,7 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
             author_role=document.author_role,
             recipient_role=document.recipient_role,
             content_flags=document.content_flags,
+            case_facts=plan.case_facts,
         )
         # A format fallback can change the extension; trust the written path.
         renders.append((result.path.name, result))
@@ -479,3 +496,22 @@ __all__ = [
     "subtype_coverage",
     "validate_output_tree",
 ]
+
+
+def _write_case_facts(facts: CaseFacts, path: Path) -> None:
+    """Write the resolved ledger beside the seed.
+
+    YAML rather than JSON to match ``seed.yaml``: the two files are read
+    together, and a reviewer should not have to change format between them.
+    """
+    import yaml
+
+    header = (
+        "# wc-caseload case facts \u2014 the resolved clinical ledger\n"
+        "# Derived from the seed; every fact the seed did not state was decided here.\n"
+        "# Documents render against this, and the manifest publishes it as 'caseFacts'.\n"
+    )
+    body = yaml.safe_dump(
+        facts_manifest_block(facts), sort_keys=False, default_flow_style=False, allow_unicode=True
+    )
+    path.write_text(header + body, encoding="utf-8")

@@ -582,6 +582,64 @@ classifier scored against these files cannot cheat by reading the name. `corpus`
 
 ---
 
+## The CaseFacts ledger
+
+Every template that wanted a clinical detail used to invent one. A QME drew an
+imaging type per body part and asserted findings for all of them; the diagnostic
+report drew its own modality independently; `has_surgery` gated six document
+rules and reached no content at all, so a post-operative progress report
+recommended conservative care. No single draw was wrong — there was simply
+nowhere for the case to agree with itself.
+
+`CaseFacts` is that place. It is derived once per case at plan time, read by
+every fact-aware template, published in the manifest as `caseFacts`, and written
+beside the seed as `case_facts.yaml`:
+
+| Field | What it records |
+|-------|-----------------|
+| `diagnostics[]` | Studies performed **and deliberately absent** — modality, body part, date |
+| `surgery` | `none` / `performed`, with the chosen CPT code and description |
+| `providers[]` | Who treated the applicant, so records packets can be attributed to different providers |
+| `visits[]` | A dated clinical series consistent with the timeline |
+| `mmi_date`, `wpi`, `pd` | The rating figures documents should agree on |
+
+The absent half is what makes the ledger enforceable. Recording only what
+happened lets a template invent anything about what did not; an explicit absence
+is something a test can grep for.
+
+### Seeding it — `scenario:` (Phase 1)
+
+```yaml
+scenario:
+  diagnostics:
+    performed: [mri]                                  # bare = the primary body part
+    absent:    [{modality: emg, body_part: shoulder}]
+  surgery: performed                                  # none | performed | omit to derive
+```
+
+Modalities: `mri`, `ct`, `xray`, `emg`, `labs`. An unknown modality is refused at
+load, as is listing the same study as both performed and absent — though the
+overlap check is body-part aware, because a study performed on one region and
+absent on another is coherent.
+
+Omitting `surgery` derives it, and derivation deliberately reproduces the
+substrate's prior 35% coin off the same stream, so every seed written before this
+block existed keeps its surgery status exactly.
+
+### What is fact-aware, and what that costs
+
+Eight subtypes dispatch to engine-owned subclasses that read the ledger:
+`DIAGNOSTICS_IMAGING`, the five QME/AME report flavours, and
+`TREATING_PHYSICIAN_REPORT_PR2`/`_PR4`. Each overrides the narrowest method that
+rolled the offending draw and delegates the rest to the substrate, which stays
+read-only. **Everything else takes the original path byte for byte** — verified
+by regenerating the demo at 0.2.0 and at 0.3.0: 308 of 331 documents identical,
+and all 23 that moved are registry-covered.
+
+Ledger draws are namespaced under `facts:` so they cannot perturb an existing
+stream, and the renderer re-seeds per document, so a fact-aware template cannot
+shift its neighbours.
+
 ## Determinism
 
 Same seed plus same version produces the same bytes — **on any machine, in any timezone, on any

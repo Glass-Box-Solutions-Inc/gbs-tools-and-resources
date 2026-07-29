@@ -245,9 +245,27 @@ def template_label(class_name: str, variant: str | None) -> str:
     return f"{class_name}/{variant}" if variant else class_name
 
 
-def _load_template(subtype: str) -> tuple[type, str | None, str]:
-    """Resolve a subtype to (template class, variant, class name)."""
+def _load_template(subtype: str, *, fact_aware: bool = False) -> tuple[type, str | None, str]:
+    """Resolve a subtype to (template class, variant, class name).
+
+    When *fact_aware* and the subtype is registered in
+    :func:`~wc_caseload_engine.fact_templates.fact_aware_templates`, the
+    engine-owned subclass is returned in place of the substrate class. Anything
+    unregistered takes the original path unchanged — that is what keeps a case
+    with no fact-aware subtype byte-identical to 0.2.0.
+
+    The reported ``class_name`` stays the *substrate* class either way, because
+    it is the manifest's ``template`` provenance string and the subclass renders
+    the same document through the same base. The subclass is not a fallback and
+    must not read as one.
+    """
     class_name, variant = resolve_template(subtype)
+    if fact_aware:
+        from wc_caseload_engine.fact_templates import fact_aware_templates
+
+        override = fact_aware_templates().get(subtype)
+        if override is not None:
+            return override, variant, class_name
     if class_name == GENERIC_TEMPLATE_CLASS:
         generic = import_substrate("pdf_templates.generic_template")
         return generic.GenericDocumentTemplate, variant, class_name
@@ -368,6 +386,7 @@ def render_document(
     author_role: str | None = None,
     recipient_role: str | None = None,
     content_flags: Sequence[str] = (),
+    case_facts: Any = None,
 ) -> RenderResult:
     """Render one planned document to *out_path*, reproducibly.
 
@@ -393,7 +412,7 @@ def render_document(
     _ensure_invariant()
     models = import_substrate("data.models")
 
-    template_class, variant, class_name = _load_template(subtype)
+    template_class, variant, class_name = _load_template(subtype, fact_aware=case_facts is not None)
     output_format = models.OutputFormat(doc_format if doc_format != "scanned_pdf" else "pdf")
 
     # Canonicalize before anything is decided by it. ``render_document`` is
@@ -430,6 +449,12 @@ def render_document(
     # the rest — the honest state of a bridge we do not edit. The one visible
     # consequence today is the docx letterhead, which is hard-coded to the
     # applicant firm and therefore wrong on a defense file (README limitation).
+    if case_facts is not None:
+        # The seam doctrine injection already uses. Substrate templates ignore
+        # unknown context keys, so this is inert for every class that has not
+        # opted in via FACT_AWARE_TEMPLATES.
+        context["case_facts"] = case_facts
+        context["document_index"] = index
     context["perspective"] = seed.perspective
     context["file_owner_firm"] = file_owner_firm(
         seed.perspective, cast.applicant_firm, cast.defense_firm
@@ -464,6 +489,11 @@ def render_document(
     random.seed(derive_seed(seed.rng_seed, f"render:{index}"))
 
     template = template_class(cast.case)
+    if case_facts is not None:
+        # ``_build_diagnostic_review`` / ``_build_treatment_plan`` are called
+        # without the doc_spec, so the ledger has to reach them off the
+        # instance rather than the context alone.
+        template._wc_case_facts = case_facts
     try:
         template.generate(out_path, spec)
     except Exception as exc:
@@ -490,7 +520,10 @@ def render_document(
         spec.output_format = models.OutputFormat("pdf")
         out_path = out_path.with_suffix(".pdf")
         random.seed(derive_seed(seed.rng_seed, f"render:{index}"))
-        template_class(cast.case).generate(out_path, spec)
+        retry = template_class(cast.case)
+        if case_facts is not None:
+            retry._wc_case_facts = case_facts
+        retry.generate(out_path, spec)
 
     payload = out_path.read_bytes()
 

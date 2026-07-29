@@ -9,6 +9,98 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the CaseFacts ledger (ticket **AJC-37**, Phase 1)
+
+Before this, every template that wanted a clinical detail invented one. A QME
+drew `random.choice(["MRI", "X-ray", "CT scan"])` per body part and asserted
+imaging no diagnostic report in the same case had produced; the diagnostic
+report drew its own modality independently; and `has_surgery` gated six document
+*rules* while reaching no document *content*, so post-operative progress reports
+described conservative care — "surgical" was not even in the choice list.
+
+Nothing was wrong with any single draw. What was missing was a place for the
+case to agree with itself.
+
+- **`case_facts.py` — the ledger.** Derived once per case at plan time from the
+  seed and the timeline: diagnostics performed *and deliberately absent*
+  (modality + body part + date), surgery status with a chosen CPT, providers,
+  a dated visit series, MMI, WPI/PD. Carried on `CasePlan`, published in the
+  manifest as `caseFacts`, and written beside the seed as `case_facts.yaml` —
+  the seed states what was asked for, the ledger states what was decided.
+
+- **`scenario:` seed block (Phase-1 subset).** `scenario.diagnostics
+  {performed, absent}` and `scenario.surgery`. Entries accept a bare modality
+  (meaning the primary body part) or `{modality, body_part}`. Unknown modalities
+  and performed/absent overlap are refused at load with actionable errors; the
+  overlap check is body-part aware, because a study performed on one region and
+  absent on another is coherent, not a clash.
+
+- **Fact-aware template registry.** `FACT_AWARE_TEMPLATES` maps eight subtypes to
+  engine-owned subclasses that override the narrowest method rolling the
+  offending draw and delegate everything else to the substrate, which stays
+  read-only. Unregistered subtypes take the original dispatch unchanged.
+
+### ⚠️ Compatibility — version bumped to 0.3.0
+
+`0.2.0` → `0.3.0`. Bytes are stable within a version (and within a
+`substrateSha` — see README), and this release moves some.
+
+1. **Only registry-covered subtypes change.** Measured by regenerating the demo
+   caseload at `867ea88` (the merged 0.2.0 tree) and at this commit: 331
+   documents both times, identical filenames, **308 byte-identical**. All 23
+   that changed are registry-covered subtypes — `QME_REPORT_INITIAL`,
+   `QME_REPORT_SUPPLEMENTAL`, `TREATING_PHYSICIAN_REPORT_PR2`. **Zero
+   uncovered documents moved.** One covered document was also unchanged: a
+   treating report on a case with no surgery, which takes the substrate path
+   verbatim by design.
+
+   That is structural rather than lucky. Every ledger draw is namespaced under
+   `facts:` via `derive_seed`, so it cannot perturb a stream an existing draw
+   consumes; the renderer re-seeds the global stream per document
+   (`render:{index}`), so a registered template's content cannot shift its
+   neighbours; and `_load_template` only consults the registry when a ledger is
+   present.
+
+2. **The registry-covered subtypes.** `DIAGNOSTICS_IMAGING`,
+   `QME_COMPREHENSIVE_REPORT`, `AME_COMPREHENSIVE_REPORT`, `QME_REPORT_INITIAL`,
+   `QME_REPORT_SUPPLEMENTAL`, `SUPPLEMENTAL_QME_AME_REPORT`,
+   `TREATING_PHYSICIAN_REPORT_PR2`, `TREATING_PHYSICIAN_REPORT_PR4`.
+
+3. **Surgery parity is preserved, deliberately.** A seed that says nothing about
+   surgery still gets the substrate's 35% coin, read off the same `clinical`
+   stream at the same position, reproducing `lifecycle_bridge`'s psych rule term
+   for term. A test asserts ledger and bridge agree across 20 seeds — a ledger
+   that flipped its own coin could describe surgery the planned document set
+   does not contain, or the reverse.
+
+### Known scope limits (Phase 1)
+
+Stated because the coherence harness asserts exactly what the code enforces and
+nothing wider.
+
+- **The absence rule is scoped to governed documents.** No `DIAGNOSTICS_IMAGING`
+  document reports a study the ledger calls absent, and the QME *records* the
+  absence in its diagnostic review rather than silently omitting it. It is not
+  asserted over every document: a QME's neurology exam builds its
+  electrodiagnostic paragraph in `_build_neurology_exam`, a different method
+  from the one this phase overrides, and the substrate's AMA-guides and
+  narrative pools name modalities in impairment language. Those need their own
+  overrides — Phase 2 — and claiming the broader rule now would assert a
+  guarantee the code does not make.
+- **The treating-report rule is about the treatment plan.** A post-surgical case
+  gets a plan describing post-operative rehabilitation and naming the CPT. The
+  word "conservative" is not banned file-wide: it is legitimate in history and
+  pre-operative sections this override does not govern.
+- **`DIAGNOSTICS_IMAGING` governs modality, not date.** The document keeps its
+  planned date so filename, manifest and content stay consistent; the ledger
+  entry's date is informational until the planner learns to place imaging
+  documents on ledger dates.
+- Phase 1 carries `surgery: none|performed` only. The ticket's `recommended` and
+  `denied_by_ur` need UR wiring that belongs with the treatment phase.
+- No adjuster/attorney personas, discovery-volume knobs, or treatment-gap
+  statuses — Phases 2-4.
+
+
 ### ⚠️ Compatibility — version bumped to 0.2.0
 
 `0.1.0` → `0.2.0`. The reproducibility guarantee is *bytes are stable within a
