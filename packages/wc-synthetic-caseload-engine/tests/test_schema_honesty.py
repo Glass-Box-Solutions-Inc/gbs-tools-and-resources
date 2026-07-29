@@ -35,6 +35,7 @@ from wc_caseload_engine.schema_audit import (
     scenario_source,
 )
 from wc_caseload_engine.seeds import parse_case_seed
+from wc_caseload_engine.taxonomy import effective_taxonomy
 
 pytestmark = requires_substrate
 
@@ -160,27 +161,76 @@ class TestTheMarkerSweepIsWellFormed:
             "The field is honoured now — delete its probe."
         )
 
+def assert_probe_stands_on_ground(field: str, probe: InertProbe) -> None:
+    """F1's check, as a function so the planted control can run the real thing.
+
+    Inlining it in the parametrized test would leave the control re-implementing
+    the assertion it is supposed to validate, which proves only that two pieces
+    of code agree.
+    """
+    plan = build_case_plan(parse_case_seed(_body("witness", probe.plain, probe.lifecycle)))
+    present = sum(1 for doc in plan.documents if doc.subtype in probe.witness)
+    assert present, (
+        f"{field}'s probe plans no document from {sorted(probe.witness)}. "
+        "Inertness proven on a case with nothing to consume the field is "
+        "the unearned zero this suite exists to reject — move the probe to "
+        "a stage that emits its consumer."
+    )
+
+
+#: A subtype no discovery-stage case can plan: it asserts an operation happened,
+#: and the probe body seeds no surgery. Canonical, so the control cannot pass by
+#: naming a key the taxonomy has never heard of — which would make it a typo
+#: test rather than a witness test.
+UNREACHABLE_WITNESS = "OPERATIVE_HOSPITAL_RECORDS"
+
+
 class TestEveryProbeStandsOnGround:
     """F1. An inertness result is only worth what its case can consume.
 
     These are the guards that would have caught the original defect, and they
     are deliberately cheap plan-level checks so they run on every field rather
     than only the ones someone remembered to look at.
+
+    ``INERT_PROBES`` is empty, which is the intended end state — so the
+    parametrized check below runs **zero times**, and on its own its
+    red-capability would rest on reading it. That is exactly the class F1
+    existed to replace, one level up. The planted control underneath executes
+    the real function against a probe whose consumer cannot appear.
     """
 
     @pytest.mark.parametrize("field", sorted(INERT_PROBES))
     def test_every_probe_runs_where_its_consumer_exists(self, field: str) -> None:
-        probe = INERT_PROBES[field]
-        plan = build_case_plan(
-            parse_case_seed(_body("witness", probe.plain, probe.lifecycle))
+        assert_probe_stands_on_ground(field, INERT_PROBES[field])
+
+    def test_the_witness_check_fails_on_a_probe_that_cannot_witness(self) -> None:
+        """The planted control. Zero parametrized runs must not mean zero proof."""
+        assert effective_taxonomy().is_canonical(UNREACHABLE_WITNESS), (
+            f"{UNREACHABLE_WITNESS} is not a canonical subtype; the control would "
+            "pass on a typo rather than on an absent consumer"
         )
-        present = sum(1 for doc in plan.documents if doc.subtype in probe.witness)
-        assert present, (
-            f"{field}'s probe plans no document from {sorted(probe.witness)}. "
-            "Inertness proven on a case with nothing to consume the field is "
-            "the unearned zero this suite exists to reject — move the probe to "
-            "a stage that emits its consumer."
+        planted = InertProbe(
+            plain={},
+            varied={"discovery": {"subpoena_sets": 2}},
+            lifecycle=_DISCOVERY_LIFECYCLE,
+            witness=frozenset({UNREACHABLE_WITNESS}),
         )
+        with pytest.raises(AssertionError, match="plans no document from"):
+            assert_probe_stands_on_ground("planted.field", planted)
+
+    def test_the_same_check_passes_on_a_probe_that_can(self) -> None:
+        """The other half: the control's failure must come from the witness.
+
+        Without this, a check that raised for any input at all would satisfy the
+        test above and prove nothing about what it is measuring.
+        """
+        reachable = InertProbe(
+            plain={},
+            varied={"discovery": {"subpoena_sets": 2}},
+            lifecycle=_DISCOVERY_LIFECYCLE,
+            witness=SUBPOENAED_RECORDS_SUBTYPES,
+        )
+        assert_probe_stands_on_ground("reachable.field", reachable)
 
     def test_the_probe_stage_is_the_one_that_yields(self) -> None:
         """The measurement behind ``_DISCOVERY_LIFECYCLE``, kept executable.

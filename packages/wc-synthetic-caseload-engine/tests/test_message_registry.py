@@ -37,6 +37,7 @@ import pytest
 from wc_caseload_engine.message_audit import (
     DIRECTIVE_VERBS,
     actionable_messages,
+    clauses,
     directives,
     is_actionable,
     longest_literal_run,
@@ -53,6 +54,36 @@ from wc_caseload_engine.seeds import deep_merge, parse_case_seed
 #: the raised text. Too short a run matches by luck, so the well-formedness
 #: check below refuses to accept one.
 MIN_MATCHABLE_RUN = 16
+
+#: Words that, placed in front of an imperative, hide it from the sweep.
+#:
+#: Second-person and first-person-plural openings plus politeness — the shapes a
+#: reviewer actually demonstrated. Articles are **not** here, and the first draft
+#: that included ``the`` proved why: it flagged "the seed speaks from the
+#: dispute's point of view", where ``seed`` is a directive verb in this
+#: vocabulary but a noun in that sentence. A hedge list wide enough to catch
+#: English is a hedge list that cries wolf.
+_HEDGES = frozenset({"you", "we", "please", "kindly", "i"})
+
+#: Modals that can sit between the hedge and the verb ("you *should* set …").
+_MODALS = frozenset(
+    {"should", "must", "can", "could", "may", "might", "will", "shall", "suggest"}
+)
+
+
+def _hides_a_verb(clause: str) -> bool:
+    """Whether *clause* buries a directive verb behind a hedge or a modal.
+
+    Deliberately narrow — it looks for the exact evasion shape a reviewer
+    demonstrated, not for English generally. A broad heuristic here would flag
+    ordinary explanatory prose and be switched off within a week.
+    """
+    words = [word.strip("\"'`([{,:;.").casefold() for word in clause.split()]
+    if len(words) < 2 or words[0] not in _HEDGES:
+        return False
+    # Hedges as well as modals, so "We suggest you remove …" reduces to "remove".
+    rest = [word for word in words[1:] if word not in _MODALS and word not in _HEDGES]
+    return bool(rest) and rest[0] in DIRECTIVE_VERBS
 
 
 @dataclass(frozen=True)
@@ -506,16 +537,68 @@ class TestTheDirectiveDetector:
     def test_the_vocabulary_is_the_limit_and_the_limit_is_stated(self) -> None:
         """The known blind spot, executable rather than merely written down.
 
-        Directive detection is a curated verb list, so an imperative opening
-        with a verb the list does not carry is invisible. That is a real gap and
-        pretending otherwise would be the same dishonesty this module exists to
-        stop. It is asserted here so the boundary is discoverable from the suite:
-        the fix for a missed directive is to add its verb to
-        ``DIRECTIVE_VERBS``, and this test says so.
+        Detection is a curated verb list read at the *front of a clause*, which
+        leaks in two ways. Pretending otherwise would be the same dishonesty
+        this module exists to stop, so both are asserted rather than described.
         """
+        # 1. An unknown verb. The fix is to add it to DIRECTIVE_VERBS.
         assert "nudge" not in DIRECTIVE_VERBS
         assert not is_actionable("the value is wrong. Nudge it upwards.")
         assert is_actionable("the value is wrong. Raise it upwards.")
+
+    @pytest.mark.parametrize(
+        "evasion",
+        [
+            "You should set scenario.surgery to 'none'.",
+            "Please set scenario.surgery to 'none'.",
+            "We suggest you remove the field.",
+        ],
+    )
+    def test_a_verb_pushed_off_the_front_of_the_clause_is_missed(
+        self, evasion: str
+    ) -> None:
+        """The wider half of the limit, found by a reviewer after the first ship.
+
+        The verb is read from the clause's first word, so anything in front of
+        it — a pronoun, a politeness, a hedge — hides a real directive. This is
+        the shape most likely to be written by accident, which is why it is
+        pinned by example rather than left to the comment in ``message_audit``.
+
+        Asserting the miss locks in a known gap, which is uncomfortable and
+        correct: an undisclosed gap is worse than a disclosed one, and the
+        remedy is stated in the module and in the assertion below — seed
+        directives are written imperative, verb first.
+        """
+        assert not is_actionable(evasion), (
+            "the leading-pronoun hole has been closed; delete this disclosure and "
+            "re-run the registry, because more messages are now actionable"
+        )
+
+    def test_the_same_instruction_verb_first_is_caught(self) -> None:
+        """The other side of the pin: the miss is about shape, not content."""
+        assert is_actionable("Set scenario.surgery to 'none'.")
+        assert is_actionable("Remove the field.")
+
+    def test_no_shipped_message_falls_into_the_hole(self) -> None:
+        """The remedy, enforced on the messages that exist rather than advised.
+
+        The blind spot only matters if a real message lands in it. None does,
+        and this keeps it that way: a seed message written "You should set …"
+        trips here even though the sweep cannot see it as a directive. That is
+        the disclosure earning its keep instead of merely apologising.
+        """
+        offenders = [
+            f"{message.where}: {clause}"
+            for message in raised_messages(seed_source())
+            for clause in clauses(message.template)
+            if _hides_a_verb(clause)
+        ]
+        assert not offenders, (
+            "seed messages whose clause opens with a pronoun or politeness in front "
+            "of an imperative, where the sweep cannot see the directive:\n  "
+            + "\n  ".join(offenders)
+            + "\nRewrite it verb-first."
+        )
 
 
 class TestTheRegistryTableIsWellFormed:

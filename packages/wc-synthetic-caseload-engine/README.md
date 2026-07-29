@@ -751,7 +751,7 @@ scenario:
 Both fields are **honoured** as of 0.7.0 (ISC-126). They were accepted and
 validated but inert in 0.5.0 and 0.6.0, and this section said so.
 
-- **`subpoena_sets`** — the plan is trimmed or extended to exactly this many
+- **`subpoena_sets`** — the plan is trimmed or extended to this many
   subpoenaed-records packets. Omitting it keeps whatever the lifecycle walk
   proposed, which is what leaves every pre-0.7.0 seed byte-identical outside the
   packets themselves. A stage that proposes no packets at all — anything before
@@ -765,8 +765,8 @@ validated but inert in 0.5.0 and 0.6.0, and this section said so.
 The point is the agreement, not the number. Before 0.7.0 the table of contents
 summed its own `random.randint` draws while the body drew separately, so a cover
 sheet could promise 23 pages in front of a packet holding 6. The ledger's
-`CaseFacts.packet_pages`, the table of contents and the paper are now three
-readings of one value, and
+`CaseFacts.packet_pages`, the table of contents and the paper are three readings
+of one value, and
 `test_ledger_table_of_contents_and_paper_all_state_one_number` opens the
 rendered PDFs and counts them.
 
@@ -774,6 +774,36 @@ rendered PDFs and counts them.
 deliberately so: the governed-fields rule publishes a fact only where a reader
 needs the manifest to check it, and here the packet itself states the number on
 its own cover sheet. Counting the pages is the check.
+
+#### Two limits on this block, stated because they are real
+
+**The packet count currently outranks a document control.** Everywhere else in
+this engine an explicit `exclude`, a zero-count override or a `global_cap` wins
+and lands a `manifest.warnings` entry saying so (ISC-29, ISC-135). Packet shaping
+runs *after* the control resolver, so a stated `subpoena_sets` re-extends the
+count using whichever packet subtype survived. Measured at
+`target_stage: discovery`, `subpoena_sets: 4`:
+
+| Seed | Packets planned | Warning |
+|---|---|---|
+| no controls | 4 (2 medical + 2 employment) | none |
+| `exclude: [SUBPOENAED_RECORDS_MEDICAL]` | **4, all employment** | **none** |
+| `overrides: [{subtype: SUBPOENAED_RECORDS_MEDICAL, count: 0}]` | **4, all employment** | **none** |
+| `exclude` every packet subtype | 0 | yes — but it blames the lifecycle stage, not the control that removed them |
+
+The count is honoured and the control is silently overridden, which inverts the
+house contract. Until it is reconciled, do not combine `subpoena_sets` with a
+packet-subtype control and expect the control to win.
+
+**The three readings agree within a validated range, not at every budget.** The
+guarantee above is proven packet by packet at `pages_per_set: {min: 12, max: 18}`
+— the range the shipped test uses and the range an independent reviewer
+re-measured. Below a packet's structural floor of roughly four pages the
+measure-then-adjust loop cannot reach the budget at all: across 27 packets
+spanning budgets 1–120, **six** carried a ledger figure the paper did not match
+(a requested 2 delivering 4), and the engine emitted **no warning of any kind** —
+its `packet_page_table_unstable` log line fired zero times. Seed `min` at 12 or
+above for volumes you intend to rely on.
 
 ### The treatment block
 

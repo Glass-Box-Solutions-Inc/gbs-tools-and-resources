@@ -52,12 +52,27 @@ PLACEHOLDER = "{}"
 #:
 #: Curated rather than inferred, because there is no part-of-speech tagger here
 #: and a heuristic that guesses would either miss directives or flag every
-#: sentence. The cost of the curation is stated plainly: **a directive opening
-#: with a verb absent from this set is invisible to the sweep.** Adding an
-#: imperative to a seed message means adding its verb here. The limit is not
-#: merely written down — ``test_the_vocabulary_is_the_limit_and_the_limit_is_stated``
-#: asserts it, so the boundary is discoverable by running the suite rather than
-#: by reading this comment.
+#: sentence. The cost of the curation is stated plainly, and it has **two**
+#: parts, because a reviewer found the second one after the first was written:
+#:
+#: 1. **An unknown verb is invisible.** "Nudge the value upwards" is a directive
+#:    the sweep does not see. Adding an imperative to a seed message means adding
+#:    its verb here.
+#: 2. **A displaced verb is invisible too, and this is the wider hole.**
+#:    Detection reads the clause's *first* word, so anything in front of the verb
+#:    hides it — a pronoun, a politeness, a hedge. Measured: "You should set
+#:    scenario.surgery to 'none'", "Please set scenario.surgery to 'none'" and
+#:    "We suggest you remove the field" all evade, while the same sentences
+#:    written imperatively are caught. **Write seed directives in the imperative,
+#:    verb first.** Every one of the eleven registered messages already does.
+#:
+#: The limit is not merely written down —
+#: ``test_the_vocabulary_is_the_limit_and_the_limit_is_stated`` asserts both
+#: halves, so the boundary is discoverable by running the suite rather than by
+#: reading this comment. Widening the detector to look past a leading pronoun is
+#: deliberately *not* done here: it would change what counts as actionable and so
+#: what the registry must contain, which is a change that deserves its own
+#: red-first cycle rather than a quiet loosening.
 DIRECTIVE_VERBS: frozenset[str] = frozenset(
     {
         "add",
@@ -118,6 +133,29 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def clauses(message: str) -> tuple[str, ...]:
+    """*message* split into the clauses :func:`directives` classifies.
+
+    Public so a test can ask questions about clause *shape* — the leading-pronoun
+    blind spot in particular — without re-deriving the split and drifting from it.
+    """
+    return tuple(
+        trimmed
+        for clause in _CLAUSE_BOUNDARY.split(normalize(message))
+        if (trimmed := clause.strip().rstrip("."))
+    )
+
+
+def first_word(clause: str) -> str:
+    """The word a clause opens with, read past any quote or bracket."""
+    return (
+        clause.lstrip(_OPENING_NOISE)
+        .split(" ", 1)[0]
+        .strip(_OPENING_NOISE + ",:;")
+        .casefold()
+    )
+
+
 def directives(message: str) -> tuple[str, ...]:
     """Every clause of *message* that tells the author what to change.
 
@@ -125,16 +163,14 @@ def directives(message: str) -> tuple[str, ...]:
     bracket — is in :data:`DIRECTIVE_VERBS`. That is the whole definition, and it
     is deliberately syntactic: "what counts as advice" is not a judgement a
     guard can make twice the same way.
+
+    The cost of reading only the *first* word is the second half of the limit
+    documented on :data:`DIRECTIVE_VERBS`: "You should set …" hides its verb
+    behind a pronoun and is not seen.
     """
-    found: list[str] = []
-    for clause in _CLAUSE_BOUNDARY.split(normalize(message)):
-        trimmed = clause.strip().rstrip(".")
-        if not trimmed:
-            continue
-        first = trimmed.lstrip(_OPENING_NOISE).split(" ", 1)[0].strip(_OPENING_NOISE + ",:;")
-        if first.casefold() in DIRECTIVE_VERBS:
-            found.append(trimmed)
-    return tuple(found)
+    return tuple(
+        clause for clause in clauses(message) if first_word(clause) in DIRECTIVE_VERBS
+    )
 
 
 def is_actionable(message: str) -> bool:
@@ -352,7 +388,9 @@ __all__ = [
     "PLACEHOLDER",
     "RaisedMessage",
     "actionable_messages",
+    "clauses",
     "directives",
+    "first_word",
     "is_actionable",
     "longest_literal_run",
     "normalize",

@@ -128,6 +128,57 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
    because it is the cheapest available evidence that the meta-guard is live
    rather than decorative — and it is the same class ISC-129 generalizes.
 
+6. **Six documentation claims were challenged in review and re-measured; four
+   were wrong.** The meta-guards cover schema docstrings and seed messages;
+   README and user-guide prose has no such guard, and this is what that costs.
+
+   - *`scenario.adjuster.diligence` is "published on `caseFacts.adjuster`"* —
+     **false.** Measured across all 7 demo and all 6 showcase cases, the block
+     carries `lateBenefitEvents`, `maxDaysLate` and `letterTypesAllowed` and
+     never `diligence`, which has been withheld deliberately since PR #25. Fixed,
+     and the reason is now stated where the claim was.
+   - *`subpoena_sets` trims or extends "to exactly this many packets"* —
+     **true, and that is the defect.** Packet shaping runs after the control
+     resolver, so an `exclude` or a zero-count override on a packet subtype is
+     silently overridden: measured, `subpoena_sets: 4` plus
+     `exclude: [SUBPOENAED_RECORDS_MEDICAL]` still plans 4 packets, all
+     employment, with no warning. That inverts the house contract that a control
+     wins loudly. Documented in README and the user guide as a limit rather than
+     quietly restated; the reconciliation needs its own criterion.
+   - *The ledger, the table of contents and the paper are "three readings of one
+     number"* — **true within the validated range, false outside it.** Across 27
+     packets spanning budgets 1–120, six carried a ledger figure the paper did
+     not match (a requested 2 delivering 4), because a packet has a structural
+     floor near four pages. The `packet_page_table_unstable` log line fired zero
+     times over the same run, so nothing reported it. Both README and the user
+     guide now name the proven range and the floor.
+   - *`event_driven` letters "name the document that prompted them"* — **true**,
+     and now qualified with the branch the code already has: a letter with
+     nothing dated before it stays silent rather than inventing a reference.
+     Measured 17 of 17 event-driven letters carrying the citation and 0 of 11
+     under the other two cadences.
+   - *`never_treated` "suppresses everything past the first-report tier"* —
+     **false.** It drops three parent types minus a five-subtype allowlist:
+     measured on one resolved case, 11 subtypes suppressed and 36 retained,
+     including the QME report and subpoenaed medical records. The prose now
+     enumerates the mechanism.
+   - *ISC-129's vocabulary limit* — **understated.** The disclosure covered an
+     unknown verb; a reviewer showed the wider hole is a *displaced* verb, since
+     detection reads a clause's first word. "You should set …", "Please set …"
+     and "We suggest you remove …" all evade. Disclosed in the module and pinned
+     by example, and `test_no_shipped_message_falls_into_the_hole` now fails if a
+     seed message is ever written that way. The detector is deliberately **not**
+     widened here: that changes what counts as actionable and therefore what the
+     registry must contain, which deserves its own red-first cycle.
+
+7. **The F1 witness check had stopped executing.** `INERT_PROBES` is empty — the
+   correct end state, since every field it guarded is now honoured — which meant
+   its parametrized witness assertion ran zero times and its red-capability
+   rested on someone reading it. That is the same class F1 existed to replace,
+   one level up. The check is now a function, and a planted probe whose witness
+   names a subtype the case cannot contain proves it still fails red, with the
+   reachable-witness half proving the failure comes from the witness.
+
 ### Fixed — the ordinal seam, and what it had been hiding (ticket **AJC-37**, Phase 3b)
 
 **A defect that shipped in 0.4.0 and passed every test written for it.** The
