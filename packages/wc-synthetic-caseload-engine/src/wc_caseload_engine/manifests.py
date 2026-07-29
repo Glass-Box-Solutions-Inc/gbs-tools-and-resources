@@ -70,6 +70,16 @@ SUBPOENAED_RECORDS_SUBTYPES: frozenset[str] = frozenset(
 )
 """The subtypes whose packets the provider round-robin advances over."""
 
+ADJUSTER_LETTER_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "ADJUSTER_LETTER",
+        "ADJUSTER_LETTER_INFORMATIONAL",
+        "ADJUSTER_LETTER_REQUEST",
+        "ADJUSTER_DEMANDS_REQUESTS",
+    }
+)
+"""The subtypes whose ordinal advances the adjuster-letter type sequence."""
+
 TREATING_REPORT_SUBTYPES: frozenset[str] = frozenset(
     {
         "TREATING_PHYSICIAN_REPORT",
@@ -244,6 +254,7 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
     # 19 must read as the first and second visit in the arc, not the fifth and
     # twentieth.
     report_counter = 0
+    letter_counter = 0
     for document in plan.documents:
         filename = filename_for(seed, case_number, document)
         result = render_document(
@@ -261,11 +272,14 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
             case_facts=plan.case_facts,
             packet_index=packet_counter,
             report_ordinal=report_counter,
+            letter_ordinal=letter_counter,
         )
         if document.subtype in SUBPOENAED_RECORDS_SUBTYPES:
             packet_counter += 1
         if document.subtype in TREATING_REPORT_SUBTYPES:
             report_counter += 1
+        if document.subtype in ADJUSTER_LETTER_SUBTYPES:
+            letter_counter += 1
         # A format fallback can change the extension; trust the written path.
         renders.append((result.path.name, result))
 

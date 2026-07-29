@@ -786,10 +786,15 @@ class AttorneyScenario(_Model):
     cadence: Literal["every_30_days", "event_driven", "sporadic"] | None = None
     """``None`` means *derive it* on the ``facts:`` namespace.
 
-    **Resolved onto the ledger, not yet honoured.** Client letters are not
-    re-dated onto the cadence and do not reference their anchoring event
-    (ISC-123/124/125). Deliberately absent from the published ``caseFacts`` for
-    that reason.
+    Honoured: counsel's client letters are re-dated onto the resolved cadence
+    (ISC-123/124). ``every_30_days`` walks a thirty-day clock; ``event_driven``
+    follows the reports and milestones already in the file, five days behind
+    each; ``sporadic`` opens at least one gap over ninety days. Published on
+    ``caseFacts.attorney.cadence``, because the letter dates in the manifest are
+    what a reader checks it against.
+
+    A file too short to hold the rhythm it declares is reported, not silently
+    compressed — see the ``sporadic`` warning in ``_apply_attorney_cadence``.
     """
 
 

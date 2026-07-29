@@ -21,6 +21,7 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
+from itertools import pairwise
 
 import structlog
 
@@ -45,6 +46,7 @@ from wc_caseload_engine.lifecycle_bridge import (
     author_role_for,
     build_core_candidates,
     build_timeline,
+    fit_dates,
     to_document_candidates,
 )
 from wc_caseload_engine.perspective import apply_perspective, document_roles
@@ -408,6 +410,24 @@ POST_DISCHARGE_FORBIDDEN: frozenset[str] = frozenset(
 #: Documents that assert an operation happened.
 OPERATIVE_SUBTYPES: frozenset[str] = frozenset({"OPERATIVE_HOSPITAL_RECORDS"})
 
+#: The applicant attorney's letters to the client — the correspondence whose
+#: *rhythm* ``scenario.attorney.cadence`` describes. ``CLIENT_INTAKE_
+#: CORRESPONDENCE`` is deliberately absent: the retainer letter is anchored to
+#: the start of the representation, not to the reporting habit that follows it.
+ATTORNEY_CADENCE_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "CLIENT_CORRESPONDENCE_INFORMATIONAL",
+        "CLIENT_CORRESPONDENCE_REQUEST",
+        "CLIENT_STATUS_LETTERS",
+        "STATUS_UPDATE_INFORMATIONAL",
+    }
+)
+
+#: What counsel sends when a benefit ran late. One per late benefit event, which
+#: is what makes correspondence density a *consequence* of the adjuster persona
+#: rather than a second, independently drawn knob that could contradict it.
+DELAY_CHAIN_SUBTYPE = "DEMAND_LETTER_FORMAL"
+
 
 def _penalty_candidates(facts: CaseFacts, timeline: CaseTimeline) -> list[DatedCandidate]:
     """The LC 5814 penalty petition, emitted only when a benefit was late.
@@ -446,7 +466,26 @@ def _penalty_candidates(facts: CaseFacts, timeline: CaseTimeline) -> list[DatedC
 
     horizon = getattr(timeline, "resolution_date", None) or filed
     if horizon is not None and when > horizon:
-        # Clamp to the horizon, but never past the floor the invariant needs.
+        # ISC-136. Two invariants collide here and only one can hold:
+        #
+        #   A. the petition post-dates every late event it punishes
+        #   B. the petition does not outlast the file's horizon
+        #
+        # **A wins, explicitly.** A pleading dated before the delay it complains
+        # about is incoherent on its face — a reader opens the file and finds a
+        # petition alleging a delay that had not happened yet. A petition dated
+        # a little past the horizon is not incoherent at all: the horizon is
+        # where the *case-in-chief* resolves, and penalty petitions are
+        # collateral proceedings that routinely outlive it.
+        #
+        # So this is not a clamp, despite its shape, and calling it one was the
+        # confusion ISC-136 was raised to settle. It is a clamp *subject to a
+        # floor*, and where the two disagree the floor is the one that holds.
+        #
+        # Reachable, narrowly. ``_derive_late_benefit_events`` drops any event
+        # past the horizon, so ``latest <= horizon`` always — the conflict needs
+        # ``latest == horizon`` exactly, and then the petition lands one day
+        # past it. Rare, not impossible, and asserted rather than assumed.
         when = max(horizon, latest + timedelta(days=1))
 
     return [
@@ -459,45 +498,243 @@ def _penalty_candidates(facts: CaseFacts, timeline: CaseTimeline) -> list[DatedC
     ]
 
 
+def _delay_chain_candidates(facts: CaseFacts, timeline: CaseTimeline) -> list[DatedCandidate]:
+    """ISC-119. One demand letter for each benefit the carrier paid late.
+
+    Correspondence density is the *visible* consequence of the adjuster persona.
+    An attentive adjuster runs no benefit past its statutory window, so nothing
+    chases them; a negligent one accumulates late events, and each one draws a
+    letter. Density therefore scales through the ledger rather than through a
+    second knob multiplying counts — which matters because
+    ``caseFacts.adjuster.lateBenefitEvents`` is published: a reader holding the
+    manifest can count the demand letters in the folder and check the two agree.
+    A free-standing density multiplier would have nothing to check it against,
+    and the persona itself is deliberately unpublished (it is an input, and no
+    document reflects it).
+
+    Emitted as candidates for the same reason the penalty petition is: anything
+    appended after ``resolve_document_controls`` is invisible to
+    ``documents.exclude``, ``include_only`` and count overrides. That defect
+    shipped once already.
+
+    Dated a week after the delay, staggered so two late benefits in one week do
+    not produce two letters on one day. Where the offset would push a letter
+    past the horizon the ISC-136 rule applies unchanged: the letter post-dates
+    the delay it chases, because correspondence complaining about something that
+    has not happened yet is incoherent in a way that a letter written near the
+    end of the file is not.
+    """
+    if not facts.late_benefit_events:
+        return []
+
+    horizon = getattr(timeline, "resolution_date", None) or timeline.horizon
+    out: list[DatedCandidate] = []
+    ordered = sorted(facts.late_benefit_events, key=lambda event: event.actual_date)
+    for offset, event in enumerate(ordered):
+        when = event.actual_date + timedelta(days=7 + offset)
+        if horizon is not None and when > horizon:
+            when = max(horizon, event.actual_date + timedelta(days=1))
+        out.append(
+            DatedCandidate(
+                subtype=DELAY_CHAIN_SUBTYPE,
+                doc_date=when,
+                track=TRACK_CORE,
+                author_role="applicant_attorney",
+            )
+        )
+    return out
+
+
 def _penalty_control_warnings(
     facts: CaseFacts,
     dated: list[tuple[date, str, str, str]],
     controls: DocumentControls,
 ) -> tuple[str, ...]:
-    """Note when document controls suppressed a petition the facts had earned.
+    """Note when a petition the ledger earned is absent from the final plan.
 
-    The precedence question is which wins when an explicit control contradicts
-    the case story. It is the control — the seed is the contract, and ISC-29
-    settles that an explicit document control beats a derived rule. But it wins
-    *loudly*: a file whose ledger records four late benefit notices and holds no
-    penalty petition is a coherent artifact only if somebody meant it, and the
-    warning is how the manifest says so.
+    Keyed off the **outcome**, not off which control name matched. The first
+    version asked "did ``exclude`` or ``include_only`` name this subtype?", and
+    so stayed silent for a zero-count override, a ``global_cap`` that ate the
+    petition, a parent-type exclude, and perspective suppression — four routes to
+    the same missing document, three of them undetected. Enumerating suppression
+    mechanisms is a losing game; the next one added would have been silent too.
 
-    This is the mirror of the emit-with-warning cases. There the seed asked for
-    something the substrate's rules exclude and got it with a note; here the
-    seed refused something the facts support, and gets that with a note too.
+    Asking instead "the ledger earned this and the plan does not contain it" is
+    one question with one answer, and it cannot go stale when a new control
+    lands.
+
+    The precedence itself is unchanged and follows ISC-29: the control wins, the
+    seed is the contract. It wins *loudly*, because a file whose ledger records
+    four late benefit notices and holds no penalty petition is a coherent
+    artifact only if somebody meant it. This is the mirror of the
+    emit-with-warning cases — there the seed asked for something the substrate
+    excludes and got it with a note; here the seed refused something the facts
+    support, and gets that with a note too.
     """
     if not facts.late_benefit_events:
         return ()
     if any(subtype == "PETITION_FOR_PENALTIES" for _date, subtype, _track, _role in dated):
         return ()
 
-    named = "PETITION_FOR_PENALTIES" in set(controls.exclude) | set(controls.include_only)
-    if not named and not controls.include_only:
-        # Not a control decision — perspective suppression or a zero override.
-        return ()
+    # Name the likely route when one is identifiable — an author who wrote the
+    # control wants to know which line to change — but warn either way.
+    if "PETITION_FOR_PENALTIES" in set(controls.exclude):
+        because = "documents.exclude names it"
+    elif any(
+        override.subtype == "PETITION_FOR_PENALTIES" and override.count == 0
+        for override in controls.overrides
+    ):
+        because = "a documents.overrides entry sets its count to 0"
+    elif controls.include_only:
+        because = "documents.include_only does not name it"
+    elif controls.global_cap is not None:
+        because = f"documents.global_cap of {controls.global_cap} excluded it"
+    else:
+        because = "a document control or the file's perspective excluded it"
 
-    reason = (
-        "documents.exclude names it"
-        if "PETITION_FOR_PENALTIES" in set(controls.exclude)
-        else "documents.include_only does not name it"
-    )
     return (
         f"scenario: the ledger records {len(facts.late_benefit_events)} late benefit "
-        f"event(s), which earns a PETITION_FOR_PENALTIES, but {reason} — the control "
-        "wins and the petition is suppressed. Drop the control if the delay should be "
-        "pleaded.",
+        f"event(s), which earns a PETITION_FOR_PENALTIES, but the plan holds none — "
+        f"{because}. The control wins; drop it if the delay should be pleaded.",
     )
+
+
+#: The gap pattern ``sporadic`` walks, in days. Fixed rather than drawn: the
+#: cadence is a *described* habit, and a draw could hand a "sporadic" file a
+#: tidy monthly rhythm — the coincidence-pass that has cost this build twice.
+#: The 120 is what makes the three-month hole a certainty rather than a hope.
+_SPORADIC_GAPS: tuple[int, ...] = (24, 120, 41, 96, 33)
+
+#: What counts as an "event" worth writing to the client about. Medical reports
+#: and the case's own milestones — the documents that change what counsel can
+#: tell the client. Correspondence is excluded on purpose: letters answering
+#: letters is a rhythm of its own, not an event-driven one.
+_CADENCE_ANCHOR_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "TREATING_PHYSICIAN_REPORT",
+        "TREATING_PHYSICIAN_REPORT_PR2",
+        "TREATING_PHYSICIAN_REPORT_PR4",
+        "TREATING_PHYSICIAN_REPORT_FINAL",
+        "QME_REPORT_INITIAL",
+        "QME_REPORT_SUPPLEMENTAL",
+        "QME_COMPREHENSIVE_REPORT",
+        "AME_REPORT",
+        "AME_COMPREHENSIVE_REPORT",
+        "MEDICAL_LEGAL_QME_AME_IME",
+        "DISCHARGE_SUMMARY",
+        "OPERATIVE_HOSPITAL_RECORDS",
+        "APPLICATION_FOR_ADJUDICATION",
+        "COMPROMISE_AND_RELEASE",
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD",
+        "FINDINGS_AND_AWARD",
+        "ORDER_APPROVING_SETTLEMENT",
+    }
+)
+
+
+def _cadence_dates(
+    cadence: str, count: int, first: date, anchors: Sequence[date]
+) -> list[date]:
+    """The dates counsel's letters land on under one cadence.
+
+    Every branch returns an *intended* chain, unclamped. The caller fits it —
+    date-spine rule 2 — because these letters cause each other in the sense
+    that matters here: they are one rhythm, and clamping them date by date
+    stacks the tail on the horizon and destroys the very gaps the cadence is
+    supposed to show.
+    """
+    if cadence == "every_30_days":
+        return [first + timedelta(days=30 * step) for step in range(count)]
+
+    if cadence == "sporadic":
+        dates = [first]
+        for step in range(1, count):
+            gap = _SPORADIC_GAPS[(step - 1) % len(_SPORADIC_GAPS)]
+            dates.append(dates[-1] + timedelta(days=gap))
+        return dates
+
+    # event_driven: counsel writes when something happened, and is silent
+    # otherwise. Each letter follows its anchor by a few days — the time it
+    # takes to read a report and dictate a letter about it.
+    #
+    # The anchors are the *other documents in this file* (see
+    # ``_CADENCE_ANCHOR_SUBTYPES``), not the timeline's four milestones. That
+    # started as the obvious choice and was wrong: after filtering to milestones
+    # at or after the first letter, most cases had one anchor left, the cycle
+    # below degenerated into a fixed lap offset, and "event driven" rendered as
+    # a tidy 90-day metronome. It passed the three-cadences-differ test — for
+    # entirely the wrong reason.
+    if not anchors:
+        # No events to follow. Say so by spacing them loosely rather than
+        # inventing a rhythm that would be indistinguishable from a cadence the
+        # file did not ask for.
+        return [first + timedelta(days=45 * step) for step in range(count)]
+    dates = []
+    for step in range(count):
+        anchor = anchors[step % len(anchors)]
+        lap = step // len(anchors)
+        dates.append(anchor + timedelta(days=5 + 45 * lap))
+    return sorted(dates)
+
+
+def _apply_attorney_cadence(
+    facts: CaseFacts,
+    timeline: CaseTimeline,
+    dated: list[tuple[date, str, str, str]],
+) -> tuple[list[tuple[date, str, str, str]], tuple[str, ...]]:
+    """ISC-123/124. Re-date counsel's client letters onto the resolved cadence.
+
+    Reads ``facts.attorney_cadence`` — the *resolved* value — not
+    ``seed.scenario.attorney.cadence``. A seed that says nothing still resolves
+    a cadence, and a file whose ledger claims ``every_30_days`` while its
+    letters are scattered at random is exactly the incoherence this phase
+    exists to remove. Reading the declared value instead is the defect class
+    that has appeared in every phase of this ticket so far.
+
+    Moves dates only. It adds no document and drops none, so it needs no pass
+    through ``resolve_document_controls`` and cannot change what a seed's
+    controls decided.
+    """
+    letters = sorted(
+        (entry for entry in dated if entry[1] in ATTORNEY_CADENCE_SUBTYPES),
+        key=lambda entry: entry[0],
+    )
+    if len(letters) < 2:
+        # One letter has no rhythm, and zero letters have nothing to re-date.
+        return dated, ()
+
+    cadence = facts.attorney_cadence
+    first = letters[0][0]
+    # The events counsel would actually write *about*, taken from the file
+    # itself so a reader can hold the letter beside the report that prompted it.
+    anchors = sorted(
+        {entry[0] for entry in dated if entry[1] in _CADENCE_ANCHOR_SUBTYPES}
+    )
+    intended = _cadence_dates(cadence, len(letters), first, anchors)
+
+    ceiling = timeline.horizon
+    floor = min(first, min(intended))
+    fitted = fit_dates(intended, floor=floor, ceiling=ceiling, label=f"cadence:{cadence}")
+
+    moved = {id(entry): when for entry, when in zip(letters, fitted, strict=True)}
+    shaped = [
+        (moved[id(entry)], entry[1], entry[2], entry[3]) if id(entry) in moved else entry
+        for entry in dated
+    ]
+
+    warnings: list[str] = []
+    if cadence == "sporadic":
+        gaps = [(b - a).days for a, b in pairwise(fitted)]
+        if gaps and max(gaps) < 90:
+            # Honest reporting rather than a silent near-miss: the window was
+            # too short to hold the hole the cadence describes.
+            warnings.append(
+                "scenario.attorney.cadence is 'sporadic' but the file's runway "
+                f"compressed the correspondence to a largest gap of {max(gaps)} "
+                "days; lengthen the case or reduce the letter count for a "
+                "visible break in the record"
+            )
+    return shaped, tuple(warnings)
 
 
 def _shape_for_scenario(
@@ -633,6 +870,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         *recon.documents,
         # Through the same gate as everything else — see _penalty_candidates.
         *_penalty_candidates(case_facts, timeline),
+        *_delay_chain_candidates(case_facts, timeline),
     ]
 
     # Whose file is this? The three machines above are perspective-blind on
@@ -673,6 +911,10 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
                 dated.append((extra, entry.subtype, track, role))
 
     dated, scenario_warnings = _shape_for_scenario(seed, timeline, case_facts, dated)
+    # After shaping: `never_treated` and `discharged` both drop documents, and
+    # re-dating a set that is about to lose members would leave gaps the cadence
+    # never intended.
+    dated, cadence_warnings = _apply_attorney_cadence(case_facts, timeline, dated)
     penalty_warnings = _penalty_control_warnings(case_facts, dated, controls)
     dated.sort(key=lambda item: (item[0], item[1], item[2]))
 
@@ -720,6 +962,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         *recon.warnings,
         *cast.warnings,
         *scenario_warnings,
+        *cadence_warnings,
         *penalty_warnings,
         *unsupported_hook_warnings(seed.lifecycle.doctrine_hooks, seed),
     )

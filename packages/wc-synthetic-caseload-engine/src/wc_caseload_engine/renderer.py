@@ -389,6 +389,7 @@ def render_document(
     case_facts: Any = None,
     packet_index: int | None = None,
     report_ordinal: int | None = None,
+    letter_ordinal: int | None = None,
 ) -> RenderResult:
     """Render one planned document to *out_path*, reproducibly.
 
@@ -469,6 +470,9 @@ def render_document(
         # Same reasoning, different axis: the trajectory advances per treating
         # report, so it needs a report ordinal rather than a document index.
         context["report_ordinal"] = report_ordinal if report_ordinal is not None else 0
+        # Same axis again for adjuster letters, whose *type* sequence has to
+        # advance per letter so a case cannot accept the claim three times.
+        context["letter_ordinal"] = letter_ordinal if letter_ordinal is not None else 0
     context["perspective"] = seed.perspective
     context["file_owner_firm"] = file_owner_firm(
         seed.perspective, cast.applicant_firm, cast.defense_firm

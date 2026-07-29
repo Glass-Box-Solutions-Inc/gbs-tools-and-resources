@@ -689,13 +689,53 @@ Windows are in `BENEFIT_NOTICE_WINDOWS`, each with its citation: LC 5401(a) for
 the claim form, LC 4650(a)/(b) for first TD and PD payments, CCR 9812(f) for the
 delay notice, LC 5402(b) for the 90-day decision.
 
+### Delay chains
+
+A late benefit does not sit in the file unanswered. Each `LateBenefitEvent`
+draws one `DEMAND_LETTER_FORMAL` — counsel chasing the payment — dated after the
+delay it chases.
+
+Correspondence density therefore scales *through the ledger* rather than through
+a knob of its own. That is the point: `caseFacts.adjuster.lateBenefitEvents` is
+published, so a reader can count the demand letters in the folder and check the
+two agree. A free-standing density multiplier would have nothing to check it
+against.
+
+### The attorney block
+
+```yaml
+scenario:
+  attorney:
+    cadence: every_30_days   # every_30_days | event_driven | sporadic
+```
+
+How often counsel wrote to the client, and it moves the letter dates:
+
+- **`every_30_days`** — the diligent practice. Letters walk a thirty-day clock.
+- **`event_driven`** — counsel writes when something happened. Each letter lands
+  about five days behind a report or milestone **already in the file**, so a
+  reader can hold the letter beside the document that prompted it.
+- **`sporadic`** — the file with a three-month hole in it that opposing counsel
+  will notice. At least one gap over ninety days.
+
+The chain is *fitted*, not clamped: clamping letter-by-letter stacks the tail
+against the horizon and flattens the very gaps the cadence exists to show. A
+case too short to hold its declared rhythm is warned about rather than quietly
+compressed.
+
+Published on `caseFacts.attorney.cadence`, because the letter dates in the
+manifest are what a reader checks it against.
+
 ### Accepted but not yet rendered
 
-`scenario.attorney.cadence` and `scenario.discovery` load and validate, and
-resolve onto the ledger, but **no template honours them yet** — client letters
-are not re-dated and subpoena volume is not driven from the seed. They are
-deliberately absent from the published `caseFacts` for that reason: a published
-fact reads as a verified one. See the CHANGELOG's "Not yet honoured" list.
+`scenario.discovery.subpoena_sets` and `scenario.discovery.pages_per_set` load,
+validate and resolve onto the ledger, but **no template honours them yet**:
+packet count still comes from the lifecycle walk, and the subpoenaed-records
+table of contents still draws its page counts independently of the body it
+fronts, so the declared and actual volumes are unrelated (ISC-126). They are
+deliberately absent from the published `caseFacts` for that reason — a published
+fact reads as a verified one — and their docstrings say so under a guard that
+fails the build if the code ever outruns the claim.
 
 ### The treatment block
 

@@ -20,6 +20,7 @@ from typing import Any
 import structlog
 
 from wc_caseload_engine.case_facts import (
+    ADJUSTER_LETTER_TYPES,
     IMAGING_MODALITIES,
     MODALITY_DISPLAY,
     SUBSTRATE_STATUS_PHRASES,
@@ -76,6 +77,34 @@ class _ForcedChoice:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(random, name)
+
+
+class _SpecCapture:
+    """Binds the rendering spec to the instance so the helpers below can read it.
+
+    The substrate threads ``doc_spec`` as a *parameter* — ``generate`` hands it
+    to ``_generate_pdf``, which hands it to ``build_story`` — and never assigns
+    ``self.doc_spec``. Every helper here that reached for
+    ``template.doc_spec.context`` therefore got ``None`` and fell through to its
+    default, silently and forever.
+
+    :func:`_facts_of` escaped because the renderer also sets
+    ``_wc_case_facts`` on the instance, so the ledger arrived by the second
+    route. :func:`_index_of` and :func:`_report_ordinal` had no second route:
+    the treatment trajectory read ordinal 0 for every report in every case from
+    the day it shipped, and the suite passed because "the first phrase of the
+    arc" satisfies "some phrase of the arc".
+
+    Capturing in ``generate`` rather than in each ``build_story`` covers the
+    helpers called from ``_build_diagnostic_review`` and friends, which the
+    substrate invokes without the spec, and means a subclass that overrides
+    nothing still gets the seam. This is our class, not the substrate's — the
+    substrate is unchanged.
+    """
+
+    def generate(self, output_path: Any, doc_spec: Any) -> Any:
+        self.doc_spec = doc_spec
+        return super().generate(output_path, doc_spec)  # type: ignore[misc]
 
 
 def _facts_of(template: Any) -> CaseFacts | None:
@@ -135,6 +164,21 @@ def _after_examination_line(story: list[Any]) -> int:
     return 0
 
 
+def _letter_ordinal(template: Any) -> int:
+    """Which adjuster letter this is within its own case, zero-based.
+
+    Its own counter for the same reason the treating report has one: the type
+    sequence has to advance per *letter*, not per document, or two letters at
+    document indices 3 and 27 would land on unrelated points of the sequence.
+    """
+    context = getattr(getattr(template, "doc_spec", None), "context", None)
+    if isinstance(context, dict):
+        value = context.get("letter_ordinal")
+        if isinstance(value, int):
+            return value
+    return 0
+
+
 def _report_ordinal(template: Any) -> int:
     """Which treating report this is within its own case, zero-based.
 
@@ -164,7 +208,7 @@ def build_fact_aware_templates() -> dict[str, type]:
 
     from reportlab.platypus import Paragraph
 
-    class FactAwareDiagnosticReport(diagnostic_module.DiagnosticReport):  # type: ignore[misc,name-defined]
+    class FactAwareDiagnosticReport(_SpecCapture, diagnostic_module.DiagnosticReport):  # type: ignore[misc,name-defined]
         """Reports the study the ledger says was performed.
 
         The substrate drew ``MRI``/``CT``/``X-Ray`` per document, independently
@@ -245,7 +289,7 @@ def build_fact_aware_templates() -> dict[str, type]:
             )
             return story
 
-    class FactAwareQmeAmeReport(qme_module.QmeAmeReport):  # type: ignore[misc,name-defined]
+    class FactAwareQmeAmeReport(_SpecCapture, qme_module.QmeAmeReport):  # type: ignore[misc,name-defined]
         """Cites only studies the ledger says happened, and says what did not.
 
         The substrate drew an imaging type *per body part* and asserted a
@@ -308,7 +352,7 @@ def build_fact_aware_templates() -> dict[str, type]:
                 )
             return elements
 
-    class FactAwareTreatingPhysicianReport(tpr_module.TreatingPhysicianReport):  # type: ignore[misc,name-defined]
+    class FactAwareTreatingPhysicianReport(_SpecCapture, tpr_module.TreatingPhysicianReport):  # type: ignore[misc,name-defined]
         """Describes post-operative care when the ledger says surgery happened.
 
         ``treatment_type`` drew from ``conservative`` / ``physical_therapy`` /
@@ -417,7 +461,7 @@ def build_fact_aware_templates() -> dict[str, type]:
 
     operative_module = import_substrate("pdf_templates.medical.operative_record")
 
-    class FactAwareOperativeRecord(operative_module.OperativeRecord):  # type: ignore[misc,name-defined]
+    class FactAwareOperativeRecord(_SpecCapture, operative_module.OperativeRecord):  # type: ignore[misc,name-defined]
         """Performs the operation the ledger says was performed.
 
         The substrate already narrows CPTs to the case's body parts and then
@@ -505,7 +549,7 @@ def build_fact_aware_templates() -> dict[str, type]:
 
     ur_module = import_substrate("pdf_templates.medical.utilization_review")
 
-    class FactAwareUtilizationReview(ur_module.UtilizationReview):  # type: ignore[misc,name-defined]
+    class FactAwareUtilizationReview(_SpecCapture, ur_module.UtilizationReview):  # type: ignore[misc,name-defined]
         """Reviews the procedure the case is actually about.
 
         ``_build_request_details`` drew one to three CPTs at random from the
@@ -545,7 +589,7 @@ def build_fact_aware_templates() -> dict[str, type]:
                 log.warning("fact_templates.ur_procedure_not_forced", cpt=surgery.cpt_code)
             return story
 
-    class FactAwareDischargeSummary(operative_module.OperativeRecord):  # type: ignore[misc,name-defined]
+    class FactAwareDischargeSummary(_SpecCapture, operative_module.OperativeRecord):  # type: ignore[misc,name-defined]
         """A discharge summary that does not call itself an operative report.
 
         ``DISCHARGE_SUMMARY`` is mapped to ``OperativeRecord`` with a
@@ -590,9 +634,87 @@ def build_fact_aware_templates() -> dict[str, type]:
             )
             return story
 
+    adjuster_module = import_substrate("pdf_templates.correspondence.adjuster_letter")
+
+    class FactAwareAdjusterLetter(_SpecCapture, adjuster_module.AdjusterLetter):  # type: ignore[misc,name-defined]
+        """Writes a letter this case could actually have produced.
+
+        The substrate drew one of five letter bodies per document, independently
+        — so a file with three adjuster letters could open the claim for the
+        first time three separate times, and a case with no UR dispute could
+        receive a determination letter about a review that never happened.
+
+        Two rules, both from the lifecycle rather than from a draw:
+
+        * the type must be one the case can support
+          (``CaseFacts.adjuster_letter_types_allowed``), and
+        * the case walks *through* the allowed types rather than sampling them,
+          so the once-only ones happen once.
+
+        Ordered so the chronology reads correctly: a case accepts the claim
+        before it discusses settling it.
+        """
+
+        #: Allowed types in the order a file would produce them.
+        ORDER = (
+            "initial_acceptance",
+            "medical_records_request",
+            "ur_decision",
+            "pd_advance_offer",
+            "settlement_discussion",
+        )
+
+        #: Types a file can legitimately repeat. A claim is accepted once.
+        REPEATABLE = ("medical_records_request", "settlement_discussion", "pd_advance_offer")
+
+        def _letter_type_for(self, facts: Any, ordinal: int) -> str:
+            allowed = [name for name in self.ORDER if name in facts.adjuster_letter_types_allowed]
+            if not allowed:
+                return "medical_records_request"
+            if ordinal < len(allowed):
+                return allowed[ordinal]
+            # Past the one-time types, cycle only what can honestly recur.
+            repeatable = [name for name in allowed if name in self.REPEATABLE] or allowed
+            return repeatable[(ordinal - len(allowed)) % len(repeatable)]
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            facts = _facts_of(self)
+            if facts is None or not facts.adjuster_letter_types_allowed:
+                return list(super().build_story(doc_spec))
+
+            wanted = self._letter_type_for(facts, _letter_ordinal(self))
+            target = getattr(self, f"_{wanted}", None)
+            if target is None:
+                log.warning("fact_templates.adjuster_letter_method_missing", wanted=wanted)
+                return list(super().build_story(doc_spec))
+
+            forced = _ForcedChoice(
+                target,
+                lambda seq: len(seq) == len(ADJUSTER_LETTER_TYPES)
+                and all(callable(item) for item in seq),
+            )
+            original = adjuster_module.random
+            adjuster_module.random = forced
+            try:
+                story = list(super().build_story(doc_spec))
+            finally:
+                adjuster_module.random = original
+
+            if not forced.fired:
+                log.warning(
+                    "fact_templates.adjuster_letter_type_not_forced",
+                    wanted=wanted,
+                    expected=len(ADJUSTER_LETTER_TYPES),
+                )
+            return story
+
     _ = Paragraph  # imported for subclasses that grow to need it
 
     return {
+        "ADJUSTER_LETTER": FactAwareAdjusterLetter,
+        "ADJUSTER_LETTER_INFORMATIONAL": FactAwareAdjusterLetter,
+        "ADJUSTER_LETTER_REQUEST": FactAwareAdjusterLetter,
+        "ADJUSTER_DEMANDS_REQUESTS": FactAwareAdjusterLetter,
         "DISCHARGE_SUMMARY": FactAwareDischargeSummary,
         "MEDICAL_TREATMENT_AUTHORIZATION": FactAwareUtilizationReview,
         "MEDICAL_TREATMENT_DENIAL_UR": FactAwareUtilizationReview,

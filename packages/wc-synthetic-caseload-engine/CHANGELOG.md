@@ -9,6 +9,107 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — the ordinal seam, and what it had been hiding (ticket **AJC-37**, Phase 3b)
+
+**A defect that shipped in 0.4.0 and passed every test written for it.** The
+substrate threads `doc_spec` to `build_story` as a *parameter* and never assigns
+`self.doc_spec`. Every engine helper that reached for `template.doc_spec.context`
+therefore read `None` and fell through to its default — silently, in every case,
+since the day the feature landed.
+
+`_facts_of` escaped because the renderer also sets `_wc_case_facts` on the
+instance, so the ledger arrived by a second route. `_index_of` and
+`_report_ordinal` had no second route. **The treatment trajectory read ordinal 0
+for every treating report in every case**, so the arc rendered its first phrase
+forever and never advanced.
+
+The Phase-2 suite could not see it. Its render test asked
+`any(phrase in body for phrase in arc)`, and at ordinal 0 the first phrase of
+the arc *is* a phrase of the arc. The assertion passed for entirely the wrong
+reason. The replacement counts **distinct** phrases, which is what makes it
+bite. `_SpecCapture` now binds the spec in `generate()` — covering the helpers
+the substrate calls without a spec — and the substrate is unchanged.
+
+### Added — letter lifecycle, delay chains and attorney cadence (**AJC-37**, Phase 3b)
+
+- **`ADJUSTER_LETTER` types follow the case (ISC-121).** The substrate picked
+  one of five letter bodies with `random.choice` per document, so a file could
+  accept liability three times, and a *denied* claim could accept it at all. The
+  ledger now derives which letter types the case permits and a per-letter
+  ordinal walks them in lifecycle order. The counter spans every adjuster
+  subtype, so a file accepts the claim once — not once per subtype.
+
+- **Delay chains (ISC-119).** One `DEMAND_LETTER_FORMAL` per late benefit event:
+  counsel chasing a benefit that ran past its statutory window. Correspondence
+  density is therefore a *consequence* of the adjuster persona rather than a
+  second knob that could contradict it — and because
+  `caseFacts.adjuster.lateBenefitEvents` is published, a reader can count the
+  letters in the folder against it. On one seed: attentive 0 late / 0 letters,
+  ordinary 0 / 0, negligent 3 / 3.
+
+- **`scenario.attorney.cadence` is honoured (ISC-123/124).** Client letters are
+  re-dated onto the resolved cadence. Gaps in days, one seed, three draws:
+
+  | cadence | gaps |
+  |---|---|
+  | `every_30_days` | 30, 30, 30, 30, 30 |
+  | `event_driven` | 4, 31, 94, 98, 162 |
+  | `sporadic` | 24, 120, 41, 96, 33 |
+
+  The chain is **fitted, not clamped** (date-spine rule 2): clamping stacks the
+  tail against the horizon and destroys the very gaps the cadence exists to
+  show. A file too short to hold its declared rhythm is warned about, not
+  silently compressed.
+
+- **`caseFacts` now publishes `attorney.cadence` and
+  `adjuster.letterTypesAllowed`.** Both were withheld under the governed-facts
+  rule — publish only what a rendered document reflects — and both now qualify.
+
+### ⚠️ Compatibility — version bumped to 0.6.0
+
+`0.5.0` → `0.6.0`.
+
+1. **331 → 331 documents. 0 added, 0 removed, 310 byte-identical, 21 changed —
+   and every change traces to a knob this release honoured.** 19
+   `ADJUSTER_LETTER_INFORMATIONAL` + 1 `ADJUSTER_LETTER_REQUEST` are the letter
+   lifecycle (ISC-121). The single `TREATING_PHYSICIAN_REPORT_PR2` is the
+   trajectory fix, and its arithmetic is exact: precisely one demo case holds
+   two PR2s, and precisely one PR2 moved — the second, at ordinal 1. The first
+   is byte-identical because the arc's opening phrase never changed. Nothing
+   unexplained.
+
+2. **The demo proves the letter lifecycle and the trajectory. It proves nothing
+   about cadence or delay chains.** No demo case draws a late benefit, and no
+   demo case carries enough client letters to have a rhythm, so both features
+   are inert there. That is a zero that has not been earned, and 0.5.0's lesson
+   applies unchanged: it is reported here rather than counted as evidence. Both
+   are proved directly instead, by the tables above and by
+   `tests/test_scenario_p3b.py`.
+
+3. **`event_driven` was wrong on its first cut and the counterfactual did not
+   catch it.** Anchored to the timeline's four milestones, the filter left one
+   anchor, the lap offset became fixed, and it rendered as a tidy 90-day
+   metronome — which still *differed* from the other two cadences and so passed
+   the three-cadences-differ test. It now anchors to the report and milestone
+   documents in the file itself: 8 anchors, every letter 1–5 days behind a real
+   one. `test_every_event_driven_letter_follows_a_real_event` is the assertion
+   that would have failed.
+
+4. **One guard was narrowed, which needs saying plainly.**
+   `test_neither_output_carries_an_ungoverned_field` scanned serialized JSON for
+   each banned name as a raw **substring**. `letterTypesAllowed` publishes the
+   value `pd_advance_offer`, which contains `pd`, and tripped it. The substring
+   sweep was always a proxy for the real rule — *publishes an ungoverned
+   field* — and every banned name is a field name, so the check now walks keys.
+   `test_the_key_walk_still_catches_a_planted_leak` is committed beside it and
+   proves the walk still catches a planted leak for all five banned fields.
+
+5. **Still schema-only, and still marked as such.**
+   `scenario.discovery.subpoena_sets` and `scenario.discovery.pages_per_set`
+   remain **accepted and validated, not yet honoured** (ISC-126), and
+   event-driven letters do not yet *name* their anchoring event in rendered text
+   (ISC-125). The ISC-137 meta-guard holds their docstrings to that claim.
+
 ### Added — adjuster persona and earned penalties (ticket **AJC-37**, Phase 3, partial)
 
 **Scope warning, first because it matters most.** This release lands the adjuster

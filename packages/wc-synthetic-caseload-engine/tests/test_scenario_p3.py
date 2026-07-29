@@ -19,14 +19,16 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from conftest import extract_text, requires_substrate
 from wc_caseload_engine import lifecycle_bridge, planner
-from wc_caseload_engine.case_facts import facts_manifest_block
+from wc_caseload_engine.case_facts import LateBenefitEvent, facts_manifest_block
 from wc_caseload_engine.lifecycle_bridge import build_core_candidates, build_timeline
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
 from wc_caseload_engine.planner import build_case_plan
@@ -383,6 +385,155 @@ class TestEveryPersonaGuardReadsTheResolvedValue:
         )
         assert not [d for d in included.documents if d.subtype == "PETITION_FOR_PENALTIES"]
 
+    @pytest.mark.parametrize(
+        ("route", "controls"),
+        [
+            ("explicit exclude", {"exclude": ["PETITION_FOR_PENALTIES"]}),
+            (
+                "zero-count override",
+                {"overrides": [{"subtype": "PETITION_FOR_PENALTIES", "count": 0}]},
+            ),
+            ("global_cap", {"global_cap": 6}),
+            ("parent-type exclude", {"exclude": ["CORRESPONDENCE"]}),
+            ("include_only", {"include_only": ["FIRST_REPORT_OF_INJURY_PHYSICIAN"]}),
+        ],
+    )
+    def test_every_route_to_a_missing_petition_warns(
+        self, route: str, controls: dict[str, Any]
+    ) -> None:
+        """ISC-135. The warning is keyed off the outcome, not the control name.
+
+        The first version asked which control matched, and so stayed silent for
+        a zero-count override, a ``global_cap`` that ate the petition, a
+        parent-type exclude and perspective suppression — four routes to the
+        same missing document, three undetected. Enumerating suppression
+        mechanisms is a losing game; the next one added would have been silent
+        too. "The ledger earned it and the plan lacks it" is one question with
+        one answer.
+        """
+        plan = build_case_plan(
+            _seed(
+                f"route-{route.replace(' ', '-')}",
+                rng_seed=100,
+                scenario={"adjuster": {"diligence": "negligent"}},
+                documents={**controls, "format_mix": {"pdf": 1.0}},
+            )
+        )
+        assert plan.case_facts is not None
+        assert plan.case_facts.late_benefit_events, "the fixture stopped earning a petition"
+        assert not [d for d in plan.documents if d.subtype == "PETITION_FOR_PENALTIES"]
+        warned = [w for w in plan.warnings if "PETITION_FOR_PENALTIES" in w]
+        assert warned, f"{route} suppressed the petition silently: {plan.warnings}"
+
+    @pytest.mark.parametrize(
+        ("label", "horizon"),
+        [
+            ("horizon before the latest late event", date(2022, 6, 1)),
+            ("horizon exactly on the latest late event", date(2022, 12, 1)),
+            ("horizon well past it", date(2023, 6, 1)),
+        ],
+    )
+    def test_the_petition_date_prefers_the_floor_over_the_horizon(
+        self, label: str, horizon: date
+    ) -> None:
+        """ISC-136. The bounds conflict, decided and asserted.
+
+        Two invariants collide when a late event sits at or after the horizon:
+        the petition must post-date every event it punishes, and it should not
+        outlast the file. **The floor wins**, deliberately — a pleading dated
+        before the delay it complains about is incoherent on its face, while a
+        petition outliving the case-in-chief is ordinary practice, since penalty
+        proceedings are collateral.
+
+        Exercised against ``_penalty_candidates`` directly with a constructed
+        boundary, because a seed cannot reach it: ``_derive_late_benefit_events``
+        drops events past the horizon, so the conflict needs
+        ``latest == horizon`` exactly. Unreachable-by-seed is not the same as
+        unreachable, and the reviewer's 0/200 seed sweep used a proxy horizon —
+        which is why this probes the function rather than the seed surface.
+        """
+        latest = date(2022, 12, 1)
+        facts = SimpleNamespace(
+            late_benefit_events=(
+                LateBenefitEvent(
+                    kind="first_td_payment",
+                    due_date=date(2022, 4, 25),
+                    actual_date=latest,
+                    days_late=220,
+                ),
+            )
+        )
+        timeline = SimpleNamespace(
+            application_filed_date=date(2022, 5, 1), resolution_date=horizon
+        )
+        candidate = planner._penalty_candidates(facts, timeline)[0]
+        assert candidate.doc_date > latest, (
+            f"{label}: the petition predates the delay it punishes"
+        )
+
+    def test_the_boundary_probe_exercises_both_sides_of_the_conflict(self) -> None:
+        """Anti-vacuity: prove the horizon actually binds when it can."""
+        latest = date(2022, 12, 1)
+        facts = SimpleNamespace(
+            late_benefit_events=(
+                LateBenefitEvent(
+                    kind="first_td_payment",
+                    due_date=date(2022, 4, 25),
+                    actual_date=latest,
+                    days_late=220,
+                ),
+            )
+        )
+        roomy = planner._penalty_candidates(
+            facts,
+            SimpleNamespace(
+                application_filed_date=date(2022, 5, 1), resolution_date=date(2023, 6, 1)
+            ),
+        )[0]
+        tight = planner._penalty_candidates(
+            facts,
+            SimpleNamespace(
+                application_filed_date=date(2022, 5, 1), resolution_date=latest
+            ),
+        )[0]
+        assert roomy.doc_date <= date(2023, 6, 1), "the horizon does not bind when it should"
+        assert tight.doc_date > latest, "the floor does not hold when the horizon is tight"
+        assert roomy.doc_date != tight.doc_date, "both branches produced the same date"
+
+    def test_a_seed_cannot_reach_the_conflict(self) -> None:
+        """The recorded unreachability half of ISC-136.
+
+        Every derived late event is dropped if it falls past the horizon, so a
+        seeded case always has ``latest <= horizon``. This asserts the property
+        the code relies on rather than the sample of seeds that happen to show it.
+        """
+        for rng_seed in range(500, 560):
+            plan = build_case_plan(
+                _seed(f"reach-{rng_seed}", rng_seed=rng_seed,
+                      scenario={"adjuster": {"diligence": "negligent"}})
+            )
+            assert plan.case_facts is not None
+            if not plan.case_facts.late_benefit_events:
+                continue
+            horizon = getattr(plan.timeline, "resolution_date", None) or getattr(
+                plan.timeline, "application_filed_date", None
+            )
+            if horizon is None:
+                continue
+            latest = max(e.actual_date for e in plan.case_facts.late_benefit_events)
+            assert latest <= horizon, (
+                f"rng_seed={rng_seed}: a derived late event ({latest}) outlives the "
+                f"horizon ({horizon}), so the ISC-136 conflict is seed-reachable after all"
+            )
+
+    def test_an_unsuppressed_case_stays_quiet(self) -> None:
+        """The anti-direction: the warning must not fire when the petition survives."""
+        plan = build_case_plan(
+            _seed("route-none", rng_seed=100, scenario={"adjuster": {"diligence": "negligent"}})
+        )
+        assert [d for d in plan.documents if d.subtype == "PETITION_FOR_PENALTIES"]
+        assert not [w for w in plan.warnings if "PETITION_FOR_PENALTIES" in w]
+
     def test_suppressing_an_earned_petition_is_loud(self) -> None:
         """Explicit control wins — and says so.
 
@@ -453,15 +604,25 @@ class TestEveryPersonaGuardReadsTheResolvedValue:
     def test_diligence_is_not_published(self) -> None:
         """m5. A persona input no rendered document reflects.
 
-        Published while ``attorney_cadence`` was withheld for precisely that
-        reason — the governed-facts rule applied inconsistently to its own
-        author.
+        It was published while ``attorney_cadence`` was withheld for precisely
+        that reason — the governed-facts rule applied inconsistently to its own
+        author. ``diligence`` stays out; the rule has not moved.
+
+        The exact-set pin below is deliberately kept rather than relaxed to a
+        subset check: it is what would catch a field slipping into the manifest
+        unnoticed. It grew by ``letterTypesAllowed`` when ISC-121 made the
+        adjuster's letter sequence render from the ledger, which is the rule
+        *admitting* a field on its merits, not an exception to it.
         """
         facts = build_case_plan(_seed("m5", rng_seed=100)).case_facts
         assert facts is not None
         block = facts_manifest_block(facts)
         assert "diligence" not in block["adjuster"]
-        assert set(block["adjuster"]) == {"lateBenefitEvents", "maxDaysLate"}
+        assert set(block["adjuster"]) == {
+            "lateBenefitEvents",
+            "maxDaysLate",
+            "letterTypesAllowed",
+        }
         assert facts.adjuster_diligence, "still resolved on the ledger, just unpublished"
 
     def test_cadence_derivation_reaches_event_driven(self) -> None:

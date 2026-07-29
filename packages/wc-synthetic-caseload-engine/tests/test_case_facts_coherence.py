@@ -716,13 +716,54 @@ class TestOnlyGovernedFactsArePublished:
         assert facts.mmi_date is not None
         assert facts.visits, "visit series was dropped rather than unpublished"
 
+    #: Ledger fields that must never be published. Every one is a *field name*,
+    #: which is why the check below walks keys.
+    BANNED_FIELDS = ("wpi", "pd", "mmiDate", "visits", "bodyPart")
+
+    @staticmethod
+    def _keys_of(node: Any) -> set[str]:
+        """Every mapping key anywhere in a nested structure."""
+        if isinstance(node, dict):
+            found = set(node)
+            for value in node.values():
+                found |= TestOnlyGovernedFactsArePublished._keys_of(value)
+            return found
+        if isinstance(node, list):
+            found: set[str] = set()
+            for item in node:
+                found |= TestOnlyGovernedFactsArePublished._keys_of(item)
+            return found
+        return set()
+
     def test_neither_output_carries_an_ungoverned_field(self, tmp_path: Path) -> None:
+        """Keys, not substrings.
+
+        This scanned the serialized JSON for each banned name as a raw
+        substring until ISC-121 published ``letterTypesAllowed``, whose value
+        ``pd_advance_offer`` contains "pd" and tripped it. The substring sweep
+        was always a proxy for the real rule — *publishes an ungoverned field* —
+        and a value that happens to spell a banned name is not a leak.
+
+        Narrowing a guard to make one's own change pass is how guards die, so
+        the planted-leak control below is not optional: it proves the key walk
+        still catches what the substring sweep caught.
+        """
         seed = _seed("no-leak", {"surgery": "performed"})
         manifest, _ = _render(seed, tmp_path)
         yaml_text = (tmp_path / seed.case_id / CASE_FACTS_NAME).read_text()
-        for banned in ("wpi", "pd", "mmiDate", "visits", "bodyPart"):
-            assert banned not in json.dumps(manifest["caseFacts"]), f"manifest leaks {banned}"
-            assert banned not in yaml_text, f"case_facts.yaml leaks {banned}"
+        published = self._keys_of(manifest["caseFacts"])
+        for banned in self.BANNED_FIELDS:
+            assert banned not in published, f"manifest leaks the {banned} field"
+            assert f"{banned}:" not in yaml_text, f"case_facts.yaml leaks {banned}"
+
+    def test_the_key_walk_still_catches_a_planted_leak(self) -> None:
+        """The control for the test above. Without it, narrowing the check from
+        substrings to keys would be indistinguishable from deleting it."""
+        for banned in self.BANNED_FIELDS:
+            planted = {"treatment": {"status": "ongoing"}, "surgery": [{banned: 42}]}
+            assert banned in self._keys_of(planted), (
+                f"the key walk cannot see a planted {banned} field"
+            )
 
 
 # ---------------------------------------------------------------------------
