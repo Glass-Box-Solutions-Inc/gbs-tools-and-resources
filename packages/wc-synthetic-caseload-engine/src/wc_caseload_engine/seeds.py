@@ -663,6 +663,90 @@ class DocumentControls(_Model):
         return {str(o.type): (o.min, o.max) for o in self.overrides if o.type is not None}
 
 
+MODALITIES: tuple[str, ...] = ("mri", "ct", "xray", "emg", "labs")
+"""Diagnostic vocabulary a ``scenario:`` block may name.
+
+Duplicated from :mod:`wc_caseload_engine.case_facts` rather than imported: that
+module imports :class:`CaseSeed` from here, so importing it back would close a
+cycle. A test asserts the two tuples are equal, which is cheaper than the
+indirection needed to share one.
+"""
+
+
+class DiagnosticEntry(_Model):
+    """One ``scenario.diagnostics`` entry: a modality, optionally scoped.
+
+    Accepts either a bare modality (``mri``) or a modality bound to a region
+    (``{modality: mri, body_part: shoulder}``). Bare means "the primary body
+    part", which is what a seed author almost always means and saves stating a
+    region the injury block already names.
+    """
+
+    modality: str
+    body_part: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_a_bare_modality(cls, value: Any) -> Any:
+        return {"modality": value} if isinstance(value, str) else value
+
+    @field_validator("modality")
+    @classmethod
+    def _known_modality(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if normalized not in MODALITIES:
+            raise ValueError(
+                f"{value!r} is not a diagnostic modality this engine can render. "
+                f"Use one of: {', '.join(MODALITIES)}."
+            )
+        return normalized
+
+
+class DiagnosticsScenario(_Model):
+    """What was imaged, and what deliberately was not.
+
+    Both halves matter. ``performed`` is what the file's documents may cite;
+    ``absent`` is what no document may cite, and stating it explicitly is what
+    turns "the QME invented an MRI" from an unfalsifiable complaint into a
+    grep. Leaving both empty hands the whole decision to derivation.
+    """
+
+    performed: list[DiagnosticEntry] = Field(default_factory=list, max_length=12)
+    absent: list[DiagnosticEntry] = Field(default_factory=list, max_length=12)
+
+    @model_validator(mode="after")
+    def _no_study_is_both(self) -> DiagnosticsScenario:
+        performed = {(e.modality, e.body_part) for e in self.performed}
+        clashes = sorted(
+            f"{e.modality}"
+            + (f" on {e.body_part}" if e.body_part else " (primary body part)")
+            for e in self.absent
+            if (e.modality, e.body_part) in performed
+        )
+        if clashes:
+            raise ValueError(
+                "scenario.diagnostics lists the same study as both performed and "
+                f"absent: {'; '.join(clashes)}. A study either happened or it did "
+                "not — name it once, in whichever list is true."
+            )
+        return self
+
+
+class ScenarioSpec(_Model):
+    """Seed-surfaced case facts (Phase 1 subset).
+
+    The axes of real-file variability this engine can currently *render*
+    coherently. Deliberately small: an axis in the schema that no template
+    honours is worse than an absent one, because it reads as a promise.
+    Treatment trajectory, adjuster diligence, attorney cadence and discovery
+    volume are named in AJC-37 and land in later phases.
+    """
+
+    diagnostics: DiagnosticsScenario = Field(default_factory=DiagnosticsScenario)
+    surgery: Literal["none", "performed"] | None = None
+    """``None`` means *derive it* — preserving the substrate's 35% coin exactly."""
+
+
 class OutputSpec(_Model):
     """Filename policy and permitted output formats."""
 
@@ -700,6 +784,7 @@ class CaseSeed(_Model):
     profile: CaseProfile = Field(default_factory=CaseProfile)
     injury: InjurySpec
     lifecycle: LifecycleSpec = Field(default_factory=LifecycleSpec)
+    scenario: ScenarioSpec = Field(default_factory=ScenarioSpec)
     documents: DocumentControls = Field(default_factory=DocumentControls)
     output: OutputSpec = Field(default_factory=OutputSpec)
 
@@ -1644,6 +1729,8 @@ __all__ = [
     "CaseProfile",
     "CaseSeed",
     "CaseloadSpec",
+    "DiagnosticEntry",
+    "DiagnosticsScenario",
     "DistributionProfile",
     "DocumentControls",
     "DocumentOverride",
@@ -1655,6 +1742,7 @@ __all__ = [
     "PhysicianProfile",
     "ReconsiderationSpec",
     "ResolutionSpec",
+    "ScenarioSpec",
     "SeedError",
     "SeedValidationError",
     "UrDispute",

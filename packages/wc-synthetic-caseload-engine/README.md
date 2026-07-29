@@ -582,6 +582,88 @@ classifier scored against these files cannot cheat by reading the name. `corpus`
 
 ---
 
+## The CaseFacts ledger
+
+Every template that wanted a clinical detail used to invent one. A QME drew an
+imaging type per body part and asserted findings for all of them; the diagnostic
+report drew its own modality independently; `has_surgery` gated six document
+rules and reached no content at all, so a post-operative progress report
+recommended conservative care. No single draw was wrong — there was simply
+nowhere for the case to agree with itself.
+
+`CaseFacts` is that place. It is derived once per case at plan time, read by
+every fact-aware template, published in the manifest as `caseFacts`, and written
+beside the seed as `case_facts.yaml`:
+
+| Field | What it records |
+|-------|-----------------|
+| `diagnostics[]` | Studies performed **and deliberately absent** — modality, body part, date |
+| `surgery` | `none` / `performed`, with the chosen CPT code and description |
+| `providers[]` | Who treated the applicant, so records packets can be attributed to different providers |
+| `visits[]` | A dated clinical series consistent with the timeline |
+| `mmi_date`, `wpi`, `pd` | The rating figures documents should agree on |
+
+The absent half is what makes the ledger enforceable. Recording only what
+happened lets a template invent anything about what did not; an explicit absence
+is something a test can grep for.
+
+### Seeding it — `scenario:` (Phase 1)
+
+```yaml
+scenario:
+  diagnostics:
+    performed: [mri]                                  # bare = the primary body part
+    absent:    [{modality: emg, body_part: shoulder}]
+  surgery: performed                                  # none | performed | omit to derive
+```
+
+Modalities: `mri`, `ct`, `xray`, `emg`, `labs`. An unknown modality is refused at
+load, as is listing the same study as both performed and absent — though the
+overlap check is body-part aware, because a study performed on one region and
+absent on another is coherent.
+
+All five are ledger facts, but only `mri`, `ct` and `xray` are ever assigned to a
+`DIAGNOSTICS_IMAGING` document, and only those three are drawn when you say
+nothing. The imaging template picks its technique paragraph off the exam type —
+pulse sequences for MRI, slice thickness for CT, projections for anything else —
+so handing it an EMG produces a nerve conduction study written up in radiographic
+language. A stated EMG or lab panel still governs the QME, which cites it when
+performed and records its absence when not.
+
+Omitting `surgery` derives it, and derivation reproduces the substrate's prior
+35% coin off the same stream, so every seed written before this block existed
+keeps its surgery status exactly. Stating it wins over the coin — and over the
+substrate's own exclusions, so a seed that asks for surgery on a psych claim gets
+it. The coin is still drawn either way and its result discarded, so stating
+`surgery:` cannot shift any other draw in the case.
+
+### What is fact-aware, and what that costs
+
+Nine subtypes dispatch to engine-owned subclasses that read the ledger:
+`DIAGNOSTICS_IMAGING`, `OPERATIVE_HOSPITAL_RECORDS`, the five QME/AME report
+flavours, and `TREATING_PHYSICIAN_REPORT_PR2`/`_PR4`. Each overrides the
+narrowest method that rolled the offending draw and delegates the rest to the
+substrate, which stays read-only.
+
+**Every byte that moves is accounted for.** Regenerating the demo at 0.2.0 and
+at 0.3.0 gives 331 documents both times with identical filenames, **303
+byte-identical and 28 changed**. All 28 trace to one of two declared sources: 23
+are registry-covered subtypes, and 5 are `SUBPOENAED_RECORDS_MEDICAL`, which the
+registry does *not* cover — those moved because the provider round-robin now
+sets a context key the substrate template has always read and the engine never
+supplied (see the CHANGELOG). Nothing else moved, and a probe fails on any
+change it cannot attribute.
+
+Two caveats worth stating. The demo spec happens to emit only three of the nine
+registry subtypes, so the byte probe exercises the rest only through the
+coherence suite. And stating `scenario:` in a seed is expected to change that
+seed's bytes — it is a content knob; the guarantee is that seeds which say
+nothing keep exactly what they had.
+
+Ledger draws are namespaced under `facts:` so they cannot perturb an existing
+stream, and the renderer re-seeds per document, so a fact-aware template cannot
+shift its neighbours.
+
 ## Determinism
 
 Same seed plus same version produces the same bytes — **on any machine, in any timezone, on any

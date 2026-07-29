@@ -40,6 +40,7 @@ from typing import Any
 
 import structlog
 
+from wc_caseload_engine.case_facts import resolve_has_surgery
 from wc_caseload_engine.doc_controls import (
     TRACK_CORE,
     TRACK_FILLER,
@@ -644,7 +645,6 @@ def seed_to_case_parameters(seed: CaseSeed) -> Any:
     """
     lifecycle_engine = import_substrate("data.lifecycle_engine")
     lifecycle = seed.lifecycle
-    rng = seed.rng("clinical")
 
     psych = any(part.part == "psyche" for part in seed.injury.body_parts)
     if "lc3208_3_psych" in lifecycle.doctrine_hooks:
@@ -666,7 +666,10 @@ def seed_to_case_parameters(seed: CaseSeed) -> Any:
         imr_outcome=ur.imr_outcome or "random",
         eval_type=lifecycle.eval_type,
         resolution_type=RESOLUTION_MAP[lifecycle.resolution.type],
-        has_surgery=seed.injury.type != "death" and not psych and rng.random() < 0.35,
+        # Resolved in one place so the ledger and the planned document set can
+        # never disagree — see ``case_facts.resolve_has_surgery``. The 35% coin
+        # still happens, on the same stream at the same position.
+        has_surgery=resolve_has_surgery(seed),
         has_psych_component=psych,
         has_liens=False,
         num_body_parts=len(seed.injury.body_parts),

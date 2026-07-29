@@ -9,6 +9,190 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the CaseFacts ledger (ticket **AJC-37**, Phase 1)
+
+Before this, every template that wanted a clinical detail invented one. A QME
+drew `random.choice(["MRI", "X-ray", "CT scan"])` per body part and asserted
+imaging no diagnostic report in the same case had produced; the diagnostic
+report drew its own modality independently; and `has_surgery` gated six document
+*rules* while reaching no document *content*, so post-operative progress reports
+described conservative care — "surgical" was not even in the choice list.
+
+Nothing was wrong with any single draw. What was missing was a place for the
+case to agree with itself.
+
+- **`case_facts.py` — the ledger.** Derived once per case at plan time from the
+  seed and the timeline: diagnostics performed *and deliberately absent*
+  (modality + body part + date), surgery status with a chosen CPT, providers,
+  a dated visit series, MMI, WPI/PD. Carried on `CasePlan`, published in the
+  manifest as `caseFacts`, and written beside the seed as `case_facts.yaml` —
+  the seed states what was asked for, the ledger states what was decided.
+
+- **`scenario:` seed block (Phase-1 subset).** `scenario.diagnostics
+  {performed, absent}` and `scenario.surgery`. Entries accept a bare modality
+  (meaning the primary body part) or `{modality, body_part}`. Unknown modalities
+  and performed/absent overlap are refused at load with actionable errors; the
+  overlap check is body-part aware, because a study performed on one region and
+  absent on another is coherent, not a clash.
+
+- **Fact-aware template registry.** `FACT_AWARE_TEMPLATES` maps nine subtypes to
+  engine-owned subclasses that override the narrowest method rolling the
+  offending draw and delegate everything else to the substrate, which stays
+  read-only. Unregistered subtypes take the original dispatch unchanged, and
+  the manifest keeps naming the substrate class — the subclass renders the same
+  document, it is not different provenance.
+
+- **Determinism re-verified at this version.** The demo caseload generated
+  three times — twice under UTC, once under `TZ=Australia/Sydney` — produced
+  331 files with an identical tree digest (`603fd9f6…`) and zero differing
+  files across all three pairs.
+
+### ⚠️ Compatibility — version bumped to 0.3.0
+
+`0.2.0` → `0.3.0`. Bytes are stable within a version (and within a
+`substrateSha` — see README), and this release moves some.
+
+1. **Two sources move bytes, and only two.** Measured by regenerating the demo
+   caseload at `867ea88` (the merged 0.2.0 tree) and at this commit: 331
+   documents both times, identical filenames, **303 byte-identical, 28
+   changed**. Every one of the 28 traces to a source declared below:
+
+   - **23 are registry-covered** — `QME_REPORT_INITIAL` (16),
+     `QME_REPORT_SUPPLEMENTAL` (5), `TREATING_PHYSICIAN_REPORT_PR2` (2). These
+     are templates this release deliberately subclasses.
+   - **5 are `SUBPOENAED_RECORDS_MEDICAL`**, which the registry does *not*
+     cover. They moved because of the provider round-robin in item 4 — a
+     context key, not a template override. The substrate's
+     `SubpoenaedRecords._select_provider` has always read `provider_index`;
+     the engine path never set it, so every packet silently fell back to the
+     treating physician. Setting it correctly is the fix, and the fix changes
+     bytes. This is intended, not leakage.
+
+   The distinction matters: a byte change is acceptable when it is *named*.
+   Anything outside these two sources would be an unaccounted-for change and a
+   defect. There is none — a probe classifies all 28 by source and fails on any
+   remainder. One covered document was unchanged: a treating report on a case
+   with no surgery, which takes the substrate path verbatim by design.
+
+   That is structural rather than lucky. Every ledger draw is namespaced under
+   `facts:` via `derive_seed`, so it cannot perturb a stream an existing draw
+   consumes; the renderer re-seeds the global stream per document
+   (`render:{index}`), so a registered template's content cannot shift its
+   neighbours; and `_load_template` only consults the registry when a ledger is
+   present.
+
+2. **The registry-covered subtypes (nine).** `DIAGNOSTICS_IMAGING`,
+   `OPERATIVE_HOSPITAL_RECORDS`, `QME_COMPREHENSIVE_REPORT`,
+   `AME_COMPREHENSIVE_REPORT`, `QME_REPORT_INITIAL`, `QME_REPORT_SUPPLEMENTAL`,
+   `SUPPLEMENTAL_QME_AME_REPORT`, `TREATING_PHYSICIAN_REPORT_PR2`,
+   `TREATING_PHYSICIAN_REPORT_PR4`.
+
+3. **Surgery is resolved once, and `scenario.surgery` actually reaches the
+   plan.** `case_facts.resolve_has_surgery` is the single answer; both
+   `CaseParameters.has_surgery` (which gates whether operative documents are
+   planned) and the ledger (which decides what documents say) read it.
+
+   They used to be computed independently, and the review caught what that
+   allows: `performed` plus a false coin produced a ledger asserting an
+   operation with no operative record behind it, and `none` plus a true coin
+   left an operation rendered that the ledger denied. The headline knob reached
+   the prose and not the plan.
+
+   A seed that says nothing still gets the substrate's 35% coin off the same
+   `clinical` stream at the same position, reproducing the psych rule term for
+   term, so unspecified seeds keep their bytes. The coin is drawn even when the
+   scenario decides the answer, and discarded — skipping it would move every
+   later draw on that stream the moment a seed stated `surgery:`, turning a
+   content knob into a silent byte change across unrelated documents. A stated
+   value also beats the substrate's death/psych exclusions: refusing silently
+   would be the same defect in a different place.
+
+4. **Subpoenaed-records packets are now answered by different providers.**
+   Each packet takes `provider_index = packet_ordinal % len(providers)` over
+   the ledger's roster, which is sourced from `cast.case.prior_providers` — the
+   same list the substrate indexes into. Before this, a case with four record
+   subpoenas returned four packets from the same physician, which is not what
+   a subpoena to four custodians produces. This is the change behind the five
+   `SUBPOENAED_RECORDS_MEDICAL` documents in item 1.
+
+5. **One CPT per case, across every document that names it.** The ledger picks
+   from the substrate's own body-part-coherent pool
+   (`operative_record._select_surgical_cpts`), and the operative record, QME
+   and treating report are all pinned to that choice. Previously each drew
+   independently, so a case could be operated on at one spinal level and
+   followed up at another.
+
+6. **The manifest publishes only facts a document renders.** `caseFacts` used to
+   carry `wpi`, `pd`, `mmiDate`, `visits`, and a body part and date per
+   diagnostic — all derived, none rendered anywhere. A published fact reads as a
+   verified one, so publishing unrendered ones let the manifest state things its
+   own documents contradicted. The governed set is now declared in
+   `case_facts.GOVERNED_LEDGER_FIELDS` and asserted by test; the rest stay on
+   the model for later phases.
+
+   Diagnostics are also published one entry per *modality* rather than per
+   study, since without body parts two entries for the same modality with
+   opposite `performed` flags would read as a contradiction rather than as
+   "scanned one region, not the other".
+
+7. **`validate --out` now checks the ledger.** It requires `caseFacts` and
+   `case_facts.yaml`, cross-compares the two published copies, and enforces what
+   is visible from the output alone: modalities are legal vocabulary, no
+   modality is both performed and absent, no ungoverned field is published, a
+   performed surgery names a CPT, and no operative document sits in a case whose
+   ledger denies surgery. Malformed, missing and self-contradictory ledgers fail
+   rather than being skipped.
+
+8. **EMG is no longer assignable to an imaging report.** The imaging template
+   selects its technique paragraph from the exam type and falls through to
+   radiographic projections for anything it does not recognise, so a forced EMG
+   rendered a nerve conduction study in X-ray language. Derivation and
+   assignment are now restricted to `IMAGING_MODALITIES` (`mri`, `ct`, `xray`) —
+   the same treatment `labs` already had. EMG remains a ledger fact and the QME
+   still governs its presence and absence.
+
+### Known scope limits (Phase 1)
+
+Stated because the coherence harness asserts exactly what the code enforces and
+nothing wider.
+
+- **The absence rule is scoped to governed documents.** No `DIAGNOSTICS_IMAGING`
+  document reports a study the ledger calls absent; the QME *records* the
+  absence in its diagnostic review rather than silently omitting it; and the
+  QME's neurology exam drops its electrodiagnostic paragraph when the ledger
+  says no EMG was performed. That last one took a second override
+  (`_build_neuro_exam`) because it is a different method from the diagnostic
+  review — the absence rule was initially scoped around it, and closing it
+  properly was cheaper than documenting the hole.
+
+  It is still not asserted over *every* document: the substrate's AMA-guides
+  and narrative pools name modalities inside impairment language, which needs
+  its own overrides in Phase 2. Claiming the broader rule now would assert a
+  guarantee the code does not make.
+- **The treating-report rule is about the treatment plan.** A post-surgical case
+  gets a plan describing post-operative rehabilitation and naming the CPT. The
+  word "conservative" is not banned file-wide: it is legitimate in history and
+  pre-operative sections this override does not govern.
+- **`DIAGNOSTICS_IMAGING` governs modality, not date.** The document keeps its
+  planned date so filename, manifest and content stay consistent; the ledger
+  entry's date is informational until the planner learns to place imaging
+  documents on ledger dates.
+- **A performed surgery does not guarantee an operative document.** The
+  validator enforces the rule one way only — an operative record in a case whose
+  ledger denies surgery is a failure — because the converse is not a property of
+  this system. The substrate's lifecycle walk gates several rules on
+  `has_surgery` without ever guaranteeing an `OPERATIVE_HOSPITAL_RECORDS`
+  document, and two of the seven demo cases resolve surgery true while emitting
+  none, with no document controls and nothing unusual in the seed. That is a
+  real coherence gap and it belongs to the document set rather than the ledger;
+  asserting the biconditional here would only make `validate` red on this
+  package's own examples. Phase 2.
+- Phase 1 carries `surgery: none|performed` only. The ticket's `recommended` and
+  `denied_by_ur` need UR wiring that belongs with the treatment phase.
+- No adjuster/attorney personas, discovery-volume knobs, or treatment-gap
+  statuses — Phases 2-4.
+
+
 ### ⚠️ Compatibility — version bumped to 0.2.0
 
 `0.1.0` → `0.2.0`. The reproducibility guarantee is *bytes are stable within a
