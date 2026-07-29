@@ -42,6 +42,17 @@
 # clamped, and a file too short to hold its declared rhythm is warned about
 # rather than silently compressed.
 #
+# Known engine behaviour, not a property of this spec: a surgery CPT can name a
+# region the case did not injure. The substrate's `_select_surgical_cpts` pools
+# by rough region, and its spine pool mixes cervical and lumbar codes — so a
+# cervical-only case can draw `64483 Transforaminal epidural injection, lumbar`,
+# which is what `personas-cadence-sporadic` does with its *derived* surgery. It
+# reproduces on unmodified main: `castellanos-trial-recon-denied` in
+# examples/demo-caseload.yaml has body parts thoracic_spine and hip and draws
+# `62323 Lumbar epidural steroid injection`. Deliberately not worked around
+# here — a seed-level dodge would hide an engine defect behind a tidy example,
+# and the fix belongs in the CPT pool rather than in this file.
+#
 # @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 
 caseload_id: personas-showcase
