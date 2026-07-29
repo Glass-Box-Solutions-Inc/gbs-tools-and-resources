@@ -199,8 +199,10 @@ def normalize_control_keys(controls: DocumentControls, *, case_id: str) -> Docum
             problems.append(
                 f"{field}: {key!r} is not a classifier subtype or document type. "
                 "Only the 353 canonical subtypes, the 15 parent types, and substrate "
-                "keys with an unambiguous canonical equivalent may be named — "
-                "run `wc-caseload taxonomy --list` to see the vocabulary."
+                "keys with an unambiguous canonical equivalent may be named — run "
+                "`wc-caseload validate --spec <spec.yaml>` to see every offending key "
+                "in one pass, and `wc-caseload seed --template --kind caseload` for a "
+                "worked example of the controls."
             )
             return key
         if canonical != key:

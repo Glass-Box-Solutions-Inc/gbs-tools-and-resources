@@ -23,6 +23,7 @@ from typing import Any, get_args
 
 import pytest
 
+import wc_caseload_engine
 from conftest import extract_text, requires_substrate
 from wc_caseload_engine.case_facts import (
     SUBSTRATE_STATUS_PHRASES,
@@ -31,6 +32,7 @@ from wc_caseload_engine.case_facts import (
     SurgeryFact,
     _derive_visits,
 )
+from wc_caseload_engine.cli import cli
 from wc_caseload_engine.fact_templates import (
     _SUBSTRATE_HISTORY_IMAGING as SUBSTRATE_HISTORY_IMAGING,
 )
@@ -934,6 +936,60 @@ class TestEveryActionableMessageResolvesWhenFollowed:
             scenario={"treatment": {"status": "never_treated"}, "surgery": "none"},
         )
         assert seed.scenario.surgery == "none"
+
+    def test_every_cli_invocation_in_the_source_is_real(self) -> None:
+        """A message that tells the author to run a command that does not exist.
+
+        ``planner.py`` sent anyone with a bad control key to
+        ``wc-caseload taxonomy --list``. There is no ``taxonomy`` command and no
+        ``--list`` flag anywhere in the CLI, so the one instruction attached to
+        the error was a dead end — the same class as the ``decision: denied``
+        suggestion, and invisible for the same reason: nothing executes the
+        text of an error message.
+
+        Scanned statically across the whole package rather than asserted on the
+        messages I happen to know about, because the ones I know about are not
+        the ones that rot.
+        """
+        # An *invocation*, not every mention. The string also appears in prose —
+        # ``# wc-caseload case facts — the resolved clinical ledger`` heads the
+        # YAML artifact — so a bare-words match would flag English. A real
+        # invocation is either quoted for the reader, or carries a flag.
+        pattern = re.compile(
+            r"(?:`+wc-caseload ([a-z][a-z-]*)((?: --[a-z][a-z-]*)*)"
+            r"|wc-caseload ([a-z][a-z-]*)((?: --[a-z][a-z-]*)+))"
+        )
+        root = Path(wc_caseload_engine.__file__).parent
+        problems: list[str] = []
+
+        for path in sorted(root.rglob("*.py")):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                for quoted_cmd, quoted_flags, bare_cmd, bare_flags in pattern.findall(line):
+                    command = quoted_cmd or bare_cmd
+                    flags = quoted_flags or bare_flags
+                    where = f"{path.name}:{number}"
+                    if command not in cli.commands:
+                        problems.append(
+                            f"{where}: names `wc-caseload {command}`, which is not a "
+                            f"command (have: {', '.join(sorted(cli.commands))})"
+                        )
+                        continue
+                    known = {
+                        opt
+                        for param in cli.commands[command].params
+                        for opt in param.opts
+                        if opt.startswith("--")
+                    }
+                    for flag in flags.split():
+                        if flag not in known:
+                            problems.append(
+                                f"{where}: `wc-caseload {command} {flag}` is not a flag "
+                                f"of that command (have: {', '.join(sorted(known))})"
+                            )
+
+        assert not problems, "source text names CLI surface that does not exist:\n" + "\n".join(
+            problems
+        )
 
     def test_following_the_never_treated_lien_message_works(self) -> None:
         """The message names edd/ambulance/attorney_costs/self_procured as safe."""
