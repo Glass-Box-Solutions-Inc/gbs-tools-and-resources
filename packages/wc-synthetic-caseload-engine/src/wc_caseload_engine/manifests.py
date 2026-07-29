@@ -36,6 +36,7 @@ import structlog
 
 from wc_caseload_engine import __version__
 from wc_caseload_engine.case_facts import (
+    DILIGENCES,
     GOVERNED_LEDGER_FIELDS,
     MODALITIES,
     TREATMENT_STATUSES,
@@ -484,6 +485,39 @@ def _validate_case_facts(
             )
         else:
             seen[modality] = performed
+
+    adjuster = block.get("adjuster")
+    if not isinstance(adjuster, dict):
+        problems.append(f"{case_label}: caseFacts.adjuster is not a mapping")
+    else:
+        extra = set(adjuster) - set(GOVERNED_LEDGER_FIELDS["adjuster"])
+        if extra:
+            problems.append(
+                f"{case_label}: caseFacts.adjuster publishes ungoverned field(s) "
+                f"{sorted(extra)}"
+            )
+        if adjuster.get("diligence") not in DILIGENCES:
+            problems.append(
+                f"{case_label}: caseFacts.adjuster.diligence is "
+                f"{adjuster.get('diligence')!r}, not one of {', '.join(DILIGENCES)}"
+            )
+        # The rule the penalty petition is gated on, checkable from the output
+        # alone: a pleading alleging unreasonable delay needs a delay behind it.
+        late = adjuster.get("lateBenefitEvents") or 0
+        has_petition = any(
+            isinstance(d, dict) and d.get("subtype") == "PETITION_FOR_PENALTIES"
+            for d in documents
+        )
+        if has_petition and not late:
+            problems.append(
+                f"{case_label}: the case pleads LC 5814 penalties but caseFacts "
+                "records no late benefit event to support it"
+            )
+        if bool(late) != bool(adjuster.get("maxDaysLate")):
+            problems.append(
+                f"{case_label}: caseFacts.adjuster has {late} late event(s) but "
+                f"maxDaysLate {adjuster.get('maxDaysLate')!r}"
+            )
 
     treatment = block.get("treatment")
     if not isinstance(treatment, dict):

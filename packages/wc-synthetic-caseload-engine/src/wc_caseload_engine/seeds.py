@@ -761,18 +761,73 @@ class TreatmentScenario(_Model):
     """Ledger roster size. ``None`` takes the substrate case's own provider list."""
 
 
+class AdjusterScenario(_Model):
+    """How diligently the claims administrator handled the file.
+
+    The axis a delay-and-penalty file turns on. ``attentive`` pays and notices
+    early inside the statutory windows; ``ordinary`` uses most of them;
+    ``negligent`` can miss them, and when it does the lateness becomes a ledger
+    fact with the days recorded — which is what lets the LC 5814 penalty
+    petition be *earned* rather than coin-flipped.
+    """
+
+    diligence: Literal["attentive", "ordinary", "negligent"] | None = None
+    """``None`` means *derive it* on the ``facts:`` namespace."""
+
+
+class AttorneyScenario(_Model):
+    """How often applicant's counsel wrote to the client.
+
+    ``every_30_days`` is the diligent practice; ``event_driven`` writes when
+    something happened and is silent otherwise; ``sporadic`` is the file with a
+    three-month hole in the correspondence that opposing counsel will notice.
+    """
+
+    cadence: Literal["every_30_days", "event_driven", "sporadic"] | None = None
+    """``None`` means *derive it* on the ``facts:`` namespace."""
+
+
+class PageRange(_Model):
+    """Inclusive page-count bounds for one subpoenaed-records packet."""
+
+    min: int = Field(default=15, ge=1, le=2000)
+    max: int = Field(default=45, ge=1, le=2000)
+
+    @model_validator(mode="after")
+    def _min_does_not_exceed_max(self) -> PageRange:
+        if self.min > self.max:
+            raise ValueError(
+                f"scenario.discovery.pages_per_set has min {self.min} greater than max "
+                f"{self.max} — a packet cannot hold fewer pages than its own floor. "
+                "Swap the two values, or raise max to at least the min."
+            )
+        return self
+
+
+class DiscoveryScenario(_Model):
+    """How much paper the discovery phase produced."""
+
+    subpoena_sets: int | None = Field(default=None, ge=0, le=24)
+    """Records packets to emit. ``None`` leaves the lifecycle walk's own count."""
+
+    pages_per_set: PageRange = Field(default_factory=PageRange)
+    """Declared page volume per packet, drawn once and used by both the table of
+    contents and the rendered body — see ``fact_templates``."""
+
+
 class ScenarioSpec(_Model):
     """Seed-surfaced case facts.
 
     The axes of real-file variability this engine can currently *render*
     coherently. Deliberately small: an axis in the schema that no template
     honours is worse than an absent one, because it reads as a promise.
-    Adjuster diligence, attorney cadence and discovery volume are named in
-    AJC-37 and land in later phases.
     """
 
     diagnostics: DiagnosticsScenario = Field(default_factory=DiagnosticsScenario)
     treatment: TreatmentScenario = Field(default_factory=TreatmentScenario)
+    adjuster: AdjusterScenario = Field(default_factory=AdjusterScenario)
+    attorney: AttorneyScenario = Field(default_factory=AttorneyScenario)
+    discovery: DiscoveryScenario = Field(default_factory=DiscoveryScenario)
     surgery: Literal["none", "performed", "recommended", "denied_by_ur"] | None = None
     """``None`` means *derive it* — preserving the substrate's 35% coin exactly.
 
@@ -1832,8 +1887,10 @@ __all__ = [
     "RESOLVED_RUNWAY_DAYS",
     "STAGE_RUNWAY_DAYS",
     "TREATMENT_LIEN_CLAIMANTS",
+    "AdjusterScenario",
     "ApplicantProfile",
     "AttorneyProfile",
+    "AttorneyScenario",
     "AutoSpec",
     "BodyPart",
     "CarrierProfile",
@@ -1842,6 +1899,7 @@ __all__ = [
     "CaseloadSpec",
     "DiagnosticEntry",
     "DiagnosticsScenario",
+    "DiscoveryScenario",
     "DistributionProfile",
     "DocumentControls",
     "DocumentOverride",
@@ -1850,6 +1908,7 @@ __all__ = [
     "LienSpec",
     "LifecycleSpec",
     "OutputSpec",
+    "PageRange",
     "PhysicianProfile",
     "ReconsiderationSpec",
     "ResolutionSpec",

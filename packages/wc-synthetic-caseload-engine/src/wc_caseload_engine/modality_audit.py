@@ -22,7 +22,23 @@ worse than no table.
 
 from __future__ import annotations
 
+import re
 from typing import Literal, NamedTuple
+
+#: The modality vocabulary the audit greps for, owned here rather than in the
+#: test that consumes it.
+#:
+#: **Case-insensitive on purpose.** The first version was case-sensitive and so
+#: matched ``EMG`` but not ``emg``, ``MRI`` but not ``mri``, "Electrodiagnostic"
+#: but not "nerve conduction studies" at the start of a sentence. Six real sites
+#: were invisible to it — including ``diagnostic_report.py:69``, a line inside a
+#: template this package already governs. An audit that misses lines in a file
+#: it has a row for is worse than no audit, because the row reads as coverage.
+MODALITY_PATTERN = re.compile(
+    r"\b(MRI|CT scan|X-[Rr]ay|X-rays|EMG|NCV|nerve conduction|[Ee]lectrodiagnostic"
+    r"|radiograph[a-z]*)\b",
+    re.IGNORECASE,
+)
 
 
 class ModalitySite(NamedTuple):
@@ -97,6 +113,43 @@ MODALITY_SITES: tuple[ModalitySite, ...] = (
         "Advanced MRI & CT Center",
         "documented",
         "a facility name, not a claim that a study happened",
+    ),
+    ModalitySite(
+        "pdf_templates/medical/diagnostic_report.py",
+        "Radiographic examination of the",
+        "governed",
+        "the TECHNIQUE else-branch, downstream of the forced exam_type — it "
+        "renders exactly when the ledger says X-Ray. Surfaced only once the "
+        "audit pattern went case-insensitive (ISC-128)",
+    ),
+    # -- Surfaced by the case-insensitive pattern (ISC-128) ------------------
+    ModalitySite(
+        "data/content_pools.py",
+        "Nerve conduction studies",
+        "documented",
+        "exam-findings pool shared across templates; needs a per-draw ledger "
+        "channel rather than a template override — Phase 3 deferral",
+    ),
+    ModalitySite(
+        "data/wc_constants.py",
+        "emg_ncv",
+        "documented",
+        "a CPT code table keyed by study type — billing vocabulary, not an "
+        "assertion that this applicant had the study",
+    ),
+    ModalitySite(
+        "pdf_templates/discovery/subpoenaed_records.py",
+        'elif modality == "CT SCAN"',
+        "documented",
+        "the prior-provider imaging branch — same reason as the rows above: "
+        "records predating this claim, which the ledger does not model",
+    ),
+    ModalitySite(
+        "pdf_templates/medical/billing_records.py",
+        "'imaging', 'x-ray', 'mri', 'ct'",
+        "documented",
+        "a substring test that categorises a billing line item; it reads a "
+        "description rather than asserting a study occurred",
     ),
     ModalitySite(
         "pdf_templates/medical/qme_ame_report.py",
@@ -268,6 +321,7 @@ def is_excluded(path: str) -> bool:
 
 __all__ = [
     "EXCLUDED_PATHS",
+    "MODALITY_PATTERN",
     "MODALITY_SITES",
     "ModalitySite",
     "is_excluded",

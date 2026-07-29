@@ -409,9 +409,46 @@ POST_DISCHARGE_FORBIDDEN: frozenset[str] = frozenset(
 OPERATIVE_SUBTYPES: frozenset[str] = frozenset({"OPERATIVE_HOSPITAL_RECORDS"})
 
 
+def _penalty_candidates(
+    facts: CaseFacts, timeline: CaseTimeline
+) -> list[tuple[date, str, str, str]]:
+    """The LC 5814 penalty petition, emitted only when a benefit was late.
+
+    The substrate's own rule is a flat 10% coin with no condition, so one file
+    in ten pleaded an unreasonable delay in payment whether or not anything had
+    been delayed — a pleading with no facts under it. The subtype is stripped
+    from the walk (``PENALTY_OWNED_SUBTYPES``) and emitted here instead, gated
+    on the ledger.
+
+    The gate reads ``CaseFacts.late_benefit_events``, which is the *resolved*
+    lateness — derived from the resolved diligence, not from whatever the seed
+    happened to declare. A seed that says nothing about the adjuster still gets
+    a derived diligence, and a derived-negligent file earns its petition exactly
+    as a stated one does.
+
+    Dated after the latest late event rather than off a uniform window: the
+    petition is a response to the delay, so it cannot predate the delay it
+    complains about.
+    """
+    if not facts.late_benefit_events:
+        return []
+
+    latest = max(event.actual_date for event in facts.late_benefit_events)
+    filed = getattr(timeline, "application_filed_date", None)
+    when = max(latest, filed) if filed is not None else latest
+    when = when + timedelta(days=30)
+
+    horizon = getattr(timeline, "resolution_date", None) or filed
+    if horizon is not None and when > horizon:
+        when = horizon
+
+    return [(when, "PETITION_FOR_PENALTIES", TRACK_CORE, "applicant_attorney")]
+
+
 def _shape_for_scenario(
     seed: CaseSeed,
     timeline: CaseTimeline,
+    facts: CaseFacts,
     dated: list[tuple[date, str, str, str]],
 ) -> tuple[list[tuple[date, str, str, str]], tuple[str, ...]]:
     """Apply the seed's treatment and surgery scenario to the candidate set.
@@ -455,7 +492,6 @@ def _shape_for_scenario(
         shaped = kept
 
     if status == "discharged":
-        facts = derive_case_facts(seed, timeline)
         discharge = facts.discharge_date
         if discharge is not None:
             after = [
@@ -478,7 +514,6 @@ def _shape_for_scenario(
     if scenario.surgery == "performed" and not any(
         entry[1] in OPERATIVE_SUBTYPES for entry in shaped
     ):
-        facts = derive_case_facts(seed, timeline)
         when = facts.surgery.date or timeline.injury_date + timedelta(days=210)
         shaped.append((when, "OPERATIVE_HOSPITAL_RECORDS", TRACK_CORE, "treating_physician"))
 
@@ -568,7 +603,13 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
             for extra in _synthesize_dates(seed, timeline, entry.subtype, available, shortfall):
                 dated.append((extra, entry.subtype, track, role))
 
-    dated, scenario_warnings = _shape_for_scenario(seed, timeline, dated)
+    # Derived once and threaded through. Each of these helpers used to derive
+    # its own copy, which put four full derivations on every plan build and
+    # took the suite from 155s to over 600s. Identical output either way —
+    # derivation is pure — so this is cost, not correctness.
+    planning_facts = derive_case_facts(seed, timeline)
+    dated.extend(_penalty_candidates(planning_facts, timeline))
+    dated, scenario_warnings = _shape_for_scenario(seed, timeline, planning_facts, dated)
     dated.sort(key=lambda item: (item[0], item[1], item[2]))
 
     documents: list[PlannedDocument] = []

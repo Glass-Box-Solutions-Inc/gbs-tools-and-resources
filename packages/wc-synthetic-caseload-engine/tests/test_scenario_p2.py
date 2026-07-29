@@ -46,7 +46,12 @@ from wc_caseload_engine.manifests import (
 from wc_caseload_engine.manifests import (
     OPERATIVE_SUBTYPES as MANIFEST_OPERATIVE_SUBTYPES,
 )
-from wc_caseload_engine.modality_audit import MODALITY_SITES, is_excluded, sites_for
+from wc_caseload_engine.modality_audit import (
+    MODALITY_PATTERN,
+    MODALITY_SITES,
+    is_excluded,
+    sites_for,
+)
 from wc_caseload_engine.planner import (
     NEVER_TREATED_SUPPRESSED_TYPES,
     NEVER_TREATED_TIER,
@@ -609,12 +614,6 @@ class TestOverridingASubstrateExclusionWarns:
 # ---------------------------------------------------------------------------
 # ISC-112 — the modality audit table
 # ---------------------------------------------------------------------------
-
-MODALITY_PATTERN = re.compile(
-    r"\b(MRI|CT scan|X-[Rr]ay|X-rays|EMG|NCV|nerve conduction|[Ee]lectrodiagnostic"
-    r"|radiograph[a-z]*)\b"
-)
-
 
 def _substrate_modality_hits() -> dict[str, list[tuple[int, str]]]:
     """Every substrate line naming a modality, keyed by substrate-relative path."""

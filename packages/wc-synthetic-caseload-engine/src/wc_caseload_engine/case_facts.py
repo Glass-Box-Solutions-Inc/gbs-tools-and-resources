@@ -189,6 +189,26 @@ class VisitFact(BaseModel):
     kind: Literal["initial", "follow_up", "post_operative", "final"] = "follow_up"
 
 
+class LateBenefitEvent(BaseModel):
+    """A benefit notice or payment that missed its statutory window.
+
+    Recorded rather than inferred. The LC 5814 penalty petition is gated on
+    this list being non-empty, so "was the administrator late" has to be a fact
+    the ledger holds, not a coin the planner flips — otherwise the file can
+    contain a penalty petition alleging a delay that never happened, which is
+    what the substrate's flat 10% rule produced.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: str
+    """Which obligation was missed — a key of :data:`BENEFIT_NOTICE_WINDOWS`."""
+
+    due_date: dt.date
+    actual_date: dt.date
+    days_late: int = Field(ge=1)
+
+
 class CaseFacts(BaseModel):
     """What clinically happened in one case, decided once.
 
@@ -205,6 +225,11 @@ class CaseFacts(BaseModel):
     visits: tuple[VisitFact, ...] = ()
     treatment_status: Literal["ongoing", "discharged", "gap", "never_treated"] = "ongoing"
     trajectory: Literal["improving", "plateau", "worsening"] = "plateau"
+    adjuster_diligence: Literal["attentive", "ordinary", "negligent"] = "ordinary"
+    attorney_cadence: Literal["every_30_days", "event_driven", "sporadic"] = "event_driven"
+    late_benefit_events: tuple[LateBenefitEvent, ...] = ()
+    adjuster_letter_types_allowed: frozenset[str] = frozenset()
+    """Letter contents this case's lifecycle can support — see ``ADJUSTER_LETTER_TYPES``."""
     mmi_date: dt.date | None = None
     wpi: int | None = None
     pd: int | None = None
@@ -403,6 +428,160 @@ TRAJECTORIES: tuple[str, ...] = ("improving", "plateau", "worsening")
 
 #: The treatment arcs a seed may state, and the ledger may publish.
 TREATMENT_STATUSES: tuple[str, ...] = ("ongoing", "discharged", "gap", "never_treated")
+
+
+#: Statutory windows, in days from the anchoring event, for the benefit
+#: obligations this engine models.
+#:
+#: These are the deadlines a delay-and-penalty file is argued over. Days from
+#: the date of injury unless noted; the citation is in the comment because a
+#: number in a table with no authority behind it is a number somebody will
+#: change.
+BENEFIT_NOTICE_WINDOWS: dict[str, int] = {
+    "claim_form_provided": 1,  # LC 5401(a) — one working day from notice of injury
+    "first_td_payment": 14,  # LC 4650(a) — 14 days from knowledge of injury
+    "delay_notice": 14,  # CCR 9812(f) — 14 days to notify of a delayed decision
+    "claim_decision": 90,  # LC 5402(b) — presumption of compensability at 90 days
+    "first_pd_payment": 14,  # LC 4650(b) — 14 days after the last TD payment
+}
+
+#: How much of each statutory window a given diligence typically consumes.
+#:
+#: The bands are the persona. ``attentive`` acts in the first part of the
+#: window; ``ordinary`` uses most of it and can graze the edge; ``negligent``
+#: routinely overruns, and the overrun is what becomes a
+#: :class:`LateBenefitEvent`. Note ``ordinary`` reaches 1.0 but not past it —
+#: an ordinary administrator is late only at the boundary, never grossly.
+DILIGENCE_WINDOW_FRACTIONS: dict[str, tuple[float, float]] = {
+    "attentive": (0.10, 0.55),
+    "ordinary": (0.45, 1.00),
+    "negligent": (0.70, 2.60),
+}
+
+DILIGENCES: tuple[str, ...] = ("attentive", "ordinary", "negligent")
+
+#: Weights for deriving diligence when the seed does not state one.
+#:
+#: Deliberately not uniform. Most claims files are handled competently, and a
+#: corpus where a third of administrators are negligent would train a reader to
+#: expect penalties everywhere.
+DILIGENCE_WEIGHTS: tuple[tuple[str, int], ...] = (
+    ("attentive", 3),
+    ("ordinary", 5),
+    ("negligent", 2),
+)
+
+CADENCES: tuple[str, ...] = ("every_30_days", "event_driven", "sporadic")
+
+CADENCE_WEIGHTS: tuple[tuple[str, int], ...] = (
+    ("every_30_days", 3),
+    ("event_driven", 4),
+    ("sporadic", 3),
+)
+
+#: Every content type the adjuster-letter template can render.
+#:
+#: Named for the substrate's own private methods
+#: (``AdjusterLetter._initial_acceptance`` and friends), because the override
+#: recognises the draw by matching that exact list of bound methods. If the
+#: substrate's list moves, the shim must stop firing loudly rather than
+#: silently reverting to a free draw.
+ADJUSTER_LETTER_TYPES: tuple[str, ...] = (
+    "initial_acceptance",
+    "pd_advance_offer",
+    "settlement_discussion",
+    "medical_records_request",
+    "ur_decision",
+)
+
+
+def _weighted(rng: random.Random, weights: tuple[tuple[str, int], ...]) -> str:
+    """Pick one weighted option off *rng*, without importing a helper."""
+    total = sum(weight for _name, weight in weights)
+    roll = rng.randrange(total)
+    for name, weight in weights:
+        roll -= weight
+        if roll < 0:
+            return name
+    return weights[-1][0]
+
+
+def resolve_adjuster_diligence(seed: CaseSeed) -> str:
+    """How diligently this file's administrator behaved. **The** answer.
+
+    Resolved once, like surgery and treatment status, because three consumers
+    depend on it and must not disagree: the benefit-notice date draws, the
+    correspondence density, and the penalty-petition gate. Unspecified derives
+    on the ``facts:`` namespace, so it can never perturb a stream an existing
+    document reads.
+    """
+    return seed.scenario.adjuster.diligence or _weighted(
+        _rng(seed, "adjuster"), DILIGENCE_WEIGHTS
+    )
+
+
+def resolve_attorney_cadence(seed: CaseSeed) -> str:
+    """How often counsel wrote to the client. **The** answer."""
+    return seed.scenario.attorney.cadence or _weighted(_rng(seed, "attorney"), CADENCE_WEIGHTS)
+
+
+def _derive_late_benefit_events(
+    seed: CaseSeed, timeline: Any, diligence: str
+) -> tuple[LateBenefitEvent, ...]:
+    """Which statutory obligations this administrator missed, and by how long.
+
+    Each window is drawn once against the diligence band. A draw past 1.0 of
+    the window is late, and the overrun is recorded rather than recomputed —
+    the penalty petition, the delay chain and the manifest all read the same
+    number, so a file cannot allege 40 days of delay in one document and 12 in
+    another.
+    """
+    onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
+    horizon = getattr(timeline, "resolution_date", None) or getattr(
+        timeline, "application_filed_date", None
+    )
+    low, high = DILIGENCE_WINDOW_FRACTIONS[diligence]
+    rng = _rng(seed, "benefits")
+
+    events: list[LateBenefitEvent] = []
+    for kind, window in BENEFIT_NOTICE_WINDOWS.items():
+        due = onset + timedelta(days=window)
+        actual_days = round(window * rng.uniform(low, high))
+        actual = onset + timedelta(days=actual_days)
+        if horizon is not None and actual > horizon:
+            # A notice that would land past the file's own horizon is not a
+            # late notice, it is a notice this case never reached. Clamping it
+            # to the horizon would manufacture lateness out of a short runway.
+            continue
+        days_late = (actual - due).days
+        if days_late > 0:
+            events.append(
+                LateBenefitEvent(
+                    kind=kind, due_date=due, actual_date=actual, days_late=days_late
+                )
+            )
+    return tuple(events)
+
+
+def _derive_allowed_letter_types(seed: CaseSeed) -> frozenset[str]:
+    """Which adjuster-letter contents this case's lifecycle can support.
+
+    The substrate drew a letter type per document from all five, so a case with
+    no UR dispute still received a UR-decision letter, and a file could hold
+    three separate letters each announcing that the claim had been accepted for
+    the first time.
+    """
+    # Always available: a records request fits any open claim, and an
+    # acceptance letter exists on every file that was not denied outright.
+    allowed = {"medical_records_request"}
+    if seed.lifecycle.claim_response != "denied":
+        allowed.add("initial_acceptance")
+    if seed.lifecycle.ur_dispute.enabled:
+        allowed.add("ur_decision")
+    if seed.lifecycle.resolution.type != "none":
+        allowed.add("settlement_discussion")
+        allowed.add("pd_advance_offer")
+    return frozenset(allowed)
 
 
 def resolve_treatment_status(seed: CaseSeed) -> str:
@@ -682,6 +861,9 @@ def derive_case_facts(seed: CaseSeed, timeline: Any, cast: Any = None) -> CaseFa
         A frozen :class:`CaseFacts`. Derivation is pure: same seed, same facts.
     """
     status = resolve_treatment_status(seed)
+    diligence = resolve_adjuster_diligence(seed)
+    cadence = resolve_attorney_cadence(seed)
+    late_events = _derive_late_benefit_events(seed, timeline, diligence)
     diagnostics = _derive_diagnostics(seed, timeline)
     surgery = _derive_surgery(seed, timeline)
     providers = _derive_providers(seed, cast, status)
@@ -703,6 +885,10 @@ def derive_case_facts(seed: CaseSeed, timeline: Any, cast: Any = None) -> CaseFa
         visits=visits,
         treatment_status=status,  # type: ignore[arg-type]
         trajectory=trajectory,  # type: ignore[arg-type]
+        adjuster_diligence=diligence,  # type: ignore[arg-type]
+        attorney_cadence=cadence,  # type: ignore[arg-type]
+        late_benefit_events=late_events,
+        adjuster_letter_types_allowed=_derive_allowed_letter_types(seed),
         mmi_date=mmi,
         wpi=wpi,
         pd=pd,
@@ -748,6 +934,23 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
     ]
 
     return {
+        # Published because a document honours it: the LC 5814 petition exists
+        # if and only if ``lateBenefitEvents`` is non-zero, so a reader holding
+        # the manifest can check the pleading against the fact behind it.
+        #
+        # ``attorney_cadence`` and ``adjuster_letter_types_allowed`` are
+        # deliberately *not* here. They are resolved on the ledger but no
+        # template consumes them yet, and a published fact reads as a verified
+        # one — the Phase-2 rule, applied to this phase's own new fields.
+        "adjuster": {
+            "diligence": facts.adjuster_diligence,
+            "lateBenefitEvents": len(facts.late_benefit_events),
+            "maxDaysLate": (
+                max(event.days_late for event in facts.late_benefit_events)
+                if facts.late_benefit_events
+                else 0
+            ),
+        },
         "treatment": {
             "status": facts.treatment_status,
             "trajectory": facts.trajectory,
@@ -780,6 +983,7 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
 #: out of the output, because publishing them would let the manifest state
 #: things its own documents contradict.
 GOVERNED_LEDGER_FIELDS: dict[str, tuple[str, ...]] = {
+    "adjuster": ("diligence", "lateBenefitEvents", "maxDaysLate"),
     "treatment": ("status", "trajectory", "dischargeDate", "gapStart", "gapEnd"),
     "diagnostics": ("modality", "display", "performed"),
     "surgery": ("status", "cptCode", "cptDescription"),
@@ -788,6 +992,13 @@ GOVERNED_LEDGER_FIELDS: dict[str, tuple[str, ...]] = {
 
 
 __all__ = [
+    "ADJUSTER_LETTER_TYPES",
+    "BENEFIT_NOTICE_WINDOWS",
+    "CADENCES",
+    "CADENCE_WEIGHTS",
+    "DILIGENCES",
+    "DILIGENCE_WEIGHTS",
+    "DILIGENCE_WINDOW_FRACTIONS",
     "GOVERNED_LEDGER_FIELDS",
     "IMAGING_MODALITIES",
     "MODALITIES",
@@ -799,12 +1010,15 @@ __all__ = [
     "TREATMENT_STATUSES",
     "CaseFacts",
     "DiagnosticFact",
+    "LateBenefitEvent",
     "Modality",
     "ProviderFact",
     "SurgeryFact",
     "VisitFact",
     "derive_case_facts",
     "facts_manifest_block",
+    "resolve_adjuster_diligence",
+    "resolve_attorney_cadence",
     "resolve_surgery_status",
     "resolve_treatment_status",
 ]
