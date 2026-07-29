@@ -35,24 +35,44 @@ case to agree with itself.
   overlap check is body-part aware, because a study performed on one region and
   absent on another is coherent, not a clash.
 
-- **Fact-aware template registry.** `FACT_AWARE_TEMPLATES` maps eight subtypes to
+- **Fact-aware template registry.** `FACT_AWARE_TEMPLATES` maps nine subtypes to
   engine-owned subclasses that override the narrowest method rolling the
   offending draw and delegate everything else to the substrate, which stays
-  read-only. Unregistered subtypes take the original dispatch unchanged.
+  read-only. Unregistered subtypes take the original dispatch unchanged, and
+  the manifest keeps naming the substrate class — the subclass renders the same
+  document, it is not different provenance.
+
+- **Determinism re-verified at this version.** The demo caseload generated
+  three times — twice under UTC, once under `TZ=Australia/Sydney` — produced
+  331 files with an identical tree digest (`603fd9f6…`) and zero differing
+  files across all three pairs.
 
 ### ⚠️ Compatibility — version bumped to 0.3.0
 
 `0.2.0` → `0.3.0`. Bytes are stable within a version (and within a
 `substrateSha` — see README), and this release moves some.
 
-1. **Only registry-covered subtypes change.** Measured by regenerating the demo
+1. **Two sources move bytes, and only two.** Measured by regenerating the demo
    caseload at `867ea88` (the merged 0.2.0 tree) and at this commit: 331
-   documents both times, identical filenames, **308 byte-identical**. All 23
-   that changed are registry-covered subtypes — `QME_REPORT_INITIAL`,
-   `QME_REPORT_SUPPLEMENTAL`, `TREATING_PHYSICIAN_REPORT_PR2`. **Zero
-   uncovered documents moved.** One covered document was also unchanged: a
-   treating report on a case with no surgery, which takes the substrate path
-   verbatim by design.
+   documents both times, identical filenames, **303 byte-identical, 28
+   changed**. Every one of the 28 traces to a source declared below:
+
+   - **23 are registry-covered** — `QME_REPORT_INITIAL` (16),
+     `QME_REPORT_SUPPLEMENTAL` (5), `TREATING_PHYSICIAN_REPORT_PR2` (2). These
+     are templates this release deliberately subclasses.
+   - **5 are `SUBPOENAED_RECORDS_MEDICAL`**, which the registry does *not*
+     cover. They moved because of the provider round-robin in item 4 — a
+     context key, not a template override. The substrate's
+     `SubpoenaedRecords._select_provider` has always read `provider_index`;
+     the engine path never set it, so every packet silently fell back to the
+     treating physician. Setting it correctly is the fix, and the fix changes
+     bytes. This is intended, not leakage.
+
+   The distinction matters: a byte change is acceptable when it is *named*.
+   Anything outside these two sources would be an unaccounted-for change and a
+   defect. There is none — a probe classifies all 28 by source and fails on any
+   remainder. One covered document was unchanged: a treating report on a case
+   with no surgery, which takes the substrate path verbatim by design.
 
    That is structural rather than lucky. Every ledger draw is namespaced under
    `facts:` via `derive_seed`, so it cannot perturb a stream an existing draw
@@ -61,10 +81,11 @@ case to agree with itself.
    neighbours; and `_load_template` only consults the registry when a ledger is
    present.
 
-2. **The registry-covered subtypes.** `DIAGNOSTICS_IMAGING`,
-   `QME_COMPREHENSIVE_REPORT`, `AME_COMPREHENSIVE_REPORT`, `QME_REPORT_INITIAL`,
-   `QME_REPORT_SUPPLEMENTAL`, `SUPPLEMENTAL_QME_AME_REPORT`,
-   `TREATING_PHYSICIAN_REPORT_PR2`, `TREATING_PHYSICIAN_REPORT_PR4`.
+2. **The registry-covered subtypes (nine).** `DIAGNOSTICS_IMAGING`,
+   `OPERATIVE_HOSPITAL_RECORDS`, `QME_COMPREHENSIVE_REPORT`,
+   `AME_COMPREHENSIVE_REPORT`, `QME_REPORT_INITIAL`, `QME_REPORT_SUPPLEMENTAL`,
+   `SUPPLEMENTAL_QME_AME_REPORT`, `TREATING_PHYSICIAN_REPORT_PR2`,
+   `TREATING_PHYSICIAN_REPORT_PR4`.
 
 3. **Surgery parity is preserved, deliberately.** A seed that says nothing about
    surgery still gets the substrate's 35% coin, read off the same `clinical`
@@ -73,19 +94,38 @@ case to agree with itself.
    that flipped its own coin could describe surgery the planned document set
    does not contain, or the reverse.
 
+4. **Subpoenaed-records packets are now answered by different providers.**
+   Each packet takes `provider_index = packet_ordinal % len(providers)` over
+   the ledger's roster, which is sourced from `cast.case.prior_providers` — the
+   same list the substrate indexes into. Before this, a case with four record
+   subpoenas returned four packets from the same physician, which is not what
+   a subpoena to four custodians produces. This is the change behind the five
+   `SUBPOENAED_RECORDS_MEDICAL` documents in item 1.
+
+5. **One CPT per case, across every document that names it.** The ledger picks
+   from the substrate's own body-part-coherent pool
+   (`operative_record._select_surgical_cpts`), and the operative record, QME
+   and treating report are all pinned to that choice. Previously each drew
+   independently, so a case could be operated on at one spinal level and
+   followed up at another.
+
 ### Known scope limits (Phase 1)
 
 Stated because the coherence harness asserts exactly what the code enforces and
 nothing wider.
 
 - **The absence rule is scoped to governed documents.** No `DIAGNOSTICS_IMAGING`
-  document reports a study the ledger calls absent, and the QME *records* the
-  absence in its diagnostic review rather than silently omitting it. It is not
-  asserted over every document: a QME's neurology exam builds its
-  electrodiagnostic paragraph in `_build_neurology_exam`, a different method
-  from the one this phase overrides, and the substrate's AMA-guides and
-  narrative pools name modalities in impairment language. Those need their own
-  overrides — Phase 2 — and claiming the broader rule now would assert a
+  document reports a study the ledger calls absent; the QME *records* the
+  absence in its diagnostic review rather than silently omitting it; and the
+  QME's neurology exam drops its electrodiagnostic paragraph when the ledger
+  says no EMG was performed. That last one took a second override
+  (`_build_neuro_exam`) because it is a different method from the diagnostic
+  review — the absence rule was initially scoped around it, and closing it
+  properly was cheaper than documenting the hole.
+
+  It is still not asserted over *every* document: the substrate's AMA-guides
+  and narrative pools name modalities inside impairment language, which needs
+  its own overrides in Phase 2. Claiming the broader rule now would assert a
   guarantee the code does not make.
 - **The treating-report rule is about the treatment plan.** A post-surgical case
   gets a plan describing post-operative rehabilitation and naming the CPT. The

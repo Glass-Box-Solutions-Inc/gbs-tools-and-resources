@@ -50,16 +50,17 @@ class _ForcedChoice:
     and still guarantees the answer.
     """
 
-    __slots__ = ("_display", "fired")
+    __slots__ = ("_answer", "_matches", "fired")
 
-    def __init__(self, display: str) -> None:
-        self._display = display
+    def __init__(self, answer: Any, matches: Any) -> None:
+        self._answer = answer
+        self._matches = matches
         self.fired = False
 
     def choice(self, seq: Any) -> Any:
-        if tuple(seq) == _SUBSTRATE_MODALITY_CHOICES:
+        if self._matches(seq):
             self.fired = True
-            return self._display
+            return self._answer
         return random.choice(seq)
 
     def __getattr__(self, name: str) -> Any:
@@ -112,7 +113,9 @@ def build_fact_aware_templates() -> dict[str, type]:
             if fact is None:
                 return list(super().build_story(doc_spec))
 
-            forced = _ForcedChoice(fact.display)
+            forced = _ForcedChoice(
+                fact.display, lambda seq: tuple(seq) == _SUBSTRATE_MODALITY_CHOICES
+            )
             original = diagnostic_module.random
             diagnostic_module.random = forced
             try:
@@ -227,15 +230,76 @@ def build_fact_aware_templates() -> dict[str, type]:
             elements.extend(self.make_section("TREATMENT PLAN", content))
             return elements
 
+    operative_module = import_substrate("pdf_templates.medical.operative_record")
+
+    class FactAwareOperativeRecord(operative_module.OperativeRecord):  # type: ignore[misc,name-defined]
+        """Performs the operation the ledger says was performed.
+
+        The substrate already narrows CPTs to the case's body parts and then
+        draws one; this pins that draw to ``facts.surgery.cpt_code`` so the
+        operative record, the QME's surgical history and the treating
+        physician's plan all name one procedure (ISC-93). The ledger draws from
+        the same pool, so pinning never contradicts the template's body-part
+        logic.
+        """
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            facts = _facts_of(self)
+            surgery = facts.surgery if facts else None
+            if surgery is None or not surgery.performed or not surgery.cpt_code:
+                return list(super().build_story(doc_spec))
+
+            answer = (surgery.cpt_code, surgery.cpt_description)
+            codes = {surgery.cpt_code}
+            forced = _ForcedChoice(
+                answer,
+                lambda seq: bool(seq)
+                and isinstance(seq[0], tuple)
+                and len(seq[0]) == 2
+                and str(seq[0][0]).isdigit(),
+            )
+            original = operative_module.random
+            operative_module.random = forced
+            try:
+                story = list(super().build_story(doc_spec))
+            finally:
+                operative_module.random = original
+            if not forced.fired:
+                log.warning("fact_templates.cpt_not_forced", expected=sorted(codes))
+            return story
+
+    class FactAwareNeuroQmeReport(FactAwareQmeAmeReport):
+        """As above, and it does not electrodiagnose a study that never happened.
+
+        ``_build_neuro_exam`` appended an EMG/NCV paragraph unconditionally,
+        which is how a ledger-absent EMG still reached the page. It is kept when
+        the ledger says EMG was performed and dropped when the ledger calls it
+        absent — dropped rather than negated because the diagnostic review
+        already records the absence, and saying it twice in two registers reads
+        like two different findings.
+        """
+
+        def _build_neuro_exam(self, body_parts: Any) -> list[Any]:
+            elements = list(super()._build_neuro_exam(body_parts))
+            facts = _facts_of(self)
+            if facts is None or "emg" not in facts.absent_modalities():
+                return elements
+            return [
+                element
+                for element in elements
+                if "Electrodiagnostic Studies" not in getattr(element, "text", "")
+            ]
+
     _ = Paragraph  # imported for subclasses that grow to need it
 
     return {
+        "OPERATIVE_HOSPITAL_RECORDS": FactAwareOperativeRecord,
         "DIAGNOSTICS_IMAGING": FactAwareDiagnosticReport,
-        "QME_COMPREHENSIVE_REPORT": FactAwareQmeAmeReport,
-        "AME_COMPREHENSIVE_REPORT": FactAwareQmeAmeReport,
-        "QME_REPORT_INITIAL": FactAwareQmeAmeReport,
-        "QME_REPORT_SUPPLEMENTAL": FactAwareQmeAmeReport,
-        "SUPPLEMENTAL_QME_AME_REPORT": FactAwareQmeAmeReport,
+        "QME_COMPREHENSIVE_REPORT": FactAwareNeuroQmeReport,
+        "AME_COMPREHENSIVE_REPORT": FactAwareNeuroQmeReport,
+        "QME_REPORT_INITIAL": FactAwareNeuroQmeReport,
+        "QME_REPORT_SUPPLEMENTAL": FactAwareNeuroQmeReport,
+        "SUPPLEMENTAL_QME_AME_REPORT": FactAwareNeuroQmeReport,
         "TREATING_PHYSICIAN_REPORT_PR2": FactAwareTreatingPhysicianReport,
         "TREATING_PHYSICIAN_REPORT_PR4": FactAwareTreatingPhysicianReport,
     }

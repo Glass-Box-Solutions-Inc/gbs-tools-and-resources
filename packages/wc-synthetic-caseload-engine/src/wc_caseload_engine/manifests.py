@@ -57,6 +57,12 @@ MANIFEST_NAME = "manifest.json"
 CASELOAD_MANIFEST_NAME = "caseload_manifest.json"
 SEED_NAME = "seed.yaml"
 
+SUBPOENAED_RECORDS_SUBTYPES: frozenset[str] = frozenset(
+    {"SUBPOENAED_RECORDS", "SUBPOENAED_RECORDS_MEDICAL", "SUBPOENAED_RECORDS_EMPLOYMENT",
+     "SUBPOENAED_RECORDS_OTHER"}
+)
+"""The subtypes whose packets the provider round-robin advances over."""
+
 CASE_FACTS_NAME = "case_facts.yaml"
 """The resolved clinical ledger, written beside the seed.
 
@@ -213,6 +219,9 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
         _write_case_facts(plan.case_facts, case_dir / CASE_FACTS_NAME)
 
     renders: list[tuple[str, RenderResult]] = []
+    # Packets are counted separately from documents so the provider round-robin
+    # advances once per records packet rather than once per file in the case.
+    packet_counter = 0
     for document in plan.documents:
         filename = filename_for(seed, case_number, document)
         result = render_document(
@@ -228,7 +237,10 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
             recipient_role=document.recipient_role,
             content_flags=document.content_flags,
             case_facts=plan.case_facts,
+            packet_index=packet_counter,
         )
+        if document.subtype in SUBPOENAED_RECORDS_SUBTYPES:
+            packet_counter += 1
         # A format fallback can change the extension; trust the written path.
         renders.append((result.path.name, result))
 

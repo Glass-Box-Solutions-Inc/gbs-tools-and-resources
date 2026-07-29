@@ -39,6 +39,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
 from wc_caseload_engine.seeds import CaseSeed, derive_seed
+from wc_caseload_engine.substrate import import_substrate
 
 log = structlog.get_logger(__name__)
 
@@ -328,7 +329,7 @@ def _derive_surgery(seed: CaseSeed, timeline: Any) -> SurgeryFact:
     if not performed:
         return SurgeryFact(status="none")
 
-    code, description = SURGERY_CPT_CODES.get(part, _DEFAULT_CPT)
+    code, description = _pick_cpt(seed, parts, part)
     onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
     return SurgeryFact(
         status="performed",
@@ -339,44 +340,60 @@ def _derive_surgery(seed: CaseSeed, timeline: Any) -> SurgeryFact:
     )
 
 
-def _derive_providers(seed: CaseSeed, cast: Any) -> tuple[ProviderFact, ...]:
-    """Two to four providers, scaled by how far the case went.
+def _pick_cpt(seed: CaseSeed, parts: list[str], primary: str) -> tuple[str, str]:
+    """The operation this case had, drawn from the substrate's own pool.
 
-    Mirrors the substrate's ``prior_providers`` shape rather than inventing a
-    new one, so a records packet attributed to provider *n* names someone the
-    rest of the file already knows about.
+    ``operative_record._select_surgical_cpts`` maps body parts to CPT
+    categories and the template then picks from that list. Drawing the ledger's
+    CPT from the *same* pool is what lets the operative record be pinned to it
+    (ISC-93) instead of the two disagreeing — a ledger CPT the template's pool
+    does not contain could only be forced by contradicting the template's own
+    body-part logic.
+
+    Falls back to the local table if the substrate is unavailable or the pool
+    comes back empty, so the ledger always names some procedure.
     """
-    rng = _rng(seed, "providers")
-    stage = seed.lifecycle.target_stage
-    reach = {
-        "intake": 1,
-        "active_treatment": 2,
-        "discovery": 3,
-        "medical_legal": 3,
-        "pre_trial": 4,
-        "resolved": 4,
-        "post_recon": 4,
-    }.get(stage, 3)
+    try:
+        operative = import_substrate("pdf_templates.medical.operative_record")
+        pool = list(operative._select_surgical_cpts(parts) or ())
+    except Exception:
+        pool = []
+    if pool:
+        return tuple(_rng(seed, "surgery").choice(pool))  # type: ignore[return-value]
+    return SURGERY_CPT_CODES.get(primary, _DEFAULT_CPT)
 
-    treating = getattr(cast, "treating_physician", None) or "Treating Physician"
-    facility = getattr(cast, "treating_facility", None) or "Valley Orthopedic Medical Group"
-    providers = [
-        ProviderFact(name=str(treating), specialty="Orthopedic Surgery", facility=str(facility))
-    ]
 
-    pool = [
-        ("Physical Medicine & Rehabilitation", "Bayside Rehabilitation Associates"),
-        ("Radiology", "Coastal Imaging Center"),
-        ("Pain Management", "Northgate Pain Institute"),
-        ("Neurology", "Harborview Neurology Group"),
-    ]
-    rng.shuffle(pool)
-    for specialty, clinic in pool[: max(0, reach - 1)]:
+def _derive_providers(seed: CaseSeed, cast: Any) -> tuple[ProviderFact, ...]:
+    """The providers a records subpoena can be answered by.
+
+    Read off the substrate case's own ``prior_providers`` rather than invented
+    here, because that is the list ``SubpoenaedRecords._select_provider``
+    indexes into. A ledger naming different people than the template can render
+    would make ISC-94's round-robin unverifiable — the attribution in the
+    document would not match the attribution in the manifest.
+
+    Falls back to the treating physician when the case has no prior providers,
+    which is the same degradation the substrate template already applies.
+    """
+    case = getattr(cast, "case", None)
+    providers: list[ProviderFact] = []
+
+    for physician in getattr(case, "prior_providers", None) or ():
         providers.append(
             ProviderFact(
-                name=f"{specialty.split()[0]} Service, {clinic}",
-                specialty=specialty,
-                facility=clinic,
+                name=str(getattr(physician, "full_name", physician)),
+                specialty=str(getattr(physician, "specialty", "") or "Medicine"),
+                facility=str(getattr(physician, "facility", "") or ""),
+            )
+        )
+
+    if not providers:
+        treating = getattr(case, "treating_physician", None)
+        providers.append(
+            ProviderFact(
+                name=str(getattr(treating, "full_name", treating) or "Treating Physician"),
+                specialty=str(getattr(treating, "specialty", "") or "Medicine"),
+                facility=str(getattr(treating, "facility", "") or ""),
             )
         )
     return tuple(providers)

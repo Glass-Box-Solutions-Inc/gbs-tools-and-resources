@@ -387,6 +387,7 @@ def render_document(
     recipient_role: str | None = None,
     content_flags: Sequence[str] = (),
     case_facts: Any = None,
+    packet_index: int | None = None,
 ) -> RenderResult:
     """Render one planned document to *out_path*, reproducibly.
 
@@ -455,6 +456,15 @@ def render_document(
         # opted in via FACT_AWARE_TEMPLATES.
         context["case_facts"] = case_facts
         context["document_index"] = index
+        # Restores the substrate's own round-robin. ``SubpoenaedRecords``
+        # reads ``provider_index`` and indexes ``case.prior_providers``; the
+        # engine path never set it, so every packet in every case was answered
+        # by the treating physician — a subpoena to four providers, returned
+        # four times by one clinic. ``packet_index`` counts packets, not
+        # documents, so consecutive packets land on different providers.
+        packet = packet_index if packet_index is not None else index
+        if case_facts.providers:
+            context["provider_index"] = packet % len(case_facts.providers)
     context["perspective"] = seed.perspective
     context["file_owner_firm"] = file_owner_firm(
         seed.perspective, cast.applicant_firm, cast.defense_firm

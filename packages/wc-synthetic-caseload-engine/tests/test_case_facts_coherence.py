@@ -56,7 +56,7 @@ def _flat(text: str) -> str:
 
 
 def _seed(case_id: str, scenario: dict[str, Any], **overrides: Any) -> Any:
-    body = {
+    body: dict[str, Any] = {
         "case_id": case_id,
         "rng_seed": 4242,
         "injury": {
@@ -121,7 +121,17 @@ class TestTheLedgerIsDerivedAndPublished:
         assert [(f.modality, f.body_part) for f in facts.absent_diagnostics] == [
             ("emg", "shoulder")
         ]
-        assert facts.surgery.performed and facts.surgery.cpt_code == "63030"
+        assert facts.surgery.performed
+        # Body-part coherent by construction: the ledger draws from the same
+        # pool the operative record would, so pinning the template to it later
+        # cannot contradict the template's own body-part logic.
+        from wc_caseload_engine.substrate import import_substrate
+
+        operative = import_substrate("pdf_templates.medical.operative_record")
+        pool = dict(operative._select_surgical_cpts(["lumbar_spine", "shoulder"]))
+        assert facts.surgery.cpt_code in pool, (
+            f"{facts.surgery.cpt_code} is not in the substrate's pool for these body parts"
+        )
 
     def test_derivation_is_pure(self) -> None:
         seed = _seed("ledger-pure", {})
@@ -371,3 +381,221 @@ class TestTheScenarioBlockRejectsIncoherentInput:
         plan = build_case_plan(_seed("bare", {"diagnostics": {"performed": ["ct"]}}))
         assert plan.case_facts is not None
         assert plan.case_facts.performed_diagnostics[0].body_part == "lumbar_spine"
+
+
+# ---------------------------------------------------------------------------
+# ISC-89 dispatch, and doctrine x fact-aware composition
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchAndComposition:
+    def test_an_unregistered_subtype_takes_the_substrate_class(self) -> None:
+        """ISC-89: the registry is opt-in, and opting out is the default."""
+        from wc_caseload_engine.fact_templates import fact_aware_templates
+        from wc_caseload_engine.renderer import _load_template
+
+        registry = fact_aware_templates()
+        assert "CLAIM_FORM_DWC1" not in registry
+        plain, _, _ = _load_template("CLAIM_FORM_DWC1", fact_aware=True)
+        assert plain.__module__.startswith("pdf_templates"), (
+            "an unregistered subtype must still resolve to a substrate class"
+        )
+
+    def test_a_registered_subtype_takes_the_engine_subclass(self) -> None:
+        from wc_caseload_engine.fact_templates import fact_aware_templates
+        from wc_caseload_engine.renderer import _load_template
+
+        override, _, class_name = _load_template("DIAGNOSTICS_IMAGING", fact_aware=True)
+        assert override is fact_aware_templates()["DIAGNOSTICS_IMAGING"]
+        assert class_name == "DiagnosticReport", (
+            "the manifest's template provenance must stay the substrate class — "
+            "the subclass renders the same document, it is not a fallback"
+        )
+
+    def test_the_registry_is_ignored_without_a_ledger(self) -> None:
+        from wc_caseload_engine.renderer import _load_template
+
+        plain, _, _ = _load_template("DIAGNOSTICS_IMAGING", fact_aware=False)
+        assert plain.__module__.startswith("pdf_templates")
+
+    def test_doctrine_and_fact_aware_content_compose_on_one_document(
+        self, tmp_path: Path
+    ) -> None:
+        """Both seams fire on the same document.
+
+        Doctrine injection wraps whatever ``_load_template`` returns, so a
+        registry-covered subtype carrying a doctrine hook must render the
+        ledger's content *and* the authorities addendum. Structurally it should
+        hold; asserted here because "should" is not evidence.
+        """
+        seed = _seed(
+            "composition",
+            {"diagnostics": {"performed": [{"modality": "ct", "body_part": "lumbar_spine"}]}},
+            lifecycle={
+                "target_stage": "medical_legal",
+                "eval_type": "qme",
+                "doctrine_hooks": ["almaraz_guzman"],
+            },
+        )
+        manifest, texts = _render(seed, tmp_path)
+
+        flagged = [
+            d
+            for d in manifest["documents"]
+            if "almaraz_guzman" in (d.get("contentFlags") or ())
+            and d["subtype"] in FACT_AWARE_PROBE_SUBTYPES
+        ]
+        assert flagged, "no document carries both a doctrine flag and a fact-aware subtype"
+
+        both = _flat(texts["QME_COMPREHENSIVE_REPORT"])
+        assert "diagnostic review" in both, "fact-aware content missing"
+        assert "guzman" in both, "doctrine marker missing"
+
+
+# ---------------------------------------------------------------------------
+# ISC-91 / 92 / 93 / 94
+# ---------------------------------------------------------------------------
+
+
+class TestClosedCoherenceRules:
+    def test_isc91_an_absent_emg_appears_nowhere_in_the_qme(self, tmp_path: Path) -> None:
+        """The electrodiagnostic paragraph is dropped when EMG did not happen."""
+        seed = _seed(
+            "isc91",
+            {"diagnostics": {"performed": ["mri"], "absent": [{"modality": "emg"}]}},
+        )
+        _, texts = _render(seed, tmp_path)
+        qme = _flat(texts.get("QME_COMPREHENSIVE_REPORT", ""))
+        assert "electrodiagnostic studies" not in qme, (
+            "the QME electrodiagnosed a study the ledger says was never performed"
+        )
+        assert "no emg study was obtained" in qme, "the absence must still be recorded"
+
+    def test_isc91_positive_control_a_performed_emg_is_kept(self, tmp_path: Path) -> None:
+        """The mirror: suppression must be conditional, not blanket."""
+        seed = _seed("isc91-ctl", {"diagnostics": {"performed": ["mri", "emg"]}})
+        _, texts = _render(seed, tmp_path)
+        assert "emg" in _flat(texts.get("QME_COMPREHENSIVE_REPORT", "")), (
+            "a performed EMG vanished from the QME"
+        )
+
+    def test_isc92_a_case_without_surgery_carries_no_surgical_language(
+        self, tmp_path: Path
+    ) -> None:
+        seed = _seed("isc92-none", {"surgery": "none"})
+        plan = build_case_plan(seed)
+        assert plan.case_facts is not None and not plan.case_facts.surgery.performed
+        _, texts = _render(seed, tmp_path)
+        whole = _flat(" ".join(texts.values()))
+        for phrase in ("status post", "post-operative rehabilitation"):
+            assert phrase not in whole, f"a surgery-free case says {phrase!r}"
+
+    def test_isc92_positive_control_surgery_reaches_the_documents(
+        self, tmp_path: Path
+    ) -> None:
+        seed = _seed("isc92-yes", {"surgery": "performed"})
+        _, texts = _render(seed, tmp_path)
+        assert "status post" in _flat(" ".join(texts.values())), (
+            "a surgical case never mentions the surgery"
+        )
+
+    def test_isc93_one_cpt_across_every_referencing_document(self, tmp_path: Path) -> None:
+        """The operative record and both medical reports name one procedure."""
+        seed = _seed(
+            "isc93",
+            {"surgery": "performed"},
+            documents={
+                "overrides": [
+                    {"subtype": s, "count": 1}
+                    for s in (*FACT_AWARE_PROBE_SUBTYPES, "OPERATIVE_HOSPITAL_RECORDS")
+                ],
+                "format_mix": {"pdf": 1.0},
+            },
+        )
+        plan = build_case_plan(seed)
+        assert plan.case_facts is not None
+        cpt = plan.case_facts.surgery.cpt_code
+        assert cpt
+        _, texts = _render(seed, tmp_path)
+
+        wanted = {
+            "OPERATIVE_HOSPITAL_RECORDS",
+            "QME_COMPREHENSIVE_REPORT",
+            "TREATING_PHYSICIAN_REPORT_PR2",
+        }
+        referencing = {k: v for k, v in texts.items() if k in wanted}
+        assert set(referencing) == wanted, sorted(referencing)
+        for subtype, text in referencing.items():
+            assert cpt in _flat(text), f"{subtype} names a different procedure than CPT {cpt}"
+
+    def test_isc94_packets_are_answered_by_different_providers(self, tmp_path: Path) -> None:
+        """The defect: every packet attributed to the treating physician."""
+        seed = _seed(
+            "isc94",
+            {},
+            documents={
+                "overrides": [{"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 3}],
+                "format_mix": {"pdf": 1.0},
+            },
+        )
+        plan = build_case_plan(seed)
+        assert plan.case_facts is not None
+        assert len(plan.case_facts.providers) >= 2, "the probe needs a roster to spread over"
+
+        generate_case(seed, tmp_path, case_number=1)
+        case_dir = tmp_path / seed.case_id
+        manifest = json.loads((case_dir / MANIFEST_NAME).read_text())
+        packets = [
+            _flat(extract_text(case_dir / "documents" / d["filename"], d["format"]) or "")
+            for d in manifest["documents"]
+            if d["subtype"] == "SUBPOENAED_RECORDS_MEDICAL"
+        ]
+        assert len(packets) >= 2, "the probe emitted too few packets to compare"
+
+        seen = [
+            frozenset(
+                p.facility.lower()
+                for p in plan.case_facts.providers
+                if p.facility and p.facility.lower() in text
+            )
+            for text in packets
+        ]
+        assert len({s for s in seen if s}) > 1, (
+            "every packet names the same provider — the round-robin is not wired, "
+            "which is the defect ISC-94 exists to close"
+        )
+
+
+class TestTheArtifactRoundTrips:
+    def test_case_facts_yaml_loads_back(self, tmp_path: Path) -> None:
+        """ISC-99 asks for a load round-trip, not just a file on disk."""
+        import yaml
+
+        seed = _seed("roundtrip", {"surgery": "performed"})
+        plan = build_case_plan(seed)
+        assert plan.case_facts is not None
+        generate_case(seed, tmp_path, case_number=1)
+        loaded = yaml.safe_load((tmp_path / seed.case_id / CASE_FACTS_NAME).read_text())
+        assert loaded["surgery"]["cptCode"] == plan.case_facts.surgery.cpt_code
+        assert len(loaded["diagnostics"]) == len(plan.case_facts.diagnostics)
+
+
+class TestASeedWithNoScenarioBlockIsStillDeterministic:
+    def test_double_derivation_without_scenario_is_identical(self) -> None:
+        """ISC-87: the ledger is derived, not required to be stated."""
+        body = {
+            "case_id": "no-scenario",
+            "rng_seed": 8123,
+            "injury": {
+                "type": "specific",
+                "date_of_injury": "2022-04-11",
+                "body_parts": [{"part": "lumbar_spine"}, {"part": "knee"}],
+            },
+            "lifecycle": {"target_stage": "medical_legal", "eval_type": "qme"},
+        }
+        assert "scenario" not in body
+        first = build_case_plan(parse_case_seed(body)).case_facts
+        second = build_case_plan(parse_case_seed(body)).case_facts
+        assert first is not None and second is not None
+        assert first.model_dump() == second.model_dump()
+        assert first.diagnostics, "derivation produced no diagnostics at all"
