@@ -29,12 +29,14 @@ from conftest import extract_text, requires_substrate
 from wc_caseload_engine.case_facts import TRAJECTORY_PHRASES
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
 from wc_caseload_engine.planner import (
+    _CADENCE_ANCHOR_SUBTYPES,
     ATTORNEY_CADENCE_SUBTYPES,
     DELAY_CHAIN_SUBTYPE,
     build_case_plan,
 )
 from wc_caseload_engine.seeds import parse_case_seed
 from wc_caseload_engine.substrate import import_substrate
+from wc_caseload_engine.taxonomy import effective_taxonomy
 
 pytestmark = requires_substrate
 
@@ -357,6 +359,42 @@ class TestAttorneyCadenceMovesTheDates:
         assert len(dates) >= 3, f"only {len(dates)} letters; the rhythm is untestable"
         gaps = [(b - a).days for a, b in pairwise(dates)]
         assert max(gaps) >= 90, f"sporadic never went quiet: {gaps}"
+
+    def test_every_event_driven_letter_follows_a_real_event(self) -> None:
+        """The assertion the first cut of this feature would have failed.
+
+        ``event_driven`` originally anchored to the timeline's milestones, most
+        of which were filtered out, leaving one anchor and a fixed lap offset —
+        a 90-day metronome that satisfied "the three cadences differ" while
+        following nothing. This binds each letter to a document in the file.
+        """
+        plan = _plan_for(
+            "cad-ev", rng_seed=8200, scenario={"attorney": {"cadence": "event_driven"}}
+        )
+        anchors = sorted(
+            {d.doc_date for d in plan.documents if d.subtype in _CADENCE_ANCHOR_SUBTYPES}
+        )
+        assert anchors, "no anchor documents in the file; the probe is vacuous"
+        letters = sorted(
+            d.doc_date for d in plan.documents if d.subtype in ATTORNEY_CADENCE_SUBTYPES
+        )
+        assert len(letters) >= 2
+        for when in letters:
+            assert any(0 <= (when - anchor).days <= 60 for anchor in anchors), (
+                f"a letter dated {when} follows no event in the file; nearest "
+                f"anchors {[str(a) for a in anchors]}"
+            )
+
+    def test_the_anchor_and_cadence_tables_name_real_subtypes(self) -> None:
+        """A table of keys the taxonomy does not know matches nothing, and a
+        cadence built on it would silently do nothing at all."""
+        taxonomy = effective_taxonomy()
+        for label, table in (
+            ("_CADENCE_ANCHOR_SUBTYPES", _CADENCE_ANCHOR_SUBTYPES),
+            ("ATTORNEY_CADENCE_SUBTYPES", ATTORNEY_CADENCE_SUBTYPES),
+        ):
+            unknown = sorted(k for k in table if not taxonomy.is_canonical(k))
+            assert not unknown, f"{label} names non-canonical subtypes: {unknown}"
 
     def test_the_three_cadences_do_not_agree(self) -> None:
         """Opposite draws of one knob: if the dates match, nothing is honoured."""
