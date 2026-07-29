@@ -604,15 +604,25 @@ class TestEveryPersonaGuardReadsTheResolvedValue:
     def test_diligence_is_not_published(self) -> None:
         """m5. A persona input no rendered document reflects.
 
-        Published while ``attorney_cadence`` was withheld for precisely that
-        reason — the governed-facts rule applied inconsistently to its own
-        author.
+        It was published while ``attorney_cadence`` was withheld for precisely
+        that reason — the governed-facts rule applied inconsistently to its own
+        author. ``diligence`` stays out; the rule has not moved.
+
+        The exact-set pin below is deliberately kept rather than relaxed to a
+        subset check: it is what would catch a field slipping into the manifest
+        unnoticed. It grew by ``letterTypesAllowed`` when ISC-121 made the
+        adjuster's letter sequence render from the ledger, which is the rule
+        *admitting* a field on its merits, not an exception to it.
         """
         facts = build_case_plan(_seed("m5", rng_seed=100)).case_facts
         assert facts is not None
         block = facts_manifest_block(facts)
         assert "diligence" not in block["adjuster"]
-        assert set(block["adjuster"]) == {"lateBenefitEvents", "maxDaysLate"}
+        assert set(block["adjuster"]) == {
+            "lateBenefitEvents",
+            "maxDaysLate",
+            "letterTypesAllowed",
+        }
         assert facts.adjuster_diligence, "still resolved on the ledger, just unpublished"
 
     def test_cadence_derivation_reaches_event_driven(self) -> None:
