@@ -55,7 +55,11 @@ INERT_PROBES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
         {},
         {"discovery": {"pages_per_set": {"min": 300, "max": 400}}},
     ),
-    "AttorneyScenario.cadence": ({}, {"attorney": {"cadence": "sporadic"}}),
+    # AttorneyScenario.cadence had a probe here until ISC-123/124 honoured it.
+    # The guard removed it: the byte-inertness run reported that varying the
+    # field moved 35 documents and named the docstring to correct. That is the
+    # meta-guard's whole purpose, and it fired without anyone remembering to
+    # look.
 }
 
 

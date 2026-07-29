@@ -941,11 +941,14 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
         #
         # ``adjuster_diligence`` is deliberately *not* here, and that took a
         # review to see. It is a persona *input*: no rendered document reflects
-        # it, so a reader cannot check it against anything. Publishing it while
-        # withholding ``attorney_cadence`` for exactly that reason was the rule
-        # applied inconsistently to its own author. ``attorney_cadence`` and
-        # ``adjuster_letter_types_allowed`` stay unpublished for the same
-        # reason — resolved on the ledger, honoured by nothing yet.
+        # it, so a reader cannot check it against anything.
+        #
+        # ``letterTypesAllowed`` and ``attorney.cadence`` were withheld under
+        # that same rule and have now earned their place, which is the rule
+        # working rather than an exception to it. The letter sequence renders
+        # from the allowed set (ISC-121), and the client letters are dated by
+        # the cadence (ISC-123/124) — both are checkable against the documents
+        # in the folder, which is the whole test for publication.
         "adjuster": {
             "lateBenefitEvents": len(facts.late_benefit_events),
             "maxDaysLate": (
@@ -953,7 +956,9 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
                 if facts.late_benefit_events
                 else 0
             ),
+            "letterTypesAllowed": sorted(facts.adjuster_letter_types_allowed),
         },
+        "attorney": {"cadence": facts.attorney_cadence},
         "treatment": {
             "status": facts.treatment_status,
             "trajectory": facts.trajectory,
@@ -986,7 +991,8 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
 #: out of the output, because publishing them would let the manifest state
 #: things its own documents contradict.
 GOVERNED_LEDGER_FIELDS: dict[str, tuple[str, ...]] = {
-    "adjuster": ("lateBenefitEvents", "maxDaysLate"),
+    "adjuster": ("lateBenefitEvents", "maxDaysLate", "letterTypesAllowed"),
+    "attorney": ("cadence",),
     "treatment": ("status", "trajectory", "dischargeDate", "gapStart", "gapEnd"),
     "diagnostics": ("modality", "display", "performed"),
     "surgery": ("status", "cptCode", "cptDescription"),
