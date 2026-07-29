@@ -27,6 +27,7 @@ from wc_caseload_engine.case_facts import (
     CaseFacts,
 )
 from wc_caseload_engine.substrate import import_substrate
+from wc_caseload_engine.taxonomy import effective_taxonomy
 
 log = structlog.get_logger(__name__)
 
@@ -177,6 +178,42 @@ def _letter_ordinal(template: Any) -> int:
         if isinstance(value, int):
             return value
     return 0
+
+
+#: The phrase an ``event_driven`` client letter opens its status paragraph
+#: with. Owned beside the template that writes it so the guard and the
+#: renderer read ONE string: a marker the test spells independently is a
+#: marker that can drift out of the document while the test still passes.
+ANCHOR_REFERENCE_MARKER = "further to the"
+
+
+def _preceding_anchor(template: Any, when: Any) -> tuple[str, Any] | None:
+    """The most recent anchor document dated at or before ``when``.
+
+    Chosen here rather than in the planner so the reference can never name a
+    document dated *after* the letter citing it — the letter's own date is the
+    only thing that decides, and it is right here.
+    """
+    context = getattr(getattr(template, "doc_spec", None), "context", None)
+    if not isinstance(context, dict) or when is None:
+        return None
+    anchors = context.get("cadence_anchors") or ()
+    prior = [entry for entry in anchors if entry[1] <= when]
+    return max(prior, key=lambda entry: entry[1]) if prior else None
+
+
+def _before_closing(story: list[Any]) -> int:
+    """Insertion point above the letter's sign-off.
+
+    Located by text so a substrate edit that adds a flowable moves the insertion
+    with it. Falls back to the end of the story, which is visible on the page
+    rather than silently dropped.
+    """
+    for position, element in enumerate(story):
+        text = str(getattr(element, "text", ""))
+        if text.startswith("Sincerely") or text.startswith("Very truly"):
+            return position
+    return len(story)
 
 
 def _report_ordinal(template: Any) -> int:
@@ -710,7 +747,53 @@ def build_fact_aware_templates() -> dict[str, type]:
 
     _ = Paragraph  # imported for subclasses that grow to need it
 
+    client_module = import_substrate("pdf_templates.correspondence.client_intake")
+
+    class FactAwareClientIntake(_SpecCapture, client_module.ClientIntake):  # type: ignore[misc,name-defined]
+        """ISC-125. Names the event that prompted the letter.
+
+        ISC-123/124 put ``event_driven`` letters on the right dates; a reader
+        still had to recompute the cadence to see *why* a letter was written
+        when it was. The reference makes it checkable on the page: the letter
+        cites a document that is in the same folder, dated before it.
+
+        Only ``event_driven``. Under the other two cadences the letter is not
+        responding to anything — a thirty-day letter is written because thirty
+        days passed — so a reference would be a claim the file does not support.
+        That distinction is also what makes the guard meaningful: an
+        unconditional sentence would prove the string exists and nothing else.
+        """
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            story = list(super().build_story(doc_spec))
+            facts = _facts_of(self)
+            if facts is None or facts.attorney_cadence != "event_driven":
+                return story
+
+            anchor = _preceding_anchor(self, getattr(doc_spec, "doc_date", None))
+            if anchor is None:
+                # Nothing precedes this letter, so there is nothing to answer.
+                # Silence is the honest rendering.
+                return story
+
+            subtype, when = anchor
+            label = effective_taxonomy().label(subtype) or subtype.replace("_", " ").title()
+            sentence = (
+                f"{ANCHOR_REFERENCE_MARKER.capitalize()} {label} of "
+                f"{when.strftime('%B %d, %Y')}, we are writing to update you on "
+                "the status of your claim and what happens next."
+            )
+            story.insert(
+                _before_closing(story),
+                Paragraph(sentence, self.styles["BodyText14"]),
+            )
+            return story
+
     return {
+        "CLIENT_CORRESPONDENCE_INFORMATIONAL": FactAwareClientIntake,
+        "CLIENT_CORRESPONDENCE_REQUEST": FactAwareClientIntake,
+        "CLIENT_STATUS_LETTERS": FactAwareClientIntake,
+        "STATUS_UPDATE_INFORMATIONAL": FactAwareClientIntake,
         "ADJUSTER_LETTER": FactAwareAdjusterLetter,
         "ADJUSTER_LETTER_INFORMATIONAL": FactAwareAdjusterLetter,
         "ADJUSTER_LETTER_REQUEST": FactAwareAdjusterLetter,

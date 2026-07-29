@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -27,10 +28,11 @@ import pytest
 import wc_caseload_engine.fact_templates as fact_templates
 from conftest import extract_text, requires_substrate
 from wc_caseload_engine.case_facts import TRAJECTORY_PHRASES
+from wc_caseload_engine.fact_templates import ANCHOR_REFERENCE_MARKER
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
 from wc_caseload_engine.planner import (
-    _CADENCE_ANCHOR_SUBTYPES,
     ATTORNEY_CADENCE_SUBTYPES,
+    CADENCE_ANCHOR_SUBTYPES,
     CADENCE_MIN_LETTERS,
     DELAY_CHAIN_SUBTYPE,
     EVENT_DRIVEN_LAG_DAYS,
@@ -375,7 +377,7 @@ class TestAttorneyCadenceMovesTheDates:
             "cad-ev", rng_seed=8200, scenario={"attorney": {"cadence": "event_driven"}}
         )
         anchors = sorted(
-            {d.doc_date for d in plan.documents if d.subtype in _CADENCE_ANCHOR_SUBTYPES}
+            {d.doc_date for d in plan.documents if d.subtype in CADENCE_ANCHOR_SUBTYPES}
         )
         assert anchors, "no anchor documents in the file; the probe is vacuous"
         letters = sorted(
@@ -411,7 +413,7 @@ class TestAttorneyCadenceMovesTheDates:
                 )
             )
             anchors = sorted(
-                {d.doc_date for d in plan.documents if d.subtype in _CADENCE_ANCHOR_SUBTYPES}
+                {d.doc_date for d in plan.documents if d.subtype in CADENCE_ANCHOR_SUBTYPES}
             )
             letters = [
                 d for d in plan.documents if d.subtype in ATTORNEY_CADENCE_SUBTYPES
@@ -448,7 +450,7 @@ class TestAttorneyCadenceMovesTheDates:
         cadence built on it would silently do nothing at all."""
         taxonomy = effective_taxonomy()
         for label, table in (
-            ("_CADENCE_ANCHOR_SUBTYPES", _CADENCE_ANCHOR_SUBTYPES),
+            ("CADENCE_ANCHOR_SUBTYPES", CADENCE_ANCHOR_SUBTYPES),
             ("ATTORNEY_CADENCE_SUBTYPES", ATTORNEY_CADENCE_SUBTYPES),
         ):
             unknown = sorted(k for k in table if not taxonomy.is_canonical(k))
@@ -464,4 +466,91 @@ class TestAttorneyCadenceMovesTheDates:
         assert len(distinct) == 3, (
             "two cadences produced identical letter dates: "
             f"{ {name: [str(d) for d in v] for name, v in rhythms.items()} }"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ISC-125 — an event-driven letter names the event it follows
+# ---------------------------------------------------------------------------
+
+
+class TestEventDrivenLettersNameTheirAnchor:
+    """A date alone is not a reference.
+
+    ISC-123/124 put the letters on the right dates; a reader still had to infer
+    *why*. The rendered letter now says which document prompted it, which is the
+    part a reviewer can check without recomputing the cadence.
+    """
+
+    def _rendered(
+        self, case_id: str, cadence: str, tmp_path: Path
+    ) -> tuple[dict[str, Any], str]:
+        seed = _seed(
+            case_id,
+            rng_seed=8300,
+            lifecycle={"target_stage": "discovery", "eval_type": "qme"},
+            scenario={"attorney": {"cadence": cadence}},
+        )
+        manifest, texts = _render(seed, tmp_path)
+        body = _flat(
+            "\n".join(
+                text
+                for subtype, text in texts.items()
+                if subtype in ATTORNEY_CADENCE_SUBTYPES
+            )
+        )
+        return manifest, body
+
+    def _letter_text(self, case_id: str, cadence: str, tmp_path: Path) -> str:
+        return self._rendered(case_id, cadence, tmp_path)[1]
+
+    def test_the_cited_event_is_a_document_that_is_really_in_the_file(
+        self, tmp_path: Path
+    ) -> None:
+        """Naming *an* event is not the property; naming a *real* one is.
+
+        A letter that cites a plausible-looking report the folder does not
+        contain is worse than one that cites nothing, so the cited dates are
+        checked against the manifest rather than merely counted.
+        """
+        manifest, body = self._rendered("anchor-real", "event_driven", tmp_path)
+        cited = re.findall(rf"{ANCHOR_REFERENCE_MARKER} .+? of ([a-z]+ \d{{1,2}}, \d{{4}})", body)
+        assert cited, "no citation parsed; the assertion below would be vacuous"
+        real = {
+            datetime.strptime(entry["documentDate"], "%Y-%m-%d").strftime("%B %d, %Y").lower()
+            for entry in manifest["documents"]
+            if entry["subtype"] in CADENCE_ANCHOR_SUBTYPES
+        }
+        assert real, "no anchor documents in the manifest; the probe proves nothing"
+        unknown = sorted(set(cited) - real)
+        assert not unknown, (
+            f"letters cite events with no matching document in the folder: {unknown}. "
+            f"Anchor documents present: {sorted(real)}"
+        )
+
+    def test_the_letter_names_the_document_that_prompted_it(
+        self, tmp_path: Path
+    ) -> None:
+        body = self._letter_text("anchor-ref", "event_driven", tmp_path)
+        assert body, "no client-letter text extracted; the grep would be vacuous"
+        assert ANCHOR_REFERENCE_MARKER.lower() in body, (
+            f"no event-driven letter carries {ANCHOR_REFERENCE_MARKER!r}; the "
+            "letter is on the right date but says nothing about why"
+        )
+
+    def test_a_non_event_driven_file_makes_no_such_reference(
+        self, tmp_path: Path
+    ) -> None:
+        """The positive control that makes the grep above mean something.
+
+        Without it the assertion would pass on a marker the engine emitted
+        unconditionally — proving the string exists, not that the cadence drives
+        it.
+        """
+        body = self._letter_text("anchor-none", "every_30_days", tmp_path)
+        assert body, "no client-letter text extracted; the control is vacuous"
+        assert ANCHOR_REFERENCE_MARKER.lower() not in body, (
+            "a thirty-day-cadence letter references an anchoring event; the "
+            "reference is unconditional, so the event_driven assertion proves "
+            "nothing"
         )

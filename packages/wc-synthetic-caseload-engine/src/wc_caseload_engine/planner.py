@@ -647,7 +647,7 @@ def event_driven_max_lag_days(letters: int, anchors: int) -> int:
 #: and the case's own milestones — the documents that change what counsel can
 #: tell the client. Correspondence is excluded on purpose: letters answering
 #: letters is a rhythm of its own, not an event-driven one.
-_CADENCE_ANCHOR_SUBTYPES: frozenset[str] = frozenset(
+CADENCE_ANCHOR_SUBTYPES: frozenset[str] = frozenset(
     {
         "TREATING_PHYSICIAN_REPORT",
         "TREATING_PHYSICIAN_REPORT_PR2",
@@ -696,7 +696,7 @@ def _cadence_dates(
     # takes to read a report and dictate a letter about it.
     #
     # The anchors are the *other documents in this file* (see
-    # ``_CADENCE_ANCHOR_SUBTYPES``), not the timeline's four milestones. That
+    # ``CADENCE_ANCHOR_SUBTYPES``), not the timeline's four milestones. That
     # started as the obvious choice and was wrong: after filtering to milestones
     # at or after the first letter, most cases had one anchor left, the cycle
     # below degenerated into a fixed lap offset, and "event driven" rendered as
@@ -748,7 +748,7 @@ def _apply_attorney_cadence(
     # The events counsel would actually write *about*, taken from the file
     # itself so a reader can hold the letter beside the report that prompted it.
     anchors = sorted(
-        {entry[0] for entry in dated if entry[1] in _CADENCE_ANCHOR_SUBTYPES}
+        {entry[0] for entry in dated if entry[1] in CADENCE_ANCHOR_SUBTYPES}
     )
     intended = _cadence_dates(cadence, len(letters), first, anchors)
 

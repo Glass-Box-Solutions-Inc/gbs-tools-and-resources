@@ -390,6 +390,7 @@ def render_document(
     packet_index: int | None = None,
     report_ordinal: int | None = None,
     letter_ordinal: int | None = None,
+    cadence_anchors: tuple[tuple[str, date], ...] = (),
 ) -> RenderResult:
     """Render one planned document to *out_path*, reproducibly.
 
@@ -473,6 +474,11 @@ def render_document(
         # Same axis again for adjuster letters, whose *type* sequence has to
         # advance per letter so a case cannot accept the claim three times.
         context["letter_ordinal"] = letter_ordinal if letter_ordinal is not None else 0
+        # ISC-125. The events in this file a client letter may refer back to.
+        # Passed whole rather than pre-selected: the template knows its own
+        # doc_date and picks the most recent anchor preceding it, so the
+        # reference cannot name a document dated after the letter citing it.
+        context["cadence_anchors"] = cadence_anchors
     context["perspective"] = seed.perspective
     context["file_owner_firm"] = file_owner_firm(
         seed.perspective, cast.applicant_firm, cast.defense_firm
