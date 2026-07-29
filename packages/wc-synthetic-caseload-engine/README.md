@@ -1008,6 +1008,43 @@ For a per-hook reference — the doctrine, its citation, exactly what the seed m
 minimal runnable seed, and the subtypes that carry the language — see the user guide at
 [`docs/user-guide/index.html`](docs/user-guide/index.html).
 
+### `examples/personas-showcase.yaml` — the adjuster and attorney personas
+
+Six cases exercising the `scenario.adjuster` and `scenario.attorney` blocks, which the demo
+caseload never touches: no demo seed carries a `scenario:` block at all, so every demo file runs
+on a *derived* persona. Live-verified at 391 documents, `validate --out` clean with zero
+fallbacks and zero warnings.
+
+```bash
+wc-caseload generate --spec examples/personas-showcase.yaml --out /tmp/wcce-personas
+wc-caseload validate --out /tmp/wcce-personas
+```
+
+| Case | What it shows | Manifest evidence |
+|------|---------------|-------------------|
+| `personas-negligent-adjuster` | An administrator who overran the statutory windows, was chased, and got pleaded against | `lateBenefitEvents: 4`, four `DEMAND_LETTER_FORMAL`, one `PETITION_FOR_PENALTIES` dated after the last late event |
+| `personas-attentive-adjuster` | The controlled counterexample — same injury date, same lifecycle, one field moved | `lateBenefitEvents: 0`, zero demand letters, zero penalty petition |
+| `personas-cadence-every-30-days` | Counsel on a thirty-day clock | six `CLIENT_STATUS_LETTERS`, gaps `30, 30, 30, 30, 30` |
+| `personas-cadence-event-driven` | Letters written when something happened | five letters, each dated exactly five days after a report or milestone already in the file |
+| `personas-cadence-sporadic` | The file with a three-month hole in the record | five letters, gaps `24, 120, 41, 96` |
+| `personas-scenario-depth` | The clinical ledger and both personas composing on one file | `surgery: performed` with `OPERATIVE_HOSPITAL_RECORDS`, three-study diagnostics ledger including a deliberate absence, `treatment.status: gap`, plus a one-event delay chain |
+
+The first two cases are a matched pair, which is what makes the zero in the second one *earned*:
+the same seed shape with `negligent` produces the penalty paper and with `attentive` produces
+none. The engine guarantees that structurally rather than statistically — an attentive
+administrator's window fractions top out at 0.55, so it cannot overrun a window.
+
+**What the delay chain does and does not yet show.** The countable half is real and is the
+feature: the number of `DEMAND_LETTER_FORMAL` files equals
+`caseFacts.adjuster.lateBenefitEvents`, each is dated after the delay it answers, and the
+petition post-dates all of them. The rendered *prose* is not there yet —
+`DEMAND_LETTER_FORMAL` dispatches to the substrate's `DefenseCounselLetter/formal_demand`,
+which writes a defense-side discovery demand under LC 5710 rather than applicant counsel
+chasing a late benefit, because the substrate template does not read the `author_role` the
+engine plans the document with. Same class as the lien and reconsideration templates already
+documented above as variants rather than bespoke: correct-looking documents in the wrong
+register. The fix is an engine-owned subclass, not a seed change.
+
 ---
 
 ## Taxonomy

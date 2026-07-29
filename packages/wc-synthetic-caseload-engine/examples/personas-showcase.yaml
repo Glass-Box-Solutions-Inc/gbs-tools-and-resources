@@ -1,0 +1,321 @@
+# wc-caseload personas showcase — the adjuster and attorney personas, in the paper.
+#
+#   wc-caseload generate --spec examples/personas-showcase.yaml --out /tmp/wcce-personas
+#   wc-caseload validate --out /tmp/wcce-personas
+#
+# The demo caseload seeds no `scenario:` block at all, so it exercises none of
+# the v0.6.0 persona features — every one of its files runs on a *derived*
+# adjuster and a *derived* cadence. This spec is the witness for those features:
+# each case states a persona explicitly and is written so the consequence is
+# countable in the manifest rather than merely asserted here.
+#
+# What each case proves, and where to read it:
+#
+#   1. negligent-adjuster   caseFacts.adjuster.lateBenefitEvents > 0, one
+#                           DEMAND_LETTER_FORMAL per late event, one
+#                           PETITION_FOR_PENALTIES earned by them
+#   2. attentive-adjuster   the controlled counterexample — same lifecycle, same
+#                           injury date, one knob moved: zero late events, zero
+#                           demand letters, zero penalty petition
+#   3. cadence-every-30     six client status letters walking a thirty-day clock
+#   4. cadence-event-driven letters landing a few days behind the reports and
+#                           milestones already in the file
+#   5. cadence-sporadic     the file with a three-month hole opposing counsel
+#                           will notice
+#   6. scenario-depth       diagnostics + surgery + a treatment gap carried on
+#                           top of both personas at once
+#
+# Cases 1 and 2 are a matched pair on purpose. They share an injury date, a
+# lifecycle and a document cap, and differ in exactly one field —
+# `scenario.adjuster.diligence`. That is what makes the zero in case 2 an
+# *earned* zero rather than an absence nobody tested: the same seed shape with
+# `negligent` produces the penalty paper, and with `attentive` produces none.
+# The engine guarantees the second half structurally, not statistically —
+# `DILIGENCE_WINDOW_FRACTIONS['attentive']` tops out at 0.55 of each statutory
+# window, so an attentive administrator cannot overrun one.
+#
+# The three cadence cases carry a `documents.overrides` entry fixing the client
+# status letter count. A rhythm needs enough beats to be visible, and the
+# lifecycle proposes however many it proposes; pinning the count is what makes
+# the *dates* — which are the thing under test — comparable between the three.
+# Each also carries a long runway on purpose: the cadence chain is fitted, not
+# clamped, and a file too short to hold its declared rhythm is warned about
+# rather than silently compressed.
+#
+# Known engine behaviour, not a property of this spec: a surgery CPT can name a
+# region the case did not injure. The substrate's `_select_surgical_cpts` pools
+# by rough region, and its spine pool mixes cervical and lumbar codes — so a
+# cervical-only case can draw `64483 Transforaminal epidural injection, lumbar`,
+# which is what `personas-cadence-sporadic` does with its *derived* surgery. It
+# reproduces on unmodified main: `castellanos-trial-recon-denied` in
+# examples/demo-caseload.yaml has body parts thoracic_spine and hip and draws
+# `62323 Lumbar epidural steroid injection`. Deliberately not worked around
+# here — a seed-level dodge would hide an engine defect behind a tidy example,
+# and the fix belongs in the CPT pool rather than in this file.
+#
+# @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+
+caseload_id: personas-showcase
+
+defaults:
+  documents:
+    format_mix: {pdf: 1.0}
+  output:
+    filename_style: neutral
+    formats: [pdf]
+
+cases:
+  # 1. THE NEGLIGENT ADJUSTER — delay, chased, then pleaded.
+  #
+  #    A negligent administrator overruns the statutory benefit windows
+  #    (LC 5401(a) claim form, LC 4650(a)/(b) first TD and PD payments,
+  #    CCR 9812(f) delay notice, LC 5402(b) 90-day decision). Each overrun is
+  #    recorded on the ledger as a late benefit event with the days counted, and
+  #    each late event draws exactly one DEMAND_LETTER_FORMAL, dated after the
+  #    delay it answers. The LC 5814 petition then appears because the ledger
+  #    earned it, dated after *every* late event it punishes.
+  #
+  #    What is checkable here is the arithmetic, and it is checkable from the
+  #    manifest alone: count the DEMAND_LETTER_FORMAL files in the folder and
+  #    they equal caseFacts.adjuster.lateBenefitEvents, with the petition dated
+  #    after the last of them. That correspondence is the feature.
+  #
+  #    Known limitation — the demand letter's *content* is not yet the delay
+  #    chain's. `DEMAND_LETTER_FORMAL` dispatches to the substrate's
+  #    `DefenseCounselLetter/formal_demand`, which renders a defense-side
+  #    discovery demand under LC 5710, addressed from defense counsel to the
+  #    applicant's attorney. The engine plans the document as applicant counsel
+  #    chasing a late benefit, and the substrate template does not read that
+  #    role. So the count, the dates and the ordering are true of the rendered
+  #    file; the register of the prose inside it is not. Stated here rather
+  #    than glossed, because this spec exists to be read against its output.
+  #
+  #    `claim_response: delayed` is the coherent partner to the persona: a file
+  #    whose administrator sat on the decision is the file where the delay
+  #    paper belongs. The case resolves, which matters mechanically — a late
+  #    notice that would land past the file's own horizon is dropped rather
+  #    than counted, so the horizon has to sit well clear of the windows.
+  #
+  #    Live-verified at 0.6.0: caseFacts.adjuster.lateBenefitEvents = 4
+  #    (claim_form_provided 1d, first_pd_payment 16d, delay_notice 17d,
+  #    claim_decision 33d), four DEMAND_LETTER_FORMAL, and one
+  #    PETITION_FOR_PENALTIES dated 2022-10-16 — after 2022-09-16, the latest
+  #    late event it pleads.
+  - case_id: personas-negligent-adjuster
+    rng_seed: 370001
+    profile:
+      applicant: {name: Yolanda Castellon, age: 46, occupation: Machine Operator, tenure_years: 11.0}
+      employer: {name: Brightmoor Fabrication Works, industry: manufacturing, county: Stanislaus}
+      carrier: {name: Ardenmoor Compensation Insurance Company}
+    injury:
+      type: specific
+      date_of_injury: 2022-05-16
+      mechanism: hand caught in an unguarded press during a shift changeover
+      body_parts:
+        - {part: wrist, icd10: S62.109A, detail: right scaphoid fracture}
+        - {part: lumbar_spine, icd10: M54.5, detail: L5-S1 strain}
+    lifecycle:
+      target_stage: resolved
+      claim_response: delayed
+      eval_type: qme
+      resolution: {type: stipulations}
+    scenario:
+      adjuster:
+        diligence: negligent
+    documents:
+      global_cap: 70
+
+  # 2. THE ATTENTIVE ADJUSTER — the counterexample, and the reason case 1 means
+  #    anything.
+  #
+  #    Identical lifecycle to case 1, identical injury date, identical cap. The
+  #    only field that moves is the diligence. An attentive administrator acts
+  #    in the first half of every window, so the ledger records no late event —
+  #    and with no late event there is no demand letter to draw and nothing for
+  #    an LC 5814 petition to plead. A file that pleads penalties with no late
+  #    event behind it is rejected by `validate`; this case is the other side of
+  #    that rule, and asserts the zero.
+  - case_id: personas-attentive-adjuster
+    rng_seed: 370002
+    profile:
+      applicant: {name: Gregory Auerbach, age: 43, occupation: Machine Operator, tenure_years: 9.0}
+      employer: {name: Kestrelton Precision Industries, industry: manufacturing, county: Stanislaus}
+      carrier: {name: Wrenfield Indemnity Company}
+    injury:
+      type: specific
+      date_of_injury: 2022-05-16
+      mechanism: hand caught in an unguarded press during a shift changeover
+      body_parts:
+        - {part: wrist, icd10: S62.109A, detail: left scaphoid fracture}
+        - {part: lumbar_spine, icd10: M54.5, detail: L5-S1 strain}
+    lifecycle:
+      target_stage: resolved
+      claim_response: delayed
+      eval_type: qme
+      resolution: {type: stipulations}
+    scenario:
+      adjuster:
+        diligence: attentive
+    documents:
+      global_cap: 70
+
+  # 3. CADENCE: every_30_days — the diligent practice.
+  #
+  #    Counsel's client letters walk a thirty-day clock. Six letters need a
+  #    hundred and fifty days of clear runway between the first letter and the
+  #    file's horizon, which a 2021 injury resolving as a C&R has several times
+  #    over. Read the CLIENT_STATUS_LETTERS dates in the manifest: the gaps
+  #    should be thirty days and stay thirty days.
+  - case_id: personas-cadence-every-30-days
+    rng_seed: 370003
+    profile:
+      applicant: {name: Marisol Tavarez, age: 38, occupation: Certified Nursing Assistant, tenure_years: 6.0}
+      employer: {name: Fernwood Care Communities, industry: healthcare, county: Fresno}
+      carrier: {name: Harrowgate Mutual Insurance Company}
+    injury:
+      type: specific
+      date_of_injury: 2021-09-13
+      mechanism: lifting injury while transferring a patient without assistance
+      body_parts:
+        - {part: lumbar_spine, icd10: M54.5, detail: L4-L5 disc protrusion}
+    lifecycle:
+      target_stage: resolved
+      claim_response: accepted
+      eval_type: qme
+      resolution: {type: c_and_r, msa: false}
+    scenario:
+      attorney:
+        cadence: every_30_days
+      adjuster:
+        diligence: ordinary
+    documents:
+      global_cap: 60
+      overrides:
+        - {subtype: CLIENT_STATUS_LETTERS, count: 6}
+
+  # 4. CADENCE: event_driven — counsel writes when something happened.
+  #
+  #    Each letter lands about five days behind a report or milestone already in
+  #    the file — a treating report, the QME report, the Application, the
+  #    settlement documents. The anchors are the other documents in *this* case,
+  #    not the timeline's milestones, which is what keeps a reader able to hold
+  #    the letter beside the document that prompted it. `eval_type: qme` and a
+  #    resolved case-in-chief are here to stock the file with anchors worth
+  #    writing about.
+  - case_id: personas-cadence-event-driven
+    rng_seed: 370004
+    profile:
+      applicant: {name: Terrence Ballard, age: 51, occupation: Heavy Equipment Mechanic, tenure_years: 18.0}
+      employer: {name: Sablecrest Equipment Services, industry: construction, county: Riverside}
+      carrier: {name: Pellworth Casualty Insurance Company}
+    injury:
+      type: specific
+      date_of_injury: 2021-11-04
+      mechanism: struck by a hydraulic line failure while servicing a loader
+      body_parts:
+        - {part: shoulder, icd10: M75.100, detail: left rotator cuff tear}
+        - {part: cervical_spine, icd10: M54.2, detail: C5-C6 disc bulge}
+    lifecycle:
+      target_stage: resolved
+      claim_response: accepted
+      eval_type: qme
+      resolution: {type: stipulations}
+    scenario:
+      attorney:
+        cadence: event_driven
+      adjuster:
+        diligence: ordinary
+    documents:
+      global_cap: 60
+      overrides:
+        - {subtype: CLIENT_STATUS_LETTERS, count: 5}
+
+  # 5. CADENCE: sporadic — the file with a hole in it.
+  #
+  #    The gap pattern is fixed rather than drawn (24, 120, 41, 96, 33 days), so
+  #    a sporadic file is never handed a tidy monthly rhythm by coincidence. The
+  #    120-day step is what makes the three-month hole a certainty. Five letters
+  #    span 281 days of intended chain, so this case carries a long runway; a
+  #    file too short to hold the hole is warned about rather than compressed
+  #    quietly, and this one should produce no such warning.
+  - case_id: personas-cadence-sporadic
+    rng_seed: 370005
+    profile:
+      applicant: {name: Devon Achterberg, age: 34, occupation: Delivery Driver, tenure_years: 4.0}
+      employer: {name: Marlowe Point Logistics, industry: warehouse_logistics, county: Kern}
+      carrier: {name: Thackery Compensation Insurance Company}
+    injury:
+      type: specific
+      date_of_injury: 2021-07-19
+      mechanism: rear-end collision while making a scheduled route delivery
+      body_parts:
+        - {part: cervical_spine, icd10: M54.2, detail: C6-C7 disc herniation}
+    lifecycle:
+      target_stage: resolved
+      claim_response: accepted
+      eval_type: ame
+      resolution: {type: c_and_r, msa: false}
+    scenario:
+      attorney:
+        cadence: sporadic
+      adjuster:
+        diligence: ordinary
+    documents:
+      global_cap: 60
+      overrides:
+        - {subtype: CLIENT_STATUS_LETTERS, count: 5}
+
+  # 6. DEPTH — the clinical ledger and both personas on one file.
+  #
+  #    `scenario.diagnostics` states what was imaged *and what deliberately was
+  #    not*, which is the half that makes the ledger enforceable: no document
+  #    may cite the absent study. `surgery: performed` guarantees at least one
+  #    operative document and names a CPT. `treatment.status: gap` opens a hole
+  #    in the visit series that the treating and QME text reference, and pins
+  #    the provider roster at three so records packets can be attributed to
+  #    different providers.
+  #
+  #    Stacked on top of that: a negligent adjuster and an event-driven
+  #    attorney. The point of the case is that the clinical ledger and the
+  #    persona features compose — the delay paper, the operative record and the
+  #    imaging all land in one coherent file rather than each needing a case of
+  #    its own. A negligent administrator is not uniformly late, so this file
+  #    draws a shorter delay chain than case 1: live-verified at 0.6.0 it
+  #    records one late event (delay_notice, 20 days), one DEMAND_LETTER_FORMAL
+  #    and the one PETITION_FOR_PENALTIES that event earns, alongside
+  #    OPERATIVE_HOSPITAL_RECORDS and the three-study diagnostics ledger.
+  - case_id: personas-scenario-depth
+    rng_seed: 370006
+    profile:
+      applicant: {name: Camille Okonjo, age: 44, occupation: Baggage Handler, tenure_years: 13.0}
+      employer: {name: Halstead Ground Services, industry: warehouse_logistics, county: San Mateo}
+      carrier: {name: Bexleigh Indemnity Company}
+    injury:
+      type: specific
+      date_of_injury: 2021-06-08
+      mechanism: crush injury while clearing a jammed baggage conveyor
+      body_parts:
+        - {part: knee, icd10: M23.51, detail: right medial meniscus tear}
+        - {part: shoulder, icd10: M75.100, detail: right rotator cuff tear}
+    lifecycle:
+      target_stage: resolved
+      claim_response: delayed
+      eval_type: qme
+      resolution: {type: stipulations}
+    scenario:
+      diagnostics:
+        performed:
+          - {modality: mri, body_part: knee}
+          - {modality: xray, body_part: shoulder}
+        absent:
+          - {modality: emg, body_part: shoulder}
+      surgery: performed
+      treatment:
+        status: gap
+        providers: 3
+      adjuster:
+        diligence: negligent
+      attorney:
+        cadence: event_driven
+    documents:
+      global_cap: 70
