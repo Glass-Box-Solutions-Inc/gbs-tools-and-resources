@@ -387,6 +387,7 @@ def render_document(
     recipient_role: str | None = None,
     content_flags: Sequence[str] = (),
     case_facts: Any = None,
+    money_facts: Any = None,
     packet_index: int | None = None,
     report_ordinal: int | None = None,
     letter_ordinal: int | None = None,
@@ -409,6 +410,12 @@ def render_document(
             (:attr:`~wc_caseload_engine.planner.PlannedDocument.content_flags`).
             Empty is the original code path exactly — no wrapper class is built
             and nothing is appended.
+        case_facts: the clinical ledger, or ``None``.
+        money_facts: the money spine, or ``None`` — which is the state for
+            every seed that carries no ``scenario.wages``. The money-aware
+            templates all delegate straight to the substrate on ``None``, so a
+            case with no money layer renders through the unmodified path even
+            for the subtypes the money registry claims.
 
     Returns:
         A :class:`RenderResult` with the checksum and size for the manifest.
@@ -521,6 +528,8 @@ def render_document(
         # without the doc_spec, so the ledger has to reach them off the
         # instance rather than the context alone.
         template._wc_case_facts = case_facts
+    if money_facts is not None:
+        template._wc_money_facts = money_facts
     try:
         template.generate(out_path, spec)
     except Exception as exc:
@@ -550,6 +559,8 @@ def render_document(
         retry = template_class(cast.case)
         if case_facts is not None:
             retry._wc_case_facts = case_facts
+        if money_facts is not None:
+            retry._wc_money_facts = money_facts
         retry.generate(out_path, spec)
 
     payload = out_path.read_bytes()

@@ -26,6 +26,7 @@ from wc_caseload_engine.case_facts import (
     SUBSTRATE_STATUS_PHRASES,
     CaseFacts,
 )
+from wc_caseload_engine.money import MoneyFacts
 from wc_caseload_engine.substrate import import_substrate
 from wc_caseload_engine.taxonomy import effective_taxonomy
 
@@ -125,6 +126,32 @@ def _index_of(template: Any) -> int:
         if isinstance(value, int):
             return value
     return 0
+
+
+def _money_of(template: Any) -> MoneyFacts | None:
+    """The money spine for the document being rendered, or ``None``.
+
+    ``None`` is the ordinary answer — most seeds carry no ``scenario.wages`` —
+    and every money-aware template below returns the substrate's own story
+    untouched on it. That is the anti-criterion expressed as a code path: the
+    registry entry exists, the subclass is dispatched, and it delegates.
+
+    Read off the instance rather than the context, because the renderer sets
+    ``_wc_money_facts`` there and ``build_story`` is not the only method that
+    needs it.
+    """
+    return getattr(template, "_wc_money_facts", None)
+
+
+def _subtype_of(template: Any) -> str:
+    """Canonical subtype of the document being rendered, or ``""``.
+
+    One substrate class (``WageStatement``) renders both the employer's earnings
+    certificate and the carrier's payment records, so the subtype is the only
+    thing that says which document is on the page.
+    """
+    subtype = getattr(getattr(template, "doc_spec", None), "subtype", None)
+    return str(getattr(subtype, "value", "") or "")
 
 
 #: The substrate's initial-imaging sentence pool, drawn at
@@ -357,6 +384,336 @@ def _report_ordinal(template: Any) -> int:
         if isinstance(value, int):
             return value
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Money
+# ---------------------------------------------------------------------------
+
+#: The bounds of ``compromise_and_release.py``'s gross-settlement draw.
+#:
+#: Matched exactly, so the interception can tell it from the four other
+#: ``randint`` calls in the same method (costs, set-aside, and two identifier
+#: digits). If the substrate edits these bounds the match stops firing — and
+#: says so, loudly, because a silent miss is a manifest publishing a gross the
+#: document contradicts.
+_SUBSTRATE_SETTLEMENT_RANGE: tuple[int, int] = (25000, 150000)
+
+#: Header text of the substrate wage statement's pay-period table.
+_PAY_TABLE_HEADER = "Pay Period"
+
+#: First label of the substrate wage statement's summary table.
+_SUMMARY_TABLE_LABEL = "Average Weekly Wage (AWW):"
+
+#: The payment-record subtypes ``WageStatement`` also renders.
+#:
+#: The substrate registry routes all eight wage/payment subtypes to one class,
+#: so the class has to know which document it is drawing. Named here rather than
+#: inferred from a prefix, because ``WAGE_STATEMENTS_POST_INJURY`` is an
+#: earnings document whose name begins the same way a payment record's does not.
+BENEFIT_RECORD_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "TD_PAYMENT_RECORD_ONGOING",
+        "TD_PAYMENT_RECORD_RETROACTIVE",
+        "PD_PAYMENT_RECORD_ADVANCE",
+        "PD_PAYMENT_RECORD_ONGOING",
+        "PD_PAYMENT_RECORD_FINAL",
+    }
+)
+
+#: The words the wage statement uses for the derivation's own label.
+#:
+#: Printed verbatim so the method name is greppable in extracted text. The
+#: method is the eval label; a label spelled one way in the manifest and another
+#: on the page is a label an analyzer cannot be scored on.
+METHOD_LABEL = "AWW Method:"
+
+#: The caveat every rate line carries. Not decoration — the corpus must never
+#: present an unverified statutory binding as a settled one, and a reader of the
+#: document (as opposed to the manifest) sees only this.
+UNCONFIRMED_NOTICE = "Statutory basis COUNSEL-UNCONFIRMED"
+
+
+class _ForcedRandint:
+    """A stand-in for :mod:`random` that answers one specific ``randint``.
+
+    The counterpart of :class:`_ForcedChoice`, and for the same reason: the
+    substrate computes a value at the top of a method and derives four more from
+    it further down. Overriding the method would mean copying all of that to pin
+    one number.
+
+    Draws and discards on a match, so every later draw in the document reads the
+    stream from where the substrate left it. Returning without drawing would
+    shift the rest of the page.
+    """
+
+    __slots__ = ("_answer", "_bounds", "fired")
+
+    def __init__(self, answer: int, bounds: tuple[int, int]) -> None:
+        self._answer = answer
+        self._bounds = bounds
+        self.fired = False
+
+    def randint(self, low: int, high: int) -> int:
+        if (low, high) == self._bounds:
+            self.fired = True
+            random.randint(low, high)
+            return self._answer
+        return random.randint(low, high)
+
+    def __getattr__(self, name: Any) -> Any:
+        return getattr(random, name)
+
+
+def _find_table(story: list[Any], matches: Any) -> int:
+    """Index of the first table in *story* whose cell values satisfy *matches*.
+
+    ``-1`` when there is none, which every caller treats as "the substrate
+    moved" and reports rather than guesses around.
+    """
+    for index, element in enumerate(story):
+        values = getattr(element, "_cellvalues", None)
+        if values and matches(values):
+            return index
+    return -1
+
+
+def _money_table(rows: list[list[Any]], widths: list[float], styles: Any) -> Any:
+    """A plain two-column figures table in the substrate's own visual register."""
+    from reportlab.lib import colors
+    from reportlab.platypus import Table, TableStyle
+
+    del styles  # matched to the substrate's tables by explicit style, not by theme
+    table = Table(rows, colWidths=widths)
+    table.setStyle(
+        TableStyle(
+            [
+                ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+                ("FONT", (0, 1), (-1, -1), "Helvetica", 9),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]
+        )
+    )
+    return table
+
+
+def _rewrite_wage_statement(story: list[Any], money: MoneyFacts, styles: Any) -> list[Any]:
+    """Swap the drawn pay periods and the drawn summary for the ledger's.
+
+    Two replacements, each keyed on the table's own text. A table that cannot be
+    found is logged rather than skipped over silently: the document would then
+    print invented earnings under a manifest publishing derived ones, which is
+    the disagreement the whole layer exists to prevent, and it must not be
+    possible to ship it quietly.
+    """
+    from reportlab.lib.units import inch
+
+    wage = money.wages
+    computation = wage.computation
+    rate = wage.rate
+
+    pay_index = _find_table(
+        story, lambda values: bool(values) and _PAY_TABLE_HEADER in (values[0] or [])
+    )
+    if pay_index < 0:
+        log.warning("fact_templates.wage_pay_table_not_found", header=_PAY_TABLE_HEADER)
+    else:
+        rows: list[list[Any]] = [
+            ["Pay Period", "Employer", "Weeks", "Regular Pay", "OT Pay", "Gross Pay"]
+        ]
+        for period in wage.periods:
+            rows.append(
+                [
+                    f"{period.period_start:%m/%d/%y}-{period.period_end:%m/%d/%y}",
+                    "Concurrent" if period.concurrent else "Primary",
+                    f"{period.weeks.normalize():f}",
+                    f"${period.regular_gross:,.2f}",
+                    f"${period.overtime_gross:,.2f}" if period.overtime_gross else "-",
+                    f"${period.gross:,.2f}",
+                ]
+            )
+        rows.append(
+            [
+                "TOTAL",
+                "",
+                f"{computation.weeks_considered.normalize():f}",
+                "",
+                "",
+                f"${computation.gross_considered:,.2f}",
+            ]
+        )
+        story[pay_index] = _money_table(
+            rows,
+            [1.4 * inch, 0.9 * inch, 0.6 * inch, 1.1 * inch, 0.9 * inch, 1.1 * inch],
+            styles,
+        )
+
+    summary_index = _find_table(
+        story,
+        lambda values: any(
+            row and str(row[0]).startswith(_SUMMARY_TABLE_LABEL) for row in values
+        ),
+    )
+    if summary_index < 0:
+        log.warning("fact_templates.wage_summary_table_not_found", label=_SUMMARY_TABLE_LABEL)
+        return story
+
+    basis = rate.basis
+    bound_note = {
+        "max": " (at statutory maximum)",
+        "min": " (at statutory minimum)",
+        "unbounded": "",
+    }
+    summary: list[list[Any]] = [
+        ["Wage Summary", ""],
+        [METHOD_LABEL, computation.method],
+        ["Basis of Method:", computation.method_reason],
+        ["Earnings Considered:", f"${computation.gross_considered:,.2f}"],
+        ["Weeks Considered:", f"{computation.weeks_considered.normalize():f}"],
+    ]
+    if computation.in_kind_weekly:
+        summary.append(["Non-Cash Wages (weekly):", f"${computation.in_kind_weekly:,.2f}"])
+    summary.extend(
+        [
+            ["Average Weekly Wage (AWW):", f"${computation.aww:,.2f}"],
+            [
+                "Temporary Disability Rate:",
+                f"${rate.td_weekly_rate:,.2f}/week{bound_note[rate.td_bound]}",
+            ],
+            [
+                "Permanent Disability Rate:",
+                f"${rate.pd_weekly_rate:,.2f}/week{bound_note[rate.pd_bound]}",
+            ],
+            ["Rate Basis:", f"{basis.label} — {UNCONFIRMED_NOTICE}"],
+        ]
+    )
+    story[summary_index] = _money_table(summary, [2.6 * inch, 3.4 * inch], styles)
+    return story
+
+
+def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) -> list[Any]:
+    """Turn the wage statement's tables into the carrier's payment history.
+
+    The same substrate class renders both documents, so the same two tables are
+    replaced — with what was *paid* rather than what was *earned*. Gaps and
+    lateness are printed as their own rows rather than left for a reader to
+    subtract out of the dates, because a delay the eval cannot see is a delay
+    the corpus does not contain.
+    """
+    from reportlab.lib.units import inch
+
+    benefits = money.benefits
+
+    pay_index = _find_table(
+        story, lambda values: bool(values) and _PAY_TABLE_HEADER in (values[0] or [])
+    )
+    if pay_index < 0:
+        log.warning("fact_templates.benefit_pay_table_not_found", header=_PAY_TABLE_HEADER)
+    else:
+        rows: list[list[Any]] = [
+            ["Benefit Period", "Type", "Weeks", "Weekly Rate", "Paid", "Days Late", "Amount"]
+        ]
+        for period in benefits.td_periods:
+            rows.append(
+                [
+                    f"{period.start:%m/%d/%y}-{period.end:%m/%d/%y}",
+                    "TD",
+                    f"{period.weeks.normalize():f}",
+                    f"${period.weekly_rate:,.2f}",
+                    f"{period.date_paid:%m/%d/%y}" if period.date_paid else "UNPAID",
+                    str(period.days_late) if period.days_late else "-",
+                    f"${period.amount:,.2f}",
+                ]
+            )
+        for advance in benefits.pd_advances:
+            rows.append(
+                [
+                    f"{advance.date_paid:%m/%d/%y}",
+                    "PD advance",
+                    f"{advance.weeks.normalize():f}",
+                    f"${advance.weekly_rate:,.2f}",
+                    f"{advance.date_paid:%m/%d/%y}",
+                    str(advance.days_late) if advance.days_late else "-",
+                    f"${advance.amount:,.2f}",
+                ]
+            )
+        for gap in benefits.gaps:
+            rows.append(
+                [
+                    f"{gap.start:%m/%d/%y}-{gap.end:%m/%d/%y}",
+                    "NO BENEFITS PAID",
+                    "",
+                    "",
+                    "",
+                    str(gap.days),
+                    "$0.00",
+                ]
+            )
+        if len(rows) == 1:
+            rows.append(["-", "no benefits paid", "", "", "", "-", "$0.00"])
+        story[pay_index] = _money_table(
+            rows,
+            [
+                1.3 * inch,
+                1.0 * inch,
+                0.5 * inch,
+                0.85 * inch,
+                0.75 * inch,
+                0.6 * inch,
+                0.9 * inch,
+            ],
+            styles,
+        )
+
+    summary_index = _find_table(
+        story,
+        lambda values: any(
+            row and str(row[0]).startswith(_SUMMARY_TABLE_LABEL) for row in values
+        ),
+    )
+    if summary_index < 0:
+        log.warning("fact_templates.benefit_summary_table_not_found")
+        return story
+
+    rate = money.wages.rate
+    summary: list[list[Any]] = [
+        ["Benefit Summary", ""],
+        ["Average Weekly Wage (AWW):", f"${money.aww:,.2f}"],
+        [METHOD_LABEL, money.method],
+        ["Temporary Disability Rate:", f"${rate.td_weekly_rate:,.2f}/week"],
+        ["Total Temporary Disability Paid:", f"${benefits.td_total:,.2f}"],
+        ["Permanent Disability Advances:", f"${benefits.pd_total:,.2f}"],
+        ["Payments Issued Late:", str(benefits.late_payment_count)],
+        ["Longest Delay (days):", str(benefits.max_days_late)],
+        ["Days Without Benefits:", str(sum(gap.days for gap in benefits.gaps))],
+        ["Rate Basis:", f"{rate.basis.label} — {UNCONFIRMED_NOTICE}"],
+    ]
+    if money.settlement is not None:
+        settlement = money.settlement
+        summary.extend(
+            [
+                ["Settlement Type:", settlement.kind],
+                ["Settlement Gross:", f"${settlement.gross_amount:,.2f}"],
+                [
+                    "Settlement Approved:",
+                    settlement.approval_date.isoformat() if settlement.approval_date else "-",
+                ],
+                [
+                    "Settlement Funded:",
+                    settlement.funding_date.isoformat() if settlement.funding_date else "-",
+                ],
+            ]
+        )
+    story[summary_index] = _money_table(summary, [2.6 * inch, 3.4 * inch], styles)
+    return story
 
 
 def build_fact_aware_templates() -> dict[str, type]:
@@ -1066,7 +1423,105 @@ def build_fact_aware_templates() -> dict[str, type]:
             )
             return story
 
+    wage_module = import_substrate("pdf_templates.employment.wage_statement")
+    cr_module = import_substrate("pdf_templates.legal.compromise_and_release")
+
+    class FactAwareWageStatement(_SpecCapture, wage_module.WageStatement):  # type: ignore[misc,name-defined]
+        """Prints the ledger's earnings and rate instead of inventing both.
+
+        The substrate's wage statement is the sharpest instance in the corpus of
+        the defect this package exists to remove. It draws eight to twelve pay
+        periods from ``random.randint``, averages them, and then prints:
+
+            Temporary Total Disability Rate: $X/week (2/3 AWW, max $1,619.15)
+
+        Three separate problems in one line. The fraction and the ceiling are
+        hardcoded, so every file in a multi-year caseload is rated under one
+        vintage regardless of its date of injury. The method is asserted in
+        passing rather than recorded, so there is no label to score an analyzer
+        against. And the earnings behind the average are dice, so the average is
+        not derivable from anything — which is the one property that makes money
+        worth generating at all.
+
+        Fixed by **replacing two tables**, not by forking the method. The
+        letterhead, the employee block, the styling, the HR signature and the
+        attestation are all the substrate's and all fine; only the numbers are
+        wrong. The tables are found by their own header text rather than by
+        position, so a substrate edit that moves them is a miss this class
+        *reports* instead of silently writing over the wrong table.
+
+        One class serves the whole family because the substrate registry routes
+        all eight wage and payment-record subtypes to ``WageStatement``. Which
+        document is on the page is decided by the subtype, not by the class.
+        """
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            story = list(super().build_story(doc_spec))
+            money = _money_of(self)
+            if money is None:
+                # No money layer. The exact original story, untouched — this is
+                # the branch the anti-criterion asserts.
+                return story
+            if _subtype_of(self) in BENEFIT_RECORD_SUBTYPES:
+                return _rewrite_benefit_record(story, money, self.styles)
+            return _rewrite_wage_statement(story, money, self.styles)
+
+    class FactAwareCompromiseAndRelease(_SpecCapture, cr_module.CompromiseAndRelease):  # type: ignore[misc,name-defined]
+        """Settles for the ledger's gross rather than a free draw.
+
+        A single intercepted draw, and deliberately only one. The substrate
+        computes ``gross_settlement = random.randint(25000, 150000)`` and then
+        derives the attorney fee, the costs, the set-aside and the net *from
+        it*, in its own code. Forcing the base number leaves that arithmetic
+        internally consistent and unforked; forcing the derived figures as well
+        would be writing the disbursement, which is the applicant-lens ticket's
+        work, not this one's.
+
+        The interception is by argument match, so it can tell this draw from the
+        four other ``randint`` calls in the same method — and reports a miss
+        rather than swallowing one, because a silent miss here is a manifest
+        publishing a gross the document contradicts.
+        """
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            money = _money_of(self)
+            if money is None or money.settlement is None:
+                return list(super().build_story(doc_spec))
+
+            forced = _ForcedRandint(
+                int(money.settlement.gross_amount),
+                _SUBSTRATE_SETTLEMENT_RANGE,
+            )
+            original = cr_module.random
+            cr_module.random = forced
+            try:
+                story = list(super().build_story(doc_spec))
+            finally:
+                cr_module.random = original
+
+            if not forced.fired:
+                log.warning(
+                    "fact_templates.settlement_gross_not_forced",
+                    expected=list(_SUBSTRATE_SETTLEMENT_RANGE),
+                    gross=str(money.settlement.gross_amount),
+                )
+            return story
+
     return {
+        "WAGE_STATEMENTS_PRE_INJURY": FactAwareWageStatement,
+        "WAGE_STATEMENTS_POST_INJURY": FactAwareWageStatement,
+        "WAGE_STATEMENTS_EARNING_RECORDS": FactAwareWageStatement,
+        "TD_PAYMENT_RECORD_ONGOING": FactAwareWageStatement,
+        "TD_PAYMENT_RECORD_RETROACTIVE": FactAwareWageStatement,
+        "PD_PAYMENT_RECORD_ADVANCE": FactAwareWageStatement,
+        "PD_PAYMENT_RECORD_ONGOING": FactAwareWageStatement,
+        "PD_PAYMENT_RECORD_FINAL": FactAwareWageStatement,
+        "COMPROMISE_AND_RELEASE": FactAwareCompromiseAndRelease,
+        "COMPROMISE_AND_RELEASE_STANDARD": FactAwareCompromiseAndRelease,
+        "COMPROMISE_AND_RELEASE_PD_ONLY": FactAwareCompromiseAndRelease,
+        "COMPROMISE_AND_RELEASE_MSA": FactAwareCompromiseAndRelease,
+        "COMPROMISE_AND_RELEASE_DEPENDENCY": FactAwareCompromiseAndRelease,
+        "COMPROMISE_AND_RELEASE_THIRD_PARTY": FactAwareCompromiseAndRelease,
         "SUBPOENAED_RECORDS": FactAwareSubpoenaedRecords,
         "SUBPOENAED_RECORDS_MEDICAL": FactAwareSubpoenaedRecords,
         "SUBPOENAED_RECORDS_EMPLOYMENT": FactAwareSubpoenaedRecords,

@@ -294,6 +294,7 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
             recipient_role=document.recipient_role,
             content_flags=document.content_flags,
             case_facts=plan.case_facts,
+            money_facts=plan.money_facts,
             packet_index=packet_counter,
             report_ordinal=report_counter,
             letter_ordinal=letter_counter,
