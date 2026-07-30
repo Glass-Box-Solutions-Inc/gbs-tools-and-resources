@@ -623,6 +623,34 @@ class TestDeterminism:
             decimal.getcontext().prec = original
         assert all(answer == answers[0] for answer in answers)
 
+    def test_the_public_currency_helper_is_pinned_on_its_own(self) -> None:
+        """``money()`` is exported, so it must not rely on a caller's context.
+
+        Found by mutation testing, and worth recording why. The whole-derivation
+        probe above stayed **green** when ``money()``'s own pin was removed —
+        ``derive_money_facts`` wraps its body, so the inner calls were covered
+        by the outer context and the mutant was invisible. A guard that cannot
+        see a defect in the code it names is not guarding it.
+
+        ``money`` and ``money_manifest_block`` are both public. A caller that
+        reaches for either from inside a ``localcontext`` — a report writer, a
+        downstream eval harness — gets the same answer or the pin is not real.
+        """
+        facts = _facts({"wages": WAGES, "benefits": {"td_weeks": 12}})
+        original = decimal.getcontext().prec
+        try:
+            baseline = (money(1234.567), money_manifest_block(facts))
+            # ``prec=2`` is in the sweep because ``Decimal.normalize`` — which
+            # the manifest block uses to print week counts — renders 52 as
+            # ``5.2E+1`` under a short context. Mutation testing found that:
+            # a sweep starting at 5 left the manifest block's own pin
+            # unguarded.
+            for prec in (2, 3, 5, 6, 9, 50):
+                decimal.getcontext().prec = prec
+                assert (money(1234.567), money_manifest_block(facts)) == baseline
+        finally:
+            decimal.getcontext().prec = original
+
     def test_money_draws_never_touch_a_stream_another_fact_reads(self) -> None:
         """Varying a money knob moves no clinical fact.
 
