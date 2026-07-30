@@ -1093,7 +1093,7 @@ class WageScenario(_Model):
             raise ValueError(
                 "scenario.wages.concurrent_employment is true but no listed earnings entry "
                 "is marked 'concurrent: true' — the aggregate would be over one employer. "
-                "Mark the second employer's periods concurrent, or set "
+                "Set 'concurrent: true' on the second employer's periods, or set "
                 "concurrent_employment to false."
             )
         return self
@@ -1433,8 +1433,8 @@ class CaseSeed(_Model):
                     f"{len(after)} period(s) ending after the injury on "
                     f"{self.injury.onset_date} (first: {after[0]}) — the average weekly "
                     "wage is computed from earnings *before* the injury, so a later period "
-                    "would silently be ignored. Trim those periods, or correct the injury "
-                    "date."
+                    "would silently be ignored. Remove those periods, or move "
+                    "injury.date_of_injury later."
                 )
 
         return self

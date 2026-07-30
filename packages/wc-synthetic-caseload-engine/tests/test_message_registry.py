@@ -296,6 +296,241 @@ REGISTRY: dict[str, RegisteredMessage] = {
         note="The original defect: this message used to name 'denied', which is not "
         "in the enum. Following it verbatim is now a test.",
     ),
+    # --- money spine (AJC-43) ---------------------------------------------
+    "money_without_wages": RegisteredMessage(
+        where="ScenarioSpec._money_needs_a_wage_block",
+        directives=("Add a scenario.wages block, or remove scenario.{}",),
+        trigger={"scenario": {"benefits": {"td_weeks": 12}}},
+        resolution={"scenario": {"wages": {"base_weekly_wage": 900}}},
+        note="The first of the two offered edits; the second removes the benefits block.",
+    ),
+    "earnings_and_shape_knobs": RegisteredMessage(
+        where="WageScenario._history_is_stated_one_way",
+        directives=("Remove the listed earnings, or remove {}",),
+        trigger={
+            "scenario": {
+                "wages": {
+                    "base_weekly_wage": 900,
+                    "earnings": [
+                        {
+                            "period_start": "2022-01-03",
+                            "period_end": "2022-01-16",
+                            "gross": 1800,
+                        }
+                    ],
+                }
+            }
+        },
+        resolution={"scenario": {"wages": {}}},
+        drop=("scenario.wages.earnings",),
+        note="Following the first clause: drop the listed earnings, keep the described "
+        "history.",
+    ),
+    "earning_capacity_without_a_figure": RegisteredMessage(
+        where="WageScenario._history_is_stated_one_way",
+        directives=(
+            "Set scenario.wages.earning_capacity_weekly, or choose a method that computes",
+        ),
+        trigger={"scenario": {"wages": {"method": "earning_capacity"}}},
+        resolution={"scenario": {"wages": {"earning_capacity_weekly": 1500}}},
+    ),
+    "concurrent_without_a_second_employer": RegisteredMessage(
+        where="WageScenario._history_is_stated_one_way",
+        directives=(
+            "Set 'concurrent: true' on the second employer's periods, or set "
+            "concurrent_employment to false",
+        ),
+        trigger={
+            "scenario": {
+                "wages": {
+                    "concurrent_employment": True,
+                    "earnings": [
+                        {
+                            "period_start": "2022-01-03",
+                            "period_end": "2022-01-16",
+                            "gross": 1800,
+                        }
+                    ],
+                }
+            }
+        },
+        resolution={"scenario": {"wages": {"concurrent_employment": False}}},
+        note="The second clause. The first would need a new earnings entry, which "
+        "deep_merge cannot express as a patch.",
+    ),
+    "earnings_period_inverted": RegisteredMessage(
+        where="EarningsEntry._period_is_ordered_and_overtime_fits",
+        directives=("Swap the two dates, or correct whichever one is mistyped",),
+        trigger={
+            "scenario": {
+                "wages": {
+                    "earnings": [
+                        {
+                            "period_start": "2022-01-16",
+                            "period_end": "2022-01-03",
+                            "gross": 1800,
+                        }
+                    ]
+                }
+            }
+        },
+        resolution={
+            "scenario": {
+                "wages": {
+                    "earnings": [
+                        {
+                            "period_start": "2022-01-03",
+                            "period_end": "2022-01-16",
+                            "gross": 1800,
+                        }
+                    ]
+                }
+            }
+        },
+    ),
+    "overtime_exceeds_gross": RegisteredMessage(
+        where="EarningsEntry._period_is_ordered_and_overtime_fits",
+        directives=("Raise gross to at least the overtime, or lower the overtime",),
+        trigger={
+            "scenario": {
+                "wages": {
+                    "earnings": [
+                        {
+                            "period_start": "2022-01-03",
+                            "period_end": "2022-01-16",
+                            "gross": 400,
+                            "overtime": 900,
+                        }
+                    ]
+                }
+            }
+        },
+        resolution={
+            "scenario": {
+                "wages": {
+                    "earnings": [
+                        {
+                            "period_start": "2022-01-03",
+                            "period_end": "2022-01-16",
+                            "gross": 900,
+                            "overtime": 900,
+                        }
+                    ]
+                }
+            }
+        },
+        note="Following the first clause literally: gross raised to exactly the overtime, "
+        "which the message says is enough.",
+    ),
+    "rate_basis_bounds_inverted": RegisteredMessage(
+        where="RateBasisOverride._bounds_are_ordered",
+        directives=("Swap the two values, or raise the maximum",),
+        trigger={
+            "scenario": {
+                "wages": {
+                    "base_weekly_wage": 900,
+                    "rate_basis": {"td_min_weekly": 900, "td_max_weekly": 200},
+                }
+            }
+        },
+        resolution={
+            "scenario": {"wages": {"rate_basis": {"td_min_weekly": 200, "td_max_weekly": 900}}}
+        },
+    ),
+    "employment_start_after_injury": RegisteredMessage(
+        where="CaseSeed._check_scenario_against_the_lifecycle",
+        directives=(
+            "Move employment_start to on or before the injury, or correct the injury date",
+        ),
+        trigger={
+            "scenario": {
+                "wages": {"base_weekly_wage": 900, "employment_start": "2023-01-01"}
+            }
+        },
+        resolution={"scenario": {"wages": {"employment_start": "2021-06-01"}}},
+    ),
+    "earnings_after_injury": RegisteredMessage(
+        where="CaseSeed._check_scenario_against_the_lifecycle",
+        directives=("Remove those periods, or move injury.date_of_injury later",),
+        trigger={
+            "scenario": {
+                "wages": {
+                    "earnings": [
+                        {
+                            "period_start": "2023-01-03",
+                            "period_end": "2023-01-16",
+                            "gross": 1800,
+                        }
+                    ]
+                }
+            }
+        },
+        resolution={"scenario": {"wages": {}}},
+        drop=("scenario.wages.earnings",),
+        note="The first clause. The second would move the injury past the anchor's own "
+        "runway, which a different validator would then reject.",
+    ),
+    "settlement_without_a_settlement": RegisteredMessage(
+        where="CaseSeed._check_scenario_against_the_lifecycle",
+        directives=(
+            "Set 'lifecycle: {resolution: {type: c_and_r}}' (or 'stipulations'), or remove "
+            "scenario.settlement",
+        ),
+        trigger={
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "settlement": {"gross_amount": 40000},
+            },
+            "injury": {"date_of_injury": "2021-06-14"},
+        },
+        resolution={"lifecycle": {"resolution": {"type": "c_and_r"}}},
+        note="Verbatim from the message. The injury moves back in the trigger because a "
+        "resolved case needs the runway a medical_legal one does not.",
+    ),
+    "funding_stated_twice": RegisteredMessage(
+        where="SettlementScenario._funding_is_stated_one_way",
+        directives=(
+            "Keep funding_date for an exact date, or funding_days for an interval, and "
+            "drop the other",
+        ),
+        trigger={
+            "injury": {"date_of_injury": "2021-06-14"},
+            "lifecycle": {"resolution": {"type": "c_and_r"}},
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "settlement": {"funding_date": "2024-02-01", "funding_days": 30},
+            },
+        },
+        resolution={"scenario": {"settlement": {}}},
+        drop=("scenario.settlement.funding_days",),
+        note="Keeping funding_date and dropping the other, exactly as offered.",
+    ),
+    "funded_before_approval": RegisteredMessage(
+        where="SettlementScenario._funding_is_stated_one_way",
+        directives=(
+            "Move funding_date to on or after the approval, or correct the approval date",
+        ),
+        trigger={
+            "injury": {"date_of_injury": "2021-06-14"},
+            "lifecycle": {"resolution": {"type": "c_and_r"}},
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "settlement": {"approval_date": "2024-03-01", "funding_date": "2024-01-01"},
+            },
+        },
+        resolution={"scenario": {"settlement": {"funding_date": "2024-03-15"}}},
+    ),
+    "lateness_without_late_payments": RegisteredMessage(
+        where="BenefitsScenario._lateness_is_coherent",
+        directives=("Raise late_payments above zero, or drop max_days_late",),
+        trigger={
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "benefits": {"late_payments": 0, "max_days_late": 30},
+            }
+        },
+        resolution={"scenario": {"benefits": {"late_payments": 2}}},
+    ),
 }
 
 
