@@ -1,0 +1,204 @@
+# wc-caseload money showcase — every AWW method, both rate bounds, and a
+# benefit ledger with known exposure.
+#
+#   wc-caseload generate --spec examples/money-showcase.yaml --out /tmp/wcce-money
+#   wc-caseload validate --out /tmp/wcce-money
+#
+# The money spine (AJC-43) is gated on `scenario.wages`. A seed without that
+# block derives no money facts, publishes no `caseFacts.money`, and renders
+# every document through the code path it took before the money layer existed —
+# which is why the demo caseload is byte-identical across this change and why
+# none of its manifests gained a key. This spec is the opposite exercise: seven
+# cases that each make one money question live.
+#
+#   1. steady-earner        a flat history               -> actual_weekly_earnings
+#   2. irregular-earner     variable weeks, some at zero -> irregular_earnings_average
+#   3. new-hire             employment starts mid-window -> short_history_projection
+#   4. two-jobs             a concurrent employer        -> concurrent_aggregate
+#   5. capped-executive     earnings above the ceiling   -> the maximum, recorded as a bound
+#   6. neglected-file       a negligent administrator    -> gaps and late payments, recorded
+#   7. atypical-earner      a stated earning capacity    -> earning_capacity
+#
+# The seventh case is the one method the engine will never select for itself.
+# `earning_capacity` is the catch-all a human argues for when no arithmetic over
+# the history gives the right answer, and an engine reaching for it unprompted
+# would be asserting a legal conclusion rather than computing one — so the seed
+# has to name both the method and the figure.
+#
+# **Read the rate line before you rely on it.** Every statutory binding this
+# engine ships is COUNSEL-UNCONFIRMED: the fraction, the ceiling, the floor and
+# the date brackets they hang on are unverified professional knowledge, and the
+# manifest says so on every case (`caseFacts.money.rate.counselConfirmed`). A
+# seed that carries a genuinely verified authority states it under
+# `scenario.wages.rate_basis` and sets `counsel_confirmed: true`; the engine's
+# own table can never set that flag itself.
+#
+# The dates of injury are spread across four rate vintages on purpose. A
+# caseload rated under one vintage regardless of its dates is the defect the
+# date-keyed basis exists to remove, and a spec whose cases all sit in one
+# bracket could not show that it had been.
+#
+# @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+
+caseload_id: money-showcase
+
+defaults:
+  documents:
+    format_mix: {pdf: 1.0}
+  output:
+    filename_style: neutral
+    formats: [pdf]
+
+cases:
+  # 1. The baseline. A steady wage, comfortably inside both bounds — the case
+  #    every other one here is a variation on.
+  - case_id: steady-earner
+    rng_seed: 51001
+    injury:
+      type: specific
+      date_of_injury: 2021-03-08
+      body_parts: [{part: lumbar_spine, icd10: M54.5}]
+    lifecycle:
+      target_stage: resolved
+      eval_type: qme
+      resolution: {type: stipulations}
+    scenario:
+      wages:
+        pattern: regular
+        base_weekly_wage: 1150
+        lookback_weeks: 52
+        pay_frequency: biweekly
+
+  # 2. The case method selection exists for. Weeks that vary widely — some with
+  #    no work at all — so no single week represents the earnings.
+  - case_id: irregular-earner
+    rng_seed: 51002
+    injury:
+      type: specific
+      date_of_injury: 2016-09-19
+      body_parts: [{part: shoulder, icd10: S43.401A}]
+    lifecycle:
+      target_stage: resolved
+      eval_type: qme
+      resolution: {type: c_and_r}
+    scenario:
+      wages:
+        pattern: irregular
+        base_weekly_wage: 980
+        overtime_share: 0.18
+        in_kind:
+          - {kind: lodging, weekly_value: 140}
+      settlement:
+        funding_days: 21
+
+  # 3. Hired eleven weeks before the injury, so the lookback window has nothing
+  #    to average over most of it. Averaging across weeks the applicant was not
+  #    employed would understate the wage; the projection is the answer, and the
+  #    label records that it was used.
+  - case_id: new-hire
+    rng_seed: 51003
+    injury:
+      type: specific
+      date_of_injury: 2020-07-02
+      body_parts: [{part: knee, icd10: S83.241A}]
+    lifecycle:
+      target_stage: medical_legal
+      eval_type: qme
+    scenario:
+      wages:
+        pattern: regular
+        base_weekly_wage: 1320
+        employment_start: 2020-04-13
+
+  # 4. Two employers at once. The aggregate is asked before anything else,
+  #    because "is this history irregular" is meaningless over the wrong set of
+  #    earnings.
+  - case_id: two-jobs
+    rng_seed: 51004
+    injury:
+      type: specific
+      date_of_injury: 2023-02-14
+      body_parts: [{part: wrist, icd10: S62.101A}]
+    lifecycle:
+      target_stage: medical_legal
+      eval_type: qme
+    scenario:
+      wages:
+        pattern: regular
+        base_weekly_wage: 760
+        concurrent_employment: true
+        concurrent_weekly_wage: 415
+
+  # 5. Earnings well above the indemnity ceiling. The interesting fact is not
+  #    the rate — every high earner in a vintage has the same one — it is that
+  #    the rate is *bounded*, which the ledger records as `tdBound: max` and the
+  #    statement prints as "(at statutory maximum)".
+  - case_id: capped-executive
+    rng_seed: 51005
+    injury:
+      type: specific
+      date_of_injury: 2019-11-05
+      body_parts: [{part: cervical_spine, icd10: M50.20}]
+    lifecycle:
+      target_stage: resolved
+      eval_type: ame
+      resolution: {type: c_and_r}
+    scenario:
+      wages:
+        pattern: regular
+        base_weekly_wage: 4800
+      settlement:
+        funding_days: 10
+
+  # 6. The delay case. A negligent administrator, a deliberate seventy-five day
+  #    hole in the temporary-disability series, and three payments issued late —
+  #    all recorded as facts with their days, which is what lets the penalty work
+  #    in Wave 3 be computed against a *known* exposure rather than inferred
+  #    from payment dates.
+  - case_id: neglected-file
+    rng_seed: 51006
+    injury:
+      type: specific
+      date_of_injury: 2013-05-21
+      body_parts: [{part: lumbar_spine, icd10: M54.5}, {part: shoulder, icd10: S43.401A}]
+    lifecycle:
+      target_stage: resolved
+      eval_type: qme
+      claim_response: delayed
+      resolution: {type: c_and_r}
+    scenario:
+      adjuster:
+        diligence: negligent
+      wages:
+        pattern: seasonal
+        base_weekly_wage: 890
+      benefits:
+        td_weeks: 32
+        td_gap_days: 75
+        late_payments: 3
+        max_days_late: 54
+        pd_advances: 2
+      settlement:
+        funding_days: 118
+
+  # 7. The catch-all, and the only method that must be authored. The history is
+  #    real but unrepresentative — a long illness before the injury — so the
+  #    average it produces is not the wage the applicant was earning. The seed
+  #    states the capacity, and the ledger records that a human chose it
+  #    (`methodSource: seed`) rather than that the engine computed it.
+  - case_id: atypical-earner
+    rng_seed: 51007
+    injury:
+      type: cumulative_trauma
+      ct_start: 2017-01-09
+      ct_end: 2018-08-24
+      body_parts: [{part: elbow, icd10: M77.11}]
+    lifecycle:
+      target_stage: medical_legal
+      eval_type: qme
+    scenario:
+      wages:
+        pattern: irregular
+        base_weekly_wage: 620
+        method: earning_capacity
+        earning_capacity_weekly: 1465
