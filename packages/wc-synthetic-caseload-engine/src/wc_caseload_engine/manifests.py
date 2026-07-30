@@ -43,6 +43,10 @@ from wc_caseload_engine.case_facts import (
     CaseFacts,
     facts_manifest_block,
 )
+from wc_caseload_engine.money import (
+    GOVERNED_MONEY_FIELDS,
+    MoneyFacts,
+)
 from wc_caseload_engine.planner import (
     CADENCE_ANCHOR_SUBTYPES,
     CasePlan,
@@ -50,7 +54,7 @@ from wc_caseload_engine.planner import (
     build_case_plan,
 )
 from wc_caseload_engine.renderer import FORMAT_EXTENSIONS, RenderResult, render_document
-from wc_caseload_engine.seeds import CaseSeed, write_case_seed
+from wc_caseload_engine.seeds import AWW_METHODS, CaseSeed, write_case_seed
 from wc_caseload_engine.substrate import check_substrate_pin, substrate_git_sha
 from wc_caseload_engine.taxonomy import (
     EXPECTED_SUBTYPE_COUNT,
@@ -222,7 +226,7 @@ def build_manifest(
     if plan.case_facts is not None:
         # Published so a reader can check every coherence claim this
         # package makes against the documents, from the output alone.
-        ordered["caseFacts"] = facts_manifest_block(plan.case_facts)
+        ordered["caseFacts"] = facts_manifest_block(plan.case_facts, plan.money_facts)
     return ordered
 
 
@@ -249,7 +253,7 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
 
     write_case_seed(seed, case_dir / SEED_NAME)
     if plan.case_facts is not None:
-        _write_case_facts(plan.case_facts, case_dir / CASE_FACTS_NAME)
+        _write_case_facts(plan.case_facts, case_dir / CASE_FACTS_NAME, plan.money_facts)
 
     renders: list[tuple[str, RenderResult]] = []
     # Packets are counted separately from documents so the provider round-robin
@@ -455,6 +459,139 @@ class ValidationReport:
 OPERATIVE_SUBTYPES = frozenset({"OPERATIVE_HOSPITAL_RECORDS"})
 
 
+#: Documents that carry the money spine, by the part of it they render.
+#:
+#: Used by the validator both ways: money published with none of these in the
+#: folder is a claim nothing supports, and one of these in a folder with no
+#: money block is a document rendering figures the ledger never decided.
+MONEY_WAGE_DOCUMENTS = frozenset(
+    {
+        "WAGE_STATEMENTS_PRE_INJURY",
+        "WAGE_STATEMENTS_POST_INJURY",
+        "WAGE_STATEMENTS_EARNING_RECORDS",
+    }
+)
+MONEY_BENEFIT_DOCUMENTS = frozenset(
+    {
+        "TD_PAYMENT_RECORD_ONGOING",
+        "TD_PAYMENT_RECORD_RETROACTIVE",
+        "PD_PAYMENT_RECORD_ADVANCE",
+        "PD_PAYMENT_RECORD_ONGOING",
+        "PD_PAYMENT_RECORD_FINAL",
+    }
+)
+
+#: Every method name the ledger may record. Mirrors ``seeds.AWW_METHODS``; a
+#: published method outside it is a label no analyzer could have been trained
+#: on, which makes the eval score meaningless rather than merely wrong.
+MONEY_METHODS = frozenset(AWW_METHODS)
+
+
+def _validate_money(
+    block: dict[str, Any], documents: list[Any], case_label: str
+) -> list[str]:
+    """Check the money spine against itself and against the folder.
+
+    Skipped entirely when there is no ``money`` key, because absence is the
+    designed state for every case that did not ask for a money layer — the
+    validator must not turn "this seed has no wages" into a problem.
+
+    What it *does* refuse is a money claim with nothing behind it. The wage
+    statement is where an average weekly wage is read from; publishing an AWW
+    with no wage statement in the folder is the asserted-not-derived failure
+    this whole layer exists to remove, and a validator that let it through would
+    be certifying exactly what it was built to catch.
+    """
+    money = block.get("money")
+    if money is None:
+        return []
+
+    problems: list[str] = []
+    if not isinstance(money, dict):
+        return [f"{case_label}: caseFacts.money is {type(money).__name__}, expected a mapping"]
+
+    for key, fields in GOVERNED_MONEY_FIELDS.items():
+        if key == "settlement":
+            # Present only for a case that settled — see SettlementFact.
+            continue
+        section = money.get(key)
+        if section is None:
+            problems.append(f"{case_label}: caseFacts.money is missing {key!r}")
+            continue
+        if not isinstance(section, dict):
+            problems.append(f"{case_label}: caseFacts.money.{key} is not a mapping")
+            continue
+        ungoverned = sorted(set(section) - set(fields))
+        if ungoverned:
+            problems.append(
+                f"{case_label}: caseFacts.money.{key} publishes ungoverned field(s) "
+                f"{', '.join(ungoverned)} — a published fact must be one a document renders"
+            )
+    if problems:
+        return problems
+
+    wage = money["wage"]
+    rate = money["rate"]
+
+    method = wage.get("method")
+    if method not in MONEY_METHODS:
+        problems.append(
+            f"{case_label}: caseFacts.money.wage.method is {method!r}, which is not one of "
+            f"{', '.join(sorted(MONEY_METHODS))}"
+        )
+    if wage.get("methodSource") not in ("seed", "derived"):
+        problems.append(
+            f"{case_label}: caseFacts.money.wage.methodSource is "
+            f"{wage.get('methodSource')!r}, expected 'seed' or 'derived'"
+        )
+    if not wage.get("methodReason"):
+        problems.append(
+            f"{case_label}: caseFacts.money.wage names method {method!r} with no reason — "
+            "the method is ground truth, so how it was chosen is part of the label"
+        )
+
+    for bound_key in ("tdBound", "pdBound"):
+        if rate.get(bound_key) not in ("max", "min", "unbounded"):
+            problems.append(
+                f"{case_label}: caseFacts.money.rate.{bound_key} is "
+                f"{rate.get(bound_key)!r}, expected max, min or unbounded"
+            )
+    if "counselConfirmed" not in rate:
+        problems.append(
+            f"{case_label}: caseFacts.money.rate omits counselConfirmed — every statutory "
+            "binding in this corpus is unverified until it says otherwise, and a consumer "
+            "must not have to read the source to find that out"
+        )
+
+    subtypes = {d.get("subtype") for d in documents if isinstance(d, dict)}
+    if not (subtypes & MONEY_WAGE_DOCUMENTS):
+        problems.append(
+            f"{case_label}: caseFacts publishes an average weekly wage but the case holds "
+            "no wage statement — the figure is asserted rather than derivable"
+        )
+    if money["benefits"].get("tdPeriods") and not (subtypes & MONEY_BENEFIT_DOCUMENTS):
+        problems.append(
+            f"{case_label}: caseFacts publishes {money['benefits']['tdPeriods']} temporary "
+            "disability period(s) but the case holds no payment record to read them from"
+        )
+
+    settlement = money.get("settlement")
+    if settlement is not None:
+        approval = settlement.get("approvalDate")
+        funding = settlement.get("fundingDate")
+        if approval and funding and funding < approval:
+            problems.append(
+                f"{case_label}: caseFacts.money.settlement was funded {funding} but "
+                f"approved {approval} — money does not move before the Board approves"
+            )
+        if settlement.get("kind") not in ("c_and_r", "stipulations"):
+            problems.append(
+                f"{case_label}: caseFacts.money.settlement.kind is "
+                f"{settlement.get('kind')!r}, expected c_and_r or stipulations"
+            )
+    return problems
+
+
 def _validate_case_facts(
     manifest: dict[str, Any],
     case_dir: Path,
@@ -644,6 +781,8 @@ def _validate_case_facts(
         else:
             problems.append(f"{case_label}: caseFacts.surgery.status is {status!r}")
 
+    problems.extend(_validate_money(block, documents, case_label))
+
     # The artifact and the manifest are two publications of one ledger. They are
     # written from the same call, so any drift means the folder was edited after
     # generation — which is exactly what a reader needs to be told.
@@ -792,11 +931,17 @@ __all__ = [
 ]
 
 
-def _write_case_facts(facts: CaseFacts, path: Path) -> None:
+def _write_case_facts(
+    facts: CaseFacts, path: Path, money: MoneyFacts | None = None
+) -> None:
     """Write the resolved ledger beside the seed.
 
     YAML rather than JSON to match ``seed.yaml``: the two files are read
     together, and a reviewer should not have to change format between them.
+
+    Built from the same call as the manifest's block, *money included*, because
+    ``_validate_case_facts`` compares the two for byte equality. Writing them
+    from two different expressions is how they would drift.
     """
     import yaml
 
@@ -806,6 +951,9 @@ def _write_case_facts(facts: CaseFacts, path: Path) -> None:
         "# Documents render against this, and the manifest publishes it as 'caseFacts'.\n"
     )
     body = yaml.safe_dump(
-        facts_manifest_block(facts), sort_keys=False, default_flow_style=False, allow_unicode=True
+        facts_manifest_block(facts, money),
+        sort_keys=False,
+        default_flow_style=False,
+        allow_unicode=True,
     )
     path.write_text(header + body, encoding="utf-8")

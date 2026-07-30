@@ -941,7 +941,7 @@ def derive_case_facts(seed: CaseSeed, timeline: Any, cast: Any = None) -> CaseFa
     return facts
 
 
-def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
+def facts_manifest_block(facts: CaseFacts, money: Any = None) -> dict[str, Any]:
     """The ``caseFacts`` object a manifest publishes.
 
     Published so the ledger is auditable from the output alone: a reader with
@@ -952,6 +952,23 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
     sentence true. A field no template renders cannot be checked against the
     documents, so publishing it would let the manifest assert things the case
     file contradicts — the exact failure the ledger was built to remove.
+
+    Args:
+        facts: the clinical ledger, which every case has.
+        money: the money spine (a ``MoneyFacts``), which only a seed carrying
+            ``scenario.wages`` has. When ``None`` — the default, and the
+            overwhelmingly common case — **no** ``money`` key is written at
+            all. Not an empty object, not a null: absent. A key whose value is
+            null still moves every existing manifest's bytes, and the money
+            layer's anti-criterion is that a case which asked for no money
+            layer is indistinguishable from one generated before it existed.
+
+            Typed ``Any`` rather than ``MoneyFacts`` on purpose:
+            :mod:`wc_caseload_engine.money` imports :class:`CaseSeed` from
+            :mod:`~wc_caseload_engine.seeds`, which imports nothing from here,
+            but this module *is* imported by money's own consumers — annotating
+            the real type would close a cycle for a parameter this function only
+            forwards.
     """
     # One entry per modality, not per study. Body parts are not published (no
     # template renders a per-study body part), and without them two entries for
@@ -970,7 +987,7 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
         if any(f.modality == modality for f in facts.diagnostics)
     ]
 
-    return {
+    block: dict[str, Any] = {
         # Published because a document honours it: the LC 5814 petition exists
         # if and only if ``lateBenefitEvents`` is non-zero, so a reader holding
         # the manifest can check the pleading against the fact behind it. The
@@ -1016,6 +1033,11 @@ def facts_manifest_block(facts: CaseFacts) -> dict[str, Any]:
             for p in facts.providers
         ],
     }
+    if money is not None:
+        from wc_caseload_engine.money import money_manifest_block
+
+        block["money"] = money_manifest_block(money)
+    return block
 
 
 #: The only ledger fields that may be published, and the template that renders each.
