@@ -50,6 +50,7 @@ from wc_caseload_engine.lifecycle_bridge import (
     fit_dates,
     to_document_candidates,
 )
+from wc_caseload_engine.money import MoneyFacts, derive_money_facts
 from wc_caseload_engine.perspective import apply_perspective, document_roles
 from wc_caseload_engine.recon_machine import ReconTrack, build_recon_track
 from wc_caseload_engine.renderer import choose_format
@@ -126,6 +127,18 @@ class CasePlan:
 
     Derived once, here, so the planner, the renderer and the manifest
     cannot reach three different answers about what happened in the case.
+    """
+    money_facts: MoneyFacts | None = None
+    """The money spine, when the seed asked for one. ``None`` when it did not.
+
+    Separate from ``case_facts`` rather than folded into it, and the ``None`` is
+    the reason. The clinical ledger is derived for *every* case; the money spine
+    is derived only for a seed carrying ``scenario.wages``, and keeping the two
+    apart is what lets "this case has no money layer" be a value the planner,
+    the renderer and the manifest can each short-circuit on. Folded in, the
+    absence would have to be spelled as a dozen ``None`` fields on a model that
+    is always present, and every consumer would have to agree on which of them
+    means "no money".
     """
     """Which of the reconsideration track's subtypes survived to the plan.
 
@@ -497,6 +510,89 @@ def _penalty_candidates(facts: CaseFacts, timeline: CaseTimeline) -> list[DatedC
             author_role="applicant_attorney",
         )
     ]
+
+
+#: The wage statement a money-bearing case must contain, and its author.
+#:
+#: One subtype, not the whole ``WAGE_STATEMENTS_*`` family. The floor exists so
+#: that a seed stating wage facts cannot produce a folder with nowhere to read
+#: them; emitting all three flavours would be the engine deciding how an employer
+#: files its payroll, which is a document-control question and belongs to the
+#: seed.
+MONEY_WAGE_SUBTYPE = "WAGE_STATEMENTS_PRE_INJURY"
+
+#: The payment records that carry the benefit ledger, each gated on having
+#: something to report. A TD record in a file that paid no temporary disability
+#: would be a blank form, which is worse than an absent one.
+MONEY_TD_SUBTYPE = "TD_PAYMENT_RECORD_ONGOING"
+MONEY_PD_SUBTYPE = "PD_PAYMENT_RECORD_ADVANCE"
+
+MONEY_FLOOR_SUBTYPES: tuple[str, ...] = (
+    MONEY_WAGE_SUBTYPE,
+    MONEY_TD_SUBTYPE,
+    MONEY_PD_SUBTYPE,
+)
+
+
+def _money_candidates(
+    seed: CaseSeed,
+    money_facts: MoneyFacts | None,
+    timeline: CaseTimeline,
+    proposed: frozenset[str],
+) -> list[DatedCandidate]:
+    """A floor: the documents a money-bearing case must be able to be read from.
+
+    The ISC-92.1 pattern — a stated scenario fact guarantees the document that
+    carries it — applied to money. A seed that states an earnings history and
+    gets back a folder with no wage statement in it has a ledger nothing can
+    check, which is precisely the "asserted, not derived" failure this layer
+    exists to remove.
+
+    A **floor**, not an emission: a subtype the lifecycle walk already proposed
+    is left alone, so this never doubles a document the case was going to have
+    anyway. And returned as ordinary candidates, so ``documents.exclude`` and
+    ``include_only`` still bind — the PR #25 M1 lesson (anything appended after
+    ``resolve_document_controls`` is invisible to the controls) applied at design
+    time rather than after a review found it.
+
+    Dated as three *independent* documents, each clamped, rather than fitted as a
+    chain. They have no causal relationship with one another — an employer's
+    payroll certificate does not cause a carrier's payment printout — which is
+    the one shape ``CaseTimeline.clamp`` is sound for.
+    """
+    if money_facts is None:
+        return []
+
+    out: list[DatedCandidate] = []
+
+    def add(subtype: str, when: date) -> None:
+        if subtype in proposed:
+            return
+        out.append(
+            DatedCandidate(
+                subtype=subtype,
+                doc_date=timeline.clamp(when),
+                track=TRACK_CORE,
+                author_role=author_role_for(subtype),
+            )
+        )
+
+    # The employer certifies earnings once the claim reaches it. Three weeks
+    # after the claim form is a working assumption, not a statutory window, and
+    # it is stated here rather than dressed up as one.
+    add(MONEY_WAGE_SUBTYPE, timeline.claim_filed_date + timedelta(days=21))
+
+    benefits = money_facts.benefits
+    if benefits.td_periods:
+        last_td = max(
+            (period.date_paid or period.end for period in benefits.td_periods),
+        )
+        add(MONEY_TD_SUBTYPE, last_td + timedelta(days=7))
+    if benefits.pd_advances:
+        last_pd = max(advance.date_paid for advance in benefits.pd_advances)
+        add(MONEY_PD_SUBTYPE, last_pd + timedelta(days=7))
+
+    return out
 
 
 def _delay_chain_candidates(facts: CaseFacts, timeline: CaseTimeline) -> list[DatedCandidate]:
@@ -957,6 +1053,11 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # one provider, the manifest published five.
     cast = build_case_cast(seed, timeline, case_number=case_number)
     case_facts = derive_case_facts(seed, timeline, cast)
+    # The resolved diligence is passed in rather than re-resolved, so the money
+    # and the clinical ledger cannot disagree about who handled this file. Two
+    # independent resolutions of the same persona is the defect that let
+    # ``scenario.surgery`` and ``has_surgery`` contradict each other in Phase 1.
+    money_facts = derive_money_facts(seed, timeline, case_facts.adjuster_diligence)
 
     core = build_core_candidates(seed, timeline)
     lien_tracks = build_lien_tracks(seed, timeline)
@@ -970,6 +1071,11 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         *_penalty_candidates(case_facts, timeline),
         *_delay_chain_candidates(case_facts, timeline),
     ]
+    candidates.extend(
+        _money_candidates(
+            seed, money_facts, timeline, frozenset(c.subtype for c in candidates)
+        )
+    )
 
     # Whose file is this? The three machines above are perspective-blind on
     # purpose — they model the *claim*, which both sides share. Only here does
@@ -1097,10 +1203,15 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         warnings=warnings,
         perspective_notes=pov.notes,
         case_facts=case_facts,
+        money_facts=money_facts,
     )
 
 
 __all__ = [
+    "MONEY_FLOOR_SUBTYPES",
+    "MONEY_PD_SUBTYPE",
+    "MONEY_TD_SUBTYPE",
+    "MONEY_WAGE_SUBTYPE",
     "CasePlan",
     "ControlKeyError",
     "PlannedDocument",
