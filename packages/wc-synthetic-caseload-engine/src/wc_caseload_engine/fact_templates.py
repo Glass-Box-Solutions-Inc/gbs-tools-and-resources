@@ -15,6 +15,7 @@ for byte; a subtype in it is announced in the compatibility notice.
 from __future__ import annotations
 
 import random
+from decimal import Decimal
 from typing import Any
 
 import structlog
@@ -448,6 +449,12 @@ UNCONFIRMED_NOTICE = "Statutory basis COUNSEL-UNCONFIRMED"
 DUE_NOTICE = "COUNSEL-UNCONFIRMED"
 
 
+#: The permanent-disability award draw in the substrate's stipulated award
+#: (``pdf_templates/legal/stipulations.py``). Matched by its bounds so the
+#: interception cannot catch the three other ``randint`` calls on the same page.
+_SUBSTRATE_STIPS_AWARD_RANGE = (5000, 75000)
+
+
 class _ForcedRandint:
     """A stand-in for :mod:`random` that answers one specific ``randint``.
 
@@ -760,22 +767,12 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
         ["Rate Basis Source:", rate.basis.source],
         ["Rate Basis Authority:", rate.basis.authority],
     ]
-    if money.settlement is not None:
-        settlement = money.settlement
-        summary.extend(
-            [
-                ["Settlement Type:", settlement.kind],
-                ["Settlement Gross:", f"${settlement.gross_amount:,.2f}"],
-                [
-                    "Settlement Approved:",
-                    settlement.approval_date.isoformat() if settlement.approval_date else "-",
-                ],
-                [
-                    "Settlement Funded:",
-                    settlement.funding_date.isoformat() if settlement.funding_date else "-",
-                ],
-            ]
-        )
+    # No settlement rows. A payment record is dated when the benefits it lists
+    # were paid, which on a real file is years before the case settles — one
+    # here carries an approval **819 days** in its own future. The release was
+    # repaired for exactly this and this older path was missed, so the rule is
+    # now stated once and applied everywhere: a document reports its own past.
+    # The approval and funding dates live on the order and the ledger.
     story[summary_index] = _money_table(summary, [2.6 * inch, 3.4 * inch], styles)
     return story
 
@@ -854,6 +851,75 @@ def _append_settlement_terms(
         )
     story.append(Spacer(1, 0.2 * inch))
     story.append(_money_table(rows, [2.6 * inch, 3.4 * inch], styles))
+    return story
+
+
+def _index_of_text(story: list[Any], marker: str) -> int | None:
+    """Where a flowable carrying ``marker`` sits, or ``None`` if none does.
+
+    Used to cut a substrate story at a known seam. ``None`` is returned rather
+    than guessed at, so a caller reports a miss instead of writing its body over
+    whatever happened to be at a hardcoded index.
+    """
+    for index, item in enumerate(story):
+        text = getattr(item, "text", None)
+        if isinstance(text, str) and marker in text:
+            return index
+    return None
+
+
+def _rewrite_stipulations(story: list[Any], money: MoneyFacts, styles: Any) -> list[Any]:
+    """Rewrite the stipulations that state money, from the ledger.
+
+    ``STIPULATIONS_WITH_REQUEST_FOR_AWARD`` is the primary settlement document
+    of every ``stipulations`` case, and it was computing its own money: an
+    average weekly wage from ``hourly_rate * weekly_hours``, a temporary
+    disability run from ``random.randint(4, 52)``, a rate from a hardcoded 0.67,
+    and a permanent disability award from ``random.randint(5000, 75000)``.
+
+    Measured on the shipped ``steady-earner`` case: ``caseFacts`` published an
+    average weekly wage of 1151.42, a temporary disability rate of 767.65 and a
+    total of 26867.75, while the document beside it read 1331.20, 891.90 and
+    40135.68. Two money ontologies in one case, on the page an analyzer would be
+    trained against — the precise failure this layer exists to remove, sitting
+    on the document that matters most to the branch it appears in.
+
+    Rewritten by index like the payment record's own summary, so everything else
+    the substrate wrote — the caption, the eight non-monetary stipulations, the
+    award and signature blocks — is left exactly as it was. A miss is reported
+    rather than swallowed, because a silent miss is a page contradicting the
+    manifest.
+    """
+    from reportlab.platypus import Paragraph
+
+    computation = money.wages.computation
+    rate = money.wages.rate
+    benefits = money.benefits
+    rewrote = 0
+    for index, item in enumerate(story):
+        text = getattr(item, "text", None)
+        if not isinstance(text, str):
+            continue
+        if "average weekly wage of $" in text:
+            head, _, tail = text.partition("average weekly wage of $")
+            _, _, rest = tail.partition(".")
+            story[index] = Paragraph(
+                f"{head}average weekly wage of ${computation.aww:,.2f}.{rest}",
+                styles["DoubleSpaced"],
+            )
+            rewrote += 1
+        elif "temporary disability indemnity has been paid for" in text:
+            weeks = sum((period.weeks for period in benefits.td_periods), Decimal(0))
+            story[index] = Paragraph(
+                f"<b>9.</b> That temporary disability indemnity has been paid for "
+                f"{weeks.normalize():f} weeks at the rate of "
+                f"${rate.td_weekly_rate:,.2f} per week, totaling "
+                f"${benefits.td_total:,.2f}, and no further temporary disability is owed.",
+                styles["DoubleSpaced"],
+            )
+            rewrote += 1
+    if rewrote != 2:
+        log.warning("fact_templates.stipulations_money_not_rewritten", rewrote=rewrote)
     return story
 
 
@@ -1567,6 +1633,7 @@ def build_fact_aware_templates() -> dict[str, type]:
     wage_module = import_substrate("pdf_templates.employment.wage_statement")
     cr_module = import_substrate("pdf_templates.legal.compromise_and_release")
     minutes_module = import_substrate("pdf_templates.legal.minutes_orders")
+    stips_module = import_substrate("pdf_templates.legal.stipulations")
     billing_module = import_substrate("pdf_templates.medical.billing_records")
 
     class FactAwareWageStatement(_SpecCapture, wage_module.WageStatement):  # type: ignore[misc,name-defined]
@@ -1658,41 +1725,198 @@ def build_fact_aware_templates() -> dict[str, type]:
                 )
             return _append_settlement_terms(story, money, self.styles, "agreement")
 
-    class FactAwareOrderApprovingSettlement(_SpecCapture, minutes_module.MinutesOrders):  # type: ignore[misc,name-defined]
-        """The order that approves the settlement prints the approval it effects.
+    class FactAwareStipulations(_SpecCapture, stips_module.Stipulations):  # type: ignore[misc,name-defined]
+        """The stipulated award states the ledger's money, not its own.
 
-        This is the document the Board issues, and the planner dates it on the
-        approval date itself, so it is the one page in the folder that can carry
-        that date without asserting its own future. Before this class existed the
-        date was published in ``caseFacts`` and printed on the release — which
-        the same planner dates weeks *earlier* — so the corpus held an extraction
-        label whose only evidence was an anachronism.
+        The counterpart of :class:`FactAwareCompromiseAndRelease` for the other
+        resolution type, and it was missing — so every ``stipulations`` case
+        shipped its primary settlement document computing an average weekly
+        wage, a temporary-disability run and a permanent-disability award from
+        scratch, contradicting the manifest beside it.
+
+        The permanent-disability award is forced through the same interception
+        the release uses; the two money stipulations are rewritten in place.
         """
 
         def build_story(self, doc_spec: Any) -> list[Any]:
+            money = _money_of(self)
+            if money is None:
+                return list(super().build_story(doc_spec))
+
+            forced = None
+            original = stips_module.random
+            if money.settlement is not None:
+                forced = _ForcedRandint(
+                    int(money.settlement.gross_amount), _SUBSTRATE_STIPS_AWARD_RANGE
+                )
+                stips_module.random = forced
+            try:
+                story = list(super().build_story(doc_spec))
+            finally:
+                stips_module.random = original
+            if forced is not None and not forced.fired:
+                log.warning(
+                    "fact_templates.stipulated_award_not_forced",
+                    expected=list(_SUBSTRATE_STIPS_AWARD_RANGE),
+                    gross=str(money.settlement.gross_amount),
+                )
+            return _rewrite_stipulations(story, money, self.styles)
+
+    class FactAwareOrderApprovingSettlement(_SpecCapture, minutes_module.MinutesOrders):  # type: ignore[misc,name-defined]
+        """An order approving a settlement says the settlement was approved.
+
+        The first version of this class appended an approval table to
+        ``MinutesOrders`` and left the base's own body alone, which was worse
+        than printing nothing. ``MinutesOrders`` ignores its
+        ``approving_settlement`` variant and draws its proceedings from a pool
+        about ongoing litigation, so the designated evidence for the approval
+        read: *"The parties have been unable to reach a settlement agreement at
+        this time"*, immediately above a row reading ``Date Approved``. A
+        document that contradicts the fact it is carrying is not weak evidence,
+        it is counter-evidence.
+
+        The substrate's WCAB caption is right and is kept; everything from its
+        title onward is replaced with the order this subtype names. Truncating
+        at the title is the same index surgery the payment record already uses,
+        and it reports a miss rather than silently emitting the litigation body.
+        """
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            from reportlab.lib.units import inch
+            from reportlab.platypus import Paragraph, Spacer
+
             story = list(super().build_story(doc_spec))
             money = _money_of(self)
             if money is None or money.settlement is None:
                 return story
-            return _append_settlement_terms(story, money, self.styles, "approval")
+
+            cut = _index_of_text(story, "MINUTES OF HEARING AND ORDERS")
+            if cut is None:
+                log.warning("fact_templates.order_body_not_replaced")
+                return story
+            story = story[:cut]
+
+            settlement = money.settlement
+            title = (
+                "ORDER APPROVING COMPROMISE AND RELEASE"
+                if settlement.kind == "c_and_r"
+                else "ORDER APPROVING STIPULATED AWARD"
+            )
+            instrument = (
+                "Compromise and Release"
+                if settlement.kind == "c_and_r"
+                else "Stipulations with Request for Award"
+            )
+            approved = (
+                settlement.approval_date.strftime("%B %d, %Y")
+                if settlement.approval_date
+                else doc_spec.doc_date.strftime("%B %d, %Y")
+            )
+            story.append(Paragraph(title, self.styles["CenterBold"]))
+            story.append(Spacer(1, 12))
+            story.append(
+                Paragraph(
+                    f"The {instrument} filed herein having been considered, and good "
+                    f"cause appearing, the Workers' Compensation Appeals Board finds "
+                    f"that its terms are adequate and that its approval is in the best "
+                    f"interest of the parties.",
+                    self.styles["DoubleSpaced"],
+                )
+            )
+            story.append(Spacer(1, 8))
+            story.append(
+                Paragraph(
+                    f"IT IS HEREBY ORDERED that the {instrument} be, and it is hereby, "
+                    f"APPROVED as of {approved}.",
+                    self.styles["DoubleSpaced"],
+                )
+            )
+            _append_settlement_terms(story, money, self.styles, "approval")
+            story.append(Spacer(1, 0.3 * inch))
+            story.extend(
+                self.make_signature_block(self.case.judge_name, "Workers' Compensation Judge")
+            )
+            return story
 
     class FactAwareBenefitPaymentLedger(_SpecCapture, billing_module.BillingRecords):  # type: ignore[misc,name-defined]
-        """The ledger dated after the money moved is what reports that it moved.
+        """The claims administrator's ledger of what it paid, and when.
 
-        ``fundingDate`` and ``fundingLagDays`` cannot honestly appear on the
-        release (signed before approval) or on the order (issued before the
-        draft clears). The planner adds this ledger a week after funding for any
-        settlement that funded, which makes it the only document in the file
-        whose own date is later than the event it reports — the condition the
-        other two fail.
+        The first version of this class appended a funding table to
+        ``BillingRecords``, whose base is a *provider* statement of charges —
+        doctor's letterhead, random CPT codes, a balance due. A benefit-free
+        settled case therefore evidenced its settlement funding with a
+        $16,724.23 medical bill. The problem was not the date or the table; it
+        was that the document was about somebody else's money.
+
+        So this one is built rather than decorated. It uses the substrate's own
+        letterhead and claim-reference helpers with the *carrier* as author,
+        which is who actually issues a benefit payment ledger, and its body is
+        the ledger: every temporary-disability period, every permanent-disability
+        advance, the settlement disbursement, and the totals the manifest
+        publishes. It is the one document in the folder dated after the draft
+        cleared, which is what makes it the only honest carrier for the funding
+        date and the interval.
         """
 
         def build_story(self, doc_spec: Any) -> list[Any]:
-            story = list(super().build_story(doc_spec))
+            from reportlab.lib.units import inch
+            from reportlab.platypus import Paragraph, Spacer
+
             money = _money_of(self)
-            if money is None or money.settlement is None:
-                return story
-            return _append_settlement_terms(story, money, self.styles, "funding")
+            if money is None:
+                return list(super().build_story(doc_spec))
+
+            carrier = self.case.insurance
+            story: list[Any] = []
+            story.extend(
+                self.make_letterhead(
+                    carrier.carrier_name,
+                    f"Claims Service Center, Claim {carrier.claim_number}",
+                    carrier.adjuster_phone,
+                )
+            )
+            story.append(Spacer(1, 0.3 * inch))
+            story.extend(self.make_claim_reference_block())
+            story.append(Spacer(1, 0.2 * inch))
+            story.append(Paragraph("<b>BENEFIT PAYMENT LEDGER</b>", self.styles["CenterBold"]))
+            story.append(Spacer(1, 0.2 * inch))
+            story.append(
+                Paragraph(
+                    f"<b>Ledger Date:</b> {doc_spec.doc_date.strftime('%B %d, %Y')}",
+                    self.styles["BodyText14"],
+                )
+            )
+            story.append(Spacer(1, 0.2 * inch))
+
+            benefits = money.benefits
+            rows: list[list[Any]] = [["Benefit", "Period / Due", "Paid", "Amount"]]
+            for period in benefits.td_periods:
+                rows.append(
+                    [
+                        "Temporary Disability",
+                        f"{period.start.isoformat()} to {period.end.isoformat()}",
+                        period.date_paid.isoformat() if period.date_paid else "unpaid",
+                        f"${period.amount:,.2f}",
+                    ]
+                )
+            for advance in benefits.pd_advances:
+                rows.append(
+                    [
+                        "Permanent Disability Advance",
+                        advance.date_due.isoformat(),
+                        advance.date_paid.isoformat(),
+                        f"${advance.amount:,.2f}",
+                    ]
+                )
+            rows.append(["Temporary Disability Paid To Date", "", "", f"${benefits.td_total:,.2f}"])
+            rows.append(
+                ["Permanent Disability Paid To Date", "", "", f"${benefits.pd_total:,.2f}"]
+            )
+            story.append(
+                _money_table(rows, [2.1 * inch, 1.9 * inch, 1.1 * inch, 1.0 * inch], self.styles)
+            )
+            _append_settlement_terms(story, money, self.styles, "funding")
+            return story
 
     return {
         "WAGE_STATEMENTS_PRE_INJURY": FactAwareWageStatement,
@@ -1704,6 +1928,10 @@ def build_fact_aware_templates() -> dict[str, type]:
         "PD_PAYMENT_RECORD_ONGOING": FactAwareWageStatement,
         "PD_PAYMENT_RECORD_FINAL": FactAwareWageStatement,
         "ORDER_APPROVING_SETTLEMENT": FactAwareOrderApprovingSettlement,
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD": FactAwareStipulations,
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD_FULL": FactAwareStipulations,
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD_PARTIAL": FactAwareStipulations,
+        "STIPS_WITH_REQUEST_FOR_AWARD_PACKAGE": FactAwareStipulations,
         "BENEFIT_PAYMENT_LEDGER": FactAwareBenefitPaymentLedger,
         "COMPROMISE_AND_RELEASE": FactAwareCompromiseAndRelease,
         "COMPROMISE_AND_RELEASE_STANDARD": FactAwareCompromiseAndRelease,

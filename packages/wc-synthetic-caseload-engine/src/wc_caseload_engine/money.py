@@ -400,7 +400,16 @@ def _apply_rate_basis_override(basis: RateBasis, seed: CaseSeed) -> RateBasis:
     # content of ``basisSource``. ``authority`` is prose about the numbers rather
     # than one of them, so it does not make a binding wholly authored.
     numeric = {name for name in changes if name != "authority"}
-    changes["source"] = "seed" if numeric == set(_RATE_BASIS_FIGURES) else "mixed"
+    if not numeric:
+        # Authority alone authors no figure, so the binding is still the table's
+        # and ``mixed`` would be describing a mixture of one thing. Review found
+        # this: the empty-block early return above is keyed on *any* change, and
+        # an authority-only block passes it. The prose is still adopted — it is
+        # the citation for these numbers — but the provenance of the numbers is
+        # unchanged, which is what ``source`` is about.
+        changes["source"] = "engine_default_table"
+    else:
+        changes["source"] = "seed" if numeric == set(_RATE_BASIS_FIGURES) else "mixed"
     changes["counsel_confirmed"] = override.counsel_confirmed
     return RateBasis(**{**basis.model_dump(), **changes})
 

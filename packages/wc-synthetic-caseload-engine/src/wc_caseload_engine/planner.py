@@ -681,10 +681,23 @@ def _money_candidates(
     for index, candidate in enumerate(existing):
         already[candidate.subtype].append(index)
 
-    def add(subtype: str, when: date) -> None:
+    def add(subtype: str, when: date, *, pin: bool = False) -> None:
         required = timeline.clamp(when)
         indices = already.get(subtype)
         if indices:
+            if pin:
+                # An approving order does not report an approval, it *is* the
+                # approval, so its date is the event's date — not merely on or
+                # after it. Forward-only re-dating left an authored approval of
+                # 2022-01-05 evidenced by an order dated 2023-12-27, 721 days
+                # later, and the on-or-after rule certified it. The one-sided
+                # constraint is right for a document that *reports* events and
+                # wrong for one that constitutes an event.
+                for index in indices:
+                    prior = existing[index]
+                    if prior.doc_date != required:
+                        existing[index] = replace(prior, doc_date=required)
+                return
             # *Every* candidate for the subtype, not the first one found. The
             # walk may propose several, and the pool below picks the earliest
             # ones by date — so moving one and leaving its siblings behind
@@ -733,7 +746,7 @@ def _money_candidates(
     settlement = money_facts.settlement
     if settlement is not None:
         if settlement.approval_date is not None:
-            add(MONEY_APPROVAL_SUBTYPE, settlement.approval_date)
+            add(MONEY_APPROVAL_SUBTYPE, settlement.approval_date, pin=True)
         if settlement.funding_date is not None:
             add(MONEY_FUNDING_SUBTYPE, settlement.funding_date + timedelta(days=7))
 

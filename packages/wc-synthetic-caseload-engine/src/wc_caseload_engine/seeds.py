@@ -1638,6 +1638,43 @@ class CaseSeed(_Model):
         return value
 
     @model_validator(mode="after")
+    def _a_fatal_injury_has_no_disability_benefits_to_pay(self) -> CaseSeed:
+        """Money on a death claim is a different benefit class, and it is not built yet.
+
+        ``scenario.wages`` on a fatal injury loaded cleanly and derived ordinary
+        temporary and permanent disability from it. Measured: a death on
+        2023-01-19 published a first temporary-disability period running
+        2023-01-22 to 2023-02-18 — begun three days after the worker died —
+        thirteen periods totalling $39,133.85, and two permanent-disability
+        advances. Permanent disability is a rating of a living worker's residual
+        capacity and temporary disability replaces wages the worker would have
+        earned; neither survives the worker.
+
+        What a fatal claim actually pays is dependency benefits and burial
+        expenses, which are a different computation with different rules and no
+        model here. So this is refused rather than approximated, on the rule
+        that governs the rest of this schema: an impossible seed is rejected,
+        not absorbed. The dependency ontology is a Wave 2 ticket; when it lands
+        this validator is what gets replaced.
+        """
+        if self.injury.type != "death":
+            return self
+        stated = [
+            name
+            for name in ("wages", "benefits", "settlement")
+            if getattr(self.scenario, name, None) is not None
+        ]
+        if stated:
+            raise ValueError(
+                f"injury.type is 'death' but scenario states {', '.join(sorted(stated))} — "
+                "the money layer computes temporary and permanent disability, which are "
+                "benefits of a living worker, and a fatal claim pays dependency benefits "
+                "instead. Remove the money blocks from this seed, or change injury.type "
+                "to 'specific' or 'cumulative_trauma'."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _check_scenario_against_the_lifecycle(self) -> CaseSeed:
         """Cross-validate the scenario against fields it cannot see from inside.
 

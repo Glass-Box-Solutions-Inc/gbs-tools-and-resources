@@ -510,6 +510,10 @@ SETTLEMENT_APPROVAL_DOCUMENTS = frozenset({"ORDER_APPROVING_SETTLEMENT"})
 #: afterwards can.
 SETTLEMENT_FUNDING_DOCUMENTS = frozenset({"BENEFIT_PAYMENT_LEDGER"})
 
+#: Every provenance the rate binding may record. Mirrors ``RateBasis.source``;
+#: a published value outside it is a label no analyzer was trained on.
+MONEY_BASIS_SOURCES = frozenset({"engine_default_table", "seed", "mixed"})
+
 #: Every method name the ledger may record. Mirrors ``seeds.AWW_METHODS``; a
 #: published method outside it is a label no analyzer could have been trained
 #: on, which makes the eval score meaningless rather than merely wrong.
@@ -595,6 +599,17 @@ def _validate_money(
 
     wage = money["wage"]
     rate = money["rate"]
+
+    # ``basisSource`` is an extraction label like ``method`` and the bound
+    # tokens, and was the one of the four nothing checked — ``"seed-ish"`` was
+    # accepted so long as both artifacts agreed with each other. Two artifacts
+    # agreeing on a value outside the vocabulary is not a check, it is a copy.
+    basis_source = rate.get("basisSource")
+    if basis_source not in MONEY_BASIS_SOURCES:
+        problems.append(
+            f"{case_label}: caseFacts.money.rate.basisSource is {basis_source!r}, "
+            f"expected one of {', '.join(sorted(MONEY_BASIS_SOURCES))}"
+        )
 
     method = wage.get("method")
     if method not in MONEY_METHODS:
@@ -840,22 +855,30 @@ def _validate_money(
         # to print, and a temporary-disability payment record dated two years
         # before it. An anachronism is worse evidence than a missing line,
         # because it reads as evidence.
-        for label, raw, when, carriers in (
-            ("approval", approval_raw, approval, SETTLEMENT_APPROVAL_DOCUMENTS),
-            ("funding", funding_raw, funding, SETTLEMENT_FUNDING_DOCUMENTS),
+        # The approval carrier is dated *on* the approval; the funding carrier
+        # on or after the funding. The difference is not fussiness: the order
+        # constitutes the approval, so a different date is a different event,
+        # while the ledger merely reports a payment and may be written any time
+        # afterwards. Review found an order dated 721 days after the approval it
+        # was vouching for, passing an on-or-after rule.
+        for label, raw, when, carriers, exact in (
+            ("approval", approval_raw, approval, SETTLEMENT_APPROVAL_DOCUMENTS, True),
+            ("funding", funding_raw, funding, SETTLEMENT_FUNDING_DOCUMENTS, False),
         ):
             if raw is None or when is None:
                 continue
             if not any(
-                doc.get("subtype") in carriers and _document_date(doc) is not None
-                and _document_date(doc) >= when
+                doc.get("subtype") in carriers
+                and _document_date(doc) is not None
+                and (_document_date(doc) == when if exact else _document_date(doc) >= when)
                 for doc in documents
                 if isinstance(doc, dict)
             ):
                 problems.append(
                     f"{case_label}: caseFacts.money.settlement publishes a {label} date of "
-                    f"{raw} but the case holds no {'/'.join(sorted(carriers))} dated on or "
-                    f"after it — a document cannot report its own future"
+                    f"{raw} but the case holds no {'/'.join(sorted(carriers))} dated "
+                    + ("on it" if exact else "on or after it")
+                    + " — a document cannot report its own future"
                 )
     return problems
 

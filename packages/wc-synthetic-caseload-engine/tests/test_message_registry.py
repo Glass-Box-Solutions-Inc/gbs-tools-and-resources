@@ -711,6 +711,24 @@ REGISTRY: dict[str, RegisteredMessage] = {
         note="The figure used to be accepted and discarded — the seed stated 7777 and the "
         "manifest published 996.73 under a different method.",
     ),
+    "money_on_a_fatal_claim": RegisteredMessage(
+        where="CaseSeed._a_fatal_injury_has_no_disability_benefits_to_pay",
+        directives=(
+            "Remove the money blocks from this seed, or change injury.type to "
+            "'specific' or 'cumulative_trauma'",
+        ),
+        trigger={
+            "injury": {"type": "death"},
+            "scenario": {"wages": {"base_weekly_wage": 1200}},
+        },
+        resolution={"injury": {"type": "specific"}},
+        note="A death on 2023-01-19 derived a first temporary-disability period "
+        "beginning 2023-01-22 — three days after the worker died — thirteen periods "
+        "totalling $39,133.85, and two permanent-disability advances. Temporary "
+        "disability replaces wages the worker would have earned and permanent "
+        "disability rates a living worker's residual capacity; a fatal claim pays "
+        "dependency benefits, which this layer does not model.",
+    ),
     "aggregate_method_without_an_aggregate": RegisteredMessage(
         where="WageScenario._dependent_fields_have_their_enabler",
         directives=(
