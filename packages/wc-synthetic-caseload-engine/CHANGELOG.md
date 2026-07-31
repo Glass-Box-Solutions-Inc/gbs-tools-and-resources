@@ -340,6 +340,104 @@ attaches additively in Wave 2.
     `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
     at 353/345/8/0.
 
+### Added — two standing sweeps that replace the review round (**AJC-43**)
+
+Eleven rounds of review found 46 real defects, at a rate that never fell:
+5, 6, 6, 5, 4, 8, 3, 2, 3, 4, 3. Reading the commit bodies back, seven of the
+eight findings in rounds 7 to 9 were *induced by the previous round's own fix* —
+the loop was feeding itself, and a stop condition of "two quiet rounds" could
+never fire while each remediation opened as much surface as it closed. So the
+generator is closed instead, with two sweeps. Both are enumerable, both end, and
+both are wired into CI so they run on every push rather than by hand at the end
+of a round.
+
+**Sweep 1 — the mutation gate** (`tools/mutation_gate.py`, `tests/mutants.toml`).
+Ninety-three registered mutants, one per fix this package has shipped: each names
+the edit that puts the defect back and the test that must go red when it does.
+The gate applies each, requires the named test to fail, and restores. A mutant
+that no longer applies is a hard failure, because it means the code under a guard
+moved and nobody re-checked that the guard still reaches it. The requirement it
+enforces: *a fix may not be claimed until a mutation of that exact fix has been
+shown to redden a test that names it.* Three separate rounds had discovered a
+guard that never covered its own fix; round 9 diagnosed it and round 10
+reproduced it identically. It is now impossible to leave behind.
+
+**Its first run scored 93 of 103**, and the ten failures are the finding. Nine
+PATCH-MISSed — round 11's withdrawal of the lattice had rewritten the lines they
+patched, so nine guards had quietly stopped reaching the code they guard, and
+nobody would have known until the next round happened to touch them. Six were
+re-pointed at the surviving logic and three retired, each naming its successor.
+The tenth SURVIVED, and it was one of the sweeps' own: reverting
+`align_employer_wage` left the hourly-rate assertion green, because the personnel
+file's own rescale satisfied it. The guard did not cover its own fix — the exact
+class the gate exists to catch, caught on the gate's first run, in code written
+the same day. Reproducing it found the surface that *does* depend on the
+alignment: the deposition transcript, where the applicant says the figure aloud.
+Three more survivors appeared after re-pointing, and all three got real guards
+rather than convenient mutants: a derived gross published with cents (invisible
+on a `td_weeks: 0` file, whose rate is a capped whole $290), deductions forced to
+zero (which keeps the release reconciling and its net positive), and a
+funding-warning shift of zero (which leaves the authored date named and every
+other assertion passing). **The registry now stands at 100 mutants, 100 of 100
+red.**
+
+**Sweep 2 — the sibling sweep** (`tests/test_money_sweep.py`). The
+document/money-figure matrix, derived from `pdf_templates.registry` rather than
+from the list of templates the engine already overrides — a matrix built from
+what is governed can only confirm what is governed. Every substrate module that
+draws money is either governed for every subtype routed to it or listed with a
+reason, and the ledger fails in both directions: an unaccounted module fails, and
+so does an entry that has stopped being true. Beside it, a runtime sweep renders
+one settled case and walks *every* document in it, asserting that each governed
+money fact is the same figure on every surface that prints it — and failing when
+a rule matches nothing, because a label that moved is how a sweep silently stops
+sweeping.
+
+The sibling sweep found five defects on its first run, four of them in template
+families no review round had looked at:
+
+- **The settlement memo family was a second money ontology.** Twenty-seven
+  registry subtypes route to `SettlementMemo` — the valuation memo, both rating
+  worksheets, the MSA submission, the conference statements, the trial briefs —
+  and not one was fact-aware. On a file publishing a temporary-disability rate of
+  $767.59 and $28,400.83 paid, it printed **$157,467 (138 weeks @ $1,141.07/week)**,
+  and recommended a settlement target of **$387,466** on a case that settled for
+  $32,668. Its permanent-disability rate was the literal `290`, which agreed with
+  the ledger on the case it was found on by luck: $290 is the capped maximum for
+  one rate vintage.
+
+- **A row of the memo's own settlement-range table did not add up.** The
+  Optimistic row's Other column and its Total came from two independent draws of
+  the same range, so the columns summed to $432,073 beside a printed total of
+  $427,428 — a document contradicting itself across one row.
+
+- **The wage-statement family was governed on eight subtypes of ten.** Its own
+  docstring said "all eight"; the registry routes ten the engine can emit. The two
+  nobody had counted were `PRIOR_CLAIMS_EDD_SDI_INFO`, which printed a
+  temporary-disability rate of **$848.53** beside a ledger publishing $767.59, and
+  `TIMECARDS_SCHEDULES`. Both families are now bound from the registry — over the
+  *canonical* subtypes, since four memo keys and one wage key are registry-only and
+  the engine can never emit them — so counting is not something anybody has to get
+  right again.
+
+- **`employer.hourly_rate` was a free draw feeding three document families.**
+  `random.uniform(18, 55)`, reaching the personnel file's pay-rate history, the
+  settlement memo's temporary-disability paragraph and the deposition's *"I was
+  making $X per hour"*. It is now derived from the published average weekly wage
+  before any template reads it.
+
+- **The personnel file's promotion row raised pay above the current rate.** It was
+  `hourly_rate * random.uniform(1.05, 1.15)`, and since the promotion predates the
+  injury the table described a pay cut nobody recorded. The column is rescaled so
+  its highest figure is the published rate.
+
+#### Compatibility notices (the sweeps)
+
+39. **Money-showcase figures move again** — the settlement memo, the wage family's
+    three newly-governed subtypes and every hourly rate now follow the ledger. The
+    demo caseload carries no `scenario.wages`, derives no money, and is unaffected:
+    still 353 files, 345 identical, 8 changed, 331 rendered documents byte-identical.
+
 ### Fixed — the PR #29 review, round 11 (**AJC-43**)
 
 Round 11 acted on review's judgment that round 10's twenty-dollar lattice on

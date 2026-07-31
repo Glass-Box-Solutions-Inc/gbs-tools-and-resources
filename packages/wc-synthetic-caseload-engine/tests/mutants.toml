@@ -1,0 +1,914 @@
+# Mutation registry — one entry per defect this package has fixed.
+#
+# Each entry names the edit that puts the defect back and the test that must go
+# red when it does. `tools/mutation_gate.py` applies every one of them on every
+# push. The registry is the acceptance record for eleven rounds of review: a
+# fix is not claimed here until its own mutation has been shown to redden a
+# test that names it.
+#
+# Adding a fix means adding a mutant. Changing code under one means re-pointing
+# its mutant at the surviving logic — a PATCH-MISS is a finding, not a chore,
+# because it means a guard stopped reaching the thing it guards.
+#
+# Fields:
+#   id       stable handle, `m<round>-<n>`
+#   title    the defect, stated as the thing that goes wrong when it is back
+#   file     path relative to the package root
+#   find     text to replace — must appear exactly once
+#   replace  the reintroduced defect
+#   test     the guard, as a pytest node id
+
+# Retired mutants. A mutant is only ever removed when the *fix* it guards has
+# been withdrawn — never because it stopped applying, which is a finding. Each
+# retirement names its successor so the claim is still guarded by something.
+#
+#   m9-4   "the award stops being a multiple of twenty, so the fee lies again"
+#   m10-2  "a gross off the twenty-dollar step is accepted again"
+#   m10-3  "a derived gross leaves the twenty-dollar step"
+#
+# All three guarded the twenty-dollar lattice on `gross_amount`, withdrawn in
+# round 11 on review's judgment that narrowing a published field to work around
+# a renderer's rounding makes the corpus unrealistic in a figure the analyzer is
+# scored on. The claim they existed to protect — that the printed fee really is
+# fifteen percent — is now guarded by m11-3, which truncates the fee instead.
+
+[[mutant]]
+id = 'm1-1'
+title = 'compute_aww loses its pin'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestDeterminism::test_every_exported_callable_is_pinned_on_its_own'
+find = '''    with _exact():
+        return _compute_aww(wages, periods)'''
+replace = '    return _compute_aww(wages, periods)'
+
+[[mutant]]
+id = 'm1-2'
+title = 'select_method loses its pin'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestDeterminism::test_the_selected_method_survives_a_hostile_context'
+find = '''    with _exact():
+        return _select_method(wages, periods)'''
+replace = '    return _select_method(wages, periods)'
+
+[[mutant]]
+id = 'm1-3'
+title = 'confirmation no longer needs the numbers'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestNoStatutoryNumberIsPresentedAsVerified::test_confirmation_without_the_numbers_is_refused'
+find = '''        if not self.counsel_confirmed:
+            return self
+        missing ='''
+replace = '''        if True:
+            return self
+        missing ='''
+
+[[mutant]]
+id = 'm1-4'
+title = 'a lone rate bound is allowed again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestNoStatutoryNumberIsPresentedAsVerified::test_a_partial_override_cannot_invert_the_merged_bounds'
+find = '            if (low is None) != (high is None):'
+replace = '            if False:'
+
+[[mutant]]
+id = 'm1-5'
+title = 'RateBasis stops validating its merged bounds'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestNoStatutoryNumberIsPresentedAsVerified::test_the_model_refuses_an_inverted_basis_however_it_was_built'
+find = '''            if low > high:
+                raise ValueError(
+                    f"rate basis {self.label!r} has'''
+replace = '''            if False:
+                raise ValueError(
+                    f"rate basis {self.label!r} has'''
+
+[[mutant]]
+id = 'm1-6'
+title = 'only the two nullable shape knobs are policed again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestTheLedgerPublishesOnlyWhatADocumentRenders::test_a_listed_history_admits_no_shape_knob'
+find = '        stated = sorted(self.model_fields_set & set(self.SHAPE_KNOBS))'
+replace = '''        stated = sorted(
+            name
+            for name in ('base_weekly_wage', 'concurrent_weekly_wage')
+            if getattr(self, name) is not None
+        )'''
+
+[[mutant]]
+id = 'm1-7'
+title = 'an all-concurrent history is accepted again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestTheLedgerPublishesOnlyWhatADocumentRenders::test_a_history_with_no_primary_period_is_refused'
+find = '        if not any(not entry.concurrent for entry in self.earnings):'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm1-8'
+title = 'earning_capacity publishes the derived operands again'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheNamedMethodIsGroundTruth::test_earning_capacity_publishes_no_operands_and_adds_nothing'
+find = '''    if method == "earning_capacity":
+        return AwwComputation('''
+replace = '''    if False:
+        return AwwComputation('''
+
+[[mutant]]
+id = 'm1-9'
+title = 'the due date leaves the ledger again'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheLedgerPublishesOnlyWhatADocumentRenders::test_lateness_is_recomputable_from_the_published_due_date'
+find = '''            "tdPaymentDueDays": TD_PAYMENT_DUE_DAYS,'''
+replace = ''
+
+[[mutant]]
+id = 'm1-10'
+title = 'the ledger publishes counts again, not events'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheLedgerPublishesOnlyWhatADocumentRenders::test_the_ledger_publishes_events_not_only_counts'
+find = '''            "tdPeriodCount": len(benefits.td_periods),'''
+replace = '''            "tdPeriodCount": len(benefits.td_periods) + 1,'''
+
+[[mutant]]
+id = 'm1-11'
+title = 'an already-proposed money document is skipped again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_spine.py::TestThePlan::test_no_payment_record_predates_the_payments_it_prints'
+find = '''            for index in indices:
+                prior = existing[index]
+                if prior.doc_date < required:'''
+replace = '''            for index in indices:
+                prior = existing[index]
+                if False:'''
+
+[[mutant]]
+id = 'm1-12'
+title = 're-dating is allowed to move a document backwards'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_spine.py::TestThePlan::test_re_dating_never_moves_a_document_earlier'
+find = '                if prior.doc_date < required:'
+replace = '                if prior.doc_date != required:'
+
+[[mutant]]
+id = 'm1-13'
+title = 'the settlement gross keeps its cents'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestASettlementIsLargeEnoughForItsOwnDocument::test_a_derived_gross_is_raised_to_the_floor_rather_than_published_short'
+find = '    gross = money(max(_whole_dollars(gross), Decimal(SETTLEMENT_GROSS_MINIMUM)))'
+replace = '    gross = money(max(gross, Decimal(SETTLEMENT_GROSS_MINIMUM)))'
+note = '''Re-pointed after round 11. Round 10's twenty-dollar step had subsumed this quantization (int() drops the cents on the way to the step) and the call was collapsed; withdrawing the step restored both.'''
+
+[[mutant]]
+id = 'm1-14'
+title = 'the seed schema accepts a gross with cents'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestTheSettlementObject::test_a_settlement_gross_with_cents_is_refused'
+find = '        if self.gross_amount != int(self.gross_amount):'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm1-15'
+title = 'a lone funding_date is accepted again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestTheSettlementObject::test_a_funding_date_without_an_approval_date_is_refused'
+find = '        if self.funding_date is not None and self.approval_date is None:'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm1-16'
+title = 'the wage statement stops printing the earnings pattern'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_every_governed_wage_and_rate_field_reaches_the_page'
+find = '''        ["Earnings Pattern:", wage.pattern],'''
+replace = ''
+
+[[mutant]]
+id = 'm1-17'
+title = 'the wage statement stops printing the rate-basis authority'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_every_governed_wage_and_rate_field_reaches_the_page'
+find = '''            ["Rate Basis Authority:", basis.authority],'''
+replace = ''
+
+[[mutant]]
+id = 'm1-18'
+title = 'the wage statement stops printing the rate bound token'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_every_governed_wage_and_rate_field_reaches_the_page'
+find = '''            ["TD Rate Bound:", rate.td_bound],'''
+replace = ''
+
+[[mutant]]
+id = 'm2-1'
+title = 'a listed history takes the pattern default again'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheNamedMethodIsGroundTruth::test_a_listed_history_derives_its_own_pattern'
+find = '    pattern, pattern_source = _pattern_of(wages, periods)'
+replace = '''    pattern, pattern_source = wages.pattern, "seed"'''
+
+[[mutant]]
+id = 'm2-2'
+title = 'the aggregate divides by the primary weeks again'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAverageIsDerivable::test_the_aggregate_divides_by_the_weeks_both_employers_cover'
+find = '''    weeks = (
+        _covered_weeks(considered)
+        if method == "concurrent_aggregate"
+        else sum((p.weeks for p in primary), Decimal("0"))
+    )'''
+replace = '''    weeks = sum((p.weeks for p in primary), Decimal("0"))'''
+
+[[mutant]]
+id = 'm2-3'
+title = 'lateness with nothing paid is accepted again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestTheBenefitLedger::test_a_stated_control_the_ledger_cannot_honour_is_refused'
+find = '        if self.td_weeks == 0 and self.pd_advances == 0:'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm2-4'
+title = 'a gap with no run to hold it is accepted again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestTheBenefitLedger::test_a_stated_control_the_ledger_cannot_honour_is_refused'
+find = '        if self.td_gap_days and (self.td_weeks or 0) < self.GAP_MINIMUM_WEEKS:'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm2-5'
+title = 'runway truncation goes unreported again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_spine.py::TestTheBenefitLedger::test_a_control_the_runway_truncates_is_reported'
+find = '        *_money_control_warnings(seed, money_facts),'
+replace = ''
+
+[[mutant]]
+id = 'm2-6'
+title = 'TD payments run past the horizon again'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheBenefitLedger::test_no_benefit_event_falls_past_the_horizon'
+find = '        if not reached(paid):'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm2-7'
+title = 'PD advances are checked by schedule, not by paid date'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheBenefitLedger::test_no_benefit_event_falls_past_the_horizon'
+find = '        if advance_cursor > horizon or not reached(paid):'
+replace = '        if advance_cursor > horizon:'
+
+[[mutant]]
+id = 'm2-8'
+title = 'PD advances lose their due date ordering'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheBenefitLedger::test_pd_advances_carry_their_due_date_and_are_ordered_by_it'
+find = '''                date_due=advance_cursor,
+                date_paid=paid,'''
+replace = '''                date_due=paid,
+                date_paid=paid,'''
+
+[[mutant]]
+id = 'm2-9'
+title = 'a benefit event with no payment record is certified again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_benefit_event_with_no_payment_record_is_refused'
+find = '    if event_count and not (subtypes & MONEY_BENEFIT_DOCUMENTS):'
+replace = '''    if (benefits.get("tdPeriodCount") or 0) and not (subtypes & MONEY_BENEFIT_DOCUMENTS):'''
+
+[[mutant]]
+id = 'm2-10'
+title = 'a malformed event passes the validator again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_malformed_event_is_refused'
+find = '            if not isinstance(event, dict):'
+replace = '            if False:'
+
+[[mutant]]
+id = 'm2-11'
+title = 'PD lateness is no longer validated'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_lateness_that_does_not_follow_from_the_dates_is_refused'
+find = '''        ("pdAdvances", "permanent disability advance"),'''
+replace = ''
+
+[[mutant]]
+id = 'm2-12'
+title = 'a settlement dated past the anchor is accepted again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_message_registry.py::TestFollowingEveryMessageWorks::test_following_the_message_produces_a_seed_that_loads[settlement_dated_past_the_anchor]'
+find = '            if stated is not None and stated > ANCHOR_DATE:'
+replace = '            if False:'
+
+[[mutant]]
+id = 'm2-13'
+title = 'the wage statement stops printing the pattern source'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_every_governed_wage_and_rate_field_reaches_the_page'
+find = '''        ["Earnings Pattern Source:", wage.pattern_source],'''
+replace = ''
+
+[[mutant]]
+id = 'm3-1'
+title = 'patternSource claims an author who never spoke'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheNamedMethodIsGroundTruth::test_pattern_provenance_names_an_author_only_when_there_was_one'
+find = '''            "seed" if "pattern" in wages.model_fields_set else "derived"'''
+replace = '''            "seed"'''
+
+[[mutant]]
+id = 'm3-2'
+title = 'an unequal concurrent history is accepted again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestPublication::test_an_unequal_concurrent_history_is_refused_rather_than_averaged'
+find = '        if concurrent_days and concurrent_days != primary_days:'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm3-3'
+title = 'earning_capacity_weekly is accepted without its method again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestTheNamedMethodIsGroundTruth::test_a_figure_no_setting_consumes_is_refused'
+find = '''        if self.earning_capacity_weekly is not None and self.method != "earning_capacity":'''
+replace = '        if False:'
+
+[[mutant]]
+id = 'm3-4'
+title = 'concurrent_weekly_wage is accepted without its enabler again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestTheNamedMethodIsGroundTruth::test_a_figure_no_setting_consumes_is_refused'
+find = '        if self.concurrent_weekly_wage is not None and not self.concurrent_employment:'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm3-5'
+title = 'max_days_late is accepted without a count again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestTheBenefitLedger::test_a_max_delay_without_a_count_is_refused'
+find = '        if self.max_days_late is not None and self.late_payments is None:'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm3-6'
+title = 'truncated lateness goes unreported again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_spine.py::TestTheBenefitLedger::test_lateness_the_ledger_could_not_deliver_is_reported'
+find = '    if scenario.late_payments:'
+replace = '    if False:'
+
+[[mutant]]
+id = 'm3-7'
+title = 'a settlement funded past the anchor is published as fact again'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheBenefitLedger::test_a_settlement_the_case_never_funded_says_so'
+find = '        if ceiling is not None and funding > ceiling:'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm3-8'
+title = 'the unfunded settlement goes unreported'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_spine.py::TestTheBenefitLedger::test_a_settlement_the_case_never_funded_says_so'
+find = '    return out + _settlement_warnings(seed, money_facts)'
+replace = '    return out'
+
+[[mutant]]
+id = 'm3-9'
+title = 'a gap is banked before its far side is emitted again'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheBenefitLedger::test_no_gap_outlives_the_run_it_interrupts'
+find = '        if pending_gap is not None:'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm3-10'
+title = 'the validator stops type-checking counts'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_malformed_count_or_gap_is_refused_rather_than_crashing'
+find = '        if value is not None and (type(value) is not int or value < 0):'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm3-11'
+title = 'the validator stops checking gap records'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_malformed_count_or_gap_is_refused_rather_than_crashing'
+find = '        if not isinstance(gap, dict):'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm3-12'
+title = 'an unpaid benefit may be late again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_an_unpaid_benefit_cannot_also_be_late'
+find = '                if late:'
+replace = '                if False:'
+
+[[mutant]]
+id = 'm3-13'
+title = 'the in-kind row goes back to being conditional'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_every_governed_wage_and_rate_field_reaches_the_page'
+find = '''    summary.append(["Non-Cash Wages (weekly):", f"${computation.in_kind_weekly:,.2f}"])'''
+replace = '''    if computation.in_kind_weekly:
+        summary.append(["Non-Cash Wages (weekly):", f"${computation.in_kind_weekly:,.2f}"])'''
+
+[[mutant]]
+id = 'm4-1'
+title = 'concurrent_aggregate is accepted with one employer again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestTheNamedMethod::test_the_aggregate_label_needs_an_aggregate_to_name'
+find = '''        if self.method == "concurrent_aggregate" and not ('''
+replace = '        if False and not ('
+
+[[mutant]]
+id = 'm4-2'
+title = 'the settlement group is skipped by the governance loop again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_settlement_is_shape_checked_and_governed_like_everything_else'
+find = '''        if key == "settlement" and money.get(key) is None:'''
+replace = '''        if key == "settlement":'''
+
+[[mutant]]
+id = 'm4-3'
+title = 'settlement dates are parsed unsafely again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_settlement_is_shape_checked_and_governed_like_everything_else'
+find = '''            try:
+                parsed = date.fromisoformat(raw)'''
+replace = '''            if True:
+                parsed = date.fromisoformat(raw)'''
+
+[[mutant]]
+id = 'm4-4'
+title = 'the funding lag is no longer recomputed'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_settlement_is_shape_checked_and_governed_like_everything_else'
+find = '                if lag != (funding - approval).days:'
+replace = '                if False:'
+
+[[mutant]]
+id = 'm4-5'
+title = 'settlement dates need no document again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_settlement_dates_need_a_document_that_could_know_them'
+find = '''            if raw is None or when is None:
+                continue'''
+replace = '''            if True:
+                continue'''
+
+[[mutant]]
+id = 'm4-6'
+title = 'the release stops printing its settlement terms'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_each_settlement_date_is_printed_by_a_document_that_could_know_it'
+find = '''            return _append_settlement_terms(story, money, self.styles, "agreement")'''
+replace = '            return story'
+
+[[mutant]]
+id = 'm4-7'
+title = 'a boolean count passes again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_malformed_count_or_gap_is_refused_rather_than_crashing'
+find = '        if value is not None and (type(value) is not int or value < 0):'
+replace = '        if value is not None and not isinstance(value, int):'
+
+[[mutant]]
+id = 'm4-8'
+title = 'a reversed gap passes again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_malformed_count_or_gap_is_refused_rather_than_crashing'
+find = '        if spanned != days or type(days) is not int or days < 1:'
+replace = '        if spanned != days:'
+
+[[mutant]]
+id = 'm5-1'
+title = 'the governance table stops requiring its own fields'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheGovernanceTableBindsBothWays::test_every_governed_field_is_required_not_merely_permitted'
+find = '        missing = sorted(set(fields) - set(section))'
+replace = '        missing = []'
+
+[[mutant]]
+id = 'm5-2'
+title = 'a null funding lag is permitted beside two dates again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheGovernanceTableBindsBothWays::test_a_lag_between_two_stated_dates_is_a_fact_not_an_option'
+find = '''                    f"but it was approved {approval_raw} and funded {funding_raw} — with "
+                    "both dates the interval is a fact, not an option"'''
+replace = '''                    "expected a whole number of days" if lag is not None else ""'''
+
+[[mutant]]
+id = 'm5-3'
+title = 'a partial rate-basis override claims the whole binding again'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheBasisSaysHowMuchOfItWasAuthored::test_the_source_names_how_much_the_seed_actually_stated'
+find = '''    changes["source"] = "seed" if numeric == set(_RATE_BASIS_FIGURES) else "mixed"'''
+replace = '''    changes["source"] = "seed"'''
+
+[[mutant]]
+id = 'm5-4'
+title = 'the count goes back to a plural name'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheGovernanceTableBindsBothWays::test_every_governed_field_is_required_not_merely_permitted'
+find = '''            "latePaymentCount": benefits.late_payment_count,'''
+replace = '''            "latePayments": benefits.late_payment_count,'''
+
+[[mutant]]
+id = 'm5-5'
+title = 'the carrier check stops reading document dates'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_settlement_dates_need_a_document_that_could_know_them'
+find = '                and (_document_date(doc) == when if exact else _document_date(doc) >= when)'
+replace = '                and True'
+
+[[mutant]]
+id = 'm5-6'
+title = 'the release prints the approval it predates again'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_each_settlement_date_is_printed_by_a_document_that_could_know_it'
+find = '''    if scope in ("approval", "funding"):'''
+replace = '    if True:'
+
+[[mutant]]
+id = 'm5-7'
+title = 'the ledger stops printing the funding it reports'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_each_settlement_date_is_printed_by_a_document_that_could_know_it'
+find = '''    if scope == "funding":'''
+replace = '    if False:'
+
+[[mutant]]
+id = 'm5-8'
+title = 'the floor stops guaranteeing the approval carrier'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_spine.py::TestTheFloorGuaranteesTheSettlementCarriers::test_a_settled_case_gets_carriers_that_could_know_its_dates'
+find = '            add(MONEY_APPROVAL_SUBTYPE, settlement.approval_date, pin=True)'
+replace = '            pass'
+
+[[mutant]]
+id = 'm5-9'
+title = 'the floor stops guaranteeing the funding carrier'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_spine.py::TestTheFloorGuaranteesTheSettlementCarriers::test_a_settled_case_gets_carriers_that_could_know_its_dates'
+find = '''        if settlement.funding_date is not None:
+            add(MONEY_FUNDING_SUBTYPE, settlement.funding_date + timedelta(days=7))'''
+replace = '''        if False:
+            add(MONEY_FUNDING_SUBTYPE, settlement.funding_date + timedelta(days=7))'''
+
+[[mutant]]
+id = 'm5-10'
+title = 'the funding ledger is dated on the funding day rather than after it'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_spine.py::TestTheFloorGuaranteesTheSettlementCarriers::test_a_settled_case_gets_carriers_that_could_know_its_dates'
+find = '            add(MONEY_FUNDING_SUBTYPE, settlement.funding_date + timedelta(days=7))'
+replace = '            add(MONEY_FUNDING_SUBTYPE, settlement.funding_date - timedelta(days=1))'
+
+[[mutant]]
+id = 'm6-1'
+title = 'the stipulated award invents its own money again'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_stipulated_award_states_the_ledgers_money_not_its_own'
+find = '            story = _rewrite_stipulations(story, money, self.styles)'
+replace = '            story = story'
+
+[[mutant]]
+id = 'm6-2'
+title = '''the stipulated award's gross is no longer forced'''
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_stipulated_award_states_the_ledgers_money_not_its_own'
+find = '                    _ForcedRandint(award, _SUBSTRATE_STIPS_AWARD_RANGE),'
+replace = '                    _ForcedRandint(0, (-1, -1)),'
+
+[[mutant]]
+id = 'm6-3'
+title = 'the approving order goes back to generic minutes'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_order_approving_the_settlement_says_it_approved_one'
+find = '''            cut = _index_of_text(story, "MINUTES OF HEARING AND ORDERS")'''
+replace = '            cut = None'
+
+[[mutant]]
+id = 'm6-4'
+title = 'the benefit ledger goes back to the medical bill'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_benefit_ledger_is_a_benefit_ledger'
+find = '''            money = _money_of(self)
+            if money is None:
+                return list(super().build_story(doc_spec))
+
+            carrier = self.case.insurance'''
+replace = '''            money = _money_of(self)
+            if money is not None or money is None:
+                return list(super().build_story(doc_spec))
+
+            carrier = self.case.insurance'''
+
+[[mutant]]
+id = 'm6-5'
+title = '''payment records print the settlement's future again'''
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_no_payment_record_reports_the_settlements_future'
+find = '    # No settlement rows. A payment record is dated when the benefits it lists'
+replace = '''    if money.settlement is not None:
+        summary.extend([
+            ["Settlement Approved:", money.settlement.approval_date.isoformat()
+             if money.settlement.approval_date else "-"],
+            ["Settlement Funded:", money.settlement.funding_date.isoformat()
+             if money.settlement.funding_date else "-"],
+        ])
+    # No settlement rows. A payment record is dated when the benefits it lists'''
+
+[[mutant]]
+id = 'm6-6'
+title = 'the approval carrier is re-dated forward only again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_spine.py::TestTheOrderIsDatedOnTheApprovalItIs::test_an_authored_approval_pins_the_order_in_both_directions'
+find = '            add(MONEY_APPROVAL_SUBTYPE, settlement.approval_date, pin=True)'
+replace = '            add(MONEY_APPROVAL_SUBTYPE, settlement.approval_date)'
+
+[[mutant]]
+id = 'm6-7'
+title = 'the validator accepts an order dated after the approval'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheOrderIsDatedOnTheApprovalItIs::test_the_validator_refuses_an_order_dated_off_the_approval'
+find = '                and (_document_date(doc) == when if exact else _document_date(doc) >= when)'
+replace = '                and _document_date(doc) >= when'
+
+[[mutant]]
+id = 'm6-8'
+title = 'an authority-only override claims a mixed binding again'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheBasisSaysHowMuchOfItWasAuthored::test_the_source_names_how_much_the_seed_actually_stated'
+find = '''        changes["source"] = "engine_default_table"'''
+replace = '''        changes["source"] = "mixed"'''
+
+[[mutant]]
+id = 'm6-9'
+title = 'basisSource goes back to being unvalidated'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheGovernanceTableBindsBothWays::test_every_published_label_is_checked_against_its_own_vocabulary'
+find = '    if basis_source not in MONEY_BASIS_SOURCES:'
+replace = '    if False:'
+
+[[mutant]]
+id = 'm6-10'
+title = 'a fatal claim accepts money again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestAFatalClaimPaysBenefitsThisLayerDoesNotModel::test_a_fatal_injury_refuses_the_money_blocks'
+find = '''        if self.injury.type != "death":
+            return self'''
+replace = '''        if True:
+            return self'''
+
+[[mutant]]
+id = 'm7-1'
+title = 'the AWW rewrite splits on the decimal point again'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_stipulated_award_states_the_ledgers_money_not_its_own'
+find = '''            replaced, count = _MONEY_AFTER_AWW.subn(
+                lambda _: f"average weekly wage of ${computation.aww:,.2f}", text
+            )
+            if count != 1:'''
+replace = '''            head, _, tail = text.partition("average weekly wage of $")
+            _, _, rest = tail.partition(".")
+            replaced = f"{head}average weekly wage of ${computation.aww:,.2f}.{rest}"
+            count = 1
+            if count != 1:'''
+
+[[mutant]]
+id = 'm7-2'
+title = 'the settlement gross is forced into the PD component again'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_stipulated_award_states_the_ledgers_money_not_its_own'
+find = '                award = total - self_procured'
+replace = '                award = total'
+
+[[mutant]]
+id = 'm7-3'
+title = 'the stipulated award stops printing the total it reconciles to'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_stipulated_award_states_the_ledgers_money_not_its_own'
+find = '            return _append_settlement_terms(story, money, self.styles, scope)'
+replace = '            return story'
+
+[[mutant]]
+id = 'm7-4'
+title = 'the self-procured component is no longer pinned'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_stipulated_award_states_the_ledgers_money_not_its_own'
+find = '                    _ForcedRandint(self_procured, _SUBSTRATE_STIPS_SELF_PROCURED_RANGE),'
+replace = '                    _ForcedRandint(0, (-1, -1)),'
+
+[[mutant]]
+id = 'm7-5'
+title = 'the instrument is left stranded after its own order again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_spine.py::TestTheOrderIsDatedOnTheApprovalItIs::test_the_whole_settlement_chain_is_ordered_not_just_each_link'
+find = '                    if prior.doc_date > approval:'
+replace = '                    if False:'
+
+[[mutant]]
+id = 'm7-6'
+title = 'the validator stops checking the instrument against the approval'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheOrderIsDatedOnTheApprovalItIs::test_the_validator_refuses_an_instrument_that_postdates_its_approval'
+find = '                if filed is not None and filed > approval:'
+replace = '                if False:'
+
+[[mutant]]
+id = 'm8-1'
+title = '''an authored approval bypasses the file's own calendar again'''
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheOrderIsDatedOnTheApprovalItIs::test_an_approval_the_file_could_not_have_reached_is_moved_and_reported'
+find = '        if earliest is not None and scenario.approval_date < earliest:'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm8-2'
+title = 'the approval floor stops looking past the claim to the application'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheOrderIsDatedOnTheApprovalItIs::test_an_approval_the_file_could_not_have_reached_is_moved_and_reported'
+find = '''    anchor = getattr(timeline, "application_filed_date", None) or getattr(
+        timeline, "claim_filed_date", None
+    )'''
+replace = '''    anchor = getattr(timeline, "claim_filed_date", None)'''
+
+[[mutant]]
+id = 'm8-3'
+title = 'a moved approval is moved in silence again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_spine.py::TestTheOrderIsDatedOnTheApprovalItIs::test_an_approval_the_file_could_not_have_reached_is_moved_and_reported'
+find = '''            f"scenario.settlement.approval_date of "'''
+replace = '''            "" or f"quietly-adjusted "'''
+
+[[mutant]]
+id = 'm8-4'
+title = 'a feasible authored approval is moved anyway'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheOrderIsDatedOnTheApprovalItIs::test_an_approval_the_file_can_reach_is_left_alone'
+find = '''            approval = earliest
+        else:
+            approval = scenario.approval_date'''
+replace = '''            approval = earliest
+        else:
+            approval = earliest or scenario.approval_date'''
+
+[[mutant]]
+id = 'm8-5'
+title = '''the award split gives up below the substrate's own floor again'''
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_award_reconciles_at_every_gross_the_schema_accepts'
+find = '                self_procured = _reimbursement_nearest_five_percent(total)'
+replace = '''                self_procured = min(
+                    _SUBSTRATE_STIPS_SELF_PROCURED_RANGE[1],
+                    max(_SUBSTRATE_STIPS_SELF_PROCURED_RANGE[0], total // 20),
+                )'''
+note = '''Re-pointed after round 11 replaced _reimbursement_leaving_an_exact_fee with _reimbursement_nearest_five_percent. Same claim: the split does not fall back to the substrate's own floor and stop summing to the gross.'''
+
+[[mutant]]
+id = 'm9-1'
+title = 'a stated funding date no longer travels with a moved approval'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheOrderIsDatedOnTheApprovalItIs::test_an_approval_the_file_could_not_have_reached_is_moved_and_reported'
+find = '            funding = scenario.funding_date + dt.timedelta(days=approval_shift)'
+replace = '            funding = scenario.funding_date'
+
+[[mutant]]
+id = 'm9-2'
+title = 'a settlement too small to print is accepted again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestASettlementIsLargeEnoughForItsOwnDocument::test_a_stated_gross_below_the_floor_is_refused'
+find = '        if gross < SETTLEMENT_GROSS_MINIMUM:'
+replace = '        if False:'
+
+[[mutant]]
+id = 'm9-3'
+title = 'a derived gross below the floor is published as-is'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestASettlementIsLargeEnoughForItsOwnDocument::test_a_derived_gross_is_raised_to_the_floor_rather_than_published_short'
+find = '    gross = money(max(_whole_dollars(gross), Decimal(SETTLEMENT_GROSS_MINIMUM)))'
+replace = '    gross = money(_whole_dollars(gross))'
+note = 'Re-pointed after round 11. Same claim, on the surviving expression: a derived gross below the floor is raised rather than published short.'
+
+[[mutant]]
+id = 'm9-5'
+title = 'the reimbursement stops reconciling to the published gross'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_award_reconciles_at_every_gross_the_schema_accepts'
+find = '                award = total - self_procured'
+replace = '                award = total'
+
+[[mutant]]
+id = 'm10-1'
+title = '''the release's deductions ignore the settlement again'''
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_release_reconciles_and_never_owes_the_applicant_money'
+find = '            _, costs, allocation = settlement_deductions(total)'
+replace = '            _, costs, allocation = (0, 0, 0)'
+note = 'Re-pointed after round 11 moved the deduction rule into seeds.settlement_deductions. Same claim.'
+
+[[mutant]]
+id = 'm10-4'
+title = 'the reimbursement stops choosing the nearest candidate'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_award_reconciles_at_every_gross_the_schema_accepts'
+find = '''    nearest = int(Decimal(total * 5) / Decimal(100) + Decimal("0.5"))'''
+replace = '    nearest = 1'
+note = 'Re-pointed after round 11 replaced the twenty-dollar candidate lattice with every whole dollar. Same claim: the reimbursement is the nearest candidate to five percent, not merely a valid one.'
+
+[[mutant]]
+id = 'm10-5'
+title = 'the funding warning names the authored date instead of the effective one'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_spine.py::TestTheOrderIsDatedOnTheApprovalItIs::test_the_dropped_funding_warning_names_the_control_that_caused_it'
+find = '        shift = (settlement.approval_date - stated.approval_date).days if ('
+replace = '        shift = 0 * (settlement.approval_date - stated.approval_date).days if ('
+
+# ---------------------------------------------------------------------------
+# Round 11 — the lattice withdrawn, and what it was hiding
+# ---------------------------------------------------------------------------
+note = 'Re-pointed after round 11 rewrote this block to name the shifted date. The original claim (the warning must not blame the adjuster) is now covered by the surrounding branch; this mutant guards the stronger one.'
+
+[[mutant]]
+id = 'm11-1'
+title = 'the release fee sentence goes back to matching only bold figures'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_release_reconciles_and_never_owes_the_applicant_money'
+find = '''    re.compile(r"(?<=in the amount of )\$[\d,]+(?:\.\d+)?(?= \(15% of gross settlement\))"),'''
+replace = '''    re.compile(r"(?<=in the amount of )ZZZ-no-such-token"),'''
+
+[[mutant]]
+id = 'm11-2'
+title = 'the settlement floor is stated again instead of searched'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_money_spine.py::TestASettlementIsLargeEnoughForItsOwnDocument::test_a_stated_gross_below_the_floor_is_refused'
+find = 'SETTLEMENT_GROSS_MINIMUM = _smallest_gross_the_documents_can_carry()'
+replace = 'SETTLEMENT_GROSS_MINIMUM = 2'
+
+[[mutant]]
+id = 'm11-3'
+title = 'the attorney fee is truncated to whole dollars again'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_award_reconciles_at_every_gross_the_schema_accepts'
+find = '    fee = (amount * SETTLEMENT_FEE_RATE).quantize(CENTS)'
+replace = '    fee = Decimal(int(amount * SETTLEMENT_FEE_RATE))'
+
+# ---------------------------------------------------------------------------
+# Sweep 2 — the sibling sweep
+# ---------------------------------------------------------------------------
+
+[[mutant]]
+id = 's2-1'
+title = 'the employer wage goes back to being a free draw'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_money_sweep.py::TestAGovernedFigureIsTheSameOnEverySurface::test_no_document_prints_an_hourly_rate_above_the_published_wage'
+find = '    align_employer_wage(cast.case, money_facts)'
+replace = '    align_employer_wage(cast.case, None)'
+
+[[mutant]]
+id = 's2-2'
+title = "the settlement memo's temporary-disability paragraph is the substrate's again"
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_sweep.py::TestAGovernedFigureIsTheSameOnEverySurface::test_every_surface_printing_a_governed_figure_prints_the_same_one'
+find = '''                    f"({weeks:g} weeks @ ${money.wages.rate.td_weekly_rate:,.2f}/week)\n"'''
+replace = '''                    f"({weeks:g} weeks @ ${money.wages.rate.td_weekly_rate + 1:,.2f}/week)\n"'''
+
+[[mutant]]
+id = 's2-3'
+title = 'a settlement-range row total stops being the sum of its own columns'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_sweep.py::TestAGovernedFigureIsTheSameOnEverySurface::test_a_settlement_range_row_adds_up_to_its_own_total'
+find = '''                [name, f"${a:,}", f"${b:,}", f"${c:,}", f"${a + b + c:,}"]'''
+replace = '''                [name, f"${a:,}", f"${b:,}", f"${c:,}", f"${a + b + c + 5000:,}"]'''
+
+[[mutant]]
+id = 's2-4'
+title = 'the wage family is bound to the eight subtypes somebody counted'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_sweep.py::TestAGovernedFigureIsTheSameOnEverySurface::test_every_surface_printing_a_governed_figure_prints_the_same_one'
+find = '''        **_family("pdf_templates.employment.wage_statement", FactAwareWageStatement),'''
+replace = ''''''
+
+[[mutant]]
+id = 's2-5'
+title = 'the memo recommends a target the file did not settle for'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_sweep.py::TestAGovernedFigureIsTheSameOnEverySurface::test_the_recommended_target_is_the_settlement_the_file_executed'
+find = '                target = int(money.settlement.gross_amount)'
+replace = '                target = int(money.settlement.gross_amount) * 4'
+
+[[mutant]]
+id = 's2-6'
+title = 'the pay-rate column stops being scaled onto the published wage'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_sweep.py::TestAGovernedFigureIsTheSameOnEverySurface::test_no_document_prints_an_hourly_rate_above_the_published_wage'
+find = '        scaled = (value / top * published).quantize(CENTS)'
+replace = '        scaled = value'
+
+[[mutant]]
+id = 's2-7'
+title = 'the memo family loses its registry binding'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_sweep.py::TestEveryMoneyDrawingTemplateIsAccountedFor::test_the_settlement_memo_family_is_governed_from_the_registry'
+find = '''        **_family("pdf_templates.summaries.settlement_memo", FactAwareSettlementMemo),'''
+replace = ''''''

@@ -25,7 +25,11 @@ from itertools import pairwise
 
 import structlog
 
-from wc_caseload_engine.case_context import CaseCast, build_case_cast
+from wc_caseload_engine.case_context import (
+    CaseCast,
+    align_employer_wage,
+    build_case_cast,
+)
 from wc_caseload_engine.case_facts import (
     CaseFacts,
     derive_case_facts,
@@ -1300,6 +1304,10 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # independent resolutions of the same persona is the defect that let
     # ``scenario.surgery`` and ``has_surgery`` contradict each other in Phase 1.
     money_facts = derive_money_facts(seed, timeline, case_facts.adjuster_diligence)
+    # …and the substrate's own wage field follows the published one, before any
+    # template reads it. Three document families derive money from
+    # ``employer.hourly_rate``; none of them were fact-aware.
+    align_employer_wage(cast.case, money_facts)
 
     core = build_core_candidates(seed, timeline)
     lien_tracks = build_lien_tracks(seed, timeline)

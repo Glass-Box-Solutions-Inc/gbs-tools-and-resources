@@ -937,6 +937,59 @@ _MONEY_AFTER_AWW = re.compile(r"average weekly wage of \$[\d,]+(?:\.\d+)?")
 #: fifteen-percent paragraph was stating a figure or merely a percentage.
 _ANY_MONEY = re.compile(r"\$[\d,]+(?:\.\d+)?")
 
+#: The settlement memo's permanent-disability paragraph, which states a duration
+#: in weeks, a weekly rate the substrate hardcodes to 290, and their product.
+_MEMO_PD_WEEKS = re.compile(r"<b>PD Duration:</b> (\d+) weeks")
+_MEMO_PD_RATE = re.compile(r"<b>Weekly Rate:</b> \$[\d,]+(?:\.\d+)?")
+_MEMO_PD_TOTAL = re.compile(r"<b>Total PD Indemnity:</b> <b>\$[\d,]+(?:\.\d+)?</b>")
+
+#: The supplemental job displacement voucher, as the substrate states it. A
+#: statutory figure rather than a draw, and the engine publishes no voucher
+#: fact, so it is carried through rather than governed. Named here so the memo
+#: and any future carrier of it cannot drift apart.
+_SJDB_VOUCHER = 6000
+
+
+#: The substrate's working week, as ``data/fake_data_generator.py`` sets it.
+#: An hourly rate is only comparable to a weekly wage through this number.
+_SUBSTRATE_WEEKLY_HOURS = 40
+
+#: An hourly figure inside a table cell.
+_HOURLY_CELL = re.compile(r"^\$([\d,]+\.\d\d)/hr$")
+
+
+def _rescale_hourly_column(table: Any, published: Decimal) -> None:
+    """Scale a pay-rate column so its highest figure is the published rate.
+
+    In place, on the ``Table`` flowable's own cell data. The relative shape of
+    the history is the substrate's and worth keeping — a hire rate below a
+    promotion rate is what a career looks like — but the top of it has to be the
+    wage the manifest publishes, because that is the one an analyzer is scored
+    on recovering.
+    """
+    rows = getattr(table, "_cellvalues", None)
+    if not rows:
+        log.warning("fact_templates.hourly_column_unreadable")
+        return
+    figures: list[tuple[int, int, Decimal]] = []
+    for row_index, row in enumerate(rows):
+        for cell_index, cell in enumerate(row):
+            if not isinstance(cell, str):
+                continue
+            found = _HOURLY_CELL.match(cell)
+            if found is not None:
+                figures.append(
+                    (row_index, cell_index, Decimal(found.group(1).replace(",", "")))
+                )
+    if not figures:
+        log.warning("fact_templates.hourly_column_empty")
+        return
+    top = max(value for _, _, value in figures)
+    if top <= 0:  # pragma: no cover - a substrate rate is always positive
+        return
+    for row_index, cell_index, value in figures:
+        scaled = (value / top * published).quantize(CENTS)
+        rows[row_index][cell_index] = f"${scaled:,.2f}/hr"
 
 
 def _restate_distribution(
@@ -1884,6 +1937,7 @@ def build_fact_aware_templates() -> dict[str, type]:
     minutes_module = import_substrate("pdf_templates.legal.minutes_orders")
     stips_module = import_substrate("pdf_templates.legal.stipulations")
     billing_module = import_substrate("pdf_templates.medical.billing_records")
+    memo_module = import_substrate("pdf_templates.summaries.settlement_memo")
 
     class FactAwareWageStatement(_SpecCapture, wage_module.WageStatement):  # type: ignore[misc,name-defined]
         """Prints the ledger's earnings and rate instead of inventing both.
@@ -1910,8 +1964,15 @@ def build_fact_aware_templates() -> dict[str, type]:
         *reports* instead of silently writing over the wrong table.
 
         One class serves the whole family because the substrate registry routes
-        all eight wage and payment-record subtypes to ``WageStatement``. Which
+        every wage and payment-record subtype to ``WageStatement``. Which
         document is on the page is decided by the subtype, not by the class.
+
+        This docstring used to say *eight* subtypes, and the map below listed
+        eight. The registry routes ten the engine can actually emit. The two
+        nobody had counted were ``PRIOR_CLAIMS_EDD_SDI_INFO``, which printed a
+        temporary-disability rate of $848.53 beside a ledger publishing $767.59,
+        and ``TIMECARDS_SCHEDULES``. The family is now bound from the registry,
+        so counting is not something anybody has to get right again.
         """
 
         def build_story(self, doc_spec: Any) -> list[Any]:
@@ -2223,7 +2284,254 @@ def build_fact_aware_templates() -> dict[str, type]:
             _append_settlement_terms(story, money, self.styles, "funding")
             return story
 
+    class FactAwareSettlementMemo(_SpecCapture, memo_module.SettlementMemo):  # type: ignore[misc,name-defined]
+        """The valuation memo's money comes from the ledger, and its rows add up.
+
+        Twenty-seven registry subtypes render through ``SettlementMemo`` — the
+        valuation memo, both rating worksheets, the MSA submission, the
+        conference statements, the trial briefs — and not one of them was
+        fact-aware. It is the largest money-bearing template family in the
+        substrate and it had never been swept, which is why the sweep that found
+        it derives its matrix from the *registry* rather than from the list of
+        classes already overridden. A matrix built from what is governed can
+        only ever confirm what is governed.
+
+        Three defects, all confirmed on rendered output of one settled case:
+
+        * **Its temporary-disability paragraph was a second wage ontology.** It
+          printed ``$157,467 (138 weeks @ $1141.07/week)`` beside a ledger that
+          published ``tdWeeklyRate 767.59`` and ``$28,400.83`` paid — a governed
+          fact contradicted on the same case. Both figures now come from the
+          ledger.
+        * **Its permanent-disability rate was the literal 290.** It agreed with
+          the ledger on the case it was found on, by luck: $290 is the capped
+          maximum for one rate vintage. On any other vintage it is simply wrong.
+        * **A row of its own settlement-range table did not add up.** The
+          Optimistic row's Other column and its Total came from two independent
+          draws of the same range, so the columns summed to $432,073 beside a
+          printed total of $427,428. Round 10's negative-net class exactly: a
+          document whose arithmetic cannot be reproduced from its own page,
+          except that here it contradicts itself across one row.
+
+        Where the file actually settled, the recommended target *is* the
+        settlement. A memo written before the settlement may legitimately
+        propose a different number, but this corpus dates these documents into
+        settled files, and a target twelve times the executed gross is not a
+        valuation — it is a label an analyzer would learn as noise.
+        """
+
+        def _make_pd_analysis_section(self) -> list[Any]:
+            story = list(super()._make_pd_analysis_section())
+            money = _money_of(self)
+            if money is None:
+                return story
+            rate = money.wages.rate.pd_weekly_rate
+            for index, item in enumerate(story):
+                text = getattr(item, "text", None)
+                if not isinstance(text, str) or "Total PD Indemnity" not in text:
+                    continue
+                weeks = _MEMO_PD_WEEKS.search(text)
+                if weeks is None:
+                    log.warning("fact_templates.memo_pd_weeks_not_found")
+                    break
+                total = (Decimal(weeks.group(1)) * rate).quantize(CENTS)
+                replaced = _MEMO_PD_RATE.sub(f"<b>Weekly Rate:</b> ${rate:,.2f}", text, count=1)
+                replaced = _MEMO_PD_TOTAL.sub(
+                    f"<b>Total PD Indemnity:</b> <b>${total:,.2f}</b>", replaced, count=1
+                )
+                from reportlab.platypus import Paragraph
+
+                story[index] = Paragraph(replaced, item.style)
+                self._pd_value = int(total)
+                break
+            return story
+
+        def _make_other_benefits_section(self) -> list[Any]:
+            money = _money_of(self)
+            if money is None:
+                return list(super()._make_other_benefits_section())
+            from reportlab.lib.units import inch
+            from reportlab.platypus import Paragraph, Spacer
+
+            benefits = money.benefits
+            weeks = sum((period.weeks for period in benefits.td_periods), Decimal(0))
+            story: list[Any] = [
+                Paragraph("<b>4. OTHER BENEFITS</b>", self.styles["SectionHeader"]),
+                Spacer(1, 0.1 * inch),
+            ]
+            # ``sjdb_voucher`` is a statutory figure the substrate states, not a
+            # draw, and the engine does not publish one — so it is carried
+            # through rather than governed. Self-procured medical is the
+            # settlement's own reimbursement where there is a settlement.
+            self_procured = (
+                _reimbursement_nearest_five_percent(int(money.settlement.gross_amount))
+                if money.settlement is not None
+                else 0
+            )
+            story.append(
+                Paragraph(
+                    f"<b>Temporary Total Disability (TTD):</b> ${benefits.td_total:,.2f} "
+                    f"({weeks:g} weeks @ ${money.wages.rate.td_weekly_rate:,.2f}/week)\n"
+                    f"<b>SJDB Voucher:</b> ${_SJDB_VOUCHER:,} (LC §4658.7)\n"
+                    f"<b>Self-Procured Medical:</b> ${self_procured:,}",
+                    self.styles["BodyText14"],
+                )
+            )
+            self._other_benefits = _SJDB_VOUCHER + self_procured
+            return story
+
+        def _make_settlement_range_section(self) -> list[Any]:
+            money = _money_of(self)
+            if money is None:
+                return list(super()._make_settlement_range_section())
+            from reportlab.lib import colors
+            from reportlab.lib.units import inch
+            from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+
+            pd_value = int(self._pd_value)
+            fmc_value = int(self._fmc_value)
+            other = int(self._other_benefits)
+            # One draw per column that varies, and every Total is the sum of the
+            # row it sits on. The substrate drew the Optimistic row's Other and
+            # its Total independently, so the row disagreed with itself.
+            # Derived, not drawn. The substrate's optimistic premium was a
+            # second ``random.randint(5000, 15000)`` — a draw is what let the
+            # row disagree with its own total, and nothing about this figure
+            # needs to be random for the document to read as one.
+            optimistic_other = other + max(fmc_value // 10, 5000)
+            rows = [
+                ["Scenario", "PD Value", "FMC Value", "Other", "Total"],
+                ["Conservative", pd_value, fmc_value // 2, other],
+                ["Expected", pd_value, fmc_value, other],
+                ["Optimistic", pd_value, fmc_value, optimistic_other],
+            ]
+            data = [rows[0]] + [
+                [name, f"${a:,}", f"${b:,}", f"${c:,}", f"${a + b + c:,}"]
+                for name, a, b, c in rows[1:]
+            ]
+            widths = [1.2 * inch, 1.2 * inch, 1.2 * inch, 1 * inch, 1.2 * inch]
+            table = Table(data, colWidths=widths)
+            table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 9),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                    ]
+                )
+            )
+            story: list[Any] = [
+                Paragraph("<b>6. SETTLEMENT RANGE ANALYSIS</b>", self.styles["SectionHeader"]),
+                Spacer(1, 0.1 * inch),
+                table,
+                Spacer(1, 0.15 * inch),
+            ]
+            if money.settlement is not None:
+                target = int(money.settlement.gross_amount)
+            else:
+                target = pd_value + fmc_value + other
+            story.append(
+                Paragraph(
+                    f"<b><u>Recommended Settlement Target: ${target:,}</u></b>",
+                    self.styles["BodyText14"],
+                )
+            )
+            story.append(Spacer(1, 0.05 * inch))
+            story.append(
+                Paragraph(
+                    f"Comparable cases with similar body parts and impairment levels have "
+                    f"settled in the range of ${int(target * 0.8):,} to "
+                    f"${int(target * 1.2):,} in the {self.case.venue} district.",
+                    self.styles["BodyText14"],
+                )
+            )
+            return story
+
+    personnel_module = import_substrate("pdf_templates.employment.personnel_file")
+
+    class FactAwarePersonnelFile(_SpecCapture, personnel_module.PersonnelFile):  # type: ignore[misc,name-defined]
+        """The pay-rate history ends at the wage the manifest publishes.
+
+        ``align_employer_wage`` already puts the published average weekly wage
+        behind ``employer.hourly_rate``, which is where the hire row and the
+        transfer row come from. The promotion row does not come from there: it
+        is ``hourly_rate * random.uniform(1.05, 1.15)``, so it printed $32.02 an
+        hour on a file publishing an average weekly wage of $1,151.33 — $28.78.
+
+        Two things wrong with that, and the second is worse. It contradicts a
+        governed fact. And it is incoherent on its own terms: the promotion
+        predates the injury, so a table showing a raise *above* the rate the
+        employee is currently on is describing a pay cut nobody recorded.
+
+        The correction scales the column so its highest figure is the published
+        rate and the earlier ones keep their proportions. A promotion still
+        raises pay; it raises it *to* what the file says the applicant earns.
+        """
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            story = list(super().build_story(doc_spec))
+            money = _money_of(self)
+            if money is None:
+                return story
+            published = (
+                Decimal(money.wages.computation.aww) / Decimal(_SUBSTRATE_WEEKLY_HOURS)
+            ).quantize(CENTS)
+            index = _index_of_text(story, "Position History")
+            if index is None:
+                log.warning("fact_templates.position_history_not_found")
+                return story
+            for item in story[index:]:
+                if item.__class__.__name__ != "Table":
+                    continue
+                _rescale_hourly_column(item, published)
+                return story
+            log.warning("fact_templates.position_history_table_not_found")
+            return story
+
+    # Two families are bound from the registry rather than listed by hand,
+    # because a hand-written list is how a sibling gets missed and that is the
+    # defect class this whole sweep exists to close.
+    #
+    # The memo family is twenty-seven emittable subtypes that had no override at
+    # all. The wage family already had one, and its own docstring said it served
+    # "all eight wage and payment-record subtypes" — the registry routes ten
+    # emittable ones. The two nobody had counted were PRIOR_CLAIMS_EDD_SDI_INFO
+    # and TIMECARDS_SCHEDULES, both of which print this case's own earnings, and
+    # the first of them was printing a temporary-disability rate of $848.53
+    # against a ledger publishing $767.59. A claim of completeness that nothing
+    # checked, live for eleven review rounds.
+    registry_module = import_substrate("pdf_templates.registry")
+
+    canonical = effective_taxonomy().subtypes
+
+    def _family(module_path: str, template: type) -> dict[str, type]:
+        """Every *canonical* subtype the registry routes to one substrate module.
+
+        Canonical, because the registry is the substrate's list and the taxonomy
+        is the engine's. Five registry keys are not classifier vocabulary — the
+        engine can never emit them — and mapping one here would put a subtype in
+        the fact-aware registry that no document can carry. ``test_scenario_p2``
+        already refuses that, and it refused this on the first run.
+        """
+        return {
+            subtype: template
+            for subtype, entry in registry_module.TEMPLATE_REGISTRY.items()
+            if entry.module_path == module_path and subtype in canonical
+        }
+
+    families = {
+        **_family("pdf_templates.summaries.settlement_memo", FactAwareSettlementMemo),
+        **_family("pdf_templates.employment.wage_statement", FactAwareWageStatement),
+        **_family("pdf_templates.employment.personnel_file", FactAwarePersonnelFile),
+    }
+
     return {
+        **families,
         "WAGE_STATEMENTS_PRE_INJURY": FactAwareWageStatement,
         "WAGE_STATEMENTS_POST_INJURY": FactAwareWageStatement,
         "WAGE_STATEMENTS_EARNING_RECORDS": FactAwareWageStatement,

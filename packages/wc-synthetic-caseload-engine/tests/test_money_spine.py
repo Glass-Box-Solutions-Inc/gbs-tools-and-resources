@@ -76,6 +76,7 @@ from wc_caseload_engine.seeds import (
     SeedValidationError,
     WageScenario,
     parse_case_seed,
+    settlement_deductions,
 )
 
 
@@ -2413,6 +2414,21 @@ class TestTheDocumentsCarryTheNumbers:
                 f"its section 9 says {prose_costs}"
             )
             assert net > 0, f"gross {gross}: the release owes the applicant {net}"
+            # …and the deductions are the settlement's own. Reconciliation alone
+            # does not say so: forcing both to zero keeps the page internally
+            # consistent and the net positive, which is how mutation found this
+            # claim unguarded. The figures themselves are asserted here.
+            expected_costs, expected_set_aside = (
+                Decimal(value) for value in settlement_deductions(gross)[1:]
+            )
+            assert costs == expected_costs, (
+                f"gross {gross}: costs of {costs} are not this settlement's "
+                f"({expected_costs})"
+            )
+            assert set_aside == expected_set_aside, (
+                f"gross {gross}: a set-aside of {set_aside} is not this "
+                f"settlement's ({expected_set_aside})"
+            )
             assert printed - fee - costs - set_aside == net, (
                 f"gross {gross}: {printed} - {fee} - {costs} - {set_aside} != {net}"
             )
@@ -2796,6 +2812,50 @@ class TestASettlementIsLargeEnoughForItsOwnDocument:
             },
         )
         assert ordinary.settlement.gross_amount > Decimal(1000)
+        # …and it is published in whole dollars. The derivation is a weekly rate
+        # with cents multiplied by a week count and added to a paid-to-date
+        # total, so a raw derived gross almost always has cents in it: this one
+        # is $32,668.47 before quantization. Mutation found the quantization
+        # unguarded — removing it left every assertion above green, because
+        # nothing here had ever looked at the cents. A gross with cents is not a
+        # rounding nicety: the award splits it into two whole-dollar components
+        # that must sum back to it exactly.
+        # The `td_weeks: 0` case above cannot see this: its rate is a capped
+        # whole $290 and its paid-to-date is zero, so the product is whole
+        # whatever the week count. A file that was actually *paid* temporary
+        # disability carries cents into the sum, and that is the reachable case.
+        paid_file = _facts(
+            {"wages": WAGES, "benefits": {"td_weeks": 32, "pd_advances": 2}},
+            rng_seed=11,
+            lifecycle={
+                "target_stage": "resolved",
+                "eval_type": "none",
+                "resolution": {"type": "stipulations"},
+            },
+        )
+        rate = paid_file.wages.rate.pd_weekly_rate
+        paid = paid_file.benefits.td_total
+        assert paid != paid.to_integral_value(), paid
+        raw = [rate * Decimal(weeks) + paid for weeks in range(20, 121)]
+        assert all(value != value.to_integral_value() for value in raw), (
+            "no week count in the derivation's own range produces cents, so "
+            "this probe cannot tell a quantized publication from an "
+            "unquantized one"
+        )
+        for seed_value in range(11, 21):
+            published = _facts(
+                {"wages": WAGES, "benefits": {"td_weeks": 32, "pd_advances": 2}},
+                rng_seed=seed_value,
+                lifecycle={
+                    "target_stage": "resolved",
+                    "eval_type": "none",
+                    "resolution": {"type": "stipulations"},
+                },
+            ).settlement.gross_amount
+            assert published == published.to_integral_value(), (
+                f"rng_seed {seed_value}: a derived gross of {published} was "
+                "published with cents"
+            )
 
 
 @requires_substrate
@@ -3034,6 +3094,19 @@ class TestTheOrderIsDatedOnTheApprovalItIs:
         assert dropped, plan.warnings
         assert any("funding_date of 2025-12-31" in warning for warning in dropped), dropped
         assert not any("for this adjuster" in warning for warning in dropped), dropped
+        # …and it says *why* that date is out of range, which is not the date.
+        # 2025-12-31 is comfortably inside the horizon; the approval shift is
+        # what carried it out. A warning naming only the authored date advises
+        # moving the approval earlier, which makes the shift larger — exactly
+        # backwards. Mutation found this claim unguarded: zeroing the shift left
+        # every other assertion here green.
+        shift = (
+            plan.money_facts.settlement.approval_date - date(2021, 6, 15)
+        ).days
+        assert shift > 0, shift
+        assert any(
+            f"carried {shift} day(s) forward" in warning for warning in dropped
+        ), dropped
 
         # The opposite draw: with no stated date, the lag is what to name.
         by_lag = build_case_plan(

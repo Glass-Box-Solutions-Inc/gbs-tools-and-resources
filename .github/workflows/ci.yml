@@ -371,6 +371,34 @@ jobs:
       - name: Validate the generated manifests
         run: python -m wc_caseload_engine.cli validate --out "${RUNNER_TEMP}/wcce-demo"
 
+  # Mutation gate. A passing test proves nothing on its own — it passes on the
+  # fixed code and it may well pass on the broken code too. Every registered
+  # fix has a mutant that puts the defect back; each one must turn the test that
+  # names it red. Three separate review rounds found a guard that had never
+  # covered its own fix, so this runs on every push rather than by hand.
+  # Sharded because each mutant is a full pytest invocation.
+  wc-synthetic-caseload-engine-mutation:
+    name: "wc-synthetic-caseload-engine (mutation gate ${{ matrix.shard }}/10)"
+    needs: changes
+    if: needs.changes.outputs.wc-synthetic-caseload-engine == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    defaults:
+      run:
+        working-directory: packages/wc-synthetic-caseload-engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Every guard still catches its own defect
+        run: python tools/mutation_gate.py --shard ${{ matrix.shard }}/10
+
   # ── Java packages ───────────────────────────────────────────────────────────
 
   phileas:
@@ -412,6 +440,7 @@ jobs:
       - spectacles
       - squeegee
       - wc-synthetic-caseload-engine
+      - wc-synthetic-caseload-engine-mutation
       - yevrah-terminal
     steps:
       - name: Check results
@@ -432,6 +461,7 @@ jobs:
             "${{ needs.spectacles.result }}"
             "${{ needs.squeegee.result }}"
             "${{ needs.wc-synthetic-caseload-engine.result }}"
+            "${{ needs.wc-synthetic-caseload-engine-mutation.result }}"
             "${{ needs.yevrah-terminal.result }}"
           )
           for r in "${results[@]}"; do
