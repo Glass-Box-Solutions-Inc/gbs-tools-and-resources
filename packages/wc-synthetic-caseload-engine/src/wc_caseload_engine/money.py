@@ -1044,7 +1044,16 @@ def _pattern_of(
     this one: a seed that means seasonal describes its history and says so.
     """
     if not wages.earnings:
-        return wages.pattern, "seed"
+        # ``model_fields_set``, not the value. ``pattern`` has a default, so a
+        # seed that never mentioned it published ``patternSource: seed`` over a
+        # label Pydantic supplied — provenance asserting an author who never
+        # spoke. A described history that states no pattern is a *derived*
+        # ``regular``: the periods were drawn to that shape, so the label is
+        # still true, but nobody authored it.
+        source: Literal["seed", "derived"] = (
+            "seed" if "pattern" in wages.model_fields_set else "derived"
+        )
+        return wages.pattern, source
     variation = _coefficient_of_variation(tuple(p for p in periods if not p.concurrent))
     return ("irregular" if variation > IRREGULARITY_THRESHOLD else "regular"), "derived"
 
@@ -1198,7 +1207,24 @@ TD_PAYMENT_DUE_AUTHORITY: str = (
 )
 
 #: Days between scheduled permanent-disability advances.
+#:
+#: **An engine schedule, not a statutory deadline**, and the distinction is
+#: load-bearing for Wave 3. A temporary-disability payment has a due date the law
+#: has an opinion about; an advance is discretionary, so the cadence here is a
+#: plausible carrier practice this engine invented to give the ledger a shape.
+#: ``PdAdvance.days_late`` is therefore lateness *against that schedule* — a real,
+#: recomputable fact about the file, and **not** by itself a measure of legal
+#: exposure. Published with its own authority text so no downstream consumer has
+#: to guess which of the two it is holding.
 PD_ADVANCE_INTERVAL_DAYS: int = 45
+
+#: What :data:`PD_ADVANCE_INTERVAL_DAYS` is, said in the manifest.
+PD_ADVANCE_SCHEDULE_AUTHORITY: str = (
+    "Interval between scheduled permanent-disability advances. ENGINE SCHEDULE, not a "
+    "statutory deadline: advances are discretionary, so pdAdvances[].daysLate measures "
+    "lateness against this cadence and is not by itself a measure of legal exposure. "
+    "COUNSEL-UNCONFIRMED."
+)
 
 
 def _derive_benefits(
@@ -1254,6 +1280,7 @@ def _derive_benefits(
     remaining = td_weeks
     block_index = 0
     gap_after_block = 1 if gap_days else -1
+    pending_gap: BenefitGap | None = None
 
     # The last date any money event in this file may carry. The *timeline's*
     # horizon, not the benefit window above: a payment is dated by when it
@@ -1279,6 +1306,15 @@ def _derive_benefits(
             # periods too: a payment past the file's own horizon is not a late
             # payment, it is one this case never reached.
             break
+        if pending_gap is not None:
+            # The gap is banked when the period on its far side is *emitted*,
+            # not when it is planned. Appended eagerly it could outlive the run
+            # it was meant to interrupt: the next block would then be dropped by
+            # the check above and the ledger ended on a gap reaching past the
+            # horizon, printed on a payment record dated before most of it. A
+            # hole in a series needs a series on both sides of it.
+            gaps.append(pending_gap)
+            pending_gap = None
         periods.append(
             TdPeriod(
                 start=start,
@@ -1297,8 +1333,8 @@ def _derive_benefits(
         if block_index == gap_after_block and gap_days and remaining > 0:
             gap_start = cursor
             cursor = cursor + dt.timedelta(days=gap_days)
-            gaps.append(
-                BenefitGap(start=gap_start, end=cursor - dt.timedelta(days=1), days=gap_days)
+            pending_gap = BenefitGap(
+                start=gap_start, end=cursor - dt.timedelta(days=1), days=gap_days
             )
 
     advances_wanted = scenario.pd_advances if scenario is not None else None
@@ -1392,6 +1428,17 @@ def _derive_settlement(
                 else DILIGENCE_FUNDING_DAYS[diligence]
             )
             funding = approval + dt.timedelta(days=lag)
+        ceiling = getattr(timeline, "horizon", None)
+        if ceiling is not None and funding > ceiling:
+            # Not yet funded, as of the date this engine calls today. A *stated*
+            # funding date past the anchor is refused at the seed; a *derived*
+            # one is a different fact — the approval is real, the lag is real,
+            # and the money simply has not arrived inside the window the file
+            # covers. ``funding_date`` is optional precisely so that state has a
+            # value, and ``funding_lag_days`` goes to ``None`` with it rather
+            # than reporting an interval that has not elapsed. The planner
+            # reports the dropped control; see ``_money_control_warnings``.
+            funding = None
 
     return SettlementFact(
         kind="c_and_r" if resolution == "c_and_r" else "stipulations",
@@ -1535,6 +1582,8 @@ GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
         "tdPaymentDueDays",
         "tdPaymentDueAuthority",
         "tdPaymentDueConfirmed",
+        "pdAdvanceIntervalDays",
+        "pdAdvanceScheduleAuthority",
     ),
     "settlement": ("kind", "grossAmount", "approvalDate", "fundingDate", "fundingLagDays"),
 }
@@ -1631,6 +1680,8 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
             # governs the rate basis and says nothing about a benefits interval.
             "tdPaymentDueAuthority": TD_PAYMENT_DUE_AUTHORITY,
             "tdPaymentDueConfirmed": False,
+            "pdAdvanceIntervalDays": PD_ADVANCE_INTERVAL_DAYS,
+            "pdAdvanceScheduleAuthority": PD_ADVANCE_SCHEDULE_AUTHORITY,
         },
     }
     if facts.settlement is not None:
@@ -1655,7 +1706,10 @@ __all__ = [
     "DILIGENCE_LATENESS",
     "GOVERNED_MONEY_FIELDS",
     "IRREGULARITY_THRESHOLD",
+    "PD_ADVANCE_INTERVAL_DAYS",
+    "PD_ADVANCE_SCHEDULE_AUTHORITY",
     "SHORT_HISTORY_WEEKS",
+    "TD_PAYMENT_DUE_AUTHORITY",
     "TD_PAYMENT_DUE_DAYS",
     "UNCONFIRMED_RATE_TABLE",
     "AwwComputation",

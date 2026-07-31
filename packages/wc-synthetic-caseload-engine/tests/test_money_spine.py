@@ -335,6 +335,55 @@ class TestTheNamedMethod:
         assert described["pattern"] == "seasonal"
         assert described["patternSource"] == "seed"
 
+    def test_pattern_provenance_names_an_author_only_when_there_was_one(self) -> None:
+        """`patternSource: seed` is a claim about the seed, so it reads the seed.
+
+        `pattern` has a default, so taking "the history was described" as
+        "the author stated a pattern" published `patternSource: seed` over a
+        label Pydantic supplied — provenance asserting an author who never
+        spoke. `model_fields_set` is the only thing that can tell them apart.
+        """
+        assert (
+            money_manifest_block(_facts({"wages": {}}))["wage"]["patternSource"]
+            == "derived"
+        )
+        assert (
+            money_manifest_block(_facts({"wages": {"base_weekly_wage": 1000.0}}))["wage"][
+                "patternSource"
+            ]
+            == "derived"
+        )
+        # The opposite draw: state it, at its own default value, and it is authored.
+        authored = money_manifest_block(
+            _facts({"wages": {"base_weekly_wage": 1000.0, "pattern": "regular"}})
+        )["wage"]
+        assert authored["pattern"] == "regular"
+        assert authored["patternSource"] == "seed"
+
+    def test_a_figure_no_setting_consumes_is_refused(self) -> None:
+        """Both fields say "required by, and only by" — and both were ignored without it."""
+        with pytest.raises(SeedValidationError) as capacity:
+            _facts({"wages": dict(WAGES, earning_capacity_weekly=7777.0)})
+        assert "earning_capacity" in str(capacity.value)
+
+        with pytest.raises(SeedValidationError) as concurrent:
+            _facts({"wages": dict(WAGES, concurrent_weekly_wage=8888.0)})
+        assert "concurrent_employment" in str(concurrent.value)
+
+        # The controls: each figure is honoured once its enabler is present.
+        capped = _facts(
+            {
+                "wages": dict(
+                    WAGES, method="earning_capacity", earning_capacity_weekly=7777.0
+                )
+            }
+        )
+        assert capped.aww == money(7777.0)
+        both = _facts(
+            {"wages": dict(WAGES, concurrent_employment=True, concurrent_weekly_wage=400.0)}
+        )
+        assert both.wages.concurrent_periods
+
     def test_the_reason_is_recorded_beside_the_method(self) -> None:
         for wages in (WAGES, dict(WAGES, pattern="irregular")):
             computation = _facts({"wages": wages}).wages.computation
@@ -779,6 +828,158 @@ class TestTheBenefitLedger:
             parse_case_seed(_seed_body({"wages": WAGES, "benefits": {"td_weeks": 8}}))
         )
         assert not any("td_weeks" in warning for warning in quiet.warnings), quiet.warnings
+
+    def test_lateness_the_ledger_could_not_deliver_is_reported(self) -> None:
+        """Eight weeks is two four-week blocks, so three late payments cannot happen.
+
+        The seed schema refuses lateness with nothing paid at all; it cannot
+        count blocks. `{td_weeks: 8, pd_advances: 0, late_payments: 3}`
+        published `latePayments: 2` and said nothing.
+        """
+        plan = build_case_plan(
+            parse_case_seed(
+                _seed_body(
+                    {
+                        "wages": WAGES,
+                        "benefits": {
+                            "td_weeks": 8,
+                            "pd_advances": 0,
+                            "late_payments": 3,
+                            "max_days_late": 62,
+                        },
+                    }
+                )
+            )
+        )
+        assert any("late_payments" in w for w in plan.warnings), plan.warnings
+
+        # The opposite draw: a run long enough to carry three is silent.
+        quiet = build_case_plan(
+            parse_case_seed(
+                _seed_body(
+                    {
+                        "wages": WAGES,
+                        "benefits": {
+                            "td_weeks": 20,
+                            "late_payments": 3,
+                            "max_days_late": 62,
+                        },
+                    }
+                )
+            )
+        )
+        assert not any("late_payments" in w for w in quiet.warnings), quiet.warnings
+
+    def test_a_max_delay_without_a_count_is_refused(self) -> None:
+        """The pair is the fact. Alone, the count came from the persona.
+
+        On an `attentive` administrator that is zero, so a stated sixty-two-day
+        delay published no lateness at all.
+        """
+        with pytest.raises(SeedValidationError) as caught:
+            _facts({"wages": WAGES, "benefits": {"td_weeks": 12, "max_days_late": 62}})
+        assert "late_payments" in str(caught.value)
+
+    def test_a_settlement_the_case_never_funded_says_so(self) -> None:
+        """Approved and not yet funded is a state, and `funding_date` is optional for it.
+
+        `approval_date: 2025-12-31` with `funding_days: 730` derived a funding
+        date of 2027-12-31 — two years past the date this engine calls today,
+        published as fact beside documents dated 2026-01-01 or earlier.
+        """
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "settlement": {"approval_date": "2025-12-31", "funding_days": 730},
+            }
+        )
+        assert facts.settlement is not None
+        assert facts.settlement.approval_date == date(2025, 12, 31)
+        assert facts.settlement.funding_date is None
+        assert facts.settlement.funding_lag_days is None
+
+        # Both return paths of ``_money_control_warnings``: a seed with no
+        # benefits block takes the early return, one with a block takes the main
+        # one. Mutation found that only the first was probed, so deleting the
+        # settlement report from the main path stayed green.
+        for benefits in (None, {"td_weeks": 12}):
+            scenario: dict[str, Any] = {
+                "wages": WAGES,
+                "settlement": {"approval_date": "2025-12-31", "funding_days": 730},
+            }
+            if benefits is not None:
+                scenario["benefits"] = benefits
+            plan = build_case_plan(parse_case_seed(_seed_body(scenario)))
+            assert any("not yet funded" in w for w in plan.warnings), (
+                benefits,
+                plan.warnings,
+            )
+
+        # The opposite draw: a lag the case reaches is funded and reported.
+        funded = _facts(
+            {
+                "wages": WAGES,
+                "settlement": {"approval_date": "2025-01-06", "funding_days": 30},
+            }
+        )
+        assert funded.settlement.funding_date == date(2025, 2, 5)
+        assert funded.settlement.funding_lag_days == 30
+
+    def test_no_gap_outlives_the_run_it_interrupts(self) -> None:
+        """A hole in a series needs a series on both sides of it.
+
+        The gap was banked when it was planned rather than when the period on
+        its far side was emitted, so the run could end *on* a gap — one reaching
+        past the horizon, printed on a payment record dated before most of it.
+
+        The gap has to be long enough to walk the run off the end of the case,
+        which is the corner the first version of this sweep missed entirely: a
+        200-day gap on a 2025 injury still leaves room for the next block, so
+        eager banking and lazy banking agree and the mutant lived. `td_gap_days:
+        700` on a 2024-06-01 intake file banks a gap running to **2026-06-01** —
+        five months past the horizon, on a ledger with nothing after it.
+        """
+        checked = 0
+        gapped = 0
+        for doi, stage in (
+            ("2024-06-01", "intake"),
+            ("2024-11-01", "discovery"),
+            ("2025-01-15", "intake"),
+            ("2025-03-01", "active_treatment"),
+        ):
+            for gap_days in (200, 400, 700, 1000):
+                for weeks in (12, 20, 40):
+                    body = _seed_body(
+                        {
+                            "wages": WAGES,
+                            "benefits": {"td_weeks": weeks, "td_gap_days": gap_days},
+                        },
+                        lifecycle={"target_stage": stage, "eval_type": "none"},
+                    )
+                    body["injury"]["date_of_injury"] = doi
+                    try:
+                        seed = parse_case_seed(body)
+                    except SeedValidationError:
+                        continue
+                    timeline = build_timeline(seed)
+                    facts = derive_money_facts(seed, timeline, "ordinary")
+                    assert facts is not None
+                    checked += 1
+                    ledger = facts.benefits
+                    gapped += len(ledger.gaps)
+                    for gap in ledger.gaps:
+                        assert gap.end <= timeline.horizon, (
+                            f"a gap ran to {gap.end}, past the horizon "
+                            f"{timeline.horizon} — doi={doi} td_gap_days={gap_days}"
+                        )
+                        assert any(p.start > gap.end for p in ledger.td_periods), (
+                            f"a gap ending {gap.end} interrupts nothing — no benefit "
+                            f"period resumes after it (doi={doi} td_gap_days={gap_days})"
+                        )
+        assert checked > 20, f"the sweep only reached {checked} seeds"
+        assert gapped > 0, (
+            "the sweep produced no gaps at all, so it proves nothing about them"
+        )
 
     def test_no_benefit_event_falls_past_the_horizon(self) -> None:
         """A payment no document in the case can report is one the case never reached.
@@ -1415,16 +1616,23 @@ class TestPublication:
         with pytest.raises(SeedValidationError):
             _facts({"wages": {"earnings": listed, "pattern": "regular"}})
 
-    def test_the_aggregate_divides_by_the_weeks_both_employers_cover(self) -> None:
-        """Both employers' earnings over one calendar, not over one employer's weeks.
+    def test_an_unequal_concurrent_history_is_refused_rather_than_averaged(self) -> None:
+        """One gross over one denominator cannot express two employments of different lengths.
 
-        The denominator was the *primary* employment's own weeks for every
-        method, which is only right when the two histories cover the same
-        calendar — documented as an assumption and checked by nothing. A
-        two-week primary period paying $2,000 beside a fifty-two-week concurrent
-        history paying $52,000 published `grossConsidered: 54000.00` over
-        `weeksConsidered: 2.0000`: an average weekly wage of **$27,000**, capped
-        to the statutory maximum and recorded as `tdBound: max`.
+        A two-week primary period paying $2,000 beside a fifty-two-week
+        concurrent history paying $52,000 aggregated to $54,000 — and *every*
+        single denominator is wrong for it. Two weeks says $27,000 (capped to
+        the statutory maximum, recorded as `tdBound: max`). Fifty-two weeks says
+        $1,038.46, diluting the primary job across fifty weeks it did not exist.
+        The answer a reader would defend is $2,000 — the sum of the two weekly
+        rates while both were running — and reaching it needs per-employment
+        operands, which needs employer identity. A boolean cannot say *which*
+        employer a period belongs to, so it cannot group them.
+
+        Refused, therefore, rather than approximated. An additive Wave-2 field
+        opens the shape properly; publishing a number here that no arithmetic on
+        the page reproduces would put the asserted figure this layer exists to
+        remove into the one method whose whole point is combining employments.
         """
         primary = [
             {"period_start": "2021-05-31", "period_end": "2021-06-13", "gross": 2000.0}
@@ -1439,25 +1647,29 @@ class TestPublication:
             }
             for i in range(26)
         ]
-        facts = _facts({"wages": {"earnings": primary + concurrent}})
+        with pytest.raises(SeedValidationError) as caught:
+            _facts({"wages": {"earnings": primary + concurrent}})
+        assert "different dates" in str(caught.value)
+
+        # The control: matched coverage is accepted, and the aggregate is then a
+        # sum over one span that a reader can reproduce from the printed table.
+        matched = [
+            {"period_start": e["period_start"], "period_end": e["period_end"], "gross": 2000.0}
+            for e in concurrent
+        ] + concurrent
+        facts = _facts({"wages": {"earnings": matched}})
         computation = facts.wages.computation
         assert computation.method == "concurrent_aggregate"
-        assert computation.gross_considered == money(54000)
-        # The union of covered days: 364 concurrent days, of which the primary
-        # period's 14 are a subset.
-        assert computation.weeks_considered == Decimal("52.0000")
+        assert computation.gross_considered == money(104000)
         assert computation.aww == money(
             (computation.gross_considered / computation.weeks_considered).quantize(
                 Decimal("0.01")
             )
         )
-        assert facts.wages.rate.td_bound == "unbounded", (
-            "an aggregate over the right weeks does not reach the statutory ceiling"
-        )
 
-        # The control: where the two histories *do* align — every derived history
-        # and every well-formed listed one — the union is the primary's own span
-        # and the answer is unchanged.
+        # And a derived concurrent history — where the engine builds both sides
+        # over the same windows — is unaffected, which is what keeps every
+        # money-showcase figure where it was.
         aligned = _facts({"wages": dict(WAGES, concurrent_employment=True)})
         primary_weeks = sum(
             (p.weeks for p in aligned.wages.primary_periods), Decimal("0")
@@ -1490,11 +1702,11 @@ class TestPublication:
             _facts({"wages": {"earnings": concurrent}})
         assert "primary" in str(caught.value)
 
-        # The control: add one primary period and the aggregate is real money.
+        # The control: matched primary periods make the aggregate real money.
         mixed = [
-            {"period_start": "2021-01-04", "period_end": "2021-01-17", "gross": 2000.0},
-            *concurrent,
-        ]
+            {"period_start": e["period_start"], "period_end": e["period_end"], "gross": 1800.0}
+            for e in concurrent
+        ] + concurrent
         facts = _facts({"wages": {"earnings": mixed}})
         assert facts.aww > money(0)
         assert facts.method == "concurrent_aggregate"
@@ -1673,17 +1885,56 @@ class TestTheDocumentsCarryTheNumbers:
         block = manifest["caseFacts"]["money"]
         page = texts[MONEY_WAGE_SUBTYPE].replace(",", "")
         normalized = " ".join(page.split())
+
+        # Label *and* value, in that order, not the value anywhere on the page.
+        # Found by review: `methodSource` and `patternSource` are both usually
+        # "derived", so deleting the pattern-source row left this test green on
+        # the method-source row's text. A sweep that a duplicate value can
+        # satisfy is not checking the field it names.
+        labels = {
+            "method": "AWW Method:",
+            "methodSource": "Method Source:",
+            "methodReason": "Basis of Method:",
+            "averageWeeklyWage": "Average Weekly Wage (AWW):",
+            "periodsConsidered": "Periods Considered:",
+            "weeksConsidered": "Weeks Considered:",
+            "grossConsidered": "Earnings Considered:",
+            "inKindWeekly": "Non-Cash Wages (weekly):",
+            "pattern": "Earnings Pattern:",
+            "patternSource": "Earnings Pattern Source:",
+            "concurrentEmployment": "Concurrent Employment:",
+            "tdWeeklyRate": "Temporary Disability Rate:",
+            "tdBound": "TD Rate Bound:",
+            "pdWeeklyRate": "Permanent Disability Rate:",
+            "pdBound": "PD Rate Bound:",
+            "basisLabel": "Rate Basis:",
+            "basisAuthority": "Rate Basis Authority:",
+            "counselConfirmed": "Rate Basis:",
+            "basisSource": "Rate Basis Source:",
+        }
+        governed = set(GOVERNED_MONEY_FIELDS["wage"]) | set(GOVERNED_MONEY_FIELDS["rate"])
+        assert governed <= set(labels), (
+            "a governed field has no label in this probe: "
+            f"{sorted(governed - set(labels))}. Give it a row on the wage statement and "
+            "name the row here — a published fact is one a document renders."
+        )
         for group in ("wage", "rate"):
             for field in GOVERNED_MONEY_FIELDS[group]:
                 value = block[group][field]
+                label = labels[field]
+                assert label in normalized, f"the wage statement lost the {label!r} row"
                 if isinstance(value, bool):
-                    # Published as the caveat text the reader of paper sees.
+                    # Rendered as the caveat text a reader of paper sees, beside
+                    # the basis label rather than as the word "False".
+                    assert UNCONFIRMED_NOTICE in normalized
                     continue
                 needle = " ".join(str(value).replace(",", "").split())
-                assert needle in normalized, (
-                    f"caseFacts.money.{group}.{field} publishes {value!r}, which the "
-                    "wage statement never prints — a published fact is one a document "
-                    "renders, or it is a label with nothing behind it"
+                after = normalized.split(label, 1)[1][: len(needle) + 80]
+                assert needle in after, (
+                    f"caseFacts.money.{group}.{field} publishes {value!r}, which does not "
+                    f"appear after its own {label!r} row on the wage statement — a "
+                    "published fact is one a document renders, or it is a label with "
+                    "nothing behind it"
                 )
 
     def test_the_wage_statement_prints_the_periods_the_average_is_made_of(
@@ -2014,6 +2265,53 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         block["money"]["benefits"]["tdPeriodCount"] = 1
         problems = _validate_money(block, documents, "probe-case")
         assert any("str where a record was expected" in p for p in problems), problems
+
+    def test_a_malformed_count_or_gap_is_refused_rather_than_crashing(self) -> None:
+        """A validator that trusts its input crashes on the input it exists to reject.
+
+        `tdPeriodCount: "one"` raised `TypeError` out of the event sum — and a
+        crash is not a verdict. `gaps: ["garbage"]` was the one array nothing
+        type-checked at all.
+        """
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = _facts({"wages": WAGES, "benefits": {"td_weeks": 12, "td_gap_days": 30}})
+        documents = [{"subtype": MONEY_WAGE_SUBTYPE}, {"subtype": MONEY_TD_SUBTYPE}]
+        assert not _validate_money({"money": money_manifest_block(facts)}, documents, "c")
+
+        broken_count = {"money": money_manifest_block(facts)}
+        broken_count["money"]["benefits"]["tdPeriodCount"] = "one"
+        problems = _validate_money(broken_count, documents, "c")
+        assert any("expected a whole number" in p for p in problems), problems
+
+        broken_gaps = {"money": money_manifest_block(facts)}
+        broken_gaps["money"]["benefits"]["gaps"] = ["garbage"]
+        problems = _validate_money(broken_gaps, documents, "c")
+        assert any("gaps holds a str" in p for p in problems), problems
+
+        miscounted = {"money": money_manifest_block(facts)}
+        assert miscounted["money"]["benefits"]["gaps"], "the probe needs a gap"
+        miscounted["money"]["benefits"]["gaps"][0]["days"] += 5
+        problems = _validate_money(miscounted, documents, "c")
+        assert any("records days" in p for p in problems), problems
+
+    def test_an_unpaid_benefit_cannot_also_be_late(self) -> None:
+        """Never paid is an interruption; late is a delay. There is no second date."""
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = _facts({"wages": WAGES, "benefits": {"td_weeks": 12}})
+        block = {"money": money_manifest_block(facts)}
+        documents = [{"subtype": MONEY_WAGE_SUBTYPE}, {"subtype": MONEY_TD_SUBTYPE}]
+        assert not _validate_money(block, documents, "c")
+
+        block["money"]["benefits"]["tdPeriods"][0]["datePaid"] = None
+        block["money"]["benefits"]["tdPeriods"][0]["daysLate"] = 62
+        problems = _validate_money(block, documents, "c")
+        assert any("never paid" in p for p in problems), problems
+
+        # The control: unpaid and not late is the ordinary interruption.
+        block["money"]["benefits"]["tdPeriods"][0]["daysLate"] = 0
+        assert not _validate_money(block, documents, "c")
 
     def test_a_lateness_that_does_not_follow_from_the_dates_is_refused(self) -> None:
         """Both ledgers, not just the one that had a probe."""

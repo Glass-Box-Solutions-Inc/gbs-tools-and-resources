@@ -648,6 +648,98 @@ REGISTRY: dict[str, RegisteredMessage] = {
         "weeks, so a history with no primary period divided a real gross by zero weeks "
         "and published an average weekly wage of 0.00 without a word.",
     ),
+    "concurrent_coverage_mismatch": RegisteredMessage(
+        where="WageScenario._history_is_stated_one_way",
+        directives=(
+            "Replace the concurrent periods with ones covering the primary dates, or drop "
+            "them and describe the second employment with concurrent_employment instead",
+        ),
+        trigger={
+            "scenario": {
+                "wages": {
+                    "earnings": [
+                        {
+                            "period_start": "2022-04-04",
+                            "period_end": "2022-04-10",
+                            "gross": 1800,
+                        },
+                        {
+                            "period_start": "2021-01-04",
+                            "period_end": "2022-04-10",
+                            "gross": 52000,
+                            "concurrent": True,
+                        },
+                    ]
+                }
+            }
+        },
+        resolution={
+            "scenario": {
+                "wages": {
+                    "earnings": [
+                        {
+                            "period_start": "2022-04-04",
+                            "period_end": "2022-04-10",
+                            "gross": 1800,
+                        },
+                        {
+                            "period_start": "2022-04-04",
+                            "period_end": "2022-04-10",
+                            "gross": 900,
+                            "concurrent": True,
+                        },
+                    ]
+                }
+            }
+        },
+        note="The first clause: the concurrent periods replaced with ones covering the "
+        "primary dates. Written verb-first because the detector reads a clause's first "
+        "word — 'Match the concurrent periods' was invisible to it, the ISC-150 hole.",
+    ),
+    "earning_capacity_figure_without_the_method": RegisteredMessage(
+        where="WageScenario._dependent_fields_have_their_enabler",
+        directives=(
+            "Set scenario.wages.method to 'earning_capacity', or remove "
+            "earning_capacity_weekly",
+        ),
+        trigger={
+            "scenario": {
+                "wages": {"base_weekly_wage": 900, "earning_capacity_weekly": 7777}
+            }
+        },
+        resolution={"scenario": {"wages": {"method": "earning_capacity"}}},
+        note="The figure used to be accepted and discarded — the seed stated 7777 and the "
+        "manifest published 996.73 under a different method.",
+    ),
+    "concurrent_wage_without_concurrent_employment": RegisteredMessage(
+        where="WageScenario._dependent_fields_have_their_enabler",
+        directives=(
+            "Set scenario.wages.concurrent_employment to true, or remove "
+            "concurrent_weekly_wage",
+        ),
+        trigger={
+            "scenario": {
+                "wages": {"base_weekly_wage": 900, "concurrent_weekly_wage": 8888}
+            }
+        },
+        resolution={"scenario": {"wages": {"concurrent_employment": True}}},
+    ),
+    "max_days_late_without_a_count": RegisteredMessage(
+        where="BenefitsScenario._lateness_is_coherent",
+        directives=(
+            "Add scenario.benefits.late_payments, or drop max_days_late and let diligence "
+            "decide both",
+        ),
+        trigger={
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "benefits": {"td_weeks": 12, "max_days_late": 62},
+            }
+        },
+        resolution={"scenario": {"benefits": {"late_payments": 2}}},
+        note="The count came from the adjuster persona otherwise, so on an attentive "
+        "administrator a stated sixty-two-day delay published no lateness at all.",
+    ),
     "lateness_with_nothing_paid": RegisteredMessage(
         where="BenefitsScenario._every_stated_control_can_be_honoured",
         directives=("Raise td_weeks or pd_advances above zero, or drop {}",),

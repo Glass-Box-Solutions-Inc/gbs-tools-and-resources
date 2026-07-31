@@ -571,6 +571,27 @@ def _validate_money(
             "no wage statement — the figure is asserted rather than derivable"
         )
     benefits = money["benefits"]
+    # Shape before arithmetic. A validator that trusts the types it was handed
+    # crashes on the input it exists to reject: ``tdPeriodCount: "one"`` raised
+    # ``TypeError`` out of the sum below rather than returning a problem, and a
+    # crash is not a verdict.
+    for count_key in ("tdPeriodCount", "pdAdvanceCount"):
+        value = benefits.get(count_key)
+        if value is not None and not isinstance(value, int):
+            problems.append(
+                f"{case_label}: caseFacts.money.benefits.{count_key} is "
+                f"{type(value).__name__}, expected a whole number"
+            )
+    for array_key in ("tdPeriods", "pdAdvances", "gaps"):
+        value = benefits.get(array_key)
+        if value is not None and not isinstance(value, list):
+            problems.append(
+                f"{case_label}: caseFacts.money.benefits.{array_key} is "
+                f"{type(value).__name__}, expected a list of records"
+            )
+    if problems:
+        return problems
+
     # Any paid or withheld event needs a record to be read from, not only a TD
     # one. A case publishing four permanent-disability advances and no payment
     # record at all used to pass: the rule was written for the half that had a
@@ -634,6 +655,16 @@ def _validate_money(
                 )
                 continue
             if paid is None:
+                if late:
+                    # Never paid is an interruption, not a delay. A record with
+                    # no payment date cannot also carry a number of days it was
+                    # late, because there is no second date to have counted them
+                    # to — and a penalty computed off that number in Wave 3
+                    # would be computed off nothing.
+                    problems.append(
+                        f"{case_label}: a {what} was never paid but records daysLate "
+                        f"{late} — an unpaid benefit is an interruption, not a delay"
+                    )
                 continue
             try:
                 actual = (date.fromisoformat(paid) - date.fromisoformat(due)).days
@@ -648,6 +679,36 @@ def _validate_money(
                     f"{case_label}: a {what} was due {due} and paid {paid} "
                     f"({actual} day(s) apart) but records daysLate {late}"
                 )
+
+    # Gaps are events too, and were the one array nothing checked.
+    for gap in benefits.get("gaps") or []:
+        if not isinstance(gap, dict):
+            problems.append(
+                f"{case_label}: caseFacts.money.benefits.gaps holds a "
+                f"{type(gap).__name__} where a record was expected"
+            )
+            continue
+        start, end, days = gap.get("start"), gap.get("end"), gap.get("days")
+        if start is None or end is None or days is None:
+            problems.append(
+                f"{case_label}: a caseFacts.money.benefits.gaps record omits start, end "
+                "or days — a gap the eval cannot measure is a gap the corpus does not "
+                "contain"
+            )
+            continue
+        try:
+            spanned = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+        except (TypeError, ValueError):
+            problems.append(
+                f"{case_label}: a benefit gap carries unreadable dates "
+                f"(start {start!r}, end {end!r})"
+            )
+            continue
+        if spanned != days:
+            problems.append(
+                f"{case_label}: a benefit gap runs {start} to {end} ({spanned} day(s)) "
+                f"but records days {days}"
+            )
 
     settlement = money.get("settlement")
     if settlement is not None:

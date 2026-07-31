@@ -925,6 +925,14 @@ analyzer is scored against, so it is never left to be inferred from the numbers:
 two methods can coincide on one earnings history, and a label that is only
 sometimes recoverable is not a label.
 
+Concurrent employment is expressed with a boolean, which means the engine can
+say *that* a period belongs to a second employer but not *which* one. Where both
+histories cover the same dates that is enough — the aggregate is one gross over
+one span, and a reader can reproduce it from the printed table. Where they do not,
+no single denominator is right, so the seed is refused rather than given a number
+no arithmetic on the page reproduces. Employer identity is an additive Wave-2
+field and opens that shape properly.
+
 `earning_capacity` is the catch-all a human argues for when no arithmetic over
 the history gives the right answer. An engine reaching for it unprompted would be
 asserting a legal conclusion rather than computing one, so the seed has to name
@@ -1021,7 +1029,11 @@ Wave 3 computes a penalty per late transaction, and a total cannot say which
 transaction it was.
 
 Advances carry `date_due` too, and the ledger is ordered by it rather than by
-the date each was paid. A delayed advance can land *after* a later on-time one —
+the date each was paid. Their cadence is an **engine schedule, not a statutory
+deadline** — an advance is discretionary — so `pdAdvances[].daysLate` measures
+lateness against that cadence and is not by itself a measure of legal exposure.
+`pdAdvanceScheduleAuthority` says so in the manifest, because Wave 3 must not
+read the two kinds of lateness the same way. A delayed advance can land *after* a later on-time one —
 that is an ordinary fact of a neglected file, not a sorting mistake — but it only
 reads as a fact once the schedule it slipped from is on the page beside it.
 

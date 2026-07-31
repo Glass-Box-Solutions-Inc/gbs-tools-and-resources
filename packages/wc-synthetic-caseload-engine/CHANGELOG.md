@@ -272,6 +272,74 @@ where the next defects were — including one the round-1 fix introduced.
     `origin/main` baseline after round 2: 353 files, 345 identical, 8 changed,
     0 unexplained; 331 rendered documents byte-identical; substrate diff 0.
 
+### Fixed — the PR #29 review, round 3 (**AJC-43**)
+
+Round 3 audited round 2. Six findings, all re-derived locally before being acted
+on. The reviewer conceded the one disagreement carried over from round 2:
+`SettlementFact.kind` is a sufficient discriminator and a stipulated-award object
+attaches additively in Wave 2.
+
+- **`patternSource` claimed an author who never spoke.** `pattern` carries a
+  default, so every described history published `patternSource: seed` over a
+  label Pydantic supplied. Read from `model_fields_set` now.
+
+- **An unequal concurrent history had no correct denominator.** A two-week
+  primary period at $2,000 beside a fifty-two-week concurrent history at $52,000
+  gives $27,000 over two weeks, $1,038.46 over the union, and $2,000 by the sum
+  of per-employment rates — which a boolean `concurrent` cannot compute, because
+  it cannot say which employer a period belongs to. The shape is refused rather
+  than approximated; employer identity reopens it additively in Wave 2.
+
+- **Two wage figures were accepted and discarded.**
+  `earning_capacity_weekly: 7777` beside a described history published `996.73`;
+  `concurrent_weekly_wage: 8888` published no concurrent employment. Both fields
+  say "required by, and only by" — now enforced.
+
+- **Lateness could still be dropped in silence.** `max_days_late` alone took its
+  count from the adjuster persona, so an `attentive` file published none of a
+  stated 62-day delay; the pair is required now. And `late_payments: 3` on an
+  eight-week run — two four-week blocks — published `2` without comment; that
+  one becomes a plan warning, since the seed cannot count blocks.
+
+- **A settlement could be funded after the case ended.** `approval_date:
+  2025-12-31` with `funding_days: 730` published a 2027 funding date beside
+  documents dated 2026-01-01 or earlier. Approved-and-not-yet-funded is a real
+  state, `funding_date` is optional for it, and the dropped lag is reported.
+
+- **A gap could outlive the run it interrupted.** Banked when planned rather than
+  when the period on its far side was emitted: `td_gap_days: 700` on a 2024-06-01
+  intake file produced a gap running to 2026-06-01, five months past the horizon,
+  printed on a payment record dated before most of it.
+
+- **`validate --out` crashed instead of returning a verdict.**
+  `tdPeriodCount: "one"` raised `TypeError`; `gaps` was never type-checked; an
+  unpaid benefit could also record 62 days late.
+
+- **The round-2 render guard had the defect it was written to catch.** It matched
+  published values anywhere on the page, and `methodSource`/`patternSource` are
+  both usually `derived`, so deleting one row stayed green on the other's text.
+  It asserts label-then-value now — and forced the non-cash-wages row
+  unconditional, since `inKindWeekly` is published unconditionally.
+
+#### Compatibility notices (review round 3)
+
+14. **`caseFacts.money.benefits` gains `pdAdvanceIntervalDays` and
+    `pdAdvanceScheduleAuthority`.** The advance cadence is an **engine
+    schedule, not a statutory deadline** — advances are discretionary — so
+    `pdAdvances[].daysLate` is lateness against that cadence and is not by
+    itself a measure of legal exposure. Said in the manifest so Wave 3 cannot
+    mistake the two.
+15. **`patternSource` on a described history that never stated a pattern now
+    reads `derived`, not `seed`.**
+16. **Five more seed shapes are refused**, each with a registered, proven
+    followable message: an unequal concurrent history, `earning_capacity_weekly`
+    without its method, `concurrent_weekly_wage` without its enabler,
+    `max_days_late` without `late_payments`, and (from round 2) a settlement past
+    the anchor.
+17. **The wage statement always prints the non-cash-wages row**, including at
+    `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
+    at 353/345/8/0.
+
 ### Added — discovery volumes, anchored letters, and a registry for advice (**AJC-37**, Phase 3c)
 
 - **The ledger, the table of contents and the paper are one number (ISC-126).**

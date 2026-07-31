@@ -27,6 +27,8 @@ from wc_caseload_engine.case_facts import (
     CaseFacts,
 )
 from wc_caseload_engine.money import (
+    PD_ADVANCE_INTERVAL_DAYS,
+    PD_ADVANCE_SCHEDULE_AUTHORITY,
     TD_PAYMENT_DUE_AUTHORITY,
     TD_PAYMENT_DUE_DAYS,
     MoneyFacts,
@@ -601,8 +603,11 @@ def _rewrite_wage_statement(story: list[Any], money: MoneyFacts, styles: Any) ->
         ["Weeks Considered:", f"{computation.weeks_considered.normalize():f}"],
         ["Periods Considered:", str(computation.periods_considered)],
     ]
-    if computation.in_kind_weekly:
-        summary.append(["Non-Cash Wages (weekly):", f"${computation.in_kind_weekly:,.2f}"])
+    # Printed even at zero. `inKindWeekly` is published unconditionally, and a
+    # governed field whose row appears only when the value is interesting is a
+    # field an analyzer is scored on recovering from a page that does not carry
+    # it. Zero is a fact about this file too.
+    summary.append(["Non-Cash Wages (weekly):", f"${computation.in_kind_weekly:,.2f}"])
     summary.extend(
         [
             ["Average Weekly Wage (AWW):", f"${computation.aww:,.2f}"],
@@ -746,6 +751,8 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
         ["Permanent Disability Advances:", f"${benefits.pd_total:,.2f}"],
         ["Payment Due Within (days of period end):", f"{TD_PAYMENT_DUE_DAYS} — {DUE_NOTICE}"],
         ["Payment Due Authority:", TD_PAYMENT_DUE_AUTHORITY],
+        ["PD Advance Interval (days):", str(PD_ADVANCE_INTERVAL_DAYS)],
+        ["PD Advance Schedule Authority:", PD_ADVANCE_SCHEDULE_AUTHORITY],
         ["Payments Issued Late:", str(benefits.late_payment_count)],
         ["Longest Delay (days):", str(benefits.max_days_late)],
         ["Days Without Benefits:", str(sum(gap.days for gap in benefits.gaps))],

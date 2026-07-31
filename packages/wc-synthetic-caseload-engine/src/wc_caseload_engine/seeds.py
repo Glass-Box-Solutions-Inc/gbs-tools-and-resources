@@ -929,6 +929,14 @@ class EarningsEntry(_Model):
         return self
 
 
+def _days_covered(entry: EarningsEntry) -> Iterable[date]:
+    """Every calendar day one earnings period spans, inclusive of both ends."""
+    cursor = entry.period_start
+    while cursor <= entry.period_end:
+        yield cursor
+        cursor += timedelta(days=1)
+
+
 class InKindEntry(_Model):
     """Non-cash wages — board, lodging, a vehicle — at their weekly value.
 
@@ -1143,6 +1151,35 @@ class WageScenario(_Model):
     """Per-case override of the statutory rate parameters. See the class."""
 
     @model_validator(mode="after")
+    def _dependent_fields_have_their_enabler(self) -> WageScenario:
+        """A figure only one setting consumes is refused without that setting.
+
+        Both fields document themselves as required by, and *only* by, something
+        else — and both were accepted and ignored without it.
+        ``earning_capacity_weekly: 7777`` beside a described history published
+        ``996.73`` under ``actual_weekly_earnings``; ``concurrent_weekly_wage:
+        8888`` published no concurrent employment at all. A seed author reading
+        either manifest would have to work out that the engine had discarded a
+        number they wrote, which is ISC-29's rule inverted.
+        """
+        if self.earning_capacity_weekly is not None and self.method != "earning_capacity":
+            stated = "unset" if self.method is None else repr(self.method)
+            raise ValueError(
+                f"scenario.wages sets earning_capacity_weekly but method is {stated} — the "
+                "figure is consumed by, and only by, the earning_capacity method, so "
+                "nothing here would read it. Set scenario.wages.method to "
+                "'earning_capacity', or remove earning_capacity_weekly."
+            )
+        if self.concurrent_weekly_wage is not None and not self.concurrent_employment:
+            raise ValueError(
+                "scenario.wages sets concurrent_weekly_wage but concurrent_employment is "
+                "false — there is no second employment for that wage to belong to. Set "
+                "scenario.wages.concurrent_employment to true, or remove "
+                "concurrent_weekly_wage."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _history_is_stated_one_way(self) -> WageScenario:
         if not self.earnings:
             if self.method == "earning_capacity" and self.earning_capacity_weekly is None:
@@ -1179,6 +1216,41 @@ class WageScenario(_Model):
                 "employment, so a history with no primary period averages a real gross "
                 "over zero weeks and publishes an average weekly wage of 0.00. Set "
                 "'concurrent: false' on the primary employer's periods, or add them."
+            )
+        primary_days = {
+            day
+            for entry in self.earnings
+            if not entry.concurrent
+            for day in _days_covered(entry)
+        }
+        concurrent_days = {
+            day
+            for entry in self.earnings
+            if entry.concurrent
+            for day in _days_covered(entry)
+        }
+        if concurrent_days and concurrent_days != primary_days:
+            # One gross over one denominator cannot express two employments that
+            # ran for different lengths. Measured: a two-week primary job at
+            # $1,000/week beside a fifty-two-week second job at $1,000/week
+            # aggregated to $54,000, and *any* single denominator is wrong for
+            # it — 2 weeks says $27,000, 52 weeks says $1,038.46, and the answer
+            # a reader would defend is $2,000, the sum of the two weekly rates
+            # while both were running. Reaching that needs per-employment
+            # operands, which needs employer identity: a boolean cannot say
+            # *which* employer a period belongs to, so it cannot group them.
+            #
+            # Refused rather than approximated. An additive Wave-2 field can
+            # open this shape properly; publishing a number here that no
+            # arithmetic on the page reproduces would put exactly the asserted
+            # figure this layer exists to remove into the one method whose whole
+            # point is combining employments.
+            raise ValueError(
+                "scenario.wages.earnings has concurrent periods covering different dates "
+                "from the primary ones — the aggregate is one gross over one span, so two "
+                "employments of different lengths cannot both be right in it. Replace the "
+                "concurrent periods with ones covering the primary dates, or drop them "
+                "and describe the second employment with concurrent_employment instead."
             )
         if self.method == "earning_capacity" and self.earning_capacity_weekly is None:
             raise ValueError(
@@ -1240,6 +1312,20 @@ class BenefitsScenario(_Model):
                 "scenario.benefits.late_payments is 0 but max_days_late is "
                 f"{self.max_days_late} — no payment was late, so none can be late by a "
                 "number of days. Raise late_payments above zero, or drop max_days_late."
+            )
+        if self.max_days_late is not None and self.late_payments is None:
+            # The pair is the fact, exactly as approval and funding are. Alone,
+            # ``max_days_late`` is measured against a count that comes from the
+            # adjuster persona — so on an `attentive` file it described a delay
+            # of sixty-two days across zero late payments, and published no
+            # lateness at all without a word.
+            raise ValueError(
+                f"scenario.benefits sets max_days_late to {self.max_days_late} without "
+                "late_payments — how many payments were late comes from "
+                "scenario.adjuster.diligence otherwise, and on an attentive administrator "
+                "that is none, so the delay would be dropped in silence. Add "
+                "scenario.benefits.late_payments, or drop max_days_late and let diligence "
+                "decide both."
             )
         return self
 

@@ -548,12 +548,17 @@ def _money_control_warnings(seed: CaseSeed, money_facts: MoneyFacts | None) -> l
     shortfall is reported. Same shape as the control-suppression warnings — the
     operator is told what they asked for and what they got.
     """
-    scenario = seed.scenario.benefits
-    if money_facts is None or scenario is None:
+    if money_facts is None:
         return []
 
     out: list[str] = []
     ledger = money_facts.benefits
+    scenario = seed.scenario.benefits
+    if scenario is None:
+        # No benefits block to have been truncated, but a settlement can still
+        # have outrun the calendar — the two are separate seed blocks and gating
+        # one behind the other silently dropped the settlement report.
+        return _settlement_warnings(seed, money_facts)
     if scenario.td_weeks:
         realized = sum(int(period.weeks) for period in ledger.td_periods)
         if realized < scenario.td_weeks:
@@ -575,7 +580,43 @@ def _money_control_warnings(seed: CaseSeed, money_facts: MoneyFacts | None) -> l
             "interruption; the temporary-disability run this case reached is too short to "
             "hold one. Raise td_weeks, or move the injury earlier."
         )
-    return out
+    if scenario.late_payments:
+        realized = ledger.late_payment_count
+        if realized < scenario.late_payments:
+            # The seed schema refuses lateness with nothing paid at all; it
+            # cannot see that eight weeks is two four-week blocks, so three late
+            # payments become two and the ledger publishes the smaller number
+            # without comment.
+            out.append(
+                f"scenario.benefits.late_payments asked for {scenario.late_payments} late "
+                f"payment(s); this case holds {realized} payable event(s) to be late. "
+                "Raise td_weeks or pd_advances, or lower late_payments."
+            )
+    return out + _settlement_warnings(seed, money_facts)
+
+
+def _settlement_warnings(seed: CaseSeed, money_facts: MoneyFacts) -> list[str]:
+    """Report a settlement whose funding falls outside the window the file covers."""
+    settlement = money_facts.settlement
+    if (
+        settlement is None
+        or settlement.approval_date is None
+        or settlement.funding_date is not None
+    ):
+        return []
+    stated = seed.scenario.settlement
+    stated_lag = stated.funding_days if stated is not None else None
+    detail = (
+        f"scenario.settlement.funding_days of {stated_lag} "
+        if stated_lag is not None
+        else "the funding lag for this adjuster "
+    )
+    return [
+        f"the settlement was approved {settlement.approval_date} but {detail}"
+        "carries funding past the date this engine treats as today, so the case is "
+        "published as approved and not yet funded. Lower funding_days, or move the "
+        "approval earlier, if the file should show the money arriving."
+    ]
 
 
 def _money_candidates(
