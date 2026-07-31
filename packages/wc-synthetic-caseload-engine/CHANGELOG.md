@@ -9,6 +9,100 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the money spine (**AJC-43**, money layer Wave 1)
+
+Money is the only part of a workers' compensation file where correctness is
+*arithmetically* checkable — a comp rate either follows from the wage data or it
+does not — and until 0.8.0 it was entirely absent from the corpus. The substrate's
+own wage statement is the sharpest instance of the defect: it drew eight to twelve
+pay periods from `random.randint`, averaged them, and printed
+
+> Temporary Total Disability Rate: $X/week (2/3 AWW, max $1,619.15)
+
+Three problems in one line. The fraction and the ceiling are hardcoded, so every
+file in a multi-year caseload was rated under one vintage regardless of its date
+of injury. The method was asserted in passing rather than recorded, so there was
+no label to score an analyzer against. And the earnings behind the average were
+dice, so the average was derivable from nothing.
+
+- **Wage facts on the seed.** `scenario.wages` is the gate for the whole layer.
+  A history is either **listed** (`earnings:`, exact pay periods) or **described**
+  (`pattern` / `base_weekly_wage` / `lookback_weeks` / `pay_frequency` /
+  `overtime_share`), never both. `employment_start`, `concurrent_employment` and
+  `in_kind` express the cases that make method selection a live legal question:
+  a short history, a second employer, non-cash wages.
+
+- **A named method, recorded as ground truth.** Five: `actual_weekly_earnings`,
+  `irregular_earnings_average`, `short_history_projection`, `concurrent_aggregate`
+  and `earning_capacity`. A seed may name one; otherwise it is *selected* by an
+  ordered, stated rule and the reason is recorded in words beside it. The names
+  are engine labels rather than statutory citations, so the label an analyzer is
+  scored on means what this package's code says it means. `earning_capacity` is
+  never derived — the catch-all is a legal argument, and an engine reaching for
+  it unprompted would be asserting a conclusion rather than computing one.
+
+- **A comp rate keyed to the date of injury.** `RateBasis` carries the fraction,
+  the ceiling and the floor for one vintage, and `CompRate` records *which bound
+  bound* (`max` / `min` / `unbounded`). That last field matters more than it
+  looks: a capped rate is the same number for every high earner in a vintage, so
+  an analyzer that recovers the number without the cap has learnt nothing about
+  the wage behind it.
+
+- **A benefit ledger with known exposure.** `scenario.benefits` expresses TD
+  weeks, a deliberate `td_gap_days` interruption, `late_payments` and
+  `max_days_late`, and `pd_advances`. Every one defaults off
+  `scenario.adjuster.diligence`, so the persona already in the schema drives the
+  money rather than a second knob that could contradict it — which is what lets
+  a `negligent` file generate *known* penalty exposure for Wave 3 instead of an
+  inferred one.
+
+- **A settlement object, with approval and funding as separate fields.** They
+  are separate events in a real file, and the interval between them is the whole
+  substance of a late-funding argument; a single `settlement_date` would delete
+  that argument from the corpus while looking like a simplification. Defined
+  here rather than in either lens ticket so both can proceed in parallel.
+
+- **The documents carry the numbers.** The wage-statement family prints the
+  ledger's periods, the average, the named method, both rates and the rate
+  basis; the payment records print the benefit ledger with its gaps and
+  lateness; the compromise and release settles for the ledger's gross. All by
+  the established engine-side override pattern — the substrate is untouched, and
+  the wage statement's two tables are located by their own header text so a
+  substrate edit that moves them is a miss the engine *reports*.
+
+- **`examples/money-showcase.yaml`** — seven cases, all five methods, both rate
+  bounds, four rate vintages, and a negligent file carrying a seventy-five day
+  benefit gap and three recorded late payments.
+
+#### Legal accuracy — nothing here is verified law
+
+Every fraction, cap, floor and date bracket lives in `UNCONFIRMED_RATE_TABLE`,
+carries `counsel_confirmed=False`, says `COUNSEL-UNCONFIRMED` in its own
+authority text, and is published with that flag in every manifest. A seed may
+supply its own binding under `scenario.wages.rate_basis` and set the flag; the
+engine's table can never set it. `rate_basis_for(doi)` is the seam a dated rate
+authority (KB-167, different repository) replaces — a function signature, so
+this work took no dependency on that work and asserts nothing about the law in
+the meantime.
+
+#### Compatibility notices
+
+1. **A seed without `scenario.wages` is unchanged, byte for byte.** Measured on
+   the full demo caseload: **353 files, 0 differences** against 0.7.0. No
+   committed example seeds wages, so no committed manifest gains a `money` key.
+2. **`caseFacts.money` is absent, not null, for a money-free case.** A
+   null-valued key would move every existing manifest's bytes.
+3. **Eight wage/payment subtypes and six compromise-and-release subtypes now
+   dispatch through engine subclasses.** They delegate to the substrate
+   unchanged when the ledger is `None`, which is the anti-criterion as a code
+   path rather than a promise.
+4. **`validate --out` gains money rules.** A published average weekly wage with
+   no wage statement in the folder now fails: the figure would be asserted
+   rather than derivable, which is the one thing this layer exists to prevent.
+5. **PD is untouched.** `case_facts.py`'s `wpi`/`pd` remain the fabricated
+   figures they were; rating is AJC-44's work, and nothing in the rate
+   derivation depends on them.
+
 ### Added — discovery volumes, anchored letters, and a registry for advice (**AJC-37**, Phase 3c)
 
 - **The ledger, the table of contents and the paper are one number (ISC-126).**

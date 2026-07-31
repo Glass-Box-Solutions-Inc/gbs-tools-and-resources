@@ -34,6 +34,6 @@ import sys
 # anti-probe names it explicitly rather than exempting a directory.
 sys.dont_write_bytecode = True
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = ["__version__"]
