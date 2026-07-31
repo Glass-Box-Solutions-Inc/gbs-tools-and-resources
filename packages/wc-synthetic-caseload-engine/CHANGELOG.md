@@ -88,8 +88,12 @@ the meantime.
 #### Compatibility notices
 
 1. **A seed without `scenario.wages` is unchanged, byte for byte.** Measured on
-   the full demo caseload: **353 files, 0 differences** against 0.7.0. No
-   committed example seeds wages, so no committed manifest gains a `money` key.
+   the full demo caseload against 0.7.0: **353 files, 345 identical, 8 changed,
+   0 unexplained.** All 331 rendered documents are byte-identical; the eight are
+   the seven case manifests and the caseload manifest, each differing by exactly
+   one line — `"generator": "…@0.7.0"` → `"…@0.8.0"`. With the version pinned
+   back, the diff is empty. No committed example seeds wages, so no committed
+   manifest gains a `money` key.
 2. **`caseFacts.money` is absent, not null, for a money-free case.** A
    null-valued key would move every existing manifest's bytes.
 3. **Eight wage/payment subtypes and six compromise-and-release subtypes now
