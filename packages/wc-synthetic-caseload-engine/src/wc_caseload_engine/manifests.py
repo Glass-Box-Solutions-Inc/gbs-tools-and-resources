@@ -505,6 +505,18 @@ SETTLEMENT_DOCUMENTS = frozenset(
 #: its date: the Board issues it *on* that date.
 SETTLEMENT_APPROVAL_DOCUMENTS = frozenset({"ORDER_APPROVING_SETTLEMENT"})
 
+#: The instruments an approval is granted *to*. The order recites that this
+#: document was filed and considered, so an order dated before it is an order
+#: approving something that did not exist yet.
+SETTLEMENT_INSTRUMENT_DOCUMENTS = SETTLEMENT_DOCUMENTS | frozenset(
+    {
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD",
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD_FULL",
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD_PARTIAL",
+        "STIPS_WITH_REQUEST_FOR_AWARD_PACKAGE",
+    }
+)
+
 #: The document dated after the settlement draft clears. The order is issued
 #: before funding, so it cannot report funding either; only a ledger written
 #: afterwards can.
@@ -855,6 +867,26 @@ def _validate_money(
         # to print, and a temporary-disability payment record dated two years
         # before it. An anachronism is worse evidence than a missing line,
         # because it reads as evidence.
+        # An approval is granted to an instrument, so the instrument comes first.
+        # Checking each carrier against its own event date is not enough: review
+        # found an order correctly pinned to an authored approval of 2022-01-05
+        # and therefore dated 677 days before the stipulations it recites as
+        # "filed herein". A chain checked link by link still has to be a chain.
+        if approval is not None:
+            for doc in documents:
+                if not isinstance(doc, dict):
+                    continue
+                if doc.get("subtype") not in SETTLEMENT_INSTRUMENT_DOCUMENTS:
+                    continue
+                filed = _document_date(doc)
+                if filed is not None and filed > approval:
+                    problems.append(
+                        f"{case_label}: caseFacts.money.settlement was approved "
+                        f"{approval_raw} but the case holds a "
+                        f"{doc.get('subtype')} dated {filed} — an order cannot approve "
+                        "an instrument that does not exist yet"
+                    )
+
         # The approval carrier is dated *on* the approval; the funding carrier
         # on or after the funding. The difference is not fussiness: the order
         # constitutes the approval, so a different date is a different event,

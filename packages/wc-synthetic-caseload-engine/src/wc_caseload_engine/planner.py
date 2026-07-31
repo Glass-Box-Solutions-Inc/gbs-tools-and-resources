@@ -537,6 +537,28 @@ MONEY_APPROVAL_SUBTYPE = "ORDER_APPROVING_SETTLEMENT"
 #: cannot carry the funding date either.
 MONEY_FUNDING_SUBTYPE = "BENEFIT_PAYMENT_LEDGER"
 
+#: The instruments a settlement is approved *from*. The order recites that this
+#: document was "filed herein and considered", so it cannot precede it.
+MONEY_INSTRUMENT_SUBTYPES = frozenset(
+    {
+        "COMPROMISE_AND_RELEASE",
+        "COMPROMISE_AND_RELEASE_STANDARD",
+        "COMPROMISE_AND_RELEASE_PD_ONLY",
+        "COMPROMISE_AND_RELEASE_MSA",
+        "COMPROMISE_AND_RELEASE_DEPENDENCY",
+        "COMPROMISE_AND_RELEASE_THIRD_PARTY",
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD",
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD_FULL",
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD_PARTIAL",
+        "STIPS_WITH_REQUEST_FOR_AWARD_PACKAGE",
+    }
+)
+
+#: How long before its approval the instrument is filed, when an authored
+#: approval date would otherwise leave it stranded after its own order. A
+#: working assumption about filing lag, stated rather than dressed up as a rule.
+MONEY_INSTRUMENT_LEAD_DAYS = 21
+
 MONEY_FLOOR_SUBTYPES: tuple[str, ...] = (
     MONEY_WAGE_SUBTYPE,
     MONEY_TD_SUBTYPE,
@@ -746,6 +768,21 @@ def _money_candidates(
     settlement = money_facts.settlement
     if settlement is not None:
         if settlement.approval_date is not None:
+            # The chain is: instrument <= approval == order <= funding <= ledger.
+            # Pinning the order to an *authored* approval was found to break the
+            # first link — an approval of 2022-01-05 put the order 677 days
+            # before the stipulations it recites as "filed herein". The order is
+            # pinned because it constitutes the approval; the instrument is
+            # pulled back only when it would otherwise post-date its own order,
+            # and never past the claim it settles.
+            approval = timeline.clamp(settlement.approval_date)
+            floor = timeline.claim_filed_date
+            filed = max(floor, approval - timedelta(days=MONEY_INSTRUMENT_LEAD_DAYS))
+            for subtype in MONEY_INSTRUMENT_SUBTYPES:
+                for index in already.get(subtype, ()):
+                    prior = existing[index]
+                    if prior.doc_date > approval:
+                        existing[index] = replace(prior, doc_date=min(filed, approval))
             add(MONEY_APPROVAL_SUBTYPE, settlement.approval_date, pin=True)
         if settlement.funding_date is not None:
             add(MONEY_FUNDING_SUBTYPE, settlement.funding_date + timedelta(days=7))

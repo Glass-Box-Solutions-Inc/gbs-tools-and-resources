@@ -340,6 +340,36 @@ attaches additively in Wave 2.
     `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
     at 353/345/8/0.
 
+### Fixed — the PR #29 review, round 7 (**AJC-43**)
+
+Round 7 audited round 6. Three findings; two were defects round 6 introduced,
+and one of those was invisible to round 6's own probe.
+
+- **The stipulated award's average weekly wage was corrupted.** The rewrite
+  partitioned the sentence on the next `"."` — the decimal point of the
+  substrate's own figure — so `$1331.20.` became `$1,001.23.20.`. The probe
+  stayed green because `"1001.23"` is a substring of `"1001.23.20"`. Every
+  money figure on that page is now parsed and compared as a `Decimal`.
+
+- **`settlement.grossAmount` had two meanings on the stipulations branch.**
+  Round 6 forced it into the substrate's `base_pd_award`, labelled "Permanent
+  Disability (Gross)" on the page, with a self-procured reimbursement added on
+  top — so the components summed past the published total. The key now means
+  the total resolution value on both branches, the two cash components are
+  reconciled to it, and the total prints under its own label.
+
+- **The settlement chain was ordered link by link, not end to end.** Pinning
+  the order to an authored approval of 2022-01-05 put it 677 days before the
+  stipulations it recites as "filed herein". `instrument <= approval == order
+  <= funding <= ledger` is now planned and validated as a chain.
+
+#### Compatibility notices (review round 7)
+
+31. **The stipulated award prints a Settlement Terms block** (type and gross)
+    and its cash components sum to the published gross.
+32. **`validate --out` refuses a settlement instrument dated after its own
+    approval.**
+
 ### Fixed — the PR #29 review, round 6 (**AJC-43**)
 
 Round 6 audited round 5 and found round 5's own carriers were the wrong

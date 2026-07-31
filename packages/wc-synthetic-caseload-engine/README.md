@@ -1063,6 +1063,22 @@ document is dated before what it prints — stated generally. A published interv
 whose evidence is on no page is the asserted figure this layer exists to remove;
 a page asserting its own future is worse, because it reads as evidence.
 
+`settlement.grossAmount` is **the total resolution value**, and it means that
+on both branches. On a compromise and release it is the settlement figure; on a
+stipulated award it is the total the award resolves to, and the award's own cash
+components — the permanent-disability gross and the self-procured medical
+reimbursement — are reconciled to sum to it, with the total printed under its
+own label so the arithmetic is checkable off the page. The SJDB voucher is a
+training benefit rather than money out of the award and is left as the substrate
+draws it; disbursement past that line belongs to AJC-46.
+
+The settlement's events form a chain — `instrument <= approval == order <=
+funding <= ledger` — and it is planned and validated as a chain, not as
+independent links. Checking each document against its own event date is not
+enough: an order correctly pinned to an authored approval once landed 677 days
+before the stipulations it recites as "filed herein", with every local relation
+satisfied.
+
 A seed with `injury.type: death` may not carry `scenario.wages`,
 `scenario.benefits` or `scenario.settlement`. Temporary disability replaces
 wages the worker would have earned and permanent disability rates a living

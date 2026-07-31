@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import decimal
 import json
+import re
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -2219,11 +2220,43 @@ class TestTheDocumentsCarryTheNumbers:
             documents={"format_mix": {"pdf": 1.0}},
         )
         block = manifest["caseFacts"]["money"]
-        page = texts["STIPULATIONS_WITH_REQUEST_FOR_AWARD"].replace(",", "")
-        assert block["wage"]["averageWeeklyWage"] in page
-        assert block["rate"]["tdWeeklyRate"] in page
-        assert block["benefits"]["tdTotal"] in page
-        assert block["settlement"]["grossAmount"].split(".")[0] in page
+        page = texts["STIPULATIONS_WITH_REQUEST_FOR_AWARD"]
+
+        # Parsed, not substring-matched. The first version of this probe asserted
+        # `aww in page` and stayed green while the page read `$1,001.23.20.` —
+        # the rewrite had split on the decimal point of the substrate's own
+        # figure, and "1001.23" is a substring of "1001.23.20". A probe that
+        # cannot tell a number from a prefix of a longer one is not reading the
+        # number.
+        def amount(pattern: str) -> Decimal:
+            found = re.search(pattern, page)
+            assert found, f"{pattern!r} not on the stipulated award"
+            return Decimal(found.group(1).replace(",", ""))
+
+        assert amount(r"average weekly wage of \$([\d,]+\.\d\d)(?!\d|\.\d)") == Decimal(
+            block["wage"]["averageWeeklyWage"]
+        )
+        assert amount(
+            r"at the rate of \$([\d,]+\.\d\d)(?!\d|\.\d) per week"
+        ) == Decimal(block["rate"]["tdWeeklyRate"])
+        assert amount(r"totaling \$([\d,]+\.\d\d)(?!\d|\.\d)") == Decimal(
+            block["benefits"]["tdTotal"]
+        )
+
+        # And the gross means one thing. It used to be forced into the
+        # substrate's `base_pd_award`, where the page labels it "Permanent
+        # Disability (Gross)" and adds a self-procured reimbursement on top — so
+        # the same number was the whole settlement in the manifest and one
+        # component of the award on the page, and the components summed past the
+        # total. The cash components must now add up to it.
+        gross = Decimal(block["settlement"]["grossAmount"])
+        pd_gross = amount(r"Permanent Disability \(Gross\) \$([\d,]+)")
+        self_procured = amount(r"Self-Procured Medical Reimbursement \$([\d,]+)")
+        assert pd_gross + self_procured == gross, (
+            f"the award's cash components are {pd_gross} + {self_procured} = "
+            f"{pd_gross + self_procured}, but the settlement gross is {gross}"
+        )
+        assert amount(r"Settlement Gross: \$([\d,]+\.\d\d)(?!\d|\.\d)") == gross
 
     def test_the_order_approving_the_settlement_says_it_approved_one(
         self, tmp_path: Path
@@ -2554,6 +2587,113 @@ class TestTheOrderIsDatedOnTheApprovalItIs:
                 assert all(
                     when == date.fromisoformat(approval) for when in orders
                 ), f"{approval}/{resolution}: order dated {orders}, not on the approval"
+
+    def test_the_whole_settlement_chain_is_ordered_not_just_each_link(self) -> None:
+        """Pinning one node to an authored date broke the link before it.
+
+        The chain is `instrument <= approval == order <= funding <= ledger`. The
+        pin satisfied its own link and put the order **677 days** before the
+        stipulations it recites as "filed herein" — every local relation held
+        and the sequence was still impossible. A chain checked link by link
+        still has to be a chain.
+        """
+        from wc_caseload_engine.planner import (
+            MONEY_APPROVAL_SUBTYPE,
+            MONEY_FUNDING_SUBTYPE,
+            MONEY_INSTRUMENT_SUBTYPES,
+        )
+
+        seen = 0
+        for approval in ("2022-01-05", "2023-03-30", "2025-06-30"):
+            for resolution in ("c_and_r", "stipulations"):
+                plan = build_case_plan(
+                    parse_case_seed(
+                        _seed_body(
+                            {
+                                "wages": WAGES,
+                                "benefits": {"td_weeks": 10},
+                                "settlement": {
+                                    "gross_amount": 88000,
+                                    "approval_date": approval,
+                                    "funding_days": 14,
+                                },
+                            },
+                            lifecycle={
+                                "target_stage": "resolved",
+                                "eval_type": "qme",
+                                "resolution": {"type": resolution},
+                            },
+                        )
+                    )
+                )
+                settlement = plan.money_facts.settlement
+                where = f"{approval}/{resolution}"
+                dated: dict[str, list[date]] = {}
+                for candidate in plan.documents:
+                    dated.setdefault(candidate.subtype, []).append(candidate.doc_date)
+
+                instruments = [
+                    when
+                    for subtype in MONEY_INSTRUMENT_SUBTYPES
+                    for when in dated.get(subtype, [])
+                ]
+                assert instruments, f"{where}: no settlement instrument planned"
+                assert max(instruments) <= settlement.approval_date, (
+                    f"{where}: instrument dated {max(instruments)} but approval is "
+                    f"{settlement.approval_date} — the order would approve an "
+                    "instrument that does not exist yet"
+                )
+                assert dated[MONEY_APPROVAL_SUBTYPE] == [settlement.approval_date]
+                assert settlement.funding_date >= settlement.approval_date
+                assert max(dated[MONEY_FUNDING_SUBTYPE]) >= settlement.funding_date
+                seen += 1
+        assert seen == 6
+
+    def test_the_validator_refuses_an_instrument_that_postdates_its_approval(
+        self,
+    ) -> None:
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "settlement": {
+                    "gross_amount": 88000,
+                    "approval_date": "2025-01-06",
+                    "funding_date": "2025-02-05",
+                },
+            }
+        )
+        block = {"money": money_manifest_block(facts)}
+
+        def problems(instrument_date: str) -> list[str]:
+            return [
+                problem
+                for problem in _validate_money(
+                    block,
+                    [
+                        {"subtype": MONEY_WAGE_SUBTYPE, "documentDate": "2021-01-01"},
+                        {
+                            "subtype": "STIPULATIONS_WITH_REQUEST_FOR_AWARD",
+                            "documentDate": instrument_date,
+                        },
+                        {
+                            "subtype": "ORDER_APPROVING_SETTLEMENT",
+                            "documentDate": "2025-01-06",
+                        },
+                        {
+                            "subtype": "BENEFIT_PAYMENT_LEDGER",
+                            "documentDate": "2025-02-05",
+                        },
+                    ],
+                    "c",
+                )
+                if "does not exist yet" in problem
+            ]
+
+        assert problems("2025-01-07"), "an instrument after its own approval passed"
+        assert not problems("2025-01-06")
+        assert not problems("2024-12-16")
 
     def test_the_validator_refuses_an_order_dated_off_the_approval(self) -> None:
         from wc_caseload_engine.manifests import _validate_money

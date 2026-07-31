@@ -15,6 +15,7 @@ for byte; a subtype in it is announced in the compatibility notice.
 from __future__ import annotations
 
 import random
+import re
 from decimal import Decimal
 from typing import Any
 
@@ -449,6 +450,11 @@ UNCONFIRMED_NOTICE = "Statutory basis COUNSEL-UNCONFIRMED"
 DUE_NOTICE = "COUNSEL-UNCONFIRMED"
 
 
+#: The self-procured medical reimbursement draw in the substrate's stipulated
+#: award. The second cash component on that page, and the one reconciled against
+#: the award so the two sum to the published settlement gross.
+_SUBSTRATE_STIPS_SELF_PROCURED_RANGE = (500, 5000)
+
 #: The permanent-disability award draw in the substrate's stipulated award
 #: (``pdf_templates/legal/stipulations.py``). Matched by its bounds so the
 #: interception cannot catch the three other ``randint`` calls on the same page.
@@ -468,18 +474,42 @@ class _ForcedRandint:
     shift the rest of the page.
     """
 
-    __slots__ = ("_answer", "_bounds", "fired")
+    __slots__ = ("_answer", "bounds", "fired")
 
     def __init__(self, answer: int, bounds: tuple[int, int]) -> None:
         self._answer = answer
-        self._bounds = bounds
+        self.bounds = bounds
         self.fired = False
 
     def randint(self, low: int, high: int) -> int:
-        if (low, high) == self._bounds:
+        if (low, high) == self.bounds:
             self.fired = True
             random.randint(low, high)
             return self._answer
+        return random.randint(low, high)
+
+    def __getattr__(self, name: Any) -> Any:
+        return getattr(random, name)
+
+
+class _ForcedChain:
+    """Several :class:`_ForcedRandint` interceptions over one document.
+
+    The stipulated award has two cash components that must reconcile to one
+    published total, and they are drawn at different points in the same method.
+    Each interception still matches on its own bounds, so the pair cannot catch
+    each other's draw or the two non-monetary ones on the same page.
+    """
+
+    __slots__ = ("_members",)
+
+    def __init__(self, members: list[_ForcedRandint]) -> None:
+        self._members = members
+
+    def randint(self, low: int, high: int) -> int:
+        for member in self._members:
+            if (low, high) == member.bounds:
+                return member.randint(low, high)
         return random.randint(low, high)
 
     def __getattr__(self, name: Any) -> Any:
@@ -854,6 +884,11 @@ def _append_settlement_terms(
     return story
 
 
+#: The substrate's average-weekly-wage figure inside stipulation 1, matched as a
+#: whole money token so the substitution cannot land inside it.
+_MONEY_AFTER_AWW = re.compile(r"average weekly wage of \$[\d,]+(?:\.\d+)?")
+
+
 def _index_of_text(story: list[Any], marker: str) -> int | None:
     """Where a flowable carrying ``marker`` sits, or ``None`` if none does.
 
@@ -901,12 +936,19 @@ def _rewrite_stipulations(story: list[Any], money: MoneyFacts, styles: Any) -> l
         if not isinstance(text, str):
             continue
         if "average weekly wage of $" in text:
-            head, _, tail = text.partition("average weekly wage of $")
-            _, _, rest = tail.partition(".")
-            story[index] = Paragraph(
-                f"{head}average weekly wage of ${computation.aww:,.2f}.{rest}",
-                styles["DoubleSpaced"],
+            # Substituted by pattern, not by partitioning on the next ".". The
+            # first cut split on the *decimal point* of the substrate's own
+            # figure, so `$1331.20.` became `$1,001.23.20.` — a mangled number
+            # that the probe's substring search could not see, because
+            # "1001.23" is a substring of "1001.23.20". Found by review, and it
+            # is the reason the probe now parses the amount instead.
+            replaced, count = _MONEY_AFTER_AWW.subn(
+                lambda _: f"average weekly wage of ${computation.aww:,.2f}", text
             )
+            if count != 1:
+                log.warning("fact_templates.stipulated_aww_not_substituted", count=count)
+                continue
+            story[index] = Paragraph(replaced, styles["DoubleSpaced"])
             rewrote += 1
         elif "temporary disability indemnity has been paid for" in text:
             weeks = sum((period.weeks for period in benefits.td_periods), Decimal(0))
@@ -1743,24 +1785,63 @@ def build_fact_aware_templates() -> dict[str, type]:
             if money is None:
                 return list(super().build_story(doc_spec))
 
-            forced = None
+            forced: list[_ForcedRandint] = []
             original = stips_module.random
+            scope = "agreement"
             if money.settlement is not None:
-                forced = _ForcedRandint(
-                    int(money.settlement.gross_amount), _SUBSTRATE_STIPS_AWARD_RANGE
+                # The first cut forced the settlement gross into the substrate's
+                # ``base_pd_award``, where the page labels it "Permanent
+                # Disability (Gross)" and then adds a self-procured medical
+                # reimbursement on top. The same number therefore meant "the
+                # whole settlement" in the manifest and "one component of the
+                # award" on the page, and the components summed past the total.
+                # A shared extraction key needs one stable meaning, and the one
+                # ``grossAmount`` has on the release is *the total resolution
+                # value* — so the components are reconciled to it here instead.
+                #
+                # Only the two **cash** components are reconciled. The SJDB
+                # voucher is a training benefit rather than money out of the
+                # award, and the attorney fee and net are the substrate's own
+                # derivations from the award figure, so they stay consistent
+                # without help. Disbursement past that line is AJC-46's.
+                total = int(money.settlement.gross_amount)
+                self_procured = min(
+                    _SUBSTRATE_STIPS_SELF_PROCURED_RANGE[1],
+                    max(_SUBSTRATE_STIPS_SELF_PROCURED_RANGE[0], total // 20),
                 )
-                stips_module.random = forced
+                award = total - self_procured
+                if award < _SUBSTRATE_STIPS_AWARD_RANGE[0]:
+                    # Too small to split into the components this document
+                    # prints. Reported rather than fudged: a silent fallback
+                    # here is a page that contradicts the ledger again.
+                    log.warning(
+                        "fact_templates.stipulated_award_too_small_to_reconcile",
+                        gross=str(money.settlement.gross_amount),
+                        floor=_SUBSTRATE_STIPS_AWARD_RANGE[0],
+                    )
+                else:
+                    forced = [
+                        _ForcedRandint(award, _SUBSTRATE_STIPS_AWARD_RANGE),
+                        _ForcedRandint(
+                            self_procured, _SUBSTRATE_STIPS_SELF_PROCURED_RANGE
+                        ),
+                    ]
+                    stips_module.random = _ForcedChain(forced)
             try:
                 story = list(super().build_story(doc_spec))
             finally:
                 stips_module.random = original
-            if forced is not None and not forced.fired:
-                log.warning(
-                    "fact_templates.stipulated_award_not_forced",
-                    expected=list(_SUBSTRATE_STIPS_AWARD_RANGE),
-                    gross=str(money.settlement.gross_amount),
-                )
-            return _rewrite_stipulations(story, money, self.styles)
+            for interception in forced:
+                if not interception.fired:
+                    log.warning(
+                        "fact_templates.stipulated_component_not_forced",
+                        bounds=list(interception.bounds),
+                        gross=str(money.settlement.gross_amount),
+                    )
+            story = _rewrite_stipulations(story, money, self.styles)
+            # And the total itself on the page, under its own label, so the two
+            # components can be checked against it rather than merely believed.
+            return _append_settlement_terms(story, money, self.styles, scope)
 
     class FactAwareOrderApprovingSettlement(_SpecCapture, minutes_module.MinutesOrders):  # type: ignore[misc,name-defined]
         """An order approving a settlement says the settlement was approved.
