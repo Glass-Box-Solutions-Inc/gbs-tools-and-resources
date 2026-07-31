@@ -571,10 +571,19 @@ def _validate_money(
             "no wage statement — the figure is asserted rather than derivable"
         )
     benefits = money["benefits"]
-    if benefits.get("tdPeriodCount") and not (subtypes & MONEY_BENEFIT_DOCUMENTS):
+    # Any paid or withheld event needs a record to be read from, not only a TD
+    # one. A case publishing four permanent-disability advances and no payment
+    # record at all used to pass: the rule was written for the half that had a
+    # probe rather than for the class.
+    event_count = (
+        (benefits.get("tdPeriodCount") or 0)
+        + (benefits.get("pdAdvanceCount") or 0)
+        + len(benefits.get("gaps") or [])
+    )
+    if event_count and not (subtypes & MONEY_BENEFIT_DOCUMENTS):
         problems.append(
-            f"{case_label}: caseFacts publishes {benefits['tdPeriodCount']} temporary "
-            "disability period(s) but the case holds no payment record to read them from"
+            f"{case_label}: caseFacts publishes {event_count} benefit event(s) but the "
+            "case holds no payment record to read them from"
         )
     # The counts and the event arrays are two publications of one ledger, so a
     # disagreement between them means one of the two was assembled from
@@ -598,25 +607,47 @@ def _validate_money(
             )
     # ``days_late`` is measured from ``dateDue``. A record that carries the
     # effect without the cause is the asserted number this layer removes, so the
-    # two are checked against each other rather than taken on trust.
-    for period in benefits.get("tdPeriods") or []:
-        if not isinstance(period, dict):
-            continue
-        due, paid, late = period.get("dateDue"), period.get("datePaid"), period.get("daysLate")
-        if due is None:
-            problems.append(
-                f"{case_label}: a caseFacts.money.benefits.tdPeriods record omits dateDue — "
-                "daysLate is measured against it and cannot be checked without it"
-            )
-            continue
-        if paid is None:
-            continue
-        actual = (date.fromisoformat(paid) - date.fromisoformat(due)).days
-        if actual != late:
-            problems.append(
-                f"{case_label}: a temporary disability period was due {due} and paid "
-                f"{paid} ({actual} day(s) apart) but records daysLate {late}"
-            )
+    # two are checked against each other rather than taken on trust — on both
+    # ledgers, because the first cut checked temporary disability only and a
+    # permanent-disability advance marked 62 days late named nothing to be late
+    # against.
+    for array_key, what in (
+        ("tdPeriods", "temporary disability period"),
+        ("pdAdvances", "permanent disability advance"),
+    ):
+        for event in benefits.get(array_key) or []:
+            if not isinstance(event, dict):
+                # A non-mapping event used to pass straight through this loop.
+                # The ledger is the eval label; a label that is a bare string is
+                # not a lesser label, it is a broken one.
+                problems.append(
+                    f"{case_label}: caseFacts.money.benefits.{array_key} holds a "
+                    f"{type(event).__name__} where a record was expected"
+                )
+                continue
+            due, paid, late = event.get("dateDue"), event.get("datePaid"), event.get("daysLate")
+            if due is None:
+                problems.append(
+                    f"{case_label}: a caseFacts.money.benefits.{array_key} record omits "
+                    "dateDue — daysLate is measured against it and cannot be checked "
+                    "without it"
+                )
+                continue
+            if paid is None:
+                continue
+            try:
+                actual = (date.fromisoformat(paid) - date.fromisoformat(due)).days
+            except (TypeError, ValueError):
+                problems.append(
+                    f"{case_label}: a {what} carries unreadable dates "
+                    f"(dateDue {due!r}, datePaid {paid!r})"
+                )
+                continue
+            if actual != late:
+                problems.append(
+                    f"{case_label}: a {what} was due {due} and paid {paid} "
+                    f"({actual} day(s) apart) but records daysLate {late}"
+                )
 
     settlement = money.get("settlement")
     if settlement is not None:

@@ -220,7 +220,12 @@ class RateBasis(BaseModel):
 UNCONFIRMED_RATE_TABLE: tuple[RateBasis, ...] = (
     RateBasis(
         label="doi-pre-2014",
-        effective_from=dt.date(1900, 1, 1),
+        # Open at the bottom, so the row :func:`rate_basis_for` falls back to is
+        # a row that actually *covers* the date it was handed. Written as
+        # 1900-01-01 it returned a basis whose own ``covers()`` said no — a
+        # fallback contradicting itself, which is a worse answer than either
+        # raising or answering.
+        effective_from=dt.date.min,
         effective_to=dt.date(2013, 12, 31),
         td_fraction=Decimal("0.6667"),
         td_max_weekly=money(1066.72),
@@ -510,6 +515,26 @@ class WageFacts(BaseModel):
     employment_start: dt.date | None = None
     concurrent_employment: bool = False
     pattern: str = "regular"
+    """Shape of the earnings history. Ground truth, like ``method``.
+
+    A *described* history takes the seed's word for it: the shape knob is what
+    drew the periods, so it is authored by construction. A **listed** history
+    has no such word to take. The seed cannot state a pattern beside explicit
+    earnings — the two would disagree and the periods would win — so the pattern
+    is *derived* from the periods themselves, by the same coefficient of
+    variation :func:`select_method` uses.
+
+    Left as the field default, this published `regular` over a listed history
+    alternating $100 and $3,900 a fortnight (coefficient 0.9500) while the same
+    facts selected ``irregular_earnings_average`` — a manifest labelling one
+    history two contradictory ways, and neither the author's fault nor their
+    doing. ``pattern_source`` records which happened, exactly as
+    ``method_source`` does.
+    """
+
+    pattern_source: Literal["seed", "derived"] = "seed"
+    """Whether the seed's shape knob set the pattern or it was read off the periods."""
+
     computation: AwwComputation
     rate: CompRate
 
@@ -568,6 +593,20 @@ class PdAdvance(BaseModel):
     """One permanent-disability advance paid before any award."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    date_due: dt.date
+    """When this advance was scheduled. The operand ``days_late`` is measured from.
+
+    Carried for the same reason :attr:`TdPeriod.date_due` is, and it was missing
+    here after that one was added — the fix had been applied to the half a
+    reviewer named rather than to the class of defect. Without it a reader sees
+    four advances dated 08-30, 10-14, 11-28 and 11-11, three of them marked 62
+    days late, and nothing on the page says late *against what*. The apparent
+    disorder is the point: an advance delayed past a later on-time one is an
+    ordinary fact of a neglected file, and it only reads as a fact rather than a
+    mistake once the schedule it slipped from is visible. The ledger is ordered
+    by ``date_due``.
+    """
 
     date_paid: dt.date
     amount: Decimal
@@ -957,6 +996,59 @@ def _select_method(
     )
 
 
+def _covered_weeks(periods: tuple[EarningsPeriod, ...]) -> Decimal:
+    """Weeks the *union* of these periods covers, counting each calendar day once.
+
+    The denominator for ``concurrent_aggregate``, and it has to be the union
+    rather than the primary employment's own weeks. Both employers' earnings go
+    in the numerator; dividing them by one employer's weeks is only right when
+    the two histories cover the same calendar, which the docstring assumed and
+    nothing checked. Measured: a two-week primary period paying $2,000 beside a
+    fifty-two-week concurrent history paying $52,000 published
+    ``grossConsidered: 54000.00`` over ``weeksConsidered: 2.0000`` — an average
+    weekly wage of **$27,000**, capped to the statutory maximum and recorded as
+    ``tdBound: max``, which is the shape of an answer that has stopped meaning
+    anything.
+
+    Counting days rather than summing period weeks is also what makes this
+    correct for more than two employers, which a boolean ``concurrent`` cannot
+    otherwise express: three overlapping histories still cover one calendar.
+    Where the histories *do* align — every derived history, and every
+    well-formed listed one — the union is the primary's own span and the answer
+    is unchanged.
+    """
+    days: set[dt.date] = set()
+    for period in periods:
+        cursor = period.period_start
+        while cursor <= period.period_end:
+            days.add(cursor)
+            cursor += dt.timedelta(days=1)
+    with _exact():
+        return (Decimal(len(days)) / Decimal(7)).quantize(Decimal("0.0001"))
+
+
+def _pattern_of(
+    wages: WageScenario, periods: tuple[EarningsPeriod, ...]
+) -> tuple[str, Literal["seed", "derived"]]:
+    """The earnings pattern and where it came from.
+
+    A described history is authored: the knob drew the periods. A listed one is
+    read off its own periods with :data:`IRREGULARITY_THRESHOLD`, the same
+    yardstick :func:`select_method` applies — one threshold, so the pattern and
+    the method cannot contradict each other on the same history, which is
+    exactly what the field default used to let them do.
+
+    ``seasonal`` is never derived. Reading a season off a spread would be
+    guessing at a *reason* rather than measuring a shape, and the same argument
+    that keeps ``earning_capacity`` out of the derived branch keeps it out of
+    this one: a seed that means seasonal describes its history and says so.
+    """
+    if not wages.earnings:
+        return wages.pattern, "seed"
+    variation = _coefficient_of_variation(tuple(p for p in periods if not p.concurrent))
+    return ("irregular" if variation > IRREGULARITY_THRESHOLD else "regular"), "derived"
+
+
 def compute_aww(
     wages: WageScenario, periods: tuple[EarningsPeriod, ...]
 ) -> AwwComputation:
@@ -1005,7 +1097,11 @@ def _compute_aww(
 
     primary = tuple(p for p in periods if not p.concurrent)
     considered = periods if method == "concurrent_aggregate" else primary
-    weeks = sum((p.weeks for p in primary), Decimal("0"))
+    weeks = (
+        _covered_weeks(considered)
+        if method == "concurrent_aggregate"
+        else sum((p.weeks for p in primary), Decimal("0"))
+    )
     gross = sum((p.gross for p in considered), ZERO)
     in_kind_weekly = sum((money(item.weekly_value) for item in wages.in_kind), ZERO)
 
@@ -1087,6 +1183,23 @@ DILIGENCE_FUNDING_DAYS: dict[str, int] = {
 #: whose baseline is invisible is not checkable.
 TD_PAYMENT_DUE_DAYS: int = 14
 
+#: The authority :data:`TD_PAYMENT_DUE_DAYS` is said to come from — prose, not a promise.
+#:
+#: A due-day count is a statutory binding exactly as a rate ceiling is, and it
+#: was the one number in this module carrying no authority of its own.
+#: ``rate.counselConfirmed`` says nothing about it: that flag governs the rate
+#: basis, and a consumer reading a *benefits* figure under a *rate* caveat is
+#: reading a caveat that does not cover it. Published beside the interval so the
+#: caveat travels with the number it qualifies.
+TD_PAYMENT_DUE_AUTHORITY: str = (
+    "Interval after a temporary-disability period ends by which the payment is due. "
+    "COUNSEL-UNCONFIRMED placeholder — the interval, and whether it runs from the "
+    "period's end at all, are both unverified."
+)
+
+#: Days between scheduled permanent-disability advances.
+PD_ADVANCE_INTERVAL_DAYS: int = 45
+
 
 def _derive_benefits(
     seed: CaseSeed,
@@ -1142,6 +1255,18 @@ def _derive_benefits(
     block_index = 0
     gap_after_block = 1 if gap_days else -1
 
+    # The last date any money event in this file may carry. The *timeline's*
+    # horizon, not the benefit window above: a payment is dated by when it
+    # cleared, and the document that reports it is clamped to this. A payment
+    # past it is one no document in the case can reach — measured, a loadable
+    # seed put a temporary-disability payment **588 days** beyond it, and
+    # `timeline.clamp` then dated the payment record before its own payment,
+    # because clamping cannot repair a future event.
+    ceiling = getattr(timeline, "horizon", None)
+
+    def reached(when: dt.date) -> bool:
+        return ceiling is None or when <= ceiling
+
     while remaining > 0:
         weeks = min(block_weeks, remaining)
         start = cursor
@@ -1149,6 +1274,11 @@ def _derive_benefits(
         due = end + dt.timedelta(days=TD_PAYMENT_DUE_DAYS)
         late = worst_late if block_index < late_count else 0
         paid = due + dt.timedelta(days=late)
+        if not reached(paid):
+            # Same rule the advances below already followed, applied to the
+            # periods too: a payment past the file's own horizon is not a late
+            # payment, it is one this case never reached.
+            break
         periods.append(
             TdPeriod(
                 start=start,
@@ -1179,23 +1309,27 @@ def _derive_benefits(
     advances: list[PdAdvance] = []
     advance_cursor = (periods[-1].end if periods else onset) + dt.timedelta(days=15)
     for index in range(advances_wanted):
-        if advance_cursor > horizon:
+        late = worst_late if index < max(0, late_count - len(periods)) else 0
+        paid = advance_cursor + dt.timedelta(days=late)
+        if advance_cursor > horizon or not reached(paid):
             # An advance past the file's own horizon is not a late advance, it
             # is one this case never reached. Same rule the clinical ledger
             # applies to a benefit notice, and for the same reason: clamping
-            # would manufacture a payment out of a short runway.
+            # would manufacture a payment out of a short runway. The *paid* date
+            # is checked too, not only the schedule — a 730-day delay on an
+            # advance due inside the window still lands outside it.
             break
-        late = worst_late if index < max(0, late_count - len(periods)) else 0
         advances.append(
             PdAdvance(
-                date_paid=advance_cursor + dt.timedelta(days=late),
+                date_due=advance_cursor,
+                date_paid=paid,
                 amount=money(pd_rate * Decimal(4)),
                 weekly_rate=pd_rate,
                 weeks=Decimal(4),
                 days_late=late,
             )
         )
-        advance_cursor = advance_cursor + dt.timedelta(days=45)
+        advance_cursor = advance_cursor + dt.timedelta(days=PD_ADVANCE_INTERVAL_DAYS)
 
     return BenefitLedger(
         td_periods=tuple(periods), pd_advances=tuple(advances), gaps=tuple(gaps)
@@ -1283,7 +1417,7 @@ def derive_money_facts(
     Returns:
         A frozen :class:`MoneyFacts`, or ``None``. The ``None`` is load-bearing:
         every consumer short-circuits on it, which is what makes "a seed with no
-        wage block produces zero money artifacts" a property of the code path
+        wage block produces zero artifacts of this layer" a property of the code path
         rather than a claim about it.
     """
     wages = seed.scenario.wages
@@ -1304,6 +1438,7 @@ def _derive_money_facts(
     basis = _apply_rate_basis_override(rate_basis_for(doi), seed)
     rate = compute_comp_rate(computation.aww, basis)
 
+    pattern, pattern_source = _pattern_of(wages, periods)
     wage_facts = WageFacts(
         periods=periods,
         in_kind=tuple(
@@ -1313,7 +1448,8 @@ def _derive_money_facts(
         employment_start=wages.employment_start,
         concurrent_employment=wages.concurrent_employment
         or any(p.concurrent for p in periods),
-        pattern=wages.pattern,
+        pattern=pattern,
+        pattern_source=pattern_source,
         computation=computation,
         rate=rate,
     )
@@ -1372,6 +1508,7 @@ GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
         "grossConsidered",
         "inKindWeekly",
         "pattern",
+        "patternSource",
         "concurrentEmployment",
     ),
     "rate": (
@@ -1396,6 +1533,8 @@ GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
         "maxDaysLate",
         "gapDays",
         "tdPaymentDueDays",
+        "tdPaymentDueAuthority",
+        "tdPaymentDueConfirmed",
     ),
     "settlement": ("kind", "grossAmount", "approvalDate", "fundingDate", "fundingLagDays"),
 }
@@ -1430,6 +1569,7 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
             "grossConsidered": _dollars(computation.gross_considered),
             "inKindWeekly": _dollars(computation.in_kind_weekly),
             "pattern": wage.pattern,
+            "patternSource": wage.pattern_source,
             "concurrentEmployment": wage.concurrent_employment,
         },
         "rate": {
@@ -1465,6 +1605,7 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
             "pdAdvanceCount": len(benefits.pd_advances),
             "pdAdvances": [
                 {
+                    "dateDue": advance.date_due.isoformat(),
                     "datePaid": advance.date_paid.isoformat(),
                     "weeks": f"{advance.weeks.normalize():f}",
                     "weeklyRate": _dollars(advance.weekly_rate),
@@ -1486,6 +1627,10 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
             "maxDaysLate": benefits.max_days_late,
             "gapDays": sum(gap.days for gap in benefits.gaps),
             "tdPaymentDueDays": TD_PAYMENT_DUE_DAYS,
+            # The caveat travels with the number it qualifies. `rate.counselConfirmed`
+            # governs the rate basis and says nothing about a benefits interval.
+            "tdPaymentDueAuthority": TD_PAYMENT_DUE_AUTHORITY,
+            "tdPaymentDueConfirmed": False,
         },
     }
     if facts.settlement is not None:

@@ -648,6 +648,55 @@ REGISTRY: dict[str, RegisteredMessage] = {
         "weeks, so a history with no primary period divided a real gross by zero weeks "
         "and published an average weekly wage of 0.00 without a word.",
     ),
+    "lateness_with_nothing_paid": RegisteredMessage(
+        where="BenefitsScenario._every_stated_control_can_be_honoured",
+        directives=("Raise td_weeks or pd_advances above zero, or drop {}",),
+        trigger={
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "benefits": {
+                    "td_weeks": 0,
+                    "pd_advances": 0,
+                    "late_payments": 3,
+                    "max_days_late": 62,
+                },
+            }
+        },
+        resolution={"scenario": {"benefits": {"td_weeks": 12}}},
+        note="The first clause. The seed asked for a delay file and used to get a clean "
+        "one — latePayments published as 0, with nothing anywhere saying the request "
+        "had been dropped.",
+    ),
+    "gap_with_no_run_to_hold_it": RegisteredMessage(
+        where="BenefitsScenario._every_stated_control_can_be_honoured",
+        directives=("Raise td_weeks to {} or more, or drop td_gap_days",),
+        trigger={
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "benefits": {"td_weeks": 0, "td_gap_days": 90},
+            }
+        },
+        resolution={"scenario": {"benefits": {"td_weeks": 12}}},
+        note="Payments issue in four-week blocks and a gap sits between two of them, so "
+        "the message's threshold is the shortest run that can hold one. Followed with a "
+        "value at or above it, as the message says.",
+    ),
+    "settlement_dated_past_the_anchor": RegisteredMessage(
+        where="SettlementScenario._funding_is_stated_one_way",
+        directives=("Move scenario.settlement.{} to on or before {}",),
+        trigger={
+            "injury": {"date_of_injury": "2021-06-14"},
+            "lifecycle": {"resolution": {"type": "c_and_r"}},
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "settlement": {"approval_date": "2099-01-01", "funding_days": 30},
+            },
+        },
+        resolution={"scenario": {"settlement": {"approval_date": "2024-03-01"}}},
+        note="Every document in a case is clamped to the anchor, so a 2099 approval was "
+        "an event no paper in the folder could report — and it loaded, publishing a 2099 "
+        "funding date beside documents dated 2026-01-01.",
+    ),
     "lateness_without_late_payments": RegisteredMessage(
         where="BenefitsScenario._lateness_is_coherent",
         directives=("Raise late_payments above zero, or drop max_days_late",),

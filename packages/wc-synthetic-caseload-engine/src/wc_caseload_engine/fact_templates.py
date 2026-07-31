@@ -26,7 +26,11 @@ from wc_caseload_engine.case_facts import (
     SUBSTRATE_STATUS_PHRASES,
     CaseFacts,
 )
-from wc_caseload_engine.money import TD_PAYMENT_DUE_DAYS, MoneyFacts
+from wc_caseload_engine.money import (
+    TD_PAYMENT_DUE_AUTHORITY,
+    TD_PAYMENT_DUE_DAYS,
+    MoneyFacts,
+)
 from wc_caseload_engine.substrate import import_substrate
 from wc_caseload_engine.taxonomy import effective_taxonomy
 
@@ -591,6 +595,7 @@ def _rewrite_wage_statement(story: list[Any], money: MoneyFacts, styles: Any) ->
         ["Method Source:", computation.method_source],
         ["Basis of Method:", computation.method_reason],
         ["Earnings Pattern:", wage.pattern],
+        ["Earnings Pattern Source:", wage.pattern_source],
         ["Concurrent Employment:", "yes" if wage.concurrent_employment else "no"],
         ["Earnings Considered:", f"${computation.gross_considered:,.2f}"],
         ["Weeks Considered:", f"{computation.weeks_considered.normalize():f}"],
@@ -679,11 +684,11 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
         for advance in benefits.pd_advances:
             rows.append(
                 [
-                    f"{advance.date_paid:%m/%d/%y}",
+                    f"{advance.date_due:%m/%d/%y}",
                     "PD advance",
                     f"{advance.weeks.normalize():f}",
                     f"${advance.weekly_rate:,.2f}",
-                    "-",
+                    f"{advance.date_due:%m/%d/%y}",
                     f"{advance.date_paid:%m/%d/%y}",
                     str(advance.days_late) if advance.days_late else "-",
                     f"${advance.amount:,.2f}",
@@ -740,6 +745,7 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
         ["Permanent Disability Advance Count:", str(len(benefits.pd_advances))],
         ["Permanent Disability Advances:", f"${benefits.pd_total:,.2f}"],
         ["Payment Due Within (days of period end):", f"{TD_PAYMENT_DUE_DAYS} — {DUE_NOTICE}"],
+        ["Payment Due Authority:", TD_PAYMENT_DUE_AUTHORITY],
         ["Payments Issued Late:", str(benefits.late_payment_count)],
         ["Longest Delay (days):", str(benefits.max_days_late)],
         ["Days Without Benefits:", str(sum(gap.days for gap in benefits.gaps))],

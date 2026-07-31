@@ -534,6 +534,50 @@ MONEY_FLOOR_SUBTYPES: tuple[str, ...] = (
 )
 
 
+def _money_control_warnings(seed: CaseSeed, money_facts: MoneyFacts | None) -> list[str]:
+    """Report a money control the case's own runway could not honour.
+
+    The seed schema refuses a control that is impossible on its face — lateness
+    with nothing paid, a gap in a run too short to hold one. It cannot see the
+    *timeline*, so it cannot see truncation: `td_weeks: 520` on a file whose
+    runway holds twelve is a request silently reduced by a factor of forty.
+
+    A warning rather than an error, and the distinction is the one this package
+    already draws elsewhere: an impossible seed is rejected, a seed whose story
+    outruns its calendar is honoured as far as the calendar goes and the
+    shortfall is reported. Same shape as the control-suppression warnings — the
+    operator is told what they asked for and what they got.
+    """
+    scenario = seed.scenario.benefits
+    if money_facts is None or scenario is None:
+        return []
+
+    out: list[str] = []
+    ledger = money_facts.benefits
+    if scenario.td_weeks:
+        realized = sum(int(period.weeks) for period in ledger.td_periods)
+        if realized < scenario.td_weeks:
+            out.append(
+                f"scenario.benefits.td_weeks asked for {scenario.td_weeks} week(s) of "
+                f"temporary disability; the case's runway holds {realized}. Move the "
+                "injury earlier, or seed a lifecycle that reaches further, to pay the "
+                "whole run."
+            )
+    if scenario.pd_advances and len(ledger.pd_advances) < scenario.pd_advances:
+        out.append(
+            f"scenario.benefits.pd_advances asked for {scenario.pd_advances} advance(s); "
+            f"the case's runway holds {len(ledger.pd_advances)}. Move the injury earlier, "
+            "or lower pd_advances."
+        )
+    if scenario.td_gap_days and not ledger.gaps:
+        out.append(
+            f"scenario.benefits.td_gap_days asked for a {scenario.td_gap_days}-day "
+            "interruption; the temporary-disability run this case reached is too short to "
+            "hold one. Raise td_weeks, or move the injury earlier."
+        )
+    return out
+
+
 def _money_candidates(
     seed: CaseSeed,
     money_facts: MoneyFacts | None,
@@ -1210,6 +1254,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         *discovery_warnings,
         *cadence_warnings,
         *penalty_warnings,
+        *_money_control_warnings(seed, money_facts),
         *unsupported_hook_warnings(seed.lifecycle.doctrine_hooks, seed),
     )
 

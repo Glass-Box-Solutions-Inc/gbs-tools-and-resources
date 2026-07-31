@@ -902,7 +902,8 @@ scenario:
 `benefits` and `settlement` both require `wages`. A benefit rate rests on an
 average weekly wage, and without an earnings history the engine would have to
 assert one — which is the failure the layer exists to remove. One gate, so "a
-seed with no wage block produces zero money artifacts" is one checkable sentence
+seed with no wage block produces zero artifacts of this layer, and moves no output
+byte" is one checkable sentence
 rather than three.
 
 #### The named method is ground truth
@@ -956,6 +957,13 @@ A rate bound is also stated as a pair. Overriding one end alone would merge
 against an *engine default* at the other end, which may sit on the wrong side of
 the figure you stated; `RateBasis` validates the merged result as well, so no
 construction path can produce a floor above its own ceiling.
+
+No money event may fall past the anchor. A payment is dated by when it cleared
+and the document reporting it is clamped to the case's horizon, so a payment
+beyond that horizon is one no paper in the folder can report — dropped from the
+ledger rather than clamped into it, because clamping would date the record before
+its own payment. Settlement dates are refused outright past the anchor for the
+same reason.
 
 `money.rate_basis_for(doi)` is the seam: the single point at which the engine asks
 what the parameters are for a date of injury, and the only reader of the table. A
@@ -1011,6 +1019,17 @@ rate, amount, due, paid, days late — with the cardinalities under
 `tdPeriodCount` and `pdAdvanceCount`, and `gaps` carrying each interruption.
 Wave 3 computes a penalty per late transaction, and a total cannot say which
 transaction it was.
+
+Advances carry `date_due` too, and the ledger is ordered by it rather than by
+the date each was paid. A delayed advance can land *after* a later on-time one —
+that is an ordinary fact of a neglected file, not a sorting mistake — but it only
+reads as a fact once the schedule it slipped from is on the page beside it.
+
+The due-day interval carries its own caveat, `tdPaymentDueAuthority` and
+`tdPaymentDueConfirmed`, rather than borrowing the rate basis's.
+`rate.counselConfirmed` is a claim about the rate table and says nothing about a
+benefits rule, so a reader taking it as cover for the interval would be reading a
+caveat that does not reach it.
 
 `approval_date` and `funding_date` are separate fields on the settlement. They are
 separate events in a real file, and the interval between them is the whole

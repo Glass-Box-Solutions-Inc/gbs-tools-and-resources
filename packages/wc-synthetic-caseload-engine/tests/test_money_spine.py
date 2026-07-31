@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import decimal
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -285,6 +285,55 @@ class TestTheNamedMethod:
             (computed.gross_considered / computed.weeks_considered).quantize(Decimal("0.01"))
             + computed.in_kind_weekly
         )
+
+    def test_a_listed_history_derives_its_own_pattern(self) -> None:
+        """A seed that cannot state a pattern must not be given a false one.
+
+        Forbidding the shape knobs beside a listed history (the previous review
+        round) left `pattern` at its field default, so an explicit history
+        alternating $100 and $3,900 a fortnight — coefficient **0.9500**, and
+        selected as `irregular_earnings_average` — published `pattern: regular`.
+        One history, two contradictory published labels, neither of them the
+        author's doing.
+
+        Derived from the periods now, by the same threshold `select_method`
+        uses, so the two cannot disagree; `patternSource` records which happened.
+        """
+        start = date(2020, 6, 15)
+        swinging = [
+            {
+                "period_start": (start + timedelta(days=14 * i)).isoformat(),
+                "period_end": (start + timedelta(days=14 * i + 13)).isoformat(),
+                "gross": 100.0 if i % 2 == 0 else 3900.0,
+            }
+            for i in range(26)
+        ]
+        facts = _facts({"wages": {"earnings": swinging}})
+        block = money_manifest_block(facts)["wage"]
+        assert block["method"] == "irregular_earnings_average"
+        assert block["pattern"] == "irregular", "the pattern contradicts the method"
+        assert block["patternSource"] == "derived"
+
+        # The opposite draw on the same shape: a steady listed history derives
+        # `regular`, so the label follows the earnings rather than the default.
+        steady = [
+            {
+                "period_start": (start + timedelta(days=14 * i)).isoformat(),
+                "period_end": (start + timedelta(days=14 * i + 13)).isoformat(),
+                "gross": 2000.0,
+            }
+            for i in range(26)
+        ]
+        flat = money_manifest_block(_facts({"wages": {"earnings": steady}}))["wage"]
+        assert flat["pattern"] == "regular"
+        assert flat["patternSource"] == "derived"
+
+        # And a described history is authored, because the knob drew the periods.
+        described = money_manifest_block(
+            _facts({"wages": dict(WAGES, pattern="seasonal")})
+        )["wage"]
+        assert described["pattern"] == "seasonal"
+        assert described["patternSource"] == "seed"
 
     def test_the_reason_is_recorded_beside_the_method(self) -> None:
         for wages in (WAGES, dict(WAGES, pattern="irregular")):
@@ -672,6 +721,159 @@ class TestTheBenefitLedger:
             counts[diligence] = build_case_plan(seed).money_facts.benefits.max_days_late
         assert counts["attentive"] == 0
         assert counts["negligent"] > 0
+
+    def test_a_stated_control_the_ledger_cannot_honour_is_refused(self) -> None:
+        """ISC-29's rule applied to money: an explicit control wins, or says it did not.
+
+        Both shapes below loaded and were silently dropped — the first published
+        `latePayments: 0` for a seed asking for three, the second `gapDays: 0`
+        for a seed asking for ninety.
+        """
+        with pytest.raises(SeedValidationError) as caught:
+            _facts(
+                {
+                    "wages": WAGES,
+                    "benefits": {
+                        "td_weeks": 0,
+                        "pd_advances": 0,
+                        "late_payments": 3,
+                        "max_days_late": 62,
+                    },
+                }
+            )
+        assert "late" in str(caught.value)
+
+        with pytest.raises(SeedValidationError) as gap:
+            _facts({"wages": WAGES, "benefits": {"td_weeks": 0, "td_gap_days": 90}})
+        assert "td_gap_days" in str(gap.value)
+
+        # The controls: the same knobs on a run that can hold them are honoured.
+        honoured = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {"td_weeks": 12, "late_payments": 3, "max_days_late": 62},
+            }
+        )
+        assert honoured.benefits.late_payment_count == 3
+        gapped = _facts({"wages": WAGES, "benefits": {"td_weeks": 12, "td_gap_days": 90}})
+        assert sum(g.days for g in gapped.benefits.gaps) == 90
+
+    def test_a_control_the_runway_truncates_is_reported(self) -> None:
+        """What the seed cannot see, the planner says out loud.
+
+        Truncation needs the timeline, so it is a plan warning rather than a
+        seed error — the same distinction this package already draws between an
+        impossible seed and one whose story outruns its calendar. Silence was
+        the third option and the wrong one: `td_weeks: 520` on a file whose
+        runway holds a dozen is a request reduced by a factor of forty.
+        """
+        plan = build_case_plan(
+            parse_case_seed(
+                _seed_body({"wages": WAGES, "benefits": {"td_weeks": 520}})
+            )
+        )
+        assert any("td_weeks" in warning for warning in plan.warnings), plan.warnings
+
+        # The opposite draw: a run the runway holds warns about nothing.
+        quiet = build_case_plan(
+            parse_case_seed(_seed_body({"wages": WAGES, "benefits": {"td_weeks": 8}}))
+        )
+        assert not any("td_weeks" in warning for warning in quiet.warnings), quiet.warnings
+
+    def test_no_benefit_event_falls_past_the_horizon(self) -> None:
+        """A payment no document in the case can report is one the case never reached.
+
+        Measured before the fix: a loadable seed put a temporary-disability
+        payment **588 days** past the timeline horizon, and `timeline.clamp`
+        then dated the payment record before its own payment — clamping cannot
+        repair a future event. The rule the advances already followed now covers
+        the periods too, and covers advances by their *paid* date rather than
+        only their schedule.
+
+        The advances need their own corner of the sweep. Their schedule is
+        bounded by the *benefit* window, which always sits inside the timeline
+        horizon, so a schedule-only check looks sufficient until a long delay is
+        applied to an advance scheduled near the end of a recent file: DOI
+        2024-01-10, resolved, `max_days_late: 730` schedules an advance on
+        2024-01-25 and pays it 2026-01-24, three weeks past the horizon.
+        """
+        checked = 0
+        advances_checked = 0
+        cases: list[tuple[str, dict[str, Any]]] = [
+            (doi, {"target_stage": stage, "eval_type": "none"})
+            for doi in ("2024-06-01", "2025-01-15", "2025-06-01")
+            for stage in ("intake", "discovery", "active_treatment")
+        ] + [
+            (doi, {"target_stage": "resolved", "eval_type": "none",
+                   "resolution": {"type": resolution}})
+            for doi in ("2023-06-01", "2024-01-10")
+            for resolution in ("c_and_r", "stipulations")
+        ]
+        for doi, lifecycle in cases:
+            for late in (365, 500, 730):
+                body = _seed_body(
+                    {
+                        "wages": WAGES,
+                        "benefits": {
+                            "td_weeks": 8,
+                            "pd_advances": 6,
+                            "late_payments": 9,
+                            "max_days_late": late,
+                        },
+                    },
+                    lifecycle=lifecycle,
+                )
+                body["injury"]["date_of_injury"] = doi
+                try:
+                    seed = parse_case_seed(body)
+                except SeedValidationError:
+                    continue
+                timeline = build_timeline(seed)
+                facts = derive_money_facts(seed, timeline, "ordinary")
+                assert facts is not None
+                checked += 1
+                for period in facts.benefits.td_periods:
+                    assert period.date_paid is None or period.date_paid <= timeline.horizon, (
+                        f"a TD payment landed {period.date_paid}, past the horizon "
+                        f"{timeline.horizon} — doi={doi} max_days_late={late}"
+                    )
+                for advance in facts.benefits.pd_advances:
+                    advances_checked += 1
+                    assert advance.date_paid <= timeline.horizon, (
+                        f"a PD advance was paid {advance.date_paid}, past the horizon "
+                        f"{timeline.horizon} — doi={doi} max_days_late={late}"
+                    )
+        assert checked > 10, f"the sweep only reached {checked} seeds"
+        assert advances_checked > 5, (
+            f"the sweep reached only {advances_checked} advances — the PD half of this "
+            "rule would go unprobed"
+        )
+
+    def test_pd_advances_carry_their_due_date_and_are_ordered_by_it(self) -> None:
+        """The same fix as TD's, applied to the half no reviewer had named.
+
+        Four advances came back dated 08-30, 10-14, 11-28 and 11-11, three of
+        them marked 62 days late, with nothing on the record saying late against
+        *what*. The apparent disorder is a real fact of a neglected file — a
+        delayed advance can land after a later on-time one — but it only reads
+        as a fact once the schedule it slipped from is on the page.
+        """
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {"td_weeks": 4, "pd_advances": 4, "late_payments": 4,
+                             "max_days_late": 62},
+            }
+        )
+        advances = facts.benefits.pd_advances
+        assert advances, "the probe needs advances to say anything"
+        due = [a.date_due for a in advances]
+        assert due == sorted(due), "the ledger is ordered by the schedule"
+        for advance in advances:
+            assert (advance.date_paid - advance.date_due).days == advance.days_late
+
+        published = money_manifest_block(facts)["benefits"]["pdAdvances"]
+        assert published and all("dateDue" in a for a in published)
 
     def test_amounts_are_the_rate_times_the_weeks(self) -> None:
         facts = _facts({"wages": WAGES, "benefits": {"td_weeks": 20}})
@@ -1213,6 +1415,55 @@ class TestPublication:
         with pytest.raises(SeedValidationError):
             _facts({"wages": {"earnings": listed, "pattern": "regular"}})
 
+    def test_the_aggregate_divides_by_the_weeks_both_employers_cover(self) -> None:
+        """Both employers' earnings over one calendar, not over one employer's weeks.
+
+        The denominator was the *primary* employment's own weeks for every
+        method, which is only right when the two histories cover the same
+        calendar — documented as an assumption and checked by nothing. A
+        two-week primary period paying $2,000 beside a fifty-two-week concurrent
+        history paying $52,000 published `grossConsidered: 54000.00` over
+        `weeksConsidered: 2.0000`: an average weekly wage of **$27,000**, capped
+        to the statutory maximum and recorded as `tdBound: max`.
+        """
+        primary = [
+            {"period_start": "2021-05-31", "period_end": "2021-06-13", "gross": 2000.0}
+        ]
+        start = date(2020, 6, 15)
+        concurrent = [
+            {
+                "period_start": (start + timedelta(days=14 * i)).isoformat(),
+                "period_end": (start + timedelta(days=14 * i + 13)).isoformat(),
+                "gross": 2000.0,
+                "concurrent": True,
+            }
+            for i in range(26)
+        ]
+        facts = _facts({"wages": {"earnings": primary + concurrent}})
+        computation = facts.wages.computation
+        assert computation.method == "concurrent_aggregate"
+        assert computation.gross_considered == money(54000)
+        # The union of covered days: 364 concurrent days, of which the primary
+        # period's 14 are a subset.
+        assert computation.weeks_considered == Decimal("52.0000")
+        assert computation.aww == money(
+            (computation.gross_considered / computation.weeks_considered).quantize(
+                Decimal("0.01")
+            )
+        )
+        assert facts.wages.rate.td_bound == "unbounded", (
+            "an aggregate over the right weeks does not reach the statutory ceiling"
+        )
+
+        # The control: where the two histories *do* align — every derived history
+        # and every well-formed listed one — the union is the primary's own span
+        # and the answer is unchanged.
+        aligned = _facts({"wages": dict(WAGES, concurrent_employment=True)})
+        primary_weeks = sum(
+            (p.weeks for p in aligned.wages.primary_periods), Decimal("0")
+        )
+        assert aligned.wages.computation.weeks_considered == primary_weeks
+
     def test_a_history_with_no_primary_period_is_refused(self) -> None:
         """Every period concurrent divides a real gross by zero primary weeks.
 
@@ -1721,6 +1972,73 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         self._rewrite(directory, manifest)
         problems = validate_output_tree(tmp_path).problems
         assert any("counselConfirmed" in problem for problem in problems), problems
+
+    def test_a_benefit_event_with_no_payment_record_is_refused(self) -> None:
+        """Any event needs a document, not only a temporary-disability one.
+
+        The rule was written for the half that had a probe: a case publishing
+        four permanent-disability advances and no payment record at all passed
+        `_validate_money` clean, which is the same asserted-not-derivable
+        failure the TD rule exists to catch.
+        """
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = _facts({"wages": WAGES, "benefits": {"td_weeks": 0, "pd_advances": 4}})
+        block = {"money": money_manifest_block(facts)}
+        assert block["money"]["benefits"]["pdAdvanceCount"] > 0
+        problems = _validate_money(
+            block, [{"subtype": MONEY_WAGE_SUBTYPE}], "probe-case"
+        )
+        assert any("payment record" in p for p in problems), problems
+
+        # The control: add the record and the same ledger passes.
+        assert not any(
+            "payment record" in p
+            for p in _validate_money(
+                block,
+                [{"subtype": MONEY_WAGE_SUBTYPE}, {"subtype": MONEY_PD_SUBTYPE}],
+                "probe-case",
+            )
+        )
+
+    def test_a_malformed_event_is_refused(self) -> None:
+        """The ledger is the eval label. A label that is a bare string is broken, not lesser."""
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = _facts({"wages": WAGES, "benefits": {"td_weeks": 8}})
+        block = {"money": money_manifest_block(facts)}
+        documents = [{"subtype": MONEY_WAGE_SUBTYPE}, {"subtype": MONEY_TD_SUBTYPE}]
+        assert not _validate_money(block, documents, "probe-case")
+
+        block["money"]["benefits"]["tdPeriods"] = ["garbage"]
+        block["money"]["benefits"]["tdPeriodCount"] = 1
+        problems = _validate_money(block, documents, "probe-case")
+        assert any("str where a record was expected" in p for p in problems), problems
+
+    def test_a_lateness_that_does_not_follow_from_the_dates_is_refused(self) -> None:
+        """Both ledgers, not just the one that had a probe."""
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {"td_weeks": 8, "pd_advances": 2, "late_payments": 3,
+                             "max_days_late": 30},
+            }
+        )
+        documents = [
+            {"subtype": MONEY_WAGE_SUBTYPE},
+            {"subtype": MONEY_TD_SUBTYPE},
+            {"subtype": MONEY_PD_SUBTYPE},
+        ]
+        for array_key, word in (("tdPeriods", "temporary"), ("pdAdvances", "permanent")):
+            block = {"money": money_manifest_block(facts)}
+            assert not _validate_money(block, documents, "probe-case")
+            events = block["money"]["benefits"][array_key]
+            assert events, f"the probe needs a {array_key} record"
+            events[0]["daysLate"] = events[0]["daysLate"] + 5
+            problems = _validate_money(block, documents, "probe-case")
+            assert any(word in p and "daysLate" in p for p in problems), (array_key, problems)
 
     def test_funding_before_approval_is_refused(self, tmp_path: Path) -> None:
         directory, manifest = self._generated(tmp_path)

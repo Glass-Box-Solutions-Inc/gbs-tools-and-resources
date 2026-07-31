@@ -1227,6 +1227,12 @@ class BenefitsScenario(_Model):
     pd_advances: int | None = Field(default=None, ge=0, le=52)
     """Permanent-disability advances paid before any award. Derived when unset."""
 
+    #: Blocks of temporary disability a gap needs on either side of it.
+    #:
+    #: Payments issue in four-week blocks and a gap sits *between* two of them,
+    #: so eight weeks is the shortest run that can hold one.
+    GAP_MINIMUM_WEEKS: ClassVar[int] = 8
+
     @model_validator(mode="after")
     def _lateness_is_coherent(self) -> BenefitsScenario:
         if self.late_payments == 0 and self.max_days_late is not None:
@@ -1234,6 +1240,42 @@ class BenefitsScenario(_Model):
                 "scenario.benefits.late_payments is 0 but max_days_late is "
                 f"{self.max_days_late} — no payment was late, so none can be late by a "
                 "number of days. Raise late_payments above zero, or drop max_days_late."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _every_stated_control_can_be_honoured(self) -> BenefitsScenario:
+        """A control the ledger cannot honour is refused, not quietly dropped.
+
+        ISC-29's rule — an explicit control wins loudly — applied to the money
+        knobs. Measured before this validator: ``{td_weeks: 0, pd_advances: 0,
+        late_payments: 3, max_days_late: 62}`` loaded and published
+        ``latePayments: 0``, and ``{td_weeks: 0, td_gap_days: 90}`` published
+        ``gapDays: 0``. The seed asked for a delay file and got a clean one,
+        with nothing anywhere saying the request had been dropped.
+
+        Only what the seed alone can decide is checked here. Truncation against
+        the case's own runway needs the timeline, so the planner reports that as
+        a warning instead — see ``planner._money_control_warnings``.
+        """
+        if self.td_weeks == 0 and self.pd_advances == 0:
+            for name in ("late_payments", "max_days_late"):
+                value = getattr(self, name)
+                if value:
+                    raise ValueError(
+                        f"scenario.benefits sets {name} to {value} but pays nothing — "
+                        "td_weeks and pd_advances are both 0, so there is no payment to "
+                        f"be late. Raise td_weeks or pd_advances above zero, or drop "
+                        f"{name}."
+                    )
+        if self.td_gap_days and (self.td_weeks or 0) < self.GAP_MINIMUM_WEEKS:
+            stated = "0" if self.td_weeks == 0 else str(self.td_weeks)
+            raise ValueError(
+                f"scenario.benefits sets td_gap_days to {self.td_gap_days} with td_weeks "
+                f"{stated} — payments issue in four-week blocks and a gap sits between "
+                f"two of them, so a run shorter than {self.GAP_MINIMUM_WEEKS} weeks has "
+                "nowhere to put one and the gap would be dropped in silence. Raise "
+                f"td_weeks to {self.GAP_MINIMUM_WEEKS} or more, or drop td_gap_days."
             )
         return self
 
@@ -1297,6 +1339,21 @@ class SettlementScenario(_Model):
                 "would disagree the moment the approval date moves. Keep funding_date for "
                 "an exact date, or funding_days for an interval, and drop the other."
             )
+        for name in ("approval_date", "funding_date"):
+            stated = getattr(self, name)
+            if stated is not None and stated > ANCHOR_DATE:
+                # Every document in the case is clamped to the anchor, so a
+                # settlement dated past it is an event no paper in the folder can
+                # report. Measured: `approval_date: 2099-01-01` loaded, published
+                # a 2099 approval and a 2099 funding, and left every document in
+                # the case dated 2026-01-01 or earlier.
+                raise ValueError(
+                    f"scenario.settlement.{name} is {stated}, after the anchor date "
+                    f"{ANCHOR_DATE} this engine treats as today — every document in the "
+                    "case is dated on or before it, so no paper in the folder could "
+                    f"report this event. Move scenario.settlement.{name} to on or before "
+                    f"{ANCHOR_DATE}."
+                )
         if self.funding_date is not None and self.approval_date is None:
             # An exact funding date is only meaningful against the approval it
             # follows, and the approval it would otherwise be measured against is

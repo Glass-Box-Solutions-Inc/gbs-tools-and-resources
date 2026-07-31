@@ -203,6 +203,75 @@ fix below is mutation-proven — reverting it turns the named probe red, 19 of 1
    Money-bearing cases only; a wage-free case renders byte-identically, still
    353/345/8/0 against `origin/main`.
 
+### Fixed — the PR #29 review, round 2 (**AJC-43**)
+
+Round 2 audited the round-1 remediation rather than the original branch, which is
+where the next defects were — including one the round-1 fix introduced.
+
+- **A listed history published a fabricated pattern.** Forbidding the shape knobs
+  beside explicit earnings closed a real hole and opened its mirror: the author
+  could no longer state a pattern, so the field default published `regular` over
+  a history alternating $100 and $3,900 a fortnight — coefficient 0.9500, and
+  selected as `irregular_earnings_average`. One history, two contradictory
+  published labels. `pattern` is now derived from the periods by the same
+  threshold `select_method` uses, with `patternSource` recording which happened.
+
+- **`concurrent_aggregate` divided by one employer's weeks.** Right only when
+  both histories cover the same calendar — documented as an assumption, checked
+  by nothing. A two-week primary period paying $2,000 beside a fifty-two-week
+  concurrent history paying $52,000 published an average weekly wage of
+  **$27,000**, capped to the maximum and recorded as `tdBound: max`. The
+  denominator is now the union of covered days, which is also what makes it
+  correct for more than two employers. Every showcase figure is unchanged, which
+  is the evidence it is a no-op where the histories align.
+
+- **Benefit payments could fall past the horizon.** A loadable seed put a
+  temporary-disability payment **588 days** beyond it, and `timeline.clamp` then
+  dated the payment record before its own payment. The rule the advances already
+  followed now covers the periods too, and covers advances by their *paid* date
+  rather than only their schedule.
+
+- **PD advances had no due date.** The previous round's fix went to the half a
+  reviewer had named. Four advances came back dated 08-30, 10-14, 11-28 and
+  11-11, three marked 62 days late, with nothing saying late against what.
+  `PdAdvance.date_due` is carried, printed and published, and the ledger is
+  ordered by it.
+
+- **Stated benefit controls were silently dropped.** `{td_weeks: 0,
+  late_payments: 3}` published `latePayments: 0`; `{td_weeks: 0, td_gap_days:
+  90}` published `gapDays: 0`. Both refused now. Truncation against the case's
+  own runway needs the timeline, so that is a **plan warning** — a seed whose
+  story outruns its calendar is not an impossible seed.
+
+- **`validate --out` certified uncheckable ledgers.** Four PD advances with no
+  payment record passed; a TD event replaced by a bare string passed; PD lateness
+  was never re-derived. All three closed.
+
+- **A settlement could be dated past the anchor.** `approval_date: 2099-01-01`
+  loaded, beside documents dated 2026-01-01 or earlier.
+
+- **The payment-due interval had no authority of its own.**
+  `rate.counselConfirmed` governs the rate basis, so a consumer reading a
+  benefits interval under it was reading a caveat that did not cover it.
+  `tdPaymentDueAuthority` and `tdPaymentDueConfirmed` are published, and the
+  authority prints on the payment record.
+
+#### Compatibility notices (review round 2)
+
+10. **`caseFacts.money.wage` gains `patternSource`**, and `pattern` on a listed
+    history is now derived rather than defaulted — a manifest that published
+    `regular` over an irregular listed history will now publish `irregular`.
+11. **`caseFacts.money.benefits` gains `tdPaymentDueAuthority`,
+    `tdPaymentDueConfirmed`, and `dateDue` on every `pdAdvances` record.**
+12. **Three more seed shapes are refused**, each with a registered, proven
+    followable message: lateness with nothing paid, a gap in a run too short to
+    hold one, and a settlement dated past the anchor. A fourth condition —
+    a control the runway truncates — is reported as a plan warning rather than
+    an error.
+13. **A wage-free case is still byte-identical.** Re-derived against the
+    `origin/main` baseline after round 2: 353 files, 345 identical, 8 changed,
+    0 unexplained; 331 rendered documents byte-identical; substrate diff 0.
+
 ### Added — discovery volumes, anchored letters, and a registry for advice (**AJC-37**, Phase 3c)
 
 - **The ledger, the table of contents and the paper are one number (ISC-126).**
