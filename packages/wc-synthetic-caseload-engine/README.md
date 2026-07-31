@@ -1045,12 +1045,18 @@ caveat that does not reach it.
 
 `approval_date` and `funding_date` are separate fields on the settlement. They are
 separate events in a real file, and the interval between them is the whole
-substance of a late-funding argument — which is also why the release prints all
-three (type, gross, both dates and the lag) in a Settlement Terms table, and why
-`validate --out` refuses a manifest publishing those dates when no
-compromise-and-release or payment record is in the case to read them from. A
-published interval whose evidence is on no page is the asserted figure this
-layer exists to remove.
+substance of a late-funding argument.
+
+Each of those facts is printed by the document that effects it, and by no
+earlier one. A compromise and release is signed before the Board approves it, so
+it carries the settlement type and gross and neither date; the
+`ORDER_APPROVING_SETTLEMENT` is issued *on* the approval date and carries it;
+and a `BENEFIT_PAYMENT_LEDGER` dated after the draft clears carries the funding
+date and the interval. `validate --out` refuses a published date with no
+document dated on or after it, which is the ISC-175 payment-record rule — no
+document is dated before what it prints — stated generally. A published interval
+whose evidence is on no page is the asserted figure this layer exists to remove;
+a page asserting its own future is worse, because it reads as evidence.
 
 `method: concurrent_aggregate` is the one method a seed may not simply assert.
 The other four name an *argument* about how to average a history and can be
@@ -1371,7 +1377,7 @@ wc-caseload validate --out /tmp/wcce-money
 | `new-hire` | Employment starting eleven weeks before the injury | `short_history_projection`, AWW `1323.04` |
 | `two-jobs` | A second, concurrent employer | `concurrent_aggregate`, AWW `1174.78` |
 | `capped-executive` | Earnings above the indemnity ceiling | TD `1539.71` with `tdBound: max` |
-| `neglected-file` | A negligent administrator's payment history | `gapDays: 75`, `latePayments: 3`, `maxDaysLate: 54`, funding lag 118 days |
+| `neglected-file` | A negligent administrator's payment history | `gapDays: 75`, `latePaymentCount: 3`, `maxDaysLate: 54`, funding lag 118 days |
 | `atypical-earner` | The one method the engine will never select | `earning_capacity` with `methodSource: seed`, AWW `1465.00` — the stated figure exactly, with every "considered" operand zero |
 
 The dates of injury span four rate vintages on purpose. A caseload rated under

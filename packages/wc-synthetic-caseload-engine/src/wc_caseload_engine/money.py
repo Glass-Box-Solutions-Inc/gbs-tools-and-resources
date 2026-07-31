@@ -178,8 +178,19 @@ class RateBasis(BaseModel):
     counsel_confirmed: bool = False
     """Whether counsel has verified this binding. False for everything shipped."""
 
-    source: Literal["engine_default_table", "seed"] = "engine_default_table"
-    """Where the numbers came from, so a reader can tell authored from defaulted."""
+    source: Literal["engine_default_table", "seed", "mixed"] = "engine_default_table"
+    """Where the numbers came from, so a reader can tell authored from defaulted.
+
+    Three values, not two, and the third was a review finding. A partial
+    override — ``rate_basis: {td_fraction: 0.5}`` — merges one authored number
+    into five defaulted ones and used to publish ``source: seed`` for the whole
+    binding, beside a ``basisLabel`` still naming the engine vintage the other
+    five came from. As an extraction label that is simply false: an analyzer
+    scored on ``basisSource`` would learn that ``seed`` means "somewhere between
+    one and six of these figures were authored", which is not a fact about
+    anything. ``mixed`` names the shape that actually occurs, and ``seed`` now
+    means what it says — every figure in the binding was authored.
+    """
 
     @model_validator(mode="after")
     def _bounds_are_ordered(self) -> RateBasis:
@@ -329,13 +340,27 @@ def rate_basis_for(doi: dt.date) -> RateBasis:
     return UNCONFIRMED_RATE_TABLE[0]
 
 
+#: The six numbers that make a rate binding. A seed stating all six has authored
+#: the binding; stating some of them has mixed its own figures with the table's.
+_RATE_BASIS_FIGURES: tuple[str, ...] = (
+    "td_fraction",
+    "td_max_weekly",
+    "td_min_weekly",
+    "pd_fraction",
+    "pd_max_weekly",
+    "pd_min_weekly",
+)
+
+
 def _apply_rate_basis_override(basis: RateBasis, seed: CaseSeed) -> RateBasis:
     """Fold a seed's ``rate_basis`` block over the table's answer.
 
     Field by field, so a seed that confirms one number does not have to restate
-    the other five. ``source`` flips to ``seed`` when anything was overridden,
-    because the point of recording the source is telling an authored binding
-    from a defaulted one — and a partially authored one is authored.
+    the other five. ``source`` records which of the three provenances the merged
+    binding actually has: ``seed`` when every figure was authored, ``mixed``
+    when some were, ``engine_default_table`` when none were. The middle value
+    was added by review — a partial override published ``seed`` over five
+    engine numbers, which is a published label no reader could act on.
 
     Two rules keep the provenance honest, and both were written after a probe
     showed the block could lie:
@@ -359,14 +384,7 @@ def _apply_rate_basis_override(basis: RateBasis, seed: CaseSeed) -> RateBasis:
         return basis
 
     changes: dict[str, Any] = {}
-    for name in (
-        "td_fraction",
-        "td_max_weekly",
-        "td_min_weekly",
-        "pd_fraction",
-        "pd_max_weekly",
-        "pd_min_weekly",
-    ):
+    for name in _RATE_BASIS_FIGURES:
         value = getattr(override, name)
         if value is not None:
             changes[name] = money(value) if name.endswith("_weekly") else Decimal(str(value))
@@ -378,7 +396,11 @@ def _apply_rate_basis_override(basis: RateBasis, seed: CaseSeed) -> RateBasis:
         # confirmation flag at whatever the table says, which is always false.
         return basis
 
-    changes["source"] = "seed"
+    # Every numeric figure authored, or only some? The distinction is the whole
+    # content of ``basisSource``. ``authority`` is prose about the numbers rather
+    # than one of them, so it does not make a binding wholly authored.
+    numeric = {name for name in changes if name != "authority"}
+    changes["source"] = "seed" if numeric == set(_RATE_BASIS_FIGURES) else "mixed"
     changes["counsel_confirmed"] = override.counsel_confirmed
     return RateBasis(**{**basis.model_dump(), **changes})
 
@@ -1576,7 +1598,7 @@ GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
         "pdAdvances",
         "pdTotal",
         "gaps",
-        "latePayments",
+        "latePaymentCount",
         "maxDaysLate",
         "gapDays",
         "tdPaymentDueDays",
@@ -1672,7 +1694,11 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
                 }
                 for gap in benefits.gaps
             ],
-            "latePayments": benefits.late_payment_count,
+            # ``latePaymentCount``, not ``latePayments``: ISC-174 moved
+            # ``tdPeriods: 3`` to ``tdPeriodCount`` because a plural name holding
+            # a cardinality is an extraction label that has to break later. This
+            # one was left behind in that rename and found by review.
+            "latePaymentCount": benefits.late_payment_count,
             "maxDaysLate": benefits.max_days_late,
             "gapDays": sum(gap.days for gap in benefits.gaps),
             "tdPaymentDueDays": TD_PAYMENT_DUE_DAYS,

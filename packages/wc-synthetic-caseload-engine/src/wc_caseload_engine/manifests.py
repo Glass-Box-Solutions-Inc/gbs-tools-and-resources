@@ -482,12 +482,14 @@ MONEY_BENEFIT_DOCUMENTS = frozenset(
     }
 )
 
-#: The documents that carry a settlement's own terms.
+#: The compromise-and-release family: the parties' own agreement, which prints
+#: the settlement type and gross.
 #:
-#: The compromise-and-release family, which now prints its approval and funding
-#: dates as well as its gross. Stipulated awards have no release, so a payment
-#: record carries them instead — see :data:`MONEY_BENEFIT_DOCUMENTS`, which the
-#: settlement rule accepts alongside these.
+#: It does **not** carry the approval or funding date, and the first attempt at
+#: this rule was wrong to let it. A release is signed and filed before the Board
+#: approves it — this engine dates one at 2023-11-13 against an approval of
+#: 2023-12-27 — so a release printing its approval asserts an event 44 days in
+#: its own future. See :data:`SETTLEMENT_APPROVAL_DOCUMENTS`.
 SETTLEMENT_DOCUMENTS = frozenset(
     {
         "COMPROMISE_AND_RELEASE",
@@ -499,10 +501,34 @@ SETTLEMENT_DOCUMENTS = frozenset(
     }
 )
 
+#: The document that effects an approval, and therefore the one that can print
+#: its date: the Board issues it *on* that date.
+SETTLEMENT_APPROVAL_DOCUMENTS = frozenset({"ORDER_APPROVING_SETTLEMENT"})
+
+#: The document dated after the settlement draft clears. The order is issued
+#: before funding, so it cannot report funding either; only a ledger written
+#: afterwards can.
+SETTLEMENT_FUNDING_DOCUMENTS = frozenset({"BENEFIT_PAYMENT_LEDGER"})
+
 #: Every method name the ledger may record. Mirrors ``seeds.AWW_METHODS``; a
 #: published method outside it is a label no analyzer could have been trained
 #: on, which makes the eval score meaningless rather than merely wrong.
 MONEY_METHODS = frozenset(AWW_METHODS)
+
+
+def _document_date(doc: dict[str, Any]) -> date | None:
+    """A manifest entry's own date, or ``None`` when it has none to read.
+
+    ``None`` fails the carrier check rather than passing it: a document that
+    cannot say when it was written cannot vouch for when something happened.
+    """
+    raw = doc.get("documentDate")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
 
 
 def _validate_money(
@@ -548,6 +574,21 @@ def _validate_money(
             problems.append(
                 f"{case_label}: caseFacts.money.{key} publishes ungoverned field(s) "
                 f"{', '.join(ungoverned)} — a published fact must be one a document renders"
+            )
+        # And the other direction, which this loop did not check for four review
+        # rounds: the governance table is a promise in both directions. Every
+        # field in it is emitted unconditionally by ``money_manifest_block`` —
+        # nullable ones as ``None``, never absent — so a *missing* key is a
+        # manifest that has lost a label the analyzer is scored on, and it was
+        # being certified clean. Found by review, which reproduced it by
+        # deleting ``settlement.grossAmount``, ``wage.averageWeeklyWage`` and
+        # ``benefits.gaps`` from a valid manifest: all three passed.
+        missing = sorted(set(fields) - set(section))
+        if missing:
+            problems.append(
+                f"{case_label}: caseFacts.money.{key} is missing governed field(s) "
+                f"{', '.join(missing)} — a governed field is published or the case has "
+                "no such group at all"
             )
     if problems:
         return problems
@@ -772,6 +813,12 @@ def _validate_money(
                     f"but approved {approval_raw} — money does not move before the Board "
                     "approves"
                 )
+            # With both dates in hand the lag is derivable, so ``None`` is not a
+            # permitted answer here — only a settlement that has not funded may
+            # leave it unstated. Review found the null slipping through beside
+            # two dates: the interval is the whole substance of a late-funding
+            # argument, and a manifest that has both endpoints and declines to
+            # state the span between them has dropped the fact, not deferred it.
             lag = settlement.get("fundingLagDays")
             if lag is not True and lag is not False and isinstance(lag, int):
                 if lag != (funding - approval).days:
@@ -780,24 +827,36 @@ def _validate_money(
                         f"{lag} but was approved {approval_raw} and funded {funding_raw} "
                         f"({(funding - approval).days} day(s) apart)"
                     )
-            elif lag is not None:
+            else:
                 problems.append(
                     f"{case_label}: caseFacts.money.settlement.fundingLagDays is {lag!r}, "
-                    "expected a whole number of days"
+                    f"but it was approved {approval_raw} and funded {funding_raw} — with "
+                    "both dates the interval is a fact, not an option"
                 )
-        # A settlement's approval and funding dates are read off the release the
-        # Board approved, or off the payment record that funds it. Published with
-        # neither in the folder they are the asserted figures this layer removes,
-        # in the one part of the file where the interval between two dates is the
-        # whole argument.
-        if (approval_raw is not None or funding_raw is not None) and not (
-            subtypes & (SETTLEMENT_DOCUMENTS | MONEY_BENEFIT_DOCUMENTS)
+        # A published date needs a document that could have printed it, and
+        # "could have" is a claim about the document's own date as much as its
+        # subtype. The first cut of this rule checked only the subtype and
+        # accepted a release dated 44 days before the approval it would have had
+        # to print, and a temporary-disability payment record dated two years
+        # before it. An anachronism is worse evidence than a missing line,
+        # because it reads as evidence.
+        for label, raw, when, carriers in (
+            ("approval", approval_raw, approval, SETTLEMENT_APPROVAL_DOCUMENTS),
+            ("funding", funding_raw, funding, SETTLEMENT_FUNDING_DOCUMENTS),
         ):
-            problems.append(
-                f"{case_label}: caseFacts publishes settlement approval or funding dates "
-                "but the case holds neither a settlement document nor a payment record to "
-                "read them from"
-            )
+            if raw is None or when is None:
+                continue
+            if not any(
+                doc.get("subtype") in carriers and _document_date(doc) is not None
+                and _document_date(doc) >= when
+                for doc in documents
+                if isinstance(doc, dict)
+            ):
+                problems.append(
+                    f"{case_label}: caseFacts.money.settlement publishes a {label} date of "
+                    f"{raw} but the case holds no {'/'.join(sorted(carriers))} dated on or "
+                    f"after it — a document cannot report its own future"
+                )
     return problems
 
 

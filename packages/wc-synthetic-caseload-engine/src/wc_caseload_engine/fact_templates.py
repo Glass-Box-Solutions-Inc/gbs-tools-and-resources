@@ -780,8 +780,10 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
     return story
 
 
-def _append_settlement_terms(story: list[Any], money: MoneyFacts, styles: Any) -> list[Any]:
-    """Print the approval and funding dates on the release that carries them.
+def _append_settlement_terms(
+    story: list[Any], money: MoneyFacts, styles: Any, scope: str
+) -> list[Any]:
+    """Print the settlement terms **the document at hand could know**.
 
     Forcing the gross was not enough. ``approvalDate``, ``fundingDate`` and
     ``fundingLagDays`` were published as ground truth and appeared on no page in
@@ -790,11 +792,29 @@ def _append_settlement_terms(story: list[Any], money: MoneyFacts, styles: Any) -
     the case paid benefits. Measured — a settled case with no temporary or
     permanent disability published all three and ``validate --out`` passed it.
 
-    The interval between approval and funding is the whole substance of a
-    late-funding argument, which is the stated reason these are two fields
-    rather than one. A corpus that publishes the interval and prints it nowhere
-    has the label without the evidence, which is the failure this layer exists
-    to remove.
+    The first fix put all three on the compromise and release, and that was
+    wrong in a way worth recording. A C&R is the parties' agreement, signed and
+    filed *before* the Board approves it — this engine dates one at 2023-11-13
+    against an approval of 2023-12-27 — so printing the approval on it produced
+    a document asserting an event 44 days in its own future. An anachronism is
+    not weaker evidence than a missing line; it is worse, because it reads as
+    evidence. The date spine's rule for payment records (ISC-175, no document is
+    dated before what it prints) is a rule about documents, not about payment
+    records.
+
+    So each date is printed by the document that effects it, and ``scope`` names
+    how far along the settlement that document sits:
+
+    ``agreement``
+        The release itself: type and gross, which are what the parties agreed.
+    ``approval``
+        The order approving the settlement, dated on the approval date it
+        carries.
+    ``funding``
+        The payment ledger, dated after the money moved, and therefore the only
+        document in the file that can report the interval between approval and
+        funding — which is the whole substance of a late-funding argument and
+        the stated reason those are two fields rather than one.
     """
     from reportlab.lib.units import inch
     from reportlab.platypus import Spacer
@@ -807,23 +827,31 @@ def _append_settlement_terms(story: list[Any], money: MoneyFacts, styles: Any) -
         ["Settlement Terms", ""],
         ["Settlement Type:", settlement.kind],
         ["Settlement Gross:", f"${settlement.gross_amount:,.2f}"],
-        [
-            "Date Approved:",
-            settlement.approval_date.isoformat() if settlement.approval_date else "-",
-        ],
-        [
-            "Date Funded:",
-            settlement.funding_date.isoformat()
-            if settlement.funding_date
-            else "not yet funded",
-        ],
-        [
-            "Days From Approval To Funding:",
-            str(settlement.funding_lag_days)
-            if settlement.funding_lag_days is not None
-            else "-",
-        ],
     ]
+    if scope in ("approval", "funding"):
+        rows.append(
+            [
+                "Date Approved:",
+                settlement.approval_date.isoformat() if settlement.approval_date else "-",
+            ]
+        )
+    if scope == "funding":
+        rows.append(
+            [
+                "Date Funded:",
+                settlement.funding_date.isoformat()
+                if settlement.funding_date
+                else "not yet funded",
+            ]
+        )
+        rows.append(
+            [
+                "Days From Approval To Funding:",
+                str(settlement.funding_lag_days)
+                if settlement.funding_lag_days is not None
+                else "-",
+            ]
+        )
     story.append(Spacer(1, 0.2 * inch))
     story.append(_money_table(rows, [2.6 * inch, 3.4 * inch], styles))
     return story
@@ -1538,6 +1566,8 @@ def build_fact_aware_templates() -> dict[str, type]:
 
     wage_module = import_substrate("pdf_templates.employment.wage_statement")
     cr_module = import_substrate("pdf_templates.legal.compromise_and_release")
+    minutes_module = import_substrate("pdf_templates.legal.minutes_orders")
+    billing_module = import_substrate("pdf_templates.medical.billing_records")
 
     class FactAwareWageStatement(_SpecCapture, wage_module.WageStatement):  # type: ignore[misc,name-defined]
         """Prints the ledger's earnings and rate instead of inventing both.
@@ -1626,7 +1656,43 @@ def build_fact_aware_templates() -> dict[str, type]:
                     expected=list(_SUBSTRATE_SETTLEMENT_RANGE),
                     gross=str(money.settlement.gross_amount),
                 )
-            return _append_settlement_terms(story, money, self.styles)
+            return _append_settlement_terms(story, money, self.styles, "agreement")
+
+    class FactAwareOrderApprovingSettlement(_SpecCapture, minutes_module.MinutesOrders):  # type: ignore[misc,name-defined]
+        """The order that approves the settlement prints the approval it effects.
+
+        This is the document the Board issues, and the planner dates it on the
+        approval date itself, so it is the one page in the folder that can carry
+        that date without asserting its own future. Before this class existed the
+        date was published in ``caseFacts`` and printed on the release — which
+        the same planner dates weeks *earlier* — so the corpus held an extraction
+        label whose only evidence was an anachronism.
+        """
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            story = list(super().build_story(doc_spec))
+            money = _money_of(self)
+            if money is None or money.settlement is None:
+                return story
+            return _append_settlement_terms(story, money, self.styles, "approval")
+
+    class FactAwareBenefitPaymentLedger(_SpecCapture, billing_module.BillingRecords):  # type: ignore[misc,name-defined]
+        """The ledger dated after the money moved is what reports that it moved.
+
+        ``fundingDate`` and ``fundingLagDays`` cannot honestly appear on the
+        release (signed before approval) or on the order (issued before the
+        draft clears). The planner adds this ledger a week after funding for any
+        settlement that funded, which makes it the only document in the file
+        whose own date is later than the event it reports — the condition the
+        other two fail.
+        """
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            story = list(super().build_story(doc_spec))
+            money = _money_of(self)
+            if money is None or money.settlement is None:
+                return story
+            return _append_settlement_terms(story, money, self.styles, "funding")
 
     return {
         "WAGE_STATEMENTS_PRE_INJURY": FactAwareWageStatement,
@@ -1637,6 +1703,8 @@ def build_fact_aware_templates() -> dict[str, type]:
         "PD_PAYMENT_RECORD_ADVANCE": FactAwareWageStatement,
         "PD_PAYMENT_RECORD_ONGOING": FactAwareWageStatement,
         "PD_PAYMENT_RECORD_FINAL": FactAwareWageStatement,
+        "ORDER_APPROVING_SETTLEMENT": FactAwareOrderApprovingSettlement,
+        "BENEFIT_PAYMENT_LEDGER": FactAwareBenefitPaymentLedger,
         "COMPROMISE_AND_RELEASE": FactAwareCompromiseAndRelease,
         "COMPROMISE_AND_RELEASE_STANDARD": FactAwareCompromiseAndRelease,
         "COMPROMISE_AND_RELEASE_PD_ONLY": FactAwareCompromiseAndRelease,

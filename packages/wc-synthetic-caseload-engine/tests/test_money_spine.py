@@ -115,6 +115,23 @@ def _facts(scenario: dict[str, Any] | None, diligence: str = "ordinary", **kwarg
 
 
 WAGES = {"pattern": "regular", "base_weekly_wage": 1000.0}
+
+def _docs(*subtypes: str, carriers: bool = True) -> list[dict[str, Any]]:
+    """Manifest-shaped document entries for the validator's own probes.
+
+    Dated at the anchor, which is on or after every settlement date a seed can
+    state — ISC-188 refuses a later one — so the settlement carrier rule is
+    satisfied by construction. That matters because the default probe seed
+    resolves by compromise and release: without the carriers every probe in this
+    class would fail on the settlement rule instead of the rule it names, which
+    is the "a probe another rule can satisfy" trap this review has already hit
+    once.
+    """
+    names = list(subtypes)
+    if carriers:
+        names += ["ORDER_APPROVING_SETTLEMENT", "BENEFIT_PAYMENT_LEDGER"]
+    return [{"subtype": name, "documentDate": "2026-01-01"} for name in names]
+
 """A plain, steady history. The baseline every opposite draw varies from."""
 
 CONFIRMED_BASIS: dict[str, Any] = {
@@ -1612,6 +1629,114 @@ class TestThePlan:
 # ---------------------------------------------------------------------------
 
 
+@requires_substrate
+class TestTheFloorGuaranteesTheSettlementCarriers:
+    """A published date needs a document dated on or after the event it reports.
+
+    The ISC-92.1 pattern — a stated scenario fact guarantees the document that
+    carries it — reaches the settlement. Neither carrier could be the release:
+    the parties sign before the Board approves, and the Board approves before
+    the draft clears.
+    """
+
+    def test_a_settled_case_gets_carriers_that_could_know_its_dates(self) -> None:
+        from wc_caseload_engine.planner import (
+            MONEY_APPROVAL_SUBTYPE,
+            MONEY_FUNDING_SUBTYPE,
+        )
+
+        # Derived dates *and* authored ones. Mutation testing found this sweep
+        # blind on its first pass: for a derived settlement the walk happens to
+        # date its own order on the approval day, so the floor looked redundant.
+        # An authored approval is where they diverge — the walk dated one order
+        # 2021-10-09 against an authored approval of 2024-06-03, nearly three
+        # years early, on 80 seeds. The floor's forward re-dating is what closes
+        # that, and nothing was exercising it.
+        settlements: list[dict[str, Any] | None] = [
+            None,
+            {"gross_amount": 88000, "approval_date": "2024-06-03"},
+            {
+                "gross_amount": 88000,
+                "approval_date": "2025-01-06",
+                "funding_date": "2025-02-05",
+            },
+        ]
+        seen = {"approval": 0, "funding": 0}
+        for offset in range(5):
+            for resolution in ("c_and_r", "stipulations"):
+                for settlement_scenario in settlements:
+                    scenario: dict[str, Any] = {
+                        "wages": WAGES,
+                        "benefits": {"td_weeks": 10},
+                    }
+                    if settlement_scenario is not None:
+                        scenario["settlement"] = settlement_scenario
+                    plan = build_case_plan(
+                        parse_case_seed(
+                            _seed_body(
+                                scenario,
+                                rng_seed=1000 + offset,
+                                lifecycle={
+                                    "target_stage": "resolved",
+                                    "eval_type": "qme",
+                                    "resolution": {"type": resolution},
+                                },
+                            )
+                        )
+                    )
+                    settlement = plan.money_facts.settlement
+                    assert settlement is not None
+                    dated: dict[str, list[date]] = {}
+                    for candidate in plan.documents:
+                        dated.setdefault(candidate.subtype, []).append(
+                            candidate.doc_date
+                        )
+
+                    where = f"seed {1000 + offset}/{resolution}/{settlement_scenario}"
+                    if settlement.approval_date is not None:
+                        assert any(
+                            when >= settlement.approval_date
+                            for when in dated.get(MONEY_APPROVAL_SUBTYPE, [])
+                        ), (
+                            f"{where}: approval {settlement.approval_date} has no "
+                            f"order dated on or after it — "
+                            f"{dated.get(MONEY_APPROVAL_SUBTYPE, [])}"
+                        )
+                        seen["approval"] += 1
+                    if settlement.funding_date is not None:
+                        assert any(
+                            when >= settlement.funding_date
+                            for when in dated.get(MONEY_FUNDING_SUBTYPE, [])
+                        ), (
+                            f"{where}: funding {settlement.funding_date} has no "
+                            f"ledger dated on or after it — "
+                            f"{dated.get(MONEY_FUNDING_SUBTYPE, [])}"
+                        )
+                        seen["funding"] += 1
+        # A sweep that reached neither branch would pass vacuously.
+        assert seen["approval"] >= 30 and seen["funding"] >= 20, seen
+
+    def test_a_case_that_never_settled_gets_neither(self) -> None:
+        """The opposite draw: the floor adds carriers for a fact, not by habit."""
+        from wc_caseload_engine.planner import (
+            MONEY_APPROVAL_SUBTYPE,
+            MONEY_FUNDING_SUBTYPE,
+        )
+
+        plan = build_case_plan(
+            parse_case_seed(
+                _seed_body(
+                    {"wages": WAGES},
+                    lifecycle={"target_stage": "discovery", "eval_type": "qme"},
+                )
+            )
+        )
+        assert plan.money_facts.settlement is None
+        subtypes = {candidate.subtype for candidate in plan.documents}
+        assert MONEY_FUNDING_SUBTYPE not in subtypes
+        assert MONEY_APPROVAL_SUBTYPE not in subtypes
+
+
 class TestPublication:
     """A published fact is a promise the documents keep."""
 
@@ -1787,7 +1912,7 @@ class TestPublication:
         assert Decimal(benefits["tdTotal"]) == sum(
             Decimal(period["amount"]) for period in benefits["tdPeriods"]
         )
-        assert benefits["latePayments"] == sum(
+        assert benefits["latePaymentCount"] == sum(
             1 for period in benefits["tdPeriods"] if period["daysLate"]
         ) + sum(1 for advance in benefits["pdAdvances"] if advance["daysLate"])
 
@@ -1975,17 +2100,24 @@ class TestTheDocumentsCarryTheNumbers:
                     "nothing behind it"
                 )
 
-    def test_the_release_prints_its_own_approval_and_funding_dates(
+    def test_each_settlement_date_is_printed_by_a_document_that_could_know_it(
         self, tmp_path: Path
     ) -> None:
-        """Forcing the gross was not enough for the group's other three fields.
+        """Every governed settlement field reaches a page, and no page reports its own future.
 
-        `approvalDate`, `fundingDate` and `fundingLagDays` were published as
-        ground truth and appeared on no page: the substrate's release leaves its
-        approval line blank and carries no funding date at all. The interval
-        between the two is the whole substance of a late-funding argument, which
-        is the stated reason they are two fields — so a corpus publishing the
-        interval and printing it nowhere has the label without the evidence.
+        Two rules that only mean something together. `approvalDate`,
+        `fundingDate` and `fundingLagDays` were published as ground truth and
+        appeared on no page: the substrate's release leaves its approval line
+        blank and carries no funding date at all.
+
+        The first fix put all three on the release, and review was right to
+        refuse it. A compromise and release is signed and filed *before* the
+        Board approves it — the planner dates one 44 days ahead of its own
+        approval — so a release printing that date asserts an event in its own
+        future. An anachronism is worse evidence than a blank line, because it
+        reads as evidence. So the release carries what the parties agreed, the
+        order carries the approval it effects, and a ledger dated after the
+        draft cleared carries the funding and the interval.
         """
         from wc_caseload_engine.money import GOVERNED_MONEY_FIELDS
 
@@ -1999,30 +2131,56 @@ class TestTheDocumentsCarryTheNumbers:
                     "funding_date": "2025-02-05",
                 },
             },
-            documents={
-                "include_only": [MONEY_WAGE_SUBTYPE, "COMPROMISE_AND_RELEASE_STANDARD"],
-                "format_mix": {"pdf": 1.0},
-            },
+            documents={"format_mix": {"pdf": 1.0}},
         )
         block = manifest["caseFacts"]["money"]["settlement"]
-        page = " ".join(texts["COMPROMISE_AND_RELEASE_STANDARD"].replace(",", "").split())
-        labels = {
-            "kind": "Settlement Type:",
-            "grossAmount": "Settlement Gross:",
-            "approvalDate": "Date Approved:",
-            "fundingDate": "Date Funded:",
-            "fundingLagDays": "Days From Approval To Funding:",
+        assert block["fundingLagDays"] == 30
+
+        # Which document is allowed to print which field. The keys cover
+        # GOVERNED_MONEY_FIELDS["settlement"] exactly, so a sixth field cannot be
+        # added to the group without a decision about who prints it.
+        carried = {
+            "kind": ("COMPROMISE_AND_RELEASE_STANDARD", "Settlement Type:"),
+            "grossAmount": ("COMPROMISE_AND_RELEASE_STANDARD", "Settlement Gross:"),
+            "approvalDate": ("ORDER_APPROVING_SETTLEMENT", "Date Approved:"),
+            "fundingDate": ("BENEFIT_PAYMENT_LEDGER", "Date Funded:"),
+            "fundingLagDays": (
+                "BENEFIT_PAYMENT_LEDGER",
+                "Days From Approval To Funding:",
+            ),
         }
-        assert set(GOVERNED_MONEY_FIELDS["settlement"]) <= set(labels)
-        for field, label in labels.items():
-            assert label in page, f"the release lost the {label!r} row"
+        assert set(GOVERNED_MONEY_FIELDS["settlement"]) == set(carried)
+
+        dates = {
+            d["subtype"]: date.fromisoformat(d["documentDate"])
+            for d in manifest["documents"]
+        }
+        for field, (subtype, label) in carried.items():
+            assert subtype in texts, f"no {subtype} in the folder to carry {field}"
+            page = " ".join(texts[subtype].replace(",", "").split())
+            assert label in page, f"{subtype} lost the {label!r} row"
             value = " ".join(str(block[field]).replace(",", "").split())
             after = page.split(label, 1)[1][: len(value) + 60]
             assert value in after, (
                 f"caseFacts.money.settlement.{field} publishes {block[field]!r}, which "
-                f"does not appear after its own {label!r} row on the release"
+                f"does not appear after its own {label!r} row on the {subtype}"
             )
-        assert block["fundingLagDays"] == 30
+            # The carrier's own date is on or after the event it reports, which
+            # is the half of the rule the first fix failed.
+            if field.endswith("Date"):
+                assert dates[subtype] >= date.fromisoformat(block[field]), (
+                    f"{subtype} is dated {dates[subtype]} and prints a {field} of "
+                    f"{block[field]} — a document cannot report its own future"
+                )
+
+        # And the opposite draw: the release, which is dated before both events,
+        # names neither of them.
+        release = " ".join(texts["COMPROMISE_AND_RELEASE_STANDARD"].split())
+        assert dates["COMPROMISE_AND_RELEASE_STANDARD"] < date.fromisoformat(
+            block["approvalDate"]
+        )
+        assert "Date Approved:" not in release
+        assert "Date Funded:" not in release
 
     def test_the_wage_statement_prints_the_periods_the_average_is_made_of(
         self, tmp_path: Path
@@ -2121,6 +2279,127 @@ class TestTheDocumentsCarryTheNumbers:
 
 
 @requires_substrate
+class TestTheGovernanceTableBindsBothWays:
+    """A governance table that only refuses extras is half a table.
+
+    For four review rounds the loop checked `set(section) - set(fields)` and
+    nothing else, so deleting `settlement.grossAmount`, `wage.averageWeeklyWage`
+    or `benefits.gaps` from a valid manifest was certified clean. Every field in
+    the table is emitted unconditionally — nullable ones as `None`, never absent
+    — so a missing key is a lost extraction label, not an optional one.
+    """
+
+    @staticmethod
+    def _block() -> dict[str, Any]:
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {"td_weeks": 12, "pd_advances": 2},
+                "settlement": {
+                    "gross_amount": 88000,
+                    "approval_date": "2025-01-06",
+                    "funding_date": "2025-02-05",
+                },
+            }
+        )
+        return {"money": money_manifest_block(facts)}
+
+    def test_every_governed_field_is_required_not_merely_permitted(self) -> None:
+        from wc_caseload_engine.manifests import _validate_money
+        from wc_caseload_engine.money import GOVERNED_MONEY_FIELDS
+
+        documents = _docs(MONEY_WAGE_SUBTYPE, MONEY_TD_SUBTYPE, MONEY_PD_SUBTYPE)
+        assert not _validate_money(self._block(), documents, "c")
+
+        # Every field of every group, off the table rather than by hand — the
+        # ISC-177 lesson, applied to the check that names the table.
+        checked = 0
+        for group, fields in GOVERNED_MONEY_FIELDS.items():
+            for field in fields:
+                block = self._block()
+                assert field in block["money"][group], (
+                    f"{group}.{field} is governed but not published, so the "
+                    "table and the publisher disagree"
+                )
+                del block["money"][group][field]
+                problems = _validate_money(block, documents, "c")
+                assert any(
+                    "missing governed field" in problem and field in problem
+                    for problem in problems
+                ), f"deleting {group}.{field} was accepted: {problems}"
+                checked += 1
+        assert checked == sum(len(f) for f in GOVERNED_MONEY_FIELDS.values())
+
+    def test_a_lag_between_two_stated_dates_is_a_fact_not_an_option(self) -> None:
+        from wc_caseload_engine.manifests import _validate_money
+
+        documents = _docs(MONEY_WAGE_SUBTYPE, MONEY_TD_SUBTYPE, MONEY_PD_SUBTYPE)
+        block = self._block()
+        block["money"]["settlement"]["fundingLagDays"] = None
+        assert any(
+            "the interval is a fact" in problem
+            for problem in _validate_money(block, documents, "c")
+        )
+        # The opposite draw: with no funding date, None is the honest answer.
+        unfunded = self._block()
+        unfunded["money"]["settlement"]["fundingDate"] = None
+        unfunded["money"]["settlement"]["fundingLagDays"] = None
+        assert not _validate_money(unfunded, documents, "c")
+
+
+@requires_substrate
+class TestTheBasisSaysHowMuchOfItWasAuthored:
+    """`basisSource` had two values for three situations.
+
+    A partial override — one authored figure merged into five defaulted ones —
+    published `source: seed` for the whole binding, beside a `basisLabel` still
+    naming the engine vintage the other five came from. An analyzer scored on
+    that label would be learning that `seed` means "between one and six of these
+    were authored", which is not a fact about anything.
+    """
+
+    def test_the_source_names_how_much_the_seed_actually_stated(self) -> None:
+        every = {
+            "td_fraction": 0.5,
+            "pd_fraction": 0.5,
+            "td_max_weekly": 900,
+            "td_min_weekly": 100,
+            "pd_max_weekly": 200,
+            "pd_min_weekly": 50,
+        }
+        cases = [
+            (None, "engine_default_table"),
+            ({"td_fraction": 0.5}, "mixed"),
+            ({"td_max_weekly": 900, "td_min_weekly": 100}, "mixed"),
+            (every, "seed"),
+            # Authority is prose *about* the numbers, not one of them, so it
+            # cannot promote a partial binding to a wholly authored one.
+            (dict(every, authority="Board bulletin 2021-04"), "seed"),
+            ({"td_fraction": 0.5, "authority": "Board bulletin 2021-04"}, "mixed"),
+        ]
+        for override, expected in cases:
+            wages = dict(WAGES) if override is None else dict(WAGES, rate_basis=override)
+            rate = money_manifest_block(_facts({"wages": wages}))["rate"]
+            assert rate["basisSource"] == expected, (
+                f"rate_basis={override!r} published basisSource "
+                f"{rate['basisSource']!r}, expected {expected!r}"
+            )
+
+    def test_a_partial_override_keeps_the_figures_it_did_not_state(self) -> None:
+        """`mixed` is only honest if it is describing a real mixture."""
+        from wc_caseload_engine.money import rate_basis_for
+
+        table = rate_basis_for(date(2021, 6, 14))
+        basis = _facts(
+            {"wages": dict(WAGES, rate_basis={"td_fraction": 0.5})}
+        ).wages.rate.basis
+        assert basis.td_fraction == Decimal("0.5")
+        for field in ("pd_fraction", "td_max_weekly", "td_min_weekly",
+                      "pd_max_weekly", "pd_min_weekly"):
+            assert getattr(basis, field) == getattr(table, field)
+
+
+@requires_substrate
 class TestASeedWithoutWagesProducesNoMoneyArtifacts:
     """ISC-21.5's shape, applied to money. Negative grep plus a code path.
 
@@ -2186,7 +2465,17 @@ class TestASeedWithoutWagesProducesNoMoneyArtifacts:
             _seed_body(
                 {"wages": WAGES, "benefits": {"td_weeks": 20, "td_gap_days": 45}},
                 documents={
-                    "include_only": [MONEY_WAGE_SUBTYPE, "TD_PAYMENT_RECORD_ONGOING"],
+                    # The carriers are part of a settled case's evidence, so an
+                    # include_only that drops them produces a folder that cannot
+                    # support its own manifest — which `validate --out` now says,
+                    # correctly, and which is the same rule that has always
+                    # applied to the wage statement.
+                    "include_only": [
+                        MONEY_WAGE_SUBTYPE,
+                        "TD_PAYMENT_RECORD_ONGOING",
+                        "ORDER_APPROVING_SETTLEMENT",
+                        "BENEFIT_PAYMENT_LEDGER",
+                    ],
                     "format_mix": {"pdf": 1.0},
                 },
             )
@@ -2247,7 +2536,15 @@ class TestTheValidatorRefusesAnUncheckableClaim:
             _seed_body(
                 {"wages": WAGES, "benefits": {"td_weeks": 20}},
                 documents={
-                    "include_only": [MONEY_WAGE_SUBTYPE, "TD_PAYMENT_RECORD_ONGOING"],
+                    # A settled case's approval and funding dates are evidenced
+                    # by the order and the ledger, so an include_only that drops
+                    # them yields a folder that cannot support its own manifest.
+                    "include_only": [
+                        MONEY_WAGE_SUBTYPE,
+                        "TD_PAYMENT_RECORD_ONGOING",
+                        "ORDER_APPROVING_SETTLEMENT",
+                        "BENEFIT_PAYMENT_LEDGER",
+                    ],
                     "format_mix": {"pdf": 1.0},
                 },
             )
@@ -2325,7 +2622,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         block = {"money": money_manifest_block(facts)}
         assert block["money"]["benefits"]["pdAdvanceCount"] > 0
         problems = _validate_money(
-            block, [{"subtype": MONEY_WAGE_SUBTYPE}], "probe-case"
+            block, _docs(MONEY_WAGE_SUBTYPE), "probe-case"
         )
         # "benefit event", not "payment record": the settlement rule added later
         # also says "payment record", and a probe a *different* rule can satisfy
@@ -2338,7 +2635,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
             "benefit event" in p
             for p in _validate_money(
                 block,
-                [{"subtype": MONEY_WAGE_SUBTYPE}, {"subtype": MONEY_PD_SUBTYPE}],
+                _docs(MONEY_WAGE_SUBTYPE, MONEY_PD_SUBTYPE),
                 "probe-case",
             )
         )
@@ -2349,7 +2646,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
 
         facts = _facts({"wages": WAGES, "benefits": {"td_weeks": 8}})
         block = {"money": money_manifest_block(facts)}
-        documents = [{"subtype": MONEY_WAGE_SUBTYPE}, {"subtype": MONEY_TD_SUBTYPE}]
+        documents = _docs(MONEY_WAGE_SUBTYPE, MONEY_TD_SUBTYPE)
         assert not _validate_money(block, documents, "probe-case")
 
         block["money"]["benefits"]["tdPeriods"] = ["garbage"]
@@ -2367,7 +2664,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         from wc_caseload_engine.manifests import _validate_money
 
         facts = _facts({"wages": WAGES, "benefits": {"td_weeks": 12, "td_gap_days": 30}})
-        documents = [{"subtype": MONEY_WAGE_SUBTYPE}, {"subtype": MONEY_TD_SUBTYPE}]
+        documents = _docs(MONEY_WAGE_SUBTYPE, MONEY_TD_SUBTYPE)
         assert not _validate_money({"money": money_manifest_block(facts)}, documents, "c")
 
         broken_count = {"money": money_manifest_block(facts)}
@@ -2411,7 +2708,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
 
         facts = _facts({"wages": WAGES, "benefits": {"td_weeks": 12}})
         block = {"money": money_manifest_block(facts)}
-        documents = [{"subtype": MONEY_WAGE_SUBTYPE}, {"subtype": MONEY_TD_SUBTYPE}]
+        documents = _docs(MONEY_WAGE_SUBTYPE, MONEY_TD_SUBTYPE)
         assert not _validate_money(block, documents, "c")
 
         block["money"]["benefits"]["tdPeriods"][0]["datePaid"] = None
@@ -2434,11 +2731,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
                              "max_days_late": 30},
             }
         )
-        documents = [
-            {"subtype": MONEY_WAGE_SUBTYPE},
-            {"subtype": MONEY_TD_SUBTYPE},
-            {"subtype": MONEY_PD_SUBTYPE},
-        ]
+        documents = _docs(MONEY_WAGE_SUBTYPE, MONEY_TD_SUBTYPE, MONEY_PD_SUBTYPE)
         for array_key, word in (("tdPeriods", "temporary"), ("pdAdvances", "permanent")):
             block = {"money": money_manifest_block(facts)}
             assert not _validate_money(block, documents, "probe-case")
@@ -2460,11 +2753,9 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         from wc_caseload_engine.manifests import _validate_money
 
         facts = _facts({"wages": WAGES, "settlement": {"gross_amount": 88000}})
-        documents = [
-            {"subtype": MONEY_WAGE_SUBTYPE},
-            {"subtype": MONEY_TD_SUBTYPE},
-            {"subtype": "COMPROMISE_AND_RELEASE_STANDARD"},
-        ]
+        documents = _docs(
+            MONEY_WAGE_SUBTYPE, MONEY_TD_SUBTYPE, "COMPROMISE_AND_RELEASE_STANDARD"
+        )
         assert not _validate_money({"money": money_manifest_block(facts)}, documents, "c")
 
         cases: list[tuple[str, Any, str]] = [
@@ -2482,12 +2773,15 @@ class TestTheValidatorRefusesAnUncheckableClaim:
             problems = _validate_money(block, documents, "c")
             assert any(expected in p for p in problems), (label, problems)
 
-    def test_settlement_dates_need_a_document_that_carries_them(self) -> None:
-        """Approval and funding are read off a release or a payment record.
+    def test_settlement_dates_need_a_document_that_could_know_them(self) -> None:
+        """A carrier is a subtype *and* a date, and the first cut checked only the subtype.
 
-        The interval between them is the stated reason they are two fields
-        rather than one, and a settled case with no benefits published all three
-        with neither document in the folder — `validate --out` passed it.
+        A settled case with no benefits published all three fields with no
+        carrying document at all — `validate --out` passed it. The fix for that
+        accepted a release or any payment record, and review showed both are
+        anachronistic: the release is signed before the Board approves, and a
+        temporary-disability payment record is dated years before the settlement
+        it would be vouching for. Reproduced here at both ends.
         """
         from wc_caseload_engine.manifests import _validate_money
 
@@ -2505,29 +2799,69 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         block = {"money": money_manifest_block(facts)}
         assert block["money"]["settlement"]["approvalDate"]
 
-        problems = _validate_money(block, [{"subtype": MONEY_WAGE_SUBTYPE}], "c")
-        assert any("read them from" in p for p in problems), problems
+        def problems(docs: list[dict[str, Any]]) -> list[str]:
+            return [
+                p
+                for p in _validate_money(block, docs, "c")
+                if "cannot report its own future" in p
+            ]
 
-        # Both carriers are accepted: the release the Board approved…
-        assert not any(
-            "read them from" in p
-            for p in _validate_money(
-                block,
+        # Nothing in the folder to read either date from.
+        assert len(problems(_docs(MONEY_WAGE_SUBTYPE, carriers=False))) == 2
+
+        # The release and a payment record are not carriers, however they are
+        # dated: neither is the document that effects either event.
+        assert len(
+            problems(
                 [
-                    {"subtype": MONEY_WAGE_SUBTYPE},
-                    {"subtype": "COMPROMISE_AND_RELEASE_STANDARD"},
-                ],
-                "c",
+                    {"subtype": MONEY_WAGE_SUBTYPE, "documentDate": "2026-01-01"},
+                    {
+                        "subtype": "COMPROMISE_AND_RELEASE_STANDARD",
+                        "documentDate": "2026-01-01",
+                    },
+                    {"subtype": MONEY_TD_SUBTYPE, "documentDate": "2026-01-01"},
+                ]
             )
+        ) == 2
+
+        # The right subtypes, dated before the events they would report, are
+        # still refused — this is the half of the rule the first fix lacked.
+        assert len(
+            problems(
+                [
+                    {"subtype": MONEY_WAGE_SUBTYPE, "documentDate": "2021-01-01"},
+                    {
+                        "subtype": "ORDER_APPROVING_SETTLEMENT",
+                        "documentDate": "2024-12-31",
+                    },
+                    {"subtype": "BENEFIT_PAYMENT_LEDGER", "documentDate": "2025-02-04"},
+                ]
+            )
+        ) == 2
+
+        # A document with no date of its own vouches for nothing. The wage
+        # statement rides along because the AWW rule returns before this one,
+        # and a probe that stops at an earlier rule is not testing this one.
+        assert (
+            len(
+                problems(
+                    [
+                        {"subtype": MONEY_WAGE_SUBTYPE, "documentDate": "2021-01-01"},
+                        {"subtype": "ORDER_APPROVING_SETTLEMENT"},
+                        {"subtype": "BENEFIT_PAYMENT_LEDGER"},
+                    ]
+                )
+            )
+            == 2
         )
-        # …and the payment record, which is what a stipulated award has instead.
-        assert not any(
-            "read them from" in p
-            for p in _validate_money(
-                block,
-                [{"subtype": MONEY_WAGE_SUBTYPE}, {"subtype": MONEY_TD_SUBTYPE}],
-                "c",
-            )
+
+        # And the control: the right subtypes, dated on the events themselves.
+        assert not problems(
+            [
+                {"subtype": MONEY_WAGE_SUBTYPE, "documentDate": "2021-01-01"},
+                {"subtype": "ORDER_APPROVING_SETTLEMENT", "documentDate": "2025-01-06"},
+                {"subtype": "BENEFIT_PAYMENT_LEDGER", "documentDate": "2025-02-05"},
+            ]
         )
 
     def test_funding_before_approval_is_refused(self, tmp_path: Path) -> None:

@@ -340,6 +340,56 @@ attaches additively in Wave 2.
     `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
     at 353/345/8/0.
 
+### Fixed — the PR #29 review, round 5 (**AJC-43**)
+
+Round 5 audited round 4 and overturned its headline fix. Round 4 was right that
+three published dates appeared on no page, and wrong about the remedy: it put
+them on the nearest document that mentioned settlements rather than on the
+document that effects each event. Four findings, all reproduced locally.
+
+- **A release printed an approval 44 days in its own future.** A compromise and
+  release is signed and filed *before* the Board approves it — the planner dates
+  one at 2023-11-13 against an approval of 2023-12-27 and a funding of
+  2024-01-10 — and `validate --out` passed it. The alternative round 4 also
+  admitted was worse: a temporary-disability payment record dated 2021-09-01
+  carrying the same 2023 approval. An anachronism is not weaker evidence than a
+  missing line; it is worse, because it reads as evidence. Each date now belongs
+  to the document that effects it, and the money floor guarantees the carriers.
+
+- **The governance table only bound one way.** The loop refused ungoverned
+  extras and never required the governed fields, so deleting
+  `settlement.grossAmount`, `wage.averageWeeklyWage` or `benefits.gaps` from a
+  valid manifest was certified clean. A `fundingLagDays` of `null` beside two
+  dates passed too, though the interval is derivable from them.
+
+- **`basisSource` claimed the whole binding for a partial override.**
+  `rate_basis: {td_fraction: 0.5}` authored one figure of six and published
+  `source: seed`, beside a `basisLabel` still naming the engine vintage the
+  other five came from.
+
+- **`latePayments` was an integer under a plural name** — the one field ISC-174
+  missed when it moved `tdPeriods: 3` to `tdPeriodCount`.
+
+#### Compatibility notices (review round 5)
+
+22. **`caseFacts.money.benefits.latePayments` is now `latePaymentCount`.** A
+    rename of a published extraction label, done while the vocabulary is still
+    unfrozen and before AJC-44/45/46/47 attach to it.
+23. **`caseFacts.money.rate.basisSource` gains a third value, `mixed`.** `seed`
+    now means every figure in the binding was authored; `mixed` means some were.
+    A consumer treating `basisSource != "engine_default_table"` as "authored"
+    is unaffected.
+24. **Two subtypes became fact-aware and are guaranteed for a settled case:**
+    `ORDER_APPROVING_SETTLEMENT` prints the settlement type, gross and approval
+    date; `BENEFIT_PAYMENT_LEDGER` prints those plus the funding date and the
+    interval. **The compromise-and-release no longer prints either date** — it
+    keeps type and gross.
+25. **`validate --out` refuses a settlement date with no document dated on or
+    after it**, and refuses every missing governed field in every money group.
+    A folder assembled with an `include_only` that drops a carrier will now be
+    reported, on the same principle that has always applied to the wage
+    statement.
+
 ### Fixed — the PR #29 review, round 4 (**AJC-43**)
 
 Round 4 audited round 3, and found that the settlement — the group rounds 2 and 3

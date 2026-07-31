@@ -527,6 +527,16 @@ MONEY_WAGE_SUBTYPE = "WAGE_STATEMENTS_PRE_INJURY"
 MONEY_TD_SUBTYPE = "TD_PAYMENT_RECORD_ONGOING"
 MONEY_PD_SUBTYPE = "PD_PAYMENT_RECORD_ADVANCE"
 
+#: The document that effects an approval, and therefore the one that can print
+#: its date. The Board issues it *on* the approval date; the release the parties
+#: signed is dated weeks earlier and cannot.
+MONEY_APPROVAL_SUBTYPE = "ORDER_APPROVING_SETTLEMENT"
+
+#: The document dated after the settlement draft clears, and therefore the only
+#: one that can report that it did — the order is issued before funding, so it
+#: cannot carry the funding date either.
+MONEY_FUNDING_SUBTYPE = "BENEFIT_PAYMENT_LEDGER"
+
 MONEY_FLOOR_SUBTYPES: tuple[str, ...] = (
     MONEY_WAGE_SUBTYPE,
     MONEY_TD_SUBTYPE,
@@ -713,6 +723,19 @@ def _money_candidates(
     if benefits.pd_advances:
         last_pd = max(advance.date_paid for advance in benefits.pd_advances)
         add(MONEY_PD_SUBTYPE, last_pd + timedelta(days=7))
+
+    # A settlement's two published dates each need a document whose own date is
+    # on or after the event, which is the ISC-175 rule stated generally rather
+    # than for payment records. The release cannot carry either: the parties
+    # sign it before the Board approves, and the Board approves before the draft
+    # clears. So the order carries the approval and a ledger carries the
+    # funding, and the floor guarantees both rather than hoping the walk did.
+    settlement = money_facts.settlement
+    if settlement is not None:
+        if settlement.approval_date is not None:
+            add(MONEY_APPROVAL_SUBTYPE, settlement.approval_date)
+        if settlement.funding_date is not None:
+            add(MONEY_FUNDING_SUBTYPE, settlement.funding_date + timedelta(days=7))
 
     return out
 
