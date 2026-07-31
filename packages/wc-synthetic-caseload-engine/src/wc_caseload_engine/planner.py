@@ -660,17 +660,25 @@ def _settlement_warnings(seed: CaseSeed, money_facts: MoneyFacts) -> list[str]:
         return warnings
     stated = seed.scenario.settlement
     stated_lag = stated.funding_days if stated is not None else None
-    detail = (
-        f"scenario.settlement.funding_days of {stated_lag} "
-        if stated_lag is not None
-        else "the funding lag for this adjuster "
-    )
+    stated_date = stated.funding_date if stated is not None else None
+    # Name the control that actually produced this state. The warning knew only
+    # about `funding_days` and blamed the adjuster for everything else, so a
+    # *stated* `funding_date` carried past the horizon by a forced approval was
+    # reported as an adjuster's lag the seed never mentioned — a warning that
+    # names the wrong knob is not followable, which is the whole point of one.
+    if stated_date is not None:
+        detail = f"scenario.settlement.funding_date of {stated_date.isoformat()} "
+    elif stated_lag is not None:
+        detail = f"scenario.settlement.funding_days of {stated_lag} "
+    else:
+        detail = "the funding lag for this adjuster "
     return [
         *warnings,
         f"the settlement was approved {settlement.approval_date} but {detail}"
         "carries funding past the date this engine treats as today, so the case is "
-        "published as approved and not yet funded. Lower funding_days, or move the "
-        "approval earlier, if the file should show the money arriving."
+        "published as approved and not yet funded. Bring the funding date or lag "
+        "earlier, or move the approval earlier, if the file should show the money "
+        "arriving."
     ]
 
 

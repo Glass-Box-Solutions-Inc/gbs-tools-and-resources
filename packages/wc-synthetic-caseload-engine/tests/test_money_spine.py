@@ -2270,7 +2270,7 @@ class TestTheDocumentsCarryTheNumbers:
         and a clean `validate --out`. Those bounds select which draw to answer;
         they never constrained the answer.
         """
-        for gross in (21, 5499, 5500, 11500, 88000):
+        for gross in (40, 5500, 11500, 32660, 88000):
             manifest, texts, _ = self._generate(
                 tmp_path / f"g{gross}",
                 {
@@ -2304,6 +2304,23 @@ class TestTheDocumentsCarryTheNumbers:
             )
             assert pd_gross >= 1 and self_procured >= 1
 
+            # …and it is the *nearest* valid reimbursement to five percent, not
+            # merely a valid one. Mutation found this claim unasserted: shifting
+            # the choice by one step keeps the sum and the exact fee, so the
+            # docstring's "nearest" was describing behaviour nothing checked.
+            step = 20
+            target = published / step
+            valid = [
+                Decimal(value)
+                for value in range(step, int(published) - step + 1, step)
+            ]
+            assert valid, gross
+            best = min(valid, key=lambda value: (abs(value - target), value))
+            assert self_procured == best, (
+                f"gross {gross}: chose a reimbursement of {self_procured} when "
+                f"{best} is nearer five percent ({target})"
+            )
+
             # And the fee the page calls fifteen percent *is* fifteen percent.
             # The substrate truncates `award * 0.15` to an integer, so an award
             # of $5,225 printed "$783" for a true $783.75 — a sentence the page
@@ -2312,6 +2329,64 @@ class TestTheDocumentsCarryTheNumbers:
             assert fee == pd_gross * Decimal("0.15"), (
                 f"gross {gross}: the award prints a 15% fee of {fee} on {pd_gross}, "
                 f"which is {pd_gross * Decimal('0.15')}"
+            )
+
+    def test_the_release_reconciles_and_never_owes_the_applicant_money(
+        self, tmp_path: Path
+    ) -> None:
+        """The release's deductions knew nothing about the settlement they came out of.
+
+        The substrate draws costs from $500 to $3,000 and a Medicare set-aside from
+        $5,000 to $25,000 regardless of the gross, so a $21 settlement printed
+        **Net to Applicant $-17,608** — a release stating that the applicant
+        owes money for settling. Both deductions are now fractions of the gross.
+
+        And the fee: the substrate truncates `gross * 0.15`, so $32,668 printed
+        $4,900 for a true $4,900.20. Round 9 fixed that sentence on the
+        stipulated award and left it false on the release, which is the more
+        important document; the twenty-dollar step on the gross makes it true on
+        both.
+        """
+        for gross in (40, 13800, 32660, 88000):
+            manifest, texts, _ = self._generate(
+                tmp_path / f"cr{gross}",
+                {
+                    "wages": WAGES,
+                    "benefits": {"td_weeks": 0, "pd_advances": 0},
+                    "settlement": {"gross_amount": gross},
+                },
+                case_id=f"release-{gross}",
+                lifecycle={
+                    "target_stage": "resolved",
+                    "eval_type": "none",
+                    "resolution": {"type": "c_and_r"},
+                },
+                documents={"format_mix": {"pdf": 1.0}},
+            )
+            page = texts["COMPROMISE_AND_RELEASE_STANDARD"]
+            published = Decimal(
+                manifest["caseFacts"]["money"]["settlement"]["grossAmount"]
+            )
+
+            def amount(pattern: str, text: str = page, where: int = gross) -> Decimal:
+                found = re.search(pattern, text)
+                assert found, f"{pattern!r} not on the release for gross {where}"
+                return Decimal(found.group(1).replace(",", ""))
+
+            printed = amount(r"Gross Settlement Amount \$([\d,]+)")
+            fee = amount(r"Less: Attorney Fees \(15%\) \(\$([\d,]+)\)")
+            costs = amount(r"Less: Costs and Expenses \(\$([\d,]+)\)")
+            set_aside = amount(r"Less: Medicare Set-Aside Allocation \(\$([\d,]+)\)")
+            net = amount(r"Net to Applicant</?b?>? ?<?b?>?\$([\d,-]+)")
+
+            assert printed == published
+            assert fee == published * Decimal("0.15"), (
+                f"gross {gross}: the release calls {fee} fifteen percent of "
+                f"{published}, which is {published * Decimal('0.15')}"
+            )
+            assert net > 0, f"gross {gross}: the release owes the applicant {net}"
+            assert printed - fee - costs - set_aside == net, (
+                f"gross {gross}: {printed} - {fee} - {costs} - {set_aside} != {net}"
             )
 
     def test_the_order_approving_the_settlement_says_it_approved_one(
@@ -2611,8 +2686,8 @@ class TestASettlementIsLargeEnoughForItsOwnDocument:
     def test_a_stated_gross_below_the_floor_is_refused(self) -> None:
         from wc_caseload_engine.seeds import SETTLEMENT_GROSS_MINIMUM
 
-        assert SETTLEMENT_GROSS_MINIMUM == 21
-        for gross in (0, 1, 20):
+        assert SETTLEMENT_GROSS_MINIMUM == 40
+        for gross in (0, 1, 20, 39):
             with pytest.raises(SeedValidationError) as caught:
                 _facts(
                     {"wages": WAGES, "settlement": {"gross_amount": gross}},
@@ -2624,6 +2699,21 @@ class TestASettlementIsLargeEnoughForItsOwnDocument:
                 )
             assert "too small" in str(caught.value), gross
 
+        # A gross off the twenty-dollar step is refused too, because both
+        # documents state a 15% fee as whole dollars: $32,668 prints $4,900 for
+        # a true $4,900.20.
+        for gross in (41, 88001, 32668):
+            with pytest.raises(SeedValidationError) as caught:
+                _facts(
+                    {"wages": WAGES, "settlement": {"gross_amount": gross}},
+                    lifecycle={
+                        "target_stage": "resolved",
+                        "eval_type": "none",
+                        "resolution": {"type": "c_and_r"},
+                    },
+                )
+            assert "multiple of 20" in str(caught.value), gross
+
         # The control: the floor itself loads and publishes exactly.
         facts = _facts(
             {"wages": WAGES, "settlement": {"gross_amount": SETTLEMENT_GROSS_MINIMUM}},
@@ -2633,7 +2723,7 @@ class TestASettlementIsLargeEnoughForItsOwnDocument:
                 "resolution": {"type": "stipulations"},
             },
         )
-        assert facts.settlement.gross_amount == Decimal("21.00")
+        assert facts.settlement.gross_amount == Decimal("40.00")
 
     def test_a_derived_gross_is_raised_to_the_floor_rather_than_published_short(
         self,
@@ -2666,6 +2756,22 @@ class TestASettlementIsLargeEnoughForItsOwnDocument:
         )
         assert facts.wages.rate.pd_weekly_rate < Decimal("1.00")
         assert facts.settlement.gross_amount == Decimal(SETTLEMENT_GROSS_MINIMUM)
+
+        # Every derived gross lands on the step, not only the clamped one.
+        from wc_caseload_engine.seeds import SETTLEMENT_GROSS_STEP
+
+        for rng_seed in range(20):
+            derived = _facts(
+                {"wages": WAGES, "benefits": {"td_weeks": 0, "pd_advances": 0}},
+                rng_seed=500 + rng_seed,
+                lifecycle={
+                    "target_stage": "resolved",
+                    "eval_type": "none",
+                    "resolution": {"type": "c_and_r"},
+                },
+            ).settlement.gross_amount
+            assert int(derived) % SETTLEMENT_GROSS_STEP == 0, (rng_seed, derived)
+            assert derived >= SETTLEMENT_GROSS_MINIMUM
 
         # The opposite draw: an ordinary case is nowhere near the floor, so the
         # probe is testing the clamp rather than a coincidence.
@@ -2878,6 +2984,68 @@ class TestTheOrderIsDatedOnTheApprovalItIs:
                 f"filed {timeline.claim_filed_date}"
             )
             assert max(instruments) <= settlement.approval_date
+
+    def test_the_dropped_funding_warning_names_the_control_that_caused_it(
+        self,
+    ) -> None:
+        """A warning that names the wrong knob is not followable.
+
+        The dropped-funding warning knew only about `funding_days`, so a stated
+        `funding_date` carried past the horizon by a forced approval was
+        reported as "the funding lag for this adjuster" — a control the seed
+        never mentioned and the author cannot act on.
+        """
+        plan = build_case_plan(
+            parse_case_seed(
+                _seed_body(
+                    {
+                        "wages": WAGES,
+                        "settlement": {
+                            "gross_amount": 88000,
+                            "approval_date": "2021-06-15",
+                            "funding_date": "2025-12-31",
+                        },
+                    },
+                    lifecycle={
+                        "target_stage": "resolved",
+                        "eval_type": "qme",
+                        "resolution": {"type": "c_and_r"},
+                    },
+                )
+            )
+        )
+        assert plan.money_facts.settlement.funding_date is None
+        dropped = [
+            warning
+            for warning in plan.warnings
+            if "not yet funded" in warning
+        ]
+        assert dropped, plan.warnings
+        assert any("funding_date of 2025-12-31" in warning for warning in dropped), dropped
+        assert not any("for this adjuster" in warning for warning in dropped), dropped
+
+        # The opposite draw: with no stated date, the lag is what to name.
+        by_lag = build_case_plan(
+            parse_case_seed(
+                _seed_body(
+                    {
+                        "wages": WAGES,
+                        "settlement": {
+                            "gross_amount": 88000,
+                            "approval_date": "2025-12-31",
+                            "funding_days": 400,
+                        },
+                    },
+                    lifecycle={
+                        "target_stage": "resolved",
+                        "eval_type": "qme",
+                        "resolution": {"type": "c_and_r"},
+                    },
+                )
+            )
+        )
+        lagged = [w for w in by_lag.warnings if "not yet funded" in w]
+        assert lagged and any("funding_days of 400" in w for w in lagged), lagged
 
     def test_an_approval_the_file_can_reach_is_left_alone(self) -> None:
         """The opposite draw: a feasible authored approval is honoured exactly."""

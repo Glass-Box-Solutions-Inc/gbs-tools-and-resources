@@ -407,6 +407,13 @@ def _report_ordinal(template: Any) -> int:
 #: document contradicts.
 _SUBSTRATE_SETTLEMENT_RANGE: tuple[int, int] = (25000, 150000)
 
+#: The release's costs-and-expenses draw. Pinned as a fraction of the gross so
+#: the deductions cannot exceed the settlement they come out of.
+_SUBSTRATE_CR_COSTS_RANGE: tuple[int, int] = (500, 3000)
+
+#: The release's Medicare set-aside draw, pinned for the same reason.
+_SUBSTRATE_CR_MSA_RANGE: tuple[int, int] = (5000, 25000)
+
 #: Header text of the substrate wage statement's pay-period table.
 _PAY_TABLE_HEADER = "Pay Period"
 
@@ -906,24 +913,26 @@ def _index_of_text(story: list[Any], marker: str) -> int | None:
 def _reimbursement_leaving_an_exact_fee(total: int) -> int:
     """The self-procured reimbursement that leaves an award divisible by twenty.
 
-    The two cash components must sum to *total*, and the award must be a
-    multiple of twenty so the substrate's truncated fifteen percent fee is the
-    exact fifteen percent it says it is. Both hold when the reimbursement is
-    congruent to *total* modulo twenty; among those the one nearest five percent
-    of the total is chosen, so the document still reads like a real file rather
-    than one bent around an arithmetic constraint.
+    The two cash components must sum to *total*, and both the award and the
+    total must be multiples of twenty so that the fifteen percent fee each
+    document truncates to an integer is the fifteen percent it says it is.
+    Among the candidates the one nearest five percent of the total is chosen, so
+    the document still reads like a real file rather than one bent around an
+    arithmetic constraint.
+
+    An earlier version floored the target before comparing distances and so
+    returned $1 for a total of $221 when $21 was nearer to $11.05 — a "nearest"
+    that was not nearest. The step is applied to the target itself now.
     """
     step = 20
-    residue = total % step or step
-    target = max(total // step, 1)
-    # The two candidates bracketing the target, of the right congruence class.
-    lower = residue + ((target - residue) // step) * step
-    candidates = [value for value in (lower, lower + step) if 1 <= value <= total - step]
-    if not candidates:
+    target = total / step
+    lowest, highest = step, total - step
+    if highest < lowest:
         # Only reachable below SETTLEMENT_GROSS_MINIMUM, which the seed refuses
         # and the derivation floors. Kept so the helper is total on its own.
-        return max(min(residue, total - step), 1)
-    return min(candidates, key=lambda value: (abs(value - target), value))
+        return max(min(step, total - 1), 1)
+    nearest = round(target / step) * step
+    return int(min(max(nearest, lowest), highest))
 
 
 def _rewrite_stipulations(story: list[Any], money: MoneyFacts, styles: Any) -> list[Any]:
@@ -1774,9 +1783,24 @@ def build_fact_aware_templates() -> dict[str, type]:
                     "fact_templates.settlement_gross_not_whole_dollars",
                     gross=str(gross),
                 )
-            forced = _ForcedRandint(int(gross), _SUBSTRATE_SETTLEMENT_RANGE)
+            # The gross, and the two deductions taken out of it. The substrate
+            # draws costs and a Medicare set-aside from ranges that know nothing
+            # about the settlement they are subtracted from, so a small gross
+            # printed **Net to Applicant $-17,608** — a release stating that the
+            # applicant owes money for settling. Both are pinned as fractions of
+            # the gross, which keeps the net positive by construction and keeps
+            # the release's own arithmetic reproducible from the page.
+            total = int(gross)
+            forced = _ForcedRandint(total, _SUBSTRATE_SETTLEMENT_RANGE)
+            deductions = _ForcedChain(
+                [
+                    forced,
+                    _ForcedRandint(max(total // 40, 1), _SUBSTRATE_CR_COSTS_RANGE),
+                    _ForcedRandint(max(total // 5, 1), _SUBSTRATE_CR_MSA_RANGE),
+                ]
+            )
             original = cr_module.random
-            cr_module.random = forced
+            cr_module.random = deductions
             try:
                 story = list(super().build_story(doc_spec))
             finally:

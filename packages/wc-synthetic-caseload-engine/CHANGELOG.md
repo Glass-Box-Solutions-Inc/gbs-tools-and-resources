@@ -340,6 +340,35 @@ attaches additively in Wave 2.
     `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
     at 353/345/8/0.
 
+### Fixed — the PR #29 review, round 10 (**AJC-43**)
+
+Round 10 audited round 9. Three findings, plus a fourth found while reproducing
+the first — and that fourth was live on the shipped showcase.
+
+- **The release could owe the applicant money.** The substrate draws costs and
+  a Medicare set-aside with no reference to the gross, so a $21 settlement
+  printed **Net to Applicant $-17,608**. Both are now fractions of the gross.
+
+- **The 15% attorney fee was false on the release, on shipped cases.** Round 9
+  fixed that sentence on the stipulated award and left it on the release: a
+  gross of $32,668 printed $4,900 for a true $4,900.20. Settlement grosses are
+  now whole multiples of twenty, which is the coarsest step for which fifteen
+  percent is always whole.
+
+- **The dropped-funding warning named the wrong control.** A stated
+  `funding_date` carried past the horizon was reported as "the funding lag for
+  this adjuster".
+
+- **"Nearest five percent" was described but not asserted**, and had a real
+  defect behind it: the target was floored before distances were compared.
+
+#### Compatibility notices (review round 10)
+
+36. **`scenario.settlement.gross_amount` must be a whole multiple of 20, and at
+    least 40.** Derived from the 15% fee both documents print as whole dollars.
+    Derived grosses are rounded onto the same step. Money-showcase figures move;
+    the demo caseload is unaffected and still byte-identical.
+
 ### Fixed — the PR #29 review, round 9 (**AJC-43**)
 
 Round 9 audited round 8. Three findings, all consequences of round 8's own

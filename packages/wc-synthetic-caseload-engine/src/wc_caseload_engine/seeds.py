@@ -1389,13 +1389,20 @@ class BenefitsScenario(_Model):
         return self
 
 
-#: The smallest settlement gross the documents can actually represent. Derived,
-#: not invented: the stipulated award prints a permanent-disability award and a
-#: self-procured reimbursement that must sum to it, each at least a whole
-#: dollar, and the award carries a fifteen percent fee that is only exact when
-#: the award is a multiple of twenty. Twenty plus one is the smallest total that
-#: satisfies both.
-SETTLEMENT_GROSS_MINIMUM = 21
+#: Settlement grosses are whole multiples of twenty dollars.
+#:
+#: Derived from the documents, not invented. Both the release and the stipulated
+#: award state an attorney fee of "15%" and print it as a whole number of
+#: dollars, truncating the product — so a gross of $32,668 printed a fee of
+#: $4,900 for a true $4,900.20, a sentence the page contradicts. Fifteen percent
+#: of a multiple of twenty is always whole, and it is the coarsest step for
+#: which that holds.
+SETTLEMENT_GROSS_STEP = 20
+
+#: The smallest settlement gross the documents can represent: the stipulated
+#: award splits it into two components that must *each* be a valid gross-like
+#: figure under the step above, so two steps is the floor.
+SETTLEMENT_GROSS_MINIMUM = SETTLEMENT_GROSS_STEP * 2
 
 class SettlementScenario(_Model):
     """How the money side of the case ended.
@@ -1466,17 +1473,30 @@ class SettlementScenario(_Model):
         percent it says it is. Twenty plus one is the smallest total satisfying
         both.
         """
-        if self.gross_amount is None or self.gross_amount >= SETTLEMENT_GROSS_MINIMUM:
+        if self.gross_amount is None:
             return self
-        raise ValueError(
-            f"scenario.settlement.gross_amount is {int(self.gross_amount)}, which is "
-            "too small for the award that carries it to print: the stipulated award "
-            "states a permanent-disability award and a self-procured reimbursement "
-            "that must sum to the gross, each at least a whole dollar, over an award "
-            "divisible by twenty so its fifteen percent fee is exact. Raise "
-            "scenario.settlement.gross_amount to 21 or more, or remove "
-            "scenario.settlement if this case did not settle for money."
-        )
+        gross = int(self.gross_amount)
+        if gross < SETTLEMENT_GROSS_MINIMUM:
+            raise ValueError(
+                f"scenario.settlement.gross_amount is {gross}, which is too small for "
+                "the document that carries it to print: the stipulated award states a "
+                "permanent-disability award and a self-procured reimbursement that "
+                "must sum to the gross, and the release subtracts a fee, costs and a "
+                "set-aside from it. Raise scenario.settlement.gross_amount to 40 or "
+                "more, or remove scenario.settlement if this case did not settle for "
+                "money."
+            )
+        if gross % SETTLEMENT_GROSS_STEP:
+            raise ValueError(
+                f"scenario.settlement.gross_amount is {gross}, which is not a whole "
+                "multiple of 20. Both the release and the stipulated award state an "
+                "attorney fee of 15% and print it as whole dollars, so a gross of "
+                "32668 prints 4900 for a true 4900.20 — a figure the page contradicts. "
+                f"The nearest multiple below is {gross - gross % SETTLEMENT_GROSS_STEP}. "
+                "Set scenario.settlement.gross_amount to a multiple of 20, or remove "
+                "scenario.settlement if this case did not settle for money."
+            )
+        return self
 
     @model_validator(mode="after")
     def _funding_is_stated_one_way(self) -> SettlementScenario:
