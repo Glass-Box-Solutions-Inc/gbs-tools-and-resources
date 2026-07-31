@@ -1389,6 +1389,14 @@ class BenefitsScenario(_Model):
         return self
 
 
+#: The smallest settlement gross the documents can actually represent. Derived,
+#: not invented: the stipulated award prints a permanent-disability award and a
+#: self-procured reimbursement that must sum to it, each at least a whole
+#: dollar, and the award carries a fifteen percent fee that is only exact when
+#: the award is a multiple of twenty. Twenty plus one is the smallest total that
+#: satisfies both.
+SETTLEMENT_GROSS_MINIMUM = 21
+
 class SettlementScenario(_Model):
     """How the money side of the case ended.
 
@@ -1439,6 +1447,36 @@ class SettlementScenario(_Model):
                 f"(for example {int(self.gross_amount)})."
             )
         return self
+
+    @model_validator(mode="after")
+    def _gross_is_large_enough_for_a_document_to_print(self) -> SettlementScenario:
+        """A settlement too small to have components is one no award can state.
+
+        `gross_amount: 0` and `1` were accepted here while the stipulated award
+        silently skipped its reconciliation for them and printed a $27,581
+        permanent-disability award beside a published $0.00. "Unreachable from a
+        sane seed" is not a boundary when the schema accepts the value; either
+        the schema refuses it or the document reconciles it.
+
+        The floor is derived rather than invented. The stipulated award prints a
+        permanent-disability award and a self-procured reimbursement that must
+        sum to this figure, each at least a whole dollar, and the award carries
+        a fifteen percent fee the substrate truncates to an integer — so the
+        award must be a multiple of twenty for that fee to be the fifteen
+        percent it says it is. Twenty plus one is the smallest total satisfying
+        both.
+        """
+        if self.gross_amount is None or self.gross_amount >= SETTLEMENT_GROSS_MINIMUM:
+            return self
+        raise ValueError(
+            f"scenario.settlement.gross_amount is {int(self.gross_amount)}, which is "
+            "too small for the award that carries it to print: the stipulated award "
+            "states a permanent-disability award and a self-procured reimbursement "
+            "that must sum to the gross, each at least a whole dollar, over an award "
+            "divisible by twenty so its fifteen percent fee is exact. Raise "
+            "scenario.settlement.gross_amount to 21 or more, or remove "
+            "scenario.settlement if this case did not settle for money."
+        )
 
     @model_validator(mode="after")
     def _funding_is_stated_one_way(self) -> SettlementScenario:

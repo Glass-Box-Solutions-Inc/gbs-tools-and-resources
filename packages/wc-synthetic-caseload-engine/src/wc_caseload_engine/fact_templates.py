@@ -903,6 +903,29 @@ def _index_of_text(story: list[Any], marker: str) -> int | None:
     return None
 
 
+def _reimbursement_leaving_an_exact_fee(total: int) -> int:
+    """The self-procured reimbursement that leaves an award divisible by twenty.
+
+    The two cash components must sum to *total*, and the award must be a
+    multiple of twenty so the substrate's truncated fifteen percent fee is the
+    exact fifteen percent it says it is. Both hold when the reimbursement is
+    congruent to *total* modulo twenty; among those the one nearest five percent
+    of the total is chosen, so the document still reads like a real file rather
+    than one bent around an arithmetic constraint.
+    """
+    step = 20
+    residue = total % step or step
+    target = max(total // step, 1)
+    # The two candidates bracketing the target, of the right congruence class.
+    lower = residue + ((target - residue) // step) * step
+    candidates = [value for value in (lower, lower + step) if 1 <= value <= total - step]
+    if not candidates:
+        # Only reachable below SETTLEMENT_GROSS_MINIMUM, which the seed refuses
+        # and the derivation floors. Kept so the helper is total on its own.
+        return max(min(residue, total - step), 1)
+    return min(candidates, key=lambda value: (abs(value - target), value))
+
+
 def _rewrite_stipulations(story: list[Any], money: MoneyFacts, styles: Any) -> list[Any]:
     """Rewrite the stipulations that state money, from the ledger.
 
@@ -1806,33 +1829,30 @@ def build_fact_aware_templates() -> dict[str, type]:
                 # without help. Disbursement past that line is AJC-46's.
                 total = int(money.settlement.gross_amount)
                 # The split holds for **every** gross the schema accepts, not
-                # only comfortable ones. The first cut clamped the reimbursement
-                # into the substrate's own ``randint`` bounds and gave up below
-                # $5,500, leaving both draws random — so a gross of $5,499
-                # printed components totalling $32,696 beside a published
-                # $5,499, silently. Those bounds select *which draw* to answer;
-                # they never constrained the answer, and treating them as a
-                # domain was the error. A five percent reimbursement, floored at
-                # a dollar and capped so the award keeps one, reconciles down to
-                # a two-dollar settlement.
-                self_procured = min(max(total // 20, 1), max(total - 1, 1))
+                # only comfortable ones. An earlier cut clamped the
+                # reimbursement into the substrate's own ``randint`` bounds and
+                # gave up beneath them, so a gross of $5,499 printed components
+                # totalling $32,696 beside a published $5,499, silently. Those
+                # bounds select *which draw* to answer and never constrained the
+                # answer; treating them as a domain was the error.
+                #
+                # The award is a multiple of twenty, which is what makes the
+                # substrate's own line — "a reasonable attorney fee of 15% ...
+                # which equals $783" — arithmetically true. It truncates
+                # ``award * 0.15`` to an integer, so any other award turns that
+                # sentence into a claim the page contradicts: $5,225 gives
+                # $783.75, printed as $783. Reserving a whole-dollar
+                # reimbursement congruent to the total modulo twenty leaves an
+                # award divisible by twenty, whose fifteen percent is exact.
+                # ``SETTLEMENT_GROSS_MINIMUM`` is set from this requirement, so
+                # there is no total the schema admits and this cannot split.
+                self_procured = _reimbursement_leaving_an_exact_fee(total)
                 award = total - self_procured
-                if award < 1:
-                    # A settlement of a dollar or less has no two components to
-                    # print. Reported rather than fudged, and unreachable from a
-                    # sane seed.
-                    log.warning(
-                        "fact_templates.stipulated_award_too_small_to_reconcile",
-                        gross=str(money.settlement.gross_amount),
-                    )
-                else:
-                    forced = [
-                        _ForcedRandint(award, _SUBSTRATE_STIPS_AWARD_RANGE),
-                        _ForcedRandint(
-                            self_procured, _SUBSTRATE_STIPS_SELF_PROCURED_RANGE
-                        ),
-                    ]
-                    stips_module.random = _ForcedChain(forced)
+                forced = [
+                    _ForcedRandint(award, _SUBSTRATE_STIPS_AWARD_RANGE),
+                    _ForcedRandint(self_procured, _SUBSTRATE_STIPS_SELF_PROCURED_RANGE),
+                ]
+                stips_module.random = _ForcedChain(forced)
             try:
                 story = list(super().build_story(doc_spec))
             finally:

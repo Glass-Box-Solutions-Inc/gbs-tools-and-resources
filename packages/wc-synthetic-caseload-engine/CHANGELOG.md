@@ -340,6 +340,33 @@ attaches additively in Wave 2.
     `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
     at 353/345/8/0.
 
+### Fixed — the PR #29 review, round 9 (**AJC-43**)
+
+Round 9 audited round 8. Three findings, all consequences of round 8's own
+fixes, and all the same shape: right about their own term, silent about what
+depended on it.
+
+- **A stated funding date did not move with its approval.** Round 8 moved an
+  infeasible authored approval forward and left `funding_date` where it was,
+  publishing `fundingLagDays: -117`. The pair states an interval, so both ends
+  now move together.
+
+- **`gross_amount: 0` and `1` were accepted** while the stipulated award
+  skipped its reconciliation for them and printed a $27,581 award beside a
+  published $0.00. A stated gross below the floor is now refused with a
+  registered message; a derived one is raised.
+
+- **The printed attorney fee was not fifteen percent.** The substrate truncates
+  `award * 0.15`, so an award of $5,225 printed "$783" for a true $783.75. The
+  award is now a multiple of twenty, which makes that sentence true.
+
+#### Compatibility notices (review round 9)
+
+34. **`scenario.settlement.gross_amount` must be at least 21.** Derived from
+    what the award must print, not invented. No shipped example is affected.
+35. **An authored `funding_date` moves with an approval the file forced
+    forward**, preserving the stated interval.
+
 ### Fixed — the PR #29 review, round 8 (**AJC-43**)
 
 Round 8 audited round 7. Two findings, both defects round 7 introduced, and

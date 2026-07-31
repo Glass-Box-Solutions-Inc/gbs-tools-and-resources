@@ -711,6 +711,26 @@ REGISTRY: dict[str, RegisteredMessage] = {
         note="The figure used to be accepted and discarded — the seed stated 7777 and the "
         "manifest published 996.73 under a different method.",
     ),
+    "settlement_gross_below_what_a_document_can_print": RegisteredMessage(
+        where="SettlementScenario._gross_is_large_enough_for_a_document_to_print",
+        directives=(
+            "Raise scenario.settlement.gross_amount to 21 or more, or remove "
+            "scenario.settlement if this case did not settle for money",
+        ),
+        trigger={
+            "lifecycle": {"target_stage": "resolved", "resolution": {"type": "c_and_r"}},
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "settlement": {"gross_amount": 1},
+            },
+        },
+        resolution={"scenario": {"settlement": {"gross_amount": 88000}}},
+        note="`gross_amount: 0` and `1` were accepted while the stipulated award "
+        "silently skipped its reconciliation for them, printing a $27,581 award beside "
+        "a published $0.00. The floor is derived from what the document must print: "
+        "two whole-dollar components summing to the gross, with an award divisible by "
+        "twenty so its fifteen percent fee is exact.",
+    ),
     "money_on_a_fatal_claim": RegisteredMessage(
         where="CaseSeed._a_fatal_injury_has_no_disability_benefits_to_pay",
         directives=(

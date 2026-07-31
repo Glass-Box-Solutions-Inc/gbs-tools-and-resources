@@ -2270,7 +2270,7 @@ class TestTheDocumentsCarryTheNumbers:
         and a clean `validate --out`. Those bounds select which draw to answer;
         they never constrained the answer.
         """
-        for gross in (2, 5499, 5500, 11500, 88000):
+        for gross in (21, 5499, 5500, 11500, 88000):
             manifest, texts, _ = self._generate(
                 tmp_path / f"g{gross}",
                 {
@@ -2303,6 +2303,16 @@ class TestTheDocumentsCarryTheNumbers:
                 f"{pd_gross + self_procured} against a published {published}"
             )
             assert pd_gross >= 1 and self_procured >= 1
+
+            # And the fee the page calls fifteen percent *is* fifteen percent.
+            # The substrate truncates `award * 0.15` to an integer, so an award
+            # of $5,225 printed "$783" for a true $783.75 — a sentence the page
+            # contradicts, and one this round's split had made reachable.
+            fee = amount(r"which equals \$([\d,]+)")
+            assert fee == pd_gross * Decimal("0.15"), (
+                f"gross {gross}: the award prints a 15% fee of {fee} on {pd_gross}, "
+                f"which is {pd_gross * Decimal('0.15')}"
+            )
 
     def test_the_order_approving_the_settlement_says_it_approved_one(
         self, tmp_path: Path
@@ -2589,6 +2599,89 @@ class TestTheGovernanceTableBindsBothWays:
 
 
 @requires_substrate
+class TestASettlementIsLargeEnoughForItsOwnDocument:
+    """`gross_amount: 0` and `1` were accepted and printed a $27,581 award.
+
+    The stipulated award states two whole-dollar cash components summing to the
+    gross, over an award divisible by twenty so its fifteen percent fee is
+    exact. Twenty plus one is the smallest total satisfying both, and it is a
+    derived floor rather than an invented one.
+    """
+
+    def test_a_stated_gross_below_the_floor_is_refused(self) -> None:
+        from wc_caseload_engine.seeds import SETTLEMENT_GROSS_MINIMUM
+
+        assert SETTLEMENT_GROSS_MINIMUM == 21
+        for gross in (0, 1, 20):
+            with pytest.raises(SeedValidationError) as caught:
+                _facts(
+                    {"wages": WAGES, "settlement": {"gross_amount": gross}},
+                    lifecycle={
+                        "target_stage": "resolved",
+                        "eval_type": "none",
+                        "resolution": {"type": "stipulations"},
+                    },
+                )
+            assert "too small" in str(caught.value), gross
+
+        # The control: the floor itself loads and publishes exactly.
+        facts = _facts(
+            {"wages": WAGES, "settlement": {"gross_amount": SETTLEMENT_GROSS_MINIMUM}},
+            lifecycle={
+                "target_stage": "resolved",
+                "eval_type": "none",
+                "resolution": {"type": "stipulations"},
+            },
+        )
+        assert facts.settlement.gross_amount == Decimal("21.00")
+
+    def test_a_derived_gross_is_raised_to_the_floor_rather_than_published_short(
+        self,
+    ) -> None:
+        """Reachable, and found by search rather than assumed.
+
+        The derived gross is the permanent-disability rate over twenty to a
+        hundred and twenty weeks, and that rate has a floor from the rate table
+        — so no ordinary seed can drive it under $21. An **authored** basis can:
+        `pd_min_weekly: 0` with `pd_max_weekly: 1` yields a rate of $0.67 and a
+        raw gross of $13. A derivation is not an author's instruction, so it is
+        raised rather than refused.
+        """
+        from wc_caseload_engine.seeds import SETTLEMENT_GROSS_MINIMUM
+
+        facts = _facts(
+            {
+                "wages": {
+                    "base_weekly_wage": 1,
+                    "rate_basis": {"pd_min_weekly": 0.0, "pd_max_weekly": 1.0},
+                },
+                "benefits": {"td_weeks": 0, "pd_advances": 0},
+            },
+            rng_seed=11,
+            lifecycle={
+                "target_stage": "resolved",
+                "eval_type": "none",
+                "resolution": {"type": "stipulations"},
+            },
+        )
+        assert facts.wages.rate.pd_weekly_rate < Decimal("1.00")
+        assert facts.settlement.gross_amount == Decimal(SETTLEMENT_GROSS_MINIMUM)
+
+        # The opposite draw: an ordinary case is nowhere near the floor, so the
+        # probe is testing the clamp rather than a coincidence.
+        ordinary = _facts(
+            {"wages": WAGES, "benefits": {"td_weeks": 0, "pd_advances": 0}},
+            rng_seed=11,
+            lifecycle={
+                "target_stage": "resolved",
+                "eval_type": "none",
+                "resolution": {"type": "stipulations"},
+            },
+        )
+        assert ordinary.settlement.gross_amount > Decimal(1000)
+
+
+@requires_substrate
 class TestTheOrderIsDatedOnTheApprovalItIs:
     """An approving order does not report an approval; it is the approval.
 
@@ -2740,6 +2833,35 @@ class TestTheOrderIsDatedOnTheApprovalItIs:
                 "approval_date" in warning and "2021-06-15" in warning
                 for warning in plan.warnings
             ), plan.warnings
+
+            # A stated funding date is carried by the same shift. Leaving it
+            # behind published `fundingLagDays: -117` — money moving four months
+            # before the Board approved it, which is the impossibility ISC-179
+            # paired these two fields to prevent.
+            paired = build_case_plan(
+                parse_case_seed(
+                    _seed_body(
+                        {
+                            "wages": WAGES,
+                            "settlement": {
+                                "gross_amount": 88000,
+                                "approval_date": "2021-06-15",
+                                "funding_date": "2021-07-01",
+                            },
+                        },
+                        lifecycle={
+                            "target_stage": "resolved",
+                            "eval_type": "qme",
+                            "resolution": {"type": resolution},
+                        },
+                    )
+                )
+            ).money_facts.settlement
+            assert paired.funding_date > paired.approval_date
+            assert paired.funding_lag_days == 16, (
+                "the authored interval was 16 days and must survive the move, "
+                f"but the ledger records {paired.funding_lag_days}"
+            )
 
             # The whole chain still holds, including the link that broke.
             dated: dict[str, list[date]] = {}

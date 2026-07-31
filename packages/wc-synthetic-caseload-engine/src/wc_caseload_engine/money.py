@@ -57,6 +57,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from wc_caseload_engine.seeds import (
     PAY_PERIODS_PER_YEAR,
+    SETTLEMENT_GROSS_MINIMUM,
     CaseSeed,
     WageScenario,
     derive_seed,
@@ -1449,6 +1450,7 @@ def _derive_settlement(
         return None
 
     scenario = seed.scenario.settlement
+    approval_shift = 0
     approval = getattr(timeline, "award_date", None) or getattr(
         timeline, "resolution_date", None
     )
@@ -1471,6 +1473,7 @@ def _derive_settlement(
             approval = earliest
         else:
             approval = scenario.approval_date
+        approval_shift = (approval - scenario.approval_date).days
 
     if scenario is not None and scenario.gross_amount is not None:
         gross = money(scenario.gross_amount)
@@ -1491,11 +1494,25 @@ def _derive_settlement(
     # thing standing between the ledger and a release that prints whole dollars,
     # and the derived probe turns red the moment it goes.
     gross = _whole_dollars(gross)
+    # The floor the stipulated award needs to print two whole-dollar components
+    # with an exact fee. A *stated* gross below it is refused at the seed; a
+    # derived one is raised to it, because a derivation is not an author's
+    # instruction and a degenerate wage history should not make the document
+    # unrepresentable.
+    if gross < SETTLEMENT_GROSS_MINIMUM:
+        gross = money(SETTLEMENT_GROSS_MINIMUM)
 
     funding: dt.date | None = None
     if approval is not None:
         if scenario is not None and scenario.funding_date is not None:
-            funding = scenario.funding_date
+            # Carried by the same shift, because the pair states an *interval*
+            # and moving one end of it would silently rewrite that interval into
+            # something the author did not ask for. Review found the approval
+            # moving forward while a stated funding date stayed put, publishing
+            # `fundingLagDays: -117` — money moving four months before the Board
+            # approved it, which is the exact impossibility ISC-179 paired these
+            # two fields to prevent.
+            funding = scenario.funding_date + dt.timedelta(days=approval_shift)
         else:
             lag = (
                 scenario.funding_days
