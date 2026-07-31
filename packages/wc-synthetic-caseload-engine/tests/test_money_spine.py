@@ -2459,6 +2459,34 @@ class TestTheGovernanceTableBindsBothWays:
                 checked += 1
         assert checked == sum(len(f) for f in GOVERNED_MONEY_FIELDS.values())
 
+    def test_every_published_label_is_checked_against_its_own_vocabulary(self) -> None:
+        """`basisSource` was the one extraction label nothing validated.
+
+        `method` and both bound tokens were checked; `basisSource` was not, so
+        `"seed-ish"` was accepted as long as the manifest and the artifact
+        agreed with each other. Two artifacts agreeing on a value outside the
+        vocabulary is a copy, not a check.
+        """
+        from wc_caseload_engine.manifests import _validate_money
+
+        documents = _docs(
+            MONEY_WAGE_SUBTYPE,
+            MONEY_TD_SUBTYPE,
+            MONEY_PD_SUBTYPE,
+            settlement=self._block()["money"]["settlement"],
+        )
+        assert not _validate_money(self._block(), documents, "c")
+        for group, field, bad in (
+            ("rate", "basisSource", "seed-ish"),
+            ("wage", "method", "made-up-method"),
+            ("rate", "tdBound", "sideways"),
+        ):
+            block = self._block()
+            block["money"][group][field] = bad
+            assert any(
+                field in problem for problem in _validate_money(block, documents, "c")
+            ), f"{group}.{field} = {bad!r} was accepted"
+
     def test_a_lag_between_two_stated_dates_is_a_fact_not_an_option(self) -> None:
         from wc_caseload_engine.manifests import _validate_money
 
@@ -2479,6 +2507,131 @@ class TestTheGovernanceTableBindsBothWays:
         unfunded["money"]["settlement"]["fundingDate"] = None
         unfunded["money"]["settlement"]["fundingLagDays"] = None
         assert not _validate_money(unfunded, documents, "c")
+
+
+@requires_substrate
+class TestTheOrderIsDatedOnTheApprovalItIs:
+    """An approving order does not report an approval; it is the approval.
+
+    The floor re-dated forward only, which is right for a document that reports
+    events and wrong for one that constitutes an event. An authored approval of
+    2022-01-05 was evidenced by an order dated 2023-12-27 — 721 days later — and
+    the on-or-after rule certified it.
+    """
+
+    def test_an_authored_approval_pins_the_order_in_both_directions(self) -> None:
+        from wc_caseload_engine.planner import MONEY_APPROVAL_SUBTYPE
+
+        # One authored approval before the walk's own order date and one after,
+        # so the probe cannot pass by only ever moving the date one way.
+        for approval in ("2022-01-05", "2025-06-30"):
+            for resolution in ("c_and_r", "stipulations"):
+                plan = build_case_plan(
+                    parse_case_seed(
+                        _seed_body(
+                            {
+                                "wages": WAGES,
+                                "benefits": {"td_weeks": 10},
+                                "settlement": {
+                                    "gross_amount": 88000,
+                                    "approval_date": approval,
+                                },
+                            },
+                            lifecycle={
+                                "target_stage": "resolved",
+                                "eval_type": "qme",
+                                "resolution": {"type": resolution},
+                            },
+                        )
+                    )
+                )
+                orders = [
+                    candidate.doc_date
+                    for candidate in plan.documents
+                    if candidate.subtype == MONEY_APPROVAL_SUBTYPE
+                ]
+                assert orders, f"{approval}/{resolution}: no approving order"
+                assert all(
+                    when == date.fromisoformat(approval) for when in orders
+                ), f"{approval}/{resolution}: order dated {orders}, not on the approval"
+
+    def test_the_validator_refuses_an_order_dated_off_the_approval(self) -> None:
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "settlement": {
+                    "gross_amount": 88000,
+                    "approval_date": "2025-01-06",
+                    "funding_date": "2025-02-05",
+                },
+            }
+        )
+        block = {"money": money_manifest_block(facts)}
+
+        def problems(order_date: str) -> list[str]:
+            return [
+                problem
+                for problem in _validate_money(
+                    block,
+                    [
+                        {"subtype": MONEY_WAGE_SUBTYPE, "documentDate": "2021-01-01"},
+                        {
+                            "subtype": "ORDER_APPROVING_SETTLEMENT",
+                            "documentDate": order_date,
+                        },
+                        {
+                            "subtype": "BENEFIT_PAYMENT_LEDGER",
+                            "documentDate": "2025-02-05",
+                        },
+                    ],
+                    "c",
+                )
+                if "cannot report its own future" in problem
+            ]
+
+        assert problems("2025-01-05"), "a day early was accepted"
+        assert problems("2025-01-07"), "a day late was accepted — which >= allowed"
+        assert not problems("2025-01-06")
+
+
+@requires_substrate
+class TestAFatalClaimPaysBenefitsThisLayerDoesNotModel:
+    """Money on a death claim derived benefits the worker could not receive."""
+
+    @staticmethod
+    def _fatal(scenario: dict[str, Any] | None) -> dict[str, Any]:
+        body = _seed_body(
+            scenario,
+            lifecycle={
+                "target_stage": "resolved",
+                "eval_type": "qme",
+                "resolution": {"type": "stipulations"},
+            },
+        )
+        body["injury"] = {
+            "type": "death",
+            "date_of_injury": "2023-01-19",
+            "body_parts": [{"part": "head"}],
+        }
+        return body
+
+    def test_a_fatal_injury_refuses_the_money_blocks(self) -> None:
+        """Measured before this rule: a first TD period beginning three days after death."""
+        for scenario in (
+            {"wages": {"base_weekly_wage": 1200}},
+            {"wages": WAGES, "benefits": {"td_weeks": 10}},
+            {"wages": WAGES, "settlement": {"gross_amount": 88000}},
+        ):
+            with pytest.raises(Exception) as raised:
+                parse_case_seed(self._fatal(scenario))
+            assert "dependency benefits" in str(raised.value), scenario
+
+    def test_a_fatal_injury_without_money_still_loads(self) -> None:
+        """The opposite draw: death is not refused, money on death is."""
+        plan = build_case_plan(parse_case_seed(self._fatal(None)))
+        assert plan.money_facts is None
 
 
 @requires_substrate
@@ -2508,8 +2661,13 @@ class TestTheBasisSaysHowMuchOfItWasAuthored:
             (every, "seed"),
             # Authority is prose *about* the numbers, not one of them, so it
             # cannot promote a partial binding to a wholly authored one.
+            # Authority cannot promote a partial binding to a wholly authored
+            # one — nor, found by review, make a binding "mixed" that states no
+            # figure at all. The empty-block early return is keyed on *any*
+            # change, and an authority-only block passes it.
             (dict(every, authority="Board bulletin 2021-04"), "seed"),
             ({"td_fraction": 0.5, "authority": "Board bulletin 2021-04"}, "mixed"),
+            ({"authority": "Author prose only; no figures"}, "engine_default_table"),
         ]
         for override, expected in cases:
             wages = dict(WAGES) if override is None else dict(WAGES, rate_basis=override)

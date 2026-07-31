@@ -390,15 +390,19 @@ def _apply_rate_basis_override(basis: RateBasis, seed: CaseSeed) -> RateBasis:
             changes[name] = money(value) if name.endswith("_weekly") else Decimal(str(value))
     if override.authority is not None:
         changes["authority"] = override.authority
-    if not changes:
-        # Nothing was authored, so nothing is authored. Returning the table's
-        # own row keeps ``source`` at ``engine_default_table`` and the
-        # confirmation flag at whatever the table says, which is always false.
-        return basis
-
-    # Every numeric figure authored, or only some? The distinction is the whole
-    # content of ``basisSource``. ``authority`` is prose about the numbers rather
-    # than one of them, so it does not make a binding wholly authored.
+    # Every numeric figure authored, or only some, or none? That distinction is
+    # the whole content of ``basisSource``. ``authority`` is prose *about* the
+    # numbers rather than one of them, so it neither makes a binding wholly
+    # authored nor makes an unauthored one mixed.
+    #
+    # There used to be an ``if not changes: return basis`` short-circuit above
+    # this, from the round-1 fix for an override that authored nothing. Once the
+    # three-valued provenance below existed it computed the same answer on the
+    # same inputs, and re-running the round-1 mutation campaign proved it: the
+    # mutant that removes the short-circuit stopped going red. Collapsed into
+    # the one provable path, exactly as round 1 collapsed the redundant
+    # ``_whole_dollars`` call — a guard whose removal no probe can detect is an
+    # unverified claim that reads like one.
     numeric = {name for name in changes if name != "authority"}
     if not numeric:
         # Authority alone authors no figure, so the binding is still the table's
