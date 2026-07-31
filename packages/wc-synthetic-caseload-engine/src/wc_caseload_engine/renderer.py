@@ -490,6 +490,13 @@ def render_document(
         # reference cannot name a document dated after the letter citing it.
         context["cadence_anchors"] = cadence_anchors
     context["perspective"] = seed.perspective
+    # Whether this file carries a Medicare set-aside. ``lifecycle.resolution.msa``
+    # already governs it, and the release needs it to decide whether to print an
+    # allocation row — a release printing one for a seed that said `msa: false`
+    # contradicts a fact the schema owns.
+    context["medicare_set_aside"] = bool(
+        getattr(getattr(seed.lifecycle, "resolution", None), "msa", False)
+    )
     context["file_owner_firm"] = file_owner_firm(
         seed.perspective, cast.applicant_firm, cast.defense_firm
     )

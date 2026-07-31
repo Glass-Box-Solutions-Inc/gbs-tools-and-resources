@@ -28,6 +28,7 @@ import random
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -1389,20 +1390,68 @@ class BenefitsScenario(_Model):
         return self
 
 
-#: Settlement grosses are whole multiples of twenty dollars.
-#:
-#: Derived from the documents, not invented. Both the release and the stipulated
-#: award state an attorney fee of "15%" and print it as a whole number of
-#: dollars, truncating the product — so a gross of $32,668 printed a fee of
-#: $4,900 for a true $4,900.20, a sentence the page contradicts. Fifteen percent
-#: of a multiple of twenty is always whole, and it is the coarsest step for
-#: which that holds.
-SETTLEMENT_GROSS_STEP = 20
-
 #: The smallest settlement gross the documents can represent: the stipulated
-#: award splits it into two components that must *each* be a valid gross-like
-#: figure under the step above, so two steps is the floor.
-SETTLEMENT_GROSS_MINIMUM = SETTLEMENT_GROSS_STEP * 2
+#: award splits it into a permanent-disability award and a self-procured
+#: reimbursement, each at least a whole dollar.
+#:
+#: There was briefly a twenty-dollar *step* here too, adopted so the fifteen
+#: percent attorney fee both documents truncate to whole dollars would be exact.
+#: Review was right that it was the wrong abstraction: real settlements are not
+#: multiples of twenty, and narrowing a **published** field to work around a
+#: renderer's rounding makes the corpus systematically unrealistic in a figure
+#: the analyzer is scored on. The fee is printed to cents instead.
+#:
+#: Which moved the binding constraint. The release subtracts more than the award
+#: does, so the award's two-dollar split is no longer what decides the floor —
+#: see :func:`settlement_deductions` and the search below. The floor is derived
+#: from the deduction rule rather than asserted beside it, because the last three
+#: defects in this module were all a bound somebody chose once and then stopped
+#: re-deriving when the arithmetic under it moved.
+
+#: The release's three deductions. Costs and the set-aside are fractions of the
+#: gross rather than the substrate's flat $500-$3,000 and $5,000-$25,000 draws,
+#: which knew nothing about the settlement they were subtracted from and printed
+#: a negative net on a small one. Each is floored at a dollar so its row prints.
+SETTLEMENT_FEE_RATE = Decimal("0.15")
+SETTLEMENT_COSTS_DIVISOR = 40
+SETTLEMENT_SET_ASIDE_DIVISOR = 5
+
+
+def settlement_deductions(gross: int) -> tuple[Decimal, int, int]:
+    """Fee, costs and Medicare set-aside for *gross*.
+
+    One definition, imported by the renderer that prints these figures and by
+    the floor derived from them, so the two cannot drift apart. The set-aside is
+    returned whether or not the file has one; the caller drops it when
+    ``lifecycle.resolution.msa`` is false, and the floor keeps it because the
+    worst case is the case that pays it.
+    """
+    fee = (Decimal(gross) * SETTLEMENT_FEE_RATE).quantize(Decimal("0.01"))
+    return fee, max(gross // SETTLEMENT_COSTS_DIVISOR, 1), max(
+        gross // SETTLEMENT_SET_ASIDE_DIVISOR, 1
+    )
+
+
+def _smallest_gross_the_documents_can_carry() -> int:
+    """Search up from the award's own two-line minimum until the release closes.
+
+    Searched rather than stated. Both constraints are real — the award needs a
+    dollar on each of its two lines, and the release must leave the applicant
+    something after fee, costs and set-aside — and which of them binds depends
+    on arithmetic three modules away. A search re-derives the answer every
+    import; a literal would have to be remembered.
+    """
+    for gross in range(2, 1000):
+        fee, costs, set_aside = settlement_deductions(gross)
+        if Decimal(gross) - fee - Decimal(costs) - Decimal(set_aside) > 0:
+            return gross
+    raise AssertionError(
+        "no settlement gross under $1,000 leaves the applicant money after the "
+        "deductions in settlement_deductions — the deduction rule is wrong"
+    )
+
+
+SETTLEMENT_GROSS_MINIMUM = _smallest_gross_the_documents_can_carry()
 
 class SettlementScenario(_Model):
     """How the money side of the case ended.
@@ -1479,22 +1528,13 @@ class SettlementScenario(_Model):
         if gross < SETTLEMENT_GROSS_MINIMUM:
             raise ValueError(
                 f"scenario.settlement.gross_amount is {gross}, which is too small for "
-                "the document that carries it to print: the stipulated award states a "
-                "permanent-disability award and a self-procured reimbursement that "
-                "must sum to the gross, and the release subtracts a fee, costs and a "
-                "set-aside from it. Raise scenario.settlement.gross_amount to 40 or "
-                "more, or remove scenario.settlement if this case did not settle for "
-                "money."
-            )
-        if gross % SETTLEMENT_GROSS_STEP:
-            raise ValueError(
-                f"scenario.settlement.gross_amount is {gross}, which is not a whole "
-                "multiple of 20. Both the release and the stipulated award state an "
-                "attorney fee of 15% and print it as whole dollars, so a gross of "
-                "32668 prints 4900 for a true 4900.20 — a figure the page contradicts. "
-                f"The nearest multiple below is {gross - gross % SETTLEMENT_GROSS_STEP}. "
-                "Set scenario.settlement.gross_amount to a multiple of 20, or remove "
-                "scenario.settlement if this case did not settle for money."
+                "the documents that carry it to print: the stipulated award splits it "
+                "into a permanent-disability award and a self-procured reimbursement, "
+                "each at least a whole dollar, and the release subtracts an attorney "
+                "fee, costs and a Medicare set-aside from it and must still leave the "
+                f"applicant money. Raise scenario.settlement.gross_amount to "
+                f"{SETTLEMENT_GROSS_MINIMUM} or more, or remove scenario.settlement if "
+                "this case did not settle for money."
             )
         return self
 

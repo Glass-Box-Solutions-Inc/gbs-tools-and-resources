@@ -5,8 +5,8 @@ slug: 20260727-143600_wc-synthetic-caseload-engine
 effort: E4
 effort_source: classifier
 phase: verify
-progress: 233/236
-iteration: 14
+progress: 235/238
+iteration: 15
 mode: interactive
 started: 2026-07-27T14:36:00-07:00
 updated: 2026-07-31T23:55:00-07:00
@@ -354,6 +354,9 @@ Round 10 audited round 9. Three findings, plus a fourth found while reproducing 
 - [x] ISC-233: **A dropped-funding warning names the control that dropped it** — the warning knew only about `funding_days`, so a stated `funding_date` carried past the horizon by a forced approval was reported as "the funding lag for this adjuster", a control the seed never mentioned and the author cannot act on. A warning naming the wrong knob is not followable, which is the entire purpose of one (probe: the stated-date case asserted to name the date and *not* the adjuster, with the stated-lag case as the opposite draw)
 - [x] ISC-234: **"Nearest five percent" is asserted, not described** — mutation found the claim unguarded: shifting the reimbursement one step keeps both the sum and the exact fee, so nothing was checking the property the docstring names. The selection also had a real defect behind it — the target was floored before distances were compared, so a total of $221 chose $1 when $21 was nearer to $11.05 (probe: the chosen reimbursement asserted equal to the nearest valid candidate, computed independently in the test)
 - [x] ISC-235: **Ten mutation campaigns, all green** — 5 new mutants **5/5 RED**, plus re-runs of rounds 1–9: **93 of 93** on the final tree. Two of the five round-10 mutants survived first pass and one more did after the fix, all three because the mutant named a test that did not cover the fix — the same failure round 9 recorded, repeated, which is why the campaign is re-run rather than trusted. Round 1's cents mutant also stopped going red: the twenty-dollar step drops the cents on its way through `int()`, so the `_whole_dollars` call above it became undetectable and was collapsed (probe: ten scripted mutate-run-restore campaigns, all re-run on the final tree)
+
+- [x] ISC-236: **The twenty-dollar lattice on `gross_amount` is withdrawn, and the fee prints to cents** — review was right that narrowing a *published* field to work around a renderer's rounding makes the corpus systematically unrealistic in a figure the analyzer is scored on. Real settlements are not multiples of twenty. Withdrawing it exposed what it had been hiding: the release's fee *sentence* had never been corrected at all, because round 9's substitution matched on the substrate's bold wrapper and only the award bolds its figure. A whole-dollar fee made the miss invisible, since a truncated fee and an exact one differ only in the cents the lattice removed (probe: both documents, four grosses each, asserting the table fee, the prose fee and the prose costs agree with each other and with fifteen percent of the printed base)
+- [x] ISC-237: **The settlement floor is searched from the deduction rule, not chosen beside it** — $2 satisfied the award's two-line split and left the release printing **Net to Applicant $-0.30**: the floor was answering one document about a constraint the other one binds. `settlement_deductions` is now the single definition of the fee, the costs and the set-aside, imported by the renderer that prints them and by the search that derives the floor from them, so a divisor moving moves the floor with it (probe: the floor asserted to be the smallest gross whose deductions leave a positive net, with the dollar below it asserted not to, and the raised message asserted to name the derived number)
 
 - [x] ISC-181: **Anti**: the whole-corpus byte accounting survives the remediation unchanged — **353 files, 345 identical, 8 changed, 0 unexplained**, all 331 rendered documents byte-identical, no `money` key anywhere in the demo output, substrate tracked diff 0 (probe: `git archive origin/main` baseline regenerated and diffed against HEAD after every fix above; determinism ×3 including `TZ=Australia/Sydney`)
 

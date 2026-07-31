@@ -711,45 +711,31 @@ REGISTRY: dict[str, RegisteredMessage] = {
         note="The figure used to be accepted and discarded — the seed stated 7777 and the "
         "manifest published 996.73 under a different method.",
     ),
-    "settlement_gross_off_the_twenty_dollar_step": RegisteredMessage(
-        where="SettlementScenario._gross_is_large_enough_for_a_document_to_print",
-        directives=(
-            "Set scenario.settlement.gross_amount to a multiple of 20, or remove "
-            "scenario.settlement if this case did not settle for money",
-        ),
-        trigger={
-            "lifecycle": {"target_stage": "resolved", "resolution": {"type": "c_and_r"}},
-            "scenario": {
-                "wages": {"base_weekly_wage": 900},
-                "settlement": {"gross_amount": 88001},
-            },
-        },
-        resolution={"scenario": {"settlement": {"gross_amount": 88000}}},
-        note="Both the release and the stipulated award state an attorney fee of 15% "
-        "and print it as whole dollars, truncating the product — so a gross of $32,668 "
-        "printed $4,900 for a true $4,900.20, a figure the page contradicts. Fifteen "
-        "percent of a multiple of twenty is always whole.",
-    ),
     "settlement_gross_below_what_a_document_can_print": RegisteredMessage(
         where="SettlementScenario._gross_is_large_enough_for_a_document_to_print",
         directives=(
-            "Raise scenario.settlement.gross_amount to 40 or more, or remove "
+            "Raise scenario.settlement.gross_amount to {} or more, or remove "
             "scenario.settlement if this case did not settle for money",
         ),
         trigger={
             "lifecycle": {"target_stage": "resolved", "resolution": {"type": "c_and_r"}},
             "scenario": {
                 "wages": {"base_weekly_wage": 900},
-                "settlement": {"gross_amount": 1},
+                "settlement": {"gross_amount": 2},
             },
         },
         resolution={"scenario": {"settlement": {"gross_amount": 88000}}},
         note="`gross_amount: 0` and `1` were accepted while the stipulated award "
         "silently skipped its reconciliation for them, printing a $27,581 award beside "
-        "a published $0.00; a $21 gross on a release printed a Net to Applicant of "
-        "-$17,608. The floor is derived from what the documents must print: two "
-        "components summing to the gross on the award, and a fee, costs and a "
-        "set-aside subtracted from it on the release.",
+        "a published $0.00. The floor is derived rather than chosen, and by the "
+        "documents rather than by one of them: the award needs two components "
+        "summing to the gross at a dollar each, and the release needs to leave the "
+        "applicant money after a fee, costs and a set-aside. The second is larger, "
+        "so the second is the floor, and the message names whichever number the "
+        "search returns. A twenty-dollar step was briefly added beside it so the "
+        "truncated 15% fee would be exact, and withdrawn on review — the fee is "
+        "printed to cents instead, rather than narrowing a published field to suit "
+        "a renderer.",
     ),
     "money_on_a_fatal_claim": RegisteredMessage(
         where="CaseSeed._a_fatal_injury_has_no_disability_benefits_to_pay",

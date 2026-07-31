@@ -58,7 +58,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from wc_caseload_engine.seeds import (
     PAY_PERIODS_PER_YEAR,
     SETTLEMENT_GROSS_MINIMUM,
-    SETTLEMENT_GROSS_STEP,
     CaseSeed,
     WageScenario,
     derive_seed,
@@ -1499,18 +1498,9 @@ def _derive_settlement(
     # derived one is raised to it, because a derivation is not an author's
     # instruction and a degenerate wage history should not make the document
     # unrepresentable.
-    # Onto the same lattice the schema requires of an author: a whole multiple
-    # of twenty, at or above the floor. A derivation is not an author's
+    # Whole dollars, at or above the floor. A derivation is not an author's
     # instruction, so it is rounded rather than refused.
-    #
-    # This also subsumes the ``_whole_dollars`` quantization that used to sit
-    # above it — ``int()`` drops the cents on the way to the step, so removing
-    # the earlier call stopped being detectable and re-running round 1's
-    # campaign caught that. Collapsed into the one provable path, on the same
-    # argument round 1 itself used: a guard whose removal no probe can detect is
-    # an unverified claim that reads like one.
-    stepped = (int(gross) // SETTLEMENT_GROSS_STEP) * SETTLEMENT_GROSS_STEP
-    gross = money(max(stepped, SETTLEMENT_GROSS_MINIMUM))
+    gross = money(max(_whole_dollars(gross), Decimal(SETTLEMENT_GROSS_MINIMUM)))
 
     funding: dt.date | None = None
     if approval is not None:

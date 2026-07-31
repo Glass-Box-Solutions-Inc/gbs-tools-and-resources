@@ -340,6 +340,46 @@ attaches additively in Wave 2.
     `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
     at 353/345/8/0.
 
+### Fixed — the PR #29 review, round 11 (**AJC-43**)
+
+Round 11 acted on review's judgment that round 10's twenty-dollar lattice on
+`gross_amount` was the wrong abstraction — narrowing a **published** field to
+work around a renderer's rounding, in a figure the analyzer is scored on. Real
+settlements are not multiples of twenty. The lattice is withdrawn and the fee is
+printed to cents instead, which is what a real document does. Withdrawing it
+then exposed three defects it had been hiding.
+
+- **The release's fee sentence was never corrected.** Round 9's substitution
+  matched on the substrate's bold wrapper, and only the stipulated award bolds
+  its figure: the release states its fee in plain text (*"in the amount of
+  $4,900 (15% of gross settlement)"*) and went two rounds uncorrected. A
+  whole-dollar fee hid it, because a truncated fee and an exact one differ only
+  in the cents the lattice had removed. There is now one pattern per prose site,
+  each anchored to its own sentence, and a paragraph that states a fee and is
+  left uncorrected is reported.
+
+- **The settlement floor was answering the wrong document.** $2 satisfied the
+  award's two-line split and left the release printing **Net to Applicant
+  $-0.30**. The floor is now *searched* from the deduction rule itself
+  (`settlement_deductions`), so it is $3 today and moves on its own if a divisor
+  moves. The three deduction figures live in one place, imported by the renderer
+  that prints them and by the floor derived from them.
+
+- **The fee rate was defined twice.** `_ATTORNEY_FEE_RATE` in the renderer and
+  the rate behind the floor were separate constants that happened to agree.
+
+#### Compatibility notices (review round 11)
+
+37. **Notice 36 is withdrawn.** `scenario.settlement.gross_amount` is any whole
+    number again, no step. The minimum is **3**, derived rather than declared:
+    it is the smallest gross whose release still leaves the applicant money
+    after a 15% fee, costs and a Medicare set-aside. Money-showcase figures move
+    back; the demo caseload is unaffected and still byte-identical.
+
+38. **Both settlement documents print the attorney fee to the cent.** A gross of
+    $32,668 now reads $4,900.20 in the table *and* in the sentence, on the award
+    and on the release.
+
 ### Fixed — the PR #29 review, round 10 (**AJC-43**)
 
 Round 10 audited round 9. Three findings, plus a fourth found while reproducing
@@ -368,6 +408,7 @@ the first — and that fourth was live on the shipped showcase.
     least 40.** Derived from the 15% fee both documents print as whole dollars.
     Derived grosses are rounded onto the same step. Money-showcase figures move;
     the demo caseload is unaffected and still byte-identical.
+    **Withdrawn in round 11 — see notice 37.**
 
 ### Fixed — the PR #29 review, round 9 (**AJC-43**)
 

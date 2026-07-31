@@ -667,7 +667,23 @@ def _settlement_warnings(seed: CaseSeed, money_facts: MoneyFacts) -> list[str]:
     # reported as an adjuster's lag the seed never mentioned — a warning that
     # names the wrong knob is not followable, which is the whole point of one.
     if stated_date is not None:
-        detail = f"scenario.settlement.funding_date of {stated_date.isoformat()} "
+        # Name the *effective* date, not the authored one. Review found the
+        # warning reporting "funding_date of 2025-12-31 carries funding past the
+        # horizon" when 2025-12-31 is comfortably inside it — the 133-day
+        # approval shift is what carried it out, so the authored date read as
+        # the culprit and the advice to "move the approval earlier" was exactly
+        # backwards, since an earlier approval means a larger shift.
+        shift = (settlement.approval_date - stated.approval_date).days if (
+            stated.approval_date is not None
+        ) else 0
+        if shift:
+            detail = (
+                f"scenario.settlement.funding_date of {stated_date.isoformat()}, "
+                f"carried {shift} day(s) forward with the approval this file could "
+                f"first support, "
+            )
+        else:
+            detail = f"scenario.settlement.funding_date of {stated_date.isoformat()} "
     elif stated_lag is not None:
         detail = f"scenario.settlement.funding_days of {stated_lag} "
     else:
@@ -677,8 +693,8 @@ def _settlement_warnings(seed: CaseSeed, money_facts: MoneyFacts) -> list[str]:
         f"the settlement was approved {settlement.approval_date} but {detail}"
         "carries funding past the date this engine treats as today, so the case is "
         "published as approved and not yet funded. Bring the funding date or lag "
-        "earlier, or move the approval earlier, if the file should show the money "
-        "arriving."
+        "earlier, or move the approval *later* so it needs no forward shift, if the "
+        "file should show the money arriving."
     ]
 
 

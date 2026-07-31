@@ -35,10 +35,17 @@ from wc_caseload_engine.money import (
     TD_PAYMENT_DUE_DAYS,
     MoneyFacts,
 )
+from wc_caseload_engine.seeds import (
+    SETTLEMENT_FEE_RATE,
+    settlement_deductions,
+)
 from wc_caseload_engine.substrate import import_substrate
 from wc_caseload_engine.taxonomy import effective_taxonomy
 
 log = structlog.get_logger(__name__)
+
+CENTS = Decimal("0.01")
+"""Quantum every currency figure on a rendered page is rounded to."""
 
 #: The candidate list ``DiagnosticReport`` draws its modality from.
 #:
@@ -125,6 +132,20 @@ def _facts_of(template: Any) -> CaseFacts | None:
         if isinstance(facts, CaseFacts):
             return facts
     return getattr(template, "_wc_case_facts", None)
+
+
+def _wants_medicare_set_aside(template: Any) -> bool:
+    """Whether this file has a Medicare set-aside, off the seed's own flag.
+
+    Read from the render context rather than the substrate case: the substrate
+    carries ``is_medicare_eligible`` on its *lifecycle profile*, not on the case
+    the template holds, so reading it there silently answered False for every
+    document.
+    """
+    context = getattr(getattr(template, "doc_spec", None), "context", None)
+    if isinstance(context, dict):
+        return bool(context.get("medicare_set_aside", False))
+    return False
 
 
 def _index_of(template: Any) -> int:
@@ -891,9 +912,154 @@ def _append_settlement_terms(
     return story
 
 
-#: The substrate's average-weekly-wage figure inside stipulation 1, matched as a
-#: whole money token so the substitution cannot land inside it.
+#: Every prose site that states the fee, one pattern per sentence the substrate
+#: writes. There are two, and they are not the same shape: the stipulated award
+#: bolds the figure (``which equals <b>$783</b>``) and the release does not
+#: (``in the amount of $4,900 (15% of gross settlement)``). Matching on the bold
+#: wrapper alone corrected the award and silently missed the release for two
+#: rounds, because a truncated fee only differs from an exact one in the cents
+#: the whole-dollar step was hiding. Each pattern is anchored to its own
+#: sentence, so neither can land on the *next* money figure in the paragraph —
+#: the release's own costs sit three words further along.
+_FEE_IN_PROSE: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?<=which equals )<b>\$[\d,]+(?:\.\d+)?</b>"),
+    re.compile(r"(?<=in the amount of )\$[\d,]+(?:\.\d+)?(?= \(15% of gross settlement\))"),
+)
+
+#: The net figure that follows the fee in the same sentence on the award.
+_NET_IN_PROSE: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?<=payable to applicant is )<b>\$[\d,]+(?:\.\d+)?</b>"),
+)
+
 _MONEY_AFTER_AWW = re.compile(r"average weekly wage of \$[\d,]+(?:\.\d+)?")
+
+#: Any money token at all — used only to decide whether an uncorrected
+#: fifteen-percent paragraph was stating a figure or merely a percentage.
+_ANY_MONEY = re.compile(r"\$[\d,]+(?:\.\d+)?")
+
+
+
+def _restate_distribution(
+    story: list[Any],
+    gross: int,
+    costs: int,
+    set_aside: int,
+    wants_msa: bool,
+    styles: Any,
+) -> None:
+    """Rebuild the release's distribution table with an exact fee.
+
+    Every figure in it is one this module pins or computes, so it is rebuilt
+    rather than edited: the gross is forced, the two deductions are forced, and
+    the fee and net follow from them to the cent. The set-aside row appears only
+    when the file has an allocation — ``lifecycle.resolution.msa`` governs that,
+    and a release printing one for a seed that said ``msa: false`` was
+    contradicting a fact the schema already owns.
+    """
+    from reportlab.lib.units import inch
+
+    fee, _ = _fee_and_net(gross)
+    net = Decimal(gross) - fee - Decimal(costs) - Decimal(set_aside)
+    rows: list[list[Any]] = [
+        ["Gross Settlement Amount", f"${gross:,.2f}"],
+        ["Less: Attorney Fees (15%)", f"(${fee:,.2f})"],
+        ["Less: Costs and Expenses", f"(${costs:,.2f})"],
+    ]
+    if wants_msa:
+        rows.append(["Less: Medicare Set-Aside Allocation", f"(${set_aside:,.2f})"])
+    rows.append(["Net to Applicant", f"${net:,.2f}"])
+    if not _replace_table_after(
+        story, "Distribution of Settlement", rows, [4 * inch, 2.5 * inch], styles
+    ):
+        log.warning("fact_templates.distribution_table_not_restated")
+    _restate_fee_prose(story, fee)
+
+
+def _restate_award_summary(
+    story: list[Any],
+    gross: int,
+    award: Any,
+    reimbursement: Any,
+    styles: Any,
+) -> None:
+    """Rebuild the stipulated award's summary with an exact fee."""
+    from reportlab.lib.units import inch
+
+    fee, net_award = _fee_and_net(award._answer)
+    rows: list[list[Any]] = [
+        ["Permanent Disability (Gross)", f"${award._answer:,.2f}"],
+        ["Less: Attorney Fees (15%)", f"(${fee:,.2f})"],
+        ["Net Permanent Disability to Applicant", f"${net_award:,.2f}"],
+        ["Self-Procured Medical Reimbursement", f"${reimbursement._answer:,.2f}"],
+        ["Settlement Gross", f"${gross:,.2f}"],
+    ]
+    if not _replace_table_after(
+        story, "SUMMARY OF AWARD", rows, [4 * inch, 2.5 * inch], styles
+    ):
+        log.warning("fact_templates.award_summary_not_restated")
+    _restate_fee_prose(story, fee, net_award)
+
+
+def _restate_fee_prose(story: list[Any], fee: Decimal, net: Decimal | None = None) -> None:
+    """Correct the fee figure where a paragraph states it in words.
+
+    Both documents say the fee "equals" or "is" fifteen percent and then print a
+    truncated number. The table is rebuilt above; the prose is substituted here,
+    so the page does not disagree with itself.
+
+    A paragraph that states the fee and is left uncorrected is reported. That
+    is the whole point of the miss check: the release's sentence went two rounds
+    uncorrected precisely because nothing said so out loud.
+    """
+    from reportlab.platypus import Paragraph
+
+    for index, item in enumerate(story):
+        text = getattr(item, "text", None)
+        if not isinstance(text, str) or "15%" not in text:
+            continue
+        replaced = text
+        for pattern in _FEE_IN_PROSE:
+            replaced = pattern.sub(_bold_like(pattern, f"${fee:,.2f}"), replaced, count=1)
+        if net is not None:
+            for pattern in _NET_IN_PROSE:
+                replaced = pattern.sub(
+                    _bold_like(pattern, f"${net:,.2f}"), replaced, count=1
+                )
+        if replaced != text:
+            story[index] = Paragraph(replaced, item.style)
+        elif _ANY_MONEY.search(text):
+            log.warning("fact_templates.fee_prose_not_restated", sentence=text[:120])
+
+
+def _bold_like(pattern: re.Pattern[str], money: str) -> str:
+    """Wrap *money* the way the sentence this pattern matches wraps its own.
+
+    The award bolds the figure and the release does not; a substitution that
+    imposed one house style on both would edit emphasis the substrate chose.
+    """
+    return f"<b>{money}</b>" if "<b>" in pattern.pattern else money
+
+
+def _replace_table_after(
+    story: list[Any], marker: str, rows: list[list[Any]], widths: list[float], styles: Any
+) -> bool:
+    """Swap the first table following *marker* for one built from the ledger.
+
+    The substrate's distribution and award summaries are ``Table`` flowables, so
+    they cannot be rewritten the way a paragraph can. Every figure in them is
+    one this module already pins or computes, so the table is rebuilt rather
+    than edited. Returns whether it found one, so the caller reports a miss
+    instead of leaving a stale table on the page.
+    """
+    start = _index_of_text(story, marker)
+    if start is None:
+        return False
+    for index in range(start, len(story)):
+        item = story[index]
+        if item.__class__.__name__ == "Table":
+            story[index] = _money_table(rows, widths, styles)
+            return True
+    return False
 
 
 def _index_of_text(story: list[Any], marker: str) -> int | None:
@@ -910,29 +1076,38 @@ def _index_of_text(story: list[Any], marker: str) -> int | None:
     return None
 
 
-def _reimbursement_leaving_an_exact_fee(total: int) -> int:
-    """The self-procured reimbursement that leaves an award divisible by twenty.
 
-    The two cash components must sum to *total*, and both the award and the
-    total must be multiples of twenty so that the fifteen percent fee each
-    document truncates to an integer is the fifteen percent it says it is.
-    Among the candidates the one nearest five percent of the total is chosen, so
-    the document still reads like a real file rather than one bent around an
-    arithmetic constraint.
 
-    An earlier version floored the target before comparing distances and so
-    returned $1 for a total of $221 when $21 was nearer to $11.05 — a "nearest"
-    that was not nearest. The step is applied to the target itself now.
+def _fee_and_net(base: Decimal | int) -> tuple[Decimal, Decimal]:
+    """The attorney fee a document calls fifteen percent, and what is left.
+
+    To the cent, because fifteen percent of a real settlement usually has
+    cents in it. The substrate truncates the product to whole dollars, so a
+    $32,668 gross printed a fee of $4,900 beside the words "15%" for a true
+    $4,900.20 — a figure the page contradicts, and it was live on shipped
+    cases.
+
+    A twenty-dollar lattice on ``gross_amount`` was tried first and withdrawn on
+    review: narrowing a *published* field to work around a renderer's rounding
+    makes the corpus systematically unrealistic in a figure the analyzer is
+    scored on. Real settlements are not multiples of twenty. The document states
+    cents instead, which is what a real one does.
     """
-    step = 20
-    target = total / step
-    lowest, highest = step, total - step
-    if highest < lowest:
-        # Only reachable below SETTLEMENT_GROSS_MINIMUM, which the seed refuses
-        # and the derivation floors. Kept so the helper is total on its own.
-        return max(min(step, total - 1), 1)
-    nearest = round(target / step) * step
-    return int(min(max(nearest, lowest), highest))
+    amount = Decimal(base)
+    fee = (amount * SETTLEMENT_FEE_RATE).quantize(CENTS)
+    return fee, amount - fee
+
+
+def _reimbursement_nearest_five_percent(total: int) -> int:
+    """The self-procured reimbursement, as near five percent of the total as a dollar allows.
+
+    The two cash components must sum to *total* and each must be at least a
+    whole dollar, which is the whole constraint now that the fee is printed to
+    cents. An earlier version floored the target before comparing candidates and
+    returned $1 for a total of $221 when $21 was nearer to $11.05.
+    """
+    nearest = int(Decimal(total * 5) / Decimal(100) + Decimal("0.5"))
+    return max(1, min(nearest, total - 1))
 
 
 def _rewrite_stipulations(story: list[Any], money: MoneyFacts, styles: Any) -> list[Any]:
@@ -1791,12 +1966,19 @@ def build_fact_aware_templates() -> dict[str, type]:
             # the gross, which keeps the net positive by construction and keeps
             # the release's own arithmetic reproducible from the page.
             total = int(gross)
+            # The set-aside is a *governed* fact, not just an amount:
+            # ``lifecycle.resolution.msa`` says whether this file has one, and
+            # forcing an allocation regardless meant a seed stating `msa: false`
+            # still got a release printing a Medicare Set-Aside Allocation.
+            wants_msa = _wants_medicare_set_aside(self)
+            _, costs, allocation = settlement_deductions(total)
+            set_aside = allocation if wants_msa else 0
             forced = _ForcedRandint(total, _SUBSTRATE_SETTLEMENT_RANGE)
             deductions = _ForcedChain(
                 [
                     forced,
-                    _ForcedRandint(max(total // 40, 1), _SUBSTRATE_CR_COSTS_RANGE),
-                    _ForcedRandint(max(total // 5, 1), _SUBSTRATE_CR_MSA_RANGE),
+                    _ForcedRandint(costs, _SUBSTRATE_CR_COSTS_RANGE),
+                    _ForcedRandint(set_aside, _SUBSTRATE_CR_MSA_RANGE),
                 ]
             )
             original = cr_module.random
@@ -1812,6 +1994,7 @@ def build_fact_aware_templates() -> dict[str, type]:
                     expected=list(_SUBSTRATE_SETTLEMENT_RANGE),
                     gross=str(money.settlement.gross_amount),
                 )
+            _restate_distribution(story, total, costs, set_aside, wants_msa, self.styles)
             return _append_settlement_terms(story, money, self.styles, "agreement")
 
     class FactAwareStipulations(_SpecCapture, stips_module.Stipulations):  # type: ignore[misc,name-defined]
@@ -1852,25 +2035,13 @@ def build_fact_aware_templates() -> dict[str, type]:
                 # derivations from the award figure, so they stay consistent
                 # without help. Disbursement past that line is AJC-46's.
                 total = int(money.settlement.gross_amount)
-                # The split holds for **every** gross the schema accepts, not
-                # only comfortable ones. An earlier cut clamped the
-                # reimbursement into the substrate's own ``randint`` bounds and
-                # gave up beneath them, so a gross of $5,499 printed components
-                # totalling $32,696 beside a published $5,499, silently. Those
-                # bounds select *which draw* to answer and never constrained the
-                # answer; treating them as a domain was the error.
-                #
-                # The award is a multiple of twenty, which is what makes the
-                # substrate's own line — "a reasonable attorney fee of 15% ...
-                # which equals $783" — arithmetically true. It truncates
-                # ``award * 0.15`` to an integer, so any other award turns that
-                # sentence into a claim the page contradicts: $5,225 gives
-                # $783.75, printed as $783. Reserving a whole-dollar
-                # reimbursement congruent to the total modulo twenty leaves an
-                # award divisible by twenty, whose fifteen percent is exact.
-                # ``SETTLEMENT_GROSS_MINIMUM`` is set from this requirement, so
-                # there is no total the schema admits and this cannot split.
-                self_procured = _reimbursement_leaving_an_exact_fee(total)
+                # The split holds for **every** gross the schema accepts. An
+                # earlier cut clamped the reimbursement into the substrate's own
+                # ``randint`` bounds and gave up beneath them, so a gross of
+                # $5,499 printed components totalling $32,696 beside a published
+                # $5,499. Those bounds select *which draw* to answer and never
+                # constrained the answer.
+                self_procured = _reimbursement_nearest_five_percent(total)
                 award = total - self_procured
                 forced = [
                     _ForcedRandint(award, _SUBSTRATE_STIPS_AWARD_RANGE),
@@ -1889,6 +2060,9 @@ def build_fact_aware_templates() -> dict[str, type]:
                         gross=str(money.settlement.gross_amount),
                     )
             story = _rewrite_stipulations(story, money, self.styles)
+            if money.settlement is not None and forced:
+                _restate_award_summary(story, int(money.settlement.gross_amount),
+                                       forced[0], forced[1], self.styles)
             # And the total itself on the page, under its own label, so the two
             # components can be checked against it rather than merely believed.
             return _append_settlement_terms(story, money, self.styles, scope)

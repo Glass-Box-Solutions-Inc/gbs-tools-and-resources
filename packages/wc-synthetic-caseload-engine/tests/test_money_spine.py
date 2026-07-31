@@ -2250,8 +2250,8 @@ class TestTheDocumentsCarryTheNumbers:
         # component of the award on the page, and the components summed past the
         # total. The cash components must now add up to it.
         gross = Decimal(block["settlement"]["grossAmount"])
-        pd_gross = amount(r"Permanent Disability \(Gross\) \$([\d,]+)")
-        self_procured = amount(r"Self-Procured Medical Reimbursement \$([\d,]+)")
+        pd_gross = amount(r"Permanent Disability \(Gross\) \$([\d,]+\.\d\d)")
+        self_procured = amount(r"Self-Procured Medical Reimbursement \$([\d,]+\.\d\d)")
         assert pd_gross + self_procured == gross, (
             f"the award's cash components are {pd_gross} + {self_procured} = "
             f"{pd_gross + self_procured}, but the settlement gross is {gross}"
@@ -2270,7 +2270,7 @@ class TestTheDocumentsCarryTheNumbers:
         and a clean `validate --out`. Those bounds select which draw to answer;
         they never constrained the answer.
         """
-        for gross in (40, 5500, 11500, 32660, 88000):
+        for gross in (3, 5499, 11500, 32668, 88000):
             manifest, texts, _ = self._generate(
                 tmp_path / f"g{gross}",
                 {
@@ -2296,24 +2296,20 @@ class TestTheDocumentsCarryTheNumbers:
                 assert found, f"{pattern!r} not on the award for gross {where}"
                 return Decimal(found.group(1).replace(",", ""))
 
-            pd_gross = amount(r"Permanent Disability \(Gross\) \$([\d,]+)")
-            self_procured = amount(r"Self-Procured Medical Reimbursement \$([\d,]+)")
+            pd_gross = amount(r"Permanent Disability \(Gross\) \$([\d,]+\.\d\d)")
+            self_procured = amount(r"Self-Procured Medical Reimbursement \$([\d,]+\.\d\d)")
             assert pd_gross + self_procured == published, (
                 f"gross {gross}: the award prints {pd_gross} + {self_procured} = "
                 f"{pd_gross + self_procured} against a published {published}"
             )
             assert pd_gross >= 1 and self_procured >= 1
 
-            # …and it is the *nearest* valid reimbursement to five percent, not
-            # merely a valid one. Mutation found this claim unasserted: shifting
-            # the choice by one step keeps the sum and the exact fee, so the
-            # docstring's "nearest" was describing behaviour nothing checked.
-            step = 20
-            target = published / step
-            valid = [
-                Decimal(value)
-                for value in range(step, int(published) - step + 1, step)
-            ]
+            # …and it is the *nearest* whole-dollar reimbursement to five
+            # percent, not merely a valid one. Mutation found this claim
+            # unasserted: shifting the choice keeps the sum, so the docstring's
+            # "nearest" was describing behaviour nothing checked.
+            target = published * Decimal("0.05")
+            valid = [Decimal(value) for value in range(1, int(published))]
             assert valid, gross
             best = min(valid, key=lambda value: (abs(value - target), value))
             assert self_procured == best, (
@@ -2325,10 +2321,23 @@ class TestTheDocumentsCarryTheNumbers:
             # The substrate truncates `award * 0.15` to an integer, so an award
             # of $5,225 printed "$783" for a true $783.75 — a sentence the page
             # contradicts, and one this round's split had made reachable.
-            fee = amount(r"which equals \$([\d,]+)")
-            assert fee == pd_gross * Decimal("0.15"), (
+            fee = amount(r"which equals \$([\d,]+\.\d\d)")
+            assert fee == (pd_gross * Decimal("0.15")).quantize(Decimal("0.01")), (
                 f"gross {gross}: the award prints a 15% fee of {fee} on {pd_gross}, "
                 f"which is {pd_gross * Decimal('0.15')}"
+            )
+            # The same figure appears twice on this page — once in the summary
+            # table, once in stipulation 6 — and a fix that reached only one of
+            # them is the defect this whole class keeps reproducing.
+            tabled = amount(r"Less: Attorney Fees \(15%\) \(\$([\d,]+\.\d\d)\)")
+            assert tabled == fee, (
+                f"gross {gross}: the award's table says {tabled} and its "
+                f"stipulation 6 says {fee}"
+            )
+            stated_net = amount(r"payable to applicant is \$([\d,]+\.\d\d)")
+            assert stated_net == pd_gross - fee, (
+                f"gross {gross}: stipulation 6 states a net of {stated_net} "
+                f"against {pd_gross} - {fee}"
             )
 
     def test_the_release_reconciles_and_never_owes_the_applicant_money(
@@ -2347,7 +2356,7 @@ class TestTheDocumentsCarryTheNumbers:
         important document; the twenty-dollar step on the gross makes it true on
         both.
         """
-        for gross in (40, 13800, 32660, 88000):
+        for gross in (3, 13810, 32668, 88000):
             manifest, texts, _ = self._generate(
                 tmp_path / f"cr{gross}",
                 {
@@ -2359,7 +2368,7 @@ class TestTheDocumentsCarryTheNumbers:
                 lifecycle={
                     "target_stage": "resolved",
                     "eval_type": "none",
-                    "resolution": {"type": "c_and_r"},
+                    "resolution": {"type": "c_and_r", "msa": True},
                 },
                 documents={"format_mix": {"pdf": 1.0}},
             )
@@ -2373,16 +2382,35 @@ class TestTheDocumentsCarryTheNumbers:
                 assert found, f"{pattern!r} not on the release for gross {where}"
                 return Decimal(found.group(1).replace(",", ""))
 
-            printed = amount(r"Gross Settlement Amount \$([\d,]+)")
-            fee = amount(r"Less: Attorney Fees \(15%\) \(\$([\d,]+)\)")
-            costs = amount(r"Less: Costs and Expenses \(\$([\d,]+)\)")
-            set_aside = amount(r"Less: Medicare Set-Aside Allocation \(\$([\d,]+)\)")
-            net = amount(r"Net to Applicant</?b?>? ?<?b?>?\$([\d,-]+)")
+            printed = amount(r"Gross Settlement Amount \$([\d,]+\.\d\d)")
+            fee = amount(r"Less: Attorney Fees \(15%\) \(\$([\d,]+\.\d\d)\)")
+            costs = amount(r"Less: Costs and Expenses \(\$([\d,]+\.\d\d)\)")
+            set_aside = amount(r"Less: Medicare Set-Aside Allocation \(\$([\d,]+\.\d\d)\)")
+            net = amount(r"Net to Applicant \$(-?[\d,]+\.\d\d)")
 
             assert printed == published
-            assert fee == published * Decimal("0.15"), (
+            assert fee == (published * Decimal("0.15")).quantize(Decimal("0.01")), (
                 f"gross {gross}: the release calls {fee} fifteen percent of "
                 f"{published}, which is {published * Decimal('0.15')}"
+            )
+            # Section 9 states the fee in prose, unbolded — which is why the
+            # round-9 correction, matched on the substrate's bold wrapper, fixed
+            # the award and missed the release for two rounds. The release is
+            # the document that gets signed.
+            prose_fee = amount(
+                r"in the amount of \$([\d,]+\.\d\d) \(15% of gross settlement\)"
+            )
+            assert prose_fee == fee, (
+                f"gross {gross}: the release's table says {fee} and its section 9 "
+                f"says {prose_fee}"
+            )
+            # Costs are whole dollars by construction, so section 9 prints them
+            # without cents where the table pads them. Same figure, and the
+            # assertion is on the figure.
+            prose_costs = amount(r"plus costs of \$([\d,]+(?:\.\d\d)?)")
+            assert prose_costs == costs, (
+                f"gross {gross}: the release's table says costs of {costs} and "
+                f"its section 9 says {prose_costs}"
             )
             assert net > 0, f"gross {gross}: the release owes the applicant {net}"
             assert printed - fee - costs - set_aside == net, (
@@ -2677,17 +2705,30 @@ class TestTheGovernanceTableBindsBothWays:
 class TestASettlementIsLargeEnoughForItsOwnDocument:
     """`gross_amount: 0` and `1` were accepted and printed a $27,581 award.
 
-    The stipulated award states two whole-dollar cash components summing to the
-    gross, over an award divisible by twenty so its fifteen percent fee is
-    exact. Twenty plus one is the smallest total satisfying both, and it is a
-    derived floor rather than an invented one.
+    The floor answers two documents, not one. The stipulated award states two
+    whole-dollar cash components summing to the gross, so it needs $2. The
+    release subtracts a fee, costs and a set-aside and must still leave the
+    applicant money, so it needs $3 — and that is the one that binds. The
+    constant searches :func:`settlement_deductions` for the answer rather than
+    stating it, so moving a divisor moves the floor with it.
     """
 
     def test_a_stated_gross_below_the_floor_is_refused(self) -> None:
-        from wc_caseload_engine.seeds import SETTLEMENT_GROSS_MINIMUM
+        from wc_caseload_engine.seeds import (
+            SETTLEMENT_GROSS_MINIMUM,
+            settlement_deductions,
+        )
 
-        assert SETTLEMENT_GROSS_MINIMUM == 40
-        for gross in (0, 1, 20, 39):
+        assert SETTLEMENT_GROSS_MINIMUM == 3
+        # …and it is derived, not stated: one dollar below it, the release the
+        # award's floor knows nothing about owes the applicant money.
+        below = Decimal(SETTLEMENT_GROSS_MINIMUM - 1)
+        fee, costs, set_aside = settlement_deductions(int(below))
+        assert below - fee - costs - set_aside <= 0
+        fee, costs, set_aside = settlement_deductions(SETTLEMENT_GROSS_MINIMUM)
+        assert Decimal(SETTLEMENT_GROSS_MINIMUM) - fee - costs - set_aside > 0
+
+        for gross in (0, 1, 2):
             with pytest.raises(SeedValidationError) as caught:
                 _facts(
                     {"wages": WAGES, "settlement": {"gross_amount": gross}},
@@ -2698,21 +2739,7 @@ class TestASettlementIsLargeEnoughForItsOwnDocument:
                     },
                 )
             assert "too small" in str(caught.value), gross
-
-        # A gross off the twenty-dollar step is refused too, because both
-        # documents state a 15% fee as whole dollars: $32,668 prints $4,900 for
-        # a true $4,900.20.
-        for gross in (41, 88001, 32668):
-            with pytest.raises(SeedValidationError) as caught:
-                _facts(
-                    {"wages": WAGES, "settlement": {"gross_amount": gross}},
-                    lifecycle={
-                        "target_stage": "resolved",
-                        "eval_type": "none",
-                        "resolution": {"type": "c_and_r"},
-                    },
-                )
-            assert "multiple of 20" in str(caught.value), gross
+            assert str(SETTLEMENT_GROSS_MINIMUM) in str(caught.value), gross
 
         # The control: the floor itself loads and publishes exactly.
         facts = _facts(
@@ -2723,7 +2750,7 @@ class TestASettlementIsLargeEnoughForItsOwnDocument:
                 "resolution": {"type": "stipulations"},
             },
         )
-        assert facts.settlement.gross_amount == Decimal("40.00")
+        assert facts.settlement.gross_amount == Decimal(SETTLEMENT_GROSS_MINIMUM)
 
     def test_a_derived_gross_is_raised_to_the_floor_rather_than_published_short(
         self,
@@ -2733,9 +2760,9 @@ class TestASettlementIsLargeEnoughForItsOwnDocument:
         The derived gross is the permanent-disability rate over twenty to a
         hundred and twenty weeks, and that rate has a floor from the rate table
         — so no ordinary seed can drive it under $21. An **authored** basis can:
-        `pd_min_weekly: 0` with `pd_max_weekly: 1` yields a rate of $0.67 and a
-        raw gross of $13. A derivation is not an author's instruction, so it is
-        raised rather than refused.
+        `pd_min_weekly: 0` with `pd_max_weekly: 0.05` yields a rate of $0.05 and
+        a raw gross under a dollar. A derivation is not an author's instruction,
+        so it is raised rather than refused.
         """
         from wc_caseload_engine.seeds import SETTLEMENT_GROSS_MINIMUM
 
@@ -2743,7 +2770,7 @@ class TestASettlementIsLargeEnoughForItsOwnDocument:
             {
                 "wages": {
                     "base_weekly_wage": 1,
-                    "rate_basis": {"pd_min_weekly": 0.0, "pd_max_weekly": 1.0},
+                    "rate_basis": {"pd_min_weekly": 0.0, "pd_max_weekly": 0.05},
                 },
                 "benefits": {"td_weeks": 0, "pd_advances": 0},
             },
@@ -2754,24 +2781,8 @@ class TestASettlementIsLargeEnoughForItsOwnDocument:
                 "resolution": {"type": "stipulations"},
             },
         )
-        assert facts.wages.rate.pd_weekly_rate < Decimal("1.00")
+        assert facts.wages.rate.pd_weekly_rate < Decimal("0.10")
         assert facts.settlement.gross_amount == Decimal(SETTLEMENT_GROSS_MINIMUM)
-
-        # Every derived gross lands on the step, not only the clamped one.
-        from wc_caseload_engine.seeds import SETTLEMENT_GROSS_STEP
-
-        for rng_seed in range(20):
-            derived = _facts(
-                {"wages": WAGES, "benefits": {"td_weeks": 0, "pd_advances": 0}},
-                rng_seed=500 + rng_seed,
-                lifecycle={
-                    "target_stage": "resolved",
-                    "eval_type": "none",
-                    "resolution": {"type": "c_and_r"},
-                },
-            ).settlement.gross_amount
-            assert int(derived) % SETTLEMENT_GROSS_STEP == 0, (rng_seed, derived)
-            assert derived >= SETTLEMENT_GROSS_MINIMUM
 
         # The opposite draw: an ordinary case is nowhere near the floor, so the
         # probe is testing the clamp rather than a coincidence.
