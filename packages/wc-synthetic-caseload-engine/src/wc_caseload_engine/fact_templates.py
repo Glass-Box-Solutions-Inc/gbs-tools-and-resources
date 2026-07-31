@@ -26,7 +26,7 @@ from wc_caseload_engine.case_facts import (
     SUBSTRATE_STATUS_PHRASES,
     CaseFacts,
 )
-from wc_caseload_engine.money import MoneyFacts
+from wc_caseload_engine.money import TD_PAYMENT_DUE_DAYS, MoneyFacts
 from wc_caseload_engine.substrate import import_substrate
 from wc_caseload_engine.taxonomy import effective_taxonomy
 
@@ -433,6 +433,14 @@ METHOD_LABEL = "AWW Method:"
 #: document (as opposed to the manifest) sees only this.
 UNCONFIRMED_NOTICE = "Statutory basis COUNSEL-UNCONFIRMED"
 
+#: The same caveat, on the payment-due yardstick.
+#:
+#: The due-day count is as much a legal binding as a rate ceiling is, and it is
+#: the baseline every ``days_late`` on the page is measured from. It carries its
+#: own caveat for the same reason the rate line does: a reader of the document
+#: never sees the manifest.
+DUE_NOTICE = "COUNSEL-UNCONFIRMED"
+
 
 class _ForcedRandint:
     """A stand-in for :mod:`random` that answers one specific ``randint``.
@@ -572,12 +580,21 @@ def _rewrite_wage_statement(story: list[Any], money: MoneyFacts, styles: Any) ->
         "min": " (at statutory minimum)",
         "unbounded": "",
     }
+    # Every row below is a governed manifest field, and that is not a
+    # coincidence — ``GOVERNED_MONEY_FIELDS`` says a published fact is one a
+    # document renders, and ``pattern``, ``basisAuthority`` and ``basisSource``
+    # were published without ever reaching paper. Three labels an analyzer would
+    # have been scored on recovering from a document that did not contain them.
     summary: list[list[Any]] = [
         ["Wage Summary", ""],
         [METHOD_LABEL, computation.method],
+        ["Method Source:", computation.method_source],
         ["Basis of Method:", computation.method_reason],
+        ["Earnings Pattern:", wage.pattern],
+        ["Concurrent Employment:", "yes" if wage.concurrent_employment else "no"],
         ["Earnings Considered:", f"${computation.gross_considered:,.2f}"],
         ["Weeks Considered:", f"{computation.weeks_considered.normalize():f}"],
+        ["Periods Considered:", str(computation.periods_considered)],
     ]
     if computation.in_kind_weekly:
         summary.append(["Non-Cash Wages (weekly):", f"${computation.in_kind_weekly:,.2f}"])
@@ -588,11 +605,22 @@ def _rewrite_wage_statement(story: list[Any], money: MoneyFacts, styles: Any) ->
                 "Temporary Disability Rate:",
                 f"${rate.td_weekly_rate:,.2f}/week{bound_note[rate.td_bound]}",
             ],
+            # The bound token itself, not only the parenthetical. "Unbounded" has
+            # no parenthetical — it renders as nothing — so the single most
+            # consequential fact about a rate was recoverable from the page only
+            # when it happened to be true. A capped rate is the same number for
+            # every high earner in a vintage; an analyzer that recovers the
+            # number without the cap has learnt nothing about the wage behind it,
+            # and it cannot recover a word that is not there.
+            ["TD Rate Bound:", rate.td_bound],
             [
                 "Permanent Disability Rate:",
                 f"${rate.pd_weekly_rate:,.2f}/week{bound_note[rate.pd_bound]}",
             ],
+            ["PD Rate Bound:", rate.pd_bound],
             ["Rate Basis:", f"{basis.label} — {UNCONFIRMED_NOTICE}"],
+            ["Rate Basis Source:", basis.source],
+            ["Rate Basis Authority:", basis.authority],
         ]
     )
     story[summary_index] = _money_table(summary, [2.6 * inch, 3.4 * inch], styles)
@@ -618,8 +646,22 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
     if pay_index < 0:
         log.warning("fact_templates.benefit_pay_table_not_found", header=_PAY_TABLE_HEADER)
     else:
+        # ``Due`` is here because ``Days Late`` is meaningless without it. The
+        # first cut printed the lateness and kept its own yardstick — the due
+        # date, computed one line above where it was discarded — off the page, so
+        # the single most consequential number on a delay file was asserted
+        # rather than derivable. Wave 3 computes a penalty against this column.
         rows: list[list[Any]] = [
-            ["Benefit Period", "Type", "Weeks", "Weekly Rate", "Paid", "Days Late", "Amount"]
+            [
+                "Benefit Period",
+                "Type",
+                "Weeks",
+                "Weekly Rate",
+                "Due",
+                "Paid",
+                "Days Late",
+                "Amount",
+            ]
         ]
         for period in benefits.td_periods:
             rows.append(
@@ -628,6 +670,7 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
                     "TD",
                     f"{period.weeks.normalize():f}",
                     f"${period.weekly_rate:,.2f}",
+                    f"{period.date_due:%m/%d/%y}",
                     f"{period.date_paid:%m/%d/%y}" if period.date_paid else "UNPAID",
                     str(period.days_late) if period.days_late else "-",
                     f"${period.amount:,.2f}",
@@ -640,6 +683,7 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
                     "PD advance",
                     f"{advance.weeks.normalize():f}",
                     f"${advance.weekly_rate:,.2f}",
+                    "-",
                     f"{advance.date_paid:%m/%d/%y}",
                     str(advance.days_late) if advance.days_late else "-",
                     f"${advance.amount:,.2f}",
@@ -653,22 +697,24 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
                     "",
                     "",
                     "",
+                    "",
                     str(gap.days),
                     "$0.00",
                 ]
             )
         if len(rows) == 1:
-            rows.append(["-", "no benefits paid", "", "", "", "-", "$0.00"])
+            rows.append(["-", "no benefits paid", "", "", "", "", "-", "$0.00"])
         story[pay_index] = _money_table(
             rows,
             [
-                1.3 * inch,
-                1.0 * inch,
-                0.5 * inch,
-                0.85 * inch,
-                0.75 * inch,
-                0.6 * inch,
+                1.2 * inch,
                 0.9 * inch,
+                0.45 * inch,
+                0.8 * inch,
+                0.65 * inch,
+                0.65 * inch,
+                0.55 * inch,
+                0.85 * inch,
             ],
             styles,
         )
@@ -689,12 +735,17 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
         ["Average Weekly Wage (AWW):", f"${money.aww:,.2f}"],
         [METHOD_LABEL, money.method],
         ["Temporary Disability Rate:", f"${rate.td_weekly_rate:,.2f}/week"],
+        ["Temporary Disability Periods:", str(len(benefits.td_periods))],
         ["Total Temporary Disability Paid:", f"${benefits.td_total:,.2f}"],
+        ["Permanent Disability Advance Count:", str(len(benefits.pd_advances))],
         ["Permanent Disability Advances:", f"${benefits.pd_total:,.2f}"],
+        ["Payment Due Within (days of period end):", f"{TD_PAYMENT_DUE_DAYS} — {DUE_NOTICE}"],
         ["Payments Issued Late:", str(benefits.late_payment_count)],
         ["Longest Delay (days):", str(benefits.max_days_late)],
         ["Days Without Benefits:", str(sum(gap.days for gap in benefits.gaps))],
         ["Rate Basis:", f"{rate.basis.label} — {UNCONFIRMED_NOTICE}"],
+        ["Rate Basis Source:", rate.basis.source],
+        ["Rate Basis Authority:", rate.basis.authority],
     ]
     if money.settlement is not None:
         settlement = money.settlement
@@ -1488,10 +1539,18 @@ def build_fact_aware_templates() -> dict[str, type]:
             if money is None or money.settlement is None:
                 return list(super().build_story(doc_spec))
 
-            forced = _ForcedRandint(
-                int(money.settlement.gross_amount),
-                _SUBSTRATE_SETTLEMENT_RANGE,
-            )
+            gross = money.settlement.gross_amount
+            if gross != int(gross):
+                # Unreachable by construction — the ledger quantizes to whole
+                # dollars and the seed schema refuses cents — and reported
+                # rather than truncated anyway, because the substrate's draw is
+                # an integer and truncating here is exactly how the manifest
+                # would come to publish a gross the release contradicts.
+                log.warning(
+                    "fact_templates.settlement_gross_not_whole_dollars",
+                    gross=str(gross),
+                )
+            forced = _ForcedRandint(int(gross), _SUBSTRATE_SETTLEMENT_RANGE)
             original = cr_module.random
             cr_module.random = forced
             try:

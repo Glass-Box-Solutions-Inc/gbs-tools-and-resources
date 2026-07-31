@@ -107,6 +107,102 @@ the meantime.
    figures they were; rating is AJC-44's work, and nothing in the rate
    derivation depends on them.
 
+### Fixed — the PR #29 cross-model review (**AJC-43**)
+
+An independent GPT-5.6-Sol review of the branch returned BLOCK with seven
+findings. Each was re-derived locally before it was acted on; five held, two
+were refuted with evidence and are recorded in `ISA.md` under Decisions. Every
+fix below is mutation-proven — reverting it turns the named probe red, 19 of 19.
+
+- **Two exported functions were running on the caller's decimal context.**
+  `compute_aww` and `select_method` were only ever reached through
+  `derive_money_facts`, whose pin covered them from outside, so a seventeen-mutant
+  campaign never saw them. Measured: `compute_aww` raised `InvalidOperation` at
+  `prec` 2–5 and moved a published `gross_considered` from `58732.37` to
+  `58732.30` at 6; a 26.2867-week history is labelled `actual_weekly_earnings` at
+  full precision and `short_history_projection` at 2 — a *wrong label*, not a
+  rounding difference. Both pinned, and the guard now enumerates `money.__all__`
+  so a new export is covered the day it is added.
+
+- **A five-word seed could publish the engine's unverified table as
+  counsel-confirmed.** `rate_basis: {counsel_confirmed: true}` kept every
+  engine-default figure, kept an `authority` still reading `COUNSEL-UNCONFIRMED`,
+  and published `counselConfirmed: true` above it. Confirming now requires all six
+  figures and the authority they come from; an override that states nothing
+  overrides nothing.
+
+- **A partial rate override could invert the merged bounds.** `td_min_weekly:
+  5000` merged under the `$1,539.71` default ceiling and the comp rate came back
+  `$5,000`, recorded as `tdBound: min` — above the maximum its own basis
+  published. Bounds must now be stated as a pair, and `RateBasis` validates the
+  merged result (the merge rebuilds through the constructor, because
+  `model_copy(update=...)` skips validation and that is how it got through).
+
+- **Four of six wage shape knobs were unenforced against a listed history.**
+  They carry defaults, so "is it None" could not tell an authored value from
+  Pydantic's. `pattern` is the sharp one — it is a published ground-truth label,
+  so a seed listing a steady history under `pattern: irregular` shipped a wrong
+  label silently. Read from `model_fields_set` now. A history of only
+  `concurrent: true` periods is refused too: it divided a real $4,000 gross by
+  zero primary weeks and published `averageWeeklyWage: 0.00`.
+
+- **106 of 132 planned payment records were dated before the payments they
+  print.** The money floor decided the right date and then discarded it whenever
+  the lifecycle walk had already proposed the subtype; the walk dates from the
+  stage, the ledger runs to whenever the last payment cleared. One record was
+  four months early. Already-proposed candidates are re-dated forward — every
+  candidate for the subtype, since the pool picks the earliest — and never
+  backward.
+
+- **`earning_capacity` published operands that reach a different answer.** It
+  carried the derived history's 26 periods, 52 weeks and $51,830.08 as
+  "considered" for a stated AWW of 1500, and added in-kind wages on top, so the
+  published figure was not even the one the author stated. It now publishes the
+  stated figure and zeroed operands.
+
+- **Six published fields never reached a document.** `GOVERNED_MONEY_FIELDS`
+  promises that a published fact is one a document renders; `pattern`,
+  `methodSource`, `basisSource`, `basisAuthority` and both bound tokens were not.
+  `unbounded` rendered as an empty parenthetical, so whether a rate was capped was
+  recoverable from the page only when it happened to be capped. The new guard
+  sweeps the governance table rather than a hand-written list, and found
+  `methodSource` and the bound tokens after a manual pass had missed both.
+
+- **A settlement gross with cents labelled a release printing whole dollars.**
+  The substrate draws an integer and derives fee, costs, set-aside and net from
+  it, so `88000.99` in the ledger sat above `$88,000` on the paper. Refused at the
+  seed rather than silently rounded, and quantized once after both derivation
+  branches.
+
+- **A `funding_date` without an `approval_date` published a negative lag.** It
+  was measured against an approval derived from the timeline, which the seed
+  cannot see; only `validate --out` caught it, a whole generation downstream. The
+  pair is now required at parse time.
+
+#### Compatibility notices (review round)
+
+6. **`caseFacts.money.benefits` publishes events, not only counts.**
+   `tdPeriods` and `pdAdvances` were integer counts under names that mean
+   collections; they now carry the records, and the counts moved to
+   `tdPeriodCount` / `pdAdvanceCount`. `gaps` and `tdPaymentDueDays` are new.
+   Done now rather than in Wave 2 because these names are *extraction labels* —
+   the analyzer is scored on them, so renaming later is the one class of change
+   this schema exists to avoid. No shipped manifest is affected: no committed
+   example seeds wages.
+7. **`TdPeriod` carries `date_due`.** `days_late` was an effect whose cause lived
+   in a module constant nothing published, so a reader holding the ledger could
+   not check it. The payment record prints a `Due` column, and Wave 3 computes
+   penalties against it.
+8. **Four seed shapes that used to load are now refused**, each with a registered,
+   proven-followable message: a listed history beside any shape knob, a history
+   with no primary period, a `counsel_confirmed` override without a complete
+   binding, a lone rate bound, a lone `funding_date`, and a settlement gross with
+   cents. Every one produced an incoherent or mislabelled ledger.
+9. **The wage statement prints more rows** — earnings pattern, method source,
+   both rate-bound tokens, the rate-basis source and its full authority text.
+   Money-bearing cases only; a wage-free case renders byte-identically, still
+   353/345/8/0 against `origin/main`.
+
 ### Added — discovery volumes, anchored letters, and a registry for advice (**AJC-37**, Phase 3c)
 
 - **The ledger, the table of contents and the paper are one number (ISC-126).**

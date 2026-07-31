@@ -570,11 +570,53 @@ def _validate_money(
             f"{case_label}: caseFacts publishes an average weekly wage but the case holds "
             "no wage statement — the figure is asserted rather than derivable"
         )
-    if money["benefits"].get("tdPeriods") and not (subtypes & MONEY_BENEFIT_DOCUMENTS):
+    benefits = money["benefits"]
+    if benefits.get("tdPeriodCount") and not (subtypes & MONEY_BENEFIT_DOCUMENTS):
         problems.append(
-            f"{case_label}: caseFacts publishes {money['benefits']['tdPeriods']} temporary "
+            f"{case_label}: caseFacts publishes {benefits['tdPeriodCount']} temporary "
             "disability period(s) but the case holds no payment record to read them from"
         )
+    # The counts and the event arrays are two publications of one ledger, so a
+    # disagreement between them means one of the two was assembled from
+    # something other than the records — which is the drift the paired
+    # publication exists to make visible.
+    for count_key, array_key in (
+        ("tdPeriodCount", "tdPeriods"),
+        ("pdAdvanceCount", "pdAdvances"),
+    ):
+        events = benefits.get(array_key)
+        if not isinstance(events, list):
+            problems.append(
+                f"{case_label}: caseFacts.money.benefits.{array_key} is not a list — the "
+                "ledger publishes the events, not only how many there were"
+            )
+            continue
+        if benefits.get(count_key) != len(events):
+            problems.append(
+                f"{case_label}: caseFacts.money.benefits.{count_key} is "
+                f"{benefits.get(count_key)} but {array_key} holds {len(events)} record(s)"
+            )
+    # ``days_late`` is measured from ``dateDue``. A record that carries the
+    # effect without the cause is the asserted number this layer removes, so the
+    # two are checked against each other rather than taken on trust.
+    for period in benefits.get("tdPeriods") or []:
+        if not isinstance(period, dict):
+            continue
+        due, paid, late = period.get("dateDue"), period.get("datePaid"), period.get("daysLate")
+        if due is None:
+            problems.append(
+                f"{case_label}: a caseFacts.money.benefits.tdPeriods record omits dateDue — "
+                "daysLate is measured against it and cannot be checked without it"
+            )
+            continue
+        if paid is None:
+            continue
+        actual = (date.fromisoformat(paid) - date.fromisoformat(due)).days
+        if actual != late:
+            problems.append(
+                f"{case_label}: a temporary disability period was due {due} and paid "
+                f"{paid} ({actual} day(s) apart) but records daysLate {late}"
+            )
 
     settlement = money.get("settlement")
     if settlement is not None:

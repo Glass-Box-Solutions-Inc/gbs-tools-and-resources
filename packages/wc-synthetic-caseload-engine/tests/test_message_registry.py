@@ -422,6 +422,55 @@ REGISTRY: dict[str, RegisteredMessage] = {
         note="Following the first clause literally: gross raised to exactly the overtime, "
         "which the message says is enough.",
     ),
+    "rate_basis_bound_unpaired": RegisteredMessage(
+        where="RateBasisOverride._bounds_are_ordered",
+        directives=("Add {}, or remove {}",),
+        trigger={
+            "scenario": {
+                "wages": {
+                    "base_weekly_wage": 900,
+                    "rate_basis": {"td_min_weekly": 900},
+                }
+            }
+        },
+        resolution={"scenario": {"wages": {"rate_basis": {"td_max_weekly": 1600}}}},
+        note="The first clause. A lone bound merges against the engine's unverified "
+        "default at the other end, which is how a $5,000 floor once landed under a "
+        "$1,539.71 ceiling and produced a rate above the maximum.",
+    ),
+    "rate_basis_confirmed_without_the_numbers": RegisteredMessage(
+        where="RateBasisOverride._confirmation_covers_a_whole_binding",
+        directives=(
+            "Supply every rate_basis figure and the authority they come from, or set "
+            "counsel_confirmed to false",
+        ),
+        trigger={
+            "scenario": {
+                "wages": {
+                    "base_weekly_wage": 900,
+                    "rate_basis": {"counsel_confirmed": True},
+                }
+            }
+        },
+        resolution={
+            "scenario": {
+                "wages": {
+                    "rate_basis": {
+                        "td_fraction": 0.6667,
+                        "td_max_weekly": 1800,
+                        "td_min_weekly": 240,
+                        "pd_fraction": 0.6667,
+                        "pd_max_weekly": 300,
+                        "pd_min_weekly": 160,
+                        "authority": "verified by counsel, memo of 2026-07-01",
+                    }
+                }
+            }
+        },
+        note="The first clause, which is the one worth proving: confirming the engine's "
+        "unverified table without restating it is the claim this package promises it "
+        "can never make, and it took five words of YAML.",
+    ),
     "rate_basis_bounds_inverted": RegisteredMessage(
         where="RateBasisOverride._bounds_are_ordered",
         directives=("Swap the two values, or raise the maximum",),
@@ -498,12 +547,56 @@ REGISTRY: dict[str, RegisteredMessage] = {
             "lifecycle": {"resolution": {"type": "c_and_r"}},
             "scenario": {
                 "wages": {"base_weekly_wage": 900},
-                "settlement": {"funding_date": "2024-02-01", "funding_days": 30},
+                "settlement": {
+                    "approval_date": "2024-01-08",
+                    "funding_date": "2024-02-01",
+                    "funding_days": 30,
+                },
             },
         },
         resolution={"scenario": {"settlement": {}}},
         drop=("scenario.settlement.funding_days",),
-        note="Keeping funding_date and dropping the other, exactly as offered.",
+        note="Keeping funding_date and dropping the other, exactly as offered. The "
+        "trigger carries approval_date because an exact funding date now requires "
+        "one — without it this very test went red, which is the guard reporting that "
+        "'keep funding_date' had become advice that lands on a second error.",
+    ),
+    "funding_date_without_approval": RegisteredMessage(
+        where="SettlementScenario._funding_is_stated_one_way",
+        directives=(
+            "Add scenario.settlement.approval_date, or state funding_days instead and "
+            "let the approval date lead it",
+        ),
+        trigger={
+            "injury": {"date_of_injury": "2021-06-14"},
+            "lifecycle": {"resolution": {"type": "c_and_r"}},
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "settlement": {"funding_date": "2024-02-01"},
+            },
+        },
+        resolution={"scenario": {"settlement": {"approval_date": "2024-01-08"}}},
+        note="The first clause. A lone funding date was measured against an approval "
+        "derived from the timeline, which the seed cannot see — so it published a "
+        "negative funding lag and only validate caught it.",
+    ),
+    "settlement_gross_with_cents": RegisteredMessage(
+        where="SettlementScenario._gross_is_whole_dollars",
+        directives=(
+            "State scenario.settlement.gross_amount as a whole number of dollars (for "
+            "example {})",
+        ),
+        trigger={
+            "injury": {"date_of_injury": "2021-06-14"},
+            "lifecycle": {"resolution": {"type": "c_and_r"}},
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "settlement": {"gross_amount": 88000.99},
+            },
+        },
+        resolution={"scenario": {"settlement": {"gross_amount": 88000}}},
+        note="The figure the message itself names, taken verbatim — the release prints "
+        "whole dollars, so a ledger holding cents labels a document it contradicts.",
     ),
     "funded_before_approval": RegisteredMessage(
         where="SettlementScenario._funding_is_stated_one_way",
@@ -519,6 +612,41 @@ REGISTRY: dict[str, RegisteredMessage] = {
             },
         },
         resolution={"scenario": {"settlement": {"funding_date": "2024-03-15"}}},
+    ),
+    "every_period_is_concurrent": RegisteredMessage(
+        where="WageScenario._history_is_stated_one_way",
+        directives=("Set 'concurrent: false' on the primary employer's periods, or add them",),
+        trigger={
+            "scenario": {
+                "wages": {
+                    "earnings": [
+                        {
+                            "period_start": "2022-01-03",
+                            "period_end": "2022-01-16",
+                            "gross": 1800,
+                            "concurrent": True,
+                        }
+                    ]
+                }
+            }
+        },
+        resolution={
+            "scenario": {
+                "wages": {
+                    "earnings": [
+                        {
+                            "period_start": "2022-01-03",
+                            "period_end": "2022-01-16",
+                            "gross": 1800,
+                            "concurrent": False,
+                        }
+                    ]
+                }
+            }
+        },
+        note="The first clause. The average is taken over the *primary* employment's "
+        "weeks, so a history with no primary period divided a real gross by zero weeks "
+        "and published an average weekly wage of 0.00 without a word.",
     ),
     "lateness_without_late_payments": RegisteredMessage(
         where="BenefitsScenario._lateness_is_coherent",

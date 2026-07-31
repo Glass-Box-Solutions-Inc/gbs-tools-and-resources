@@ -927,7 +927,12 @@ sometimes recoverable is not a label.
 `earning_capacity` is the catch-all a human argues for when no arithmetic over
 the history gives the right answer. An engine reaching for it unprompted would be
 asserting a legal conclusion rather than computing one, so the seed has to name
-both the method and the figure.
+both the method and the figure. And the figure it names is the whole answer:
+this method publishes `periodsConsidered`, `weeksConsidered`, `grossConsidered`
+and `inKindWeekly` as zero, because operands that reach a *different* number than
+the one published are worse than no operands at all. Every other method publishes
+the earnings its average was computed from, and a reader can divide them to get
+back to it.
 
 #### Every statutory number here is unverified
 
@@ -940,8 +945,17 @@ caveat on the way. The flag is published on every case at
 `caseFacts.money.rate.counselConfirmed`.
 
 A seed carrying a genuinely verified authority states it under
-`scenario.wages.rate_basis` and sets `counsel_confirmed: true`. The engine's own
-table can never set that flag.
+`scenario.wages.rate_basis` and sets `counsel_confirmed: true` — and to set that
+flag it must state the **whole** binding: all six figures and the authority they
+come from. Confirming is a claim about numbers, so it takes the numbers. Adopting
+the engine's unverified table and calling it confirmed is refused, and a block
+that states nothing overrides nothing. The engine's own table can never set the
+flag under any seed.
+
+A rate bound is also stated as a pair. Overriding one end alone would merge
+against an *engine default* at the other end, which may sit on the wrong side of
+the figure you stated; `RateBasis` validates the merged result as well, so no
+construction path can produce a floor above its own ceiling.
 
 `money.rate_basis_for(doi)` is the seam: the single point at which the engine asks
 what the parameters are for a date of injury, and the only reader of the table. A
@@ -949,6 +963,15 @@ verified dated authority replaces it by replacing that function's body. It is
 deliberately a plain function signature with no network call and no configuration
 hook, so this package takes no dependency on the authority work running elsewhere
 and that work needs no knowledge of this package beyond the shape it returns.
+
+**Out of range, the placeholder table answers rather than raises**, and that is a
+deliberate call with a recorded reason: a synthetic corpus should not become
+un-generatable because a seed reached back further than a placeholder does. It is
+also narrower than it sounds — a date of injury *after* the anchor is already
+refused by the seed's own runway validation, so only a direct call can reach the
+forward edge. A dated authority that fails closed in both directions is a
+different contract, and whoever lands one owns that decision at the seam rather
+than inheriting this default silently.
 
 The rate is keyed to the **date of injury** because that is the axis these
 numbers actually move on. A caseload spans years, and the current figures are the
@@ -959,8 +982,11 @@ wrong answer for most files in it.
 `caseFacts.money.rate` publishes `tdBound` and `pdBound` as `max`, `min` or
 `unbounded`. A capped rate is the same number for every high earner in a vintage,
 so an analyzer that recovers the number without recovering the cap has learnt
-nothing about the wage behind it. The wage statement prints it too, as
-"(at statutory maximum)".
+nothing about the wage behind it. The wage statement prints both the readable
+form — "(at statutory maximum)" — and the token itself, on its own row. The token
+is there because the readable form has nothing to say for `unbounded`: it renders
+as an empty parenthetical, which made the fact recoverable from the page only in
+the cases where it happened to be true.
 
 #### The ledger records exposure rather than implying it
 
@@ -971,6 +997,20 @@ so the persona already in the schema drives the money instead of a second knob
 that could contradict it: an `attentive` administrator produces no lateness at
 all, a `negligent` one accumulates it. That is what lets Wave 3 compute a penalty
 against a *known* exposure.
+
+Lateness carries its own yardstick. `TdPeriod.date_due` is on the record and
+`tdPaymentDueDays` on the manifest, so `days_late` can be recomputed from the
+published facts — `datePaid - dateDue` — instead of taken on trust against a
+constant nothing publishes. The payment record prints a `Due` column beside the
+`Paid` one for the same reason: a delay a reader cannot check is a delay the
+corpus only claims.
+
+`caseFacts.money.benefits` publishes the **events**, not only how many there
+were. `tdPeriods` and `pdAdvances` are arrays of records — dates, weeks, weekly
+rate, amount, due, paid, days late — with the cardinalities under
+`tdPeriodCount` and `pdAdvanceCount`, and `gaps` carrying each interruption.
+Wave 3 computes a penalty per late transaction, and a total cannot say which
+transaction it was.
 
 `approval_date` and `funding_date` are separate fields on the settlement. They are
 separate events in a real file, and the interval between them is the whole
@@ -1290,7 +1330,7 @@ wc-caseload validate --out /tmp/wcce-money
 | `two-jobs` | A second, concurrent employer | `concurrent_aggregate`, AWW `1174.78` |
 | `capped-executive` | Earnings above the indemnity ceiling | TD `1539.71` with `tdBound: max` |
 | `neglected-file` | A negligent administrator's payment history | `gapDays: 75`, `latePayments: 3`, `maxDaysLate: 54`, funding lag 118 days |
-| `atypical-earner` | The one method the engine will never select | `earning_capacity` with `methodSource: seed` |
+| `atypical-earner` | The one method the engine will never select | `earning_capacity` with `methodSource: seed`, AWW `1465.00` — the stated figure exactly, with every "considered" operand zero |
 
 The dates of injury span four rate vintages on purpose. A caseload rated under
 one vintage regardless of its dates is the defect a date-keyed basis exists to

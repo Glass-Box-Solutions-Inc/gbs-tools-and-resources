@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from itertools import pairwise
 
@@ -538,7 +538,7 @@ def _money_candidates(
     seed: CaseSeed,
     money_facts: MoneyFacts | None,
     timeline: CaseTimeline,
-    proposed: frozenset[str],
+    existing: list[DatedCandidate],
 ) -> list[DatedCandidate]:
     """A floor: the documents a money-bearing case must be able to be read from.
 
@@ -549,29 +549,66 @@ def _money_candidates(
     exists to remove.
 
     A **floor**, not an emission: a subtype the lifecycle walk already proposed
-    is left alone, so this never doubles a document the case was going to have
-    anyway. And returned as ordinary candidates, so ``documents.exclude`` and
-    ``include_only`` still bind — the PR #25 M1 lesson (anything appended after
-    ``resolve_document_controls`` is invisible to the controls) applied at design
-    time rather than after a review found it.
+    is never doubled, so this cannot give a case two of a document it was going
+    to have one of. And returned as ordinary candidates, so ``documents.exclude``
+    and ``include_only`` still bind — the PR #25 M1 lesson (anything appended
+    after ``resolve_document_controls`` is invisible to the controls) applied at
+    design time rather than after a review found it.
 
     Dated as three *independent* documents, each clamped, rather than fitted as a
     chain. They have no causal relationship with one another — an employer's
     payroll certificate does not cause a carrier's payment printout — which is
     the one shape ``CaseTimeline.clamp`` is sound for.
+
+    **An already-proposed document is re-dated, not skipped**, and this is the
+    correction that matters most. The first cut returned early when the walk had
+    already proposed the subtype, which quietly abandoned the date this function
+    had just decided the document needed. The walk dates a payment record from
+    the lifecycle stage; the ledger it now carries runs to whenever the last
+    payment cleared. Measured across 132 planned records on 30 seeds and three
+    stages, **106 were dated before the last payment printed on them** — one by
+    123 days. A carrier's printout dated four months before a payment it lists
+    is not a snapshot, it is a document contradicting itself, and it is the money
+    layer that put the ledger on the page to contradict.
+
+    Re-dating moves the date **forward only**, and only for the money floor's own
+    subtypes. Forward, because the constraint is one-sided: these documents
+    report events, so they may be issued any time after the last one and never
+    before it. And it is sound to move them precisely because they are the
+    parallel, causally-unrelated set described above — nothing is sequenced
+    behind them to be dragged along.
     """
     if money_facts is None:
         return []
 
     out: list[DatedCandidate] = []
+    already: dict[str, list[int]] = defaultdict(list)
+    for index, candidate in enumerate(existing):
+        already[candidate.subtype].append(index)
 
     def add(subtype: str, when: date) -> None:
-        if subtype in proposed:
+        required = timeline.clamp(when)
+        indices = already.get(subtype)
+        if indices:
+            # *Every* candidate for the subtype, not the first one found. The
+            # walk may propose several, and the pool below picks the earliest
+            # ones by date — so moving one and leaving its siblings behind
+            # leaves the earliest still standing, which is exactly what the
+            # first attempt at this fix did and what the sweep caught.
+            for index in indices:
+                prior = existing[index]
+                if prior.doc_date < required:
+                    # ``DatedCandidate`` is frozen, so the move is a
+                    # replacement. Everything else the walk decided about this
+                    # document — track, priority, author role, stage — is
+                    # carried across untouched; only the date the ledger
+                    # contradicts is corrected.
+                    existing[index] = replace(prior, doc_date=required)
             return
         out.append(
             DatedCandidate(
                 subtype=subtype,
-                doc_date=timeline.clamp(when),
+                doc_date=required,
                 track=TRACK_CORE,
                 author_role=author_role_for(subtype),
             )
@@ -1071,11 +1108,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         *_penalty_candidates(case_facts, timeline),
         *_delay_chain_candidates(case_facts, timeline),
     ]
-    candidates.extend(
-        _money_candidates(
-            seed, money_facts, timeline, frozenset(c.subtype for c in candidates)
-        )
-    )
+    candidates.extend(_money_candidates(seed, money_facts, timeline, candidates))
 
     # Whose file is this? The three machines above are perspective-blind on
     # purpose — they model the *claim*, which both sides share. Only here does

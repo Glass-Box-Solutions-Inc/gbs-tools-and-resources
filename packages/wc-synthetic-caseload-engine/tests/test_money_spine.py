@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import decimal
 import json
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,7 @@ from typing import Any
 import pytest
 
 from conftest import extract_text, requires_substrate
+from wc_caseload_engine import money as money_module
 from wc_caseload_engine.case_facts import derive_case_facts
 from wc_caseload_engine.fact_templates import (
     BENEFIT_RECORD_SUBTYPES,
@@ -50,7 +52,9 @@ from wc_caseload_engine.manifests import (
 from wc_caseload_engine.money import (
     IRREGULARITY_THRESHOLD,
     SHORT_HISTORY_WEEKS,
+    TD_PAYMENT_DUE_DAYS,
     UNCONFIRMED_RATE_TABLE,
+    compute_aww,
     compute_comp_rate,
     derive_money_facts,
     money,
@@ -60,11 +64,18 @@ from wc_caseload_engine.money import (
 )
 from wc_caseload_engine.planner import (
     MONEY_FLOOR_SUBTYPES,
+    MONEY_PD_SUBTYPE,
+    MONEY_TD_SUBTYPE,
     MONEY_WAGE_SUBTYPE,
     build_case_plan,
 )
 from wc_caseload_engine.renderer import _load_template
-from wc_caseload_engine.seeds import AWW_METHODS, parse_case_seed
+from wc_caseload_engine.seeds import (
+    AWW_METHODS,
+    SeedValidationError,
+    WageScenario,
+    parse_case_seed,
+)
 
 
 def _seed_body(
@@ -105,6 +116,23 @@ def _facts(scenario: dict[str, Any] | None, diligence: str = "ordinary", **kwarg
 
 WAGES = {"pattern": "regular", "base_weekly_wage": 1000.0}
 """A plain, steady history. The baseline every opposite draw varies from."""
+
+CONFIRMED_BASIS: dict[str, Any] = {
+    "td_fraction": 0.6667,
+    "td_max_weekly": 1800.0,
+    "td_min_weekly": 240.0,
+    "pd_fraction": 0.6667,
+    "pd_max_weekly": 300.0,
+    "pd_min_weekly": 160.0,
+    "authority": "verified by counsel, memo of 2026-07-01",
+    "counsel_confirmed": True,
+}
+"""A *complete* authored binding — the only shape that may claim confirmation.
+
+Every figure and the authority behind them. Confirming is a claim about numbers,
+so it takes the numbers; adopting the engine's unverified table and calling it
+confirmed is the thing this shape exists to make impossible.
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +243,48 @@ class TestTheNamedMethod:
                     }
                 )
                 assert facts.method != "earning_capacity"
+
+    def test_earning_capacity_publishes_no_operands_and_adds_nothing(self) -> None:
+        """The stated figure is the answer — the whole answer, and only it.
+
+        The first cut published the *derived* history's operands beside a figure
+        none of them produced: 26 periods, 52 weeks and $51,830.08 "considered"
+        for an AWW of 1500, and then in-kind wages added on top so the published
+        number was not even the number the author stated. Every other method
+        publishes operands a reader can divide to reach the answer; this one
+        published operands that reach a different answer.
+        """
+        stated = 1500.0
+        facts = _facts(
+            {
+                "wages": dict(
+                    WAGES,
+                    method="earning_capacity",
+                    earning_capacity_weekly=stated,
+                    in_kind=[{"kind": "lodging", "weekly_value": 175.0}],
+                )
+            }
+        )
+        computation = facts.wages.computation
+        assert computation.aww == money(stated)
+        assert computation.in_kind_weekly == money(0)
+        assert computation.periods_considered == 0
+        assert computation.weeks_considered == Decimal("0.0000")
+        assert computation.gross_considered == money(0)
+
+        # The opposite draw: a computing method on the same seed *does* add the
+        # in-kind value and *does* publish its operands, so the zeroes above are
+        # this method's rule rather than an inert field.
+        computed = _facts(
+            {"wages": dict(WAGES, in_kind=[{"kind": "lodging", "weekly_value": 175.0}])}
+        ).wages.computation
+        assert computed.in_kind_weekly == money(175.0)
+        assert computed.periods_considered > 0
+        assert computed.gross_considered > money(0)
+        assert computed.aww == money(
+            (computed.gross_considered / computed.weeks_considered).quantize(Decimal("0.01"))
+            + computed.in_kind_weekly
+        )
 
     def test_the_reason_is_recorded_beside_the_method(self) -> None:
         for wages in (WAGES, dict(WAGES, pattern="irregular")):
@@ -396,11 +466,7 @@ class TestNoStatutoryNumberIsPresentedAsVerified:
                 "wages": dict(
                     WAGES,
                     base_weekly_wage=6000.0,
-                    rate_basis={
-                        "td_max_weekly": 2500.0,
-                        "authority": "verified by counsel, memo of 2026-07-01",
-                        "counsel_confirmed": True,
-                    },
+                    rate_basis=dict(CONFIRMED_BASIS, td_max_weekly=2500.0),
                 )
             }
         )
@@ -411,6 +477,118 @@ class TestNoStatutoryNumberIsPresentedAsVerified:
         # The engine's own default cannot reach that state.
         default = _facts({"wages": dict(WAGES, base_weekly_wage=6000.0)})
         assert default.wages.rate.basis.counsel_confirmed is False
+
+    def test_confirmation_without_the_numbers_is_refused(self) -> None:
+        """The five-word laundering: confirm the engine's table without restating it.
+
+        Found by review. ``rate_basis: {counsel_confirmed: true}`` alone used to
+        publish every engine-default figure as counsel-confirmed, under an
+        authority string still reading ``COUNSEL-UNCONFIRMED`` — the one claim
+        this package promises it can never make, reachable from a seed.
+        """
+        with pytest.raises(SeedValidationError) as caught:
+            _facts({"wages": dict(WAGES, rate_basis={"counsel_confirmed": True})})
+        assert "counsel_confirmed" in str(caught.value)
+
+        # Opposite draw: the same block short of exactly one figure is still refused,
+        # so the rule is "a whole binding", not "some numbers were mentioned".
+        short = {k: v for k, v in CONFIRMED_BASIS.items() if k != "pd_min_weekly"}
+        with pytest.raises(SeedValidationError):
+            _facts({"wages": dict(WAGES, rate_basis=short)})
+
+    def test_an_unstated_override_leaves_the_table_untouched(self) -> None:
+        """An override that authors nothing must not be recorded as authored."""
+        plain = _facts({"wages": WAGES}).wages.rate.basis
+        empty = _facts(
+            {"wages": dict(WAGES, rate_basis={"counsel_confirmed": False})}
+        ).wages.rate.basis
+        assert empty == plain
+        assert empty.source == "engine_default_table"
+
+    def test_a_partial_override_cannot_invert_the_merged_bounds(self) -> None:
+        """A floor above a defaulted ceiling used to produce a rate above the maximum.
+
+        The seed-level check compares the override's *own* pair, so a block
+        stating only a minimum showed it a floor with no ceiling beside it and
+        passed. Measured before the fix: a $5,000 floor merged under the
+        $1,539.71 default ceiling and ``compute_comp_rate`` returned $5,000,
+        recorded as ``tdBound: min`` — a temporary-disability rate above the
+        maximum the same basis published.
+        """
+        with pytest.raises(SeedValidationError) as caught:
+            _facts({"wages": dict(WAGES, rate_basis={"td_min_weekly": 5000.0})})
+        assert "td_max_weekly" in str(caught.value)
+
+        # And stated as a pair but the wrong way round, which is the plain case.
+        with pytest.raises(SeedValidationError) as inverted:
+            _facts(
+                {
+                    "wages": dict(
+                        WAGES,
+                        rate_basis={"td_min_weekly": 5000.0, "td_max_weekly": 1000.0},
+                    )
+                }
+            )
+        assert "ceiling" in str(inverted.value)
+
+        # The control: the same figure under a ceiling that admits it is fine.
+        ok = _facts(
+            {
+                "wages": dict(
+                    WAGES,
+                    base_weekly_wage=9000.0,
+                    rate_basis={"td_min_weekly": 5000.0, "td_max_weekly": 6000.0},
+                )
+            }
+        )
+        assert ok.wages.rate.basis.td_min_weekly == money(5000.0)
+
+    def test_no_shipped_vintage_inverts_its_own_bounds(self) -> None:
+        for basis in UNCONFIRMED_RATE_TABLE:
+            assert basis.td_min_weekly <= basis.td_max_weekly
+            assert basis.pd_min_weekly <= basis.pd_max_weekly
+
+    def test_the_model_refuses_an_inverted_basis_however_it_was_built(self) -> None:
+        """The backstop, probed where the seed rule cannot shadow it.
+
+        Found by mutation: deleting :meth:`RateBasis._bounds_are_ordered`
+        entirely left every probe green, because the seed-level pairing rule
+        rejects the reported seed first and nothing else ever built a basis by
+        hand. A guard reached only through a guard that already refused the
+        input is not being tested.
+
+        So this constructs one directly. The model is the layer every path goes
+        through — the shipped table, the merge in
+        ``_apply_rate_basis_override``, and any future authority (KB-167) that
+        returns a :class:`RateBasis` of its own — and it is the only layer that
+        sees the *merged* numbers.
+        """
+        import datetime as dt
+
+        from pydantic import ValidationError
+
+        from wc_caseload_engine.money import RateBasis
+
+        good = UNCONFIRMED_RATE_TABLE[-1].model_dump()
+        with pytest.raises(ValidationError) as caught:
+            RateBasis(**{**good, "td_min_weekly": Decimal("5000.00")})
+        assert "ceiling" in str(caught.value)
+
+        with pytest.raises(ValidationError):
+            RateBasis(**{**good, "pd_min_weekly": Decimal("9999.00")})
+
+        # The control: the same construction with an ordered pair is fine, so the
+        # refusals above are about the inversion and not about building one here.
+        ok = RateBasis(
+            **{
+                **good,
+                "label": "probe",
+                "effective_from": dt.date(2023, 1, 1),
+                "td_min_weekly": Decimal("240.00"),
+                "td_max_weekly": Decimal("1800.00"),
+            }
+        )
+        assert ok.td_min_weekly < ok.td_max_weekly
 
     def test_the_manifest_publishes_the_caveat(self) -> None:
         block = money_manifest_block(_facts({"wages": WAGES}))
@@ -574,8 +752,53 @@ class TestTheSettlementObject:
     def test_an_exact_funding_date_overrides_the_interval(self) -> None:
         import datetime as dt
 
-        facts = _facts({"wages": WAGES, "settlement": {"funding_date": "2025-03-04"}})
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "settlement": {
+                    "approval_date": "2025-01-06",
+                    "funding_date": "2025-03-04",
+                },
+            }
+        )
         assert facts.settlement.funding_date == dt.date(2025, 3, 4)
+        assert facts.settlement.approval_date == dt.date(2025, 1, 6)
+
+    def test_a_funding_date_without_an_approval_date_is_refused(self) -> None:
+        """The pair is the fact. One half of it can only be measured against a guess.
+
+        A lone ``funding_date`` used to be measured against an approval date
+        derived from the timeline, which the seed cannot see — so a 2025 funding
+        date under a 2021 derived approval loaded cleanly and published a
+        negative funding lag. ``validate --out`` caught it, one whole generation
+        downstream of the seed that caused it.
+        """
+        with pytest.raises(SeedValidationError) as caught:
+            _facts({"wages": WAGES, "settlement": {"funding_date": "2025-03-04"}})
+        assert "approval_date" in str(caught.value)
+
+    def test_a_settlement_gross_with_cents_is_refused(self) -> None:
+        """The release prints whole dollars, so the ledger may not hold cents.
+
+        The substrate draws its gross with ``random.randint`` and derives the
+        fee, costs, set-aside and net from it; the interception can only hand it
+        an integer. A ledger holding ``88000.99`` therefore labelled a document
+        reading ``$88,000`` — measured, off by 99 cents, which in an
+        arithmetic check is simply a wrong label.
+        """
+        with pytest.raises(SeedValidationError) as caught:
+            _facts({"wages": WAGES, "settlement": {"gross_amount": 88000.99}})
+        assert "whole" in str(caught.value)
+
+        whole = _facts({"wages": WAGES, "settlement": {"gross_amount": 88000}})
+        assert whole.settlement.gross_amount == money(88000)
+
+    def test_a_derived_gross_is_whole_dollars_too(self) -> None:
+        """Not only the stated one — the derived gross reaches the same release."""
+        for rng_seed in range(4242, 4262):
+            facts = _facts({"wages": WAGES}, rng_seed=rng_seed)
+            gross = facts.settlement.gross_amount
+            assert gross == int(gross), f"{gross} carries cents the release cannot print"
 
     def test_diligence_drives_the_funding_lag_when_unstated(self) -> None:
         attentive = _facts({"wages": WAGES}, "attentive").settlement
@@ -651,6 +874,125 @@ class TestDeterminism:
         finally:
             decimal.getcontext().prec = original
 
+    def test_every_exported_callable_is_pinned_on_its_own(self) -> None:
+        """The systematic version. ``__all__`` is the surface, so ``__all__`` is the sweep.
+
+        The two probes above name the functions somebody thought to name, and
+        that is exactly how two live defects survived a seventeen-mutant
+        campaign: ``compute_aww`` and ``select_method`` are exported, unwrapped,
+        and were only ever reached through ``derive_money_facts``, whose pin
+        covered them from the outside. Measured before the fix — ``compute_aww``
+        raised ``InvalidOperation`` at ``prec`` 2 through 5 and moved a published
+        ``gross_considered`` from ``58732.37`` to ``58732.30`` at 6.
+
+        Enumerating the export list rather than a hand-written tuple is the
+        point: a new public function is covered the day it is exported, not the
+        day somebody remembers to add it here.
+        """
+        seed = parse_case_seed(
+            _seed_body({"wages": dict(WAGES, pattern="irregular", base_weekly_wage=1500.0)})
+        )
+        wages = seed.scenario.wages
+        timeline = build_timeline(seed)
+        facts = derive_money_facts(seed, timeline, "ordinary")
+        periods = facts.wages.periods
+        basis = facts.wages.rate.basis
+        doi = seed.injury.date_of_injury
+
+        calls = {
+            "money": lambda: money(1234.567),
+            "rate_basis_for": lambda: rate_basis_for(doi),
+            "select_method": lambda: select_method(wages, periods),
+            "compute_aww": lambda: compute_aww(wages, periods),
+            "compute_comp_rate": lambda: compute_comp_rate(money(1234.56), basis),
+            "derive_money_facts": lambda: derive_money_facts(seed, timeline, "ordinary"),
+            "money_manifest_block": lambda: money_manifest_block(facts),
+        }
+        exported = {
+            name
+            for name in money_module.__all__
+            if callable(getattr(money_module, name)) and not isinstance(
+                getattr(money_module, name), type
+            )
+        }
+        assert exported == set(calls), (
+            "money.__all__ exports a callable this sweep does not exercise: "
+            f"{sorted(exported ^ set(calls))}. Add it — an exported function whose "
+            "answer depends on the caller's decimal context is a determinism leak "
+            "that no in-process double run can see."
+        )
+
+        original = decimal.getcontext().prec
+        try:
+            decimal.getcontext().prec = 28
+            baseline = {name: repr(call()) for name, call in calls.items()}
+            for prec in (2, 3, 4, 5, 6, 7, 8, 9, 50):
+                decimal.getcontext().prec = prec
+                for name, call in calls.items():
+                    assert repr(call()) == baseline[name], (
+                        f"{name}() answers differently at prec={prec} — its arithmetic "
+                        "is running under the caller's context, not the module's"
+                    )
+        finally:
+            decimal.getcontext().prec = original
+
+    def test_the_selected_method_survives_a_hostile_context(self) -> None:
+        """The label, specifically — a rounded week total picks a different method.
+
+        ``select_method`` compares a ``Decimal`` week total against
+        :data:`SHORT_HISTORY_WEEKS`. Unpinned, a short ambient context rounds
+        the sum, and a history sitting near the threshold is labelled by the
+        caller's precision rather than by its own earnings. That is not a
+        rounding difference; the method is the eval label, so it is a wrong
+        label.
+        The history is chosen, not arbitrary. Twenty-three eight-day periods
+        total **26.2867** weeks — just above the twenty-six-week threshold, so
+        the honest label is ``actual_weekly_earnings``. Accumulated under a short
+        context the same sum reads 24, which is below it, and the label becomes
+        ``short_history_projection``: a file whose employment was long enough,
+        labelled as one that was not. A history comfortably clear of the
+        threshold cannot show this, which is why the first version of this probe
+        left the mutant alive.
+        """
+        from datetime import date as _date
+
+        doi = _date(2021, 6, 14)
+        span = 8
+        count = 23
+        first = doi - timedelta(days=span * count)
+        earnings = [
+            {
+                "period_start": (first + timedelta(days=span * i)).isoformat(),
+                "period_end": (first + timedelta(days=span * i + span - 1)).isoformat(),
+                "gross": 2000.0,
+            }
+            for i in range(count)
+        ]
+        seed = parse_case_seed(_seed_body({"wages": {"earnings": earnings}}))
+        wages = seed.scenario.wages
+        periods = derive_money_facts(seed, build_timeline(seed), "ordinary").wages.periods
+
+        exact_weeks = sum((p.weeks for p in periods), Decimal("0"))
+        assert exact_weeks > SHORT_HISTORY_WEEKS, (
+            f"the probe history must sit just *above* the threshold; it totals "
+            f"{exact_weeks}"
+        )
+
+        original = decimal.getcontext().prec
+        try:
+            decimal.getcontext().prec = 28
+            expected = select_method(wages, periods)
+            assert expected[0] == "actual_weekly_earnings"
+            for prec in (2, 3, 4, 5, 6, 7):
+                decimal.getcontext().prec = prec
+                assert select_method(wages, periods) == expected, (
+                    f"at prec={prec} the label moved to "
+                    f"{select_method(wages, periods)[0]!r} — the eval label decided by "
+                    "the caller's precision rather than by the earnings"
+                )
+        finally:
+            decimal.getcontext().prec = original
+
     def test_money_draws_never_touch_a_stream_another_fact_reads(self) -> None:
         """Varying a money knob moves no clinical fact.
 
@@ -678,6 +1020,96 @@ class TestThePlan:
     def test_a_money_bearing_case_holds_a_wage_statement(self) -> None:
         plan = build_case_plan(parse_case_seed(_seed_body({"wages": WAGES})))
         assert MONEY_WAGE_SUBTYPE in {document.subtype for document in plan.documents}
+
+    def test_no_payment_record_predates_the_payments_it_prints(self) -> None:
+        """A carrier's printout cannot report a cheque it has not cut yet.
+
+        The floor decides the date these documents need; the first cut then
+        threw that decision away whenever the lifecycle walk had already
+        proposed the subtype, and the walk dates from the stage rather than
+        from the ledger. Measured across this sweep before the fix: **106 of
+        132** planned temporary-disability records were dated before the last
+        payment printed on them, one of them by 123 days.
+
+        Swept across stages and thirty seeds because a single draw of a
+        date chain proves nothing about the chain — the same discipline the
+        date-spine rules demand of every new path.
+        """
+        scenario = {
+            "wages": WAGES,
+            "benefits": {"td_weeks": 520, "late_payments": 3, "max_days_late": 60},
+        }
+        checked = 0
+        for stage in ("active_treatment", "pre_trial", "resolved"):
+            lifecycle: dict[str, Any] = {"target_stage": stage, "eval_type": "qme"}
+            if stage == "resolved":
+                lifecycle["resolution"] = {"type": "c_and_r"}
+            for rng_seed in range(4242, 4272):
+                plan = build_case_plan(
+                    parse_case_seed(
+                        _seed_body(scenario, rng_seed=rng_seed, lifecycle=lifecycle)
+                    )
+                )
+                facts = plan.money_facts
+                assert facts is not None
+                if not facts.benefits.td_periods:
+                    continue
+                last = max(
+                    (p.date_paid or p.end) for p in facts.benefits.td_periods
+                )
+                for document in plan.documents:
+                    if document.subtype == MONEY_TD_SUBTYPE:
+                        checked += 1
+                        assert document.doc_date >= last, (
+                            f"{MONEY_TD_SUBTYPE} dated {document.doc_date} prints a "
+                            f"payment made {last} ({(last - document.doc_date).days} "
+                            f"days later) — stage={stage} rng_seed={rng_seed}"
+                        )
+                if facts.benefits.pd_advances:
+                    last_pd = max(a.date_paid for a in facts.benefits.pd_advances)
+                    for document in plan.documents:
+                        if document.subtype == MONEY_PD_SUBTYPE:
+                            assert document.doc_date >= last_pd
+        assert checked > 50, f"the sweep only reached {checked} payment records"
+
+    def test_re_dating_never_moves_a_document_earlier(self) -> None:
+        """Forward only. These documents report events; they may lag, never lead.
+
+        The control on the fix above, and asserted on the rule itself rather
+        than by comparing two plans — a wage-free plan and a money-bearing one
+        allocate different document counts, so a date that differs between them
+        says nothing about the direction of a move.
+
+        A candidate the walk placed *after* the ledger is left exactly where it
+        was. Moving it back would be the money floor overruling the lifecycle
+        walk rather than correcting it.
+        """
+        from wc_caseload_engine.lifecycle_bridge import DatedCandidate
+        from wc_caseload_engine.planner import _money_candidates
+
+        seed = parse_case_seed(_seed_body({"wages": WAGES, "benefits": {"td_weeks": 8}}))
+        timeline = build_timeline(seed)
+        facts = derive_money_facts(seed, timeline, "ordinary")
+        assert facts is not None
+
+        far = timeline.clamp(
+            max((p.date_paid or p.end) for p in facts.benefits.td_periods)
+            + timedelta(days=400)
+        )
+        existing = [DatedCandidate(subtype=MONEY_TD_SUBTYPE, doc_date=far)]
+        added = _money_candidates(seed, facts, timeline, existing)
+
+        assert existing[0].doc_date == far, "a later candidate was dragged backwards"
+        assert MONEY_TD_SUBTYPE not in {c.subtype for c in added}, (
+            "the floor doubled a document the walk already proposed"
+        )
+
+        # And the opposite draw on the same call: a candidate the walk placed
+        # too early *is* moved, so the branch above is a rule rather than an
+        # inert early return.
+        early = [DatedCandidate(subtype=MONEY_TD_SUBTYPE, doc_date=timeline.injury_date)]
+        _money_candidates(seed, facts, timeline, early)
+        assert early[0].doc_date > timeline.injury_date
 
     def test_the_floor_fires_where_the_walk_proposes_nothing(self) -> None:
         """A floor that never fires is dead code claiming to be a guarantee.
@@ -742,6 +1174,80 @@ class TestThePlan:
 class TestPublication:
     """A published fact is a promise the documents keep."""
 
+    def test_a_listed_history_admits_no_shape_knob(self) -> None:
+        """Listed or described, never both — for **all six** knobs, not the two nullable ones.
+
+        The first cut checked the two knobs whose default is ``None``, because
+        "is it None" is the obvious test. The other four carry real defaults, so
+        an author's ``pattern: irregular`` was indistinguishable from Pydantic's
+        ``pattern: regular`` and passed. ``pattern`` is the sharp one: it is a
+        **published ground-truth label**, so a seed listing a steady history
+        under ``pattern: irregular`` shipped a wrong label to the analyzer
+        without a word. ``model_fields_set`` is the only thing that can see it.
+        """
+        listed = [
+            {"period_start": "2021-01-04", "period_end": "2021-01-17", "gross": 2000.0},
+            {"period_start": "2021-01-18", "period_end": "2021-01-31", "gross": 2000.0},
+        ]
+        knobs: dict[str, Any] = {
+            "pattern": "irregular",
+            "base_weekly_wage": 1500.0,
+            "lookback_weeks": 26,
+            "pay_frequency": "weekly",
+            "overtime_share": 0.2,
+            "concurrent_weekly_wage": 400.0,
+        }
+        assert set(knobs) == WageScenario.SHAPE_KNOBS, (
+            "the knob set moved; this probe and the class docstring must move with it"
+        )
+        for knob, value in knobs.items():
+            with pytest.raises(SeedValidationError) as caught:
+                _facts({"wages": {"earnings": listed, knob: value}})
+            assert knob in str(caught.value)
+
+        # The control: the listed history alone loads, so the refusals above are
+        # about the pairing rather than about the earnings.
+        assert _facts({"wages": {"earnings": listed}}) is not None
+
+        # And a knob restated at its own default is still a stated knob.
+        with pytest.raises(SeedValidationError):
+            _facts({"wages": {"earnings": listed, "pattern": "regular"}})
+
+    def test_a_history_with_no_primary_period_is_refused(self) -> None:
+        """Every period concurrent divides a real gross by zero primary weeks.
+
+        Measured before the fix: two concurrent periods totalling $4,000 loaded
+        cleanly and published ``averageWeeklyWage: 0.00`` — an asserted zero,
+        which is the same defect as an asserted average wearing the opposite
+        sign.
+        """
+        concurrent = [
+            {
+                "period_start": "2021-01-04",
+                "period_end": "2021-01-17",
+                "gross": 2000.0,
+                "concurrent": True,
+            },
+            {
+                "period_start": "2021-01-18",
+                "period_end": "2021-01-31",
+                "gross": 2000.0,
+                "concurrent": True,
+            },
+        ]
+        with pytest.raises(SeedValidationError) as caught:
+            _facts({"wages": {"earnings": concurrent}})
+        assert "primary" in str(caught.value)
+
+        # The control: add one primary period and the aggregate is real money.
+        mixed = [
+            {"period_start": "2021-01-04", "period_end": "2021-01-17", "gross": 2000.0},
+            *concurrent,
+        ]
+        facts = _facts({"wages": {"earnings": mixed}})
+        assert facts.aww > money(0)
+        assert facts.method == "concurrent_aggregate"
+
     def test_the_block_publishes_only_governed_fields(self) -> None:
         from wc_caseload_engine.money import GOVERNED_MONEY_FIELDS
 
@@ -749,6 +1255,79 @@ class TestPublication:
         assert set(block) <= set(GOVERNED_MONEY_FIELDS)
         for group, fields in block.items():
             assert set(fields) <= set(GOVERNED_MONEY_FIELDS[group]), group
+
+    def test_the_ledger_publishes_events_not_only_counts(self) -> None:
+        """``tdPeriods`` holds periods. It held a number.
+
+        An extraction label is expensive to move — the analyzer is scored on
+        these names — so a key named for a collection had to become the
+        collection now or never. Wave 3 computes a penalty per late payment;
+        given ``latePayments: 2`` and nothing else it cannot say *which* two,
+        and given only a total it cannot recompute an exposure at all.
+        """
+        block = money_manifest_block(
+            _facts(
+                {
+                    "wages": WAGES,
+                    "benefits": {"td_weeks": 20, "late_payments": 2, "max_days_late": 30},
+                }
+            )
+        )
+        benefits = block["benefits"]
+        assert isinstance(benefits["tdPeriods"], list)
+        assert isinstance(benefits["pdAdvances"], list)
+        assert isinstance(benefits["gaps"], list)
+        assert benefits["tdPeriodCount"] == len(benefits["tdPeriods"])
+        assert benefits["pdAdvanceCount"] == len(benefits["pdAdvances"])
+        assert benefits["tdPeriods"], "a 20-week TD run published no periods"
+
+        # The count and the array are two publications of one ledger; the
+        # totals must follow from the records rather than from a second sum.
+        assert Decimal(benefits["tdTotal"]) == sum(
+            Decimal(period["amount"]) for period in benefits["tdPeriods"]
+        )
+        assert benefits["latePayments"] == sum(
+            1 for period in benefits["tdPeriods"] if period["daysLate"]
+        ) + sum(1 for advance in benefits["pdAdvances"] if advance["daysLate"])
+
+    def test_lateness_is_recomputable_from_the_published_due_date(self) -> None:
+        """``daysLate`` without ``dateDue`` is an effect with its cause off the page.
+
+        The due date was computed one line above where it was discarded, and the
+        yardstick it came from lived in a module constant nothing published. A
+        reader holding the ledger could see that a payment was 30 days late and
+        had no way to check it — which is the asserted-not-derived shape this
+        whole layer exists to remove, in miniature.
+        """
+        from datetime import date as _date
+
+        block = money_manifest_block(
+            _facts(
+                {
+                    "wages": WAGES,
+                    "benefits": {"td_weeks": 20, "late_payments": 2, "max_days_late": 30},
+                }
+            )
+        )
+        benefits = block["benefits"]
+        assert benefits["tdPaymentDueDays"] == TD_PAYMENT_DUE_DAYS
+        late = 0
+        for period in benefits["tdPeriods"]:
+            due = _date.fromisoformat(period["dateDue"])
+            end = _date.fromisoformat(period["end"])
+            # The due date follows from the period's own end and the published
+            # yardstick — no third number, and nothing to take on trust.
+            assert (due - end).days == benefits["tdPaymentDueDays"]
+            paid = _date.fromisoformat(period["datePaid"])
+            assert (paid - due).days == period["daysLate"]
+            late += 1 if period["daysLate"] else 0
+        assert late == 2, "the opposite draw is the point: exactly the seeded lateness"
+
+        # And with the knob off, every payment recomputes to zero days late.
+        timely = money_manifest_block(
+            _facts({"wages": WAGES, "benefits": {"td_weeks": 20, "late_payments": 0}})
+        )
+        assert all(p["daysLate"] == 0 for p in timely["benefits"]["tdPeriods"])
 
     def test_currency_is_published_as_exact_decimal_strings(self) -> None:
         """Never a float. A label rounded through binary can disagree by a cent.
@@ -814,6 +1393,47 @@ class TestTheDocumentsCarryTheNumbers:
         assert block["rate"]["tdWeeklyRate"] in page
         assert block["rate"]["pdWeeklyRate"] in page
         assert UNCONFIRMED_NOTICE in texts[MONEY_WAGE_SUBTYPE]
+
+    def test_every_governed_wage_and_rate_field_reaches_the_page(
+        self, tmp_path: Path
+    ) -> None:
+        """The governance rule, checked instead of stated.
+
+        ``GOVERNED_MONEY_FIELDS`` says a published fact is one a document
+        renders. Three were not: ``pattern``, ``basisSource`` and
+        ``basisAuthority`` were published as ground truth and appeared on no
+        page — labels an analyzer would have been scored on recovering from a
+        document that did not contain them.
+
+        Driven off the governance table rather than a hand-written list, so a
+        field added to the table without a row on the statement fails here on the
+        day it is added, not in an eval later.
+        """
+        from wc_caseload_engine.money import GOVERNED_MONEY_FIELDS
+
+        manifest, texts, _ = self._generate(
+            tmp_path,
+            {"wages": dict(WAGES, pattern="seasonal")},
+            documents={
+                "include_only": [MONEY_WAGE_SUBTYPE],
+                "format_mix": {"pdf": 1.0},
+            },
+        )
+        block = manifest["caseFacts"]["money"]
+        page = texts[MONEY_WAGE_SUBTYPE].replace(",", "")
+        normalized = " ".join(page.split())
+        for group in ("wage", "rate"):
+            for field in GOVERNED_MONEY_FIELDS[group]:
+                value = block[group][field]
+                if isinstance(value, bool):
+                    # Published as the caveat text the reader of paper sees.
+                    continue
+                needle = " ".join(str(value).replace(",", "").split())
+                assert needle in normalized, (
+                    f"caseFacts.money.{group}.{field} publishes {value!r}, which the "
+                    "wage statement never prints — a published fact is one a document "
+                    "renders, or it is a label with nothing behind it"
+                )
 
     def test_the_wage_statement_prints_the_periods_the_average_is_made_of(
         self, tmp_path: Path

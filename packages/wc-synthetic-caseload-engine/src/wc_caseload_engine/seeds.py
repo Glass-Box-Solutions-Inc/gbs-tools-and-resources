@@ -29,7 +29,7 @@ from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import structlog
 import yaml
@@ -973,18 +973,87 @@ class RateBasisOverride(_Model):
     engine's own table can never set it true.
     """
 
+    #: Every number a complete statutory binding states.
+    NUMERIC_FIELDS: ClassVar[tuple[str, ...]] = (
+        "td_fraction",
+        "td_max_weekly",
+        "td_min_weekly",
+        "pd_fraction",
+        "pd_max_weekly",
+        "pd_min_weekly",
+    )
+
     @model_validator(mode="after")
     def _bounds_are_ordered(self) -> RateBasisOverride:
+        """A bound is stated with the bound it is bounded by, and in order.
+
+        The pairing requirement is the half that was missing. A lone
+        ``td_min_weekly`` merges against a *defaulted* ceiling this block never
+        saw, so a pairwise check on the override alone finds a floor with
+        nothing beside it and passes — measured, a $5,000 floor went through
+        under the $1,539.71 default ceiling and produced a temporary-disability
+        rate above the maximum published in the same basis, recorded as ``min``.
+
+        Requiring the pair is what makes the ordering check meaningful here
+        rather than only in :class:`~wc_caseload_engine.money.RateBasis`, where
+        it is now also enforced on the merged result. An author overriding one
+        end of a range has an opinion about the range; stating both is the cost
+        of that opinion, and it is one line of YAML.
+        """
         for low, high, name in (
             (self.td_min_weekly, self.td_max_weekly, "td"),
             (self.pd_min_weekly, self.pd_max_weekly, "pd"),
         ):
+            if (low is None) != (high is None):
+                stated, missing = (
+                    (f"{name}_min_weekly", f"{name}_max_weekly")
+                    if high is None
+                    else (f"{name}_max_weekly", f"{name}_min_weekly")
+                )
+                raise ValueError(
+                    f"scenario.wages.rate_basis sets {stated} without {missing} — the "
+                    "other end of the range would come from the engine's unverified "
+                    "default table, where it may sit on the wrong side of the figure "
+                    f"you stated. Add {missing}, or remove {stated}."
+                )
             if low is not None and high is not None and low > high:
                 raise ValueError(
                     f"scenario.wages.rate_basis has {name}_min_weekly {low} above "
                     f"{name}_max_weekly {high} — a floor cannot sit above its own ceiling. "
                     "Swap the two values, or raise the maximum."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _confirmation_covers_a_whole_binding(self) -> RateBasisOverride:
+        """Confirmation is a claim about numbers, so it needs the numbers.
+
+        The engine's table is counsel-unconfirmed in every row and says so in
+        its own authority text. A block carrying nothing but
+        ``counsel_confirmed: true`` used to publish that entire table as
+        confirmed — engine numbers, engine authority string still reading
+        ``COUNSEL-UNCONFIRMED``, and ``counselConfirmed: true`` on the manifest
+        above it. That is the one assertion this package promises it can never
+        make, and it was reachable in five words of YAML.
+
+        Confirming therefore means stating what is confirmed: all six figures
+        and the authority they come from. Anything less is an override of the
+        numbers it names, defaulted for the rest, and unconfirmed — which is
+        what a partially authored binding actually is.
+        """
+        if not self.counsel_confirmed:
+            return self
+        missing = [name for name in self.NUMERIC_FIELDS if getattr(self, name) is None]
+        if self.authority is None:
+            missing.append("authority")
+        if missing:
+            raise ValueError(
+                "scenario.wages.rate_basis sets counsel_confirmed: true but leaves "
+                f"{', '.join(missing)} unset — the engine's own figures are unverified "
+                "placeholders, so confirming a binding means stating the binding rather "
+                "than adopting theirs. Supply every rate_basis figure and the authority "
+                "they come from, or set counsel_confirmed to false."
+            )
         return self
 
 
@@ -1009,6 +1078,24 @@ class WageScenario(_Model):
     recorded with the reason; set, it is taken as given and recorded as authored.
     Either way the answer is written down rather than left to be inferred.
     """
+
+    #: The knobs that *describe* a history, and so cannot sit beside a listed one.
+    #:
+    #: Named as data rather than checked one by one, because the set is what the
+    #: class docstring promises and a list that drifts from the prose is how four
+    #: of these six went unenforced. :meth:`_history_is_stated_one_way` reads
+    #: this against ``model_fields_set``, which is the only way to see a knob
+    #: whose stated value happens to equal its default.
+    SHAPE_KNOBS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "pattern",
+            "base_weekly_wage",
+            "lookback_weeks",
+            "pay_frequency",
+            "overtime_share",
+            "concurrent_weekly_wage",
+        }
+    )
 
     earnings: list[EarningsEntry] = Field(default_factory=list, max_length=60)
     """Explicit pay periods. Mutually exclusive with the shape knobs."""
@@ -1069,17 +1156,29 @@ class WageScenario(_Model):
                 )
             return self
 
-        stated = [
-            name
-            for name in ("base_weekly_wage", "concurrent_weekly_wage")
-            if getattr(self, name) is not None
-        ]
+        # Read from the *set* fields, not from the values. Four of the six shape
+        # knobs carry defaults, so "is it None" cannot tell a knob the author
+        # wrote from one Pydantic filled in — which is why the first cut of this
+        # validator policed only the two nullable ones and let the other four
+        # through. ``pattern`` is the sharp case: it is a **published ground
+        # truth label**, so a seed listing a steady history under
+        # ``pattern: irregular`` shipped a wrong label to the analyzer, silently.
+        stated = sorted(self.model_fields_set & set(self.SHAPE_KNOBS))
         if stated:
             raise ValueError(
                 f"scenario.wages lists explicit earnings and also sets "
-                f"{', '.join(sorted(stated))} — a history is either listed or described, "
-                "never both, because the two would disagree. Remove the listed earnings, "
-                f"or remove {', '.join(sorted(stated))}."
+                f"{', '.join(stated)} — a history is either listed or described, "
+                "never both, because the two would disagree and the listed periods "
+                f"would win silently. Remove the listed earnings, or remove "
+                f"{', '.join(stated)}."
+            )
+        if not any(not entry.concurrent for entry in self.earnings):
+            raise ValueError(
+                "scenario.wages.earnings marks every period 'concurrent: true' — the "
+                "average weekly wage is computed over the weeks of the *primary* "
+                "employment, so a history with no primary period averages a real gross "
+                "over zero weeks and publishes an average weekly wage of 0.00. Set "
+                "'concurrent: false' on the primary employer's periods, or add them."
             )
         if self.method == "earning_capacity" and self.earning_capacity_weekly is None:
             raise ValueError(
@@ -1166,12 +1265,51 @@ class SettlementScenario(_Model):
     """When the settlement was actually funded. Overrides ``funding_days``."""
 
     @model_validator(mode="after")
+    def _gross_is_whole_dollars(self) -> SettlementScenario:
+        """A gross the release cannot print is a gross the ledger must not claim.
+
+        The substrate's compromise and release draws its gross as an integer and
+        derives the fee, costs, set-aside and net from it; the engine pins that
+        draw, and an integer is all it can pin. A ledger stating ``88000.99``
+        therefore labels a document reading ``$88,000`` — measured, and off by
+        99 cents, which in an arithmetic check is simply wrong.
+
+        Refused rather than rounded, because rounding is the engine quietly
+        overruling an explicit control. The author is told which way to go.
+        """
+        if self.gross_amount is None:
+            return self
+        if self.gross_amount != int(self.gross_amount):
+            raise ValueError(
+                f"scenario.settlement.gross_amount is {self.gross_amount} — the release "
+                "that carries this figure prints whole dollars, so a ledger holding cents "
+                "would label a document that contradicts it. State "
+                f"scenario.settlement.gross_amount as a whole number of dollars "
+                f"(for example {int(self.gross_amount)})."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _funding_is_stated_one_way(self) -> SettlementScenario:
         if self.funding_date is not None and self.funding_days is not None:
             raise ValueError(
                 "scenario.settlement sets both funding_date and funding_days — the two "
                 "would disagree the moment the approval date moves. Keep funding_date for "
                 "an exact date, or funding_days for an interval, and drop the other."
+            )
+        if self.funding_date is not None and self.approval_date is None:
+            # An exact funding date is only meaningful against the approval it
+            # follows, and the approval it would otherwise be measured against is
+            # derived from the timeline — which the seed cannot see. Left
+            # unpaired, a 2024 funding date under a 2021 derived approval loaded
+            # cleanly and published a negative funding lag; only ``validate --out``
+            # caught it, one whole generation later.
+            raise ValueError(
+                "scenario.settlement sets funding_date without approval_date — the "
+                "interval between them is the fact this pair exists to carry, and the "
+                "approval it would be measured against is derived from the timeline, "
+                "where this seed cannot see it. Add scenario.settlement.approval_date, "
+                "or state funding_days instead and let the approval date lead it."
             )
         if (
             self.funding_date is not None
