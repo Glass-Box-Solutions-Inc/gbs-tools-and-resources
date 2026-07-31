@@ -374,7 +374,13 @@ class AwwComputation(BaseModel):
     gross_considered: Decimal
     in_kind_weekly: Decimal
     aww: Decimal
-    """The result. Cents-quantized, and the figure that reaches ``CaseFacts``."""
+    """The result. Cents-quantized.
+
+    The figure that reaches the published ledger as
+    ``caseFacts.money.wage.averageWeeklyWage`` and appears on the wage
+    statement. Nothing downstream recomputes it — an average that is derived
+    twice is an average that can disagree with itself.
+    """
 
 
 class CompRate(BaseModel):

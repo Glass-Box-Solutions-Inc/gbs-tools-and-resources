@@ -1112,6 +1112,58 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         assert any("before the Board approves" in problem for problem in problems), problems
 
 
+def test_the_rate_derivation_takes_no_dependency_on_the_fabricated_rating() -> None:
+    """ISC-169 — AJC-44 inherits a clean surface.
+
+    ``case_facts.py`` still reaches its whole-person impairment by
+    ``rng.randint(3, 24)`` and its permanent disability by multiplying that by
+    1.4. Those are placeholders for a rating that never happened, and correcting
+    them is a separate piece of work. Building the comp rate on top of them
+    would make this layer's arithmetic depend on a number that is about to
+    change — so the money module never reads either field, and this asserts it
+    rather than trusting a reviewer to notice.
+
+    Two probes, because either alone is weak. The source sweep would miss an
+    indirect read through ``CaseFacts``; the behavioural sweep would miss a read
+    that happens to agree across the values it tried.
+    """
+    import ast
+
+    from wc_caseload_engine import money as money_module
+
+    tree = ast.parse(Path(money_module.__file__).read_text(encoding="utf-8"))
+    # Over the syntax tree, not the raw text: the module *documents* its
+    # relationship to the clinical ledger in prose, and a substring sweep would
+    # convict it for the docstring. What must be absent is a dependency.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            assert "case_facts" not in (node.module or ""), ast.dump(node)
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert "case_facts" not in alias.name, alias.name
+        if isinstance(node, ast.Name):
+            assert node.id not in {"CaseFacts", "derive_case_facts"}, node.id
+        if isinstance(node, ast.Attribute):
+            assert node.attr not in {"wpi", "pd"}, node.attr
+
+    # Behavioural: the rating varies with eval_type (``none`` leaves wpi/pd
+    # unset), and the money must not move with it.
+    rates = set()
+    for eval_type in ("qme", "ame", "none"):
+        seed = parse_case_seed(
+            _seed_body(
+                {"wages": WAGES},
+                lifecycle={"target_stage": "medical_legal", "eval_type": eval_type},
+            )
+        )
+        timeline = build_timeline(seed)
+        clinical = derive_case_facts(seed, timeline)
+        facts = derive_money_facts(seed, timeline)
+        rates.add((facts.aww, facts.wages.rate.td_weekly_rate))
+        assert (clinical.wpi is None) == (eval_type == "none")
+    assert len(rates) == 1, rates
+
+
 def test_select_method_is_a_pure_function_of_the_wage_facts() -> None:
     """No RNG in the label. The rule has to be one a reader could reproduce."""
     seed = parse_case_seed(_seed_body({"wages": dict(WAGES, pattern="irregular")}))
