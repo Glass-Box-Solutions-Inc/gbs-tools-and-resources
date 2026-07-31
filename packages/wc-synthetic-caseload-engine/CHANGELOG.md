@@ -340,6 +340,32 @@ attaches additively in Wave 2.
     `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
     at 353/345/8/0.
 
+### Fixed — the PR #29 review, round 8 (**AJC-43**)
+
+Round 8 audited round 7. Two findings, both defects round 7 introduced, and
+both the same mistake: a bound applied to the wrong term.
+
+- **An authored approval could still precede the file's own calendar.** Round 7
+  pulled the instrument back to meet the approval and floored it at the claim,
+  and then `min(filed, approval)` defeated that floor. `approval_date:
+  2021-06-15` on a case whose Application was filed 2021-10-05 produced a
+  release dated 2021-06-15, reciting a filing eleven weeks in its future. The
+  floor now sits on the approval — anchored to the Application, plus the lead
+  the instrument needs — and the adjustment is reported as a plan warning
+  rather than made in silence.
+
+- **The award reconciliation gave up below $5,500.** Round 7 clamped the
+  reimbursement into the substrate's `randint` bounds and left both draws
+  random beneath them, so a gross of `5499` printed components totalling
+  $32,696 beside a published $5,499. Those bounds select which draw to answer;
+  they never constrained the answer. The split now holds down to $2.
+
+#### Compatibility notices (review round 8)
+
+33. **An authored `scenario.settlement.approval_date` earlier than the case
+    could reach the Board is moved forward and reported as a plan warning.** No
+    shipped example is affected.
+
 ### Fixed — the PR #29 review, round 7 (**AJC-43**)
 
 Round 7 audited round 6. Three findings; two were defects round 6 introduced,

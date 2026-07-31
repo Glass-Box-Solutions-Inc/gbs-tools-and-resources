@@ -1805,19 +1805,25 @@ def build_fact_aware_templates() -> dict[str, type]:
                 # derivations from the award figure, so they stay consistent
                 # without help. Disbursement past that line is AJC-46's.
                 total = int(money.settlement.gross_amount)
-                self_procured = min(
-                    _SUBSTRATE_STIPS_SELF_PROCURED_RANGE[1],
-                    max(_SUBSTRATE_STIPS_SELF_PROCURED_RANGE[0], total // 20),
-                )
+                # The split holds for **every** gross the schema accepts, not
+                # only comfortable ones. The first cut clamped the reimbursement
+                # into the substrate's own ``randint`` bounds and gave up below
+                # $5,500, leaving both draws random — so a gross of $5,499
+                # printed components totalling $32,696 beside a published
+                # $5,499, silently. Those bounds select *which draw* to answer;
+                # they never constrained the answer, and treating them as a
+                # domain was the error. A five percent reimbursement, floored at
+                # a dollar and capped so the award keeps one, reconciles down to
+                # a two-dollar settlement.
+                self_procured = min(max(total // 20, 1), max(total - 1, 1))
                 award = total - self_procured
-                if award < _SUBSTRATE_STIPS_AWARD_RANGE[0]:
-                    # Too small to split into the components this document
-                    # prints. Reported rather than fudged: a silent fallback
-                    # here is a page that contradicts the ledger again.
+                if award < 1:
+                    # A settlement of a dollar or less has no two components to
+                    # print. Reported rather than fudged, and unreachable from a
+                    # sane seed.
                     log.warning(
                         "fact_templates.stipulated_award_too_small_to_reconcile",
                         gross=str(money.settlement.gross_amount),
-                        floor=_SUBSTRATE_STIPS_AWARD_RANGE[0],
                     )
                 else:
                     forced = [

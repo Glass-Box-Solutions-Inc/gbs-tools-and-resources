@@ -1407,6 +1407,29 @@ def _derive_benefits(
     )
 
 
+#: How long after the Application is filed a settlement may first be approved.
+#: A working assumption about how quickly a file can reach the Board, stated
+#: here rather than dressed up as a rule, and it exists so the instrument has a
+#: date to occupy between the Application and its own approval.
+SETTLEMENT_INSTRUMENT_LEAD_DAYS = 21
+
+
+def _earliest_approval(timeline: Any) -> dt.date | None:
+    """The first date this file could plausibly have had a settlement approved.
+
+    The Application for Adjudication, because the settlement instrument recites
+    it as already filed, plus the lead the instrument needs. Falls back to the
+    claim and then to nothing, so a timeline shape without these fields loses
+    the check rather than raising on it.
+    """
+    anchor = getattr(timeline, "application_filed_date", None) or getattr(
+        timeline, "claim_filed_date", None
+    )
+    if anchor is None:
+        return None
+    return anchor + dt.timedelta(days=SETTLEMENT_INSTRUMENT_LEAD_DAYS)
+
+
 def _derive_settlement(
     seed: CaseSeed,
     wages_facts: WageFacts,
@@ -1430,7 +1453,24 @@ def _derive_settlement(
         timeline, "resolution_date", None
     )
     if scenario is not None and scenario.approval_date is not None:
-        approval = scenario.approval_date
+        # An authored approval still has to be an approval this file could have
+        # reached. Review found `approval_date: 2021-06-15` on a case whose claim
+        # was filed 2021-06-27 and whose Application was filed 2021-10-05: the
+        # settlement instrument was dragged back to meet it, and then recited an
+        # Application that would not exist for another eleven weeks. The earlier
+        # fix floored the instrument and the floor was defeated by the very
+        # clamp that kept the chain ordered.
+        #
+        # So the floor is applied to the *approval* instead, where it belongs —
+        # the chain starts here — and the adjustment is reported rather than made
+        # in silence, because a stated control that is quietly moved is the
+        # defect ISC-184 exists to prevent. `SETTLEMENT_INSTRUMENT_LEAD_DAYS`
+        # leaves the instrument somewhere to stand between the two.
+        earliest = _earliest_approval(timeline)
+        if earliest is not None and scenario.approval_date < earliest:
+            approval = earliest
+        else:
+            approval = scenario.approval_date
 
     if scenario is not None and scenario.gross_amount is not None:
         gross = money(scenario.gross_amount)

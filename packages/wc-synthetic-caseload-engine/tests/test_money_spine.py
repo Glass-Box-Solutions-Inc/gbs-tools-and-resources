@@ -2258,6 +2258,52 @@ class TestTheDocumentsCarryTheNumbers:
         )
         assert amount(r"Settlement Gross: \$([\d,]+\.\d\d)(?!\d|\.\d)") == gross
 
+    def test_the_award_reconciles_at_every_gross_the_schema_accepts(
+        self, tmp_path: Path
+    ) -> None:
+        """The split held above $5,500 and gave up below it, silently.
+
+        The first version clamped the reimbursement into the substrate's own
+        `randint` bounds and abandoned the reconciliation when the award fell
+        under 5000 — leaving both draws random. A gross of $5,499 printed
+        components totalling $32,696 beside a published $5,499, with no warning
+        and a clean `validate --out`. Those bounds select which draw to answer;
+        they never constrained the answer.
+        """
+        for gross in (2, 5499, 5500, 11500, 88000):
+            manifest, texts, _ = self._generate(
+                tmp_path / f"g{gross}",
+                {
+                    "wages": WAGES,
+                    "benefits": {"td_weeks": 0, "pd_advances": 0},
+                    "settlement": {"gross_amount": gross},
+                },
+                case_id=f"reconcile-{gross}",
+                lifecycle={
+                    "target_stage": "resolved",
+                    "eval_type": "none",
+                    "resolution": {"type": "stipulations"},
+                },
+                documents={"format_mix": {"pdf": 1.0}},
+            )
+            page = texts["STIPULATIONS_WITH_REQUEST_FOR_AWARD"]
+            published = Decimal(
+                manifest["caseFacts"]["money"]["settlement"]["grossAmount"]
+            )
+
+            def amount(pattern: str, text: str = page, where: int = gross) -> Decimal:
+                found = re.search(pattern, text)
+                assert found, f"{pattern!r} not on the award for gross {where}"
+                return Decimal(found.group(1).replace(",", ""))
+
+            pd_gross = amount(r"Permanent Disability \(Gross\) \$([\d,]+)")
+            self_procured = amount(r"Self-Procured Medical Reimbursement \$([\d,]+)")
+            assert pd_gross + self_procured == published, (
+                f"gross {gross}: the award prints {pd_gross} + {self_procured} = "
+                f"{pd_gross + self_procured} against a published {published}"
+            )
+            assert pd_gross >= 1 and self_procured >= 1
+
     def test_the_order_approving_the_settlement_says_it_approved_one(
         self, tmp_path: Path
     ) -> None:
@@ -2648,6 +2694,91 @@ class TestTheOrderIsDatedOnTheApprovalItIs:
                 assert max(dated[MONEY_FUNDING_SUBTYPE]) >= settlement.funding_date
                 seen += 1
         assert seen == 6
+
+    def test_an_approval_the_file_could_not_have_reached_is_moved_and_reported(
+        self,
+    ) -> None:
+        """The chain starts at the Application, and the floor belongs on the approval.
+
+        Flooring the *instrument* was defeated by the clamp that kept the chain
+        ordered: `min(filed, approval)` put a compromise and release on
+        2021-06-15 for a case whose claim was filed 2021-06-27 and whose
+        Application was filed 2021-10-05 — an instrument reciting a filing that
+        would not exist for eleven weeks, and predating the claim itself.
+        """
+        from wc_caseload_engine.lifecycle_bridge import build_timeline
+        from wc_caseload_engine.planner import MONEY_INSTRUMENT_SUBTYPES
+
+        for resolution in ("c_and_r", "stipulations"):
+            body = _seed_body(
+                {
+                    "wages": WAGES,
+                    "settlement": {
+                        "gross_amount": 88000,
+                        "approval_date": "2021-06-15",
+                        "funding_days": 14,
+                    },
+                },
+                lifecycle={
+                    "target_stage": "resolved",
+                    "eval_type": "qme",
+                    "resolution": {"type": resolution},
+                },
+            )
+            seed = parse_case_seed(body)
+            timeline = build_timeline(seed)
+            plan = build_case_plan(seed)
+            settlement = plan.money_facts.settlement
+
+            # Moved forward, past the Application the instrument recites.
+            assert settlement.approval_date > date(2021, 6, 15)
+            assert settlement.approval_date > timeline.application_filed_date
+            assert settlement.approval_date > timeline.claim_filed_date
+
+            # …and said so, rather than adjusting a stated control in silence.
+            assert any(
+                "approval_date" in warning and "2021-06-15" in warning
+                for warning in plan.warnings
+            ), plan.warnings
+
+            # The whole chain still holds, including the link that broke.
+            dated: dict[str, list[date]] = {}
+            for candidate in plan.documents:
+                dated.setdefault(candidate.subtype, []).append(candidate.doc_date)
+            instruments = [
+                when
+                for subtype in MONEY_INSTRUMENT_SUBTYPES
+                for when in dated.get(subtype, [])
+            ]
+            assert instruments, resolution
+            assert min(instruments) >= timeline.claim_filed_date, (
+                f"{resolution}: instrument {min(instruments)} predates the claim "
+                f"filed {timeline.claim_filed_date}"
+            )
+            assert max(instruments) <= settlement.approval_date
+
+    def test_an_approval_the_file_can_reach_is_left_alone(self) -> None:
+        """The opposite draw: a feasible authored approval is honoured exactly."""
+        plan = build_case_plan(
+            parse_case_seed(
+                _seed_body(
+                    {
+                        "wages": WAGES,
+                        "settlement": {
+                            "gross_amount": 88000,
+                            "approval_date": "2023-03-30",
+                        },
+                    },
+                    lifecycle={
+                        "target_stage": "resolved",
+                        "eval_type": "qme",
+                        "resolution": {"type": "c_and_r"},
+                    },
+                )
+            )
+        )
+        assert plan.money_facts.settlement.approval_date == date(2023, 3, 30)
+        assert not any("approval_date" in warning for warning in plan.warnings)
 
     def test_the_validator_refuses_an_instrument_that_postdates_its_approval(
         self,

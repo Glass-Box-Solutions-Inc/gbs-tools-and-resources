@@ -628,14 +628,36 @@ def _money_control_warnings(seed: CaseSeed, money_facts: MoneyFacts | None) -> l
 
 
 def _settlement_warnings(seed: CaseSeed, money_facts: MoneyFacts) -> list[str]:
-    """Report a settlement whose funding falls outside the window the file covers."""
+    """Report a settlement whose stated dates the file's own calendar could not hold."""
     settlement = money_facts.settlement
+    stated_settlement = seed.scenario.settlement
+    warnings: list[str] = []
+    if (
+        settlement is not None
+        and stated_settlement is not None
+        and stated_settlement.approval_date is not None
+        and settlement.approval_date is not None
+        and settlement.approval_date != stated_settlement.approval_date
+    ):
+        # Moved, and said so. A stated control that is quietly adjusted is the
+        # defect ISC-184 exists to prevent, and an approval before the file's own
+        # Application is a story the calendar cannot hold rather than an
+        # impossible seed — so it is a warning, like every other runway
+        # truncation in this module, not a refusal.
+        warnings.append(
+            f"scenario.settlement.approval_date of "
+            f"{stated_settlement.approval_date.isoformat()} falls before this case "
+            f"could have reached the Board; approved "
+            f"{settlement.approval_date.isoformat()} instead, which is the first date "
+            "leaving the settlement instrument somewhere to stand after the "
+            "Application for Adjudication"
+        )
     if (
         settlement is None
         or settlement.approval_date is None
         or settlement.funding_date is not None
     ):
-        return []
+        return warnings
     stated = seed.scenario.settlement
     stated_lag = stated.funding_days if stated is not None else None
     detail = (
@@ -644,6 +666,7 @@ def _settlement_warnings(seed: CaseSeed, money_facts: MoneyFacts) -> list[str]:
         else "the funding lag for this adjuster "
     )
     return [
+        *warnings,
         f"the settlement was approved {settlement.approval_date} but {detail}"
         "carries funding past the date this engine treats as today, so the case is "
         "published as approved and not yet funded. Lower funding_days, or move the "
