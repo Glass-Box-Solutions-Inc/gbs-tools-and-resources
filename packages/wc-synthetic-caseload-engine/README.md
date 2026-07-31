@@ -1045,7 +1045,18 @@ caveat that does not reach it.
 
 `approval_date` and `funding_date` are separate fields on the settlement. They are
 separate events in a real file, and the interval between them is the whole
-substance of a late-funding argument.
+substance of a late-funding argument — which is also why the release prints all
+three (type, gross, both dates and the lag) in a Settlement Terms table, and why
+`validate --out` refuses a manifest publishing those dates when no
+compromise-and-release or payment record is in the case to read them from. A
+published interval whose evidence is on no page is the asserted figure this
+layer exists to remove.
+
+`method: concurrent_aggregate` is the one method a seed may not simply assert.
+The other four name an *argument* about how to average a history and can be
+argued over any history; this one names a *fact* — that earnings from more than
+one employer were combined — so it is refused unless the history actually has
+concurrent employment.
 
 #### Not in scope here
 

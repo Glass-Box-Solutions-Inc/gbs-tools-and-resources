@@ -482,6 +482,23 @@ MONEY_BENEFIT_DOCUMENTS = frozenset(
     }
 )
 
+#: The documents that carry a settlement's own terms.
+#:
+#: The compromise-and-release family, which now prints its approval and funding
+#: dates as well as its gross. Stipulated awards have no release, so a payment
+#: record carries them instead — see :data:`MONEY_BENEFIT_DOCUMENTS`, which the
+#: settlement rule accepts alongside these.
+SETTLEMENT_DOCUMENTS = frozenset(
+    {
+        "COMPROMISE_AND_RELEASE",
+        "COMPROMISE_AND_RELEASE_STANDARD",
+        "COMPROMISE_AND_RELEASE_PD_ONLY",
+        "COMPROMISE_AND_RELEASE_MSA",
+        "COMPROMISE_AND_RELEASE_DEPENDENCY",
+        "COMPROMISE_AND_RELEASE_THIRD_PARTY",
+    }
+)
+
 #: Every method name the ledger may record. Mirrors ``seeds.AWW_METHODS``; a
 #: published method outside it is a label no analyzer could have been trained
 #: on, which makes the eval score meaningless rather than merely wrong.
@@ -512,8 +529,12 @@ def _validate_money(
         return [f"{case_label}: caseFacts.money is {type(money).__name__}, expected a mapping"]
 
     for key, fields in GOVERNED_MONEY_FIELDS.items():
-        if key == "settlement":
-            # Present only for a case that settled — see SettlementFact.
+        if key == "settlement" and money.get(key) is None:
+            # Absent for a case that did not settle — see SettlementFact. Absent
+            # is fine; *present* was being skipped along with it, so a settlement
+            # was the one group whose shape and governance nothing checked. An
+            # ungoverned field there is an extraction label the documents never
+            # promised, which is exactly what this loop exists to refuse.
             continue
         section = money.get(key)
         if section is None:
@@ -577,10 +598,13 @@ def _validate_money(
     # crash is not a verdict.
     for count_key in ("tdPeriodCount", "pdAdvanceCount"):
         value = benefits.get(count_key)
-        if value is not None and not isinstance(value, int):
+        # ``type(...) is int`` rather than ``isinstance``: ``bool`` is a subclass
+        # of ``int``, so ``tdPeriodCount: True`` passed an isinstance check and
+        # then compared equal to a length of 1.
+        if value is not None and (type(value) is not int or value < 0):
             problems.append(
-                f"{case_label}: caseFacts.money.benefits.{count_key} is "
-                f"{type(value).__name__}, expected a whole number"
+                f"{case_label}: caseFacts.money.benefits.{count_key} is {value!r}, "
+                "expected a count of zero or more"
             )
     for array_key in ("tdPeriods", "pdAdvances", "gaps"):
         value = benefits.get(array_key)
@@ -704,25 +728,75 @@ def _validate_money(
                 f"(start {start!r}, end {end!r})"
             )
             continue
-        if spanned != days:
+        if spanned != days or type(days) is not int or days < 1:
+            # ``spanned == days`` alone agreed with a reversed gap carrying a
+            # negative count: 2025-01-10 to 2025-01-01 spans -8 days and recorded
+            # -8. Two wrongs cancelling is not a check.
             problems.append(
                 f"{case_label}: a benefit gap runs {start} to {end} ({spanned} day(s)) "
-                f"but records days {days}"
+                f"but records days {days!r} — a gap runs forwards and lasts at least a day"
             )
 
     settlement = money.get("settlement")
     if settlement is not None:
-        approval = settlement.get("approvalDate")
-        funding = settlement.get("fundingDate")
-        if approval and funding and funding < approval:
-            problems.append(
-                f"{case_label}: caseFacts.money.settlement was funded {funding} but "
-                f"approved {approval} — money does not move before the Board approves"
-            )
         if settlement.get("kind") not in ("c_and_r", "stipulations"):
             problems.append(
                 f"{case_label}: caseFacts.money.settlement.kind is "
                 f"{settlement.get('kind')!r}, expected c_and_r or stipulations"
+            )
+        approval_raw = settlement.get("approvalDate")
+        funding_raw = settlement.get("fundingDate")
+        approval = funding = None
+        for label, raw in (("approvalDate", approval_raw), ("fundingDate", funding_raw)):
+            if raw is None:
+                continue
+            try:
+                parsed = date.fromisoformat(raw)
+            except (TypeError, ValueError):
+                # ``fromisoformat`` on an int raises TypeError, which used to
+                # escape this function: the comparison below reached a str and an
+                # int and the validator crashed rather than reporting.
+                problems.append(
+                    f"{case_label}: caseFacts.money.settlement.{label} is {raw!r}, "
+                    "which is not a date"
+                )
+                continue
+            if label == "approvalDate":
+                approval = parsed
+            else:
+                funding = parsed
+        if approval is not None and funding is not None:
+            if funding < approval:
+                problems.append(
+                    f"{case_label}: caseFacts.money.settlement was funded {funding_raw} "
+                    f"but approved {approval_raw} — money does not move before the Board "
+                    "approves"
+                )
+            lag = settlement.get("fundingLagDays")
+            if lag is not True and lag is not False and isinstance(lag, int):
+                if lag != (funding - approval).days:
+                    problems.append(
+                        f"{case_label}: caseFacts.money.settlement records fundingLagDays "
+                        f"{lag} but was approved {approval_raw} and funded {funding_raw} "
+                        f"({(funding - approval).days} day(s) apart)"
+                    )
+            elif lag is not None:
+                problems.append(
+                    f"{case_label}: caseFacts.money.settlement.fundingLagDays is {lag!r}, "
+                    "expected a whole number of days"
+                )
+        # A settlement's approval and funding dates are read off the release the
+        # Board approved, or off the payment record that funds it. Published with
+        # neither in the folder they are the asserted figures this layer removes,
+        # in the one part of the file where the interval between two dates is the
+        # whole argument.
+        if (approval_raw is not None or funding_raw is not None) and not (
+            subtypes & (SETTLEMENT_DOCUMENTS | MONEY_BENEFIT_DOCUMENTS)
+        ):
+            problems.append(
+                f"{case_label}: caseFacts publishes settlement approval or funding dates "
+                "but the case holds neither a settlement document nor a payment record to "
+                "read them from"
             )
     return problems
 

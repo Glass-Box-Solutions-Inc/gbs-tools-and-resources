@@ -183,18 +183,56 @@ class TestTheNamedMethod:
         A label an analyzer can be scored against but no seed can produce is a
         label the corpus never teaches — the eval would be measuring a class
         with no examples in it.
+
+        Each method is given the shape it *names*, not the same history under a
+        different label. The first version of this probe gave every method the
+        plain steady history, which meant it codified a seed asserting
+        ``concurrent_aggregate`` over a single employment — a ground-truth label
+        the manifest contradicted one field later, in a test whose job was to
+        prove the labels are real.
         """
+        required: dict[str, dict[str, Any]] = {
+            "earning_capacity": {"earning_capacity_weekly": 1500.0},
+            "concurrent_aggregate": {"concurrent_employment": True},
+        }
         reached = set()
         for method in AWW_METHODS:
-            wages = dict(WAGES, method=method)
-            if method == "earning_capacity":
-                wages["earning_capacity_weekly"] = 1500.0
+            wages = dict(WAGES, method=method, **required.get(method, {}))
             facts = _facts({"wages": wages})
             reached.add(facts.method)
+            assert facts.wages.computation.method_source == "seed"
         assert reached == set(AWW_METHODS)
 
+    def test_the_aggregate_label_needs_an_aggregate_to_name(self) -> None:
+        """A seed may argue any method — except one that asserts a fact it lacks.
+
+        The other four label an *argument* about how to average one history, and
+        an author may make that argument over any history. ``concurrent_aggregate``
+        labels a *fact*: that earnings from more than one employer were combined.
+        Over a single employment there was nothing to combine, and the seed used
+        to load and publish ``method: concurrent_aggregate`` beside
+        ``concurrentEmployment: false``.
+        """
+        with pytest.raises(SeedValidationError) as caught:
+            _facts({"wages": dict(WAGES, method="concurrent_aggregate")})
+        assert "concurrent" in str(caught.value)
+
+        # Both ways of supplying the fact are accepted.
+        described = _facts(
+            {"wages": dict(WAGES, method="concurrent_aggregate", concurrent_employment=True)}
+        )
+        assert described.method == "concurrent_aggregate"
+        assert described.wages.concurrent_employment is True
+
+        # And the other four are still free to be argued over the plain history.
+        for method in ("actual_weekly_earnings", "irregular_earnings_average",
+                       "short_history_projection"):
+            assert _facts({"wages": dict(WAGES, method=method)}).method == method
+
     def test_a_seeded_method_wins_and_is_recorded_as_authored(self) -> None:
-        facts = _facts({"wages": dict(WAGES, method="concurrent_aggregate")})
+        facts = _facts(
+            {"wages": dict(WAGES, method="concurrent_aggregate", concurrent_employment=True)}
+        )
         assert facts.method == "concurrent_aggregate"
         assert facts.wages.computation.method_source == "seed"
         # ... and the opposite draw: the same history without the statement
@@ -1937,6 +1975,55 @@ class TestTheDocumentsCarryTheNumbers:
                     "nothing behind it"
                 )
 
+    def test_the_release_prints_its_own_approval_and_funding_dates(
+        self, tmp_path: Path
+    ) -> None:
+        """Forcing the gross was not enough for the group's other three fields.
+
+        `approvalDate`, `fundingDate` and `fundingLagDays` were published as
+        ground truth and appeared on no page: the substrate's release leaves its
+        approval line blank and carries no funding date at all. The interval
+        between the two is the whole substance of a late-funding argument, which
+        is the stated reason they are two fields — so a corpus publishing the
+        interval and printing it nowhere has the label without the evidence.
+        """
+        from wc_caseload_engine.money import GOVERNED_MONEY_FIELDS
+
+        manifest, texts, _ = self._generate(
+            tmp_path,
+            {
+                "wages": WAGES,
+                "settlement": {
+                    "gross_amount": 88000,
+                    "approval_date": "2025-01-06",
+                    "funding_date": "2025-02-05",
+                },
+            },
+            documents={
+                "include_only": [MONEY_WAGE_SUBTYPE, "COMPROMISE_AND_RELEASE_STANDARD"],
+                "format_mix": {"pdf": 1.0},
+            },
+        )
+        block = manifest["caseFacts"]["money"]["settlement"]
+        page = " ".join(texts["COMPROMISE_AND_RELEASE_STANDARD"].replace(",", "").split())
+        labels = {
+            "kind": "Settlement Type:",
+            "grossAmount": "Settlement Gross:",
+            "approvalDate": "Date Approved:",
+            "fundingDate": "Date Funded:",
+            "fundingLagDays": "Days From Approval To Funding:",
+        }
+        assert set(GOVERNED_MONEY_FIELDS["settlement"]) <= set(labels)
+        for field, label in labels.items():
+            assert label in page, f"the release lost the {label!r} row"
+            value = " ".join(str(block[field]).replace(",", "").split())
+            after = page.split(label, 1)[1][: len(value) + 60]
+            assert value in after, (
+                f"caseFacts.money.settlement.{field} publishes {block[field]!r}, which "
+                f"does not appear after its own {label!r} row on the release"
+            )
+        assert block["fundingLagDays"] == 30
+
     def test_the_wage_statement_prints_the_periods_the_average_is_made_of(
         self, tmp_path: Path
     ) -> None:
@@ -2240,11 +2327,15 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         problems = _validate_money(
             block, [{"subtype": MONEY_WAGE_SUBTYPE}], "probe-case"
         )
-        assert any("payment record" in p for p in problems), problems
+        # "benefit event", not "payment record": the settlement rule added later
+        # also says "payment record", and a probe a *different* rule can satisfy
+        # is not testing the rule it names. Found by re-running this campaign
+        # after the settlement rule landed.
+        assert any("benefit event" in p for p in problems), problems
 
         # The control: add the record and the same ledger passes.
         assert not any(
-            "payment record" in p
+            "benefit event" in p
             for p in _validate_money(
                 block,
                 [{"subtype": MONEY_WAGE_SUBTYPE}, {"subtype": MONEY_PD_SUBTYPE}],
@@ -2282,7 +2373,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         broken_count = {"money": money_manifest_block(facts)}
         broken_count["money"]["benefits"]["tdPeriodCount"] = "one"
         problems = _validate_money(broken_count, documents, "c")
-        assert any("expected a whole number" in p for p in problems), problems
+        assert any("expected a count of zero or more" in p for p in problems), problems
 
         broken_gaps = {"money": money_manifest_block(facts)}
         broken_gaps["money"]["benefits"]["gaps"] = ["garbage"]
@@ -2294,6 +2385,25 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         miscounted["money"]["benefits"]["gaps"][0]["days"] += 5
         problems = _validate_money(miscounted, documents, "c")
         assert any("records days" in p for p in problems), problems
+
+        # `bool` is a subclass of `int`, so an isinstance check passed
+        # `tdPeriodCount: True` and it then compared equal to a length of one.
+        boolean = {"money": money_manifest_block(facts)}
+        boolean["money"]["benefits"]["tdPeriods"] = boolean["money"]["benefits"][
+            "tdPeriods"
+        ][:1]
+        boolean["money"]["benefits"]["tdPeriodCount"] = True
+        problems = _validate_money(boolean, documents, "c")
+        assert any("expected a count of zero or more" in p for p in problems), problems
+
+        # And a reversed gap whose day count is negative: span and count agree,
+        # which is two wrongs cancelling rather than a check passing.
+        reversed_gap = {"money": money_manifest_block(facts)}
+        reversed_gap["money"]["benefits"]["gaps"] = [
+            {"start": "2025-01-10", "end": "2025-01-01", "days": -8}
+        ]
+        problems = _validate_money(reversed_gap, documents, "c")
+        assert any("runs forwards" in p for p in problems), problems
 
     def test_an_unpaid_benefit_cannot_also_be_late(self) -> None:
         """Never paid is an interruption; late is a delay. There is no second date."""
@@ -2337,6 +2447,88 @@ class TestTheValidatorRefusesAnUncheckableClaim:
             events[0]["daysLate"] = events[0]["daysLate"] + 5
             problems = _validate_money(block, documents, "probe-case")
             assert any(word in p and "daysLate" in p for p in problems), (array_key, problems)
+
+    def test_a_settlement_is_shape_checked_and_governed_like_everything_else(self) -> None:
+        """The settlement group was skipped by the governance loop along with its absence.
+
+        `if key == "settlement": continue` was meant to say "absent is fine" and
+        said "never checked" — so `settlement: []` crashed the validator with
+        `AttributeError`, `approvalDate: 1` crashed it with `TypeError`, and an
+        ungoverned `settlement.surprise` was certified. A crash is not a verdict,
+        and an ungoverned field is an extraction label no document promised.
+        """
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = _facts({"wages": WAGES, "settlement": {"gross_amount": 88000}})
+        documents = [
+            {"subtype": MONEY_WAGE_SUBTYPE},
+            {"subtype": MONEY_TD_SUBTYPE},
+            {"subtype": "COMPROMISE_AND_RELEASE_STANDARD"},
+        ]
+        assert not _validate_money({"money": money_manifest_block(facts)}, documents, "c")
+
+        cases: list[tuple[str, Any, str]] = [
+            ("settlement is a list", [], "not a mapping"),
+            ("an ungoverned field", {"surprise": "x"}, "ungoverned"),
+            ("a non-date approval", {"approvalDate": 1}, "not a date"),
+            ("a wrong lag", {"fundingLagDays": 999}, "fundingLagDays"),
+        ]
+        for label, mutation, expected in cases:
+            block = {"money": money_manifest_block(facts)}
+            if isinstance(mutation, list):
+                block["money"]["settlement"] = mutation
+            else:
+                block["money"]["settlement"].update(mutation)
+            problems = _validate_money(block, documents, "c")
+            assert any(expected in p for p in problems), (label, problems)
+
+    def test_settlement_dates_need_a_document_that_carries_them(self) -> None:
+        """Approval and funding are read off a release or a payment record.
+
+        The interval between them is the stated reason they are two fields
+        rather than one, and a settled case with no benefits published all three
+        with neither document in the folder — `validate --out` passed it.
+        """
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {"td_weeks": 0, "pd_advances": 0},
+                "settlement": {
+                    "gross_amount": 88000,
+                    "approval_date": "2025-01-06",
+                    "funding_date": "2025-02-05",
+                },
+            }
+        )
+        block = {"money": money_manifest_block(facts)}
+        assert block["money"]["settlement"]["approvalDate"]
+
+        problems = _validate_money(block, [{"subtype": MONEY_WAGE_SUBTYPE}], "c")
+        assert any("read them from" in p for p in problems), problems
+
+        # Both carriers are accepted: the release the Board approved…
+        assert not any(
+            "read them from" in p
+            for p in _validate_money(
+                block,
+                [
+                    {"subtype": MONEY_WAGE_SUBTYPE},
+                    {"subtype": "COMPROMISE_AND_RELEASE_STANDARD"},
+                ],
+                "c",
+            )
+        )
+        # …and the payment record, which is what a stipulated award has instead.
+        assert not any(
+            "read them from" in p
+            for p in _validate_money(
+                block,
+                [{"subtype": MONEY_WAGE_SUBTYPE}, {"subtype": MONEY_TD_SUBTYPE}],
+                "c",
+            )
+        )
 
     def test_funding_before_approval_is_refused(self, tmp_path: Path) -> None:
         directory, manifest = self._generated(tmp_path)

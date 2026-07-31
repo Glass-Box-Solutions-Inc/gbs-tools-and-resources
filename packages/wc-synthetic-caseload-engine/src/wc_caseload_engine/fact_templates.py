@@ -780,6 +780,55 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
     return story
 
 
+def _append_settlement_terms(story: list[Any], money: MoneyFacts, styles: Any) -> list[Any]:
+    """Print the approval and funding dates on the release that carries them.
+
+    Forcing the gross was not enough. ``approvalDate``, ``fundingDate`` and
+    ``fundingLagDays`` were published as ground truth and appeared on no page in
+    the folder: the substrate's release leaves its approval line blank and has no
+    funding date at all, and the payment record that prints them exists only when
+    the case paid benefits. Measured — a settled case with no temporary or
+    permanent disability published all three and ``validate --out`` passed it.
+
+    The interval between approval and funding is the whole substance of a
+    late-funding argument, which is the stated reason these are two fields
+    rather than one. A corpus that publishes the interval and prints it nowhere
+    has the label without the evidence, which is the failure this layer exists
+    to remove.
+    """
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Spacer
+
+    settlement = money.settlement
+    if settlement is None:
+        return story
+
+    rows: list[list[Any]] = [
+        ["Settlement Terms", ""],
+        ["Settlement Type:", settlement.kind],
+        ["Settlement Gross:", f"${settlement.gross_amount:,.2f}"],
+        [
+            "Date Approved:",
+            settlement.approval_date.isoformat() if settlement.approval_date else "-",
+        ],
+        [
+            "Date Funded:",
+            settlement.funding_date.isoformat()
+            if settlement.funding_date
+            else "not yet funded",
+        ],
+        [
+            "Days From Approval To Funding:",
+            str(settlement.funding_lag_days)
+            if settlement.funding_lag_days is not None
+            else "-",
+        ],
+    ]
+    story.append(Spacer(1, 0.2 * inch))
+    story.append(_money_table(rows, [2.6 * inch, 3.4 * inch], styles))
+    return story
+
+
 def build_fact_aware_templates() -> dict[str, type]:
     """Construct the subclasses. Deferred so importing this module is substrate-free.
 
@@ -1577,7 +1626,7 @@ def build_fact_aware_templates() -> dict[str, type]:
                     expected=list(_SUBSTRATE_SETTLEMENT_RANGE),
                     gross=str(money.settlement.gross_amount),
                 )
-            return story
+            return _append_settlement_terms(story, money, self.styles)
 
     return {
         "WAGE_STATEMENTS_PRE_INJURY": FactAwareWageStatement,

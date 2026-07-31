@@ -340,6 +340,64 @@ attaches additively in Wave 2.
     `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
     at 353/345/8/0.
 
+### Fixed — the PR #29 review, round 4 (**AJC-43**)
+
+Round 4 audited round 3, and found that the settlement — the group rounds 2 and 3
+had spent most of their findings on — was the one group the manifest validator
+skipped entirely. Five findings, all re-derived locally before being acted on.
+The reviewer withdrew the tagged-union disagreement.
+
+- **The settlement was exempt from its own governance.** `_validate_money`
+  skipped the `settlement` key rather than the *absent* settlement it meant to
+  skip, so every fix rounds 2 and 3 landed there went into the one group whose
+  output was never read back. An exemption written for a value condition and
+  coded as a key condition survives every later change to that key.
+
+- **Three published dates appeared on no page.** `approvalDate`, `fundingDate`
+  and `fundingLagDays` were ground truth an analyzer is scored on; the
+  substrate's release leaves its approval line blank and carries no funding date,
+  and the payment record that could print them exists only when the case paid
+  benefits. A settled case with `td_weeks: 0, pd_advances: 0` published all three
+  and `validate --out` passed it. The C&R family now appends its own terms table,
+  and the validator refuses the dates when no document in the folder could carry
+  them.
+
+- **`concurrent_aggregate` could label an aggregate that never happened.** A seed
+  may name any method — the author's argument beating the engine's rule is why
+  `method` is authored at all — but the other four label an *argument* about how
+  to average one history, while this one labels a *fact* about combining
+  employers. Over a single employment it published
+  `method: concurrent_aggregate` beside `concurrentEmployment: false`.
+
+- **A count that was not a count, and a gap that ran backwards.**
+  `isinstance(value, int)` admits `bool`, so `tdPeriodCount: True` type-checked
+  and then compared equal to a length of 1; negatives passed everything. And
+  `spanned == days` agreed with a reversed gap carrying a negative count —
+  2025-01-10 to 2025-01-01 spans -8 days and recorded -8, two wrongs cancelling
+  into a clean bill of health.
+
+- **The funding lag was published, never checked, and a non-date crashed the
+  validator.** `fundingLagDays` is trivially derivable from the two dates beside
+  it and was taken on trust; a settlement date that was not a string raised out
+  of the `<` comparison, which is the same defect round 3 fixed for benefits, in
+  the group the first finding had been skipping.
+
+#### Compatibility notices (review round 4)
+
+18. **The compromise-and-release family prints a Settlement Terms table** —
+    type, gross, date approved, date funded (or "not yet funded"), and days from
+    approval to funding. Money-bearing settled cases only; a wage-free case is
+    still byte-identical at 353/345/8/0.
+19. **`validate --out` refuses a settlement whose dates no document carries.** A
+    manifest publishing `approvalDate` or `fundingDate` needs a
+    compromise-and-release or a payment record in the same case.
+20. **One more seed shape is refused**, with a registered, proven followable
+    message: `method: concurrent_aggregate` on a history with no concurrent
+    employment.
+21. **`validate --out` refuses boolean and negative counts, reversed gaps,
+    non-date settlement dates, and a `fundingLagDays` the two dates disagree
+    with.** All were previously accepted or, in the last two cases, raised.
+
 ### Added — discovery volumes, anchored letters, and a registry for advice (**AJC-37**, Phase 3c)
 
 - **The ledger, the table of contents and the paper are one number (ISC-126).**

@@ -711,6 +711,23 @@ REGISTRY: dict[str, RegisteredMessage] = {
         note="The figure used to be accepted and discarded — the seed stated 7777 and the "
         "manifest published 996.73 under a different method.",
     ),
+    "aggregate_method_without_an_aggregate": RegisteredMessage(
+        where="WageScenario._dependent_fields_have_their_enabler",
+        directives=(
+            "Set scenario.wages.concurrent_employment to true, or mark the second "
+            "employer's periods 'concurrent: true', or choose a method that averages one "
+            "employment",
+        ),
+        trigger={
+            "scenario": {
+                "wages": {"base_weekly_wage": 900, "method": "concurrent_aggregate"}
+            }
+        },
+        resolution={"scenario": {"wages": {"concurrent_employment": True}}},
+        note="The first clause. The label names a fact — earnings combined across "
+        "employers — so over a single employment it asserted an aggregation that did not "
+        "happen, beside a concurrentEmployment of false in the same manifest.",
+    ),
     "concurrent_wage_without_concurrent_employment": RegisteredMessage(
         where="WageScenario._dependent_fields_have_their_enabler",
         directives=(

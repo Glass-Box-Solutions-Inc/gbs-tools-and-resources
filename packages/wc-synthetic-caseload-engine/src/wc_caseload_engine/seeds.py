@@ -1177,6 +1177,29 @@ class WageScenario(_Model):
                 "scenario.wages.concurrent_employment to true, or remove "
                 "concurrent_weekly_wage."
             )
+        if self.method == "concurrent_aggregate" and not (
+            self.concurrent_employment or any(e.concurrent for e in self.earnings)
+        ):
+            # A seed may name any method — the author's argument wins over the
+            # engine's rule, which is why ``method`` is authored at all. This one
+            # is different in kind: the other four label an *argument* about how
+            # to average one history, and could be argued over any history.
+            # ``concurrent_aggregate`` labels a *fact* — that earnings from more
+            # than one employer were combined — and over a single employment
+            # there was nothing to combine. Measured: the seed loaded and
+            # published ``method: concurrent_aggregate`` beside
+            # ``concurrentEmployment: false`` on a computation containing only
+            # primary earnings, which is a ground-truth label the manifest
+            # contradicts one field later.
+            raise ValueError(
+                "scenario.wages.method is 'concurrent_aggregate' but this history has no "
+                "concurrent employment — the method names earnings combined across "
+                "employers, and there is only one here, so the label would assert an "
+                "aggregation that did not happen. Set "
+                "scenario.wages.concurrent_employment to true, or mark the second "
+                "employer's periods 'concurrent: true', or choose a method that averages "
+                "one employment."
+            )
         return self
 
     @model_validator(mode="after")
