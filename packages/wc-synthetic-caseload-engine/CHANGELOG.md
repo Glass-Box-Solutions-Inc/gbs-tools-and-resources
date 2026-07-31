@@ -340,6 +340,68 @@ attaches additively in Wave 2.
     `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
     at 353/345/8/0.
 
+### Fixed — the PR #29 review, round 6 (**AJC-43**)
+
+Round 6 audited round 5 and found round 5's own carriers were the wrong
+documents — the fifth consecutive round to find a defect inside its
+predecessor's fix. Eight findings, all reproduced locally. See the ISA's
+Decisions section for the structural read on why six rounds produced this many:
+the layer's one invariant is enforced by three hand-maintained lists that
+nothing reconciles.
+
+- **The stipulated award computed its own money.** `STIPULATIONS_WITH_REQUEST_
+  FOR_AWARD` — the primary settlement document of every `stipulations` case —
+  had no fact-aware subclass, so it drew an average weekly wage from
+  `hourly_rate * weekly_hours`, a TD run from `randint(4, 52)`, a rate from a
+  hardcoded 0.67 and an award from `randint(5000, 75000)`. On the shipped
+  `steady-earner`, caseFacts said 1151.42 / 767.65 / 26867.75 and the document
+  said 1331.20 / 891.90 / 40135.68.
+
+- **The approval order denied a settlement existed.** `MinutesOrders` ignores
+  its `approving_settlement` variant, so the designated approval evidence read
+  "The parties have been unable to reach a settlement agreement at this time"
+  above a `Date Approved` row.
+
+- **The funding carrier was a medical bill.** `BillingRecords` is a provider
+  "STATEMENT OF CHARGES", so a benefit-free settled case evidenced its
+  settlement funding with a $16,724.23 balance due. Rebuilt as the claims
+  administrator's own ledger.
+
+- **Payment records still printed the settlement's future.** One dated
+  2021-09-29 carried an approval of 2023-12-27 — 819 days ahead. Round 5 fixed
+  the release and missed this path.
+
+- **The approving order could be dated after its own approval.** Forward-only
+  re-dating left an authored approval of 2022-01-05 evidenced by an order dated
+  2023-12-27, and on-or-after certified it. An order does not report an
+  approval; it is the approval.
+
+- **An authority-only `rate_basis` override published `basisSource: mixed`**
+  having authored none of the six figures.
+
+- **`basisSource` was never validated on output** — `"seed-ish"` passed.
+
+- **A fatal claim accepted money and derived post-mortem disability**: a death
+  on 2023-01-19 produced a first TD period beginning 2023-01-22, 13 periods
+  totalling $39,133.85 and 2 PD advances.
+
+#### Compatibility notices (review round 6)
+
+26. **The `STIPULATIONS_WITH_REQUEST_FOR_AWARD` family is now fact-aware** and
+    prints the ledger's average weekly wage, TD rate and TD total, with the
+    award forced to the settlement gross.
+27. **`ORDER_APPROVING_SETTLEMENT` and `BENEFIT_PAYMENT_LEDGER` render
+    engine-owned bodies**, not the substrate's minutes and billing statement.
+    Both are guaranteed for a settled case and both are money-bearing only.
+28. **Payment records no longer print settlement approval or funding dates.**
+    Those live on the order and the ledger.
+29. **`validate --out` requires the approving order to be dated *on* the
+    approval date**, not merely on or after it.
+30. **A seed with `injury.type: death` refuses `scenario.wages`,
+    `scenario.benefits` and `scenario.settlement`**, with a registered
+    followable message. Dependency benefits are a Wave 2 ontology; no shipped
+    example is affected.
+
 ### Fixed — the PR #29 review, round 5 (**AJC-43**)
 
 Round 5 audited round 4 and overturned its headline fix. Round 4 was right that

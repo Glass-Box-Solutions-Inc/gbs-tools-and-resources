@@ -1048,7 +1048,12 @@ separate events in a real file, and the interval between them is the whole
 substance of a late-funding argument.
 
 Each of those facts is printed by the document that effects it, and by no
-earlier one. A compromise and release is signed before the Board approves it, so
+earlier one — and by a document whose *body* supports it, which is a separate
+requirement that cost a review round to learn. A subtype whose name fits and
+whose date fits can still render something that contradicts the fact: the
+substrate's `ORDER_APPROVING_SETTLEMENT` is generic hearing minutes that say the
+parties reached no settlement, and its `BENEFIT_PAYMENT_LEDGER` is a provider's
+medical bill. Both are engine-owned renders here for that reason. A compromise and release is signed before the Board approves it, so
 it carries the settlement type and gross and neither date; the
 `ORDER_APPROVING_SETTLEMENT` is issued *on* the approval date and carries it;
 and a `BENEFIT_PAYMENT_LEDGER` dated after the draft clears carries the funding
@@ -1057,6 +1062,13 @@ document dated on or after it, which is the ISC-175 payment-record rule — no
 document is dated before what it prints — stated generally. A published interval
 whose evidence is on no page is the asserted figure this layer exists to remove;
 a page asserting its own future is worse, because it reads as evidence.
+
+A seed with `injury.type: death` may not carry `scenario.wages`,
+`scenario.benefits` or `scenario.settlement`. Temporary disability replaces
+wages the worker would have earned and permanent disability rates a living
+worker's residual capacity; a fatal claim pays dependency benefits, which this
+layer does not model. Before the rule, a death on 2023-01-19 derived a first
+temporary-disability period beginning 2023-01-22.
 
 `method: concurrent_aggregate` is the one method a seed may not simply assert.
 The other four name an *argument* about how to average a history and can be
