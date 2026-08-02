@@ -80,6 +80,29 @@ from wc_caseload_engine.seeds import (
 )
 
 
+def _refusals(block: dict, documents: list, case_id: str, *, given: str) -> list[str]:
+    """``_validate_money``, with a crash reported as a failure of the calling guard.
+
+    The defect these probes cover *is* a crash: a validator that trusts its
+    input raises out of the very input it exists to reject. Letting the
+    exception escape makes the probe a test *error* rather than a test failure,
+    which reads as infrastructure noise — and to the mutation gate it is not
+    evidence about the defect at all, because an ``AttributeError`` from a
+    broken mutation and an ``AssertionError`` from a guard are both "did not
+    pass" and only one of them means anything. Caught here so the verdict comes
+    from the guard.
+    """
+    from wc_caseload_engine.manifests import _validate_money
+
+    try:
+        return _validate_money(block, documents, case_id)
+    except Exception as exc:
+        pytest.fail(
+            f"the validator raised {type(exc).__name__} on {given} rather than "
+            f"refusing it: {exc}"
+        )
+
+
 def _seed_body(
     scenario: dict[str, Any] | None = None,
     *,
@@ -509,6 +532,94 @@ class TestTheAverageIsDerivableNotAsserted:
         assert computation.gross_considered == money(gross)
         assert computation.periods_considered == len(considered)
 
+    def test_the_aggregate_divides_by_the_calendar_both_employers_cover(self) -> None:
+        """The denominator is the union of the periods, not the sum of their weeks.
+
+        Two employments running over the same calendar are combined by adding
+        their earnings and dividing by the calendar they share. Summing period
+        weeks instead double-counts any day two periods both cover, and a
+        payroll history has such days in it: a re-issued or corrected pay period
+        overlaps the one it corrects. It is a well-formed history — every period
+        is valid, and the two employments still cover the same span, so the rule
+        that refuses unequal concurrent coverage does not reach it.
+
+        Reproduced before it was asserted. The overlapping fortnight below makes
+        the summed denominator fifty weeks against a real calendar of
+        forty-eight, and moves the published average weekly wage from $1,491.67
+        to $1,432.00 — a wage the page's own operands do not reproduce.
+
+        This guard exists because the mutation naming it pointed at a class that
+        never existed, so pytest collected nothing, exited 4, and the gate
+        scored it green. The open question when that surfaced was whether any
+        valid history still tells the two denominators apart, now that unequal
+        concurrent coverage is refused outright. It does, and this is it.
+        """
+        start = date(2021, 1, 4)
+        fortnights = 24
+
+        def series(gross: float, *, concurrent: bool) -> list[dict[str, Any]]:
+            return [
+                {
+                    "period_start": (start + timedelta(days=14 * index)).isoformat(),
+                    "period_end": (start + timedelta(days=14 * index + 13)).isoformat(),
+                    "gross": gross,
+                    **({"concurrent": True} if concurrent else {}),
+                }
+                for index in range(fortnights)
+            ]
+
+        primary = series(2000.0, concurrent=False)
+        # A corrected pay period, re-issued across the boundary of the one it
+        # replaces. Seven days of it are days the history already covers.
+        primary.append(
+            {
+                "period_start": (start + timedelta(days=14 * 5 + 7)).isoformat(),
+                "period_end": (start + timedelta(days=14 * 6 + 6)).isoformat(),
+                "gross": 2000.0,
+            }
+        )
+        # Built here rather than through `_seed_body`, whose fixed date of injury
+        # sits in the middle of this history.
+        seed = parse_case_seed(
+            {
+                "case_id": "concurrent-overlap",
+                "rng_seed": 7,
+                "injury": {
+                    "type": "specific",
+                    "date_of_injury": "2021-12-20",
+                    "body_parts": [{"part": "lumbar_spine", "icd10": "M54.5"}],
+                },
+                "lifecycle": {"target_stage": "medical_legal", "eval_type": "qme"},
+                "scenario": {
+                    "wages": {
+                        "earnings": primary + series(900.0, concurrent=True),
+                        "concurrent_employment": True,
+                    }
+                },
+            }
+        )
+        facts = derive_money_facts(seed, build_timeline(seed), "ordinary")
+        computation = facts.wages.computation
+        assert computation.method == "concurrent_aggregate", computation.method
+
+        summed = sum(
+            (period.weeks for period in facts.wages.periods if not period.concurrent),
+            Decimal("0"),
+        )
+        covered = computation.weeks_considered
+        assert summed > covered, (
+            f"the probe needs an overlap to discriminate: summed {summed} against "
+            f"covered {covered}"
+        )
+        assert covered == Decimal("48.0000"), covered
+        assert computation.aww == (computation.gross_considered / covered).quantize(
+            Decimal("0.01")
+        ), (computation.aww, computation.gross_considered, covered)
+        # …and explicitly not the summed-weeks answer the defect published.
+        assert computation.aww != (computation.gross_considered / summed).quantize(
+            Decimal("0.01")
+        )
+
     def test_the_gross_on_each_period_is_its_own_parts(self) -> None:
         """Overtime is *inside* gross, as payroll prints it — checked, not assumed."""
         facts = _facts({"wages": dict(WAGES, overtime_share=0.25)})
@@ -682,8 +793,24 @@ class TestNoStatutoryNumberIsPresentedAsVerified:
         recorded as ``tdBound: min`` — a temporary-disability rate above the
         maximum the same basis published.
         """
-        with pytest.raises(SeedValidationError) as caught:
-            _facts({"wages": dict(WAGES, rate_basis={"td_min_weekly": 5000.0})})
+        from pydantic import ValidationError as _ModelValidationError
+
+        # What the seed rule buys is the *message*, and the mutation gate is
+        # what made that precise. Remove the rule and the number is still
+        # refused — by `RateBasis._bounds_are_ordered`, one layer down, as a
+        # pydantic error about a merged ceiling the seed author never wrote.
+        # Letting that escape scores ERROR-ValidationError, which proves a
+        # crash; caught here, the guard proves the defect it is actually for.
+        try:
+            with pytest.raises(SeedValidationError) as caught:
+                _facts({"wages": dict(WAGES, rate_basis={"td_min_weekly": 5000.0})})
+        except _ModelValidationError as exc:
+            pytest.fail(
+                "a lone td_min_weekly reached the model backstop and raised "
+                f"{type(exc).__name__} — the seed-level pairing rule that names "
+                "td_max_weekly, at the layer holding the line the author wrote, "
+                "is gone"
+            )
         assert "td_max_weekly" in str(caught.value)
 
         # And stated as a pair but the wrong way round, which is the plain case.
@@ -1401,7 +1528,25 @@ class TestDeterminism:
             for prec in (2, 3, 4, 5, 6, 7, 8, 9, 50):
                 decimal.getcontext().prec = prec
                 for name, call in calls.items():
-                    assert repr(call()) == baseline[name], (
+                    try:
+                        answer = repr(call())
+                    except decimal.DecimalException as exc:
+                        # An unpinned callable does not merely answer
+                        # differently at a short context — it cannot answer at
+                        # all. Letting that exception escape makes the MUTATION
+                        # prove an error; catching it and failing here makes the
+                        # GUARD prove the defect. The mutation gate scores only
+                        # a call-phase assertion as evidence (ASSERTION_TYPES =
+                        # AssertionError | Failed), so m1-1 previously scored
+                        # ERROR-InvalidOperation — a shipped fix with no
+                        # standing proof — rather than RED.
+                        pytest.fail(
+                            f"{name}() raised {type(exc).__name__} at "
+                            f"prec={prec} — its arithmetic is running under the "
+                            "caller's context, not the module's; restore the "
+                            "module's own pin around it"
+                        )
+                    assert answer == baseline[name], (
                         f"{name}() answers differently at prec={prec} — its arithmetic "
                         "is running under the caller's context, not the module's"
                     )
@@ -1877,7 +2022,12 @@ class TestPublication:
         ]
         with pytest.raises(SeedValidationError) as caught:
             _facts({"wages": {"earnings": concurrent}})
-        assert "primary" in str(caught.value)
+        # Name *this* refusal, not any refusal. With no primary periods the
+        # matched-dates check one clause below also fires — its message says
+        # "different dates from the primary ones" — so asserting on the bare
+        # word "primary" passed with this guard removed entirely. The seed
+        # author needs to be told which of the two shapes they wrote.
+        assert "marks every period" in str(caught.value)
 
         # The control: matched primary periods make the aggregate real money.
         mixed = [
@@ -1950,6 +2100,14 @@ class TestPublication:
             )
         )
         benefits = block["benefits"]
+        # Presence before value. A missing yardstick is the defect this guard
+        # exists for, and subscripting it raises KeyError — which the mutation
+        # gate scores as ERROR, not RED, because an error proves a crash and
+        # only an assertion proves a defect.
+        assert "tdPaymentDueDays" in benefits, (
+            "the ledger publishes daysLate but not the yardstick it was measured "
+            "against — an effect with its cause off the page"
+        )
         assert benefits["tdPaymentDueDays"] == TD_PAYMENT_DUE_DAYS
         late = 0
         for period in benefits["tdPeriods"]:
@@ -3598,7 +3756,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
 
         block["money"]["benefits"]["tdPeriods"] = ["garbage"]
         block["money"]["benefits"]["tdPeriodCount"] = 1
-        problems = _validate_money(block, documents, "probe-case")
+        problems = _refusals(block, documents, "probe-case", given="a bare string event")
         assert any("str where a record was expected" in p for p in problems), problems
 
     def test_a_malformed_count_or_gap_is_refused_rather_than_crashing(self) -> None:
@@ -3620,12 +3778,12 @@ class TestTheValidatorRefusesAnUncheckableClaim:
 
         broken_count = {"money": money_manifest_block(facts)}
         broken_count["money"]["benefits"]["tdPeriodCount"] = "one"
-        problems = _validate_money(broken_count, documents, "c")
+        problems = _refusals(broken_count, documents, "c", given='tdPeriodCount: "one"')
         assert any("expected a count of zero or more" in p for p in problems), problems
 
         broken_gaps = {"money": money_manifest_block(facts)}
         broken_gaps["money"]["benefits"]["gaps"] = ["garbage"]
-        problems = _validate_money(broken_gaps, documents, "c")
+        problems = _refusals(broken_gaps, documents, "c", given='gaps: ["garbage"]')
         assert any("gaps holds a str" in p for p in problems), problems
 
         miscounted = {"money": money_manifest_block(facts)}
@@ -3733,7 +3891,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
                 block["money"]["settlement"] = mutation
             else:
                 block["money"]["settlement"].update(mutation)
-            problems = _validate_money(block, documents, "c")
+            problems = _refusals(block, documents, "c", given=label)
             assert any(expected in p for p in problems), (label, problems)
 
     def test_settlement_dates_need_a_document_that_could_know_them(self) -> None:

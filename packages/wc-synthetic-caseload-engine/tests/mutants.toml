@@ -86,7 +86,7 @@ replace = '''            if False:
 id = 'm1-6'
 title = 'only the two nullable shape knobs are policed again'
 file = 'src/wc_caseload_engine/seeds.py'
-test = 'tests/test_money_spine.py::TestTheLedgerPublishesOnlyWhatADocumentRenders::test_a_listed_history_admits_no_shape_knob'
+test = 'tests/test_money_spine.py::TestPublication::test_a_listed_history_admits_no_shape_knob'
 find = '        stated = sorted(self.model_fields_set & set(self.SHAPE_KNOBS))'
 replace = '''        stated = sorted(
             name
@@ -98,7 +98,7 @@ replace = '''        stated = sorted(
 id = 'm1-7'
 title = 'an all-concurrent history is accepted again'
 file = 'src/wc_caseload_engine/seeds.py'
-test = 'tests/test_money_spine.py::TestTheLedgerPublishesOnlyWhatADocumentRenders::test_a_history_with_no_primary_period_is_refused'
+test = 'tests/test_money_spine.py::TestPublication::test_a_history_with_no_primary_period_is_refused'
 find = '        if not any(not entry.concurrent for entry in self.earnings):'
 replace = '        if False:'
 
@@ -106,7 +106,7 @@ replace = '        if False:'
 id = 'm1-8'
 title = 'earning_capacity publishes the derived operands again'
 file = 'src/wc_caseload_engine/money.py'
-test = 'tests/test_money_spine.py::TestTheNamedMethodIsGroundTruth::test_earning_capacity_publishes_no_operands_and_adds_nothing'
+test = 'tests/test_money_spine.py::TestTheNamedMethod::test_earning_capacity_publishes_no_operands_and_adds_nothing'
 find = '''    if method == "earning_capacity":
         return AwwComputation('''
 replace = '''    if False:
@@ -116,7 +116,7 @@ replace = '''    if False:
 id = 'm1-9'
 title = 'the due date leaves the ledger again'
 file = 'src/wc_caseload_engine/money.py'
-test = 'tests/test_money_spine.py::TestTheLedgerPublishesOnlyWhatADocumentRenders::test_lateness_is_recomputable_from_the_published_due_date'
+test = 'tests/test_money_spine.py::TestPublication::test_lateness_is_recomputable_from_the_published_due_date'
 find = '''            "tdPaymentDueDays": TD_PAYMENT_DUE_DAYS,'''
 replace = ''
 
@@ -124,7 +124,7 @@ replace = ''
 id = 'm1-10'
 title = 'the ledger publishes counts again, not events'
 file = 'src/wc_caseload_engine/money.py'
-test = 'tests/test_money_spine.py::TestTheLedgerPublishesOnlyWhatADocumentRenders::test_the_ledger_publishes_events_not_only_counts'
+test = 'tests/test_money_spine.py::TestPublication::test_the_ledger_publishes_events_not_only_counts'
 find = '''            "tdPeriodCount": len(benefits.td_periods),'''
 replace = '''            "tdPeriodCount": len(benefits.td_periods) + 1,'''
 
@@ -201,7 +201,7 @@ replace = ''
 id = 'm2-1'
 title = 'a listed history takes the pattern default again'
 file = 'src/wc_caseload_engine/money.py'
-test = 'tests/test_money_spine.py::TestTheNamedMethodIsGroundTruth::test_a_listed_history_derives_its_own_pattern'
+test = 'tests/test_money_spine.py::TestTheNamedMethod::test_a_listed_history_derives_its_own_pattern'
 find = '    pattern, pattern_source = _pattern_of(wages, periods)'
 replace = '''    pattern, pattern_source = wages.pattern, "seed"'''
 
@@ -209,13 +209,14 @@ replace = '''    pattern, pattern_source = wages.pattern, "seed"'''
 id = 'm2-2'
 title = 'the aggregate divides by the primary weeks again'
 file = 'src/wc_caseload_engine/money.py'
-test = 'tests/test_money_spine.py::TestTheAverageIsDerivable::test_the_aggregate_divides_by_the_weeks_both_employers_cover'
+test = 'tests/test_money_spine.py::TestTheAverageIsDerivableNotAsserted::test_the_aggregate_divides_by_the_calendar_both_employers_cover'
 find = '''    weeks = (
         _covered_weeks(considered)
         if method == "concurrent_aggregate"
         else sum((p.weeks for p in primary), Decimal("0"))
     )'''
 replace = '''    weeks = sum((p.weeks for p in primary), Decimal("0"))'''
+note = 'Not retired. Its node id named a class that never existed, so pytest collected nothing, exited 4, and the old gate scored it green. The open question was whether any valid history still distinguishes the union denominator from the summed one, now that unequal concurrent coverage is refused outright. It does: an overlapping corrected pay period is well-formed, leaves both employments covering the same span, and moves the published AWW from 1491.67 to 1432.00. The guard was built around that seed rather than the mutant retired.'
 
 [[mutant]]
 id = 'm2-3'
@@ -311,7 +312,7 @@ replace = ''
 id = 'm3-1'
 title = 'patternSource claims an author who never spoke'
 file = 'src/wc_caseload_engine/money.py'
-test = 'tests/test_money_spine.py::TestTheNamedMethodIsGroundTruth::test_pattern_provenance_names_an_author_only_when_there_was_one'
+test = 'tests/test_money_spine.py::TestTheNamedMethod::test_pattern_provenance_names_an_author_only_when_there_was_one'
 find = '''            "seed" if "pattern" in wages.model_fields_set else "derived"'''
 replace = '''            "seed"'''
 
@@ -327,7 +328,7 @@ replace = '        if False:'
 id = 'm3-3'
 title = 'earning_capacity_weekly is accepted without its method again'
 file = 'src/wc_caseload_engine/seeds.py'
-test = 'tests/test_money_spine.py::TestTheNamedMethodIsGroundTruth::test_a_figure_no_setting_consumes_is_refused'
+test = 'tests/test_money_spine.py::TestTheNamedMethod::test_a_figure_no_setting_consumes_is_refused'
 find = '''        if self.earning_capacity_weekly is not None and self.method != "earning_capacity":'''
 replace = '        if False:'
 
@@ -335,7 +336,7 @@ replace = '        if False:'
 id = 'm3-4'
 title = 'concurrent_weekly_wage is accepted without its enabler again'
 file = 'src/wc_caseload_engine/seeds.py'
-test = 'tests/test_money_spine.py::TestTheNamedMethodIsGroundTruth::test_a_figure_no_setting_consumes_is_refused'
+test = 'tests/test_money_spine.py::TestTheNamedMethod::test_a_figure_no_setting_consumes_is_refused'
 find = '        if self.concurrent_weekly_wage is not None and not self.concurrent_employment:'
 replace = '        if False:'
 
@@ -434,9 +435,11 @@ title = 'settlement dates are parsed unsafely again'
 file = 'src/wc_caseload_engine/manifests.py'
 test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_settlement_is_shape_checked_and_governed_like_everything_else'
 find = '''            try:
-                parsed = date.fromisoformat(raw)'''
-replace = '''            if True:
-                parsed = date.fromisoformat(raw)'''
+                parsed = date.fromisoformat(raw)
+            except (TypeError, ValueError):'''
+replace = '''            try:
+                parsed = date.fromisoformat(raw)
+            except ():'''
 
 [[mutant]]
 id = 'm4-4'
@@ -912,3 +915,91 @@ file = 'src/wc_caseload_engine/fact_templates.py'
 test = 'tests/test_money_sweep.py::TestEveryMoneyDrawingTemplateIsAccountedFor::test_the_settlement_memo_family_is_governed_from_the_registry'
 find = '''        **_family("pdf_templates.summaries.settlement_memo", FactAwareSettlementMemo),'''
 replace = ''''''
+
+# ---------------------------------------------------------------------------
+# The gate itself. It certifies every entry above, so it is certified too.
+#
+# Its first version treated any non-zero pytest exit as proof. Ten registered
+# mutants named classes that do not exist: pytest exited 4 having collected
+# nothing, and all ten scored RED. The reported 100/100 was really 90/100 — a
+# guard that did not cover its own claim, which is the defect class this whole
+# registry exists to catch, in the thing doing the catching.
+#
+# One mutant per clause of the RED conjunction.
+# ---------------------------------------------------------------------------
+
+[[mutant]]
+id = 'g-1'
+title = 'any non-zero pytest exit counts as proof again'
+file = 'tools/mutation_gate.py'
+test = 'tests/test_mutation_gate.py::TestOnlyANamedCallPhaseAssertionIsRed::test_a_node_id_that_names_nothing_is_not_red'
+find = '''    if collected == 0:
+        return Verdict(
+            "NO-TEST",'''
+replace = '''    if False:
+        return Verdict(
+            "NO-TEST",'''
+
+[[mutant]]
+id = 'g-2'
+title = 'a raw exception counts as a guard firing again'
+file = 'tools/mutation_gate.py'
+test = 'tests/test_mutation_gate.py::TestOnlyANamedCallPhaseAssertionIsRed::test_a_raw_exception_is_not_red'
+find = '    if exception not in ASSERTION_TYPES:'
+replace = '    if False:'
+
+[[mutant]]
+id = 'g-3'
+title = 'a guard that was already failing is accepted as proof'
+file = 'tools/mutation_gate.py'
+test = 'tests/test_mutation_gate.py::TestOnlyANamedCallPhaseAssertionIsRed::test_a_guard_that_is_already_failing_proves_nothing'
+find = '    if cached.token != "GREEN":'
+replace = '    if False:'
+
+[[mutant]]
+id = 'g-4'
+title = 'a mutation that does not compile is run anyway'
+file = 'tools/mutation_gate.py'
+test = 'tests/test_mutation_gate.py::TestOnlyANamedCallPhaseAssertionIsRed::test_a_mutation_that_does_not_compile_is_not_red'
+find = '''    except SyntaxError as exc:
+        return Verdict(
+            "INVALID-MUTATION",'''
+replace = '''    except SyntaxError as exc:
+        return Verdict(
+            "RED" if exc else "INVALID-MUTATION",'''
+
+[[mutant]]
+id = 'g-5'
+title = 'a fixture that exploded counts as a guard that fired'
+file = 'tools/mutation_gate.py'
+test = 'tests/test_mutation_gate.py::TestOnlyANamedCallPhaseAssertionIsRed::test_a_setup_failure_is_named_as_one'
+find = '        if outcome not in (None, "passed"):'
+replace = '        if False:'
+
+[[mutant]]
+id = 'g-6'
+title = 'a shard that selects nothing reports success again'
+file = 'tools/mutation_gate.py'
+test = 'tests/test_mutation_gate.py::TestAShardCannotPassVacuously::test_an_empty_selection_fails'
+find = '''    if not selected:
+        raise SystemExit('''
+replace = '''    if False:
+        raise SystemExit('''
+
+[[mutant]]
+id = 'g-7'
+title = 'an out-of-range shard spec is accepted'
+file = 'tools/mutation_gate.py'
+test = 'tests/test_mutation_gate.py::TestAShardCannotPassVacuously::test_an_out_of_range_shard_fails'
+find = '    if count < 1 or not 1 <= index <= count:'
+replace = '    if False:'
+
+[[mutant]]
+id = 'g-8'
+title = 'a skipped guard counts as a guard that fired'
+file = 'tools/mutation_gate.py'
+test = 'tests/test_mutation_gate.py::TestOnlyANamedCallPhaseAssertionIsRed::test_a_skipped_guard_is_not_red'
+find = '''    if call == "skipped":
+        return Verdict("SKIPPED", "the guard was skipped, so it proved nothing")'''
+replace = '''    if False:
+        return Verdict("SKIPPED", "the guard was skipped, so it proved nothing")'''

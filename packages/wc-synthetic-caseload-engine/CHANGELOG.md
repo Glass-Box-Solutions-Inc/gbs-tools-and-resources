@@ -340,6 +340,62 @@ attaches additively in Wave 2.
     `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
     at 353/345/8/0.
 
+### Fixed — the mutation gate had been scoring ten mutants it never ran (**AJC-43**)
+
+The section below leans on the gate for its central claim: *a fix is not claimed
+until a mutation of that exact fix has been shown to redden a test that names
+it*. For ten of those fixes, no test ran.
+
+An earlier round renamed three test classes. Ten `mutants.toml` node ids still
+named the old ones, so pytest collected nothing and exited **4** — and the gate
+read any non-zero exit as "the guard failed", which is precisely what a working
+guard looks like from the outside. The gate was not lenient; it was blind, and it
+reported the blindness as proof. `m2-2` was the sharpest case: its node id named
+a class that had never existed at any commit, so that mutant had been green since
+the day it was written.
+
+- **Ten node ids re-pointed** at their surviving classes.
+- **A preflight.** `python tools/mutation_gate.py --preflight` asserts that every
+  registered guard collects **exactly one** test — not zero (a stale id), not
+  several (a parametrized node, which cannot be attributed to one assertion). CI
+  runs it per shard, ahead of that shard's mutants, so a stale id fails the build
+  in seconds instead of passing quietly for a round.
+- **RED is now a five-clause conjunction**: the guard is green on pristine
+  source, the mutated source compiles, the node collects exactly once, setup and
+  teardown pass with the failure in the *call* phase, and the call-phase
+  exception is an assertion. Everything else scores `ERROR-<type>`,
+  `PATCH-MISS`, or `SURVIVED` — findings, not passes.
+- **`PYTHONDONTWRITEBYTECODE=1` in the subprocess environment.** CPython
+  invalidates a cached `.pyc` on *(source mtime, source size)*. A great many real
+  mutants are same-length edits — a flipped comparison, `1` for `2` — so
+  patch-then-rerun inside one mtime tick left both keys unchanged and the
+  subprocess imported **pre-mutation** bytecode. Measured on the gate's own
+  probe: 7 spurious `SURVIVED` in 10 runs without the line, 0 in 10 with it. The
+  failure was loud rather than silent, but a gate that reds at random is a gate
+  somebody switches off, which costs exactly what one that never fires costs.
+- **`tests/test_mutation_gate.py`** — the scorer's own suite, with a planted
+  control per verdict class, and eight `g-*` mutants so the gate is held to the
+  standard it holds everything else to.
+
+Four guards then scored non-RED under the honest gate. All four were the guard's
+fault, not the fix's — the shipped behaviour was correct in every case, and had
+simply never been proven. Three of the four are one shape: a guard that *raises*
+where it should *assert* proves a crash, and a crash is not a defect.
+
+| Mutant | Scored | What the guard was doing |
+|--------|--------|--------------------------|
+| `m1-1` | `ERROR-InvalidOperation` | An unpinned callable does not merely answer differently at a short `decimal` context — it cannot answer at all. Letting the exception escape made the mutation prove an *error*; catching it and failing there makes the guard prove the *defect*. |
+| `m1-9` | `ERROR-KeyError` | The same shape one level down: subscripting the removed key raised rather than asserted. Presence is asserted before value now. |
+| `m1-4` | `ERROR-ValidationError` | The most informative of the three. Remove the seed-level pairing rule and the bad basis is *still* refused — by `RateBasis._bounds_are_ordered`, one layer down, as a pydantic error naming a merged ceiling the seed author never wrote. So what the seed rule buys is the message, at the layer holding the line the author typed; the guard now says exactly that when it fails. |
+| `m1-7` | `SURVIVED` | A real hole. The guard asserted on the word *"primary"* — which the neighbouring matched-dates refusal also uses — so deleting the all-concurrent check entirely still produced a message containing it. It asserts on the phrase only that refusal writes. |
+
+`m2-2` was rebuilt rather than retired. The open question was whether any valid
+history still separates the union denominator from the summed one now that
+unequal concurrent coverage is refused outright. One does: an overlapping
+corrected pay period is well-formed, leaves both employments covering the same
+span, and moves the published average weekly wage from `1491.67` to `1432.00`.
+The guard was built around that seed.
+
 ### Added — two standing sweeps that replace the review round (**AJC-43**)
 
 Eleven rounds of review found 46 real defects, at a rate that never fell:

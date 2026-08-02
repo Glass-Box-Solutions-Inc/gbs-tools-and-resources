@@ -396,6 +396,8 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      - name: Every registered guard collects exactly one test
+        run: python tools/mutation_gate.py --preflight --shard ${{ matrix.shard }}/10
       - name: Every guard still catches its own defect
         run: python tools/mutation_gate.py --shard ${{ matrix.shard }}/10
 
