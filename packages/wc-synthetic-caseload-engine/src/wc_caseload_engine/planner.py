@@ -1250,6 +1250,28 @@ def _packet_count_controls(
     return pins, ceilings
 
 
+def _type_headroom(
+    dated: list[tuple[date, str, str, str]],
+    ceilinged: dict[str, tuple[str, int]],
+) -> dict[str, int]:
+    """How many more documents each ceilinged subtype's parent type may hold.
+
+    A ``{type: T, max: N}`` bound is on the whole type, and the plan does not
+    always fill it — so "there is a ceiling" and "the ceiling binds" are
+    different questions, and only the second forbids a clone. Counted from the
+    dated candidate set rather than from the packets alone, because every
+    subtype under the type consumes the same allowance.
+    """
+    if not ceilinged:
+        return {}
+    taxonomy = effective_taxonomy()
+    under_type = Counter(taxonomy.parent_of(entry[1]) for entry in dated)
+    return {
+        subtype: maximum - under_type.get(parent, 0)
+        for subtype, (parent, maximum) in ceilinged.items()
+    }
+
+
 #: The lifecycle half of the shortfall message, kept verbatim from ISC-126.
 #:
 #: Unchanged on purpose: it is still the right thing to say when the stage
@@ -1456,8 +1478,25 @@ def _shape_discovery(
 
     forbidden = _suppressed_packet_subtypes(controls)
     pinned, ceilinged = _packet_count_controls(controls)
-    # Cloning breaches either one; only a pin also forbids the trim.
-    uncloneable = set(pinned) | set(ceilinged)
+    # A pin states an exact count, so cloning one is always an overrule and the
+    # subtype cannot be a donor. A ceiling is enforced differently — by clamping
+    # how many clones the donor may produce, below — and deliberately NOT by
+    # excluding the subtype here.
+    #
+    # The distinction is measured, not assumed: `max: 3` fills the DISCOVERY type
+    # to 3 of 3 and `max: 6` to 6 of 6, but `max: 12` reaches only 10 of 12 — two
+    # spare. Reading the packet ladder alone (1, 2, 3 packets) suggests a ceiling
+    # always binds; counting documents under the type shows it does not, and
+    # refusing to refill below the cap denies a count both controls permit.
+    #
+    # An earlier pass excluded at-cap ceilinged subtypes here as well. The gate
+    # then scored that clause SURVIVED, which was correct: every packet subtype
+    # shares the parent DISCOVERY, so a type bound ceilings all of them at once
+    # and the clamp already yields zero clones at zero headroom. Two mechanisms
+    # for one rule, the second unreachable. Removed rather than given a mutant
+    # that could only ever pass.
+    headroom = _type_headroom(dated, ceilinged)
+    uncloneable = set(pinned)
 
     shaped = [entry for entry in dated if entry[1] not in DISCOVERY_PACKET_SUBTYPES]
     packets.sort(key=lambda entry: entry[0])
@@ -1502,7 +1541,14 @@ def _shape_discovery(
         if donor is not None:
             last_date, subtype, track, role = donor
             ceiling = timeline.horizon
-            for step in range(declared - len(packets)):
+            # Clone up to the shortfall, but never past the donor's own type
+            # allowance. A subtype reaches this line only with headroom > 0, and
+            # the headroom is how many more the type may hold — so a shortfall
+            # larger than the spare room is filled as far as the control permits
+            # and then reported, rather than met by breaching it.
+            wanted = declared - len(packets)
+            allowed = min(wanted, headroom[subtype]) if subtype in headroom else wanted
+            for step in range(allowed):
                 when = min(last_date + timedelta(days=14 * (step + 1)), ceiling)
                 kept.append((when, subtype, track, role))
 

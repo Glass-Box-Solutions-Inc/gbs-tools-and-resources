@@ -31,6 +31,19 @@
 # a renderer's rounding makes the corpus unrealistic in a figure the analyzer is
 # scored on. The claim they existed to protect — that the printed fee really is
 # fifteen percent — is now guarded by m11-3, which truncates the fee instead.
+#
+#   m12-9   "the refill clones past a type ceiling that is at its cap"
+#   m12-11  "a type ceiling below its cap forbids the refill anyway"
+#
+# Both guarded a clause that excluded at-cap ceilinged subtypes from donor
+# selection. The gate scored them SURVIVED on the round they were written, and
+# was right to: every packet subtype shares the parent DISCOVERY, so a type
+# bound ceilings all of them together and the refill's headroom clamp already
+# yields zero clones at zero headroom. The clause was a second mechanism for one
+# rule, unreachable behind the first. The fix was withdrawn — not the mutants
+# abandoned — and the claim is now guarded by m12-12, which mutates the clamp
+# itself. A vacuous mutant is worse than none: it reports coverage it does not
+# have.
 
 [[mutant]]
 id = 'm1-1'
@@ -1099,19 +1112,23 @@ test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls
 find = '''        pinned_entries = [entry for entry in packets if entry[1] in pinned]'''
 replace = '''        pinned_entries = []'''
 
+
+
 [[mutant]]
-id = 'm12-9'
-title = 'the refill clones past a documents.overrides type ceiling again'
+id = 'm12-12'
+title = 'the refill fills past the spare room a type ceiling leaves'
 file = 'src/wc_caseload_engine/planner.py'
-test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_positive_type_bound_is_not_cloned_past'
-find = '''    uncloneable = set(pinned) | set(ceilinged)'''
-replace = '''    uncloneable = set(pinned)'''
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_the_refill_stops_at_the_spare_room_and_says_so'
+find = '''            allowed = min(wanted, headroom[subtype]) if subtype in headroom else wanted'''
+replace = '''            allowed = wanted'''
 
 [[mutant]]
 id = 'm12-10'
 title = 'a type ceiling is treated as an exact count and refuses a legal trim'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_type_ceiling_does_not_forbid_the_trim'
-find = '''        pinned_entries = [entry for entry in packets if entry[1] in pinned]'''
-replace = '''        pinned_entries = [entry for entry in packets if entry[1] in uncloneable]'''
-note = 'The opposite-draw mutant to m12-8: over-protecting the trim is as wrong as under-protecting it, and one fix that satisfied both is the point.'
+find = '''            if maximum is not None and maximum > 0:
+                ceilings[subtype] = (parent, maximum)'''
+replace = '''            if maximum is not None and maximum > 0:
+                pins[subtype] = (parent, maximum)'''
+note = 'The opposite-draw mutant to m12-8: over-protecting the trim is as wrong as under-protecting it. Re-pointed once — it used to mutate the trim predicate from `pinned` to `uncloneable`, which became a no-op the moment `uncloneable` stopped carrying ceilings, so the gate scored it SURVIVED. It now mutates the split at its source, filing a ceiling as a pin, which is the actual claim: a `max` is not an exact count and must not protect the trim.'

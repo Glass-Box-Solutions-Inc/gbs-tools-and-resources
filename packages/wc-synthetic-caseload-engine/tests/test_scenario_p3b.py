@@ -1129,9 +1129,11 @@ class TestDiscoveryShapingRespectsDocumentControls:
         the same overrule as cloning past an exact count, through the spelling
         the fix did not read.
 
-        `max: 6` leaves two packets on this seed (see the delivery test above for
-        the measured ladder), so the shortfall is real and the donor must decline
-        rather than pad it to four.
+        `max: 6` fills the DISCOVERY type to **6 of 6** on this seed — no spare
+        room — so a synthesized packet would breach the cap and the donor must
+        decline rather than pad to four. That "at the cap" qualifier is
+        load-bearing; see the sibling test for the below-cap case, where
+        declining would be wrong.
         """
         counts, warning = self._shaped(
             "isc148r-typecap",
@@ -1146,6 +1148,53 @@ class TestDiscoveryShapingRespectsDocumentControls:
         assert "DISCOVERY at 6" in warning, (
             f"the cap is not reported under the key the seed states it with: {warning}"
         )
+
+    def test_a_type_ceiling_below_its_cap_still_permits_the_refill(self) -> None:
+        """The opposite draw, and the one that refuted the first model.
+
+        "There is a ceiling" and "the ceiling binds" are different questions, and
+        only the second forbids a clone. Reading the packet ladder alone — `max:
+        3` yields one packet, `max: 6` two, `max: 12` three — suggests a ceiling
+        always binds. Counting documents *under the type* shows it does not:
+        `max: 3` fills 3 of 3 and `max: 6` fills 6 of 6, but `max: 12` reaches
+        only 10 of 12. With two spare, a fourth packet breaches nothing, and
+        refusing it denies the seed a count both controls permit.
+
+        The reviewer flagged the ladder as refuting the model; the headroom
+        measurement is what settled it.
+        """
+        counts, warning = self._shaped(
+            "isc148r-ceiling-headroom",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 4}},
+            documents=self._documents(overrides=[{"type": "DISCOVERY", "max": 12}]),
+        )
+        assert sum(counts.values()) == 4, (
+            "the type sits below its cap, so the refill breaches nothing and the "
+            f"declared count is deliverable: {counts}"
+        )
+        assert warning is None, f"a deliverable count warned anyway: {warning}"
+
+    def test_the_refill_stops_at_the_spare_room_and_says_so(self) -> None:
+        """Between "no room" and "enough room" is the case that needs the arithmetic.
+
+        `max: 12` leaves two spare on this seed and the file holds three packets,
+        so a request for six is deliverable only as far as five. Filling to six
+        breaches the cap; refusing outright denies two packets the control
+        permits. The refill takes the spare room and the shortfall is reported.
+        """
+        counts, warning = self._shaped(
+            "isc148r-ceiling-partial",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 6}},
+            documents=self._documents(overrides=[{"type": "DISCOVERY", "max": 12}]),
+        )
+        assert sum(counts.values()) == 5, (
+            "the refill should take the two spare slots the ceiling leaves and "
+            f"stop, neither breaching the cap nor declining the room: {counts}"
+        )
+        assert warning is not None, "a shortfall the controls caused, unreported"
+        assert "DISCOVERY at 12" in warning, warning
 
     def test_a_type_ceiling_does_not_forbid_the_trim(self) -> None:
         """A ceiling is not a pin, and conflating them refuses a legal trim.
