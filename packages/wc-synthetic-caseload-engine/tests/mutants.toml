@@ -33,17 +33,28 @@
 # fifteen percent — is now guarded by m11-3, which truncates the fee instead.
 #
 #   m12-9   "the refill clones past a type ceiling that is at its cap"
-#   m12-11  "a type ceiling below its cap forbids the refill anyway"
 #
-# Both guarded a clause that excluded at-cap ceilinged subtypes from donor
-# selection. The gate scored them SURVIVED on the round they were written, and
-# was right to: every packet subtype shares the parent DISCOVERY, so a type
-# bound ceilings all of them together and the refill's headroom clamp already
-# yields zero clones at zero headroom. The clause was a second mechanism for one
-# rule, unreachable behind the first. The fix was withdrawn — not the mutants
-# abandoned — and the claim is now guarded by m12-12, which mutates the clamp
-# itself. A vacuous mutant is worse than none: it reports coverage it does not
-# have.
+# It guarded a clause that excluded ceilinged subtypes from donor selection. The
+# gate scored it SURVIVED on the round it was written, and was right to: every
+# packet subtype shares the parent DISCOVERY, so a type bound ceilings all of
+# them together and the refill's headroom clamp already yields zero clones at
+# zero headroom. The clause was a second mechanism for one rule, unreachable
+# behind the first. The fix was withdrawn — not the mutant abandoned. A vacuous
+# mutant is worse than none: it reports coverage it does not have.
+#
+# Two corrections to what this note said when it was first written, both from
+# review round 3 and both proved by execution rather than argued:
+#
+#   * It claimed the withdrawn claim was "now guarded by m12-12". It was not.
+#     m12-12 mutates the clamp, and `test_a_type_ceiling_below_its_cap_still_
+#     permits_the_refill` SURVIVES it. The withdrawal — the model correction the
+#     whole round existed for — shipped with no mutant at all. m12-13 is that
+#     mutant: it restores the withdrawn clause, which is precisely the defect
+#     24c9683 carried, and reddens the below-cap guard.
+#   * It listed an `m12-11` as retired. No such mutant was ever committed; it
+#     existed only inside one working session. A retirement note for something
+#     that never shipped is a record of work, not of coverage, and does not
+#     belong here.
 
 [[mutant]]
 id = 'm1-1'
@@ -1132,3 +1143,12 @@ find = '''            if maximum is not None and maximum > 0:
 replace = '''            if maximum is not None and maximum > 0:
                 pins[subtype] = (parent, maximum)'''
 note = 'The opposite-draw mutant to m12-8: over-protecting the trim is as wrong as under-protecting it. Re-pointed once — it used to mutate the trim predicate from `pinned` to `uncloneable`, which became a no-op the moment `uncloneable` stopped carrying ceilings, so the gate scored it SURVIVED. It now mutates the split at its source, filing a ceiling as a pin, which is the actual claim: a `max` is not an exact count and must not protect the trim.'
+
+[[mutant]]
+id = 'm12-13'
+title = 'a type ceiling below its cap forbids the refill again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_type_ceiling_below_its_cap_still_permits_the_refill'
+find = '''    uncloneable = set(pinned)'''
+replace = '''    uncloneable = set(pinned) | set(ceilinged)'''
+note = 'The mutant round 2 should have shipped with and did not. Restoring this clause IS the 24c9683 defect — a ceiling treated as an unconditional bar on cloning, so `{type: DISCOVERY, max: 12}` with subpoena_sets 4 delivers 3 packets against a cap of 12 that leaves two spare. Round 3 found the withdrawal had no mutant naming it and that the below-cap guard survives m12-12, which mutates the clamp instead. The clamp and the withdrawal are two halves of one correction and each needs its own.'
