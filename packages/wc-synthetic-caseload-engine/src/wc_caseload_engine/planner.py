@@ -1133,20 +1133,225 @@ DISCOVERY_PACKET_SUBTYPES: frozenset[str] = frozenset(
 )
 
 
+def _packet_control_keys(subtype: str, taxonomy: Taxonomy) -> frozenset[str]:
+    """Every ``documents:`` key that can name *subtype* — its own and its parent's.
+
+    ``exclude: [DISCOVERY]`` empties the file of packets exactly as
+    ``exclude: [SUBPOENAED_RECORDS_MEDICAL]`` does, and an attribution bound to
+    the subtype spelling would report the parent-type route as "no control
+    involved". Resolved through the taxonomy rather than a literal, because the
+    parent of a packet subtype is the taxonomy's answer to give.
+    """
+    parent = taxonomy.parent_of(subtype)
+    return frozenset({subtype} | ({parent} if parent else set()))
+
+
+def _suppressed_packet_subtypes(controls: DocumentControls) -> dict[str, tuple[str, str | None]]:
+    """Packet subtypes the controls forbid outright: ``{subtype: (control, key)}``.
+
+    *key* is the seed line the author would edit, which is not always the subtype
+    — ``exclude: [DISCOVERY]`` suppresses all four packet subtypes through the
+    parent type, and "remove SUBPOENAED_RECORDS_MEDICAL from documents.exclude"
+    would send them to a line that does not exist. ``None`` where there is no key
+    to remove, which is what ``include_only`` omission *is*.
+
+    Membership only — a *positive* per-subtype override is a count control and is
+    read separately, because it caps rather than forbids. Precedence is the
+    resolver's own (``doc_controls.resolve_document_controls``): an explicit
+    ``documents.overrides`` entry decides the subtype's fate in both directions,
+    which is why a positive override on an excluded subtype is *not* suppression
+    — that is the resurrection path the resolver already warns about.
+
+    ``global_cap`` is deliberately absent. It trims the whole plan by rank and
+    cannot be attributed to a subtype here; a cap that ate the last packet is
+    reported as a shortfall with no named control rather than with a wrong one.
+    """
+    taxonomy = effective_taxonomy()
+    overrides = controls.subtype_overrides
+    exclude, include_only = set(controls.exclude), set(controls.include_only)
+    forbidden: dict[str, tuple[str, str | None]] = {}
+    for subtype in sorted(DISCOVERY_PACKET_SUBTYPES):
+        keys = _packet_control_keys(subtype, taxonomy)
+        if subtype in overrides:
+            if overrides[subtype] == 0:
+                forbidden[subtype] = ("documents.overrides", subtype)
+            continue
+        if matched := sorted(exclude & keys):
+            forbidden[subtype] = ("documents.exclude", matched[0])
+        elif include_only and not (include_only & keys):
+            forbidden[subtype] = ("documents.include_only", None)
+    return forbidden
+
+
+#: The lifecycle half of the shortfall message, kept verbatim from ISC-126.
+#:
+#: Unchanged on purpose: it is still the right thing to say when the stage
+#: really is the cause, and rewording it would move the text of a warning that
+#: shipped. What ISC-148 changes is *when* it is said.
+_STAGE_CAUSE = (
+    "this file's lifecycle stage proposes no records packets at all; the count "
+    "has nothing to act on — try target_stage 'discovery' or later"
+)
+
+
+def _control_causes(
+    forbidden: dict[str, tuple[str, str | None]],
+    capped: dict[str, int],
+) -> tuple[list[str], list[str]]:
+    """Turn the blocking controls into ``(findings, imperatives)``.
+
+    Separated from the sentence assembly so each control says what it *did* in
+    its own words. The first draft used one template — "X suppresses Y" — and
+    described a subtype capped at two by an override as suppressed, which is a
+    false statement about a subtype the file holds.
+
+    Imperatives are verb-first and lower-case (ISC-150): they are joined into a
+    sentence whose first word is capitalized by the caller, so a directive is
+    never pushed off the front of its clause by a hedge, and never reads as a
+    capital in mid-sentence either.
+    """
+    grouped: dict[tuple[str, str | None], list[str]] = {}
+    for subtype, where in sorted(forbidden.items()):
+        grouped.setdefault(where, []).append(subtype)
+
+    findings: list[str] = []
+    # Per control, the subtypes whose ``documents.overrides`` count must go up —
+    # a zero entry and a positive one take the same edit, so they take one line.
+    override_targets: list[str] = []
+    exclude_keys: list[str] = []
+    include_only_targets: list[str] = []
+
+    for (control, key), subtypes in grouped.items():
+        listed = ", ".join(subtypes)
+        if control == "documents.exclude":
+            # "names X, which suppresses X" on the subtype-key route; the longer
+            # form is only informative when the key is the parent type.
+            findings.append(
+                f"documents.exclude names {key}"
+                if subtypes == [key]
+                else f"documents.exclude names {key}, which suppresses {listed}"
+            )
+            exclude_keys.append(str(key))
+        elif control == "documents.include_only":
+            findings.append(f"documents.include_only does not name {listed}")
+            include_only_targets.extend(subtypes)
+        else:
+            findings.append(f"documents.overrides sets {listed} to 0")
+            override_targets.extend(subtypes)
+
+    if capped:
+        findings.append(
+            "documents.overrides caps "
+            + ", ".join(f"{subtype} at {count}" for subtype, count in sorted(capped.items()))
+        )
+        override_targets.extend(capped)
+
+    imperatives: list[str] = []
+    if exclude_keys:
+        imperatives.append(f"remove {', '.join(sorted(set(exclude_keys)))} from documents.exclude")
+    if include_only_targets:
+        imperatives.append(
+            f"add {', '.join(sorted(set(include_only_targets)))} to documents.include_only"
+        )
+    if override_targets:
+        imperatives.append(
+            "raise the documents.overrides count for "
+            + ", ".join(sorted(set(override_targets)))
+        )
+    return findings, imperatives
+
+
+def _discovery_shortfall_warning(
+    declared: int,
+    delivered: int,
+    *,
+    stage_is_a_cause: bool,
+    forbidden: dict[str, tuple[str, str | None]],
+    capped: dict[str, int],
+) -> str:
+    """Say why the packet count could not be met, naming every cause at once.
+
+    ISC-148. The predecessor had one message and one cause, so a control that
+    emptied the file was reported as a lifecycle-stage problem — on seeds already
+    at ``target_stage: discovery``, where the prescribed edit is a no-op. Both
+    causes are real, they are independent, and a seed can carry both: an early
+    stage proposes nothing *and* a zero-count override pins the subtype at
+    nothing, so neither edit alone delivers a packet. Naming one of them there is
+    a wrong answer, not a partial one.
+    """
+    findings, imperatives = _control_causes(forbidden, capped)
+    if not findings:
+        return f"scenario.discovery.subpoena_sets is {declared} but {_STAGE_CAUSE}"
+
+    detail = "; ".join(findings)
+    fallback = f"lower scenario.discovery.subpoena_sets to {delivered}"
+    if stage_is_a_cause:
+        edits = ", and ".join(imperatives)
+        return (
+            f"scenario.discovery.subpoena_sets is {declared} but two separate things "
+            f"stand in the way and the file holds {delivered} records packet(s): "
+            f"{_STAGE_CAUSE}; and {detail}. "
+            f"{_capitalized(edits)} too — both edits are needed, or {fallback}"
+        )
+    edits = ", or ".join(imperatives)
+    return (
+        f"scenario.discovery.subpoena_sets is {declared} but the document controls "
+        f"permit only {delivered} records packet(s): {detail}. "
+        f"{_capitalized(edits)}, or {fallback} — the control wins until then"
+    )
+
+
+def _capitalized(sentence: str) -> str:
+    """*sentence* with its first letter upper-cased and the rest untouched.
+
+    ``str.capitalize`` lower-cases the tail, which would turn every subtype key
+    in the imperative into prose.
+    """
+    return sentence[:1].upper() + sentence[1:]
+
+
 def _shape_discovery(
     seed: CaseSeed,
     timeline: CaseTimeline,
     dated: list[tuple[date, str, str, str]],
+    controls: DocumentControls,
+    *,
+    proposed: frozenset[str],
 ) -> tuple[list[tuple[date, str, str, str]], tuple[str, ...]]:
-    """ISC-126. Make the file hold the number of packets the seed asked for.
+    """ISC-126/148. Make the file hold the packets the seed asked for — up to the controls.
 
-    Trims from the end and extends by repeating the last packet's shape on a
-    later date, which keeps the added packets inside the file's own runway
-    rather than inventing a discovery phase that never happened.
+    Trims from the end and extends by repeating a surviving packet's shape on a
+    later date, which keeps the added packets inside the file's own runway rather
+    than inventing a discovery phase that never happened.
 
     Gated on a *stated* count. A seed that says nothing keeps whatever the walk
     proposed, byte for byte — the same rule ISC-109 set for surgery, and what
     keeps every pre-0.7.0 seed identical.
+
+    ISC-148 threads the resolved ``documents:`` block in, because without it this
+    function outranked the highest-precedence control in the package. Two defects
+    came out of that blindness, and the second is the one a guard for the first
+    walks straight past:
+
+    * the refill cloned the last packet to reach *declared* even when
+      ``documents.overrides`` had set that subtype's exact count, which needs a
+      **mixed** set to reproduce — one subtype surviving, another suppressed;
+    * with nothing surviving, the shortfall was reported as a lifecycle-stage
+      problem on files already at ``target_stage: discovery``.
+
+    Args:
+        seed: the case seed; ``scenario.discovery.subpoena_sets`` is the gate.
+        timeline: supplies the horizon any synthesized packet date is fitted to.
+        dated: the shaped candidate set, controls already applied.
+        controls: the **normalized** ``documents:`` block — canonical keys, so a
+            substrate-only spelling in the seed cannot read as "no control here".
+        proposed: the packet subtypes the lifecycle walk proposed *before* the
+            controls ran. This is what separates the two causes: a control that
+            names a subtype the walk never proposed removed nothing, and blaming
+            it would send the author to a line whose edit changes nothing.
+
+    Returns:
+        The shaped list and at most one warning naming every cause of a shortfall.
     """
     declared = seed.scenario.discovery.subpoena_sets
     if declared is None:
@@ -1156,25 +1361,55 @@ def _shape_discovery(
     if len(packets) == declared:
         return dated, ()
 
-    if not packets:
-        return dated, (
-            f"scenario.discovery.subpoena_sets is {declared} but this file's "
-            "lifecycle stage proposes no records packets at all; the count has "
-            "nothing to act on — try target_stage 'discovery' or later",
-        )
+    forbidden = _suppressed_packet_subtypes(controls)
+    # A positive per-subtype override states how many there are to be. Cloning
+    # such a subtype to reach `declared` overrules the control the package calls
+    # highest-precedence, so it is not a donor.
+    pinned = {
+        subtype: count
+        for subtype, count in controls.subtype_overrides.items()
+        if subtype in DISCOVERY_PACKET_SUBTYPES and count > 0
+    }
 
     shaped = [entry for entry in dated if entry[1] not in DISCOVERY_PACKET_SUBTYPES]
     packets.sort(key=lambda entry: entry[0])
-    if len(packets) > declared:
-        kept = packets[:declared]
-    else:
-        kept = list(packets)
-        last_date, subtype, track, role = packets[-1]
-        ceiling = timeline.horizon
-        for step in range(declared - len(packets)):
-            when = min(last_date + timedelta(days=14 * (step + 1)), ceiling)
-            kept.append((when, subtype, track, role))
-    return shaped + kept, ()
+    kept = packets[:declared] if len(packets) > declared else list(packets)
+    if len(packets) < declared:
+        # The latest packet whose count no control pinned. With no overrides at
+        # all this is `packets[-1]` — the pre-ISC-148 donor, byte for byte.
+        donor = next((entry for entry in reversed(packets) if entry[1] not in pinned), None)
+        if donor is not None:
+            last_date, subtype, track, role = donor
+            ceiling = timeline.horizon
+            for step in range(declared - len(packets)):
+                when = min(last_date + timedelta(days=14 * (step + 1)), ceiling)
+                kept.append((when, subtype, track, role))
+
+    if len(kept) == declared:
+        return shaped + kept, ()
+
+    # Attribution, keyed off what a control actually did rather than off whether
+    # its key appears in the seed. A membership control earns the blame only for
+    # a subtype the walk proposed for it to remove — except a zero-count
+    # override, which the author wrote about this exact subtype and which blocks
+    # it whether or not the walk ever got that far.
+    blocking = {
+        subtype: where
+        for subtype, where in forbidden.items()
+        if subtype in proposed or where[0] == "documents.overrides"
+    }
+    present = {entry[1] for entry in kept}
+    capping = {subtype: count for subtype, count in pinned.items() if subtype in present}
+
+    return shaped + kept, (
+        _discovery_shortfall_warning(
+            declared,
+            len(kept),
+            stage_is_a_cause=not proposed,
+            forbidden=blocking,
+            capped=capping,
+        ),
+    )
 
 
 def _shape_for_scenario(
@@ -1364,7 +1599,21 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # After shaping: `never_treated` and `discharged` both drop documents, and
     # re-dating a set that is about to lose members would leave gaps the cadence
     # never intended.
-    dated, discovery_warnings = _shape_discovery(seed, timeline, dated)
+    # ISC-148. The controls ride in with the walk's own packet proposal, because
+    # "the stage proposed none" and "a control removed them" are different
+    # defects with different edits, and the shaper cannot tell them apart from
+    # the surviving plan alone.
+    dated, discovery_warnings = _shape_discovery(
+        seed,
+        timeline,
+        dated,
+        controls,
+        proposed=frozenset(
+            candidate.subtype
+            for candidate in candidates
+            if candidate.subtype in DISCOVERY_PACKET_SUBTYPES
+        ),
+    )
     # ISC-126. The page budget is drawn only once the packet count is final, so
     # the ledger, the cover sheet and the rendered pages are three readings of
     # one number rather than three independent draws.

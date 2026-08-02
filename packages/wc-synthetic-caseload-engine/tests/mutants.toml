@@ -1003,3 +1003,42 @@ find = '''    if call == "skipped":
         return Verdict("SKIPPED", "the guard was skipped, so it proved nothing")'''
 replace = '''    if False:
         return Verdict("SKIPPED", "the guard was skipped, so it proved nothing")'''
+
+# ISC-148 — discovery shaping respects document controls.
+#
+# The refill used to clone `packets[-1]` unconditionally, which manufactured
+# packets of a permitted subtype past the exact count `documents.overrides` set
+# for it; and a control-caused shortfall was reported as a lifecycle-stage
+# problem, prescribing an edit that is a no-op on a seed already at that stage.
+
+[[mutant]]
+id = 'm12-1'
+title = 'the refill clones past an exact documents.overrides packet count again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_an_exact_override_count_is_not_padded_to_the_declared_count'
+find = '        donor = next((entry for entry in reversed(packets) if entry[1] not in pinned), None)'
+replace = '        donor = packets[-1] if packets else None'
+
+[[mutant]]
+id = 'm12-2'
+title = 'a control-caused shortfall is reported as a lifecycle-stage problem again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_an_exclude_is_not_refilled_and_the_warning_names_the_control'
+find = '    if not findings:'
+replace = '    if True:'
+
+[[mutant]]
+id = 'm12-3'
+title = 'a control that removed nothing is blamed for a stage shortfall'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_an_innocent_control_is_not_blamed_for_a_stage_shortfall'
+find = '        if subtype in proposed or where[0] == "documents.overrides"'
+replace = '        if True or subtype in proposed or where[0] == "documents.overrides"'
+
+[[mutant]]
+id = 'm12-4'
+title = 'a parent-type exclude prescribes removing a key the seed does not contain'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_parent_type_exclude_is_named_as_the_cause_too'
+find = '            forbidden[subtype] = ("documents.exclude", matched[0])'
+replace = '            forbidden[subtype] = ("documents.exclude", subtype)'

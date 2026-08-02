@@ -340,6 +340,48 @@ attaches additively in Wave 2.
     `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
     at 353/345/8/0.
 
+### Fixed — discovery shaping outranked the document controls (**AJC-43**, ISC-148)
+
+`_shape_discovery` runs after `resolve_document_controls`, and it had no idea the
+controls existed. It saw a plan holding fewer records packets than
+`scenario.discovery.subpoena_sets` asked for and refilled it by cloning the last
+packet — which is right when the lifecycle walk simply proposed too few, and
+wrong when a control removed them on purpose. The package calls
+`documents.overrides` its highest-precedence control; the shaper was quietly
+overruling it.
+
+Two defects, and the second is the one a guard for the first walks straight past:
+
+1. **The refill cloned past an exact `documents.overrides` count.** Measured:
+   `subpoena_sets: 4`, `exclude: [SUBPOENAED_RECORDS_MEDICAL]`, and
+   `overrides: SUBPOENAED_RECORDS_EMPLOYMENT → 2` shipped **four** employment
+   packets. It needs a *mixed* set to reproduce — one packet subtype surviving to
+   be cloned, another suppressed — which is why the emptied-file probe that found
+   defect 2 never reaches it: with nothing surviving there is no donor to clone.
+   Donor selection now skips any subtype a positive override pinned. With no
+   overrides at all the donor is `packets[-1]`, byte for byte as before.
+2. **The shortfall warning named the lifecycle stage regardless of the cause.**
+   A seed already at `target_stage: discovery`, with the packets removed by an
+   `exclude`, was told to *"try target_stage 'discovery' or later"* — an edit
+   that is a no-op on that seed. The message now names every operative cause and
+   the seed line to edit: `documents.exclude` (by the key that actually matched,
+   which for `exclude: [DISCOVERY]` is the parent type, not the subtype),
+   `documents.include_only`, a zero-count override, a positive override that
+   caps, and the stage — with both halves stated when a seed carries both,
+   because neither edit alone delivers a packet then.
+
+Attribution is keyed off what a control *did*, not off whether its key appears in
+the seed: a membership control earns the blame only for a subtype the walk
+actually proposed for it to remove. A zero-count override is the exception — the
+author wrote it about that exact subtype, so it is named whether or not the walk
+ever got that far. `global_cap` is deliberately never named: it trims the whole
+plan by rank and cannot be attributed to a subtype, so a cap that ate the last
+packet reports a shortfall with **no** named control rather than a wrong one.
+
+15 tests in `TestDiscoveryShapingRespectsDocumentControls`, and mutants
+`m12-1..m12-4` — including one for the innocent-control case, where a control
+that removed nothing must *not* appear in the warning.
+
 ### Fixed — the mutation gate had been scoring ten mutants it never ran (**AJC-43**)
 
 The section below leans on the gate for its central claim: *a fix is not claimed

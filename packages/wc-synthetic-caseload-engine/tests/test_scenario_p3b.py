@@ -30,6 +30,7 @@ from conftest import extract_text, requires_substrate
 from wc_caseload_engine.case_facts import TRAJECTORY_PHRASES
 from wc_caseload_engine.fact_templates import ANCHOR_REFERENCE_MARKER
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
+from wc_caseload_engine.message_audit import DIRECTIVE_VERBS, clauses, first_word
 from wc_caseload_engine.planner import (
     ATTORNEY_CADENCE_SUBTYPES,
     CADENCE_ANCHOR_SUBTYPES,
@@ -621,3 +622,350 @@ class TestEventDrivenLettersNameTheirAnchor:
             "reference is unconditional, so the event_driven assertion proves "
             "nothing"
         )
+
+
+# ---------------------------------------------------------------------------
+# ISC-148 — discovery shaping respects the document controls, loudly
+# ---------------------------------------------------------------------------
+
+#: A stage that proposes records packets, and one that proposes none.
+#:
+#: Measured rather than assumed: ``intake`` and ``active_treatment`` propose no
+#: packets, ``discovery`` and later do. ``medical_legal`` — this module's default
+#: — also proposes none, which is why every seed below states its stage.
+_DISCOVERY_STAGE: dict[str, Any] = {"target_stage": "discovery", "eval_type": "qme"}
+_PRE_DISCOVERY_STAGE: dict[str, Any] = {"target_stage": "intake", "eval_type": "qme"}
+
+
+class TestDiscoveryShapingRespectsDocumentControls:
+    """ISC-126 met the count; ISC-148 makes it stop at the controls.
+
+    ``_shape_discovery`` ran on ``(seed, timeline, dated)`` and never saw the
+    ``documents:`` block, so the stated count outranked the highest-precedence
+    control in the system. Two separate defects came out of that blindness and
+    both are pinned below, because a guard written for one of them passes on the
+    other:
+
+    * **The refill.** With *some* packet subtype surviving, the shaper pads to
+      the declared count by cloning the last packet — past an exact
+      ``documents.overrides`` count that said how many there were to be.
+    * **The warning.** With *no* packet surviving, the shaper blames the
+      lifecycle stage and prescribes ``target_stage: discovery`` — on a seed
+      that already says ``target_stage: discovery``, so the prescribed edit is a
+      no-op and the control that actually emptied the file is never named.
+
+    The tests do not stop at "a warning was emitted": each follows the edit the
+    warning prescribes and asserts the count is then met. An instruction nobody
+    executes is how both of these shipped.
+    """
+
+    #: Control names a shortfall warning may name, for the negative assertions.
+    _CONTROL_NAMES = ("documents.exclude", "documents.include_only", "documents.overrides")
+
+    def _shaped(self, case_id: str, **overrides: Any) -> tuple[dict[str, int], str | None]:
+        """Packet counts per subtype, and the one shortfall warning if any."""
+        plan = build_case_plan(_seed(case_id, **overrides))
+        counts: dict[str, int] = {}
+        for document in plan.documents:
+            if document.subtype in DISCOVERY_PACKET_SUBTYPES:
+                counts[document.subtype] = counts.get(document.subtype, 0) + 1
+        shortfall = [
+            warning
+            for warning in plan.warnings
+            if "scenario.discovery.subpoena_sets" in warning
+        ]
+        assert len(shortfall) <= 1, f"more than one shortfall warning: {shortfall}"
+        return counts, shortfall[0] if shortfall else None
+
+    @staticmethod
+    def _documents(**controls: Any) -> dict[str, Any]:
+        return {"format_mix": {"pdf": 1.0}, **controls}
+
+    # -- the byte-stability control, first, so the rest cannot be vacuous ----
+
+    def test_a_seed_with_no_controls_still_gets_the_count_it_asked_for(self) -> None:
+        """ISC-126's own property, restated as this class's positive control.
+
+        Every assertion below is about a count the controls hold *down*. If the
+        uncontrolled seed did not reach 3, "fewer than 3" would prove nothing.
+        """
+        counts, warning = self._shaped(
+            "isc148-plain",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+        )
+        assert sum(counts.values()) == 3, f"the uncontrolled seed holds {counts}"
+        assert warning is None, f"an uncontrolled seed warned: {warning}"
+
+    # -- shape (b): every packet subtype suppressed -------------------------
+
+    def test_an_exclude_is_not_refilled_and_the_warning_names_the_control(self) -> None:
+        counts, warning = self._shaped(
+            "isc148-excl",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(exclude=["SUBPOENAED_RECORDS_MEDICAL"]),
+        )
+        assert "SUBPOENAED_RECORDS_MEDICAL" not in counts, (
+            "documents.exclude named this subtype and the plan holds it anyway"
+        )
+        assert warning is not None, "the count could not be met and nothing said so"
+        assert "documents.exclude" in warning, (
+            f"the warning does not name the control that caused it: {warning}"
+        )
+        assert "SUBPOENAED_RECORDS_MEDICAL" in warning, (
+            f"the warning does not name the suppressed subtype: {warning}"
+        )
+        assert "target_stage" not in warning, (
+            "the warning prescribes a lifecycle edit on a seed that is already at "
+            f"target_stage 'discovery' — following it changes nothing: {warning}"
+        )
+
+    def test_a_parent_type_exclude_is_named_as_the_cause_too(self) -> None:
+        """``exclude: [DISCOVERY]`` suppresses all four packet subtypes at once.
+
+        The subtype-key path and the parent-type path reach the same emptied
+        file, and a guard bound to the subtype spelling would miss this one.
+        """
+        counts, warning = self._shaped(
+            "isc148-ptype",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(exclude=["DISCOVERY"]),
+        )
+        assert sum(counts.values()) == 0
+        assert warning is not None and "documents.exclude" in warning, (
+            f"a parent-type exclude is not named as the cause: {warning}"
+        )
+        assert "DISCOVERY" in warning, (
+            "the warning prescribes an edit against a key the seed does not "
+            f"contain — the author wrote 'DISCOVERY', not a subtype: {warning}"
+        )
+        assert "target_stage" not in warning, warning
+
+    def test_following_the_exclude_warning_delivers_the_count(self) -> None:
+        """The ISC-129 discipline: execute the prescribed edit, not just read it."""
+        counts, warning = self._shaped(
+            "isc148-excl-fixed",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(exclude=[]),
+        )
+        assert sum(counts.values()) == 3, (
+            f"removing the subtype from documents.exclude — the edit the warning "
+            f"prescribes — still does not deliver 3 packets: {counts}"
+        )
+        assert warning is None, warning
+
+    # -- shape (a): a mixed set, so the refill branch actually runs ----------
+
+    def test_an_exact_override_count_is_not_padded_to_the_declared_count(self) -> None:
+        """The refill defect, which the emptied-file seed above never reaches.
+
+        With every proposed subtype suppressed there is nothing to clone, so
+        ``packets[-1]`` is never read. This seed keeps one packet subtype alive
+        under an exact ``documents.overrides`` count and suppresses the other:
+        the shaper then had a donor, and cloned it past the count the override
+        set.
+        """
+        counts, warning = self._shaped(
+            "isc148-pin",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 4}},
+            documents=self._documents(
+                exclude=["SUBPOENAED_RECORDS_MEDICAL"],
+                overrides=[{"subtype": "SUBPOENAED_RECORDS_EMPLOYMENT", "count": 2}],
+            ),
+        )
+        assert counts == {"SUBPOENAED_RECORDS_EMPLOYMENT": 2}, (
+            "documents.overrides set an exact count of 2 and the shaper padded "
+            f"past it to reach subpoena_sets: {counts}"
+        )
+        assert warning is not None, (
+            "the controls capped the count below the declared one and nothing said so"
+        )
+        assert "documents.overrides" in warning, (
+            f"the warning does not name the count control that capped it: {warning}"
+        )
+        assert "documents.exclude" in warning, (
+            f"the warning does not name the membership control: {warning}"
+        )
+        assert "suppresses SUBPOENAED_RECORDS_EMPLOYMENT" not in warning, (
+            "a count of 2 is a cap, not a suppression; the warning describes the "
+            f"one surviving subtype as absent: {warning}"
+        )
+        assert "target_stage" not in warning, warning
+
+    def test_following_the_override_warning_delivers_the_count(self) -> None:
+        counts, _ = self._shaped(
+            "isc148-pin-fixed",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 4}},
+            documents=self._documents(
+                exclude=["SUBPOENAED_RECORDS_MEDICAL"],
+                overrides=[{"subtype": "SUBPOENAED_RECORDS_EMPLOYMENT", "count": 4}],
+            ),
+        )
+        assert counts == {"SUBPOENAED_RECORDS_EMPLOYMENT": 4}, (
+            f"raising the documents.overrides count does not deliver 4: {counts}"
+        )
+
+    # -- the stage cause, undisturbed ---------------------------------------
+
+    def test_the_lifecycle_warning_survives_when_the_stage_really_is_the_cause(
+        self,
+    ) -> None:
+        """Both causes must stay distinguishable, so the old one is pinned too."""
+        counts, warning = self._shaped(
+            "isc148-stage",
+            lifecycle=_PRE_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+        )
+        assert sum(counts.values()) == 0
+        assert warning is not None and "target_stage" in warning, (
+            f"an early stage no longer prescribes advancing it: {warning}"
+        )
+        named = [name for name in self._CONTROL_NAMES if name in warning]
+        assert not named, (
+            f"the warning blames {named} on a seed with no document controls: {warning}"
+        )
+
+    def test_an_innocent_control_is_not_blamed_for_a_stage_shortfall(self) -> None:
+        """``exclude`` naming a subtype the walk never proposed removed nothing.
+
+        Attribution keyed off the *presence of a control key* rather than off
+        what the control actually removed would send this author to the wrong
+        line — the stage is the cause, and lifting the exclude changes nothing.
+        """
+        counts, warning = self._shaped(
+            "isc148-innocent",
+            lifecycle=_PRE_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(exclude=["SUBPOENAED_RECORDS_MEDICAL"]),
+        )
+        assert sum(counts.values()) == 0
+        assert warning is not None and "target_stage" in warning, warning
+        assert "documents.exclude" not in warning, (
+            "documents.exclude is blamed for a shortfall it did not cause — the "
+            f"lifecycle stage proposed no packets for it to remove: {warning}"
+        )
+
+    # -- both causes at once -------------------------------------------------
+
+    def test_a_seed_where_both_causes_apply_names_both(self) -> None:
+        """Neither edit alone works, so naming one of them is a wrong answer.
+
+        ``target_stage: intake`` proposes no packets *and* a zero-count override
+        pins the subtype at nothing. Advancing the stage leaves the override in
+        force; raising the override leaves the stage with nothing to propose.
+        """
+        counts, warning = self._shaped(
+            "isc148-both",
+            lifecycle=_PRE_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(
+                overrides=[{"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 0}],
+            ),
+        )
+        assert sum(counts.values()) == 0
+        assert warning is not None, "neither cause was reported"
+        assert "target_stage" in warning, f"the stage cause is missing: {warning}"
+        assert "documents.overrides" in warning, f"the control cause is missing: {warning}"
+
+    @pytest.mark.parametrize(
+        ("case_id", "lifecycle", "documents"),
+        [
+            ("isc148-half-stage", _PRE_DISCOVERY_STAGE, {"format_mix": {"pdf": 1.0}}),
+            (
+                "isc148-half-control",
+                _DISCOVERY_STAGE,
+                {
+                    "format_mix": {"pdf": 1.0},
+                    "overrides": [
+                        {"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 0}
+                    ],
+                },
+            ),
+        ],
+    )
+    def test_half_of_the_both_edit_is_not_enough(
+        self, case_id: str, lifecycle: dict[str, Any], documents: dict[str, Any]
+    ) -> None:
+        """The proof that "both" is honest rather than decorative."""
+        counts, warning = self._shaped(
+            case_id,
+            lifecycle=lifecycle,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=documents,
+        )
+        assert sum(counts.values()) == 0, (
+            f"one half of the prescribed pair was enough after all: {counts}"
+        )
+        assert warning is not None
+
+    def test_making_both_edits_delivers_the_count(self) -> None:
+        counts, warning = self._shaped(
+            "isc148-both-fixed",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(
+                overrides=[{"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 3}],
+            ),
+        )
+        assert sum(counts.values()) == 3, f"both edits together still fall short: {counts}"
+        assert warning is None, warning
+
+    # -- ISC-150: the prescription is a verb-first imperative ----------------
+
+    @pytest.mark.parametrize(
+        ("case_id", "lifecycle", "documents"),
+        [
+            (
+                "isc148-verb-excl",
+                _DISCOVERY_STAGE,
+                {"format_mix": {"pdf": 1.0}, "exclude": ["SUBPOENAED_RECORDS_MEDICAL"]},
+            ),
+            (
+                "isc148-verb-pin",
+                _DISCOVERY_STAGE,
+                {
+                    "format_mix": {"pdf": 1.0},
+                    "exclude": ["SUBPOENAED_RECORDS_MEDICAL"],
+                    "overrides": [
+                        {"subtype": "SUBPOENAED_RECORDS_EMPLOYMENT", "count": 2}
+                    ],
+                },
+            ),
+            (
+                "isc148-verb-both",
+                _PRE_DISCOVERY_STAGE,
+                {
+                    "format_mix": {"pdf": 1.0},
+                    "overrides": [
+                        {"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 0}
+                    ],
+                },
+            ),
+        ],
+    )
+    def test_the_warning_prescribes_a_verb_first_edit(
+        self, case_id: str, lifecycle: dict[str, Any], documents: dict[str, Any]
+    ) -> None:
+        """ISC-150. A directive hidden behind "you should" is invisible to the sweep."""
+        _, warning = self._shaped(
+            case_id,
+            lifecycle=lifecycle,
+            scenario={"discovery": {"subpoena_sets": 4}},
+            documents=documents,
+        )
+        assert warning is not None
+        opening = [first_word(clause) for clause in clauses(warning)]
+        assert any(word in DIRECTIVE_VERBS for word in opening), (
+            f"no clause of the warning opens with a directive verb {opening}: {warning}"
+        )
+        buried = [
+            clause
+            for clause in clauses(warning)
+            if first_word(clause) in {"you", "we", "please", "kindly"}
+        ]
+        assert not buried, f"a directive is buried behind a hedge: {buried}"
