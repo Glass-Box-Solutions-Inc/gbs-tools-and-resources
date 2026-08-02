@@ -34,6 +34,7 @@ from mutation_gate import (
     load,
     partition,
     preflight,
+    pristine_verdict,
     run_one,
     shard,
 )
@@ -197,6 +198,57 @@ class TestOnlyANamedCallPhaseAssertionIsRed:
             _mutant(probe, "VALUE = 8", find="VALUE = 9"), python=sys.executable
         )
         assert verdict.token == "GUARD-NOT-GREEN", verdict
+
+    def test_a_guard_whose_teardown_fails_is_not_green_before_the_mutation(
+        self, probe: Path
+    ) -> None:
+        """The pristine check must mean by "green" what pytest means by it.
+
+        ``pristine_verdict`` read ``setup`` and ``call`` and stopped, while
+        ``_phase_verdict`` rejected a failed ``teardown`` on the mutated side —
+        one comparison whose two halves disagreed about passing. A guard whose
+        fixture teardown fails is ``1 passed, 1 error``, **exit 1**, red in CI;
+        it was cached GREEN, and the mutant then scored RED and counted as
+        evidence. That is the gate certifying a fix on a guard nobody could run.
+
+        Found by cross-model review, which also observed that no registered
+        mutant covered this predicate — so the clause was unguarded as well as
+        wrong. ``g-9`` now covers it.
+        """
+        (probe / "subject.py").write_text(
+            _SOURCE.replace("def teardown_value():\n    return VALUE", "")
+            + "\n\ndef teardown_value():\n    raise AssertionError('teardown says no')\n"
+        )
+        verdict = pristine_verdict(
+            "test_probe.py::TestTheClaim::test_the_value_is_one",
+            root=probe,
+            python=sys.executable,
+        )
+        assert verdict.token == "GUARD-NOT-GREEN", (
+            "a guard that pytest reports as an error and exits 1 on was accepted "
+            f"as green before the mutation: {verdict}"
+        )
+
+    def test_a_guard_with_no_teardown_phase_is_still_green(self, probe: Path) -> None:
+        """The opposite draw: absent is not failed.
+
+        pytest omits the phase when there is nothing to tear down, so comparing
+        ``== "passed"`` outright would reject every guard that takes no fixture —
+        which is most of them. The fix defaults the phase to passed, and this
+        pins that the default is doing real work rather than papering over it.
+        """
+        (probe / "test_probe.py").write_text(
+            "import subject\n\n\n"
+            "class TestTheClaim:\n"
+            "    def test_the_value_is_one(self):\n"
+            "        assert subject.VALUE == 1\n"
+        )
+        verdict = pristine_verdict(
+            "test_probe.py::TestTheClaim::test_the_value_is_one",
+            root=probe,
+            python=sys.executable,
+        )
+        assert verdict.token == "GREEN", verdict
 
     def test_a_mutation_that_no_longer_applies_is_a_finding(self, probe: Path) -> None:
         verdict = run_one(

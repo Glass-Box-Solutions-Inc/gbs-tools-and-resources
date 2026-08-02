@@ -969,3 +969,200 @@ class TestDiscoveryShapingRespectsDocumentControls:
             if first_word(clause) in {"you", "we", "please", "kindly"}
         ]
         assert not buried, f"a directive is buried behind a hedge: {buried}"
+
+    # -- the cross-model review round: the fix had the defect it fixed ------
+    #
+    # Every test below reproduces a case a GPT-family reviewer executed against
+    # the first ISC-148 commit. The pattern in all of them is the same and is
+    # worth naming: the first fix read `documents.overrides` through ONE of its
+    # two spellings. A seed writes either `{subtype: X, count: N}` or
+    # `{type: T, max: N}`, `DocumentControls` splits them into two properties,
+    # and the fix consulted only `subtype_overrides` — so the control the module
+    # calls highest-precedence stayed invisible through its other spelling, and
+    # the original defect survived inside its own remediation.
+
+    def test_a_type_level_zero_override_names_the_control_not_the_stage(self) -> None:
+        """`{type: DISCOVERY, max: 0}` is `documents.overrides`, spelled the other way.
+
+        Measured on the first fix: 0 packets and the lifecycle-stage sentence, on
+        a seed already at `target_stage: discovery` — the exact defect ISC-148
+        exists to remove, reached through the spelling the fix did not read.
+        """
+        counts, warning = self._shaped(
+            "isc148r-typezero",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(overrides=[{"type": "DISCOVERY", "max": 0}]),
+        )
+        assert sum(counts.values()) == 0, counts
+        assert warning is not None
+        assert "target_stage" not in warning, (
+            f"the stage is blamed for a control-caused shortfall: {warning}"
+        )
+        assert "documents.overrides" in warning, warning
+        # The key the author wrote, not the four subtypes it governs — an
+        # imperative naming lines the seed does not contain cannot be followed.
+        assert "count for DISCOVERY" in warning, (
+            f"the prescribed edit does not name the seed's own key: {warning}"
+        )
+
+    def test_following_the_type_level_warning_delivers_the_count(self) -> None:
+        """Execute the prescribed edit; an instruction nobody runs is how this shipped.
+
+        The raise has to clear the *type*, not the packet count. `max` bounds
+        every DISCOVERY document, and records packets are a fraction of them —
+        measured on this seed, `max: 3` yields one packet, `max: 6` two, `max:
+        12` three. That is the difference between a ceiling and a pin, and it is
+        why this test raises to 12 rather than to `subpoena_sets`.
+        """
+        counts, warning = self._shaped(
+            "isc148r-typezero-fixed",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(overrides=[{"type": "DISCOVERY", "max": 12}]),
+        )
+        assert sum(counts.values()) == 3, (
+            f"raising the documents.overrides count for DISCOVERY — the edit the "
+            f"warning prescribes — does not deliver 3 packets: {counts}"
+        )
+        assert warning is None, warning
+
+    def test_a_global_cap_shortfall_does_not_blame_the_stage(self) -> None:
+        """`global_cap` is unattributable, which is not a licence to name the stage.
+
+        The first fix fell back to the stage sentence whenever no per-subtype
+        control matched, without consulting whether the stage was a cause. So the
+        one control the docstring said would be reported "with no named control
+        rather than with a wrong one" was reported with the wrongest one
+        available.
+        """
+        _, warning = self._shaped(
+            "isc148r-globalcap",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(global_cap=3),
+        )
+        assert warning is not None
+        assert "target_stage" not in warning, (
+            f"the stage is blamed for a global_cap shortfall: {warning}"
+        )
+        assert "documents.global_cap" in warning, (
+            f"the only control that could have done it is not named: {warning}"
+        )
+
+    def test_an_exclude_naming_both_routes_prescribes_removing_both(self) -> None:
+        """Sorting and taking `[0]` prescribed a no-op.
+
+        With the parent type and the subtype both excluded, removing either alone
+        leaves the other in force. The first fix named `DISCOVERY` because it
+        sorts first, and following that literally still delivered nothing.
+        """
+        _, warning = self._shaped(
+            "isc148r-bothkeys",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(
+                exclude=["DISCOVERY", "SUBPOENAED_RECORDS_MEDICAL"],
+            ),
+        )
+        assert warning is not None
+        assert "Remove DISCOVERY, SUBPOENAED_RECORDS_MEDICAL" in warning, (
+            f"the warning prescribes removing only one of the two keys in force: {warning}"
+        )
+
+    def test_the_trim_does_not_slice_an_exact_override_count(self) -> None:
+        """The refill respected the pin; the trim sliced straight through it.
+
+        `resolve_document_controls` has already applied the count by the time the
+        shaper runs, so `packets[:declared]` was cutting the author's own number
+        down. Measured on the first fix: a pin of 2 under `subpoena_sets: 1`
+        delivered 1, silently.
+        """
+        counts, warning = self._shaped(
+            "isc148r-trim",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 1}},
+            documents=self._documents(
+                overrides=[{"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 2}],
+            ),
+        )
+        assert counts.get("SUBPOENAED_RECORDS_MEDICAL") == 2, (
+            f"the trim sliced through an exact documents.overrides count: {counts}"
+        )
+        assert warning is not None, (
+            "the file holds more than subpoena_sets asked for and nothing said so"
+        )
+        assert "documents.overrides" in warning and "at 2" in warning, warning
+
+    def test_the_trim_drops_no_pinned_subtype_entirely(self) -> None:
+        """The severe shape: a pinned subtype vanished from the file.
+
+        Two subtypes pinned at 2 each under `subpoena_sets: 1` kept a
+        date-ordered prefix, so one subtype the author had written an explicit
+        count for was dropped to zero — and no warning was emitted at all.
+        """
+        counts, warning = self._shaped(
+            "isc148r-trim-two",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 1}},
+            documents=self._documents(
+                overrides=[
+                    {"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 2},
+                    {"subtype": "SUBPOENAED_RECORDS_EMPLOYMENT", "count": 2},
+                ],
+            ),
+        )
+        assert counts.get("SUBPOENAED_RECORDS_MEDICAL") == 2, counts
+        assert counts.get("SUBPOENAED_RECORDS_EMPLOYMENT") == 2, (
+            f"a subtype with an explicit count of 2 was dropped by the trim: {counts}"
+        )
+        assert warning is not None, "a silent overrule of the highest-precedence control"
+        for key in ("SUBPOENAED_RECORDS_MEDICAL", "SUBPOENAED_RECORDS_EMPLOYMENT"):
+            assert key in warning, f"{key} pinned but unnamed in the warning: {warning}"
+
+    def test_a_positive_type_bound_is_not_cloned_past(self) -> None:
+        """The refill's own blind spot, through the same second spelling.
+
+        The reviewer proved the `max: 0` case; this is the adjacent one it did
+        not reach. A synthesized packet is one more document under the type, so
+        cloning to reach `subpoena_sets` breaches a ceiling the author wrote —
+        the same overrule as cloning past an exact count, through the spelling
+        the fix did not read.
+
+        `max: 6` leaves two packets on this seed (see the delivery test above for
+        the measured ladder), so the shortfall is real and the donor must decline
+        rather than pad it to four.
+        """
+        counts, warning = self._shaped(
+            "isc148r-typecap",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 4}},
+            documents=self._documents(overrides=[{"type": "DISCOVERY", "max": 6}]),
+        )
+        assert sum(counts.values()) == 2, (
+            f"the refill cloned past a documents.overrides type bound of 6: {counts}"
+        )
+        assert warning is not None
+        assert "DISCOVERY at 6" in warning, (
+            f"the cap is not reported under the key the seed states it with: {warning}"
+        )
+
+    def test_a_type_ceiling_does_not_forbid_the_trim(self) -> None:
+        """A ceiling is not a pin, and conflating them refuses a legal trim.
+
+        `max: 12` permits up to twelve DISCOVERY documents; it does not oblige
+        the file to hold three packets. A seed asking for one should get one,
+        with no overage warning — the pin machinery would have kept all three
+        and complained that the override outranked the seed, about a number the
+        override never required.
+        """
+        counts, warning = self._shaped(
+            "isc148r-ceiling-trim",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 1}},
+            documents=self._documents(overrides=[{"type": "DISCOVERY", "max": 12}]),
+        )
+        assert sum(counts.values()) == 1, (
+            f"a type ceiling was treated as an exact count and refused the trim: {counts}"
+        )
+        assert warning is None, f"a legal trim warned about an overage: {warning}"

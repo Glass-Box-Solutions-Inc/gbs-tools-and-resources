@@ -272,13 +272,31 @@ def _phase_verdict(report: dict) -> Verdict:
 def pristine_verdict(
     node: str, *, root: Path = PACKAGE, python: str | None = None
 ) -> Verdict:
-    """The guard must be green *before* the mutation, or it proves nothing."""
+    """The guard must be green *before* the mutation, or it proves nothing.
+
+    "Green" means what pytest means by it, in every phase. This predicate read
+    only ``setup`` and ``call`` while :func:`_phase_verdict` rejected a failed
+    ``teardown`` on the mutated side — the two halves of one comparison
+    disagreeing about what passing is. A guard whose fixture teardown fails is
+    reported by pytest as ``1 passed, 1 error`` with **exit 1**: red in CI, and
+    cached GREEN here. Its mutant then scored RED and counted as evidence, which
+    is the precise failure this gate exists to make impossible, reintroduced in
+    the clause meant to prevent it.
+
+    ``teardown`` is compared against a passed/absent set rather than ``==
+    "passed"`` because pytest omits the phase entirely when there is nothing to
+    tear down, and an absent teardown is not a failed one.
+    """
     report = _run_pytest(node, root=root, python=python or interpreter(root))
     rejected = _selection_verdict(report, node)
     if rejected is not None:
         return rejected
     phases = report.get("phases", {})
-    if phases.get("setup") == "passed" and phases.get("call") == "passed":
+    if (
+        phases.get("setup") == "passed"
+        and phases.get("call") == "passed"
+        and phases.get("teardown", "passed") == "passed"
+    ):
         return Verdict("GREEN")
     return Verdict(
         "GUARD-NOT-GREEN",

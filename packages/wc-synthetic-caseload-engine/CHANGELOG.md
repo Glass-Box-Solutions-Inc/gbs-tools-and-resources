@@ -374,13 +374,50 @@ Attribution is keyed off what a control *did*, not off whether its key appears i
 the seed: a membership control earns the blame only for a subtype the walk
 actually proposed for it to remove. A zero-count override is the exception — the
 author wrote it about that exact subtype, so it is named whether or not the walk
-ever got that far. `global_cap` is deliberately never named: it trims the whole
-plan by rank and cannot be attributed to a subtype, so a cap that ate the last
-packet reports a shortfall with **no** named control rather than a wrong one.
+ever got that far. `global_cap` is never named as a *subtype's* cause: it trims
+the whole plan by rank, so the shortfall says so in as many words and prescribes
+raising or removing the cap.
 
-15 tests in `TestDiscoveryShapingRespectsDocumentControls`, and mutants
-`m12-1..m12-4` — including one for the innocent-control case, where a control
-that removed nothing must *not* appear in the warning.
+23 tests in `TestDiscoveryShapingRespectsDocumentControls`, and mutants
+`m12-1..m12-10` — including one for the innocent-control case, where a control
+that removed nothing must *not* appear in the warning, and an opposite-draw pair
+(`m12-8`/`m12-10`) pinning that the trim protects an exact count without
+refusing a legal trim under a ceiling.
+
+#### What the first version of this fix got wrong
+
+The paragraph above originally claimed `global_cap` "reports a shortfall with no
+named control rather than with a wrong one." **That was false**, and a
+GPT-family review round proved it by execution rather than by reading. Both
+defects below are the ISC-148 defect surviving inside the ISC-148 fix:
+
+- **`documents.overrides` has two spellings and the fix read one.** A seed writes
+  either `{subtype: X, count: N}` or `{type: T, max: N}`; `DocumentControls`
+  splits them into `subtype_overrides` and `type_bounds`, and the fix consulted
+  only the first. So `{type: DISCOVERY, max: 0}` emptied the file of packets and
+  was attributed to the lifecycle stage — on a seed already at `target_stage:
+  discovery`, where the prescribed edit is a no-op. The exact defect, through the
+  spelling nobody read.
+- **"No control matched" was treated as "the stage did it."** The warning reached
+  for the stage sentence whenever the findings list came back empty, without
+  consulting `stage_is_a_cause`. `global_cap`, which is deliberately not
+  attributable to a subtype, therefore produced the wrongest available answer
+  rather than no answer.
+
+Two more came out of the same round. The **trim** side still sliced
+`packets[:declared]` blind, so two subtypes each pinned at 2 under
+`subpoena_sets: 1` dropped one of them *entirely* and said nothing — the refill
+respected the highest-precedence control while the trim walked through it. And a
+seed naming both a parent type and its subtype in `exclude` was told to "remove
+DISCOVERY", because the key was chosen by sorting; following that literally still
+delivered nothing.
+
+A fifth was found by taking the reviewer's class rather than its instances: a
+**positive** `{type: T, max: N}` was equally invisible to the refill. It is a
+ceiling on the whole type and not a per-subtype count — measured on one seed,
+`max: 3` yields one packet, `max: 6` two, `max: 12` three — so it forbids cloning
+but does not forbid trimming. Conflating it with an exact count refuses a legal
+trim, which is why `m12-10` exists beside `m12-8`.
 
 ### Fixed — the mutation gate had been scoring ten mutants it never ran (**AJC-43**)
 

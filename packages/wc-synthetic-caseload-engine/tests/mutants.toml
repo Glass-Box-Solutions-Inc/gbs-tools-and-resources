@@ -1016,8 +1016,11 @@ id = 'm12-1'
 title = 'the refill clones past an exact documents.overrides packet count again'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_an_exact_override_count_is_not_padded_to_the_declared_count'
-find = '        donor = next((entry for entry in reversed(packets) if entry[1] not in pinned), None)'
+find = '''        donor = next(
+            (entry for entry in reversed(packets) if entry[1] not in uncloneable), None
+        )'''
 replace = '        donor = packets[-1] if packets else None'
+note = 'Re-pointed in the review round: the donor guard moved from `pinned` to `uncloneable` when a type-level ceiling was found to forbid cloning too. The surviving logic is the same claim, so the mutant follows it rather than being retired.'
 
 [[mutant]]
 id = 'm12-2'
@@ -1040,5 +1043,75 @@ id = 'm12-4'
 title = 'a parent-type exclude prescribes removing a key the seed does not contain'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_parent_type_exclude_is_named_as_the_cause_too'
-find = '            forbidden[subtype] = ("documents.exclude", matched[0])'
-replace = '            forbidden[subtype] = ("documents.exclude", subtype)'
+find = '            forbidden[subtype] = ("documents.exclude", matched)'
+replace = '            forbidden[subtype] = ("documents.exclude", (subtype,))'
+note = 'Re-pointed in the review round: the attribution now carries every key in force rather than one, so the mutant puts back the subtype-only spelling it used to put back — same claim, new shape.'
+
+# ISC-148 cross-model review round. Every mutant below puts back a defect a
+# GPT-family reviewer executed against the first fix. The shape they share:
+# `documents.overrides` has two spellings — `{subtype, count}` and `{type, max}`
+# — and the first fix read only the first, so the control the module calls
+# highest-precedence stayed invisible through its other spelling.
+
+[[mutant]]
+id = 'g-9'
+title = 'the pristine check calls a guard green while its teardown fails'
+file = 'tools/mutation_gate.py'
+test = 'tests/test_mutation_gate.py::TestOnlyANamedCallPhaseAssertionIsRed::test_a_guard_whose_teardown_fails_is_not_green_before_the_mutation'
+find = '''        and phases.get("teardown", "passed") == "passed"'''
+replace = ''
+note = 'The reviewer found this clause both wrong and unguarded — no registered mutant touched the pristine-green predicate at all, which is why the asymmetry survived the commit that was about removing exactly this class of blindness.'
+
+[[mutant]]
+id = 'm12-5'
+title = 'a type-level zero override is invisible again and the stage takes the blame'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_type_level_zero_override_names_the_control_not_the_stage'
+find = '''        if parent is not None and parent in bounds:
+            if bounds[parent][1] == 0:
+                forbidden[subtype] = ("documents.overrides", (parent,))
+            continue'''
+replace = ''
+
+[[mutant]]
+id = 'm12-6'
+title = 'an unattributable shortfall reaches for the stage sentence again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_global_cap_shortfall_does_not_blame_the_stage'
+find = '''        if stage_is_a_cause:
+            return f"scenario.discovery.subpoena_sets is {declared} but {_STAGE_CAUSE}"'''
+replace = '''        if True:
+            return f"scenario.discovery.subpoena_sets is {declared} but {_STAGE_CAUSE}"'''
+
+[[mutant]]
+id = 'm12-7'
+title = 'the exclude imperative names one key again when two are in force'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_an_exclude_naming_both_routes_prescribes_removing_both'
+find = '''        if matched := tuple(sorted(exclude & keys)):'''
+replace = '''        if matched := tuple(sorted(exclude & keys)[:1]):'''
+
+[[mutant]]
+id = 'm12-8'
+title = 'the trim slices through an exact documents.overrides count again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_the_trim_drops_no_pinned_subtype_entirely'
+find = '''        pinned_entries = [entry for entry in packets if entry[1] in pinned]'''
+replace = '''        pinned_entries = []'''
+
+[[mutant]]
+id = 'm12-9'
+title = 'the refill clones past a documents.overrides type ceiling again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_positive_type_bound_is_not_cloned_past'
+find = '''    uncloneable = set(pinned) | set(ceilinged)'''
+replace = '''    uncloneable = set(pinned)'''
+
+[[mutant]]
+id = 'm12-10'
+title = 'a type ceiling is treated as an exact count and refuses a legal trim'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_type_ceiling_does_not_forbid_the_trim'
+find = '''        pinned_entries = [entry for entry in packets if entry[1] in pinned]'''
+replace = '''        pinned_entries = [entry for entry in packets if entry[1] in uncloneable]'''
+note = 'The opposite-draw mutant to m12-8: over-protecting the trim is as wrong as under-protecting it, and one fix that satisfied both is the point.'

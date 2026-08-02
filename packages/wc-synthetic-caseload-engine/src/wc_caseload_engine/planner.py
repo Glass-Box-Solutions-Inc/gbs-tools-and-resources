@@ -1146,41 +1146,108 @@ def _packet_control_keys(subtype: str, taxonomy: Taxonomy) -> frozenset[str]:
     return frozenset({subtype} | ({parent} if parent else set()))
 
 
-def _suppressed_packet_subtypes(controls: DocumentControls) -> dict[str, tuple[str, str | None]]:
-    """Packet subtypes the controls forbid outright: ``{subtype: (control, key)}``.
+def _suppressed_packet_subtypes(
+    controls: DocumentControls,
+) -> dict[str, tuple[str, tuple[str, ...]]]:
+    """Packet subtypes the controls forbid outright: ``{subtype: (control, keys)}``.
 
-    *key* is the seed line the author would edit, which is not always the subtype
-    — ``exclude: [DISCOVERY]`` suppresses all four packet subtypes through the
-    parent type, and "remove SUBPOENAED_RECORDS_MEDICAL from documents.exclude"
-    would send them to a line that does not exist. ``None`` where there is no key
-    to remove, which is what ``include_only`` omission *is*.
+    *keys* are the seed lines the author must edit, which are not always the
+    subtype — ``exclude: [DISCOVERY]`` suppresses all four packet subtypes through
+    the parent type, and "remove SUBPOENAED_RECORDS_MEDICAL from documents.exclude"
+    would send them to a line that does not exist. Empty where there is no key to
+    remove, which is what ``include_only`` omission *is*.
 
-    Membership only — a *positive* per-subtype override is a count control and is
-    read separately, because it caps rather than forbids. Precedence is the
-    resolver's own (``doc_controls.resolve_document_controls``): an explicit
+    **Every** matching key is returned, not the first one sorted. A seed may name
+    both the subtype and its parent, and removing either alone still delivers
+    nothing; the lexicographic pick prescribed "remove DISCOVERY" and left
+    ``SUBPOENAED_RECORDS_MEDICAL`` excluded, so following the warning literally
+    was a no-op. An imperative that does not deliver is the defect this warning
+    exists to remove, one level up.
+
+    Membership only — a *positive* count is a cap and is read separately, because
+    it caps rather than forbids. Precedence is the resolver's own
+    (``doc_controls.resolve_document_controls``): an explicit
     ``documents.overrides`` entry decides the subtype's fate in both directions,
     which is why a positive override on an excluded subtype is *not* suppression
     — that is the resurrection path the resolver already warns about.
 
-    ``global_cap`` is deliberately absent. It trims the whole plan by rank and
-    cannot be attributed to a subtype here; a cap that ate the last packet is
-    reported as a shortfall with no named control rather than with a wrong one.
+    **Both spellings of ``documents.overrides`` are read.** A seed writes either
+    ``{subtype: X, count: N}`` or ``{type: T, max: N}``, and :class:`DocumentControls`
+    splits them into two properties — ``subtype_overrides`` and ``type_bounds``.
+    Reading only the first made ``{type: DISCOVERY, max: 0}`` invisible: it
+    suppressed every packet and was attributed to the lifecycle stage, on seeds
+    already at ``target_stage: discovery`` where the prescribed edit is a no-op.
+    That is the ISC-148 defect surviving inside the ISC-148 fix, through the very
+    control this module calls highest-precedence. Found by cross-model review.
+
+    ``global_cap`` is deliberately absent, and absent means *not named* — see
+    :func:`_discovery_shortfall_warning`, which must not reach for the stage
+    sentence just because nothing here matched. It trims the whole plan by rank
+    and cannot be attributed to a subtype.
     """
     taxonomy = effective_taxonomy()
     overrides = controls.subtype_overrides
+    bounds = controls.type_bounds
     exclude, include_only = set(controls.exclude), set(controls.include_only)
-    forbidden: dict[str, tuple[str, str | None]] = {}
+    forbidden: dict[str, tuple[str, tuple[str, ...]]] = {}
     for subtype in sorted(DISCOVERY_PACKET_SUBTYPES):
         keys = _packet_control_keys(subtype, taxonomy)
+        parent = taxonomy.parent_of(subtype)
         if subtype in overrides:
             if overrides[subtype] == 0:
-                forbidden[subtype] = ("documents.overrides", subtype)
+                forbidden[subtype] = ("documents.overrides", (subtype,))
             continue
-        if matched := sorted(exclude & keys):
-            forbidden[subtype] = ("documents.exclude", matched[0])
+        if parent is not None and parent in bounds:
+            if bounds[parent][1] == 0:
+                forbidden[subtype] = ("documents.overrides", (parent,))
+            continue
+        if matched := tuple(sorted(exclude & keys)):
+            forbidden[subtype] = ("documents.exclude", matched)
         elif include_only and not (include_only & keys):
-            forbidden[subtype] = ("documents.include_only", None)
+            forbidden[subtype] = ("documents.include_only", ())
     return forbidden
+
+
+def _packet_count_controls(
+    controls: DocumentControls,
+) -> tuple[dict[str, tuple[str, int]], dict[str, tuple[str, int]]]:
+    """``(pins, ceilings)`` — the two ways a control can state a packet count.
+
+    Both are spelled ``documents.overrides`` and they are **not** the same thing,
+    which is the distinction the first pass at this got wrong in both directions:
+
+    * A **pin** is ``{subtype: X, count: N}`` — an exact count, a floor *and* a
+      ceiling. It binds both ways: the refill may not clone above it and the trim
+      may not slice below it.
+    * A **ceiling** is ``{type: T, max: N}`` — a bound on the whole parent type,
+      not on any one subtype, and measurably not a per-packet count: on the same
+      seed, ``max: 3`` yields one packet, ``max: 6`` two, ``max: 12`` three. It
+      forbids cloning, because a synthesized packet is one more document under
+      the type; it does **not** oblige the file to hold any particular number, so
+      trimming below it is legal and treating it as a pin would refuse the trim
+      the seed asked for and warn about an overage that was never required.
+
+    A zero belongs to neither — that is suppression, and
+    :func:`_suppressed_packet_subtypes` owns it. Values are keyed by the seed line
+    the author wrote, so a type bound is reported once under its own key rather
+    than once per subtype it governs.
+    """
+    taxonomy = effective_taxonomy()
+    overrides = controls.subtype_overrides
+    bounds = controls.type_bounds
+    pins: dict[str, tuple[str, int]] = {}
+    ceilings: dict[str, tuple[str, int]] = {}
+    for subtype in sorted(DISCOVERY_PACKET_SUBTYPES):
+        if subtype in overrides:
+            if overrides[subtype] > 0:
+                pins[subtype] = (subtype, overrides[subtype])
+            continue
+        parent = taxonomy.parent_of(subtype)
+        if parent is not None and parent in bounds:
+            maximum = bounds[parent][1]
+            if maximum is not None and maximum > 0:
+                ceilings[subtype] = (parent, maximum)
+    return pins, ceilings
 
 
 #: The lifecycle half of the shortfall message, kept verbatim from ISC-126.
@@ -1195,7 +1262,7 @@ _STAGE_CAUSE = (
 
 
 def _control_causes(
-    forbidden: dict[str, tuple[str, str | None]],
+    forbidden: dict[str, tuple[str, tuple[str, ...]]],
     capped: dict[str, int],
 ) -> tuple[list[str], list[str]]:
     """Turn the blocking controls into ``(findings, imperatives)``.
@@ -1210,7 +1277,7 @@ def _control_causes(
     never pushed off the front of its clause by a hedge, and never reads as a
     capital in mid-sentence either.
     """
-    grouped: dict[tuple[str, str | None], list[str]] = {}
+    grouped: dict[tuple[str, tuple[str, ...]], list[str]] = {}
     for subtype, where in sorted(forbidden.items()):
         grouped.setdefault(where, []).append(subtype)
 
@@ -1221,23 +1288,33 @@ def _control_causes(
     exclude_keys: list[str] = []
     include_only_targets: list[str] = []
 
-    for (control, key), subtypes in grouped.items():
+    for (control, keys), subtypes in grouped.items():
         listed = ", ".join(subtypes)
         if control == "documents.exclude":
+            named = ", ".join(keys)
             # "names X, which suppresses X" on the subtype-key route; the longer
             # form is only informative when the key is the parent type.
             findings.append(
-                f"documents.exclude names {key}"
-                if subtypes == [key]
-                else f"documents.exclude names {key}, which suppresses {listed}"
+                f"documents.exclude names {named}"
+                if subtypes == list(keys)
+                else f"documents.exclude names {named}, which suppresses {listed}"
             )
-            exclude_keys.append(str(key))
+            exclude_keys.extend(keys)
         elif control == "documents.include_only":
             findings.append(f"documents.include_only does not name {listed}")
             include_only_targets.extend(subtypes)
         else:
-            findings.append(f"documents.overrides sets {listed} to 0")
-            override_targets.extend(subtypes)
+            # Name the line the author wrote. A `{type: DISCOVERY, max: 0}` entry
+            # suppresses four subtypes through one key, and prescribing the four
+            # subtype spellings sends them to lines their seed does not contain —
+            # the same non-delivering imperative as the exclude route above.
+            named = ", ".join(keys)
+            findings.append(
+                f"documents.overrides sets {named} to 0"
+                if subtypes == list(keys)
+                else f"documents.overrides sets {named} to 0, which suppresses {listed}"
+            )
+            override_targets.extend(keys)
 
     if capped:
         findings.append(
@@ -1266,7 +1343,7 @@ def _discovery_shortfall_warning(
     delivered: int,
     *,
     stage_is_a_cause: bool,
-    forbidden: dict[str, tuple[str, str | None]],
+    forbidden: dict[str, tuple[str, tuple[str, ...]]],
     capped: dict[str, int],
 ) -> str:
     """Say why the packet count could not be met, naming every cause at once.
@@ -1278,10 +1355,26 @@ def _discovery_shortfall_warning(
     stage proposes nothing *and* a zero-count override pins the subtype at
     nothing, so neither edit alone delivers a packet. Naming one of them there is
     a wrong answer, not a partial one.
+
+    "No control matched" is **not** a reason to say the stage did it. The first
+    fix reached for :data:`_STAGE_CAUSE` whenever ``findings`` was empty, without
+    consulting *stage_is_a_cause* — so ``global_cap``, which is deliberately not
+    attributable to a subtype, reproduced the original defect exactly: the stage
+    blamed on a seed already at ``discovery``. Where the cause is real but
+    unnameable, this says so and prescribes the edits that do exist, which is a
+    true sentence. Found by cross-model review.
     """
     findings, imperatives = _control_causes(forbidden, capped)
     if not findings:
-        return f"scenario.discovery.subpoena_sets is {declared} but {_STAGE_CAUSE}"
+        if stage_is_a_cause:
+            return f"scenario.discovery.subpoena_sets is {declared} but {_STAGE_CAUSE}"
+        return (
+            f"scenario.discovery.subpoena_sets is {declared} but the file holds "
+            f"{delivered} records packet(s) and no per-subtype control accounts for "
+            "it — documents.global_cap trims the whole plan by rank, so it cannot "
+            "be attributed to one subtype. Raise or remove documents.global_cap, or "
+            f"lower scenario.discovery.subpoena_sets to {delivered}"
+        )
 
     detail = "; ".join(findings)
     fallback = f"lower scenario.discovery.subpoena_sets to {delivered}"
@@ -1362,22 +1455,50 @@ def _shape_discovery(
         return dated, ()
 
     forbidden = _suppressed_packet_subtypes(controls)
-    # A positive per-subtype override states how many there are to be. Cloning
-    # such a subtype to reach `declared` overrules the control the package calls
-    # highest-precedence, so it is not a donor.
-    pinned = {
-        subtype: count
-        for subtype, count in controls.subtype_overrides.items()
-        if subtype in DISCOVERY_PACKET_SUBTYPES and count > 0
-    }
+    pinned, ceilinged = _packet_count_controls(controls)
+    # Cloning breaches either one; only a pin also forbids the trim.
+    uncloneable = set(pinned) | set(ceilinged)
 
     shaped = [entry for entry in dated if entry[1] not in DISCOVERY_PACKET_SUBTYPES]
     packets.sort(key=lambda entry: entry[0])
-    kept = packets[:declared] if len(packets) > declared else list(packets)
+    overage: dict[str, int] = {}
+    if len(packets) > declared:
+        # The trim side used to be `packets[:declared]` — a blind date-ordered
+        # prefix. `resolve_document_controls` has already applied the override
+        # counts by this point, so those packets are the count the author wrote;
+        # slicing them off overruled the highest-precedence control in exactly
+        # the direction the refill fix did not cover. Measured: two subtypes each
+        # pinned at 2 with `subpoena_sets: 1` dropped one subtype ENTIRELY, and
+        # said nothing. Found by cross-model review.
+        #
+        # Pinned packets are kept whole and the remainder is trimmed from the
+        # unpinned ones, latest first. When the pins alone exceed `declared` the
+        # two controls genuinely conflict, and `documents.overrides` wins by
+        # documented precedence — so the file holds more than `subpoena_sets`
+        # asked for and the warning says which pins did it.
+        pinned_entries = [entry for entry in packets if entry[1] in pinned]
+        unpinned = [entry for entry in packets if entry[1] not in pinned]
+        room = declared - len(pinned_entries)
+        kept = sorted(
+            pinned_entries + (unpinned[:room] if room > 0 else []),
+            key=lambda entry: entry[0],
+        )
+        if room < 0:
+            # Report the seed lines that state the counts, not the subtypes they
+            # happen to govern — `{type: DISCOVERY, max: 2}` is one line.
+            overage = {
+                pinned[subtype][0]: pinned[subtype][1]
+                for subtype in sorted({entry[1] for entry in kept})
+                if subtype in pinned
+            }
+    else:
+        kept = list(packets)
     if len(packets) < declared:
         # The latest packet whose count no control pinned. With no overrides at
         # all this is `packets[-1]` — the pre-ISC-148 donor, byte for byte.
-        donor = next((entry for entry in reversed(packets) if entry[1] not in pinned), None)
+        donor = next(
+            (entry for entry in reversed(packets) if entry[1] not in uncloneable), None
+        )
         if donor is not None:
             last_date, subtype, track, role = donor
             ceiling = timeline.horizon
@@ -1387,6 +1508,16 @@ def _shape_discovery(
 
     if len(kept) == declared:
         return shaped + kept, ()
+
+    if overage:
+        pins = ", ".join(f"{key} at {count}" for key, count in sorted(overage.items()))
+        return shaped + kept, (
+            f"scenario.discovery.subpoena_sets is {declared} but documents.overrides "
+            f"pins {pins} — {len(kept)} packet(s) in total. The override is the "
+            "higher-precedence control, so the file holds the pinned count rather "
+            "than the declared one. Lower the documents.overrides count(s), or raise "
+            f"scenario.discovery.subpoena_sets to {len(kept)}",
+        )
 
     # Attribution, keyed off what a control actually did rather than off whether
     # its key appears in the seed. A membership control earns the blame only for
@@ -1398,8 +1529,20 @@ def _shape_discovery(
         for subtype, where in forbidden.items()
         if subtype in proposed or where[0] == "documents.overrides"
     }
+    # Keyed by the seed line, so a type-level bound is reported once under the
+    # key the author wrote rather than once per subtype it governs. A ceiling is
+    # reported whether or not a packet survived it: unlike a pin, `max: 2` can
+    # bind hard enough to leave none, and staying silent then would hand the
+    # shortfall to the unattributable branch and name no control at all.
     present = {entry[1] for entry in kept}
-    capping = {subtype: count for subtype, count in pinned.items() if subtype in present}
+    capping = {key: count for subtype, (key, count) in pinned.items() if subtype in present}
+    capping.update(
+        {
+            key: count
+            for subtype, (key, count) in ceilinged.items()
+            if subtype in present or subtype in proposed
+        }
+    )
 
     return shaped + kept, (
         _discovery_shortfall_warning(
