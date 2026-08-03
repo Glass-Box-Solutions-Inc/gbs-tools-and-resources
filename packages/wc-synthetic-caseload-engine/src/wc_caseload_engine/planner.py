@@ -1458,12 +1458,30 @@ def _discovery_shortfall_warning(
     detail = "; ".join(findings)
     fallback = f"lower scenario.discovery.subpoena_sets to {delivered}"
     if stage_is_a_cause:
+        # The stage is the cause we can prove; the controls are causes we cannot
+        # yet see. With nothing proposed there is no way to tell, from here,
+        # which of them will bite once the stage produces packets: an `exclude`
+        # on SUBPOENAED_RECORDS_MEDICAL does, one on SUBPOENAED_RECORDS_EMPLOYMENT
+        # does not, because the walk never proposes that subtype at any stage.
+        #
+        # An earlier pass asserted "both edits are needed" for every listed
+        # control. That is a confident false claim in the second case — measured
+        # in 9 of 12 rng_seed draws, the stage edit alone delivered the full
+        # count with the exclude still in place. The first pass had the opposite
+        # defect, withholding the control entirely, which left a non-delivering
+        # imperative when the control did bite.
+        #
+        # Both failures come from asserting something unknowable. This states the
+        # stage as the cause, prescribes its edit, and lists the controls as the
+        # next place to look rather than as a second required edit — which is
+        # true whichever way the unknown resolves, and still delivers when
+        # followed in order.
         edits = ", and ".join(imperatives)
         return (
-            f"scenario.discovery.subpoena_sets is {declared} but two separate things "
-            f"stand in the way and the file holds {delivered} records packet(s): "
-            f"{_STAGE_CAUSE}; and {detail}. "
-            f"{_capitalized(edits)} too — both edits are needed, or {fallback}"
+            f"scenario.discovery.subpoena_sets is {declared} but {_STAGE_CAUSE}. "
+            f"The file also carries controls over records packets: {detail}. "
+            f"{_capitalized(edits)} if the stage change alone does not deliver "
+            f"the count, or {fallback}"
         )
     edits = ", or ".join(imperatives)
     return (
@@ -1558,6 +1576,7 @@ def _shape_discovery(
     shaped = [entry for entry in dated if entry[1] not in DISCOVERY_PACKET_SUBTYPES]
     packets.sort(key=lambda entry: entry[0])
     overage: dict[str, int] = {}
+    floors: list[tuple[str, int, int]] = []
     if len(packets) > declared:
         # The trim side used to be `packets[:declared]` — a blind date-ordered
         # prefix. `resolve_document_controls` has already applied the override
@@ -1572,31 +1591,47 @@ def _shape_discovery(
         # two controls genuinely conflict, and `documents.overrides` wins by
         # documented precedence — so the file holds more than `subpoena_sets`
         # asked for and the warning says which pins did it.
-        pinned_entries = [entry for entry in packets if entry[1] in pinned]
-        unpinned = [entry for entry in packets if entry[1] not in pinned]
-        room = declared - len(pinned_entries)
-        kept = sorted(
-            pinned_entries + (unpinned[:room] if room > 0 else []),
-            key=lambda entry: entry[0],
-        )
+        # Kept-ness is tracked by POSITION in `packets`, not by tuple value. A
+        # packet is a `(date, subtype, track, role)` tuple, and two of them can
+        # be equal without being the same document — the resolver may plan two
+        # of one subtype and the parallel core track may date them alike. Under
+        # `entry not in kept`, one copy in `kept` made BOTH copies invisible to
+        # the floor restore below, so a floor could be reported short with a
+        # spare packet sitting unused. Positions are unique by construction.
+        #
+        # The pre-sort concatenation order is preserved exactly — pinned, then
+        # the unpinned prefix, then whatever the floor restores — because the
+        # sort is stable and packets sharing a date resolve their tie by it.
+        # Changing that order would change bytes for tied dates.
+        pinned_at = [index for index, entry in enumerate(packets) if entry[1] in pinned]
+        unpinned_at = [
+            index for index, entry in enumerate(packets) if entry[1] not in pinned
+        ]
+        room = declared - len(pinned_at)
+        kept_at = pinned_at + (unpinned_at[:room] if room > 0 else [])
+        kept = sorted((packets[index] for index in kept_at), key=lambda entry: entry[0])
         # A `{type: T, min: N}` floor is the other half of `type_bounds`, and the
         # trim used to cut straight through it — a floor holding 12 documents
         # dropped to 10 under `subpoena_sets: 1`, silently. Restore whichever
-        # trimmed packets the floor still needs, latest first, so the kept set
-        # stays a suffix-consistent slice rather than an arbitrary one.
+        # trimmed packets the floor still needs, earliest of the trimmed first,
+        # so the kept set stays a suffix-consistent slice rather than an
+        # arbitrary one.
         required = _packets_a_type_floor_requires(dated, controls)
-        floors_binding: dict[str, int] = {}
+        floors_binding: list[str] = []
         for parent, need in sorted(required.items()):
-            held = sum(1 for entry in kept if taxonomy_parent(entry[1]) == parent)
+            held = sum(1 for index in kept_at if taxonomy_parent(packets[index][1]) == parent)
             if held >= need:
                 continue
             spare = [
-                entry
-                for entry in packets
-                if entry not in kept and taxonomy_parent(entry[1]) == parent
+                index
+                for index in range(len(packets))
+                if index not in kept_at and taxonomy_parent(packets[index][1]) == parent
             ]
-            kept = sorted(kept + spare[: need - held], key=lambda entry: entry[0])
-            floors_binding[parent] = controls.type_bounds[parent][0] or 0
+            kept_at = kept_at + spare[: need - held]
+            kept = sorted(
+                (packets[index] for index in kept_at), key=lambda entry: entry[0]
+            )
+            floors_binding.append(parent)
         if room < 0 or floors_binding:
             # Report the seed lines that state the counts, not the subtypes they
             # happen to govern — `{type: DISCOVERY, max: 2}` is one line.
@@ -1605,7 +1640,23 @@ def _shape_discovery(
                 for subtype in sorted({entry[1] for entry in kept})
                 if subtype in pinned
             }
-            overage.update(floors_binding)
+            # A floor is NOT a pin, and its number is not counted in the same
+            # unit. `overage` maps a seed key to a packet count and its sentence
+            # says "pins <key> at <n>". An earlier pass merged the floors into it
+            # with `overage.update(floors_binding)`, which stated two falsehoods
+            # at once: it called `{type: DISCOVERY, min: 67}` a pin, and it
+            # printed 67 as though the file held 67 records packets — 67 counts
+            # *documents under the type*, and the file held 52 of them. The
+            # sentence therefore claimed a floor was being honoured at the exact
+            # moment it was unmet. Floors get their own clause below, in their
+            # own unit, reporting what the file actually holds.
+            for parent in floors_binding:
+                held_documents = sum(
+                    1 for entry in shaped + kept if taxonomy_parent(entry[1]) == parent
+                )
+                floors.append(
+                    (parent, controls.type_bounds[parent][0] or 0, held_documents)
+                )
     else:
         kept = list(packets)
     if len(packets) < declared:
@@ -1631,13 +1682,42 @@ def _shape_discovery(
     if len(kept) == declared:
         return shaped + kept, ()
 
-    if overage:
-        pins = ", ".join(f"{key} at {count}" for key, count in sorted(overage.items()))
+    if overage or floors:
+        # Two controls, two units, two sentences. A pin counts records packets of
+        # one subtype; a floor counts every document under a parent type, packets
+        # and non-packets alike. Each clause states its own number in its own
+        # unit, and the floor clause reports what the file holds rather than
+        # asserting the floor is satisfied — because it need not be. When the
+        # spare packets run out before the minimum is reached the trim has kept
+        # everything it can and the floor is still short, which is the one case
+        # the author most needs told.
+        causes: list[str] = []
+        remedies: list[str] = []
+        if overage:
+            pins = ", ".join(
+                f"{key} at {count}" for key, count in sorted(overage.items())
+            )
+            causes.append(f"pins {pins}")
+            remedies.append("lower the documents.overrides count(s)")
+        for parent, minimum, held in sorted(floors):
+            if held >= minimum:
+                causes.append(
+                    f"sets min {minimum} on {parent}, which the file meets with "
+                    f"{held} document(s) under that type"
+                )
+            else:
+                causes.append(
+                    f"sets min {minimum} on {parent} and the file holds only {held} "
+                    "document(s) under that type, so every records packet was kept "
+                    "and the floor is still short"
+                )
+            remedies.append(f"lower the documents.overrides min on {parent}")
         return shaped + kept, (
             f"scenario.discovery.subpoena_sets is {declared} but documents.overrides "
-            f"pins {pins} — {len(kept)} packet(s) in total. The override is the "
-            "higher-precedence control, so the file holds the pinned count rather "
-            "than the declared one. Lower the documents.overrides count(s), or raise "
+            f"{'; and '.join(causes)} — {len(kept)} records packet(s) in total. The "
+            "override is the higher-precedence control, so the file holds what it "
+            f"requires rather than the declared count. "
+            f"{_capitalized(', or '.join(remedies))}, or raise "
             f"scenario.discovery.subpoena_sets to {len(kept)}",
         )
 

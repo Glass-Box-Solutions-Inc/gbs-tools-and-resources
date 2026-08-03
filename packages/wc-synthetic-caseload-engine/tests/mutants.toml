@@ -1111,8 +1111,9 @@ id = 'm12-8'
 title = 'the trim slices through an exact documents.overrides count again'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_the_trim_drops_no_pinned_subtype_entirely'
-find = '''        pinned_entries = [entry for entry in packets if entry[1] in pinned]'''
-replace = '''        pinned_entries = []'''
+find = '''        pinned_at = [index for index, entry in enumerate(packets) if entry[1] in pinned]'''
+replace = '''        pinned_at = []'''
+note = "Re-pointed in round 5. The trim now tracks kept-ness by position rather than tuple value (see m12-21), which renamed `pinned_entries` to `pinned_at` and left this find text matching nothing. Caught by the registry meta-guard, not by memory — a PATCH-MISS is a finding: it means a guard stopped reaching the thing it guards. The claim is unchanged: emptying the pinned set restores the blind date-ordered prefix that dropped a pinned subtype to zero."
 
 
 
@@ -1183,3 +1184,51 @@ file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_type_floor_is_not_trimmed_through'
 find = '''        required = _packets_a_type_floor_requires(dated, controls)'''
 replace = '''        required = {}'''
+
+[[mutant]]
+id = 'm12-18'
+title = 'an early stage asserts both edits are needed for a control that does not bite'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_an_early_stage_does_not_claim_a_control_must_also_be_edited'
+find = '''            f"scenario.discovery.subpoena_sets is {declared} but {_STAGE_CAUSE}. "
+            f"The file also carries controls over records packets: {detail}. "
+            f"{_capitalized(edits)} if the stage change alone does not deliver "
+            f"the count, or {fallback}"'''
+replace = '''            f"scenario.discovery.subpoena_sets is {declared} but two separate things "
+            f"stand in the way and the file holds {delivered} records packet(s): "
+            f"{_STAGE_CAUSE}; and {detail}. "
+            f"{_capitalized(edits)} too — both edits are needed, or {fallback}"'''
+note = 'The exact round-4 sentence, restored. Round 4 fixed the under-naming and shipped an over-claim with it: whether a listed control bites is not knowable at a stage that proposes nothing, and `exclude: [SUBPOENAED_RECORDS_EMPLOYMENT]` at intake is the counter-example — the stage edit alone delivers 3 of 3 with the exclude still in the file. The guard both asserts the claim is absent and makes only the stage edit to show it would have been false. Paired with m12-15, which pins the naming this mutant leaves intact: the two together say name the control, do not assert it.'
+
+[[mutant]]
+id = 'm12-19'
+title = 'a type floor is reported through the pin template, in the pin unit'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_type_floor_is_stated_in_its_own_unit_not_as_a_pin'
+find = '''                floors.append(
+                    (parent, controls.type_bounds[parent][0] or 0, held_documents)
+                )'''
+replace = '''                overage[parent] = controls.type_bounds[parent][0] or 0'''
+note = "Restores round 4's `overage.update(floors_binding)` at its source. A pin counts records packets of one subtype; a floor counts every document under a parent type. Merged into one dict they print through one template, so `{type: DISCOVERY, min: 67}` beside a pin of 2 read \"pins DISCOVERY at 67\" about a file holding 52 documents under the type and 2 packets — a pin that is not a pin, a number in the wrong unit, and a floor claimed as honoured at the moment the trim had run out of packets to honour it with."
+
+[[mutant]]
+id = 'm12-20'
+title = 'an unsatisfiable-min verdict is reached before the overrides that satisfy it'
+file = 'src/wc_caseload_engine/doc_controls.py'
+test = 'tests/test_doc_controls.py::test_a_min_an_override_then_satisfies_does_not_warn_that_it_cannot_be'
+find = '''                unsatisfiable[doc_type] = minimum'''
+replace = '''                warnings.append(
+                    f"documents.overrides min={minimum} for type {doc_type} cannot be "
+                    "satisfied: the lifecycle proposed no documents of that type"
+                )'''
+note = 'Type bounds resolve at step 3, per-subtype overrides at step 1 — last, highest precedence, and the only control that can invent documents of a type the lifecycle never proposed. Deciding "cannot be satisfied" before it runs decides it against a plan that is not the plan: measured, `{type: DISCOVERY, min: 5}` at target_stage intake beside a forced count of 6 shipped a manifest carrying both the warning and six DISCOVERY documents. The verdict is now taken against the finished plan.'
+
+[[mutant]]
+id = 'm12-21'
+title = 'the floor restore identifies packets by tuple value again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestTheShaperIdentifiesPacketsByPositionNotValue::test_a_floor_restores_both_copies_of_an_identical_packet'
+find = '''                if index not in kept_at and taxonomy_parent(packets[index][1]) == parent'''
+replace = '''                if packets[index] not in [packets[i] for i in kept_at]
+                and taxonomy_parent(packets[index][1]) == parent'''
+note = 'A packet is a plain `(date, subtype, track, role)` tuple and two of them can compare equal without being the same document. Under value equality one copy in the kept set hid both, so a floor could be reported short with a spare packet unused. Unreachable from any generated seed today — the reviewer could not reach it across 45 combinations and neither could I — so the guard calls `_shape_discovery` directly with the duplicate rather than hunting for a seed that makes one. An invariant no current seed violates is still an invariant.'

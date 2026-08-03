@@ -235,6 +235,9 @@ def resolve_document_controls(
     emit_log = logger if logger is not None else log
     warnings: list[str] = []
     dropped: dict[str, str] = dict(pre_dropped or {})
+    #: ``{parent_type: minimum}`` for floors the lifecycle proposed nothing for.
+    #: Resolved against the finished plan below — see the deferral note there.
+    unsatisfiable: dict[str, int] = {}
 
     # 4. Lifecycle emission defaults.
     plan: list[PlannedDocumentCount] = _collapse_candidates(candidates, parent_type_of)
@@ -266,17 +269,17 @@ def resolve_document_controls(
         elif minimum is not None and total < minimum:
             shortfall = minimum - total
             if not members:
-                warning = (
-                    f"documents.overrides min={minimum} for type {doc_type} cannot be "
-                    "satisfied: the lifecycle proposed no documents of that type"
-                )
-                warnings.append(warning)
-                emit_log.warning(
-                    "doc_controls.min_unsatisfiable",
-                    case_id=case_id,
-                    doc_type=doc_type,
-                    minimum=minimum,
-                )
+                # Deferred on purpose. "Cannot be satisfied" is a claim about the
+                # finished file, and this step is not the finished file: the
+                # per-subtype overrides run *after* it and are the highest
+                # precedence control in the system — they may invent documents of
+                # exactly this type. Deciding here produced a manifest carrying
+                # both "min=5 for type DISCOVERY cannot be satisfied" and six
+                # DISCOVERY documents, the second of which refutes the first.
+                # Recorded now, because this is where we know the lifecycle
+                # proposed nothing; asserted at the end, against what the file
+                # actually holds.
+                unsatisfiable[doc_type] = minimum
             else:
                 plan = _apply_type_min(plan, members, shortfall)
 
@@ -309,6 +312,40 @@ def resolve_document_controls(
             )
 
     plan = [entry for entry in plan if entry.count > 0]
+
+    # The deferred verdict from step 3, decided against the finished plan. A
+    # floor the lifecycle proposed nothing for is still unsatisfiable *unless*
+    # something later put documents of that type in the file — which only the
+    # per-subtype overrides can do, and which is precisely the case the eager
+    # check got wrong. Ordered by type so the warning list stays deterministic.
+    for doc_type, minimum in sorted(unsatisfiable.items()):
+        held = sum(entry.count for entry in plan if entry.parent_type == doc_type)
+        if held >= minimum:
+            continue
+        # Partly filled is its own case: an override that supplies 3 against a
+        # floor of 5 leaves the floor unmet, but "proposed no documents of that
+        # type" on its own reads as a file holding none.
+        detail = (
+            "the lifecycle proposed no documents of that type"
+            if held == 0
+            else (
+                "the lifecycle proposed no documents of that type and the "
+                f"overrides supply only {held}"
+            )
+        )
+        warning = (
+            f"documents.overrides min={minimum} for type {doc_type} cannot be "
+            f"satisfied: {detail}"
+        )
+        warnings.append(warning)
+        emit_log.warning(
+            "doc_controls.min_unsatisfiable",
+            case_id=case_id,
+            doc_type=doc_type,
+            minimum=minimum,
+            held=held,
+        )
+
     return ControlResolution(
         planned=tuple(plan), warnings=tuple(warnings), dropped=dict(dropped)
     )

@@ -28,6 +28,9 @@ PARENTS: dict[str, str] = {
     "MRI_REPORT": "MEDICAL_CLINICAL",
     "DEPOSITION_TRANSCRIPT": "DISCOVERY",
     "NOTICE_OF_LIEN_FILING": "LIENS",
+    # Known to the taxonomy, proposed by nothing in `candidates()` — the shape a
+    # `min` on an unproposed type needs, with an override able to supply it.
+    "MEDICAL_BILL": "BILLING",
 }
 
 
@@ -298,3 +301,71 @@ def test_negative_candidate_count_is_rejected() -> None:
         resolve_document_controls(
             [DocumentCandidate("X", count=-1)], DocumentControls()
         )
+
+
+# 15 — the unsatisfiable-min verdict is about the finished file, not step 3
+def test_a_min_on_an_unproposed_type_still_warns_when_nothing_supplies_it() -> None:
+    """The claim's true case, kept as the control for the one below it.
+
+    Nothing in the miniature lifecycle carries parent type ``BILLING``, and no
+    override supplies any, so the floor genuinely cannot be met and the manifest
+    must say so.
+    """
+    result = resolve({"overrides": [{"type": "BILLING", "min": 3}]})
+    assert "BILLING" not in result.type_totals()
+    assert [warning for warning in result.warnings if "cannot be satisfied" in warning] == [
+        "documents.overrides min=3 for type BILLING cannot be satisfied: the "
+        "lifecycle proposed no documents of that type"
+    ], result.warnings
+
+
+def test_a_min_an_override_then_satisfies_does_not_warn_that_it_cannot_be() -> None:
+    """Review round 5, finding 3: two warnings, and the file refutes one.
+
+    Type bounds are resolved at step 3 and per-subtype overrides at step 1 — the
+    highest precedence control in the system, and the only one that can *invent*
+    documents of a type the lifecycle never proposed. Deciding "cannot be
+    satisfied" before it runs decides it against a plan that is not the plan.
+
+    Measured on the shipped code: ``{type: DISCOVERY, min: 5}`` at
+    ``target_stage: intake`` beside ``{subtype: SUBPOENAED_RECORDS_MEDICAL,
+    count: 6}`` produced a manifest carrying both the warning and six DISCOVERY
+    documents. Restated here on the pure resolver, whose ``BILLING`` type no
+    candidate proposes.
+    """
+    result = resolve(
+        {
+            "overrides": [
+                {"type": "BILLING", "min": 3},
+                {"subtype": "MEDICAL_BILL", "count": 4},
+            ]
+        }
+    )
+    assert result.type_totals().get("BILLING") == 4, (
+        f"the override did not supply the type at all: {result.type_totals()}"
+    )
+    assert not [w for w in result.warnings if "cannot be satisfied" in w], (
+        "the file holds 4 documents of a type whose floor of 3 is reported "
+        f"unsatisfiable: {result.warnings}"
+    )
+
+
+def test_a_partly_supplied_min_says_how_far_short_the_file_falls() -> None:
+    """Between the two: the override supplies some, but not the floor.
+
+    "The lifecycle proposed no documents of that type" is still true and no
+    longer the whole truth — the file holds two, and a reader told only that
+    nothing was proposed will look for a file holding none.
+    """
+    result = resolve(
+        {
+            "overrides": [
+                {"type": "BILLING", "min": 3},
+                {"subtype": "MEDICAL_BILL", "count": 2},
+            ]
+        }
+    )
+    assert result.type_totals().get("BILLING") == 2
+    unsatisfiable = [w for w in result.warnings if "cannot be satisfied" in w]
+    assert len(unsatisfiable) == 1, result.warnings
+    assert "the overrides supply only 2" in unsatisfiable[0], unsatisfiable[0]

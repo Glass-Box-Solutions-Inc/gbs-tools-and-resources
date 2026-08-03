@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import date, datetime
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -29,6 +29,7 @@ import wc_caseload_engine.fact_templates as fact_templates
 from conftest import extract_text, requires_substrate
 from wc_caseload_engine.case_facts import TRAJECTORY_PHRASES
 from wc_caseload_engine.fact_templates import ANCHOR_REFERENCE_MARKER
+from wc_caseload_engine.lifecycle_bridge import CaseTimeline
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
 from wc_caseload_engine.message_audit import DIRECTIVE_VERBS, clauses, first_word
 from wc_caseload_engine.planner import (
@@ -38,6 +39,7 @@ from wc_caseload_engine.planner import (
     DELAY_CHAIN_SUBTYPE,
     DISCOVERY_PACKET_SUBTYPES,
     EVENT_DRIVEN_LAG_DAYS,
+    _shape_discovery,
     build_case_plan,
     event_driven_max_lag_days,
 )
@@ -849,6 +851,12 @@ class TestDiscoveryShapingRespectsDocumentControls:
 
         The genuine innocence claim survives at a live stage and is pinned by
         :meth:`test_a_control_that_touched_nothing_proposed_is_not_named`.
+
+        Round 5 then refuted the *assertion* round 4 shipped with the naming —
+        "both edits are needed" — without disturbing the naming itself. Naming
+        the control is right; claiming it must be edited is not knowable from
+        here. That half is pinned by
+        :meth:`test_an_early_stage_does_not_claim_a_control_must_also_be_edited`.
         """
         counts, warning = self._shaped(
             "isc148-innocent",
@@ -862,7 +870,58 @@ class TestDiscoveryShapingRespectsDocumentControls:
             "the exclude bites the instant the stage stops being the obstacle, so "
             f"the stage-only imperative does not deliver: {warning}"
         )
-        assert "both edits are needed" in warning, warning
+        assert "SUBPOENAED_RECORDS_MEDICAL" in warning, (
+            f"the control is named without the subtype it acts on: {warning}"
+        )
+
+    def test_an_early_stage_does_not_claim_a_control_must_also_be_edited(self) -> None:
+        """Round 5: naming the pending control is right, asserting it is not.
+
+        Round 4 fixed the under-naming and shipped an over-claim with it: the
+        early-stage sentence ended "both edits are needed". That is a statement
+        about a future the shaper cannot see. Whether a control listed here bites
+        depends on whether the walk would ever propose the subtype it names, and
+        at a stage that proposes nothing there is no evidence either way.
+
+        This seed is the counter-example, measured across every ``rng_seed`` draw
+        below: ``exclude: [SUBPOENAED_RECORDS_EMPLOYMENT]`` at ``intake``. The
+        walk never proposes that subtype at any stage, so advancing the stage
+        alone delivers the full count with the exclude still in the file — and
+        the second "needed" edit was never needed.
+
+        The test does both halves. It asserts the sentence makes no
+        both-edits-required claim, and then makes only the stage edit and counts,
+        so the claim's falseness is demonstrated rather than argued.
+        """
+        counts, warning = self._shaped(
+            "isc148r5-overclaim",
+            lifecycle=_PRE_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(exclude=["SUBPOENAED_RECORDS_EMPLOYMENT"]),
+        )
+        assert sum(counts.values()) == 0
+        assert warning is not None and "target_stage" in warning, warning
+        assert "documents.exclude" in warning, (
+            f"the pending control is no longer listed at all: {warning}"
+        )
+        for claim in ("both edits are needed", "two separate things"):
+            assert claim not in warning, (
+                f"the warning asserts {claim!r} about a control that does not "
+                f"bite; the stage edit alone delivers the count: {warning}"
+            )
+
+        # The demonstration: make ONLY the edit the warning prescribes first.
+        delivered, after = self._shaped(
+            "isc148r5-overclaim",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(exclude=["SUBPOENAED_RECORDS_EMPLOYMENT"]),
+        )
+        assert sum(delivered.values()) == 3, (
+            "the stage edit alone delivers the declared count with the exclude "
+            f"still in place, so 'both edits are needed' would be false: {delivered}"
+        )
+        assert after is None, f"a delivered count warned anyway: {after}"
 
     def test_a_control_that_touched_nothing_proposed_is_not_named(self) -> None:
         """The innocence claim that survives round 4, at a stage that proposes.
@@ -1356,4 +1415,149 @@ class TestDiscoveryShapingRespectsDocumentControls:
             f"the trim cut through a documents.overrides floor of 12: {counts}"
         )
         assert warning is not None, "a floor was overruled and nothing said so"
-        assert "DISCOVERY at 12" in warning, warning
+        assert "min 12 on DISCOVERY" in warning, (
+            f"the floor is not reported under the key the seed states it with: {warning}"
+        )
+        # Round 5: a floor is not a pin, and 12 is not a packet count. The
+        # round-4 wording said "DISCOVERY at 12" through the pin template — see
+        # `test_a_type_floor_is_stated_in_its_own_unit_not_as_a_pin`.
+        assert "pins" not in warning, (
+            f"a type floor is reported through the pin template: {warning}"
+        )
+        assert "12 document(s) under that type" in warning, (
+            f"the floor's number is not stated in the unit it counts: {warning}"
+        )
+
+    def test_a_type_floor_is_stated_in_its_own_unit_not_as_a_pin(self) -> None:
+        """Round 5's second finding: two controls, two units, one template.
+
+        The round-4 fix ended `overage.update(floors_binding)`, merging a type
+        floor into the dict whose sentence reads "documents.overrides pins <key>
+        at <n>". That stated two falsehoods in one clause. A floor is not a pin,
+        and its number counts *documents under the parent type* while the pin
+        template's number counts *records packets*.
+
+        This seed is the one the reviewer measured. ``min: 67`` beside a pin of 2
+        holds **52** documents under DISCOVERY and **2** packets, so the old
+        sentence read "pins DISCOVERY at 67" about a file holding neither 67 of
+        anything nor a pin — and it read as though the floor were being honoured
+        at the exact moment the trim had run out of packets to honour it with.
+
+        Both numbers are asserted against the file, so the sentence cannot drift
+        back into the wrong unit without going red.
+        """
+        plan = build_case_plan(
+            _seed(
+                "isc148r5-floorpin",
+                lifecycle=_DISCOVERY_STAGE,
+                scenario={"discovery": {"subpoena_sets": 1}},
+                documents=self._documents(
+                    overrides=[
+                        {"type": "DISCOVERY", "min": 67},
+                        {"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 2},
+                    ],
+                ),
+            )
+        )
+        taxonomy = effective_taxonomy()
+        under_type = sum(
+            1
+            for document in plan.documents
+            if taxonomy.parent_of(document.subtype) == "DISCOVERY"
+        )
+        packets = sum(
+            1
+            for document in plan.documents
+            if document.subtype in DISCOVERY_PACKET_SUBTYPES
+        )
+        assert (under_type, packets) == (52, 2), (
+            "the seed no longer produces the shape this assertion is about: "
+            f"{under_type} under DISCOVERY, {packets} packets"
+        )
+        shortfall = [
+            text for text in plan.warnings if "scenario.discovery.subpoena_sets" in text
+        ]
+        assert len(shortfall) == 1, f"a pin and an unmet floor, and: {plan.warnings}"
+        warning = shortfall[0]
+        assert "pins SUBPOENAED_RECORDS_MEDICAL at 2" in warning, (
+            f"the pin's clause lost the pin: {warning}"
+        )
+        assert "DISCOVERY at 67" not in warning, (
+            "the floor is reported through the pin template, in the pin's unit, "
+            f"about a count the file does not hold: {warning}"
+        )
+        assert "min 67 on DISCOVERY" in warning and "only 52 document(s)" in warning, (
+            f"the floor's own clause states neither its bound nor what is held: {warning}"
+        )
+        assert "still short" in warning, (
+            "the trim ran out of packets before reaching the floor, and the "
+            f"warning does not say the floor is unmet: {warning}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ISC-148 — the shaper's identity model, unit-tested without a case around it
+# ---------------------------------------------------------------------------
+
+
+class TestTheShaperIdentifiesPacketsByPositionNotValue:
+    """Review round 5, finding 4: two equal tuples are not one document.
+
+    A packet travels through the shaper as a ``(date, subtype, track, role)``
+    tuple, and nothing about it is unique — two documents of one subtype dated
+    alike produce two tuples that compare equal. The floor restore asked ``entry
+    not in kept``, which is value equality, so one copy already kept made *both*
+    copies invisible and the second could never be restored.
+
+    The reviewer could not reach this from a generated seed and neither could I,
+    which is exactly why it is pinned here instead: ``_shape_discovery`` reads
+    only ``subpoena_sets`` off the seed and ``horizon`` off the timeline, so the
+    duplicate can be handed to it directly rather than hunted for. An invariant
+    that no current seed happens to violate is still an invariant — the next
+    lifecycle path that dates two packets alike would meet it silently.
+    """
+
+    @staticmethod
+    def _timeline() -> CaseTimeline:
+        return CaseTimeline(
+            injury_date=date(2024, 1, 1),
+            claim_filed_date=date(2024, 1, 8),
+            application_filed_date=date(2024, 3, 1),
+            resolution_date=None,
+            award_date=None,
+        )
+
+    def test_a_floor_restores_both_copies_of_an_identical_packet(self) -> None:
+        seed = _seed(
+            "isc148r5-twin",
+            scenario={"discovery": {"subpoena_sets": 1}},
+            documents={
+                "format_mix": {"pdf": 1.0},
+                "overrides": [{"type": "DISCOVERY", "min": 3}],
+            },
+        )
+        twin = (date(2025, 3, 1), "SUBPOENAED_RECORDS_MEDICAL", "core", "applicant")
+        dated = [
+            twin,
+            twin,
+            (date(2025, 4, 1), "SUBPOENAED_RECORDS_EMPLOYMENT", "core", "applicant"),
+        ]
+        assert dated[0] == dated[1] and dated[0] is dated[1], (
+            "the premise is two entries that compare equal; without it this test "
+            "proves nothing"
+        )
+
+        kept, warnings = _shape_discovery(
+            seed, self._timeline(), list(dated), seed.documents, proposed=frozenset()
+        )
+
+        packets = [entry for entry in kept if entry[1] in DISCOVERY_PACKET_SUBTYPES]
+        assert len(packets) == 3, (
+            "the floor of 3 needs all three packets and one of them is a duplicate "
+            f"of a packet already kept; value equality hides it: {packets}"
+        )
+        assert len(warnings) == 1, warnings
+        assert "meets with 3 document(s)" in warnings[0], (
+            "the floor is reachable and reached, so the warning must not report "
+            f"it short: {warnings[0]}"
+        )
