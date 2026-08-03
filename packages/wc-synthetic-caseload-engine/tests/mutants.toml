@@ -1272,3 +1272,40 @@ test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls
 find = '''            remedies.append(f"remove the documents.overrides min on {parent}")'''
 replace = '''            remedies.append(f"lower the documents.overrides min on {parent}")'''
 note = "The reported `held` is not independent of the floor — `_apply_type_min` grows the type to reach it — so lowering the min to the number the sentence just printed lowers the number: measured 67 -> 52 -> 41 -> 32 -> 26 -> 21 -> 17, short at every step, never converging. A non-delivering imperative written into the very fix meant to remove that class. The guard also follows the always-delivering edit the sentence now leads with and asserts the warning is gone."
+
+[[mutant]]
+id = 'm12-25'
+title = 'an override that added documents is blamed for cutting the type back'
+file = 'src/wc_caseload_engine/doc_controls.py'
+test = 'tests/test_doc_controls.py::test_an_override_that_added_documents_is_not_blamed_for_the_shortfall'
+find = '''                and count < before_overrides.get(subtype, 0)'''
+replace = ''
+note = "Attribution by seed membership rather than by effect. Naming every override whose subtype sits under the short type blamed `SUBPOENAED_RECORDS_OTHER x4` — which INVENTED four documents of that very type, taking it from 52 to 56 — for cutting it back, in the same manifest that says it forced them into existence. The implied edit moves the file away from the floor. Only overrides whose count fell below what the plan held before they ran are named."
+
+[[mutant]]
+id = 'm12-26'
+title = 'the floor verdict is taken against the resolver plan, not the finished file'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestTypeFloorsAreVerifiedAgainstTheFinishedFile::test_a_type_the_scenario_empties_reports_the_count_the_file_holds'
+find = '''    floor_warnings = verify_type_floors(
+        control.floor_checks, held_by_type, control.type_totals()
+    )'''
+replace = '''    floor_warnings = verify_type_floors(
+        control.floor_checks, control.type_totals(), control.type_totals()
+    )'''
+note = "The third consecutive round in which this verdict was computed one phase short of the object its own words describe — step 3 is not the finished plan, one arm is not both arms, and the resolver's plan is not the file. `_shape_for_scenario` runs after the resolver and drops documents wholesale, so `never_treated` shipped a warning reading \"the file holds 23\" in a manifest whose file held 0. Feeding the resolver's own totals back in restores exactly that lie."
+
+[[mutant]]
+id = 'm12-27'
+title = 'a floor lost to the scenario names only the override, whose edit cannot deliver'
+file = 'src/wc_caseload_engine/doc_controls.py'
+test = 'tests/test_doc_controls.py::test_an_override_cut_and_a_later_removal_are_both_named'
+find = '''        if reducing and scenario_note:
+            detail = (
+                "documents.overrides "
+                + ", ".join(reducing)
+                + f" cut it back and {scenario_note}"
+            )
+        elif reducing:'''
+replace = '''        if reducing:'''
+note = "Under `never_treated` a MEDICAL_CLINICAL floor reaches zero however high the overrides go — measured at counts 1, 10, 30 and 60, all zero. Naming only the override that reduced the type is then a cause whose edit cannot deliver, which is the ISC-150 class. Both the override and what removed the rest have to be named."

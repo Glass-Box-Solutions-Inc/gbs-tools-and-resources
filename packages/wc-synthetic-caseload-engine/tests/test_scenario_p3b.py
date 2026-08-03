@@ -1688,3 +1688,77 @@ class TestTheShaperIdentifiesPacketsByPositionNotValue:
             "the floor is reachable and reached, so the warning must not report "
             f"it short: {warnings[0]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# ISC-148 — a floor verdict is about the file, so it is taken where the file is
+# ---------------------------------------------------------------------------
+
+
+class TestTypeFloorsAreVerifiedAgainstTheFinishedFile:
+    """Review round 7, finding 2, at the level the defect actually lives.
+
+    Three consecutive rounds moved this verdict later in the pipeline and each
+    stopped one phase short of the manifest: step 3 is not the finished plan
+    (round 5), one arm is not both arms (round 6), and the resolver's plan is
+    not the file (round 7). `_shape_for_scenario` runs after
+    `resolve_document_controls` and drops documents wholesale, so a sentence
+    written inside the resolver described a file that no longer existed by the
+    time it was published.
+
+    The resolver now hands out `floor_checks` and the planner answers them
+    against the documents it is about to emit. This class pins that seam from
+    the planner's side, because a unit test of the resolver cannot see the
+    phase that removes the documents.
+    """
+
+    @staticmethod
+    def _plan(case_id: str, **overrides: Any) -> Any:
+        return build_case_plan(_seed(case_id, **overrides))
+
+    @staticmethod
+    def _held(plan: Any, parent: str) -> int:
+        taxonomy = effective_taxonomy()
+        return sum(
+            1
+            for document in plan.documents
+            if taxonomy.parent_of(document.subtype) == parent
+        )
+
+    def test_a_type_the_scenario_empties_reports_the_count_the_file_holds(self) -> None:
+        """The measured lie: "the file holds 23" in a manifest holding 0."""
+        plan = self._plan(
+            "isc148r7-scenario",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"treatment": {"status": "never_treated"}, "surgery": "none"},
+            documents={
+                "format_mix": {"pdf": 1.0},
+                "overrides": [
+                    {"type": "MEDICAL_CLINICAL", "min": 30},
+                    {"subtype": "TREATING_PHYSICIAN_REPORT_PR2", "count": 1},
+                ],
+            },
+        )
+        held = self._held(plan, "MEDICAL_CLINICAL")
+        assert held == 0, (
+            f"the scenario no longer empties the type, so nothing is proven: {held}"
+        )
+        unmet = [w for w in plan.warnings if "min=30" in w]
+        assert len(unmet) == 1, f"a floor of 30 reached 0 unreported: {plan.warnings}"
+        assert "the file holds 0" in unmet[0], (
+            "the warning states a count taken before the scenario ran, which the "
+            f"manifest it ships in refutes: {unmet[0]}"
+        )
+
+    def test_a_floor_the_file_still_meets_says_nothing(self) -> None:
+        """The opposite draw, so the check above cannot pass by warning always."""
+        plan = self._plan(
+            "isc148r7-met",
+            lifecycle=_DISCOVERY_STAGE,
+            documents={
+                "format_mix": {"pdf": 1.0},
+                "overrides": [{"type": "MEDICAL_CLINICAL", "min": 3}],
+            },
+        )
+        assert self._held(plan, "MEDICAL_CLINICAL") >= 3
+        assert not [w for w in plan.warnings if "is not met" in w], plan.warnings

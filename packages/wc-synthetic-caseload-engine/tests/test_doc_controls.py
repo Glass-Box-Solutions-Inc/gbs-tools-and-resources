@@ -16,6 +16,7 @@ from wc_caseload_engine.doc_controls import (
     TRACK_SUPPORTING,
     DocumentCandidate,
     resolve_document_controls,
+    verify_type_floors,
 )
 from wc_caseload_engine.seeds import DocumentControls
 
@@ -58,6 +59,19 @@ def resolve(controls: dict[str, Any], **kwargs: Any) -> Any:
         **kwargs,
     )
 
+
+
+def floor_warnings(result: Any, held: dict[str, int] | None = None) -> list[str]:
+    """The floor verdict, taken the way the planner takes it.
+
+    The resolver deliberately does not decide this — its plan is not the finished
+    file, and the scenario shaping between the two can drop a whole type. It
+    hands out `floor_checks`; the caller answers them against what it actually
+    holds. Passing `held=None` models the case where nothing is removed after
+    the controls run.
+    """
+    planned = result.type_totals()
+    return verify_type_floors(result.floor_checks, held or planned, planned)
 
 BASELINE_TOTAL = 17
 
@@ -121,7 +135,7 @@ def test_type_min_grows_the_type_most_essential_first() -> None:
 def test_type_min_without_candidates_warns_instead_of_inventing() -> None:
     result = resolve({"overrides": [{"type": "INVESTIGATION", "min": 3}]})
     assert result.total == BASELINE_TOTAL
-    assert any("INVESTIGATION" in warning for warning in result.warnings)
+    assert any("INVESTIGATION" in warning for warning in floor_warnings(result))
 
 
 # 6 — global cap (ISC-26)
@@ -313,7 +327,7 @@ def test_a_min_on_an_unproposed_type_still_warns_when_nothing_supplies_it() -> N
     """
     result = resolve({"overrides": [{"type": "BILLING", "min": 3}]})
     assert "BILLING" not in result.type_totals()
-    assert [warning for warning in result.warnings if "min=3" in warning] == [
+    assert [warning for warning in floor_warnings(result) if "min=3" in warning] == [
         "documents.overrides min=3 for type BILLING is not met: the file holds "
         "0 — the lifecycle proposed no documents of that type"
     ], result.warnings
@@ -344,9 +358,18 @@ def test_a_min_an_override_then_satisfies_does_not_warn_that_it_cannot_be() -> N
     assert result.type_totals().get("BILLING") == 4, (
         f"the override did not supply the type at all: {result.type_totals()}"
     )
-    assert not [w for w in result.warnings if "is not met" in w], (
+    assert not floor_warnings(result), (
         "the file holds 4 documents of a type whose floor of 3 is reported "
-        f"unsatisfiable: {result.warnings}"
+        f"unmet: {floor_warnings(result)}"
+    )
+    # Round 7 moved the verdict out of the resolver entirely: its plan is not
+    # the finished file, so it must hand out the question and answer nothing.
+    # Asserting only on `floor_warnings` left this guard blind to a resolver
+    # that decides eagerly and writes straight into `warnings` — which is what
+    # m12-20 restores, and it SURVIVED until this assertion was added.
+    assert not [w for w in result.warnings if "min=3" in w], (
+        "the resolver decided a floor verdict itself, against a plan that is "
+        f"not the file: {result.warnings}"
     )
 
 
@@ -366,8 +389,8 @@ def test_a_partly_supplied_min_says_how_far_short_the_file_falls() -> None:
         }
     )
     assert result.type_totals().get("BILLING") == 2
-    unmet = [w for w in result.warnings if "is not met" in w]
-    assert len(unmet) == 1, result.warnings
+    unmet = floor_warnings(result)
+    assert len(unmet) == 1, unmet
     assert "the file holds 2" in unmet[0], unmet[0]
     assert "the overrides supply only 2" in unmet[0], unmet[0]
 
@@ -400,10 +423,10 @@ def test_a_floor_an_override_cuts_back_below_is_reported() -> None:
     assert held < 10, (
         f"the seed no longer leaves the floor short, so it proves nothing: {held}"
     )
-    unmet = [w for w in result.warnings if "min=10" in w]
+    unmet = [w for w in floor_warnings(result) if "min=10" in w]
     assert len(unmet) == 1, (
         f"a floor of 10 holding {held} was overruled and nothing said so: "
-        f"{result.warnings}"
+        f"{floor_warnings(result)}"
     )
     assert f"the file holds {held}" in unmet[0], unmet[0]
     assert "PTP_PR2_PROGRESS_REPORT" in unmet[0], (
@@ -416,4 +439,111 @@ def test_a_floor_the_lifecycle_already_meets_says_nothing() -> None:
     """The opposite draw, so the check above cannot pass by warning always."""
     result = resolve({"overrides": [{"type": "MEDICAL_CLINICAL", "min": 4}]})
     assert result.type_totals()["MEDICAL_CLINICAL"] >= 4
-    assert not [w for w in result.warnings if "is not met" in w], result.warnings
+    assert not floor_warnings(result), floor_warnings(result)
+
+
+def test_an_override_that_added_documents_is_not_blamed_for_the_shortfall() -> None:
+    """Review round 7, finding 1: attribution by seed membership, not by effect.
+
+    `cut_by` selected every override whose subtype sits under the short type.
+    That named `SUBPOENAED_RECORDS_OTHER x4` — an override that INVENTED four
+    documents of the very type whose floor was short — as having cut it back, in
+    the same manifest that says it forced them into existence. Measured on the
+    shipped code: the type went from 52 to 56 when that override was added, and
+    following the implied edit moves the file further from the floor, not
+    closer. Only overrides that actually lowered a count are named now.
+    """
+    # The floor grows MEDICAL_CLINICAL to 30 by inflating its members — PTP to
+    # 17 and MRI to 13 — so an override BELOW the grown figure is a cut and one
+    # ABOVE it is an addition. Both are in the seed, and only the cut may be
+    # named.
+    grown = resolve({"overrides": [{"type": "MEDICAL_CLINICAL", "min": 30}]})
+    assert (grown.count_for("PTP_PR2_PROGRESS_REPORT"), grown.count_for("MRI_REPORT")) == (
+        17,
+        13,
+    ), f"the growth figures this test is built on moved: {grown.counts()}"
+
+    with_adder = resolve(
+        {
+            "overrides": [
+                {"type": "MEDICAL_CLINICAL", "min": 30},
+                {"subtype": "PTP_PR2_PROGRESS_REPORT", "count": 2},
+                {"subtype": "MRI_REPORT", "count": 25},
+            ]
+        }
+    )
+    assert with_adder.count_for("MRI_REPORT") == 25 > 13, (
+        "MRI_REPORT must be the override that ADDED documents of the short type"
+    )
+    assert with_adder.count_for("PTP_PR2_PROGRESS_REPORT") == 2 < 17, (
+        "PTP_PR2_PROGRESS_REPORT must be the override that CUT the short type"
+    )
+
+    unmet = [w for w in floor_warnings(with_adder) if "min=30" in w]
+    assert len(unmet) == 1, floor_warnings(with_adder)
+    assert "PTP_PR2_PROGRESS_REPORT" in unmet[0], (
+        f"the override that cut the type back is not named: {unmet[0]}"
+    )
+    assert "MRI_REPORT" not in unmet[0], (
+        "an override that raised the count of the short type is blamed for "
+        f"cutting it back: {unmet[0]}"
+    )
+
+
+def test_a_floor_the_caller_loses_after_the_controls_run_names_the_scenario() -> None:
+    """Round 7, finding 2: the resolver's plan is not the finished file.
+
+    `resolve_document_controls` returns a plan; scenario shaping runs afterwards
+    and can drop a whole type. A verdict taken inside the resolver therefore
+    described a file that no longer existed — measured, a warning reading "the
+    file holds 23" shipped in a manifest whose file held 0.
+
+    The resolver now hands out the question and the caller answers it against
+    what it holds. Here the caller reports holding nothing, which is the shape
+    `never_treated` produces, and both the count and the cause must follow.
+    """
+    result = resolve({"overrides": [{"type": "MEDICAL_CLINICAL", "min": 10}]})
+    assert result.type_totals()["MEDICAL_CLINICAL"] >= 10, (
+        "the resolver must MEET this floor, so any warning can only come from "
+        "what the caller lost afterwards"
+    )
+    assert not floor_warnings(result), (
+        f"the resolver's own plan meets the floor: {floor_warnings(result)}"
+    )
+
+    lost_it_all = floor_warnings(result, held={"MEDICAL_CLINICAL": 0})
+    assert len(lost_it_all) == 1, lost_it_all
+    assert "the file holds 0" in lost_it_all[0], (
+        f"the count is not the caller's: {lost_it_all[0]}"
+    )
+    assert "the scenario removed them" in lost_it_all[0], (
+        "no override lowered a count, so blaming documents.overrides would send "
+        f"the author to a line that is not responsible: {lost_it_all[0]}"
+    )
+
+
+def test_an_override_cut_and_a_later_removal_are_both_named() -> None:
+    """Both causes, because prescribing only the first does not deliver.
+
+    Under `never_treated` a MEDICAL_CLINICAL floor reaches zero however high the
+    overrides go — measured at counts 1, 10, 30 and 60, all zero. Naming only
+    the override that reduced the type prescribes an edit that cannot deliver,
+    which is the ISC-150 class this ticket exists to remove.
+    """
+    result = resolve(
+        {
+            "overrides": [
+                {"type": "MEDICAL_CLINICAL", "min": 30},
+                {"subtype": "PTP_PR2_PROGRESS_REPORT", "count": 1},
+            ]
+        }
+    )
+    planned = result.type_totals()["MEDICAL_CLINICAL"]
+    assert planned > 0
+    unmet = floor_warnings(result, held={"MEDICAL_CLINICAL": 0})
+    assert len(unmet) == 1, unmet
+    assert "PTP_PR2_PROGRESS_REPORT" in unmet[0], unmet[0]
+    assert f"the scenario then removed {planned} more" in unmet[0], (
+        "the override alone cannot deliver this floor and the warning does not "
+        f"say what else took the documents: {unmet[0]}"
+    )

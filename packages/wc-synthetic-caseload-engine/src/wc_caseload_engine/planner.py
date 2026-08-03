@@ -41,6 +41,7 @@ from wc_caseload_engine.doc_controls import (
     TRACK_CORE,
     ControlResolution,
     resolve_document_controls,
+    verify_type_floors,
 )
 from wc_caseload_engine.doctrine import content_flags_for, unsupported_hook_warnings
 from wc_caseload_engine.lien_machine import LienTrack, build_lien_tracks, lien_candidates
@@ -2084,8 +2085,22 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         candidate.subtype for candidate in recon.documents if candidate.subtype in emitted_subtypes
     )
 
+    # The floor verdict, taken here because here is the first place the finished
+    # file exists. `resolve_document_controls` hands out the question rather than
+    # an answer: the scenario shaping between it and this line can drop a whole
+    # type, so a floor decided there described a file that no longer existed by
+    # the time the manifest was written. Counted off `dated`, which is exactly
+    # what becomes `plan.documents`.
+    held_by_type = Counter(
+        parent for entry in dated if (parent := taxonomy.parent_of(entry[1])) is not None
+    )
+    floor_warnings = verify_type_floors(
+        control.floor_checks, held_by_type, control.type_totals()
+    )
+
     warnings = (
         *control.warnings,
+        *floor_warnings,
         *recon.warnings,
         *cast.warnings,
         *scenario_warnings,

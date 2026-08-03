@@ -97,6 +97,12 @@ class ControlResolution:
     planned: tuple[PlannedDocumentCount, ...]
     warnings: tuple[str, ...] = ()
     dropped: Mapping[str, str] = field(default_factory=dict)
+    #: ``(parent_type, minimum, lifecycle_proposed, reducing_overrides)`` for
+    #: every ``min`` floor that was short when step 3 reached it. NOT a list of
+    #: violations — the resolver's plan is not the finished file, so whether each
+    #: floor ends up met is a question only the caller can answer, against the
+    #: documents it finally holds. :func:`verify_type_floors` is that answer.
+    floor_checks: tuple[tuple[str, int, bool, tuple[str, ...]], ...] = ()
 
     @property
     def total(self) -> int:
@@ -235,10 +241,10 @@ def resolve_document_controls(
     emit_log = logger if logger is not None else log
     warnings: list[str] = []
     dropped: dict[str, str] = dict(pre_dropped or {})
-    #: ``{parent_type: minimum}`` for every ``min`` floor that did not already
-    #: hold when step 3 reached it. Resolved against the finished plan below —
-    #: see the deferral note there.
-    floors_to_verify: dict[str, int] = {}
+    #: ``{parent_type: (minimum, lifecycle_proposed_any)}`` for every ``min``
+    #: floor that did not already hold when step 3 reached it. Handed to the
+    #: caller as `floor_checks` — see the note where they are built.
+    floors_to_verify: dict[str, tuple[int, bool]] = {}
 
     # 4. Lifecycle emission defaults.
     plan: list[PlannedDocumentCount] = _collapse_candidates(candidates, parent_type_of)
@@ -287,6 +293,11 @@ def resolve_document_controls(
             if members:
                 plan = _apply_type_min(plan, members, shortfall)
 
+    # Counts as they stand BEFORE the per-subtype overrides run, so the floor
+    # report can say which overrides actually reduced a type rather than which
+    # ones merely mention it. See `reducing_overrides` below.
+    before_overrides = {entry.subtype: entry.count for entry in plan}
+
     # 1. Per-subtype overrides — highest precedence, may resurrect or invent.
     plan = _apply_subtype_overrides(
         plan,
@@ -317,58 +328,45 @@ def resolve_document_controls(
 
     plan = [entry for entry in plan if entry.count > 0]
 
-    # The deferred verdict from step 3, decided against the finished plan.
-    # Ordered by type so the warning list stays deterministic.
-    for doc_type, (minimum, lifecycle_proposed) in sorted(floors_to_verify.items()):
-        held = sum(entry.count for entry in plan if entry.parent_type == doc_type)
-        if held >= minimum:
-            continue
-        planned_parents = {entry.subtype: entry.parent_type for entry in plan}
-        cut_by = sorted(
-            subtype
-            for subtype in controls.subtype_overrides
-            if (
-                planned_parents.get(subtype)
-                or (parent_type_of(subtype) if parent_type_of else None)
-            )
-            == doc_type
+    # A floor verdict is NOT emitted here, because here is still not the
+    # finished file. `_shape_for_scenario` runs after this function and drops
+    # documents wholesale — `never_treated` can take a MEDICAL_CLINICAL type to
+    # zero — so a sentence written here saying "the file holds 23" shipped in a
+    # manifest whose file held 0. That is the third consecutive round in which
+    # this verdict was computed one phase short of the object its own words
+    # describe: step 3 is not the finished plan, one arm is not both arms, and
+    # the resolver's plan is not the file.
+    #
+    # So the resolver stops guessing and hands out the question instead. The
+    # planner answers it against `plan.documents`, which is the thing the
+    # sentence is about.
+    #
+    # Attribution is measured, not inferred. Naming every override whose subtype
+    # sits under the type blamed `SUBPOENAED_RECORDS_OTHER x4` — an override that
+    # ADDED four documents of the short type — for cutting it back, in the same
+    # manifest that says it forced them into existence, and the edit that implies
+    # moves the file further from the floor (56 -> 52, measured). Only overrides
+    # that lowered a subtype's count are named.
+    floor_checks = tuple(
+        (
+            doc_type,
+            minimum,
+            lifecycle_proposed,
+            tuple(
+                subtype
+                for subtype, count in sorted(controls.subtype_overrides.items())
+                if _override_parent(subtype, plan, parent_type_of) == doc_type
+                and count < before_overrides.get(subtype, 0)
+            ),
         )
-        if lifecycle_proposed:
-            # The type WAS grown toward its floor and something took the
-            # documents back. Only the per-subtype overrides run after step 3,
-            # so they are the only thing that can have done it, and naming them
-            # is what makes the message actionable rather than a lament.
-            detail = (
-                "documents.overrides " + ", ".join(cut_by) + " cut it back"
-                if cut_by
-                else "a higher-precedence control cut it back"
-            )
-        elif held == 0:
-            detail = "the lifecycle proposed no documents of that type"
-        else:
-            # Partly filled is its own case: an override that supplies 3 against
-            # a floor of 5 leaves the floor unmet, but "proposed no documents of
-            # that type" on its own reads as a file holding none.
-            detail = (
-                "the lifecycle proposed no documents of that type and the "
-                f"overrides supply only {held}"
-            )
-        warning = (
-            f"documents.overrides min={minimum} for type {doc_type} is not met: "
-            f"the file holds {held} — {detail}"
-        )
-        warnings.append(warning)
-        emit_log.warning(
-            "doc_controls.min_unmet",
-            case_id=case_id,
-            doc_type=doc_type,
-            minimum=minimum,
-            held=held,
-            lifecycle_proposed=lifecycle_proposed,
-        )
+        for doc_type, (minimum, lifecycle_proposed) in sorted(floors_to_verify.items())
+    )
 
     return ControlResolution(
-        planned=tuple(plan), warnings=tuple(warnings), dropped=dict(dropped)
+        planned=tuple(plan),
+        warnings=tuple(warnings),
+        dropped=dict(dropped),
+        floor_checks=floor_checks,
     )
 
 
@@ -568,3 +566,85 @@ __all__ = [
     "PlannedDocumentCount",
     "resolve_document_controls",
 ]
+
+
+def _override_parent(
+    subtype: str,
+    plan: Sequence[PlannedDocumentCount],
+    parent_type_of: Callable[[str], str | None] | None,
+) -> str | None:
+    """Parent type of an overridden *subtype*, from the plan or the taxonomy."""
+    for entry in plan:
+        if entry.subtype == subtype:
+            return entry.parent_type
+    return parent_type_of(subtype) if parent_type_of else None
+
+
+def verify_type_floors(
+    floor_checks: Iterable[tuple[str, int, bool, tuple[str, ...]]],
+    held_by_type: Mapping[str, int],
+    planned_by_type: Mapping[str, int] | None = None,
+) -> list[str]:
+    """Warnings for every ``documents.overrides`` ``min`` the finished file misses.
+
+    Separated from :func:`resolve_document_controls` on purpose. The resolver
+    knows which floors were short when it saw them and which overrides reduced
+    them; it does NOT know what the file ends up holding, because the scenario
+    shaping that runs afterwards can drop a whole type. Deciding there produced a
+    warning reading "the file holds 23" in a manifest whose file held 0.
+
+    *held_by_type* must therefore be counted from the documents the caller is
+    actually going to emit — not from any intermediate plan. *planned_by_type* is
+    what the resolver left; the gap between the two is what the scenario removed,
+    and naming it is the difference between a cause an author can act on and one
+    they cannot.
+
+    That distinction is load-bearing rather than decorative. Under
+    ``never_treated`` a MEDICAL_CLINICAL floor of 30 reaches zero however high the
+    overrides go — measured at counts 1, 10, 30 and 60, all zero — so naming only
+    the override that reduced the type prescribes an edit that cannot deliver,
+    which is the ISC-150 class this ticket exists to remove.
+    """
+    out: list[str] = []
+    for doc_type, minimum, lifecycle_proposed, reducing in floor_checks:
+        held = held_by_type.get(doc_type, 0)
+        if held >= minimum:
+            continue
+        planned = (planned_by_type or {}).get(doc_type)
+        removed_after = None if planned is None else planned - held
+        scenario_note = (
+            f"the scenario then removed {removed_after} more"
+            if removed_after
+            else None
+        )
+        if reducing and scenario_note:
+            detail = (
+                "documents.overrides "
+                + ", ".join(reducing)
+                + f" cut it back and {scenario_note}"
+            )
+        elif reducing:
+            detail = "documents.overrides " + ", ".join(reducing) + " cut it back"
+        elif scenario_note or lifecycle_proposed:
+            # No override lowered a count, so the scenario shaping did it, and
+            # pointing at documents.overrides would send the author to a line
+            # that is not responsible for anything.
+            detail = (
+                "the lifecycle proposed documents of that type and the scenario "
+                "removed them"
+            )
+        elif held == 0:
+            detail = "the lifecycle proposed no documents of that type"
+        else:
+            # Partly filled is its own case: an override that supplies 3 against
+            # a floor of 5 leaves the floor unmet, but "proposed no documents of
+            # that type" on its own reads as a file holding none.
+            detail = (
+                "the lifecycle proposed no documents of that type and the "
+                f"overrides supply only {held}"
+            )
+        out.append(
+            f"documents.overrides min={minimum} for type {doc_type} is not met: "
+            f"the file holds {held} — {detail}"
+        )
+    return out
