@@ -271,25 +271,30 @@ def resolve_document_controls(
     for doc_type, (minimum, maximum) in controls.type_bounds.items():
         members = [entry for entry in plan if entry.parent_type == doc_type]
         total = sum(entry.count for entry in members)
+        # EVERY declared floor is enrolled for verification, whether or not it
+        # happens to be short right now. Enrolment is a fact about the SEED — the
+        # author wrote this floor — and it must not be filtered by an
+        # intermediate count.
+        #
+        # Three rounds moved the *evaluation* toward the finished file and this
+        # line kept the *enrolment* at step 3, which is the same defect wearing
+        # the other half of the mechanism. Because a floor already satisfied here
+        # was never enrolled, it was never handed to the planner and never
+        # compared against the file: measured under `never_treated`, where the
+        # type ends at 0, floors of 1 through 9 were SILENT and 10 through 12
+        # warned — the boundary being exactly this step's total. The weakest
+        # possible assertion, "this file must contain at least one clinical
+        # record", was the one least likely to be enforced.
+        #
+        # `verify_type_floors` warns only when the file is actually short, so
+        # enrolling every floor costs nothing and is the only way its docstring
+        # claim — every `min` the finished file misses — can be true.
+        if minimum is not None and minimum > 0:
+            floors_to_verify[doc_type] = (minimum, bool(members))
         if maximum is not None and total > maximum:
             plan = _apply_type_max(plan, doc_type, members, total - maximum)
         elif minimum is not None and total < minimum:
             shortfall = minimum - total
-            # EVERY floor is checked against the finished plan, whichever arm it
-            # takes here. "Is this floor met" is a claim about the finished file,
-            # and this step is not the finished file: the per-subtype overrides
-            # run *after* it, are the highest precedence control in the system,
-            # and move the count in BOTH directions.
-            #
-            # An earlier pass recorded only the `not members` arm, on the theory
-            # that the danger was an override inventing documents of a type the
-            # lifecycle never proposed. It is also the reverse. `_apply_type_min`
-            # grows the type to the floor below, and an override then cuts it
-            # back: `{type: DISCOVERY, min: 67}` beside a pin of 2 leaves 52
-            # documents under DISCOVERY — short by 15, with NO warning at all,
-            # because the grown arm recorded nothing to check. Half of one
-            # principle applied to one arm of a two-arm branch.
-            floors_to_verify[doc_type] = (minimum, bool(members))
             if members:
                 plan = _apply_type_min(plan, members, shortfall)
 

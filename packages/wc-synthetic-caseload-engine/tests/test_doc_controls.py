@@ -367,7 +367,13 @@ def test_a_min_an_override_then_satisfies_does_not_warn_that_it_cannot_be() -> N
     # Asserting only on `floor_warnings` left this guard blind to a resolver
     # that decides eagerly and writes straight into `warnings` — which is what
     # m12-20 restores, and it SURVIVED until this assertion was added.
-    assert not [w for w in result.warnings if "min=3" in w], (
+    #
+    # Matched on "is not met" — the SHAPE of a floor verdict — rather than on
+    # this seed's floor value. Round 8 pointed out that the first version keyed
+    # on "min=3", so an eager verdict phrased differently, or emitted for another
+    # floor, would have slipped past a guard whose comment claims to assert the
+    # architecture.
+    assert not [w for w in result.warnings if "is not met" in w], (
         "the resolver decided a floor verdict itself, against a plan that is "
         f"not the file: {result.warnings}"
     )
@@ -546,4 +552,39 @@ def test_an_override_cut_and_a_later_removal_are_both_named() -> None:
     assert f"the scenario then removed {planned} more" in unmet[0], (
         "the override alone cannot deliver this floor and the warning does not "
         f"say what else took the documents: {unmet[0]}"
+    )
+
+
+def test_every_declared_floor_is_enrolled_even_when_it_already_holds() -> None:
+    """Round 8: the evaluation moved to the file and enrolment stayed at step 3.
+
+    A floor was written into `floors_to_verify` only if it was SHORT when step 3
+    saw it, and `floor_checks` is built from that dict — so a floor the lifecycle
+    already satisfied was never handed to the caller and never compared against
+    anything, however much the file lost afterwards.
+
+    Measured under `never_treated`, where MEDICAL_CLINICAL ends at 0: floors of 1
+    through 9 were silent and 10 through 12 warned, the boundary being exactly
+    the step-3 total. The weakest possible assertion — "this file must hold at
+    least one clinical record" — was the one least likely to be enforced.
+
+    Enrolment is a fact about the seed, so it cannot be filtered by an
+    intermediate count. This asserts the floor is enrolled even though the
+    resolver's own plan satisfies it, which is precisely the case that was lost.
+    """
+    result = resolve({"overrides": [{"type": "MEDICAL_CLINICAL", "min": 3}]})
+    assert result.type_totals()["MEDICAL_CLINICAL"] >= 3, (
+        "this floor must be MET at the resolver, or the test is about the "
+        "already-covered short case instead"
+    )
+    enrolled = [check for check in result.floor_checks if check[0] == "MEDICAL_CLINICAL"]
+    assert len(enrolled) == 1, (
+        f"a floor the resolver satisfies is never handed out: {result.floor_checks}"
+    )
+    assert enrolled[0][1] == 3
+
+    # And it must produce a verdict once the caller reports losing the documents.
+    assert not floor_warnings(result), floor_warnings(result)
+    assert len(floor_warnings(result, held={"MEDICAL_CLINICAL": 0})) == 1, (
+        "enrolled but silent when the file drops to zero"
     )

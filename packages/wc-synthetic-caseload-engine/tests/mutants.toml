@@ -1222,16 +1222,17 @@ id = 'm12-20'
 title = 'an unsatisfiable-min verdict is reached before the overrides that satisfy it'
 file = 'src/wc_caseload_engine/doc_controls.py'
 test = 'tests/test_doc_controls.py::test_a_min_an_override_then_satisfies_does_not_warn_that_it_cannot_be'
-find = '''            floors_to_verify[doc_type] = (minimum, bool(members))
-            if members:'''
-replace = '''            if not members:
+find = '''        if minimum is not None and minimum > 0:
+            floors_to_verify[doc_type] = (minimum, bool(members))'''
+replace = '''        if minimum is not None and minimum > 0:
+            floors_to_verify[doc_type] = (minimum, bool(members))
+            if not members:
                 warnings.append(
                     f"documents.overrides min={minimum} for type {doc_type} is not "
                     "met: the file holds 0 — the lifecycle proposed no documents "
                     "of that type"
-                )
-            if members:'''
-note = 'Type bounds resolve at step 3, per-subtype overrides at step 1 — last, highest precedence, and the only control that can invent documents of a type the lifecycle never proposed. Deciding "cannot be satisfied" before it runs decides it against a plan that is not the plan: measured, `{type: DISCOVERY, min: 5}` at target_stage intake beside a forced count of 6 shipped a manifest carrying both the warning and six DISCOVERY documents. The verdict is now taken against the finished plan. Re-pointed in round 6, when finding 3 replaced the one-arm `unsatisfiable` dict with `floors_to_verify` covering both arms; the claim is unchanged — decide the verdict eagerly and it is decided against a plan that is not the plan.'
+                )'''
+note = 'Type bounds resolve at step 3, per-subtype overrides at step 1 — last, highest precedence, and the only control that can invent documents of a type the lifecycle never proposed. Deciding "cannot be satisfied" before it runs decides it against a plan that is not the plan: measured, `{type: DISCOVERY, min: 5}` at target_stage intake beside a forced count of 6 shipped a manifest carrying both the warning and six DISCOVERY documents. The verdict is now taken against the finished plan. Re-pointed in round 6, when finding 3 replaced the one-arm `unsatisfiable` dict with `floors_to_verify` covering both arms; the claim is unchanged — decide the verdict eagerly and it is decided against a plan that is not the plan. Re-pointed again in round 8, when enrolment moved off the shortfall test. Its guard now matches on "is not met" — the shape of a floor verdict — rather than on the floor value of one seed, after round 8 observed that the narrower match let a reworded eager verdict through a guard whose comment claims to assert the architecture.'
 
 [[mutant]]
 id = 'm12-21'
@@ -1309,3 +1310,14 @@ find = '''        if reducing and scenario_note:
         elif reducing:'''
 replace = '''        if reducing:'''
 note = "Under `never_treated` a MEDICAL_CLINICAL floor reaches zero however high the overrides go — measured at counts 1, 10, 30 and 60, all zero. Naming only the override that reduced the type is then a cause whose edit cannot deliver, which is the ISC-150 class. Both the override and what removed the rest have to be named."
+
+[[mutant]]
+id = 'm12-28'
+title = 'a floor is enrolled only when an intermediate count says it is short'
+file = 'src/wc_caseload_engine/doc_controls.py'
+test = 'tests/test_doc_controls.py::test_every_declared_floor_is_enrolled_even_when_it_already_holds'
+find = '''        if minimum is not None and minimum > 0:
+            floors_to_verify[doc_type] = (minimum, bool(members))'''
+replace = '''        if minimum is not None and minimum > 0 and total < minimum:
+            floors_to_verify[doc_type] = (minimum, bool(members))'''
+note = "The fourth appearance of one class, through the half of the mechanism nobody had moved. Rounds 5-7 walked the floor EVALUATION toward the finished file; enrolment stayed at step 3, gated on a shortfall against an intermediate count. A floor the resolver already satisfied was therefore never handed to the planner and never compared against the file: measured under `never_treated`, where MEDICAL_CLINICAL ends at 0, floors 1-9 were silent and 10-12 warned, the boundary being exactly the step-3 total — so the looser the constraint, the less likely it was enforced. Enrolment is a fact about the seed and cannot be filtered by an intermediate."
