@@ -45,7 +45,11 @@ from wc_caseload_engine.doc_controls import (
     verify_global_cap,
     verify_type_floors,
 )
-from wc_caseload_engine.doctrine import content_flags_for, unsupported_hook_warnings
+from wc_caseload_engine.doctrine import (
+    content_flags_for,
+    unsupported_hooks,
+    verify_unsupported_hooks,
+)
 from wc_caseload_engine.lien_machine import LienTrack, build_lien_tracks, lien_candidates
 from wc_caseload_engine.lifecycle_bridge import (
     SUBSTRATE_TO_CANONICAL,
@@ -2119,6 +2123,21 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         verify_forced_subtypes(control.forced_checks, held_by_subtype)
     )
 
+    # The sixth site, and the only one outside `doc_controls`. "Its language will
+    # be rendered" is a claim about the finished file, and doctrine text reaches
+    # a file only through `content_flags` on a document that survives — so the
+    # count comes from `documents`, not from the seed. Measured before this
+    # change: the warning fired in 24 of 24 configurations and the language was
+    # rendered in none of them, because the condition that makes a hook
+    # unsupported is usually the same one that removes its carrier documents.
+    carried_by_hook: Counter[str] = Counter()
+    for document in documents:
+        for flag in document.content_flags or ():
+            carried_by_hook[flag] += 1
+    hook_warnings = verify_unsupported_hooks(
+        unsupported_hooks(seed.lifecycle.doctrine_hooks, seed), carried_by_hook
+    )
+
     warnings = (
         *control.warnings,
         *floor_warnings,
@@ -2129,7 +2148,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         *cadence_warnings,
         *penalty_warnings,
         *_money_control_warnings(seed, money_facts),
-        *unsupported_hook_warnings(seed.lifecycle.doctrine_hooks, seed),
+        *hook_warnings,
     )
 
     log.debug(

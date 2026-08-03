@@ -49,7 +49,7 @@ anyone adding a hook to a case whose neighbours share a citation's name.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -1146,34 +1146,72 @@ def supported_hooks(hooks: Sequence[str], subject: Any) -> tuple[str, ...]:
     return tuple(hook for hook in hooks if hook_is_supported(hook, facts))
 
 
-def unsupported_hook_warnings(hooks: Sequence[str], subject: Any) -> tuple[str, ...]:
-    """One warning per explicitly seeded hook whose prerequisite fails.
+def unsupported_hooks(hooks: Sequence[str], subject: Any) -> tuple[tuple[str, str], ...]:
+    """``(hook, requirement)`` per explicitly seeded hook whose prerequisite fails.
 
-    The hook is *kept* — ISC-29's rule is that an explicit control wins, and it
-    wins loudly. What the case gets is a warning naming the doctrine, what the
-    seed would have to say for it to fit, and the fact that the document will
-    argue it anyway.
+    Facts, not a verdict. The hook is *kept* — ISC-29's rule is that an explicit
+    control wins, and it wins loudly — but whether its language reaches the file
+    is a different question, and this function cannot answer it: doctrine text
+    arrives only through `content_flags` on a document that SURVIVES to the plan.
+
+    The sentence this used to emit asserted "its language will be rendered", and
+    that was measured false in every configuration it fires in — 24 of 24 in one
+    sweep, zero carriers each, against a positive control proving carriers are
+    reachable for a supported hook. There is a structural reason: the condition
+    that makes a hook unsupported is usually the same condition that removes its
+    carrier documents. `eval_type: none` is both why `ogilvie` is unsupported and
+    why no QME report exists to argue it.
+
+    Sixth site of one class and the fourth fixed this way — see
+    :func:`wc_caseload_engine.doc_controls.verify_type_floors`. The unusual part
+    is that this one lives outside `doc_controls` entirely, which is why five
+    rounds of work inside that module never reached it.
     """
     facts = _as_facts(subject)
-    warnings: list[str] = []
+    unsupported: list[tuple[str, str]] = []
     for hook in hooks:
         content = DOCTRINE_CONTENT.get(hook)
         if content is None or content.requires is None:
             continue
         if content.requires.satisfied_by(facts):
             continue
-        warnings.append(
-            f"lifecycle.doctrine_hooks names {hook} on a case that cannot support it: "
-            f"{content.requires.description}. The hook is kept and its language will be "
-            "rendered (an explicit seed wins), but the argument will not match the rest "
-            "of the file."
-        )
+        unsupported.append((hook, content.requires.description))
         log.warning(
             "doctrine.unsupported_hook",
             hook=hook,
             requirement=content.requires.description,
         )
-    return tuple(warnings)
+    return tuple(unsupported)
+
+
+def verify_unsupported_hooks(
+    unsupported: Iterable[tuple[str, str]],
+    carried_by_hook: Mapping[str, int],
+) -> list[str]:
+    """Warnings for kept-but-unsupported hooks, saying what the file actually holds.
+
+    *carried_by_hook* counts the planned documents whose ``content_flags`` name
+    each hook — the only route doctrine language takes into a rendered file.
+    """
+    out: list[str] = []
+    for hook, requirement in unsupported:
+        carried = carried_by_hook.get(hook, 0)
+        head = (
+            f"lifecycle.doctrine_hooks names {hook} on a case that cannot support "
+            f"it: {requirement}. The hook is kept (an explicit seed wins)"
+        )
+        if carried:
+            out.append(
+                f"{head} and {carried} document(s) argue it, so the argument will "
+                "not match the rest of the file."
+            )
+        else:
+            out.append(
+                f"{head}, but no document in this file carries it — the subtypes "
+                "that would argue it are absent for the same reason the hook is "
+                "unsupported, so the doctrine changes nothing here."
+            )
+    return out
 
 
 def register_for_subtype(subtype: str) -> str:
@@ -1218,5 +1256,6 @@ __all__ = [
     "hook_is_supported",
     "register_for_subtype",
     "supported_hooks",
-    "unsupported_hook_warnings",
+    "unsupported_hooks",
+    "verify_unsupported_hooks",
 ]
