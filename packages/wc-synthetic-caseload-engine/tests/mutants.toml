@@ -1054,21 +1054,14 @@ test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls
 find = '    if not findings:'
 replace = '    if True:'
 
-[[mutant]]
-id = 'm12-3'
-title = 'a control that removed nothing is blamed for a stage shortfall'
-file = 'src/wc_caseload_engine/planner.py'
-test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_an_innocent_control_is_not_blamed_for_a_stage_shortfall'
-find = '        if subtype in proposed or where[0] == "documents.overrides"'
-replace = '        if True or subtype in proposed or where[0] == "documents.overrides"'
 
 [[mutant]]
 id = 'm12-4'
 title = 'a parent-type exclude prescribes removing a key the seed does not contain'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_parent_type_exclude_is_named_as_the_cause_too'
-find = '            forbidden[subtype] = ("documents.exclude", matched)'
-replace = '            forbidden[subtype] = ("documents.exclude", (subtype,))'
+find = '            causes.append(("documents.exclude", matched))'
+replace = '            causes.append(("documents.exclude", (subtype,)))'
 note = 'Re-pointed in the review round: the attribution now carries every key in force rather than one, so the mutant puts back the subtype-only spelling it used to put back — same claim, new shape.'
 
 # ISC-148 cross-model review round. Every mutant below puts back a defect a
@@ -1091,10 +1084,8 @@ id = 'm12-5'
 title = 'a type-level zero override is invisible again and the stage takes the blame'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_type_level_zero_override_names_the_control_not_the_stage'
-find = '''        if parent is not None and parent in bounds:
-            if bounds[parent][1] == 0:
-                forbidden[subtype] = ("documents.overrides", (parent,))
-            continue'''
+find = '''        if parent is not None and parent in bounds and bounds[parent][1] == 0:
+            causes.append(("documents.overrides", (parent,)))'''
 replace = ''
 
 [[mutant]]
@@ -1152,3 +1143,43 @@ test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls
 find = '''    uncloneable = set(pinned)'''
 replace = '''    uncloneable = set(pinned) | set(ceilinged)'''
 note = 'The mutant round 2 should have shipped with and did not. Restoring this clause IS the 24c9683 defect — a ceiling treated as an unconditional bar on cloning, so `{type: DISCOVERY, max: 12}` with subpoena_sets 4 delivers 3 packets against a cap of 12 that leaves two spare. Round 3 found the withdrawal had no mutant naming it and that the below-cap guard survives m12-12, which mutates the clamp instead. The clamp and the withdrawal are two halves of one correction and each needs its own.'
+
+[[mutant]]
+id = 'm12-14'
+title = 'a type bound skips the membership checks again, so exclude goes unnamed'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_an_exclude_and_a_type_cap_are_both_named'
+find = '''        if parent is not None and parent in bounds and bounds[parent][1] == 0:
+            causes.append(("documents.overrides", (parent,)))'''
+replace = '''        if parent is not None and parent in bounds:
+            causes = [("documents.overrides", (parent,))] if bounds[parent][1] == 0 else []'''
+
+[[mutant]]
+id = 'm12-15'
+title = 'an early stage exonerates every control waiting behind it again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_control_waiting_behind_an_early_stage_is_named_with_it'
+find = '''        if subtype in proposed
+        or stage_is_a_cause
+        or any(control == "documents.overrides" for control, _ in causes)'''
+replace = '''        if subtype in proposed
+        or any(control == "documents.overrides" for control, _ in causes)'''
+
+[[mutant]]
+id = 'm12-16'
+title = 'a control that touched nothing proposed is blamed at a live stage'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_control_that_touched_nothing_proposed_is_not_named'
+find = '''        if subtype in proposed
+        or stage_is_a_cause'''
+replace = '''        if True
+        or stage_is_a_cause'''
+note = 'The opposite draw to m12-15. Round 4 inverted the early-stage half of this rule; the live-stage half survives, and both directions need pinning or the next round trades one wrong answer for the other.'
+
+[[mutant]]
+id = 'm12-17'
+title = 'a documents.overrides type floor is trimmed through again'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_type_floor_is_not_trimmed_through'
+find = '''        required = _packets_a_type_floor_requires(dated, controls)'''
+replace = '''        required = {}'''

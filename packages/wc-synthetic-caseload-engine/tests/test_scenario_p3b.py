@@ -830,12 +830,25 @@ class TestDiscoveryShapingRespectsDocumentControls:
             f"the warning blames {named} on a seed with no document controls: {warning}"
         )
 
-    def test_an_innocent_control_is_not_blamed_for_a_stage_shortfall(self) -> None:
-        """``exclude`` naming a subtype the walk never proposed removed nothing.
+    def test_a_control_waiting_behind_an_early_stage_is_named_with_it(self) -> None:
+        """This test asserted the opposite until review round 4 refuted it.
 
-        Attribution keyed off the *presence of a control key* rather than off
-        what the control actually removed would send this author to the wrong
-        line — the stage is the cause, and lifting the exclude changes nothing.
+        It used to require that ``exclude`` NOT be named here, reasoning that the
+        walk proposed no packets for it to remove, so the stage was the only
+        cause. That reasoning is sound about the present and wrong about the
+        edit: at ``target_stage: discovery`` this same exclude suppresses every
+        packet, so following the stage-only imperative delivers 0 of 3. A
+        cross-family reviewer proved it by making the prescribed edit and
+        counting.
+
+        "Removed nothing yet" is not "innocent" — it is the second half of a
+        two-edit fix, and withholding it produces exactly the non-delivering
+        instruction this whole class exists to prevent. Over-naming costs an
+        author one unnecessary edit; under-naming costs them a wrong answer that
+        looks authoritative, which is strictly worse.
+
+        The genuine innocence claim survives at a live stage and is pinned by
+        :meth:`test_a_control_that_touched_nothing_proposed_is_not_named`.
         """
         counts, warning = self._shaped(
             "isc148-innocent",
@@ -845,9 +858,35 @@ class TestDiscoveryShapingRespectsDocumentControls:
         )
         assert sum(counts.values()) == 0
         assert warning is not None and "target_stage" in warning, warning
-        assert "documents.exclude" not in warning, (
-            "documents.exclude is blamed for a shortfall it did not cause — the "
-            f"lifecycle stage proposed no packets for it to remove: {warning}"
+        assert "documents.exclude" in warning, (
+            "the exclude bites the instant the stage stops being the obstacle, so "
+            f"the stage-only imperative does not deliver: {warning}"
+        )
+        assert "both edits are needed" in warning, warning
+
+    def test_a_control_that_touched_nothing_proposed_is_not_named(self) -> None:
+        """The innocence claim that survives round 4, at a stage that proposes.
+
+        With the stage producing packets, a control naming a subtype the walk did
+        not propose genuinely removed nothing and genuinely changes nothing when
+        lifted — so blaming it would send the author to a line whose edit is a
+        no-op. That is still true and still guarded; what round 4 removed was
+        applying the same reasoning when the stage proposes *nothing at all*,
+        where every control is a pending cause rather than an innocent one.
+        """
+        _, warning = self._shaped(
+            "isc148r4-untouched",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(
+                exclude=["SUBPOENAED_RECORDS_MEDICAL", "SUBPOENAED_RECORDS_EMPLOYMENT"],
+            ),
+        )
+        assert warning is not None
+        assert "SUBPOENAED_RECORDS_MEDICAL" in warning, warning
+        assert "SUBPOENAED_RECORDS_EMPLOYMENT" not in warning, (
+            "a subtype the walk never proposed is blamed; lifting that exclude "
+            f"changes nothing: {warning}"
         )
 
     # -- both causes at once -------------------------------------------------
@@ -1215,3 +1254,106 @@ class TestDiscoveryShapingRespectsDocumentControls:
             f"a type ceiling was treated as an exact count and refused the trim: {counts}"
         )
         assert warning is None, f"a legal trim warned about an overage: {warning}"
+
+    # -- review round 4: the Gemini-family round, and what it found ---------
+    #
+    # Rounds 1-3 all asked one question — "does the fix READ the control
+    # correctly" — and a reviewer in a different family asked others. Two of the
+    # four findings below are combinations no earlier test built: a membership
+    # control together with a type bound, and a control together with an early
+    # stage. The third is the half of `type_bounds` nobody had read at all.
+
+    def test_an_exclude_and_a_type_cap_are_both_named(self) -> None:
+        """`continue` sat outside the `== 0` test, so any bound skipped membership.
+
+        `exclude: [DISCOVERY]` with `{type: DISCOVERY, max: 2}` reported only the
+        cap. Raising the cap to 10 then delivered 0 of 3, because the exclude was
+        never named — and the resolver applies exclude FIRST, so the warning
+        blamed a control the resolver had not acted on.
+        """
+        _, warning = self._shaped(
+            "isc148r4-excl-cap",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(
+                exclude=["DISCOVERY"],
+                overrides=[{"type": "DISCOVERY", "max": 2}],
+            ),
+        )
+        assert warning is not None
+        assert "documents.exclude" in warning, (
+            f"the control the resolver applied first is unnamed: {warning}"
+        )
+        assert "documents.overrides" in warning, warning
+
+    def test_following_both_edits_delivers_where_one_did_not(self) -> None:
+        """Execute the pair. Raising the cap alone was the measured no-op."""
+        counts, warning = self._shaped(
+            "isc148r4-excl-cap-fixed",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(overrides=[{"type": "DISCOVERY", "max": 12}]),
+        )
+        assert sum(counts.values()) == 3, (
+            f"both prescribed edits together still do not deliver: {counts}"
+        )
+        assert warning is None, warning
+
+    def test_an_include_only_and_a_type_cap_are_both_named(self) -> None:
+        """The same skip, reached through the other membership control."""
+        _, warning = self._shaped(
+            "isc148r4-inc-cap",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(
+                include_only=["MEDICAL_CLINICAL"],
+                overrides=[{"type": "DISCOVERY", "max": 2}],
+            ),
+        )
+        assert warning is not None
+        assert "documents.include_only" in warning, warning
+        assert "documents.overrides" in warning, warning
+
+    def test_a_min_only_bound_does_not_invent_a_global_cap(self) -> None:
+        """The worst of the round: a true-sounding sentence about an absent control.
+
+        With `{type: DISCOVERY, min: 2}` the max is None, so the `== 0` test was
+        false, the `continue` still fired, the exclude went unnamed, and the
+        empty-findings branch printed "documents.global_cap trims the whole plan
+        by rank" — on a seed containing no `global_cap` at all. The prescribed
+        edit was impossible to make.
+        """
+        _, warning = self._shaped(
+            "isc148r4-minonly",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 3}},
+            documents=self._documents(
+                exclude=["DISCOVERY"],
+                overrides=[{"type": "DISCOVERY", "min": 2}],
+            ),
+        )
+        assert warning is not None
+        assert "global_cap" not in warning, (
+            f"the warning names a control the seed does not contain: {warning}"
+        )
+        assert "documents.exclude" in warning, warning
+
+    def test_a_type_floor_is_not_trimmed_through(self) -> None:
+        """`min` is the half of `type_bounds` nobody read.
+
+        `_packet_count_controls` looked only at `bounds[parent][1]`, so a floor
+        never reached the trim's protected set. Measured: `{type: DISCOVERY,
+        min: 12}` held 12 documents, and `subpoena_sets: 1` cut it to 10 with no
+        warning at all — worse than the pin case, which at least warned.
+        """
+        counts, warning = self._shaped(
+            "isc148r4-floor",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 1}},
+            documents=self._documents(overrides=[{"type": "DISCOVERY", "min": 12}]),
+        )
+        assert sum(counts.values()) >= 3, (
+            f"the trim cut through a documents.overrides floor of 12: {counts}"
+        )
+        assert warning is not None, "a floor was overruled and nothing said so"
+        assert "DISCOVERY at 12" in warning, warning

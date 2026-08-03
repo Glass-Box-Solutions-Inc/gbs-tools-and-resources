@@ -1189,22 +1189,33 @@ def _suppressed_packet_subtypes(
     overrides = controls.subtype_overrides
     bounds = controls.type_bounds
     exclude, include_only = set(controls.exclude), set(controls.include_only)
-    forbidden: dict[str, tuple[str, tuple[str, ...]]] = {}
+    forbidden: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {}
     for subtype in sorted(DISCOVERY_PACKET_SUBTYPES):
         keys = _packet_control_keys(subtype, taxonomy)
         parent = taxonomy.parent_of(subtype)
+        # An explicit per-subtype override decides this subtype's fate outright,
+        # in both directions. That is the resolver's own resurrection path, and
+        # the only control that genuinely short-circuits the rest.
         if subtype in overrides:
             if overrides[subtype] == 0:
-                forbidden[subtype] = ("documents.overrides", (subtype,))
+                forbidden[subtype] = (("documents.overrides", (subtype,)),)
             continue
-        if parent is not None and parent in bounds:
-            if bounds[parent][1] == 0:
-                forbidden[subtype] = ("documents.overrides", (parent,))
-            continue
+        # Membership first, then the type bound — the order
+        # `resolve_document_controls` actually applies them. A type bound used to
+        # `continue` past these checks whatever its value, so a seed carrying
+        # both `exclude: [DISCOVERY]` and `{type: DISCOVERY, max: 2}` was told
+        # only about the cap, and raising the cap delivered nothing. A control
+        # the resolver did act on went unnamed, which is the same wrong answer
+        # this function exists to remove.
+        causes: list[tuple[str, tuple[str, ...]]] = []
         if matched := tuple(sorted(exclude & keys)):
-            forbidden[subtype] = ("documents.exclude", matched)
+            causes.append(("documents.exclude", matched))
         elif include_only and not (include_only & keys):
-            forbidden[subtype] = ("documents.include_only", ())
+            causes.append(("documents.include_only", ()))
+        if parent is not None and parent in bounds and bounds[parent][1] == 0:
+            causes.append(("documents.overrides", (parent,)))
+        if causes:
+            forbidden[subtype] = tuple(causes)
     return forbidden
 
 
@@ -1250,6 +1261,48 @@ def _packet_count_controls(
     return pins, ceilings
 
 
+def taxonomy_parent(subtype: str) -> str | None:
+    """The parent type of *subtype*, resolved through the effective taxonomy."""
+    return effective_taxonomy().parent_of(subtype)
+
+
+def _packets_a_type_floor_requires(
+    dated: list[tuple[date, str, str, str]],
+    controls: DocumentControls,
+) -> dict[str, int]:
+    """``{parent_type: packets that must survive the trim}`` for each ``min`` bound.
+
+    ``{type: T, min: N}`` is the other half of ``type_bounds`` and was never
+    read. `_packet_count_controls` looked only at ``bounds[parent][1]``, so the
+    trim sliced straight through a floor the author had written — measured, a
+    ``min: 12`` floor holding 12 documents dropped to 10 under ``subpoena_sets:
+    1``, silently and with no warning. That is the round-2 defect's other half:
+    that round protected exact counts and ceilings from the trim and left floors
+    exposed.
+
+    The floor is on the whole type, so what it requires of *packets* is whatever
+    the type's non-packet documents do not already supply. Zero when they supply
+    it all — a floor satisfied elsewhere constrains nothing here.
+    """
+    floors = {
+        parent: minimum
+        for parent, (minimum, _) in controls.type_bounds.items()
+        if minimum is not None and minimum > 0
+    }
+    if not floors:
+        return {}
+    taxonomy = effective_taxonomy()
+    non_packet = Counter(
+        taxonomy.parent_of(entry[1])
+        for entry in dated
+        if entry[1] not in DISCOVERY_PACKET_SUBTYPES
+    )
+    return {
+        parent: max(0, minimum - non_packet.get(parent, 0))
+        for parent, minimum in floors.items()
+    }
+
+
 def _type_headroom(
     dated: list[tuple[date, str, str, str]],
     ceilinged: dict[str, tuple[str, int]],
@@ -1284,7 +1337,7 @@ _STAGE_CAUSE = (
 
 
 def _control_causes(
-    forbidden: dict[str, tuple[str, tuple[str, ...]]],
+    forbidden: dict[str, tuple[tuple[str, tuple[str, ...]], ...]],
     capped: dict[str, int],
 ) -> tuple[list[str], list[str]]:
     """Turn the blocking controls into ``(findings, imperatives)``.
@@ -1299,9 +1352,13 @@ def _control_causes(
     never pushed off the front of its clause by a hedge, and never reads as a
     capital in mid-sentence either.
     """
+    # A subtype may be suppressed by more than one control at once, and each is
+    # a genuine cause with its own edit — naming one and stopping is how the
+    # exclude-plus-cap seed got an imperative that delivered nothing.
     grouped: dict[tuple[str, tuple[str, ...]], list[str]] = {}
-    for subtype, where in sorted(forbidden.items()):
-        grouped.setdefault(where, []).append(subtype)
+    for subtype, causes in sorted(forbidden.items()):
+        for where in causes:
+            grouped.setdefault(where, []).append(subtype)
 
     findings: list[str] = []
     # Per control, the subtypes whose ``documents.overrides`` count must go up —
@@ -1365,7 +1422,7 @@ def _discovery_shortfall_warning(
     delivered: int,
     *,
     stage_is_a_cause: bool,
-    forbidden: dict[str, tuple[str, tuple[str, ...]]],
+    forbidden: dict[str, tuple[tuple[str, tuple[str, ...]], ...]],
     capped: dict[str, int],
 ) -> str:
     """Say why the packet count could not be met, naming every cause at once.
@@ -1522,7 +1579,25 @@ def _shape_discovery(
             pinned_entries + (unpinned[:room] if room > 0 else []),
             key=lambda entry: entry[0],
         )
-        if room < 0:
+        # A `{type: T, min: N}` floor is the other half of `type_bounds`, and the
+        # trim used to cut straight through it — a floor holding 12 documents
+        # dropped to 10 under `subpoena_sets: 1`, silently. Restore whichever
+        # trimmed packets the floor still needs, latest first, so the kept set
+        # stays a suffix-consistent slice rather than an arbitrary one.
+        required = _packets_a_type_floor_requires(dated, controls)
+        floors_binding: dict[str, int] = {}
+        for parent, need in sorted(required.items()):
+            held = sum(1 for entry in kept if taxonomy_parent(entry[1]) == parent)
+            if held >= need:
+                continue
+            spare = [
+                entry
+                for entry in packets
+                if entry not in kept and taxonomy_parent(entry[1]) == parent
+            ]
+            kept = sorted(kept + spare[: need - held], key=lambda entry: entry[0])
+            floors_binding[parent] = controls.type_bounds[parent][0] or 0
+        if room < 0 or floors_binding:
             # Report the seed lines that state the counts, not the subtypes they
             # happen to govern — `{type: DISCOVERY, max: 2}` is one line.
             overage = {
@@ -1530,6 +1605,7 @@ def _shape_discovery(
                 for subtype in sorted({entry[1] for entry in kept})
                 if subtype in pinned
             }
+            overage.update(floors_binding)
     else:
         kept = list(packets)
     if len(packets) < declared:
@@ -1566,14 +1642,27 @@ def _shape_discovery(
         )
 
     # Attribution, keyed off what a control actually did rather than off whether
-    # its key appears in the seed. A membership control earns the blame only for
-    # a subtype the walk proposed for it to remove — except a zero-count
-    # override, which the author wrote about this exact subtype and which blocks
-    # it whether or not the walk ever got that far.
+    # its key appears in the seed. A membership control earns the blame for a
+    # subtype the walk proposed for it to remove — and a zero-count override
+    # earns it regardless, because the author wrote it about this exact subtype.
+    #
+    # The third clause is the one an earlier pass got backwards. When the walk
+    # proposed nothing, `subtype in proposed` is false for every subtype, so
+    # every membership control was exonerated — at exactly the moment
+    # `stage_is_a_cause` is true. An early stage plus `exclude:
+    # [SUBPOENAED_RECORDS_MEDICAL]` therefore printed the stage sentence alone,
+    # and following it delivered nothing because the exclude bites the instant
+    # the stage stops being the obstacle. "Removed nothing yet" is not
+    # "innocent"; it is the second half of a two-edit fix, which is the case
+    # `_discovery_shortfall_warning` was written to handle and this filter was
+    # quietly withholding from it.
+    stage_is_a_cause = not proposed
     blocking = {
-        subtype: where
-        for subtype, where in forbidden.items()
-        if subtype in proposed or where[0] == "documents.overrides"
+        subtype: causes
+        for subtype, causes in forbidden.items()
+        if subtype in proposed
+        or stage_is_a_cause
+        or any(control == "documents.overrides" for control, _ in causes)
     }
     # Keyed by the seed line, so a type-level bound is reported once under the
     # key the author wrote rather than once per subtype it governs. A ceiling is
@@ -1594,7 +1683,7 @@ def _shape_discovery(
         _discovery_shortfall_warning(
             declared,
             len(kept),
-            stage_is_a_cause=not proposed,
+            stage_is_a_cause=stage_is_a_cause,
             forbidden=blocking,
             capped=capping,
         ),
