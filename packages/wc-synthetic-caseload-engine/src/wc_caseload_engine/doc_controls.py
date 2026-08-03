@@ -235,9 +235,10 @@ def resolve_document_controls(
     emit_log = logger if logger is not None else log
     warnings: list[str] = []
     dropped: dict[str, str] = dict(pre_dropped or {})
-    #: ``{parent_type: minimum}`` for floors the lifecycle proposed nothing for.
-    #: Resolved against the finished plan below — see the deferral note there.
-    unsatisfiable: dict[str, int] = {}
+    #: ``{parent_type: minimum}`` for every ``min`` floor that did not already
+    #: hold when step 3 reached it. Resolved against the finished plan below —
+    #: see the deferral note there.
+    floors_to_verify: dict[str, int] = {}
 
     # 4. Lifecycle emission defaults.
     plan: list[PlannedDocumentCount] = _collapse_candidates(candidates, parent_type_of)
@@ -268,19 +269,22 @@ def resolve_document_controls(
             plan = _apply_type_max(plan, doc_type, members, total - maximum)
         elif minimum is not None and total < minimum:
             shortfall = minimum - total
-            if not members:
-                # Deferred on purpose. "Cannot be satisfied" is a claim about the
-                # finished file, and this step is not the finished file: the
-                # per-subtype overrides run *after* it and are the highest
-                # precedence control in the system — they may invent documents of
-                # exactly this type. Deciding here produced a manifest carrying
-                # both "min=5 for type DISCOVERY cannot be satisfied" and six
-                # DISCOVERY documents, the second of which refutes the first.
-                # Recorded now, because this is where we know the lifecycle
-                # proposed nothing; asserted at the end, against what the file
-                # actually holds.
-                unsatisfiable[doc_type] = minimum
-            else:
+            # EVERY floor is checked against the finished plan, whichever arm it
+            # takes here. "Is this floor met" is a claim about the finished file,
+            # and this step is not the finished file: the per-subtype overrides
+            # run *after* it, are the highest precedence control in the system,
+            # and move the count in BOTH directions.
+            #
+            # An earlier pass recorded only the `not members` arm, on the theory
+            # that the danger was an override inventing documents of a type the
+            # lifecycle never proposed. It is also the reverse. `_apply_type_min`
+            # grows the type to the floor below, and an override then cuts it
+            # back: `{type: DISCOVERY, min: 67}` beside a pin of 2 leaves 52
+            # documents under DISCOVERY — short by 15, with NO warning at all,
+            # because the grown arm recorded nothing to check. Half of one
+            # principle applied to one arm of a two-arm branch.
+            floors_to_verify[doc_type] = (minimum, bool(members))
+            if members:
                 plan = _apply_type_min(plan, members, shortfall)
 
     # 1. Per-subtype overrides — highest precedence, may resurrect or invent.
@@ -313,37 +317,54 @@ def resolve_document_controls(
 
     plan = [entry for entry in plan if entry.count > 0]
 
-    # The deferred verdict from step 3, decided against the finished plan. A
-    # floor the lifecycle proposed nothing for is still unsatisfiable *unless*
-    # something later put documents of that type in the file — which only the
-    # per-subtype overrides can do, and which is precisely the case the eager
-    # check got wrong. Ordered by type so the warning list stays deterministic.
-    for doc_type, minimum in sorted(unsatisfiable.items()):
+    # The deferred verdict from step 3, decided against the finished plan.
+    # Ordered by type so the warning list stays deterministic.
+    for doc_type, (minimum, lifecycle_proposed) in sorted(floors_to_verify.items()):
         held = sum(entry.count for entry in plan if entry.parent_type == doc_type)
         if held >= minimum:
             continue
-        # Partly filled is its own case: an override that supplies 3 against a
-        # floor of 5 leaves the floor unmet, but "proposed no documents of that
-        # type" on its own reads as a file holding none.
-        detail = (
-            "the lifecycle proposed no documents of that type"
-            if held == 0
-            else (
+        planned_parents = {entry.subtype: entry.parent_type for entry in plan}
+        cut_by = sorted(
+            subtype
+            for subtype in controls.subtype_overrides
+            if (
+                planned_parents.get(subtype)
+                or (parent_type_of(subtype) if parent_type_of else None)
+            )
+            == doc_type
+        )
+        if lifecycle_proposed:
+            # The type WAS grown toward its floor and something took the
+            # documents back. Only the per-subtype overrides run after step 3,
+            # so they are the only thing that can have done it, and naming them
+            # is what makes the message actionable rather than a lament.
+            detail = (
+                "documents.overrides " + ", ".join(cut_by) + " cut it back"
+                if cut_by
+                else "a higher-precedence control cut it back"
+            )
+        elif held == 0:
+            detail = "the lifecycle proposed no documents of that type"
+        else:
+            # Partly filled is its own case: an override that supplies 3 against
+            # a floor of 5 leaves the floor unmet, but "proposed no documents of
+            # that type" on its own reads as a file holding none.
+            detail = (
                 "the lifecycle proposed no documents of that type and the "
                 f"overrides supply only {held}"
             )
-        )
         warning = (
-            f"documents.overrides min={minimum} for type {doc_type} cannot be "
-            f"satisfied: {detail}"
+            f"documents.overrides min={minimum} for type {doc_type} is not met: "
+            f"the file holds {held} — {detail}"
         )
         warnings.append(warning)
         emit_log.warning(
-            "doc_controls.min_unsatisfiable",
+            "doc_controls.min_unmet",
             case_id=case_id,
             doc_type=doc_type,
             minimum=minimum,
             held=held,
+            lifecycle_proposed=lifecycle_proposed,
         )
 
     return ControlResolution(

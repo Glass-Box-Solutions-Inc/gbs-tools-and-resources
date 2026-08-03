@@ -313,9 +313,9 @@ def test_a_min_on_an_unproposed_type_still_warns_when_nothing_supplies_it() -> N
     """
     result = resolve({"overrides": [{"type": "BILLING", "min": 3}]})
     assert "BILLING" not in result.type_totals()
-    assert [warning for warning in result.warnings if "cannot be satisfied" in warning] == [
-        "documents.overrides min=3 for type BILLING cannot be satisfied: the "
-        "lifecycle proposed no documents of that type"
+    assert [warning for warning in result.warnings if "min=3" in warning] == [
+        "documents.overrides min=3 for type BILLING is not met: the file holds "
+        "0 — the lifecycle proposed no documents of that type"
     ], result.warnings
 
 
@@ -344,7 +344,7 @@ def test_a_min_an_override_then_satisfies_does_not_warn_that_it_cannot_be() -> N
     assert result.type_totals().get("BILLING") == 4, (
         f"the override did not supply the type at all: {result.type_totals()}"
     )
-    assert not [w for w in result.warnings if "cannot be satisfied" in w], (
+    assert not [w for w in result.warnings if "is not met" in w], (
         "the file holds 4 documents of a type whose floor of 3 is reported "
         f"unsatisfiable: {result.warnings}"
     )
@@ -366,6 +366,54 @@ def test_a_partly_supplied_min_says_how_far_short_the_file_falls() -> None:
         }
     )
     assert result.type_totals().get("BILLING") == 2
-    unsatisfiable = [w for w in result.warnings if "cannot be satisfied" in w]
-    assert len(unsatisfiable) == 1, result.warnings
-    assert "the overrides supply only 2" in unsatisfiable[0], unsatisfiable[0]
+    unmet = [w for w in result.warnings if "is not met" in w]
+    assert len(unmet) == 1, result.warnings
+    assert "the file holds 2" in unmet[0], unmet[0]
+    assert "the overrides supply only 2" in unmet[0], unmet[0]
+
+
+def test_a_floor_an_override_cuts_back_below_is_reported() -> None:
+    """Review round 6, finding 3: one principle, applied to one arm of two.
+
+    Round 5 established that "is this floor met" is a claim about the finished
+    file — the per-subtype overrides run last and are the highest precedence
+    control in the system — and then fed the deferred check from only the arm
+    where the lifecycle proposed NOTHING. The overrides move the count in both
+    directions. Here the lifecycle proposes 6 PTP_PR2_PROGRESS_REPORTs,
+    `_apply_type_min` grows MEDICAL_CLINICAL toward a floor of 10, and a
+    per-subtype override then pins one of its members back down.
+
+    Measured on the shipped code: the file held less than the floor and the
+    warning list was EMPTY. A silent overrule of a control the author wrote is
+    the exact failure this whole class of warning exists to prevent, and it was
+    silent because the grown arm recorded nothing to check.
+    """
+    result = resolve(
+        {
+            "overrides": [
+                {"type": "MEDICAL_CLINICAL", "min": 10},
+                {"subtype": "PTP_PR2_PROGRESS_REPORT", "count": 1},
+            ]
+        }
+    )
+    held = result.type_totals().get("MEDICAL_CLINICAL", 0)
+    assert held < 10, (
+        f"the seed no longer leaves the floor short, so it proves nothing: {held}"
+    )
+    unmet = [w for w in result.warnings if "min=10" in w]
+    assert len(unmet) == 1, (
+        f"a floor of 10 holding {held} was overruled and nothing said so: "
+        f"{result.warnings}"
+    )
+    assert f"the file holds {held}" in unmet[0], unmet[0]
+    assert "PTP_PR2_PROGRESS_REPORT" in unmet[0], (
+        "the warning does not name the override that cut the type back, so the "
+        f"author is told a floor failed but not by what: {unmet[0]}"
+    )
+
+
+def test_a_floor_the_lifecycle_already_meets_says_nothing() -> None:
+    """The opposite draw, so the check above cannot pass by warning always."""
+    result = resolve({"overrides": [{"type": "MEDICAL_CLINICAL", "min": 4}]})
+    assert result.type_totals()["MEDICAL_CLINICAL"] >= 4
+    assert not [w for w in result.warnings if "is not met" in w], result.warnings

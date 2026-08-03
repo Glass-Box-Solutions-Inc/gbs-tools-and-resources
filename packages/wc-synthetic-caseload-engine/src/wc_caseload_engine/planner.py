@@ -1336,6 +1336,33 @@ _STAGE_CAUSE = (
 )
 
 
+def _stage_cause(delivered: int) -> str:
+    """:data:`_STAGE_CAUSE`, or its honest form when the file holds packets anyway.
+
+    ``stage_is_a_cause`` is derived from what the *walk* proposed, and the walk
+    is not the last word: ``resolve_document_controls`` applies the per-subtype
+    overrides afterwards, and those may invent packets of a subtype no stage
+    proposes. When they do, the shipped sentence's second clause — "the count
+    has nothing to act on" — is a false statement about a file that holds three
+    records packets, and the same sentence then offers to lower the count to
+    three, a number it could only have got from the packets it just denied.
+
+    Round 4's version of this branch carried "the file holds {delivered} records
+    packet(s)" and was factually complete; round 5 rewrote the branch for a
+    different defect and dropped the count with it. That regression is what this
+    repairs. The zero case still returns the shipped text verbatim, because the
+    stage really is the whole story there and rewording a warning that shipped
+    for no reason is its own cost.
+    """
+    if delivered == 0:
+        return _STAGE_CAUSE
+    return (
+        "this file's lifecycle stage proposes no records packets at all, so the "
+        f"{delivered} the file holds come from documents.overrides alone — try "
+        "target_stage 'discovery' or later"
+    )
+
+
 def _control_causes(
     forbidden: dict[str, tuple[tuple[str, tuple[str, ...]], ...]],
     capped: dict[str, int],
@@ -1446,7 +1473,10 @@ def _discovery_shortfall_warning(
     findings, imperatives = _control_causes(forbidden, capped)
     if not findings:
         if stage_is_a_cause:
-            return f"scenario.discovery.subpoena_sets is {declared} but {_STAGE_CAUSE}"
+            return (
+                f"scenario.discovery.subpoena_sets is {declared} but "
+                f"{_stage_cause(delivered)}"
+            )
         return (
             f"scenario.discovery.subpoena_sets is {declared} but the file holds "
             f"{delivered} records packet(s) and no per-subtype control accounts for "
@@ -1460,9 +1490,21 @@ def _discovery_shortfall_warning(
     if stage_is_a_cause:
         # The stage is the cause we can prove; the controls are causes we cannot
         # yet see. With nothing proposed there is no way to tell, from here,
-        # which of them will bite once the stage produces packets: an `exclude`
-        # on SUBPOENAED_RECORDS_MEDICAL does, one on SUBPOENAED_RECORDS_EMPLOYMENT
-        # does not, because the walk never proposes that subtype at any stage.
+        # which of them will bite once the stage produces packets — and the
+        # answer is not even a property of the subtype. `exclude:
+        # [SUBPOENAED_RECORDS_EMPLOYMENT]` at `subpoena_sets: 3` was measured
+        # across ten rng_seed draws: in eight the stage edit alone delivered 3
+        # of 3 with the exclude still in the file, and in two (777, 1234) the
+        # walk proposed that subtype, the exclude removed it, and the stage edit
+        # alone delivered 0. Same seed, same control, opposite answers by draw.
+        #
+        # An earlier revision of this comment asserted the walk "never proposes
+        # that subtype at any stage". That was never measured and is false —
+        # round 6 disproved it by counting. It is recorded here because the
+        # false claim was the load-bearing justification for the sentence below,
+        # and the sentence survives only because the truth is *stronger*: not
+        # "this control is harmless" but "which control binds is undecidable
+        # from this branch".
         #
         # An earlier pass asserted "both edits are needed" for every listed
         # control. That is a confident false claim in the second case — measured
@@ -1478,7 +1520,7 @@ def _discovery_shortfall_warning(
         # followed in order.
         edits = ", and ".join(imperatives)
         return (
-            f"scenario.discovery.subpoena_sets is {declared} but {_STAGE_CAUSE}. "
+            f"scenario.discovery.subpoena_sets is {declared} but {_stage_cause(delivered)}. "
             f"The file also carries controls over records packets: {detail}. "
             f"{_capitalized(edits)} if the stage change alone does not deliver "
             f"the count, or {fallback}"
@@ -1711,14 +1753,34 @@ def _shape_discovery(
                     "document(s) under that type, so every records packet was kept "
                     "and the floor is still short"
                 )
-            remedies.append(f"lower the documents.overrides min on {parent}")
+            # "Lower the min" is not an edit that converges, and it was shipped
+            # as though it were. The reported `held` is not independent of the
+            # floor — `_apply_type_min` grows the type to reach it — so lowering
+            # the min to the number the sentence just printed lowers the number:
+            # measured, 67 -> 52 -> 41 -> 32 -> 26 -> 21 -> 17, still short at
+            # every step. Removing the floor is the edit that actually resolves
+            # this cause, and it is the one prescribed.
+            remedies.append(f"remove the documents.overrides min on {parent}")
+        # The remedies are NOT independently sufficient, and joining them with
+        # "or" said they were. With a pin and a floor both in force, removing the
+        # floor alone still leaves the pinned packets — measured, 2 against a
+        # declared 1. Raising the declared count is the one edit that always
+        # resolves this warning, so it leads; the rest is offered as "whichever
+        # binds", which asserts nothing about sufficiency.
+        #
+        # A floor left short by this trim is no longer this sentence's business
+        # either: every `min` is now verified against the finished plan in
+        # `doc_controls`, so it carries its own warning and keeps it after the
+        # author acts on any remedy here. Round 6 measured the alternative —
+        # lowering the pin silenced this warning and left a floor short by 16
+        # with nothing said at all.
         return shaped + kept, (
             f"scenario.discovery.subpoena_sets is {declared} but documents.overrides "
             f"{'; and '.join(causes)} — {len(kept)} records packet(s) in total. The "
             "override is the higher-precedence control, so the file holds what it "
-            f"requires rather than the declared count. "
-            f"{_capitalized(', or '.join(remedies))}, or raise "
-            f"scenario.discovery.subpoena_sets to {len(kept)}",
+            "requires rather than the declared count. Raise "
+            f"scenario.discovery.subpoena_sets to {len(kept)}, or lift whichever of "
+            f"these binds: {'; '.join(remedies)}",
         )
 
     # Attribution, keyed off what a control actually did rather than off whether

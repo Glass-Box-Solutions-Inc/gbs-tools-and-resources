@@ -883,15 +883,21 @@ class TestDiscoveryShapingRespectsDocumentControls:
         depends on whether the walk would ever propose the subtype it names, and
         at a stage that proposes nothing there is no evidence either way.
 
-        This seed is the counter-example, measured across every ``rng_seed`` draw
-        below: ``exclude: [SUBPOENAED_RECORDS_EMPLOYMENT]`` at ``intake``. The
-        walk never proposes that subtype at any stage, so advancing the stage
-        alone delivers the full count with the exclude still in the file — and
-        the second "needed" edit was never needed.
+        Round 6 then caught this docstring claiming a measurement it had not
+        made — "measured across every ``rng_seed`` draw below", in a test that
+        drew one seed — and justifying itself with "the walk never proposes that
+        subtype at any stage", which counting disproves. Both are corrected by
+        actually sweeping, below.
 
-        The test does both halves. It asserts the sentence makes no
-        both-edits-required claim, and then makes only the stage edit and counts,
-        so the claim's falseness is demonstrated rather than argued.
+        The sweep is the point. Across ten draws of ``exclude:
+        [SUBPOENAED_RECORDS_EMPLOYMENT]`` at ``subpoena_sets: 3``, the stage edit
+        ALONE delivers 3 of 3 in eight and delivers 0 in two (777 and 1234),
+        where the walk did propose that subtype and the exclude removed it. Same
+        seed, same control, opposite answers by draw — so "both edits are
+        needed" is false for most draws and true for some, and the branch that
+        emits this sentence can see neither. That is a stronger reason for the
+        wording than the false one it replaces: not "this control is harmless"
+        but "which control binds is undecidable from here".
         """
         counts, warning = self._shaped(
             "isc148r5-overclaim",
@@ -910,18 +916,139 @@ class TestDiscoveryShapingRespectsDocumentControls:
                 f"bite; the stage edit alone delivers the count: {warning}"
             )
 
-        # The demonstration: make ONLY the edit the warning prescribes first.
-        delivered, after = self._shaped(
-            "isc148r5-overclaim",
-            lifecycle=_DISCOVERY_STAGE,
+        # The demonstration, swept rather than asserted: make ONLY the stage
+        # edit and count, across draws, and show the answer differs by draw.
+        stage_edit_alone: dict[int, int] = {}
+        for rng_seed in (500, 777, 1234, 2000, 7100):
+            delivered, _ = self._shaped(
+                f"isc148r6-sweep-{rng_seed}",
+                rng_seed=rng_seed,
+                lifecycle=_DISCOVERY_STAGE,
+                scenario={"discovery": {"subpoena_sets": 3}},
+                documents=self._documents(exclude=["SUBPOENAED_RECORDS_EMPLOYMENT"]),
+            )
+            stage_edit_alone[rng_seed] = sum(delivered.values())
+
+        assert stage_edit_alone[777] == 0 and stage_edit_alone[1234] == 0, (
+            "these draws are the ones where the walk proposes the excluded "
+            "subtype, so the exclude bites and withholding it from the warning "
+            f"would be the round-4 defect: {stage_edit_alone}"
+        )
+        assert stage_edit_alone[500] == 3 and stage_edit_alone[7100] == 3, (
+            "these draws are the ones where the stage edit alone delivers with "
+            "the exclude still in place, so asserting the control must also be "
+            f"edited would be the round-5 defect: {stage_edit_alone}"
+        )
+        assert len(set(stage_edit_alone.values())) > 1, (
+            "the sweep no longer contains both outcomes, so it cannot show the "
+            f"question is undecidable from the early-stage branch: {stage_edit_alone}"
+        )
+
+    def test_an_early_stage_reports_the_packets_an_override_invented(self) -> None:
+        """Round 6, finding 1: a regression round 5 introduced.
+
+        ``stage_is_a_cause`` is derived from what the WALK proposed, and the walk
+        is not the last word — ``resolve_document_controls`` applies the
+        per-subtype overrides afterwards, and those can invent packets of a
+        subtype no stage proposes. The shipped sentence then said "the count has
+        nothing to act on" about a file holding three records packets, and in the
+        same breath offered to lower the count to three: a number it could only
+        have taken from the packets it had just denied existed.
+
+        Round 4's version of this branch carried "the file holds {delivered}
+        records packet(s)" — it is still visible in m12-18's replacement text —
+        and round 5 rewrote the branch for a different defect and dropped the
+        count with it.
+        """
+        counts, warning = self._shaped(
+            "isc148r6-invented",
+            lifecycle=_PRE_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 8}},
+            documents=self._documents(
+                overrides=[{"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 3}],
+            ),
+        )
+        assert sum(counts.values()) == 3, (
+            f"the seed no longer holds override-invented packets: {counts}"
+        )
+        assert warning is not None
+        assert "nothing to act on" not in warning, (
+            "the file holds 3 records packets and the warning says the count has "
+            f"nothing to act on: {warning}"
+        )
+        assert "the 3 the file holds" in warning, (
+            f"the warning does not state what the file actually holds: {warning}"
+        )
+
+    def test_a_stage_shortfall_with_an_empty_file_keeps_the_shipped_wording(self) -> None:
+        """The opposite draw: the zero case must not be reworded gratuitously.
+
+        ISC-126's sentence is correct when the file really does hold nothing, and
+        moving the text of a shipped warning has its own cost. The fix above is
+        conditional for that reason, and this pins the condition.
+        """
+        counts, warning = self._shaped(
+            "isc148r6-empty",
+            lifecycle=_PRE_DISCOVERY_STAGE,
             scenario={"discovery": {"subpoena_sets": 3}},
-            documents=self._documents(exclude=["SUBPOENAED_RECORDS_EMPLOYMENT"]),
         )
-        assert sum(delivered.values()) == 3, (
-            "the stage edit alone delivers the declared count with the exclude "
-            f"still in place, so 'both edits are needed' would be false: {delivered}"
+        assert sum(counts.values()) == 0
+        assert warning is not None and "nothing to act on" in warning, (
+            f"the shipped zero-case wording moved: {warning}"
         )
-        assert after is None, f"a delivered count warned anyway: {after}"
+
+    def test_the_overage_warning_prescribes_an_edit_that_converges(self) -> None:
+        """Round 6, finding 2: an imperative that walks away from its own target.
+
+        The floor clause prescribed "lower the documents.overrides min", joined
+        to the other remedies with ", or" — asserting each was independently
+        sufficient. Neither half held. The reported `held` is not independent of
+        the floor, because `_apply_type_min` grows the type to reach it, so
+        lowering the min to the printed number lowers the number: measured, 67 ->
+        52 -> 41 -> 32 -> 26 -> 21 -> 17, short at every step and never
+        converging. That is the ISC-150 non-delivering-imperative class, written
+        into the fix that was supposed to remove it.
+
+        Raising the declared count is the edit that always resolves THIS warning,
+        so it is the one prescribed outright, and the test follows it.
+        """
+        counts, warning = self._shaped(
+            "isc148r6-converge",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": 1}},
+            documents=self._documents(
+                overrides=[
+                    {"type": "DISCOVERY", "min": 67},
+                    {"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 2},
+                ],
+            ),
+        )
+        held = sum(counts.values())
+        assert warning is not None and held == 2, (counts, warning)
+        assert "lower the documents.overrides min" not in warning, (
+            "the warning prescribes lowering a floor to a count the floor itself "
+            f"produces, which does not converge: {warning}"
+        )
+        assert f"Raise scenario.discovery.subpoena_sets to {held}" in warning, (
+            f"the one always-delivering edit is not prescribed outright: {warning}"
+        )
+
+        # Follow it, exactly as written.
+        after_counts, after = self._shaped(
+            "isc148r6-converge",
+            lifecycle=_DISCOVERY_STAGE,
+            scenario={"discovery": {"subpoena_sets": held}},
+            documents=self._documents(
+                overrides=[
+                    {"type": "DISCOVERY", "min": 67},
+                    {"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 2},
+                ],
+            ),
+        )
+        assert after is None, (
+            f"the prescribed edit did not resolve the warning: {after}"
+        )
+        assert sum(after_counts.values()) == held
 
     def test_a_control_that_touched_nothing_proposed_is_not_named(self) -> None:
         """The innocence claim that survives round 4, at a stage that proposes.

@@ -1094,9 +1094,15 @@ title = 'an unattributable shortfall reaches for the stage sentence again'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_a_global_cap_shortfall_does_not_blame_the_stage'
 find = '''        if stage_is_a_cause:
-            return f"scenario.discovery.subpoena_sets is {declared} but {_STAGE_CAUSE}"'''
+            return (
+                f"scenario.discovery.subpoena_sets is {declared} but "
+                f"{_stage_cause(delivered)}"
+            )'''
 replace = '''        if True:
-            return f"scenario.discovery.subpoena_sets is {declared} but {_STAGE_CAUSE}"'''
+            return (
+                f"scenario.discovery.subpoena_sets is {declared} but "
+                f"{_stage_cause(delivered)}"
+            )'''
 
 [[mutant]]
 id = 'm12-7'
@@ -1190,7 +1196,7 @@ id = 'm12-18'
 title = 'an early stage asserts both edits are needed for a control that does not bite'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_an_early_stage_does_not_claim_a_control_must_also_be_edited'
-find = '''            f"scenario.discovery.subpoena_sets is {declared} but {_STAGE_CAUSE}. "
+find = '''            f"scenario.discovery.subpoena_sets is {declared} but {_stage_cause(delivered)}. "
             f"The file also carries controls over records packets: {detail}. "
             f"{_capitalized(edits)} if the stage change alone does not deliver "
             f"the count, or {fallback}"'''
@@ -1198,7 +1204,7 @@ replace = '''            f"scenario.discovery.subpoena_sets is {declared} but tw
             f"stand in the way and the file holds {delivered} records packet(s): "
             f"{_STAGE_CAUSE}; and {detail}. "
             f"{_capitalized(edits)} too — both edits are needed, or {fallback}"'''
-note = 'The exact round-4 sentence, restored. Round 4 fixed the under-naming and shipped an over-claim with it: whether a listed control bites is not knowable at a stage that proposes nothing, and `exclude: [SUBPOENAED_RECORDS_EMPLOYMENT]` at intake is the counter-example — the stage edit alone delivers 3 of 3 with the exclude still in the file. The guard both asserts the claim is absent and makes only the stage edit to show it would have been false. Paired with m12-15, which pins the naming this mutant leaves intact: the two together say name the control, do not assert it.'
+note = 'The exact round-4 sentence, restored. Round 4 fixed the under-naming and shipped an over-claim with it: whether a listed control bites is not knowable at a stage that proposes nothing, and `exclude: [SUBPOENAED_RECORDS_EMPLOYMENT]` at intake is the counter-example — the stage edit alone delivers 3 of 3 with the exclude still in the file. The guard asserts the claim is absent; that assertion alone is what kills this mutant. Its sibling sweep across rng_seed draws runs at the discovery stage and passes identically either side of the mutation, since this mutation rewrites only the early-stage branch — round 6 corrected an earlier note here that credited the mutant with a second guard it does not have. Re-pointed in round 6: the finding-1 fix routed this branch through `_stage_cause(delivered)`, which moved the find text. Paired with m12-15, which pins the naming this mutant leaves intact: the two together say name the control, do not assert it.'
 
 [[mutant]]
 id = 'm12-19'
@@ -1216,12 +1222,16 @@ id = 'm12-20'
 title = 'an unsatisfiable-min verdict is reached before the overrides that satisfy it'
 file = 'src/wc_caseload_engine/doc_controls.py'
 test = 'tests/test_doc_controls.py::test_a_min_an_override_then_satisfies_does_not_warn_that_it_cannot_be'
-find = '''                unsatisfiable[doc_type] = minimum'''
-replace = '''                warnings.append(
-                    f"documents.overrides min={minimum} for type {doc_type} cannot be "
-                    "satisfied: the lifecycle proposed no documents of that type"
-                )'''
-note = 'Type bounds resolve at step 3, per-subtype overrides at step 1 — last, highest precedence, and the only control that can invent documents of a type the lifecycle never proposed. Deciding "cannot be satisfied" before it runs decides it against a plan that is not the plan: measured, `{type: DISCOVERY, min: 5}` at target_stage intake beside a forced count of 6 shipped a manifest carrying both the warning and six DISCOVERY documents. The verdict is now taken against the finished plan.'
+find = '''            floors_to_verify[doc_type] = (minimum, bool(members))
+            if members:'''
+replace = '''            if not members:
+                warnings.append(
+                    f"documents.overrides min={minimum} for type {doc_type} is not "
+                    "met: the file holds 0 — the lifecycle proposed no documents "
+                    "of that type"
+                )
+            if members:'''
+note = 'Type bounds resolve at step 3, per-subtype overrides at step 1 — last, highest precedence, and the only control that can invent documents of a type the lifecycle never proposed. Deciding "cannot be satisfied" before it runs decides it against a plan that is not the plan: measured, `{type: DISCOVERY, min: 5}` at target_stage intake beside a forced count of 6 shipped a manifest carrying both the warning and six DISCOVERY documents. The verdict is now taken against the finished plan. Re-pointed in round 6, when finding 3 replaced the one-arm `unsatisfiable` dict with `floors_to_verify` covering both arms; the claim is unchanged — decide the verdict eagerly and it is decided against a plan that is not the plan.'
 
 [[mutant]]
 id = 'm12-21'
@@ -1232,3 +1242,33 @@ find = '''                if index not in kept_at and taxonomy_parent(packets[in
 replace = '''                if packets[index] not in [packets[i] for i in kept_at]
                 and taxonomy_parent(packets[index][1]) == parent'''
 note = 'A packet is a plain `(date, subtype, track, role)` tuple and two of them can compare equal without being the same document. Under value equality one copy in the kept set hid both, so a floor could be reported short with a spare packet unused. Unreachable from any generated seed today — the reviewer could not reach it across 45 combinations and neither could I — so the guard calls `_shape_discovery` directly with the duplicate rather than hunting for a seed that makes one. An invariant no current seed violates is still an invariant.'
+
+[[mutant]]
+id = 'm12-22'
+title = 'the stage sentence claims an empty file while an override fills it'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_an_early_stage_reports_the_packets_an_override_invented'
+find = '''    if delivered == 0:
+        return _STAGE_CAUSE'''
+replace = '''    if True:
+        return _STAGE_CAUSE'''
+note = "Round 5's regression, restored. `stage_is_a_cause` reads what the WALK proposed; the per-subtype overrides run afterwards and can invent packets of a subtype no stage proposes. Unconditionally returning the shipped text then asserts 'the count has nothing to act on' about a file holding three records packets, and offers to lower the count to three in the same sentence — a number it could only have taken from the packets it just denied. Paired with test_a_stage_shortfall_with_an_empty_file_keeps_the_shipped_wording as the opposite draw, so the conditional cannot be satisfied by rewording the zero case too."
+
+[[mutant]]
+id = 'm12-23'
+title = 'a type floor is verified on only one arm of the branch again'
+file = 'src/wc_caseload_engine/doc_controls.py'
+test = 'tests/test_doc_controls.py::test_a_floor_an_override_cuts_back_below_is_reported'
+find = '''            floors_to_verify[doc_type] = (minimum, bool(members))'''
+replace = '''            if not members:
+                floors_to_verify[doc_type] = (minimum, bool(members))'''
+note = "Round 5 established that 'is this floor met' is a claim about the finished file, then fed the deferred check from only the arm where the lifecycle proposed nothing. The overrides move the count in both directions: `_apply_type_min` grows the type toward its floor and a per-subtype override cuts it back, leaving `{type: DISCOVERY, min: 67}` beside a pin of 2 holding 52 documents — short by 15, with an EMPTY warning list, because the grown arm recorded nothing to check. Restoring the guard reproduces that silence."
+
+[[mutant]]
+id = 'm12-24'
+title = 'the overage warning prescribes lowering a floor to a number the floor produces'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_the_overage_warning_prescribes_an_edit_that_converges'
+find = '''            remedies.append(f"remove the documents.overrides min on {parent}")'''
+replace = '''            remedies.append(f"lower the documents.overrides min on {parent}")'''
+note = "The reported `held` is not independent of the floor — `_apply_type_min` grows the type to reach it — so lowering the min to the number the sentence just printed lowers the number: measured 67 -> 52 -> 41 -> 32 -> 26 -> 21 -> 17, short at every step, never converging. A non-delivering imperative written into the very fix meant to remove that class. The guard also follows the always-delivering edit the sentence now leads with and asserts the warning is gone."
