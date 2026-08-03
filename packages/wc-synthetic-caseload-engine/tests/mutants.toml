@@ -1321,3 +1321,23 @@ find = '''        if minimum is not None and minimum > 0:
 replace = '''        if minimum is not None and minimum > 0 and total < minimum:
             floors_to_verify[doc_type] = (minimum, bool(members))'''
 note = "The fourth appearance of one class, through the half of the mechanism nobody had moved. Rounds 5-7 walked the floor EVALUATION toward the finished file; enrolment stayed at step 3, gated on a shortfall against an intermediate count. A floor the resolver already satisfied was therefore never handed to the planner and never compared against the file: measured under `never_treated`, where MEDICAL_CLINICAL ends at 0, floors 1-9 were silent and 10-12 warned, the boundary being exactly the step-3 total — so the looser the constraint, the less likely it was enforced. Enrolment is a fact about the seed and cannot be filtered by an intermediate."
+
+[[mutant]]
+id = 'm12-29'
+title = 'the global_cap verdict is decided inside the resolver again'
+file = 'src/wc_caseload_engine/doc_controls.py'
+test = 'tests/test_doc_controls.py::test_a_cap_the_file_no_longer_breaches_is_not_reported_as_unreachable'
+find = '''    if held <= global_cap:
+        return []'''
+replace = ''
+note = "The fourth living instance of the class, in the last verdict left inside the resolver. Round 8 moved the floor verdict to the planner because the resolver's plan is not the file; the cap verdict makes the same grammatical claim and stayed behind. Measured with global_cap 5, {type: MEDICAL_CLINICAL, min: 30} and never_treated: the manifest carried \"documents.global_cap=5 cannot be met without breaking a higher-precedence control (... MEDICAL_CLINICAL min=30)\" for a file holding ZERO documents, beside a second warning stating that same floor held nothing. The cap was met, the floor blamed for forcing the total up was empty, and each warning refuted the other."
+
+[[mutant]]
+id = 'm12-30'
+title = 'a bystander override is named as the cause of a floor shortfall'
+file = 'src/wc_caseload_engine/doc_controls.py'
+test = 'tests/test_doc_controls.py::test_an_override_that_reduced_without_causing_the_shortfall_is_not_named'
+find = '''                if planned_by_type.get(doc_type, 0) < minimum
+                and _override_parent(subtype, plan, parent_type_of) == doc_type'''
+replace = '''                if _override_parent(subtype, plan, parent_type_of) == doc_type'''
+note = "`count < before_overrides` answers \"did this override reduce anything\"; the sentence claims \"this override is why the floor is short\". They differ whenever the controls left the type at or above its floor and something afterwards emptied it — the override reduced a subtype, the floor was still satisfied, and the scenario is the sole cause. Naming it implies raising it would help, which this package's own measurements refute: under never_treated the type reaches zero at override counts 1, 10, 30 and 60 alike. Round 7 caught this predicate naming an override that ADDED documents; this is the subtler form, and m12-30's sibling test pins that a genuine cause is still named."

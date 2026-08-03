@@ -41,6 +41,7 @@ from wc_caseload_engine.doc_controls import (
     TRACK_CORE,
     ControlResolution,
     resolve_document_controls,
+    verify_global_cap,
     verify_type_floors,
 )
 from wc_caseload_engine.doctrine import content_flags_for, unsupported_hook_warnings
@@ -2097,6 +2098,12 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     floor_warnings = verify_type_floors(
         control.floor_checks, held_by_type, control.type_totals()
     )
+    # The cap verdict, for the same reason and in the same place. Round 8 moved
+    # the floor verdict out here because the resolver's plan is not the file, and
+    # left this one behind — so `global_cap: 5` warned "cannot be met" about a
+    # file holding zero documents, naming as the culprit a floor that a second
+    # warning in the same manifest reported empty.
+    floor_warnings.extend(verify_global_cap(control.cap_check, len(dated)))
 
     warnings = (
         *control.warnings,

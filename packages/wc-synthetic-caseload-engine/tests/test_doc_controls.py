@@ -16,6 +16,7 @@ from wc_caseload_engine.doc_controls import (
     TRACK_SUPPORTING,
     DocumentCandidate,
     resolve_document_controls,
+    verify_global_cap,
     verify_type_floors,
 )
 from wc_caseload_engine.seeds import DocumentControls
@@ -59,6 +60,19 @@ def resolve(controls: dict[str, Any], **kwargs: Any) -> Any:
         **kwargs,
     )
 
+
+
+def cap_warnings(result: Any, held: int | None = None) -> list[str]:
+    """The cap verdict, taken the way the planner takes it.
+
+    Same seam as `floor_warnings`, and for the same reason: the resolver trims
+    toward the cap and knows when it stopped short, but whether the cap is
+    actually breached is a fact about the finished file. `held=None` models the
+    case where nothing is removed after the controls run.
+    """
+    return verify_global_cap(
+        result.cap_check, result.total if held is None else held
+    )
 
 
 def floor_warnings(result: Any, held: dict[str, int] | None = None) -> list[str]:
@@ -214,7 +228,7 @@ def test_cap_below_pinned_overrides_warns_and_keeps_the_overrides() -> None:
     )
     assert result.count_for("PROOF_OF_SERVICE") == 6
     assert result.total == 6
-    assert any("cannot be met" in warning for warning in result.warnings)
+    assert any("cannot be met" in warning for warning in cap_warnings(result))
 
 
 # 11 — lifecycle-invalid forced subtype still emits, loudly (ISC-29)
@@ -264,7 +278,15 @@ def test_global_cap_respects_a_type_minimum_floor() -> None:
     )
     assert result.type_totals()["MEDICAL_CLINICAL"] == 6
     assert result.total == 6  # cap yields to the min floor
-    assert any("cannot be met" in warning for warning in result.warnings)
+    assert any("cannot be met" in warning for warning in cap_warnings(result))
+    # Round 9: the resolver records the facts and decides nothing. Whether the
+    # cap is breached depends on what the file finally holds, which it cannot
+    # see — under `never_treated` every remaining document is dropped and the
+    # cap of 5 is met after all.
+    assert not [w for w in result.warnings if "cannot be met" in w], result.warnings
+    assert not cap_warnings(result, held=0), (
+        "a file holding nothing cannot breach a cap of 5"
+    )
 
 
 def test_global_cap_trims_types_that_have_slack_above_their_minimum() -> None:
@@ -587,4 +609,95 @@ def test_every_declared_floor_is_enrolled_even_when_it_already_holds() -> None:
     assert not floor_warnings(result), floor_warnings(result)
     assert len(floor_warnings(result, held={"MEDICAL_CLINICAL": 0})) == 1, (
         "enrolled but silent when the file drops to zero"
+    )
+
+
+def test_a_cap_the_file_no_longer_breaches_is_not_reported_as_unreachable() -> None:
+    """Round 9, finding A: the fourth instance, in the last verdict left behind.
+
+    Round 8 moved the floor verdict to the planner precisely because the
+    resolver's plan is not the file. The cap verdict stayed, and it makes the
+    same grammatical claim. Measured with `global_cap: 5`,
+    `{type: MEDICAL_CLINICAL, min: 30}` and `never_treated`, the manifest carried
+    "documents.global_cap=5 cannot be met without breaking a higher-precedence
+    control (... MEDICAL_CLINICAL min=30)" for a file holding ZERO documents —
+    beside a second warning stating that same floor held nothing. The cap was
+    met, the floor blamed for forcing the total up was empty, and each warning
+    refuted the other.
+    """
+    result = resolve(
+        {"global_cap": 5, "overrides": [{"type": "MEDICAL_CLINICAL", "min": 30}]}
+    )
+    assert result.cap_check is not None, (
+        "the resolver must still record that it could not reach the cap"
+    )
+    assert result.total > 5, "the resolver's own plan exceeds the cap"
+    assert cap_warnings(result), "a genuine breach must still be reported"
+    assert "the file holds" in cap_warnings(result)[0], (
+        f"the verdict does not state what the file holds: {cap_warnings(result)[0]}"
+    )
+
+    # The case that shipped the false claim: the scenario empties the file.
+    assert not cap_warnings(result, held=0), (
+        "a file holding nothing is reported as unable to meet a cap of 5"
+    )
+    assert not cap_warnings(result, held=5), "at the cap is not over the cap"
+    assert cap_warnings(result, held=6), "one over the cap must still report"
+
+
+def test_an_override_that_reduced_without_causing_the_shortfall_is_not_named() -> None:
+    """Round 9, finding B: `reducing` answered the wrong question.
+
+    `count < before_overrides` asks "did this override reduce anything". The
+    sentence claims "this override is why the floor is short". Those differ
+    whenever the controls left the type at or above its floor and something
+    afterwards emptied it: the override reduced a subtype, the floor was still
+    satisfied, and the scenario is the sole cause.
+
+    Naming it there implies raising it would help, and this package's own
+    measurements say it cannot — under `never_treated` the type reaches zero at
+    override counts 1, 10, 30 and 60 alike. Round 7 caught this predicate naming
+    an override that ADDED documents; this is the subtler form.
+    """
+    controls = {
+        "overrides": [
+            {"type": "MEDICAL_CLINICAL", "min": 3},
+            {"subtype": "PTP_PR2_PROGRESS_REPORT", "count": 1},
+        ]
+    }
+    result = resolve(controls)
+    planned = result.type_totals()["MEDICAL_CLINICAL"]
+    assert planned >= 3, (
+        f"the controls must SATISFY this floor for the test to be about a "
+        f"bystander override: planned {planned}"
+    )
+
+    unmet = floor_warnings(result, held={"MEDICAL_CLINICAL": 0})
+    assert len(unmet) == 1, unmet
+    assert "PTP_PR2_PROGRESS_REPORT" not in unmet[0], (
+        "an override that reduced a subtype without causing the shortfall is "
+        f"named as the cause: {unmet[0]}"
+    )
+    assert "the scenario removed them" in unmet[0], unmet[0]
+
+
+def test_an_override_that_did_cause_the_shortfall_is_still_named() -> None:
+    """The opposite draw, so the rule above cannot pass by never naming anything."""
+    result = resolve(
+        {
+            "overrides": [
+                {"type": "MEDICAL_CLINICAL", "min": 30},
+                {"subtype": "PTP_PR2_PROGRESS_REPORT", "count": 1},
+            ]
+        }
+    )
+    planned = result.type_totals()["MEDICAL_CLINICAL"]
+    assert planned < 30, (
+        f"the controls must leave this floor SHORT for the override to be a "
+        f"genuine cause: planned {planned}"
+    )
+    unmet = floor_warnings(result, held={"MEDICAL_CLINICAL": 0})
+    assert len(unmet) == 1, unmet
+    assert "PTP_PR2_PROGRESS_REPORT" in unmet[0], (
+        f"the override that genuinely caused the shortfall is not named: {unmet[0]}"
     )

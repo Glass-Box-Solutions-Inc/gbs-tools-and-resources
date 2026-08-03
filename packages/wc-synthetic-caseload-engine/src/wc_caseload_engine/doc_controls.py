@@ -103,6 +103,11 @@ class ControlResolution:
     #: floor ends up met is a question only the caller can answer, against the
     #: documents it finally holds. :func:`verify_type_floors` is that answer.
     floor_checks: tuple[tuple[str, int, bool, tuple[str, ...]], ...] = ()
+    #: ``(global_cap, pinned, type_floors)`` when the cap could not be reached
+    #: inside the resolver, else ``None``. Also NOT a verdict: the scenario
+    #: shaping downstream can drop every remaining document, at which point the
+    #: cap is met after all. :func:`verify_global_cap` decides.
+    cap_check: tuple[int, int, tuple[tuple[str, int], ...]] | None = None
 
     @property
     def total(self) -> int:
@@ -240,6 +245,9 @@ def resolve_document_controls(
     """
     emit_log = logger if logger is not None else log
     warnings: list[str] = []
+    #: Facts about an unreachable `global_cap`, or None. Not a verdict — see
+    #: `verify_global_cap`.
+    cap_check: tuple[int, int, tuple[tuple[str, int], ...]] | None = None
     dropped: dict[str, str] = dict(pre_dropped or {})
     #: ``{parent_type: (minimum, lifecycle_proposed_any)}`` for every ``min``
     #: floor that did not already hold when step 3 reached it. Handed to the
@@ -321,15 +329,7 @@ def resolve_document_controls(
             for doc_type, (minimum, _) in controls.type_bounds.items()
             if minimum is not None
         }
-        plan, cap_warnings = _apply_global_cap(plan, controls.global_cap, type_minimums)
-        for warning in cap_warnings:
-            warnings.append(warning)
-            emit_log.warning(
-                "doc_controls.cap_unreachable",
-                case_id=case_id,
-                global_cap=controls.global_cap,
-                detail=warning,
-            )
+        plan, cap_check = _apply_global_cap(plan, controls.global_cap, type_minimums)
 
     plan = [entry for entry in plan if entry.count > 0]
 
@@ -352,15 +352,30 @@ def resolve_document_controls(
     # manifest that says it forced them into existence, and the edit that implies
     # moves the file further from the floor (56 -> 52, measured). Only overrides
     # that lowered a subtype's count are named.
+    planned_by_type: Counter[str] = Counter()
+    for entry in plan:
+        if entry.parent_type is not None:
+            planned_by_type[entry.parent_type] += entry.count
     floor_checks = tuple(
         (
             doc_type,
             minimum,
             lifecycle_proposed,
+            # An override is a CAUSE of the shortfall only if the resolver's own
+            # plan ended short. When the controls left the type at or above the
+            # floor, whatever emptied it came afterwards and the overrides are
+            # bystanders: naming one then says "raise this and the floor is met",
+            # which under `never_treated` is false at every count (measured at 1,
+            # 10, 30 and 60, all reaching zero). Round 7 caught this predicate
+            # naming an override that ADDED documents; round 9 caught it naming
+            # one that reduced a subtype without being why the floor is short.
+            # `count < before_overrides` answers "did this override reduce
+            # anything", which is not the question the sentence asks.
             tuple(
                 subtype
                 for subtype, count in sorted(controls.subtype_overrides.items())
-                if _override_parent(subtype, plan, parent_type_of) == doc_type
+                if planned_by_type.get(doc_type, 0) < minimum
+                and _override_parent(subtype, plan, parent_type_of) == doc_type
                 and count < before_overrides.get(subtype, 0)
             ),
         )
@@ -372,6 +387,7 @@ def resolve_document_controls(
         warnings=tuple(warnings),
         dropped=dict(dropped),
         floor_checks=floor_checks,
+        cap_check=cap_check,
     )
 
 
@@ -497,15 +513,24 @@ def _apply_global_cap(
     plan: Sequence[PlannedDocumentCount],
     global_cap: int,
     type_minimums: Mapping[str, int] | None = None,
-) -> tuple[list[PlannedDocumentCount], list[str]]:
+) -> tuple[
+    list[PlannedDocumentCount], tuple[int, int, tuple[tuple[str, int], ...]] | None
+]:
     """Trim the plan down to *global_cap*, honouring higher-precedence floors.
 
     The cap is the weakest control: it never trims a per-subtype override and
     never pushes a parent type below its ``min`` bound.
+
+    Returns the trimmed plan and, when the cap could not be reached here, the
+    facts a caller needs to decide whether it was actually breached — NOT a
+    warning. "The cap cannot be met" is a claim about the finished file, and this
+    function cannot see it: the scenario shaping downstream may drop every
+    remaining document, at which point the cap is met after all. See
+    :func:`verify_global_cap`.
     """
     total = sum(entry.count for entry in plan)
     if total <= global_cap:
-        return list(plan), []
+        return list(plan), None
 
     minimums = dict(type_minimums or {})
     slack: dict[str, int] = {}
@@ -541,20 +566,11 @@ def _apply_global_cap(
         else entry
         for entry in plan
     ]
-    warnings: list[str] = []
+    unreachable: tuple[int, int, tuple[tuple[str, int], ...]] | None = None
     if excess > 0:
         pinned = sum(entry.count for entry in plan if entry.forced)
-        floors = ", ".join(
-            f"{doc_type} min={value}" for doc_type, value in sorted(minimums.items())
-        )
-        detail = f"{pinned} document(s) pinned by per-subtype overrides"
-        if floors:
-            detail += f"; type floors: {floors}"
-        warnings.append(
-            f"documents.global_cap={global_cap} cannot be met without breaking a "
-            f"higher-precedence control ({detail})"
-        )
-    return out, warnings
+        unreachable = (global_cap, pinned, tuple(sorted(minimums.items())))
+    return out, unreachable
 
 
 __all__ = [
@@ -570,6 +586,8 @@ __all__ = [
     "ParentResolver",
     "PlannedDocumentCount",
     "resolve_document_controls",
+    "verify_global_cap",
+    "verify_type_floors",
 ]
 
 
@@ -653,3 +671,42 @@ def verify_type_floors(
             f"the file holds {held} — {detail}"
         )
     return out
+
+
+def verify_global_cap(
+    cap_check: tuple[int, int, tuple[tuple[str, int], ...]] | None,
+    held: int,
+) -> list[str]:
+    """Warning when ``documents.global_cap`` is genuinely breached by the file.
+
+    The resolver trims toward the cap and knows when it had to stop short, but
+    "the cap cannot be met" is a claim about the finished file and the resolver
+    cannot see it. Deciding there put this in a manifest whose file held **zero**
+    documents::
+
+        documents.global_cap=5 cannot be met without breaking a
+        higher-precedence control (... type floors: MEDICAL_CLINICAL min=30)
+
+    — beside a second warning stating that same floor held nothing. The cap of 5
+    was met, the floor named as forcing the total up was empty, and each warning
+    refuted the other. Under ``never_treated`` the scenario had dropped every
+    document after the resolver ran.
+
+    This is the same class as the floor verdict (see :func:`verify_type_floors`),
+    and it is fixed the same way rather than patched again: the resolver returns
+    the facts, the caller that owns the finished file decides.
+    """
+    if cap_check is None:
+        return []
+    global_cap, pinned, floors = cap_check
+    if held <= global_cap:
+        return []
+    detail = f"{pinned} document(s) pinned by per-subtype overrides"
+    if floors:
+        detail += "; type floors: " + ", ".join(
+            f"{doc_type} min={value}" for doc_type, value in floors
+        )
+    return [
+        f"documents.global_cap={global_cap} cannot be met without breaking a "
+        f"higher-precedence control ({detail}) — the file holds {held}"
+    ]
