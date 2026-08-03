@@ -41,6 +41,7 @@ from wc_caseload_engine.doc_controls import (
     TRACK_CORE,
     ControlResolution,
     resolve_document_controls,
+    verify_forced_subtypes,
     verify_global_cap,
     verify_type_floors,
 )
@@ -2103,7 +2104,20 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # left this one behind — so `global_cap: 5` warned "cannot be met" about a
     # file holding zero documents, naming as the culprit a floor that a second
     # warning in the same manifest reported empty.
-    floor_warnings.extend(verify_global_cap(control.cap_check, len(dated)))
+    # Both parentheticals describe the file too: the pinned count is what
+    # SURVIVED, not what the resolver pinned, and whether a forced subtype's
+    # control "won" is a question only the finished file can answer.
+    held_by_subtype = Counter(entry[1] for entry in dated)
+    floor_warnings.extend(
+        verify_global_cap(
+            control.cap_check,
+            len(dated),
+            sum(held_by_subtype[key] for key in control.forced_subtypes()),
+        )
+    )
+    floor_warnings.extend(
+        verify_forced_subtypes(control.forced_checks, held_by_subtype)
+    )
 
     warnings = (
         *control.warnings,

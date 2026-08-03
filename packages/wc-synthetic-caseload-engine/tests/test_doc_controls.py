@@ -16,6 +16,7 @@ from wc_caseload_engine.doc_controls import (
     TRACK_SUPPORTING,
     DocumentCandidate,
     resolve_document_controls,
+    verify_forced_subtypes,
     verify_global_cap,
     verify_type_floors,
 )
@@ -60,6 +61,16 @@ def resolve(controls: dict[str, Any], **kwargs: Any) -> Any:
         **kwargs,
     )
 
+
+
+def forced_warnings(result: Any, held: dict[str, int] | None = None) -> list[str]:
+    """The forced-subtype verdict, taken the way the planner takes it.
+
+    Whether an override "won" is a claim about the finished file: the scenario
+    shaping downstream can remove every document it forced. `held=None` models
+    nothing being removed after the controls run.
+    """
+    return verify_forced_subtypes(result.forced_checks, held or result.counts())
 
 
 def cap_warnings(result: Any, held: int | None = None) -> list[str]:
@@ -183,7 +194,7 @@ def test_subtype_override_beats_exclude_and_warns() -> None:
     )
     assert result.count_for("DEPOSITION_TRANSCRIPT") == 2
     assert "DEPOSITION_TRANSCRIPT" in result.forced_subtypes()
-    assert any("documents.exclude" in w for w in result.warnings)
+    assert any("documents.exclude" in w for w in forced_warnings(result))
 
 
 # 8 — precedence: subtype override beats include_only
@@ -247,7 +258,7 @@ def test_lifecycle_invalid_subtype_is_emitted_with_a_warning() -> None:
     assert "SURVEILLANCE_REPORT" in result.forced_subtypes()
     assert warnings[0]["event"] == "doc_controls.forced_subtype"
     assert warnings[0]["subtype"] == "SURVEILLANCE_REPORT"
-    assert any("never emits it" in warning for warning in result.warnings)
+    assert any("never emits it" in warning for warning in forced_warnings(result))
 
 
 # 12 — full composition: whitelist + type bound + override + cap
@@ -700,4 +711,59 @@ def test_an_override_that_did_cause_the_shortfall_is_still_named() -> None:
     assert len(unmet) == 1, unmet
     assert "PTP_PR2_PROGRESS_REPORT" in unmet[0], (
         f"the override that genuinely caused the shortfall is not named: {unmet[0]}"
+    )
+
+
+def test_a_forced_subtype_the_file_never_holds_is_not_called_a_win() -> None:
+    """Round 10, finding 2: the fifth site, and the only inverted one.
+
+    "control wins, loudly" is a claim about the finished file. At
+    `target_stage: intake` under `never_treated` it was published for four
+    different subtypes whose final count was ZERO, beside a second warning in
+    the same manifest saying the scenario had suppressed exactly that family.
+    Not a stale number — the opposite of what happened. The control lost, and
+    it lost silently.
+    """
+    result = resolve({"overrides": [{"subtype": "SURVEILLANCE_REPORT", "count": 6}]})
+    assert result.count_for("SURVEILLANCE_REPORT") == 6
+
+    won = forced_warnings(result)
+    assert len(won) == 1 and "control wins, loudly" in won[0], won
+
+    lost = forced_warnings(result, held={"SURVEILLANCE_REPORT": 0})
+    assert len(lost) == 1, lost
+    assert "control wins" not in lost[0], (
+        "a file holding none of the forced subtype is reported as the control "
+        f"winning: {lost[0]}"
+    )
+    assert "did NOT win" in lost[0], lost[0]
+
+    partial = forced_warnings(result, held={"SURVEILLANCE_REPORT": 2})
+    assert "control wins" not in partial[0], partial[0]
+    assert "only 2" in partial[0], partial[0]
+
+
+def test_the_cap_reason_counts_pinned_documents_the_file_still_holds() -> None:
+    """Round 10, finding 1: the verdict moved to the file and its reason did not.
+
+    Round 9 fixed `held`. The parenthetical explaining the breach still counted
+    forced documents at resolver time, so ten of them were offered as the reason
+    a cap could not be met in a file containing none. Removing that override left
+    the breach byte-identical, which proves they were never a cause: the author
+    is told to lower a pin that is not holding anything.
+    """
+    result = resolve(
+        {"global_cap": 2, "overrides": [{"subtype": "PROOF_OF_SERVICE", "count": 6}]}
+    )
+    assert result.cap_check is not None
+
+    survived = cap_warnings(result)
+    assert survived and "6 document(s) pinned" in survived[0], survived
+
+    # The file kept the documents but not the pinned ones.
+    none_pinned = verify_global_cap(result.cap_check, result.total, 0)
+    assert none_pinned, "the cap is still breached, so it must still report"
+    assert "0 document(s) pinned" in none_pinned[0], (
+        "the reason counts pinned documents the file no longer holds: "
+        f"{none_pinned[0]}"
     )

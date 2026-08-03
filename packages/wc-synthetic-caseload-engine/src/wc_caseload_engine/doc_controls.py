@@ -108,6 +108,10 @@ class ControlResolution:
     #: shaping downstream can drop every remaining document, at which point the
     #: cap is met after all. :func:`verify_global_cap` decides.
     cap_check: tuple[int, int, tuple[tuple[str, int], ...]] | None = None
+    #: ``(subtype, count, suppressed_by)`` per override that forced a subtype the
+    #: lifecycle did not propose. Also facts rather than a verdict: whether the
+    #: control actually won is a question about the finished file.
+    forced_checks: tuple[tuple[str, int, str | None], ...] = ()
 
     @property
     def total(self) -> int:
@@ -248,6 +252,9 @@ def resolve_document_controls(
     #: Facts about an unreachable `global_cap`, or None. Not a verdict — see
     #: `verify_global_cap`.
     cap_check: tuple[int, int, tuple[tuple[str, int], ...]] | None = None
+    #: ``(subtype, count, suppressed_by)`` for each override that resurrected or
+    #: invented a subtype. Facts, not a verdict — see `verify_forced_subtypes`.
+    forced_checks: list[tuple[str, int, str | None]] = []
     dropped: dict[str, str] = dict(pre_dropped or {})
     #: ``{parent_type: (minimum, lifecycle_proposed_any)}`` for every ``min``
     #: floor that did not already hold when step 3 reached it. Handed to the
@@ -320,6 +327,7 @@ def resolve_document_controls(
         warnings=warnings,
         emit_log=emit_log,
         case_id=case_id,
+        forced_checks=forced_checks,
     )
 
     # 5. global_cap trims last, respecting every higher-precedence floor.
@@ -388,6 +396,7 @@ def resolve_document_controls(
         dropped=dict(dropped),
         floor_checks=floor_checks,
         cap_check=cap_check,
+        forced_checks=tuple(forced_checks),
     )
 
 
@@ -453,6 +462,7 @@ def _apply_subtype_overrides(
     warnings: list[str],
     emit_log: Any,
     case_id: str | None,
+    forced_checks: list[tuple[str, int, str | None]],
 ) -> list[PlannedDocumentCount]:
     """Force exact per-subtype counts, warning when the lifecycle never proposed one."""
     overrides = controls.subtype_overrides
@@ -479,15 +489,17 @@ def _apply_subtype_overrides(
             dropped.pop(subtype, None)
             continue
         reason = dropped.pop(subtype, None)
-        warning = (
-            f"documents.overrides forces {subtype} x{count}: "
-            + (
-                f"suppressed by {reason} but an explicit override wins"
-                if reason
-                else "the lifecycle for this case never emits it (control wins, loudly)"
-            )
-        )
-        warnings.append(warning)
+        # Recorded, not decided. "Control wins, loudly" is a claim about the
+        # finished file — and at `target_stage: intake` under `never_treated` it
+        # was emitted for four different subtypes whose final count was ZERO,
+        # beside a second warning in the same manifest saying the scenario had
+        # suppressed exactly that family. Not a stale number: the opposite of
+        # what happened. The control lost, and it lost silently.
+        #
+        # This is the fifth site of one class, and the third fixed the same way:
+        # the resolver states what it did, `verify_forced_subtypes` says whether
+        # it survived. See :func:`verify_type_floors`, :func:`verify_global_cap`.
+        forced_checks.append((subtype, count, reason))
         emit_log.warning(
             "doc_controls.forced_subtype",
             case_id=case_id,
@@ -586,6 +598,7 @@ __all__ = [
     "ParentResolver",
     "PlannedDocumentCount",
     "resolve_document_controls",
+    "verify_forced_subtypes",
     "verify_global_cap",
     "verify_type_floors",
 ]
@@ -676,6 +689,7 @@ def verify_type_floors(
 def verify_global_cap(
     cap_check: tuple[int, int, tuple[tuple[str, int], ...]] | None,
     held: int,
+    pinned_in_file: int | None = None,
 ) -> list[str]:
     """Warning when ``documents.global_cap`` is genuinely breached by the file.
 
@@ -698,9 +712,16 @@ def verify_global_cap(
     """
     if cap_check is None:
         return []
-    global_cap, pinned, floors = cap_check
+    global_cap, resolver_pinned, floors = cap_check
     if held <= global_cap:
         return []
+    # `held` was fixed in round 9 and the parenthetical explaining it was not.
+    # `pinned` counted forced documents at resolver time, so ten of them were
+    # offered as the reason a cap could not be met in a file containing none —
+    # and removing that override left the breach byte-identical, which proves
+    # they were never a cause. A reason has to describe the same object as the
+    # number it explains.
+    pinned = resolver_pinned if pinned_in_file is None else pinned_in_file
     detail = f"{pinned} document(s) pinned by per-subtype overrides"
     if floors:
         detail += "; type floors: " + ", ".join(
@@ -710,3 +731,47 @@ def verify_global_cap(
         f"documents.global_cap={global_cap} cannot be met without breaking a "
         f"higher-precedence control ({detail}) — the file holds {held}"
     ]
+
+
+def verify_forced_subtypes(
+    forced_checks: Iterable[tuple[str, int, str | None]],
+    held_by_subtype: Mapping[str, int],
+) -> list[str]:
+    """Whether each forced ``documents.overrides`` subtype actually reached the file.
+
+    The resolver knows an override resurrected or invented a subtype. It does not
+    know whether the document survives to the manifest, and the sentence it used
+    to emit — *"control wins, loudly"* — is a claim about exactly that. At
+    ``target_stage: intake`` under ``never_treated`` it was published for four
+    subtypes whose final count was **zero**, beside a second warning saying the
+    scenario had suppressed that family. Not a stale number: the opposite of what
+    happened. The control lost, and it lost silently.
+
+    Fifth site of one class, third fixed this way. The resolver states what it
+    did; this says whether it held. See :func:`verify_type_floors` and
+    :func:`verify_global_cap`.
+    """
+    out: list[str] = []
+    for subtype, count, reason in forced_checks:
+        held = held_by_subtype.get(subtype, 0)
+        forced = (
+            f"documents.overrides forces {subtype} x{count}: "
+            + (
+                f"suppressed by {reason} but an explicit override wins"
+                if reason
+                else "the lifecycle for this case never emits it"
+            )
+        )
+        if held >= count:
+            out.append(f"{forced} (control wins, loudly)")
+        elif held == 0:
+            out.append(
+                f"{forced} — but the file holds none of them: something after the "
+                "document controls removed every one, so the override did NOT win"
+            )
+        else:
+            out.append(
+                f"{forced} — but the file holds only {held}: something after the "
+                "document controls removed the rest"
+            )
+    return out

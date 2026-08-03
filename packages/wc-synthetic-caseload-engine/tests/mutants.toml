@@ -1341,3 +1341,21 @@ find = '''                if planned_by_type.get(doc_type, 0) < minimum
                 and _override_parent(subtype, plan, parent_type_of) == doc_type'''
 replace = '''                if _override_parent(subtype, plan, parent_type_of) == doc_type'''
 note = "`count < before_overrides` answers \"did this override reduce anything\"; the sentence claims \"this override is why the floor is short\". They differ whenever the controls left the type at or above its floor and something afterwards emptied it — the override reduced a subtype, the floor was still satisfied, and the scenario is the sole cause. Naming it implies raising it would help, which this package's own measurements refute: under never_treated the type reaches zero at override counts 1, 10, 30 and 60 alike. Round 7 caught this predicate naming an override that ADDED documents; this is the subtler form, and m12-30's sibling test pins that a genuine cause is still named."
+
+[[mutant]]
+id = 'm12-31'
+title = 'a forced subtype the file never holds is still called a win'
+file = 'src/wc_caseload_engine/doc_controls.py'
+test = 'tests/test_doc_controls.py::test_a_forced_subtype_the_file_never_holds_is_not_called_a_win'
+find = '''        if held >= count:'''
+replace = '''        if True:'''
+note = "The fifth site of one class and the only one where the sentence is inverted rather than stale. 'control wins, loudly' is a claim about the finished file; at target_stage intake under never_treated it was published for four subtypes whose final count was ZERO, beside a second warning in the same manifest saying the scenario had suppressed exactly that family. The control lost, and it lost silently. Fixed the way the floor and cap verdicts were: the resolver states what it did, verify_forced_subtypes says whether it held."
+
+[[mutant]]
+id = 'm12-32'
+title = 'the cap reason counts pinned documents the file no longer holds'
+file = 'src/wc_caseload_engine/doc_controls.py'
+test = 'tests/test_doc_controls.py::test_the_cap_reason_counts_pinned_documents_the_file_still_holds'
+find = '''    pinned = resolver_pinned if pinned_in_file is None else pinned_in_file'''
+replace = '''    pinned = resolver_pinned'''
+note = "Round 9 fixed the cap verdict's `held` and left its explanation behind. `pinned` was counted at resolver time, so ten forced documents were offered as the reason a cap could not be met in a file holding none of them — and removing that override left the breach byte-identical, proving they were never a cause. An author is sent to lower a pin that is holding nothing. A reason has to describe the same object as the number it explains."
