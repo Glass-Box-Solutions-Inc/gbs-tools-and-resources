@@ -9,6 +9,893 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the money spine (**AJC-43**, money layer Wave 1)
+
+Money is the only part of a workers' compensation file where correctness is
+*arithmetically* checkable — a comp rate either follows from the wage data or it
+does not — and until 0.8.0 it was entirely absent from the corpus. The substrate's
+own wage statement is the sharpest instance of the defect: it drew eight to twelve
+pay periods from `random.randint`, averaged them, and printed
+
+> Temporary Total Disability Rate: $X/week (2/3 AWW, max $1,619.15)
+
+Three problems in one line. The fraction and the ceiling are hardcoded, so every
+file in a multi-year caseload was rated under one vintage regardless of its date
+of injury. The method was asserted in passing rather than recorded, so there was
+no label to score an analyzer against. And the earnings behind the average were
+dice, so the average was derivable from nothing.
+
+- **Wage facts on the seed.** `scenario.wages` is the gate for the whole layer.
+  A history is either **listed** (`earnings:`, exact pay periods) or **described**
+  (`pattern` / `base_weekly_wage` / `lookback_weeks` / `pay_frequency` /
+  `overtime_share`), never both. `employment_start`, `concurrent_employment` and
+  `in_kind` express the cases that make method selection a live legal question:
+  a short history, a second employer, non-cash wages.
+
+- **A named method, recorded as ground truth.** Five: `actual_weekly_earnings`,
+  `irregular_earnings_average`, `short_history_projection`, `concurrent_aggregate`
+  and `earning_capacity`. A seed may name one; otherwise it is *selected* by an
+  ordered, stated rule and the reason is recorded in words beside it. The names
+  are engine labels rather than statutory citations, so the label an analyzer is
+  scored on means what this package's code says it means. `earning_capacity` is
+  never derived — the catch-all is a legal argument, and an engine reaching for
+  it unprompted would be asserting a conclusion rather than computing one.
+
+- **A comp rate keyed to the date of injury.** `RateBasis` carries the fraction,
+  the ceiling and the floor for one vintage, and `CompRate` records *which bound
+  bound* (`max` / `min` / `unbounded`). That last field matters more than it
+  looks: a capped rate is the same number for every high earner in a vintage, so
+  an analyzer that recovers the number without the cap has learnt nothing about
+  the wage behind it.
+
+- **A benefit ledger with known exposure.** `scenario.benefits` expresses TD
+  weeks, a deliberate `td_gap_days` interruption, `late_payments` and
+  `max_days_late`, and `pd_advances`. Every one defaults off
+  `scenario.adjuster.diligence`, so the persona already in the schema drives the
+  money rather than a second knob that could contradict it — which is what lets
+  a `negligent` file generate *known* penalty exposure for Wave 3 instead of an
+  inferred one.
+
+- **A settlement object, with approval and funding as separate fields.** They
+  are separate events in a real file, and the interval between them is the whole
+  substance of a late-funding argument; a single `settlement_date` would delete
+  that argument from the corpus while looking like a simplification. Defined
+  here rather than in either lens ticket so both can proceed in parallel.
+
+- **The documents carry the numbers.** The wage-statement family prints the
+  ledger's periods, the average, the named method, both rates and the rate
+  basis; the payment records print the benefit ledger with its gaps and
+  lateness; the compromise and release settles for the ledger's gross. All by
+  the established engine-side override pattern — the substrate is untouched, and
+  the wage statement's two tables are located by their own header text so a
+  substrate edit that moves them is a miss the engine *reports*.
+
+- **`examples/money-showcase.yaml`** — seven cases, all five methods, both rate
+  bounds, four rate vintages, and a negligent file carrying a seventy-five day
+  benefit gap and three recorded late payments.
+
+#### Legal accuracy — nothing here is verified law
+
+Every fraction, cap, floor and date bracket lives in `UNCONFIRMED_RATE_TABLE`,
+carries `counsel_confirmed=False`, says `COUNSEL-UNCONFIRMED` in its own
+authority text, and is published with that flag in every manifest. A seed may
+supply its own binding under `scenario.wages.rate_basis` and set the flag; the
+engine's table can never set it. `rate_basis_for(doi)` is the seam a dated rate
+authority (KB-167, different repository) replaces — a function signature, so
+this work took no dependency on that work and asserts nothing about the law in
+the meantime.
+
+#### Compatibility notices
+
+1. **A seed without `scenario.wages` is unchanged, byte for byte.** Measured on
+   the full demo caseload against 0.7.0: **353 files, 345 identical, 8 changed,
+   0 unexplained.** All 331 rendered documents are byte-identical; the eight are
+   the seven case manifests and the caseload manifest, each differing by exactly
+   one line — `"generator": "…@0.7.0"` → `"…@0.8.0"`. With the version pinned
+   back, the diff is empty. No committed example seeds wages, so no committed
+   manifest gains a `money` key.
+2. **`caseFacts.money` is absent, not null, for a money-free case.** A
+   null-valued key would move every existing manifest's bytes.
+3. **Eight wage/payment subtypes and six compromise-and-release subtypes now
+   dispatch through engine subclasses.** They delegate to the substrate
+   unchanged when the ledger is `None`, which is the anti-criterion as a code
+   path rather than a promise.
+4. **`validate --out` gains money rules.** A published average weekly wage with
+   no wage statement in the folder now fails: the figure would be asserted
+   rather than derivable, which is the one thing this layer exists to prevent.
+5. **PD is untouched.** `case_facts.py`'s `wpi`/`pd` remain the fabricated
+   figures they were; rating is AJC-44's work, and nothing in the rate
+   derivation depends on them.
+
+### Fixed — the PR #29 cross-model review (**AJC-43**)
+
+An independent GPT-5.6-Sol review of the branch returned BLOCK with seven
+findings. Each was re-derived locally before it was acted on; five held, two
+were refuted with evidence and are recorded in `ISA.md` under Decisions. Every
+fix below is mutation-proven — reverting it turns the named probe red, 19 of 19.
+
+- **Two exported functions were running on the caller's decimal context.**
+  `compute_aww` and `select_method` were only ever reached through
+  `derive_money_facts`, whose pin covered them from outside, so a seventeen-mutant
+  campaign never saw them. Measured: `compute_aww` raised `InvalidOperation` at
+  `prec` 2–5 and moved a published `gross_considered` from `58732.37` to
+  `58732.30` at 6; a 26.2867-week history is labelled `actual_weekly_earnings` at
+  full precision and `short_history_projection` at 2 — a *wrong label*, not a
+  rounding difference. Both pinned, and the guard now enumerates `money.__all__`
+  so a new export is covered the day it is added.
+
+- **A five-word seed could publish the engine's unverified table as
+  counsel-confirmed.** `rate_basis: {counsel_confirmed: true}` kept every
+  engine-default figure, kept an `authority` still reading `COUNSEL-UNCONFIRMED`,
+  and published `counselConfirmed: true` above it. Confirming now requires all six
+  figures and the authority they come from; an override that states nothing
+  overrides nothing.
+
+- **A partial rate override could invert the merged bounds.** `td_min_weekly:
+  5000` merged under the `$1,539.71` default ceiling and the comp rate came back
+  `$5,000`, recorded as `tdBound: min` — above the maximum its own basis
+  published. Bounds must now be stated as a pair, and `RateBasis` validates the
+  merged result (the merge rebuilds through the constructor, because
+  `model_copy(update=...)` skips validation and that is how it got through).
+
+- **Four of six wage shape knobs were unenforced against a listed history.**
+  They carry defaults, so "is it None" could not tell an authored value from
+  Pydantic's. `pattern` is the sharp one — it is a published ground-truth label,
+  so a seed listing a steady history under `pattern: irregular` shipped a wrong
+  label silently. Read from `model_fields_set` now. A history of only
+  `concurrent: true` periods is refused too: it divided a real $4,000 gross by
+  zero primary weeks and published `averageWeeklyWage: 0.00`.
+
+- **106 of 132 planned payment records were dated before the payments they
+  print.** The money floor decided the right date and then discarded it whenever
+  the lifecycle walk had already proposed the subtype; the walk dates from the
+  stage, the ledger runs to whenever the last payment cleared. One record was
+  four months early. Already-proposed candidates are re-dated forward — every
+  candidate for the subtype, since the pool picks the earliest — and never
+  backward.
+
+- **`earning_capacity` published operands that reach a different answer.** It
+  carried the derived history's 26 periods, 52 weeks and $51,830.08 as
+  "considered" for a stated AWW of 1500, and added in-kind wages on top, so the
+  published figure was not even the one the author stated. It now publishes the
+  stated figure and zeroed operands.
+
+- **Six published fields never reached a document.** `GOVERNED_MONEY_FIELDS`
+  promises that a published fact is one a document renders; `pattern`,
+  `methodSource`, `basisSource`, `basisAuthority` and both bound tokens were not.
+  `unbounded` rendered as an empty parenthetical, so whether a rate was capped was
+  recoverable from the page only when it happened to be capped. The new guard
+  sweeps the governance table rather than a hand-written list, and found
+  `methodSource` and the bound tokens after a manual pass had missed both.
+
+- **A settlement gross with cents labelled a release printing whole dollars.**
+  The substrate draws an integer and derives fee, costs, set-aside and net from
+  it, so `88000.99` in the ledger sat above `$88,000` on the paper. Refused at the
+  seed rather than silently rounded, and quantized once after both derivation
+  branches.
+
+- **A `funding_date` without an `approval_date` published a negative lag.** It
+  was measured against an approval derived from the timeline, which the seed
+  cannot see; only `validate --out` caught it, a whole generation downstream. The
+  pair is now required at parse time.
+
+#### Compatibility notices (review round)
+
+6. **`caseFacts.money.benefits` publishes events, not only counts.**
+   `tdPeriods` and `pdAdvances` were integer counts under names that mean
+   collections; they now carry the records, and the counts moved to
+   `tdPeriodCount` / `pdAdvanceCount`. `gaps` and `tdPaymentDueDays` are new.
+   Done now rather than in Wave 2 because these names are *extraction labels* —
+   the analyzer is scored on them, so renaming later is the one class of change
+   this schema exists to avoid. No shipped manifest is affected: no committed
+   example seeds wages.
+7. **`TdPeriod` carries `date_due`.** `days_late` was an effect whose cause lived
+   in a module constant nothing published, so a reader holding the ledger could
+   not check it. The payment record prints a `Due` column, and Wave 3 computes
+   penalties against it.
+8. **Four seed shapes that used to load are now refused**, each with a registered,
+   proven-followable message: a listed history beside any shape knob, a history
+   with no primary period, a `counsel_confirmed` override without a complete
+   binding, a lone rate bound, a lone `funding_date`, and a settlement gross with
+   cents. Every one produced an incoherent or mislabelled ledger.
+9. **The wage statement prints more rows** — earnings pattern, method source,
+   both rate-bound tokens, the rate-basis source and its full authority text.
+   Money-bearing cases only; a wage-free case renders byte-identically, still
+   353/345/8/0 against `origin/main`.
+
+### Fixed — the PR #29 review, round 2 (**AJC-43**)
+
+Round 2 audited the round-1 remediation rather than the original branch, which is
+where the next defects were — including one the round-1 fix introduced.
+
+- **A listed history published a fabricated pattern.** Forbidding the shape knobs
+  beside explicit earnings closed a real hole and opened its mirror: the author
+  could no longer state a pattern, so the field default published `regular` over
+  a history alternating $100 and $3,900 a fortnight — coefficient 0.9500, and
+  selected as `irregular_earnings_average`. One history, two contradictory
+  published labels. `pattern` is now derived from the periods by the same
+  threshold `select_method` uses, with `patternSource` recording which happened.
+
+- **`concurrent_aggregate` divided by one employer's weeks.** Right only when
+  both histories cover the same calendar — documented as an assumption, checked
+  by nothing. A two-week primary period paying $2,000 beside a fifty-two-week
+  concurrent history paying $52,000 published an average weekly wage of
+  **$27,000**, capped to the maximum and recorded as `tdBound: max`. The
+  denominator is now the union of covered days, which is also what makes it
+  correct for more than two employers. Every showcase figure is unchanged, which
+  is the evidence it is a no-op where the histories align.
+
+- **Benefit payments could fall past the horizon.** A loadable seed put a
+  temporary-disability payment **588 days** beyond it, and `timeline.clamp` then
+  dated the payment record before its own payment. The rule the advances already
+  followed now covers the periods too, and covers advances by their *paid* date
+  rather than only their schedule.
+
+- **PD advances had no due date.** The previous round's fix went to the half a
+  reviewer had named. Four advances came back dated 08-30, 10-14, 11-28 and
+  11-11, three marked 62 days late, with nothing saying late against what.
+  `PdAdvance.date_due` is carried, printed and published, and the ledger is
+  ordered by it.
+
+- **Stated benefit controls were silently dropped.** `{td_weeks: 0,
+  late_payments: 3}` published `latePayments: 0`; `{td_weeks: 0, td_gap_days:
+  90}` published `gapDays: 0`. Both refused now. Truncation against the case's
+  own runway needs the timeline, so that is a **plan warning** — a seed whose
+  story outruns its calendar is not an impossible seed.
+
+- **`validate --out` certified uncheckable ledgers.** Four PD advances with no
+  payment record passed; a TD event replaced by a bare string passed; PD lateness
+  was never re-derived. All three closed.
+
+- **A settlement could be dated past the anchor.** `approval_date: 2099-01-01`
+  loaded, beside documents dated 2026-01-01 or earlier.
+
+- **The payment-due interval had no authority of its own.**
+  `rate.counselConfirmed` governs the rate basis, so a consumer reading a
+  benefits interval under it was reading a caveat that did not cover it.
+  `tdPaymentDueAuthority` and `tdPaymentDueConfirmed` are published, and the
+  authority prints on the payment record.
+
+#### Compatibility notices (review round 2)
+
+10. **`caseFacts.money.wage` gains `patternSource`**, and `pattern` on a listed
+    history is now derived rather than defaulted — a manifest that published
+    `regular` over an irregular listed history will now publish `irregular`.
+11. **`caseFacts.money.benefits` gains `tdPaymentDueAuthority`,
+    `tdPaymentDueConfirmed`, and `dateDue` on every `pdAdvances` record.**
+12. **Three more seed shapes are refused**, each with a registered, proven
+    followable message: lateness with nothing paid, a gap in a run too short to
+    hold one, and a settlement dated past the anchor. A fourth condition —
+    a control the runway truncates — is reported as a plan warning rather than
+    an error.
+13. **A wage-free case is still byte-identical.** Re-derived against the
+    `origin/main` baseline after round 2: 353 files, 345 identical, 8 changed,
+    0 unexplained; 331 rendered documents byte-identical; substrate diff 0.
+
+### Fixed — the PR #29 review, round 3 (**AJC-43**)
+
+Round 3 audited round 2. Six findings, all re-derived locally before being acted
+on. The reviewer conceded the one disagreement carried over from round 2:
+`SettlementFact.kind` is a sufficient discriminator and a stipulated-award object
+attaches additively in Wave 2.
+
+- **`patternSource` claimed an author who never spoke.** `pattern` carries a
+  default, so every described history published `patternSource: seed` over a
+  label Pydantic supplied. Read from `model_fields_set` now.
+
+- **An unequal concurrent history had no correct denominator.** A two-week
+  primary period at $2,000 beside a fifty-two-week concurrent history at $52,000
+  gives $27,000 over two weeks, $1,038.46 over the union, and $2,000 by the sum
+  of per-employment rates — which a boolean `concurrent` cannot compute, because
+  it cannot say which employer a period belongs to. The shape is refused rather
+  than approximated; employer identity reopens it additively in Wave 2.
+
+- **Two wage figures were accepted and discarded.**
+  `earning_capacity_weekly: 7777` beside a described history published `996.73`;
+  `concurrent_weekly_wage: 8888` published no concurrent employment. Both fields
+  say "required by, and only by" — now enforced.
+
+- **Lateness could still be dropped in silence.** `max_days_late` alone took its
+  count from the adjuster persona, so an `attentive` file published none of a
+  stated 62-day delay; the pair is required now. And `late_payments: 3` on an
+  eight-week run — two four-week blocks — published `2` without comment; that
+  one becomes a plan warning, since the seed cannot count blocks.
+
+- **A settlement could be funded after the case ended.** `approval_date:
+  2025-12-31` with `funding_days: 730` published a 2027 funding date beside
+  documents dated 2026-01-01 or earlier. Approved-and-not-yet-funded is a real
+  state, `funding_date` is optional for it, and the dropped lag is reported.
+
+- **A gap could outlive the run it interrupted.** Banked when planned rather than
+  when the period on its far side was emitted: `td_gap_days: 700` on a 2024-06-01
+  intake file produced a gap running to 2026-06-01, five months past the horizon,
+  printed on a payment record dated before most of it.
+
+- **`validate --out` crashed instead of returning a verdict.**
+  `tdPeriodCount: "one"` raised `TypeError`; `gaps` was never type-checked; an
+  unpaid benefit could also record 62 days late.
+
+- **The round-2 render guard had the defect it was written to catch.** It matched
+  published values anywhere on the page, and `methodSource`/`patternSource` are
+  both usually `derived`, so deleting one row stayed green on the other's text.
+  It asserts label-then-value now — and forced the non-cash-wages row
+  unconditional, since `inKindWeekly` is published unconditionally.
+
+#### Compatibility notices (review round 3)
+
+14. **`caseFacts.money.benefits` gains `pdAdvanceIntervalDays` and
+    `pdAdvanceScheduleAuthority`.** The advance cadence is an **engine
+    schedule, not a statutory deadline** — advances are discretionary — so
+    `pdAdvances[].daysLate` is lateness against that cadence and is not by
+    itself a measure of legal exposure. Said in the manifest so Wave 3 cannot
+    mistake the two.
+15. **`patternSource` on a described history that never stated a pattern now
+    reads `derived`, not `seed`.**
+16. **Five more seed shapes are refused**, each with a registered, proven
+    followable message: an unequal concurrent history, `earning_capacity_weekly`
+    without its method, `concurrent_weekly_wage` without its enabler,
+    `max_days_late` without `late_payments`, and (from round 2) a settlement past
+    the anchor.
+17. **The wage statement always prints the non-cash-wages row**, including at
+    `$0.00`. Money-bearing cases only; a wage-free case is still byte-identical
+    at 353/345/8/0.
+
+### Fixed — discovery shaping outranked the document controls (**AJC-43**, ISC-148)
+
+`_shape_discovery` runs after `resolve_document_controls`, and it had no idea the
+controls existed. It saw a plan holding fewer records packets than
+`scenario.discovery.subpoena_sets` asked for and refilled it by cloning the last
+packet — which is right when the lifecycle walk simply proposed too few, and
+wrong when a control removed them on purpose. The package calls
+`documents.overrides` its highest-precedence control; the shaper was quietly
+overruling it.
+
+Two defects, and the second is the one a guard for the first walks straight past:
+
+1. **The refill cloned past an exact `documents.overrides` count.** Measured:
+   `subpoena_sets: 4`, `exclude: [SUBPOENAED_RECORDS_MEDICAL]`, and
+   `overrides: SUBPOENAED_RECORDS_EMPLOYMENT → 2` shipped **four** employment
+   packets. It needs a *mixed* set to reproduce — one packet subtype surviving to
+   be cloned, another suppressed — which is why the emptied-file probe that found
+   defect 2 never reaches it: with nothing surviving there is no donor to clone.
+   Donor selection now skips any subtype a positive override pinned. With no
+   overrides at all the donor is `packets[-1]`, byte for byte as before.
+2. **The shortfall warning named the lifecycle stage regardless of the cause.**
+   A seed already at `target_stage: discovery`, with the packets removed by an
+   `exclude`, was told to *"try target_stage 'discovery' or later"* — an edit
+   that is a no-op on that seed. The message now names every operative cause and
+   the seed line to edit: `documents.exclude` (by the key that actually matched,
+   which for `exclude: [DISCOVERY]` is the parent type, not the subtype),
+   `documents.include_only`, a zero-count override, a positive override that
+   caps, and the stage — with both halves stated when a seed carries both,
+   because neither edit alone delivers a packet then.
+
+Attribution is keyed off what a control *did*, not off whether its key appears in
+the seed: a membership control earns the blame only for a subtype the walk
+actually proposed for it to remove. A zero-count override is the exception — the
+author wrote it about that exact subtype, so it is named whether or not the walk
+ever got that far. `global_cap` is never named as a *subtype's* cause: it trims
+the whole plan by rank, so the shortfall says so in as many words and prescribes
+raising or removing the cap.
+
+23 tests in `TestDiscoveryShapingRespectsDocumentControls`, and mutants
+`m12-1..m12-10` — including one for the innocent-control case, where a control
+that removed nothing must *not* appear in the warning, and an opposite-draw pair
+(`m12-8`/`m12-10`) pinning that the trim protects an exact count without
+refusing a legal trim under a ceiling.
+
+#### What the first version of this fix got wrong
+
+The paragraph above originally claimed `global_cap` "reports a shortfall with no
+named control rather than with a wrong one." **That was false**, and a
+GPT-family review round proved it by execution rather than by reading. Both
+defects below are the ISC-148 defect surviving inside the ISC-148 fix:
+
+- **`documents.overrides` has two spellings and the fix read one.** A seed writes
+  either `{subtype: X, count: N}` or `{type: T, max: N}`; `DocumentControls`
+  splits them into `subtype_overrides` and `type_bounds`, and the fix consulted
+  only the first. So `{type: DISCOVERY, max: 0}` emptied the file of packets and
+  was attributed to the lifecycle stage — on a seed already at `target_stage:
+  discovery`, where the prescribed edit is a no-op. The exact defect, through the
+  spelling nobody read.
+- **"No control matched" was treated as "the stage did it."** The warning reached
+  for the stage sentence whenever the findings list came back empty, without
+  consulting `stage_is_a_cause`. `global_cap`, which is deliberately not
+  attributable to a subtype, therefore produced the wrongest available answer
+  rather than no answer.
+
+Two more came out of the same round. The **trim** side still sliced
+`packets[:declared]` blind, so two subtypes each pinned at 2 under
+`subpoena_sets: 1` dropped one of them *entirely* and said nothing — the refill
+respected the highest-precedence control while the trim walked through it. And a
+seed naming both a parent type and its subtype in `exclude` was told to "remove
+DISCOVERY", because the key was chosen by sorting; following that literally still
+delivered nothing.
+
+A fifth was found by taking the reviewer's class rather than its instances: a
+**positive** `{type: T, max: N}` was equally invisible to the refill. It is a
+ceiling on the whole type and not a per-subtype count — measured on one seed,
+`max: 3` yields one packet, `max: 6` two, `max: 12` three — so it forbids cloning
+but does not forbid trimming. Conflating it with an exact count refuses a legal
+trim, which is why `m12-10` exists beside `m12-8`.
+
+### Fixed — the mutation gate had been scoring ten mutants it never ran (**AJC-43**)
+
+The section below leans on the gate for its central claim: *a fix is not claimed
+until a mutation of that exact fix has been shown to redden a test that names
+it*. For ten of those fixes, no test ran.
+
+An earlier round renamed three test classes. Ten `mutants.toml` node ids still
+named the old ones, so pytest collected nothing and exited **4** — and the gate
+read any non-zero exit as "the guard failed", which is precisely what a working
+guard looks like from the outside. The gate was not lenient; it was blind, and it
+reported the blindness as proof. `m2-2` was the sharpest case: its node id named
+a class that had never existed at any commit, so that mutant had been green since
+the day it was written.
+
+- **Ten node ids re-pointed** at their surviving classes.
+- **A preflight.** `python tools/mutation_gate.py --preflight` asserts that every
+  registered guard collects **exactly one** test — not zero (a stale id), not
+  several (a parametrized node, which cannot be attributed to one assertion). CI
+  runs it per shard, ahead of that shard's mutants, so a stale id fails the build
+  in seconds instead of passing quietly for a round.
+- **RED is now a five-clause conjunction**: the guard is green on pristine
+  source, the mutated source compiles, the node collects exactly once, setup and
+  teardown pass with the failure in the *call* phase, and the call-phase
+  exception is an assertion. Everything else scores `ERROR-<type>`,
+  `PATCH-MISS`, or `SURVIVED` — findings, not passes.
+- **`PYTHONDONTWRITEBYTECODE=1` in the subprocess environment.** CPython
+  invalidates a cached `.pyc` on *(source mtime, source size)*. A great many real
+  mutants are same-length edits — a flipped comparison, `1` for `2` — so
+  patch-then-rerun inside one mtime tick left both keys unchanged and the
+  subprocess imported **pre-mutation** bytecode. Measured on the gate's own
+  probe: 7 spurious `SURVIVED` in 10 runs without the line, 0 in 10 with it. The
+  failure was loud rather than silent, but a gate that reds at random is a gate
+  somebody switches off, which costs exactly what one that never fires costs.
+- **`tests/test_mutation_gate.py`** — the scorer's own suite, with a planted
+  control per verdict class, and eight `g-*` mutants so the gate is held to the
+  standard it holds everything else to.
+
+Four guards then scored non-RED under the honest gate. All four were the guard's
+fault, not the fix's — the shipped behaviour was correct in every case, and had
+simply never been proven. Three of the four are one shape: a guard that *raises*
+where it should *assert* proves a crash, and a crash is not a defect.
+
+| Mutant | Scored | What the guard was doing |
+|--------|--------|--------------------------|
+| `m1-1` | `ERROR-InvalidOperation` | An unpinned callable does not merely answer differently at a short `decimal` context — it cannot answer at all. Letting the exception escape made the mutation prove an *error*; catching it and failing there makes the guard prove the *defect*. |
+| `m1-9` | `ERROR-KeyError` | The same shape one level down: subscripting the removed key raised rather than asserted. Presence is asserted before value now. |
+| `m1-4` | `ERROR-ValidationError` | The most informative of the three. Remove the seed-level pairing rule and the bad basis is *still* refused — by `RateBasis._bounds_are_ordered`, one layer down, as a pydantic error naming a merged ceiling the seed author never wrote. So what the seed rule buys is the message, at the layer holding the line the author typed; the guard now says exactly that when it fails. |
+| `m1-7` | `SURVIVED` | A real hole. The guard asserted on the word *"primary"* — which the neighbouring matched-dates refusal also uses — so deleting the all-concurrent check entirely still produced a message containing it. It asserts on the phrase only that refusal writes. |
+
+`m2-2` was rebuilt rather than retired. The open question was whether any valid
+history still separates the union denominator from the summed one now that
+unequal concurrent coverage is refused outright. One does: an overlapping
+corrected pay period is well-formed, leaves both employments covering the same
+span, and moves the published average weekly wage from `1491.67` to `1432.00`.
+The guard was built around that seed.
+
+### Added — two standing sweeps that replace the review round (**AJC-43**)
+
+Eleven rounds of review found 46 real defects, at a rate that never fell:
+5, 6, 6, 5, 4, 8, 3, 2, 3, 4, 3. Reading the commit bodies back, seven of the
+eight findings in rounds 7 to 9 were *induced by the previous round's own fix* —
+the loop was feeding itself, and a stop condition of "two quiet rounds" could
+never fire while each remediation opened as much surface as it closed. So the
+generator is closed instead, with two sweeps. Both are enumerable, both end, and
+both are wired into CI so they run on every push rather than by hand at the end
+of a round.
+
+**Sweep 1 — the mutation gate** (`tools/mutation_gate.py`, `tests/mutants.toml`).
+Ninety-three registered mutants, one per fix this package has shipped: each names
+the edit that puts the defect back and the test that must go red when it does.
+The gate applies each, requires the named test to fail, and restores. A mutant
+that no longer applies is a hard failure, because it means the code under a guard
+moved and nobody re-checked that the guard still reaches it. The requirement it
+enforces: *a fix may not be claimed until a mutation of that exact fix has been
+shown to redden a test that names it.* Three separate rounds had discovered a
+guard that never covered its own fix; round 9 diagnosed it and round 10
+reproduced it identically. It is now impossible to leave behind.
+
+**Its first run scored 93 of 103**, and the ten failures are the finding. Nine
+PATCH-MISSed — round 11's withdrawal of the lattice had rewritten the lines they
+patched, so nine guards had quietly stopped reaching the code they guard, and
+nobody would have known until the next round happened to touch them. Six were
+re-pointed at the surviving logic and three retired, each naming its successor.
+The tenth SURVIVED, and it was one of the sweeps' own: reverting
+`align_employer_wage` left the hourly-rate assertion green, because the personnel
+file's own rescale satisfied it. The guard did not cover its own fix — the exact
+class the gate exists to catch, caught on the gate's first run, in code written
+the same day. Reproducing it found the surface that *does* depend on the
+alignment: the deposition transcript, where the applicant says the figure aloud.
+Three more survivors appeared after re-pointing, and all three got real guards
+rather than convenient mutants: a derived gross published with cents (invisible
+on a `td_weeks: 0` file, whose rate is a capped whole $290), deductions forced to
+zero (which keeps the release reconciling and its net positive), and a
+funding-warning shift of zero (which leaves the authored date named and every
+other assertion passing). **The registry now stands at 100 mutants, 100 of 100
+red.**
+
+**Sweep 2 — the sibling sweep** (`tests/test_money_sweep.py`). The
+document/money-figure matrix, derived from `pdf_templates.registry` rather than
+from the list of templates the engine already overrides — a matrix built from
+what is governed can only confirm what is governed. Every substrate module that
+draws money is either governed for every subtype routed to it or listed with a
+reason, and the ledger fails in both directions: an unaccounted module fails, and
+so does an entry that has stopped being true. Beside it, a runtime sweep renders
+one settled case and walks *every* document in it, asserting that each governed
+money fact is the same figure on every surface that prints it — and failing when
+a rule matches nothing, because a label that moved is how a sweep silently stops
+sweeping.
+
+The sibling sweep found five defects on its first run, four of them in template
+families no review round had looked at:
+
+- **The settlement memo family was a second money ontology.** Twenty-seven
+  registry subtypes route to `SettlementMemo` — the valuation memo, both rating
+  worksheets, the MSA submission, the conference statements, the trial briefs —
+  and not one was fact-aware. On a file publishing a temporary-disability rate of
+  $767.59 and $28,400.83 paid, it printed **$157,467 (138 weeks @ $1,141.07/week)**,
+  and recommended a settlement target of **$387,466** on a case that settled for
+  $32,668. Its permanent-disability rate was the literal `290`, which agreed with
+  the ledger on the case it was found on by luck: $290 is the capped maximum for
+  one rate vintage.
+
+- **A row of the memo's own settlement-range table did not add up.** The
+  Optimistic row's Other column and its Total came from two independent draws of
+  the same range, so the columns summed to $432,073 beside a printed total of
+  $427,428 — a document contradicting itself across one row.
+
+- **The wage-statement family was governed on eight subtypes of ten.** Its own
+  docstring said "all eight"; the registry routes ten the engine can emit. The two
+  nobody had counted were `PRIOR_CLAIMS_EDD_SDI_INFO`, which printed a
+  temporary-disability rate of **$848.53** beside a ledger publishing $767.59, and
+  `TIMECARDS_SCHEDULES`. Both families are now bound from the registry — over the
+  *canonical* subtypes, since four memo keys and one wage key are registry-only and
+  the engine can never emit them — so counting is not something anybody has to get
+  right again.
+
+- **`employer.hourly_rate` was a free draw feeding three document families.**
+  `random.uniform(18, 55)`, reaching the personnel file's pay-rate history, the
+  settlement memo's temporary-disability paragraph and the deposition's *"I was
+  making $X per hour"*. It is now derived from the published average weekly wage
+  before any template reads it.
+
+- **The personnel file's promotion row raised pay above the current rate.** It was
+  `hourly_rate * random.uniform(1.05, 1.15)`, and since the promotion predates the
+  injury the table described a pay cut nobody recorded. The column is rescaled so
+  its highest figure is the published rate.
+
+#### Compatibility notices (the sweeps)
+
+39. **Money-showcase figures move again** — the settlement memo, the wage family's
+    three newly-governed subtypes and every hourly rate now follow the ledger. The
+    demo caseload carries no `scenario.wages`, derives no money, and is unaffected:
+    still 353 files, 345 identical, 8 changed, 331 rendered documents byte-identical.
+
+### Fixed — the PR #29 review, round 11 (**AJC-43**)
+
+Round 11 acted on review's judgment that round 10's twenty-dollar lattice on
+`gross_amount` was the wrong abstraction — narrowing a **published** field to
+work around a renderer's rounding, in a figure the analyzer is scored on. Real
+settlements are not multiples of twenty. The lattice is withdrawn and the fee is
+printed to cents instead, which is what a real document does. Withdrawing it
+then exposed three defects it had been hiding.
+
+- **The release's fee sentence was never corrected.** Round 9's substitution
+  matched on the substrate's bold wrapper, and only the stipulated award bolds
+  its figure: the release states its fee in plain text (*"in the amount of
+  $4,900 (15% of gross settlement)"*) and went two rounds uncorrected. A
+  whole-dollar fee hid it, because a truncated fee and an exact one differ only
+  in the cents the lattice had removed. There is now one pattern per prose site,
+  each anchored to its own sentence, and a paragraph that states a fee and is
+  left uncorrected is reported.
+
+- **The settlement floor was answering the wrong document.** $2 satisfied the
+  award's two-line split and left the release printing **Net to Applicant
+  $-0.30**. The floor is now *searched* from the deduction rule itself
+  (`settlement_deductions`), so it is $3 today and moves on its own if a divisor
+  moves. The three deduction figures live in one place, imported by the renderer
+  that prints them and by the floor derived from them.
+
+- **The fee rate was defined twice.** `_ATTORNEY_FEE_RATE` in the renderer and
+  the rate behind the floor were separate constants that happened to agree.
+
+#### Compatibility notices (review round 11)
+
+37. **Notice 36 is withdrawn.** `scenario.settlement.gross_amount` is any whole
+    number again, no step. The minimum is **3**, derived rather than declared:
+    it is the smallest gross whose release still leaves the applicant money
+    after a 15% fee, costs and a Medicare set-aside. Money-showcase figures move
+    back; the demo caseload is unaffected and still byte-identical.
+
+38. **Both settlement documents print the attorney fee to the cent.** A gross of
+    $32,668 now reads $4,900.20 in the table *and* in the sentence, on the award
+    and on the release.
+
+### Fixed — the PR #29 review, round 10 (**AJC-43**)
+
+Round 10 audited round 9. Three findings, plus a fourth found while reproducing
+the first — and that fourth was live on the shipped showcase.
+
+- **The release could owe the applicant money.** The substrate draws costs and
+  a Medicare set-aside with no reference to the gross, so a $21 settlement
+  printed **Net to Applicant $-17,608**. Both are now fractions of the gross.
+
+- **The 15% attorney fee was false on the release, on shipped cases.** Round 9
+  fixed that sentence on the stipulated award and left it on the release: a
+  gross of $32,668 printed $4,900 for a true $4,900.20. Settlement grosses are
+  now whole multiples of twenty, which is the coarsest step for which fifteen
+  percent is always whole.
+
+- **The dropped-funding warning named the wrong control.** A stated
+  `funding_date` carried past the horizon was reported as "the funding lag for
+  this adjuster".
+
+- **"Nearest five percent" was described but not asserted**, and had a real
+  defect behind it: the target was floored before distances were compared.
+
+#### Compatibility notices (review round 10)
+
+36. **`scenario.settlement.gross_amount` must be a whole multiple of 20, and at
+    least 40.** Derived from the 15% fee both documents print as whole dollars.
+    Derived grosses are rounded onto the same step. Money-showcase figures move;
+    the demo caseload is unaffected and still byte-identical.
+    **Withdrawn in round 11 — see notice 37.**
+
+### Fixed — the PR #29 review, round 9 (**AJC-43**)
+
+Round 9 audited round 8. Three findings, all consequences of round 8's own
+fixes, and all the same shape: right about their own term, silent about what
+depended on it.
+
+- **A stated funding date did not move with its approval.** Round 8 moved an
+  infeasible authored approval forward and left `funding_date` where it was,
+  publishing `fundingLagDays: -117`. The pair states an interval, so both ends
+  now move together.
+
+- **`gross_amount: 0` and `1` were accepted** while the stipulated award
+  skipped its reconciliation for them and printed a $27,581 award beside a
+  published $0.00. A stated gross below the floor is now refused with a
+  registered message; a derived one is raised.
+
+- **The printed attorney fee was not fifteen percent.** The substrate truncates
+  `award * 0.15`, so an award of $5,225 printed "$783" for a true $783.75. The
+  award is now a multiple of twenty, which makes that sentence true.
+
+#### Compatibility notices (review round 9)
+
+34. **`scenario.settlement.gross_amount` must be at least 21.** Derived from
+    what the award must print, not invented. No shipped example is affected.
+35. **An authored `funding_date` moves with an approval the file forced
+    forward**, preserving the stated interval.
+
+### Fixed — the PR #29 review, round 8 (**AJC-43**)
+
+Round 8 audited round 7. Two findings, both defects round 7 introduced, and
+both the same mistake: a bound applied to the wrong term.
+
+- **An authored approval could still precede the file's own calendar.** Round 7
+  pulled the instrument back to meet the approval and floored it at the claim,
+  and then `min(filed, approval)` defeated that floor. `approval_date:
+  2021-06-15` on a case whose Application was filed 2021-10-05 produced a
+  release dated 2021-06-15, reciting a filing eleven weeks in its future. The
+  floor now sits on the approval — anchored to the Application, plus the lead
+  the instrument needs — and the adjustment is reported as a plan warning
+  rather than made in silence.
+
+- **The award reconciliation gave up below $5,500.** Round 7 clamped the
+  reimbursement into the substrate's `randint` bounds and left both draws
+  random beneath them, so a gross of `5499` printed components totalling
+  $32,696 beside a published $5,499. Those bounds select which draw to answer;
+  they never constrained the answer. The split now holds down to $2.
+
+#### Compatibility notices (review round 8)
+
+33. **An authored `scenario.settlement.approval_date` earlier than the case
+    could reach the Board is moved forward and reported as a plan warning.** No
+    shipped example is affected.
+
+### Fixed — the PR #29 review, round 7 (**AJC-43**)
+
+Round 7 audited round 6. Three findings; two were defects round 6 introduced,
+and one of those was invisible to round 6's own probe.
+
+- **The stipulated award's average weekly wage was corrupted.** The rewrite
+  partitioned the sentence on the next `"."` — the decimal point of the
+  substrate's own figure — so `$1331.20.` became `$1,001.23.20.`. The probe
+  stayed green because `"1001.23"` is a substring of `"1001.23.20"`. Every
+  money figure on that page is now parsed and compared as a `Decimal`.
+
+- **`settlement.grossAmount` had two meanings on the stipulations branch.**
+  Round 6 forced it into the substrate's `base_pd_award`, labelled "Permanent
+  Disability (Gross)" on the page, with a self-procured reimbursement added on
+  top — so the components summed past the published total. The key now means
+  the total resolution value on both branches, the two cash components are
+  reconciled to it, and the total prints under its own label.
+
+- **The settlement chain was ordered link by link, not end to end.** Pinning
+  the order to an authored approval of 2022-01-05 put it 677 days before the
+  stipulations it recites as "filed herein". `instrument <= approval == order
+  <= funding <= ledger` is now planned and validated as a chain.
+
+#### Compatibility notices (review round 7)
+
+31. **The stipulated award prints a Settlement Terms block** (type and gross)
+    and its cash components sum to the published gross.
+32. **`validate --out` refuses a settlement instrument dated after its own
+    approval.**
+
+### Fixed — the PR #29 review, round 6 (**AJC-43**)
+
+Round 6 audited round 5 and found round 5's own carriers were the wrong
+documents — the fifth consecutive round to find a defect inside its
+predecessor's fix. Eight findings, all reproduced locally. See the ISA's
+Decisions section for the structural read on why six rounds produced this many:
+the layer's one invariant is enforced by three hand-maintained lists that
+nothing reconciles.
+
+- **The stipulated award computed its own money.** `STIPULATIONS_WITH_REQUEST_
+  FOR_AWARD` — the primary settlement document of every `stipulations` case —
+  had no fact-aware subclass, so it drew an average weekly wage from
+  `hourly_rate * weekly_hours`, a TD run from `randint(4, 52)`, a rate from a
+  hardcoded 0.67 and an award from `randint(5000, 75000)`. On the shipped
+  `steady-earner`, caseFacts said 1151.42 / 767.65 / 26867.75 and the document
+  said 1331.20 / 891.90 / 40135.68.
+
+- **The approval order denied a settlement existed.** `MinutesOrders` ignores
+  its `approving_settlement` variant, so the designated approval evidence read
+  "The parties have been unable to reach a settlement agreement at this time"
+  above a `Date Approved` row.
+
+- **The funding carrier was a medical bill.** `BillingRecords` is a provider
+  "STATEMENT OF CHARGES", so a benefit-free settled case evidenced its
+  settlement funding with a $16,724.23 balance due. Rebuilt as the claims
+  administrator's own ledger.
+
+- **Payment records still printed the settlement's future.** One dated
+  2021-09-29 carried an approval of 2023-12-27 — 819 days ahead. Round 5 fixed
+  the release and missed this path.
+
+- **The approving order could be dated after its own approval.** Forward-only
+  re-dating left an authored approval of 2022-01-05 evidenced by an order dated
+  2023-12-27, and on-or-after certified it. An order does not report an
+  approval; it is the approval.
+
+- **An authority-only `rate_basis` override published `basisSource: mixed`**
+  having authored none of the six figures.
+
+- **`basisSource` was never validated on output** — `"seed-ish"` passed.
+
+- **A fatal claim accepted money and derived post-mortem disability**: a death
+  on 2023-01-19 produced a first TD period beginning 2023-01-22, 13 periods
+  totalling $39,133.85 and 2 PD advances.
+
+#### Compatibility notices (review round 6)
+
+26. **The `STIPULATIONS_WITH_REQUEST_FOR_AWARD` family is now fact-aware** and
+    prints the ledger's average weekly wage, TD rate and TD total, with the
+    award forced to the settlement gross.
+27. **`ORDER_APPROVING_SETTLEMENT` and `BENEFIT_PAYMENT_LEDGER` render
+    engine-owned bodies**, not the substrate's minutes and billing statement.
+    Both are guaranteed for a settled case and both are money-bearing only.
+28. **Payment records no longer print settlement approval or funding dates.**
+    Those live on the order and the ledger.
+29. **`validate --out` requires the approving order to be dated *on* the
+    approval date**, not merely on or after it.
+30. **A seed with `injury.type: death` refuses `scenario.wages`,
+    `scenario.benefits` and `scenario.settlement`**, with a registered
+    followable message. Dependency benefits are a Wave 2 ontology; no shipped
+    example is affected.
+
+### Fixed — the PR #29 review, round 5 (**AJC-43**)
+
+Round 5 audited round 4 and overturned its headline fix. Round 4 was right that
+three published dates appeared on no page, and wrong about the remedy: it put
+them on the nearest document that mentioned settlements rather than on the
+document that effects each event. Four findings, all reproduced locally.
+
+- **A release printed an approval 44 days in its own future.** A compromise and
+  release is signed and filed *before* the Board approves it — the planner dates
+  one at 2023-11-13 against an approval of 2023-12-27 and a funding of
+  2024-01-10 — and `validate --out` passed it. The alternative round 4 also
+  admitted was worse: a temporary-disability payment record dated 2021-09-01
+  carrying the same 2023 approval. An anachronism is not weaker evidence than a
+  missing line; it is worse, because it reads as evidence. Each date now belongs
+  to the document that effects it, and the money floor guarantees the carriers.
+
+- **The governance table only bound one way.** The loop refused ungoverned
+  extras and never required the governed fields, so deleting
+  `settlement.grossAmount`, `wage.averageWeeklyWage` or `benefits.gaps` from a
+  valid manifest was certified clean. A `fundingLagDays` of `null` beside two
+  dates passed too, though the interval is derivable from them.
+
+- **`basisSource` claimed the whole binding for a partial override.**
+  `rate_basis: {td_fraction: 0.5}` authored one figure of six and published
+  `source: seed`, beside a `basisLabel` still naming the engine vintage the
+  other five came from.
+
+- **`latePayments` was an integer under a plural name** — the one field ISC-174
+  missed when it moved `tdPeriods: 3` to `tdPeriodCount`.
+
+#### Compatibility notices (review round 5)
+
+22. **`caseFacts.money.benefits.latePayments` is now `latePaymentCount`.** A
+    rename of a published extraction label, done while the vocabulary is still
+    unfrozen and before AJC-44/45/46/47 attach to it.
+23. **`caseFacts.money.rate.basisSource` gains a third value, `mixed`.** `seed`
+    now means every figure in the binding was authored; `mixed` means some were.
+    A consumer treating `basisSource != "engine_default_table"` as "authored"
+    is unaffected.
+24. **Two subtypes became fact-aware and are guaranteed for a settled case:**
+    `ORDER_APPROVING_SETTLEMENT` prints the settlement type, gross and approval
+    date; `BENEFIT_PAYMENT_LEDGER` prints those plus the funding date and the
+    interval. **The compromise-and-release no longer prints either date** — it
+    keeps type and gross.
+25. **`validate --out` refuses a settlement date with no document dated on or
+    after it**, and refuses every missing governed field in every money group.
+    A folder assembled with an `include_only` that drops a carrier will now be
+    reported, on the same principle that has always applied to the wage
+    statement.
+
+### Fixed — the PR #29 review, round 4 (**AJC-43**)
+
+Round 4 audited round 3, and found that the settlement — the group rounds 2 and 3
+had spent most of their findings on — was the one group the manifest validator
+skipped entirely. Five findings, all re-derived locally before being acted on.
+The reviewer withdrew the tagged-union disagreement.
+
+- **The settlement was exempt from its own governance.** `_validate_money`
+  skipped the `settlement` key rather than the *absent* settlement it meant to
+  skip, so every fix rounds 2 and 3 landed there went into the one group whose
+  output was never read back. An exemption written for a value condition and
+  coded as a key condition survives every later change to that key.
+
+- **Three published dates appeared on no page.** `approvalDate`, `fundingDate`
+  and `fundingLagDays` were ground truth an analyzer is scored on; the
+  substrate's release leaves its approval line blank and carries no funding date,
+  and the payment record that could print them exists only when the case paid
+  benefits. A settled case with `td_weeks: 0, pd_advances: 0` published all three
+  and `validate --out` passed it. The C&R family now appends its own terms table,
+  and the validator refuses the dates when no document in the folder could carry
+  them.
+
+- **`concurrent_aggregate` could label an aggregate that never happened.** A seed
+  may name any method — the author's argument beating the engine's rule is why
+  `method` is authored at all — but the other four label an *argument* about how
+  to average one history, while this one labels a *fact* about combining
+  employers. Over a single employment it published
+  `method: concurrent_aggregate` beside `concurrentEmployment: false`.
+
+- **A count that was not a count, and a gap that ran backwards.**
+  `isinstance(value, int)` admits `bool`, so `tdPeriodCount: True` type-checked
+  and then compared equal to a length of 1; negatives passed everything. And
+  `spanned == days` agreed with a reversed gap carrying a negative count —
+  2025-01-10 to 2025-01-01 spans -8 days and recorded -8, two wrongs cancelling
+  into a clean bill of health.
+
+- **The funding lag was published, never checked, and a non-date crashed the
+  validator.** `fundingLagDays` is trivially derivable from the two dates beside
+  it and was taken on trust; a settlement date that was not a string raised out
+  of the `<` comparison, which is the same defect round 3 fixed for benefits, in
+  the group the first finding had been skipping.
+
+#### Compatibility notices (review round 4)
+
+18. **The compromise-and-release family prints a Settlement Terms table** —
+    type, gross, date approved, date funded (or "not yet funded"), and days from
+    approval to funding. Money-bearing settled cases only; a wage-free case is
+    still byte-identical at 353/345/8/0.
+19. **`validate --out` refuses a settlement whose dates no document carries.** A
+    manifest publishing `approvalDate` or `fundingDate` needs a
+    compromise-and-release or a payment record in the same case.
+20. **One more seed shape is refused**, with a registered, proven followable
+    message: `method: concurrent_aggregate` on a history with no concurrent
+    employment.
+21. **`validate --out` refuses boolean and negative counts, reversed gaps,
+    non-date settlement dates, and a `fundingLagDays` the two dates disagree
+    with.** All were previously accepted or, in the last two cases, raised.
+
 ### Added — discovery volumes, anchored letters, and a registry for advice (**AJC-37**, Phase 3c)
 
 - **The ledger, the table of contents and the paper are one number (ISC-126).**

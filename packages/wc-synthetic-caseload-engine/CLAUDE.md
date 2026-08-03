@@ -37,7 +37,7 @@ package is built on. Flagged and accepted as an explicit stack decision.
 | `lifecycle_bridge.py` | Seed → substrate `CaseParameters`, the walk, vocabulary normalization, deterministic guarantees, `CaseTimeline`. |
 | `lien_machine.py` | One `LienTrack` per claimant, claim → notice → conference → resolution. |
 | `recon_machine.py` | The petition-for-reconsideration round trip and its post-recon paths. |
-| `case_context.py` | The one canonical cast per case (`CaseCast`), including the coined-name substitution for every substrate organization pool. |
+| `case_context.py` | The one canonical cast per case (`CaseCast`), including the coined-name substitution for every substrate organization pool, and `align_employer_wage` — the substrate's `employer.hourly_rate` follows the published AWW, because three document families compute money from it. |
 | `name_denylist.py` | The shipped real-entity denylist (package data) and the **live** read of the substrate's organization pools. Engine and anti-probes read one list. |
 | `perspective.py` | Applicant vs defense **file** POV: the work-product swap table, `PERSPECTIVE_PROFILES` (per-key emission weights + floors), and author/recipient roles. Changes no case fact — the applicant path is a literal identity function. |
 | `planner.py` | Composes the three machines through the resolver into an ordered `CasePlan`. |
@@ -178,7 +178,7 @@ If an import breaks, fix the bridge — not by copying files.
 
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/         # 844 tests, ~180s (pyproject already passes -q)
+.venv/bin/python -m pytest tests/         # 1116 tests, ~240s (pyproject already passes -q)
 .venv/bin/ruff check .
 ```
 
@@ -203,6 +203,39 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_manifest_integrity.py` | `zeroRealPii` vs the denylist, canonical control keys at generate, emitted-vs-proposed track counts |
 | `test_schema_honesty.py` | The "not yet honoured" marker sweep, its inertness probes, and the planted control (ISC-137) |
 | `test_message_registry.py` | Every actionable seed message paired with the edit that resolves it, completeness both ways, and the planted control (ISC-129) |
+| `test_money_sweep.py` | The document/money matrix derived from `pdf_templates.registry`, and the cross-document sweep: every governed money fact asserted equal on every surface that prints it (ISC-239, ISC-240) |
+
+### The mutation gate
+
+```bash
+python tools/mutation_gate.py            # every registered mutant, ~25 min
+python tools/mutation_gate.py --list     # ids and titles
+python tools/mutation_gate.py --only m11-2
+python tools/mutation_gate.py --shard 2/10
+python tools/mutation_gate.py --preflight # seconds: every guard collects exactly one test
+```
+
+`tests/mutants.toml` holds one entry per fix this package has shipped: the edit
+that puts the defect back, and the test that must go red when it does. CI runs
+it sharded on every push. **A fix is not claimed until a mutation of that exact
+fix has been shown to redden a test that names it** — three review rounds found
+a guard that had never covered its own fix, so this is mechanized rather than
+remembered. Adding a fix means adding a mutant; changing code under one means
+re-pointing its mutant at the surviving logic. A PATCH-MISS is a finding, not a
+chore: it means a guard stopped reaching the thing it guards.
+
+**Renaming a test class is a gate change.** Ten registered node ids once named
+classes an earlier round had renamed: pytest collected nothing, exited 4, and a
+gate that read exit status alone scored that as "the guard failed". `--preflight`
+now asserts that every guard collects **exactly one** test — zero means a stale
+id, several means a parametrized node no single assertion can be attributed to —
+and CI runs it per shard ahead of the mutants. RED itself is a five-clause
+conjunction (guard green on pristine source; the mutation compiles; the node
+collects once; setup and teardown pass with the failure in the **call** phase;
+the call-phase exception is an assertion). A guard that raises rather than
+asserts scores `ERROR-<type>`, which is a finding: it proves a crash, not a
+defect. The scorer has its own suite, `tests/test_mutation_gate.py`, and its own
+`g-*` mutants.
 
 Two meta-guards police the docs from inside the suite, and both fail in the
 direction that matters. Wiring up a field marked "not yet honoured" turns

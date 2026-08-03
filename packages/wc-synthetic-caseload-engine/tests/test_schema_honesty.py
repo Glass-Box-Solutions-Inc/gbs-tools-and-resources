@@ -49,6 +49,16 @@ SCENARIO_CLASSES = (
     "TreatmentScenario",
     "DiagnosticsScenario",
     "DiagnosticEntry",
+    # The money spine (AJC-43). Added the moment the classes existed rather
+    # than when something went wrong with them: a scenario class outside this
+    # tuple is invisible to the guard, so the tuple is the guard's real scope
+    # and forgetting to extend it is how the guard dies quietly.
+    "WageScenario",
+    "EarningsEntry",
+    "InKindEntry",
+    "RateBasisOverride",
+    "BenefitsScenario",
+    "SettlementScenario",
 )
 
 @dataclass(frozen=True)

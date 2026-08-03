@@ -97,6 +97,21 @@ class ControlResolution:
     planned: tuple[PlannedDocumentCount, ...]
     warnings: tuple[str, ...] = ()
     dropped: Mapping[str, str] = field(default_factory=dict)
+    #: ``(parent_type, minimum, lifecycle_proposed, reducing_overrides)`` for
+    #: every ``min`` floor that was short when step 3 reached it. NOT a list of
+    #: violations — the resolver's plan is not the finished file, so whether each
+    #: floor ends up met is a question only the caller can answer, against the
+    #: documents it finally holds. :func:`verify_type_floors` is that answer.
+    floor_checks: tuple[tuple[str, int, bool, tuple[str, ...]], ...] = ()
+    #: ``(global_cap, pinned, type_floors)`` when the cap could not be reached
+    #: inside the resolver, else ``None``. Also NOT a verdict: the scenario
+    #: shaping downstream can drop every remaining document, at which point the
+    #: cap is met after all. :func:`verify_global_cap` decides.
+    cap_check: tuple[int, int, tuple[tuple[str, int], ...]] | None = None
+    #: ``(subtype, count, suppressed_by)`` per override that forced a subtype the
+    #: lifecycle did not propose. Also facts rather than a verdict: whether the
+    #: control actually won is a question about the finished file.
+    forced_checks: tuple[tuple[str, int, str | None], ...] = ()
 
     @property
     def total(self) -> int:
@@ -234,7 +249,17 @@ def resolve_document_controls(
     """
     emit_log = logger if logger is not None else log
     warnings: list[str] = []
+    #: Facts about an unreachable `global_cap`, or None. Not a verdict — see
+    #: `verify_global_cap`.
+    cap_check: tuple[int, int, tuple[tuple[str, int], ...]] | None = None
+    #: ``(subtype, count, suppressed_by)`` for each override that resurrected or
+    #: invented a subtype. Facts, not a verdict — see `verify_forced_subtypes`.
+    forced_checks: list[tuple[str, int, str | None]] = []
     dropped: dict[str, str] = dict(pre_dropped or {})
+    #: ``{parent_type: (minimum, lifecycle_proposed_any)}`` for every ``min``
+    #: floor that did not already hold when step 3 reached it. Handed to the
+    #: caller as `floor_checks` — see the note where they are built.
+    floors_to_verify: dict[str, tuple[int, bool]] = {}
 
     # 4. Lifecycle emission defaults.
     plan: list[PlannedDocumentCount] = _collapse_candidates(candidates, parent_type_of)
@@ -261,24 +286,37 @@ def resolve_document_controls(
     for doc_type, (minimum, maximum) in controls.type_bounds.items():
         members = [entry for entry in plan if entry.parent_type == doc_type]
         total = sum(entry.count for entry in members)
+        # EVERY declared floor is enrolled for verification, whether or not it
+        # happens to be short right now. Enrolment is a fact about the SEED — the
+        # author wrote this floor — and it must not be filtered by an
+        # intermediate count.
+        #
+        # Three rounds moved the *evaluation* toward the finished file and this
+        # line kept the *enrolment* at step 3, which is the same defect wearing
+        # the other half of the mechanism. Because a floor already satisfied here
+        # was never enrolled, it was never handed to the planner and never
+        # compared against the file: measured under `never_treated`, where the
+        # type ends at 0, floors of 1 through 9 were SILENT and 10 through 12
+        # warned — the boundary being exactly this step's total. The weakest
+        # possible assertion, "this file must contain at least one clinical
+        # record", was the one least likely to be enforced.
+        #
+        # `verify_type_floors` warns only when the file is actually short, so
+        # enrolling every floor costs nothing and is the only way its docstring
+        # claim — every `min` the finished file misses — can be true.
+        if minimum is not None and minimum > 0:
+            floors_to_verify[doc_type] = (minimum, bool(members))
         if maximum is not None and total > maximum:
             plan = _apply_type_max(plan, doc_type, members, total - maximum)
         elif minimum is not None and total < minimum:
             shortfall = minimum - total
-            if not members:
-                warning = (
-                    f"documents.overrides min={minimum} for type {doc_type} cannot be "
-                    "satisfied: the lifecycle proposed no documents of that type"
-                )
-                warnings.append(warning)
-                emit_log.warning(
-                    "doc_controls.min_unsatisfiable",
-                    case_id=case_id,
-                    doc_type=doc_type,
-                    minimum=minimum,
-                )
-            else:
+            if members:
                 plan = _apply_type_min(plan, members, shortfall)
+
+    # Counts as they stand BEFORE the per-subtype overrides run, so the floor
+    # report can say which overrides actually reduced a type rather than which
+    # ones merely mention it. See `reducing_overrides` below.
+    before_overrides = {entry.subtype: entry.count for entry in plan}
 
     # 1. Per-subtype overrides — highest precedence, may resurrect or invent.
     plan = _apply_subtype_overrides(
@@ -289,6 +327,7 @@ def resolve_document_controls(
         warnings=warnings,
         emit_log=emit_log,
         case_id=case_id,
+        forced_checks=forced_checks,
     )
 
     # 5. global_cap trims last, respecting every higher-precedence floor.
@@ -298,19 +337,66 @@ def resolve_document_controls(
             for doc_type, (minimum, _) in controls.type_bounds.items()
             if minimum is not None
         }
-        plan, cap_warnings = _apply_global_cap(plan, controls.global_cap, type_minimums)
-        for warning in cap_warnings:
-            warnings.append(warning)
-            emit_log.warning(
-                "doc_controls.cap_unreachable",
-                case_id=case_id,
-                global_cap=controls.global_cap,
-                detail=warning,
-            )
+        plan, cap_check = _apply_global_cap(plan, controls.global_cap, type_minimums)
 
     plan = [entry for entry in plan if entry.count > 0]
+
+    # A floor verdict is NOT emitted here, because here is still not the
+    # finished file. `_shape_for_scenario` runs after this function and drops
+    # documents wholesale — `never_treated` can take a MEDICAL_CLINICAL type to
+    # zero — so a sentence written here saying "the file holds 23" shipped in a
+    # manifest whose file held 0. That is the third consecutive round in which
+    # this verdict was computed one phase short of the object its own words
+    # describe: step 3 is not the finished plan, one arm is not both arms, and
+    # the resolver's plan is not the file.
+    #
+    # So the resolver stops guessing and hands out the question instead. The
+    # planner answers it against `plan.documents`, which is the thing the
+    # sentence is about.
+    #
+    # Attribution is measured, not inferred. Naming every override whose subtype
+    # sits under the type blamed `SUBPOENAED_RECORDS_OTHER x4` — an override that
+    # ADDED four documents of the short type — for cutting it back, in the same
+    # manifest that says it forced them into existence, and the edit that implies
+    # moves the file further from the floor (56 -> 52, measured). Only overrides
+    # that lowered a subtype's count are named.
+    planned_by_type: Counter[str] = Counter()
+    for entry in plan:
+        if entry.parent_type is not None:
+            planned_by_type[entry.parent_type] += entry.count
+    floor_checks = tuple(
+        (
+            doc_type,
+            minimum,
+            lifecycle_proposed,
+            # An override is a CAUSE of the shortfall only if the resolver's own
+            # plan ended short. When the controls left the type at or above the
+            # floor, whatever emptied it came afterwards and the overrides are
+            # bystanders: naming one then says "raise this and the floor is met",
+            # which under `never_treated` is false at every count (measured at 1,
+            # 10, 30 and 60, all reaching zero). Round 7 caught this predicate
+            # naming an override that ADDED documents; round 9 caught it naming
+            # one that reduced a subtype without being why the floor is short.
+            # `count < before_overrides` answers "did this override reduce
+            # anything", which is not the question the sentence asks.
+            tuple(
+                subtype
+                for subtype, count in sorted(controls.subtype_overrides.items())
+                if planned_by_type.get(doc_type, 0) < minimum
+                and _override_parent(subtype, plan, parent_type_of) == doc_type
+                and count < before_overrides.get(subtype, 0)
+            ),
+        )
+        for doc_type, (minimum, lifecycle_proposed) in sorted(floors_to_verify.items())
+    )
+
     return ControlResolution(
-        planned=tuple(plan), warnings=tuple(warnings), dropped=dict(dropped)
+        planned=tuple(plan),
+        warnings=tuple(warnings),
+        dropped=dict(dropped),
+        floor_checks=floor_checks,
+        cap_check=cap_check,
+        forced_checks=tuple(forced_checks),
     )
 
 
@@ -376,6 +462,7 @@ def _apply_subtype_overrides(
     warnings: list[str],
     emit_log: Any,
     case_id: str | None,
+    forced_checks: list[tuple[str, int, str | None]],
 ) -> list[PlannedDocumentCount]:
     """Force exact per-subtype counts, warning when the lifecycle never proposed one."""
     overrides = controls.subtype_overrides
@@ -402,15 +489,17 @@ def _apply_subtype_overrides(
             dropped.pop(subtype, None)
             continue
         reason = dropped.pop(subtype, None)
-        warning = (
-            f"documents.overrides forces {subtype} x{count}: "
-            + (
-                f"suppressed by {reason} but an explicit override wins"
-                if reason
-                else "the lifecycle for this case never emits it (control wins, loudly)"
-            )
-        )
-        warnings.append(warning)
+        # Recorded, not decided. "Control wins, loudly" is a claim about the
+        # finished file — and at `target_stage: intake` under `never_treated` it
+        # was emitted for four different subtypes whose final count was ZERO,
+        # beside a second warning in the same manifest saying the scenario had
+        # suppressed exactly that family. Not a stale number: the opposite of
+        # what happened. The control lost, and it lost silently.
+        #
+        # This is the fifth site of one class, and the third fixed the same way:
+        # the resolver states what it did, `verify_forced_subtypes` says whether
+        # it survived. See :func:`verify_type_floors`, :func:`verify_global_cap`.
+        forced_checks.append((subtype, count, reason))
         emit_log.warning(
             "doc_controls.forced_subtype",
             case_id=case_id,
@@ -436,15 +525,24 @@ def _apply_global_cap(
     plan: Sequence[PlannedDocumentCount],
     global_cap: int,
     type_minimums: Mapping[str, int] | None = None,
-) -> tuple[list[PlannedDocumentCount], list[str]]:
+) -> tuple[
+    list[PlannedDocumentCount], tuple[int, int, tuple[tuple[str, int], ...]] | None
+]:
     """Trim the plan down to *global_cap*, honouring higher-precedence floors.
 
     The cap is the weakest control: it never trims a per-subtype override and
     never pushes a parent type below its ``min`` bound.
+
+    Returns the trimmed plan and, when the cap could not be reached here, the
+    facts a caller needs to decide whether it was actually breached — NOT a
+    warning. "The cap cannot be met" is a claim about the finished file, and this
+    function cannot see it: the scenario shaping downstream may drop every
+    remaining document, at which point the cap is met after all. See
+    :func:`verify_global_cap`.
     """
     total = sum(entry.count for entry in plan)
     if total <= global_cap:
-        return list(plan), []
+        return list(plan), None
 
     minimums = dict(type_minimums or {})
     slack: dict[str, int] = {}
@@ -480,20 +578,11 @@ def _apply_global_cap(
         else entry
         for entry in plan
     ]
-    warnings: list[str] = []
+    unreachable: tuple[int, int, tuple[tuple[str, int], ...]] | None = None
     if excess > 0:
         pinned = sum(entry.count for entry in plan if entry.forced)
-        floors = ", ".join(
-            f"{doc_type} min={value}" for doc_type, value in sorted(minimums.items())
-        )
-        detail = f"{pinned} document(s) pinned by per-subtype overrides"
-        if floors:
-            detail += f"; type floors: {floors}"
-        warnings.append(
-            f"documents.global_cap={global_cap} cannot be met without breaking a "
-            f"higher-precedence control ({detail})"
-        )
-    return out, warnings
+        unreachable = (global_cap, pinned, tuple(sorted(minimums.items())))
+    return out, unreachable
 
 
 __all__ = [
@@ -509,4 +598,180 @@ __all__ = [
     "ParentResolver",
     "PlannedDocumentCount",
     "resolve_document_controls",
+    "verify_forced_subtypes",
+    "verify_global_cap",
+    "verify_type_floors",
 ]
+
+
+def _override_parent(
+    subtype: str,
+    plan: Sequence[PlannedDocumentCount],
+    parent_type_of: Callable[[str], str | None] | None,
+) -> str | None:
+    """Parent type of an overridden *subtype*, from the plan or the taxonomy."""
+    for entry in plan:
+        if entry.subtype == subtype:
+            return entry.parent_type
+    return parent_type_of(subtype) if parent_type_of else None
+
+
+def verify_type_floors(
+    floor_checks: Iterable[tuple[str, int, bool, tuple[str, ...]]],
+    held_by_type: Mapping[str, int],
+    planned_by_type: Mapping[str, int] | None = None,
+) -> list[str]:
+    """Warnings for every ``documents.overrides`` ``min`` the finished file misses.
+
+    Separated from :func:`resolve_document_controls` on purpose. The resolver
+    knows which floors were short when it saw them and which overrides reduced
+    them; it does NOT know what the file ends up holding, because the scenario
+    shaping that runs afterwards can drop a whole type. Deciding there produced a
+    warning reading "the file holds 23" in a manifest whose file held 0.
+
+    *held_by_type* must therefore be counted from the documents the caller is
+    actually going to emit — not from any intermediate plan. *planned_by_type* is
+    what the resolver left; the gap between the two is what the scenario removed,
+    and naming it is the difference between a cause an author can act on and one
+    they cannot.
+
+    That distinction is load-bearing rather than decorative. Under
+    ``never_treated`` a MEDICAL_CLINICAL floor of 30 reaches zero however high the
+    overrides go — measured at counts 1, 10, 30 and 60, all zero — so naming only
+    the override that reduced the type prescribes an edit that cannot deliver,
+    which is the ISC-150 class this ticket exists to remove.
+    """
+    out: list[str] = []
+    for doc_type, minimum, lifecycle_proposed, reducing in floor_checks:
+        held = held_by_type.get(doc_type, 0)
+        if held >= minimum:
+            continue
+        planned = (planned_by_type or {}).get(doc_type)
+        removed_after = None if planned is None else planned - held
+        scenario_note = (
+            f"the scenario then removed {removed_after} more"
+            if removed_after
+            else None
+        )
+        if reducing and scenario_note:
+            detail = (
+                "documents.overrides "
+                + ", ".join(reducing)
+                + f" cut it back and {scenario_note}"
+            )
+        elif reducing:
+            detail = "documents.overrides " + ", ".join(reducing) + " cut it back"
+        elif scenario_note or lifecycle_proposed:
+            # No override lowered a count, so the scenario shaping did it, and
+            # pointing at documents.overrides would send the author to a line
+            # that is not responsible for anything.
+            detail = (
+                "the lifecycle proposed documents of that type and the scenario "
+                "removed them"
+            )
+        elif held == 0:
+            detail = "the lifecycle proposed no documents of that type"
+        else:
+            # Partly filled is its own case: an override that supplies 3 against
+            # a floor of 5 leaves the floor unmet, but "proposed no documents of
+            # that type" on its own reads as a file holding none.
+            detail = (
+                "the lifecycle proposed no documents of that type and the "
+                f"overrides supply only {held}"
+            )
+        out.append(
+            f"documents.overrides min={minimum} for type {doc_type} is not met: "
+            f"the file holds {held} — {detail}"
+        )
+    return out
+
+
+def verify_global_cap(
+    cap_check: tuple[int, int, tuple[tuple[str, int], ...]] | None,
+    held: int,
+    pinned_in_file: int | None = None,
+) -> list[str]:
+    """Warning when ``documents.global_cap`` is genuinely breached by the file.
+
+    The resolver trims toward the cap and knows when it had to stop short, but
+    "the cap cannot be met" is a claim about the finished file and the resolver
+    cannot see it. Deciding there put this in a manifest whose file held **zero**
+    documents::
+
+        documents.global_cap=5 cannot be met without breaking a
+        higher-precedence control (... type floors: MEDICAL_CLINICAL min=30)
+
+    — beside a second warning stating that same floor held nothing. The cap of 5
+    was met, the floor named as forcing the total up was empty, and each warning
+    refuted the other. Under ``never_treated`` the scenario had dropped every
+    document after the resolver ran.
+
+    This is the same class as the floor verdict (see :func:`verify_type_floors`),
+    and it is fixed the same way rather than patched again: the resolver returns
+    the facts, the caller that owns the finished file decides.
+    """
+    if cap_check is None:
+        return []
+    global_cap, resolver_pinned, floors = cap_check
+    if held <= global_cap:
+        return []
+    # `held` was fixed in round 9 and the parenthetical explaining it was not.
+    # `pinned` counted forced documents at resolver time, so ten of them were
+    # offered as the reason a cap could not be met in a file containing none —
+    # and removing that override left the breach byte-identical, which proves
+    # they were never a cause. A reason has to describe the same object as the
+    # number it explains.
+    pinned = resolver_pinned if pinned_in_file is None else pinned_in_file
+    detail = f"{pinned} document(s) pinned by per-subtype overrides"
+    if floors:
+        detail += "; type floors: " + ", ".join(
+            f"{doc_type} min={value}" for doc_type, value in floors
+        )
+    return [
+        f"documents.global_cap={global_cap} cannot be met without breaking a "
+        f"higher-precedence control ({detail}) — the file holds {held}"
+    ]
+
+
+def verify_forced_subtypes(
+    forced_checks: Iterable[tuple[str, int, str | None]],
+    held_by_subtype: Mapping[str, int],
+) -> list[str]:
+    """Whether each forced ``documents.overrides`` subtype actually reached the file.
+
+    The resolver knows an override resurrected or invented a subtype. It does not
+    know whether the document survives to the manifest, and the sentence it used
+    to emit — *"control wins, loudly"* — is a claim about exactly that. At
+    ``target_stage: intake`` under ``never_treated`` it was published for four
+    subtypes whose final count was **zero**, beside a second warning saying the
+    scenario had suppressed that family. Not a stale number: the opposite of what
+    happened. The control lost, and it lost silently.
+
+    Fifth site of one class, third fixed this way. The resolver states what it
+    did; this says whether it held. See :func:`verify_type_floors` and
+    :func:`verify_global_cap`.
+    """
+    out: list[str] = []
+    for subtype, count, reason in forced_checks:
+        held = held_by_subtype.get(subtype, 0)
+        forced = (
+            f"documents.overrides forces {subtype} x{count}: "
+            + (
+                f"suppressed by {reason} but an explicit override wins"
+                if reason
+                else "the lifecycle for this case never emits it"
+            )
+        )
+        if held >= count:
+            out.append(f"{forced} (control wins, loudly)")
+        elif held == 0:
+            out.append(
+                f"{forced} — but the file holds none of them: something after the "
+                "document controls removed every one, so the override did NOT win"
+            )
+        else:
+            out.append(
+                f"{forced} — but the file holds only {held}: something after the "
+                "document controls removed the rest"
+            )
+    return out

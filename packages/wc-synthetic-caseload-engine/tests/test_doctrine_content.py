@@ -56,7 +56,8 @@ from wc_caseload_engine.doctrine import (
     DoctrineFacts,
     content_flags_for,
     hook_is_supported,
-    unsupported_hook_warnings,
+    unsupported_hooks,
+    verify_unsupported_hooks,
 )
 from wc_caseload_engine.lifecycle_bridge import build_timeline
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
@@ -620,7 +621,7 @@ class TestTheDemoCaseloadsWarningsArePinned:
 
     def test_exactly_the_documented_demo_seeds_warn(self) -> None:
         from conftest import DEMO_SPEC
-        from wc_caseload_engine.doctrine import unsupported_hook_warnings
+        from wc_caseload_engine.doctrine import unsupported_hooks
         from wc_caseload_engine.seeds import load_caseload_spec, resolve_caseload
 
         actual: dict[str, tuple[str, ...]] = {}
@@ -628,7 +629,7 @@ class TestTheDemoCaseloadsWarningsArePinned:
             warned = tuple(
                 hook
                 for hook in seed.lifecycle.doctrine_hooks
-                if unsupported_hook_warnings([hook], seed)
+                if unsupported_hooks([hook], seed)
             )
             if warned:
                 actual[seed.case_id] = warned
@@ -1544,10 +1545,79 @@ class TestNoGateIsSatisfiedByAnotherHook:
         )
 
     def test_the_warning_does_not_advise_the_removed_route(self) -> None:
-        (warning,) = unsupported_hook_warnings(["gfpa"], self._lumbar_only(("gfpa",)))
+        # Round 11 split this into facts + verdict, because "its language will be
+        # rendered" is a claim about the finished file. The advice being pinned
+        # here lives in the requirement text, which travels unchanged.
+        (warning,) = verify_unsupported_hooks(
+            unsupported_hooks(["gfpa"], self._lumbar_only(("gfpa",))), {"gfpa": 1}
+        )
         assert "seed lc3208_3_psych alongside" not in warning, (
             "the warning still tells the user to seed lc3208_3_psych as a way to "
             "satisfy gfpa. That route is gone, and advice inside a warning has to "
             "stay true."
         )
         assert "psyche" in warning, "the warning must still name the fix that does work"
+
+
+class TestAnUnsupportedHookReportsWhatTheFileHolds:
+    """Review round 11, the sixth site — and the only one outside `doc_controls`.
+
+    The warning said "its language **will be rendered** (an explicit seed wins)".
+    Doctrine text reaches a file only through `content_flags` on a document that
+    survives to the plan, and this sentence was computed from the seed and the
+    case facts without ever consulting the document set.
+
+    Measured across 24 warning-firing configurations: language rendered in ZERO
+    of them. Not rare drift — there is a structural reason the rate is total. The
+    condition that makes a hook unsupported is generally the same condition that
+    removes its carrier documents: `eval_type: none` is both why `ogilvie` is
+    unsupported and why no QME report exists to argue it.
+
+    Five rounds of work inside `doc_controls` never reached this, which is the
+    argument for enumerating claims by what their words describe rather than by
+    the module they live in.
+    """
+
+    def test_a_hook_no_document_carries_does_not_promise_rendered_language(self) -> None:
+        plan = build_case_plan(
+            parse_case_seed(
+                {
+                    "case_id": "isc148r11-hook",
+                    "rng_seed": 4242,
+                    "injury": dict(SAMPLE_INJURY),
+                    "lifecycle": {
+                        "target_stage": "medical_legal",
+                        "eval_type": "none",
+                        "doctrine_hooks": ["ogilvie"],
+                    },
+                    "documents": {"format_mix": {"pdf": 1.0}},
+                }
+            )
+        )
+        carriers = sum(
+            1 for document in plan.documents if "ogilvie" in (document.content_flags or ())
+        )
+        assert carriers == 0, (
+            f"the seed no longer produces a carrier-free file: {carriers}"
+        )
+        warning = next(w for w in plan.warnings if "cannot support it" in w)
+        assert "will be rendered" not in warning, (
+            "the warning promises language the file does not contain: "
+            f"{warning}"
+        )
+        assert "no document in this file carries it" in warning, warning
+
+    def test_a_hook_documents_do_carry_still_reports_the_mismatch(self) -> None:
+        """The opposite draw: an unsupported hook that DOES reach the page.
+
+        Without this, the fix could be satisfied by never claiming anything is
+        rendered — which would lose the warning's actual purpose.
+        """
+        carried = verify_unsupported_hooks((("gfpa", "some requirement"),), {"gfpa": 3})
+        assert len(carried) == 1
+        assert "3 document(s) argue it" in carried[0], carried[0]
+        assert "will not match the rest of the file" in carried[0], carried[0]
+
+        uncarried = verify_unsupported_hooks((("gfpa", "some requirement"),), {})
+        assert "document(s) argue it" not in uncarried[0], uncarried[0]
+        assert "changes nothing here" in uncarried[0], uncarried[0]

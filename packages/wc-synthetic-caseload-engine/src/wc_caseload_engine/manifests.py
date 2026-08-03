@@ -43,6 +43,10 @@ from wc_caseload_engine.case_facts import (
     CaseFacts,
     facts_manifest_block,
 )
+from wc_caseload_engine.money import (
+    GOVERNED_MONEY_FIELDS,
+    MoneyFacts,
+)
 from wc_caseload_engine.planner import (
     CADENCE_ANCHOR_SUBTYPES,
     CasePlan,
@@ -50,7 +54,7 @@ from wc_caseload_engine.planner import (
     build_case_plan,
 )
 from wc_caseload_engine.renderer import FORMAT_EXTENSIONS, RenderResult, render_document
-from wc_caseload_engine.seeds import CaseSeed, write_case_seed
+from wc_caseload_engine.seeds import AWW_METHODS, CaseSeed, write_case_seed
 from wc_caseload_engine.substrate import check_substrate_pin, substrate_git_sha
 from wc_caseload_engine.taxonomy import (
     EXPECTED_SUBTYPE_COUNT,
@@ -222,7 +226,7 @@ def build_manifest(
     if plan.case_facts is not None:
         # Published so a reader can check every coherence claim this
         # package makes against the documents, from the output alone.
-        ordered["caseFacts"] = facts_manifest_block(plan.case_facts)
+        ordered["caseFacts"] = facts_manifest_block(plan.case_facts, plan.money_facts)
     return ordered
 
 
@@ -249,7 +253,7 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
 
     write_case_seed(seed, case_dir / SEED_NAME)
     if plan.case_facts is not None:
-        _write_case_facts(plan.case_facts, case_dir / CASE_FACTS_NAME)
+        _write_case_facts(plan.case_facts, case_dir / CASE_FACTS_NAME, plan.money_facts)
 
     renders: list[tuple[str, RenderResult]] = []
     # Packets are counted separately from documents so the provider round-robin
@@ -290,6 +294,7 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
             recipient_role=document.recipient_role,
             content_flags=document.content_flags,
             case_facts=plan.case_facts,
+            money_facts=plan.money_facts,
             packet_index=packet_counter,
             report_ordinal=report_counter,
             letter_ordinal=letter_counter,
@@ -453,6 +458,461 @@ class ValidationReport:
 
 #: Subtypes that constitute proof an operation happened.
 OPERATIVE_SUBTYPES = frozenset({"OPERATIVE_HOSPITAL_RECORDS"})
+
+
+#: Documents that carry the money spine, by the part of it they render.
+#:
+#: Used by the validator both ways: money published with none of these in the
+#: folder is a claim nothing supports, and one of these in a folder with no
+#: money block is a document rendering figures the ledger never decided.
+MONEY_WAGE_DOCUMENTS = frozenset(
+    {
+        "WAGE_STATEMENTS_PRE_INJURY",
+        "WAGE_STATEMENTS_POST_INJURY",
+        "WAGE_STATEMENTS_EARNING_RECORDS",
+    }
+)
+MONEY_BENEFIT_DOCUMENTS = frozenset(
+    {
+        "TD_PAYMENT_RECORD_ONGOING",
+        "TD_PAYMENT_RECORD_RETROACTIVE",
+        "PD_PAYMENT_RECORD_ADVANCE",
+        "PD_PAYMENT_RECORD_ONGOING",
+        "PD_PAYMENT_RECORD_FINAL",
+    }
+)
+
+#: The compromise-and-release family: the parties' own agreement, which prints
+#: the settlement type and gross.
+#:
+#: It does **not** carry the approval or funding date, and the first attempt at
+#: this rule was wrong to let it. A release is signed and filed before the Board
+#: approves it — this engine dates one at 2023-11-13 against an approval of
+#: 2023-12-27 — so a release printing its approval asserts an event 44 days in
+#: its own future. See :data:`SETTLEMENT_APPROVAL_DOCUMENTS`.
+SETTLEMENT_DOCUMENTS = frozenset(
+    {
+        "COMPROMISE_AND_RELEASE",
+        "COMPROMISE_AND_RELEASE_STANDARD",
+        "COMPROMISE_AND_RELEASE_PD_ONLY",
+        "COMPROMISE_AND_RELEASE_MSA",
+        "COMPROMISE_AND_RELEASE_DEPENDENCY",
+        "COMPROMISE_AND_RELEASE_THIRD_PARTY",
+    }
+)
+
+#: The document that effects an approval, and therefore the one that can print
+#: its date: the Board issues it *on* that date.
+SETTLEMENT_APPROVAL_DOCUMENTS = frozenset({"ORDER_APPROVING_SETTLEMENT"})
+
+#: The instruments an approval is granted *to*. The order recites that this
+#: document was filed and considered, so an order dated before it is an order
+#: approving something that did not exist yet.
+SETTLEMENT_INSTRUMENT_DOCUMENTS = SETTLEMENT_DOCUMENTS | frozenset(
+    {
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD",
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD_FULL",
+        "STIPULATIONS_WITH_REQUEST_FOR_AWARD_PARTIAL",
+        "STIPS_WITH_REQUEST_FOR_AWARD_PACKAGE",
+    }
+)
+
+#: The document dated after the settlement draft clears. The order is issued
+#: before funding, so it cannot report funding either; only a ledger written
+#: afterwards can.
+SETTLEMENT_FUNDING_DOCUMENTS = frozenset({"BENEFIT_PAYMENT_LEDGER"})
+
+#: Every provenance the rate binding may record. Mirrors ``RateBasis.source``;
+#: a published value outside it is a label no analyzer was trained on.
+MONEY_BASIS_SOURCES = frozenset({"engine_default_table", "seed", "mixed"})
+
+#: Every method name the ledger may record. Mirrors ``seeds.AWW_METHODS``; a
+#: published method outside it is a label no analyzer could have been trained
+#: on, which makes the eval score meaningless rather than merely wrong.
+MONEY_METHODS = frozenset(AWW_METHODS)
+
+
+def _document_date(doc: dict[str, Any]) -> date | None:
+    """A manifest entry's own date, or ``None`` when it has none to read.
+
+    ``None`` fails the carrier check rather than passing it: a document that
+    cannot say when it was written cannot vouch for when something happened.
+    """
+    raw = doc.get("documentDate")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _validate_money(
+    block: dict[str, Any], documents: list[Any], case_label: str
+) -> list[str]:
+    """Check the money spine against itself and against the folder.
+
+    Skipped entirely when there is no ``money`` key, because absence is the
+    designed state for every case that did not ask for a money layer — the
+    validator must not turn "this seed has no wages" into a problem.
+
+    What it *does* refuse is a money claim with nothing behind it. The wage
+    statement is where an average weekly wage is read from; publishing an AWW
+    with no wage statement in the folder is the asserted-not-derived failure
+    this whole layer exists to remove, and a validator that let it through would
+    be certifying exactly what it was built to catch.
+    """
+    money = block.get("money")
+    if money is None:
+        return []
+
+    problems: list[str] = []
+    if not isinstance(money, dict):
+        return [f"{case_label}: caseFacts.money is {type(money).__name__}, expected a mapping"]
+
+    for key, fields in GOVERNED_MONEY_FIELDS.items():
+        if key == "settlement" and money.get(key) is None:
+            # Absent for a case that did not settle — see SettlementFact. Absent
+            # is fine; *present* was being skipped along with it, so a settlement
+            # was the one group whose shape and governance nothing checked. An
+            # ungoverned field there is an extraction label the documents never
+            # promised, which is exactly what this loop exists to refuse.
+            continue
+        section = money.get(key)
+        if section is None:
+            problems.append(f"{case_label}: caseFacts.money is missing {key!r}")
+            continue
+        if not isinstance(section, dict):
+            problems.append(f"{case_label}: caseFacts.money.{key} is not a mapping")
+            continue
+        ungoverned = sorted(set(section) - set(fields))
+        if ungoverned:
+            problems.append(
+                f"{case_label}: caseFacts.money.{key} publishes ungoverned field(s) "
+                f"{', '.join(ungoverned)} — a published fact must be one a document renders"
+            )
+        # And the other direction, which this loop did not check for four review
+        # rounds: the governance table is a promise in both directions. Every
+        # field in it is emitted unconditionally by ``money_manifest_block`` —
+        # nullable ones as ``None``, never absent — so a *missing* key is a
+        # manifest that has lost a label the analyzer is scored on, and it was
+        # being certified clean. Found by review, which reproduced it by
+        # deleting ``settlement.grossAmount``, ``wage.averageWeeklyWage`` and
+        # ``benefits.gaps`` from a valid manifest: all three passed.
+        missing = sorted(set(fields) - set(section))
+        if missing:
+            problems.append(
+                f"{case_label}: caseFacts.money.{key} is missing governed field(s) "
+                f"{', '.join(missing)} — a governed field is published or the case has "
+                "no such group at all"
+            )
+    if problems:
+        return problems
+
+    wage = money["wage"]
+    rate = money["rate"]
+
+    # ``basisSource`` is an extraction label like ``method`` and the bound
+    # tokens, and was the one of the four nothing checked — ``"seed-ish"`` was
+    # accepted so long as both artifacts agreed with each other. Two artifacts
+    # agreeing on a value outside the vocabulary is not a check, it is a copy.
+    basis_source = rate.get("basisSource")
+    if basis_source not in MONEY_BASIS_SOURCES:
+        problems.append(
+            f"{case_label}: caseFacts.money.rate.basisSource is {basis_source!r}, "
+            f"expected one of {', '.join(sorted(MONEY_BASIS_SOURCES))}"
+        )
+
+    method = wage.get("method")
+    if method not in MONEY_METHODS:
+        problems.append(
+            f"{case_label}: caseFacts.money.wage.method is {method!r}, which is not one of "
+            f"{', '.join(sorted(MONEY_METHODS))}"
+        )
+    if wage.get("methodSource") not in ("seed", "derived"):
+        problems.append(
+            f"{case_label}: caseFacts.money.wage.methodSource is "
+            f"{wage.get('methodSource')!r}, expected 'seed' or 'derived'"
+        )
+    if not wage.get("methodReason"):
+        problems.append(
+            f"{case_label}: caseFacts.money.wage names method {method!r} with no reason — "
+            "the method is ground truth, so how it was chosen is part of the label"
+        )
+
+    for bound_key in ("tdBound", "pdBound"):
+        if rate.get(bound_key) not in ("max", "min", "unbounded"):
+            problems.append(
+                f"{case_label}: caseFacts.money.rate.{bound_key} is "
+                f"{rate.get(bound_key)!r}, expected max, min or unbounded"
+            )
+    if "counselConfirmed" not in rate:
+        problems.append(
+            f"{case_label}: caseFacts.money.rate omits counselConfirmed — every statutory "
+            "binding in this corpus is unverified until it says otherwise, and a consumer "
+            "must not have to read the source to find that out"
+        )
+
+    subtypes = {d.get("subtype") for d in documents if isinstance(d, dict)}
+    if not (subtypes & MONEY_WAGE_DOCUMENTS):
+        problems.append(
+            f"{case_label}: caseFacts publishes an average weekly wage but the case holds "
+            "no wage statement — the figure is asserted rather than derivable"
+        )
+    benefits = money["benefits"]
+    # Shape before arithmetic. A validator that trusts the types it was handed
+    # crashes on the input it exists to reject: ``tdPeriodCount: "one"`` raised
+    # ``TypeError`` out of the sum below rather than returning a problem, and a
+    # crash is not a verdict.
+    for count_key in ("tdPeriodCount", "pdAdvanceCount"):
+        value = benefits.get(count_key)
+        # ``type(...) is int`` rather than ``isinstance``: ``bool`` is a subclass
+        # of ``int``, so ``tdPeriodCount: True`` passed an isinstance check and
+        # then compared equal to a length of 1.
+        if value is not None and (type(value) is not int or value < 0):
+            problems.append(
+                f"{case_label}: caseFacts.money.benefits.{count_key} is {value!r}, "
+                "expected a count of zero or more"
+            )
+    for array_key in ("tdPeriods", "pdAdvances", "gaps"):
+        value = benefits.get(array_key)
+        if value is not None and not isinstance(value, list):
+            problems.append(
+                f"{case_label}: caseFacts.money.benefits.{array_key} is "
+                f"{type(value).__name__}, expected a list of records"
+            )
+    if problems:
+        return problems
+
+    # Any paid or withheld event needs a record to be read from, not only a TD
+    # one. A case publishing four permanent-disability advances and no payment
+    # record at all used to pass: the rule was written for the half that had a
+    # probe rather than for the class.
+    event_count = (
+        (benefits.get("tdPeriodCount") or 0)
+        + (benefits.get("pdAdvanceCount") or 0)
+        + len(benefits.get("gaps") or [])
+    )
+    if event_count and not (subtypes & MONEY_BENEFIT_DOCUMENTS):
+        problems.append(
+            f"{case_label}: caseFacts publishes {event_count} benefit event(s) but the "
+            "case holds no payment record to read them from"
+        )
+    # The counts and the event arrays are two publications of one ledger, so a
+    # disagreement between them means one of the two was assembled from
+    # something other than the records — which is the drift the paired
+    # publication exists to make visible.
+    for count_key, array_key in (
+        ("tdPeriodCount", "tdPeriods"),
+        ("pdAdvanceCount", "pdAdvances"),
+    ):
+        events = benefits.get(array_key)
+        if not isinstance(events, list):
+            problems.append(
+                f"{case_label}: caseFacts.money.benefits.{array_key} is not a list — the "
+                "ledger publishes the events, not only how many there were"
+            )
+            continue
+        if benefits.get(count_key) != len(events):
+            problems.append(
+                f"{case_label}: caseFacts.money.benefits.{count_key} is "
+                f"{benefits.get(count_key)} but {array_key} holds {len(events)} record(s)"
+            )
+    # ``days_late`` is measured from ``dateDue``. A record that carries the
+    # effect without the cause is the asserted number this layer removes, so the
+    # two are checked against each other rather than taken on trust — on both
+    # ledgers, because the first cut checked temporary disability only and a
+    # permanent-disability advance marked 62 days late named nothing to be late
+    # against.
+    for array_key, what in (
+        ("tdPeriods", "temporary disability period"),
+        ("pdAdvances", "permanent disability advance"),
+    ):
+        for event in benefits.get(array_key) or []:
+            if not isinstance(event, dict):
+                # A non-mapping event used to pass straight through this loop.
+                # The ledger is the eval label; a label that is a bare string is
+                # not a lesser label, it is a broken one.
+                problems.append(
+                    f"{case_label}: caseFacts.money.benefits.{array_key} holds a "
+                    f"{type(event).__name__} where a record was expected"
+                )
+                continue
+            due, paid, late = event.get("dateDue"), event.get("datePaid"), event.get("daysLate")
+            if due is None:
+                problems.append(
+                    f"{case_label}: a caseFacts.money.benefits.{array_key} record omits "
+                    "dateDue — daysLate is measured against it and cannot be checked "
+                    "without it"
+                )
+                continue
+            if paid is None:
+                if late:
+                    # Never paid is an interruption, not a delay. A record with
+                    # no payment date cannot also carry a number of days it was
+                    # late, because there is no second date to have counted them
+                    # to — and a penalty computed off that number in Wave 3
+                    # would be computed off nothing.
+                    problems.append(
+                        f"{case_label}: a {what} was never paid but records daysLate "
+                        f"{late} — an unpaid benefit is an interruption, not a delay"
+                    )
+                continue
+            try:
+                actual = (date.fromisoformat(paid) - date.fromisoformat(due)).days
+            except (TypeError, ValueError):
+                problems.append(
+                    f"{case_label}: a {what} carries unreadable dates "
+                    f"(dateDue {due!r}, datePaid {paid!r})"
+                )
+                continue
+            if actual != late:
+                problems.append(
+                    f"{case_label}: a {what} was due {due} and paid {paid} "
+                    f"({actual} day(s) apart) but records daysLate {late}"
+                )
+
+    # Gaps are events too, and were the one array nothing checked.
+    for gap in benefits.get("gaps") or []:
+        if not isinstance(gap, dict):
+            problems.append(
+                f"{case_label}: caseFacts.money.benefits.gaps holds a "
+                f"{type(gap).__name__} where a record was expected"
+            )
+            continue
+        start, end, days = gap.get("start"), gap.get("end"), gap.get("days")
+        if start is None or end is None or days is None:
+            problems.append(
+                f"{case_label}: a caseFacts.money.benefits.gaps record omits start, end "
+                "or days — a gap the eval cannot measure is a gap the corpus does not "
+                "contain"
+            )
+            continue
+        try:
+            spanned = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+        except (TypeError, ValueError):
+            problems.append(
+                f"{case_label}: a benefit gap carries unreadable dates "
+                f"(start {start!r}, end {end!r})"
+            )
+            continue
+        if spanned != days or type(days) is not int or days < 1:
+            # ``spanned == days`` alone agreed with a reversed gap carrying a
+            # negative count: 2025-01-10 to 2025-01-01 spans -8 days and recorded
+            # -8. Two wrongs cancelling is not a check.
+            problems.append(
+                f"{case_label}: a benefit gap runs {start} to {end} ({spanned} day(s)) "
+                f"but records days {days!r} — a gap runs forwards and lasts at least a day"
+            )
+
+    settlement = money.get("settlement")
+    if settlement is not None:
+        if settlement.get("kind") not in ("c_and_r", "stipulations"):
+            problems.append(
+                f"{case_label}: caseFacts.money.settlement.kind is "
+                f"{settlement.get('kind')!r}, expected c_and_r or stipulations"
+            )
+        approval_raw = settlement.get("approvalDate")
+        funding_raw = settlement.get("fundingDate")
+        approval = funding = None
+        for label, raw in (("approvalDate", approval_raw), ("fundingDate", funding_raw)):
+            if raw is None:
+                continue
+            try:
+                parsed = date.fromisoformat(raw)
+            except (TypeError, ValueError):
+                # ``fromisoformat`` on an int raises TypeError, which used to
+                # escape this function: the comparison below reached a str and an
+                # int and the validator crashed rather than reporting.
+                problems.append(
+                    f"{case_label}: caseFacts.money.settlement.{label} is {raw!r}, "
+                    "which is not a date"
+                )
+                continue
+            if label == "approvalDate":
+                approval = parsed
+            else:
+                funding = parsed
+        if approval is not None and funding is not None:
+            if funding < approval:
+                problems.append(
+                    f"{case_label}: caseFacts.money.settlement was funded {funding_raw} "
+                    f"but approved {approval_raw} — money does not move before the Board "
+                    "approves"
+                )
+            # With both dates in hand the lag is derivable, so ``None`` is not a
+            # permitted answer here — only a settlement that has not funded may
+            # leave it unstated. Review found the null slipping through beside
+            # two dates: the interval is the whole substance of a late-funding
+            # argument, and a manifest that has both endpoints and declines to
+            # state the span between them has dropped the fact, not deferred it.
+            lag = settlement.get("fundingLagDays")
+            if lag is not True and lag is not False and isinstance(lag, int):
+                if lag != (funding - approval).days:
+                    problems.append(
+                        f"{case_label}: caseFacts.money.settlement records fundingLagDays "
+                        f"{lag} but was approved {approval_raw} and funded {funding_raw} "
+                        f"({(funding - approval).days} day(s) apart)"
+                    )
+            else:
+                problems.append(
+                    f"{case_label}: caseFacts.money.settlement.fundingLagDays is {lag!r}, "
+                    f"but it was approved {approval_raw} and funded {funding_raw} — with "
+                    "both dates the interval is a fact, not an option"
+                )
+        # A published date needs a document that could have printed it, and
+        # "could have" is a claim about the document's own date as much as its
+        # subtype. The first cut of this rule checked only the subtype and
+        # accepted a release dated 44 days before the approval it would have had
+        # to print, and a temporary-disability payment record dated two years
+        # before it. An anachronism is worse evidence than a missing line,
+        # because it reads as evidence.
+        # An approval is granted to an instrument, so the instrument comes first.
+        # Checking each carrier against its own event date is not enough: review
+        # found an order correctly pinned to an authored approval of 2022-01-05
+        # and therefore dated 677 days before the stipulations it recites as
+        # "filed herein". A chain checked link by link still has to be a chain.
+        if approval is not None:
+            for doc in documents:
+                if not isinstance(doc, dict):
+                    continue
+                if doc.get("subtype") not in SETTLEMENT_INSTRUMENT_DOCUMENTS:
+                    continue
+                filed = _document_date(doc)
+                if filed is not None and filed > approval:
+                    problems.append(
+                        f"{case_label}: caseFacts.money.settlement was approved "
+                        f"{approval_raw} but the case holds a "
+                        f"{doc.get('subtype')} dated {filed} — an order cannot approve "
+                        "an instrument that does not exist yet"
+                    )
+
+        # The approval carrier is dated *on* the approval; the funding carrier
+        # on or after the funding. The difference is not fussiness: the order
+        # constitutes the approval, so a different date is a different event,
+        # while the ledger merely reports a payment and may be written any time
+        # afterwards. Review found an order dated 721 days after the approval it
+        # was vouching for, passing an on-or-after rule.
+        for label, raw, when, carriers, exact in (
+            ("approval", approval_raw, approval, SETTLEMENT_APPROVAL_DOCUMENTS, True),
+            ("funding", funding_raw, funding, SETTLEMENT_FUNDING_DOCUMENTS, False),
+        ):
+            if raw is None or when is None:
+                continue
+            if not any(
+                doc.get("subtype") in carriers
+                and _document_date(doc) is not None
+                and (_document_date(doc) == when if exact else _document_date(doc) >= when)
+                for doc in documents
+                if isinstance(doc, dict)
+            ):
+                problems.append(
+                    f"{case_label}: caseFacts.money.settlement publishes a {label} date of "
+                    f"{raw} but the case holds no {'/'.join(sorted(carriers))} dated "
+                    + ("on it" if exact else "on or after it")
+                    + " — a document cannot report its own future"
+                )
+    return problems
 
 
 def _validate_case_facts(
@@ -644,6 +1104,8 @@ def _validate_case_facts(
         else:
             problems.append(f"{case_label}: caseFacts.surgery.status is {status!r}")
 
+    problems.extend(_validate_money(block, documents, case_label))
+
     # The artifact and the manifest are two publications of one ledger. They are
     # written from the same call, so any drift means the folder was edited after
     # generation — which is exactly what a reader needs to be told.
@@ -792,11 +1254,17 @@ __all__ = [
 ]
 
 
-def _write_case_facts(facts: CaseFacts, path: Path) -> None:
+def _write_case_facts(
+    facts: CaseFacts, path: Path, money: MoneyFacts | None = None
+) -> None:
     """Write the resolved ledger beside the seed.
 
     YAML rather than JSON to match ``seed.yaml``: the two files are read
     together, and a reviewer should not have to change format between them.
+
+    Built from the same call as the manifest's block, *money included*, because
+    ``_validate_case_facts`` compares the two for byte equality. Writing them
+    from two different expressions is how they would drift.
     """
     import yaml
 
@@ -806,6 +1274,9 @@ def _write_case_facts(facts: CaseFacts, path: Path) -> None:
         "# Documents render against this, and the manifest publishes it as 'caseFacts'.\n"
     )
     body = yaml.safe_dump(
-        facts_manifest_block(facts), sort_keys=False, default_flow_style=False, allow_unicode=True
+        facts_manifest_block(facts, money),
+        sort_keys=False,
+        default_flow_style=False,
+        allow_unicode=True,
     )
     path.write_text(header + body, encoding="utf-8")

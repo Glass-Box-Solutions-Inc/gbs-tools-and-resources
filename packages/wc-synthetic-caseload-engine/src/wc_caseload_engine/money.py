@@ -1,0 +1,1830 @@
+"""The money spine — wage facts, rate derivation, benefit ledger, settlement.
+
+Money is the only part of a workers' compensation file where correctness is
+*arithmetically* checkable. A comp rate either follows from the wage data or it
+does not, and there is no register in which a wrong one reads as a judgement
+call. That makes this the highest-signal surface in the corpus and, until this
+module, the one entirely absent from it: the substrate's own wage statement
+invents twelve pay periods with ``random.randint``, computes an average from
+them, and prints a rate under a hardcoded fraction and a hardcoded ceiling that
+no date of injury reaches.
+
+Three roles, one schema — the same shape the clinical ledger has. Every object
+here is simultaneously a **generation spec** (what the engine renders), an
+**extraction target** (what the analyzer must recover from the document) and an
+**eval label** (what the analyzer is scored against). Fields are therefore named
+for what a reader must recover from paper, not for what is convenient to render.
+
+Four guarantees hold this up.
+
+**The gate is the wage block.** :func:`derive_money_facts` returns ``None`` for
+any seed without ``scenario.wages``, and every consumer — planner, renderer,
+manifest — short-circuits on that ``None``. A seed that says nothing about money
+therefore takes the exact code path it took before this module existed, renders
+byte for byte as it did, and publishes nothing. That is the anti-criterion, and
+it is a code path rather than a promise.
+
+**Every draw is namespaced.** Money derivation draws only from
+``derive_seed(rng_seed, "money:...")`` — never the global stream the substrate
+templates consume, never a ``facts:`` salt the clinical ledger already uses, and
+never the wall clock. Same seed and same version give byte-identical money.
+
+**Arithmetic is decimal.** Currency is :class:`~decimal.Decimal` throughout,
+quantized to cents at exactly the points a payroll system would round, so the
+numbers on the statement add up to the total printed under them. Seeds state
+money as ordinary YAML numbers and are converted here through ``str``, because a
+seed is a document a human writes.
+
+**No number here is verified law.** Every fraction, ceiling and floor is
+table-supplied and marked counsel-unconfirmed; see :data:`UNCONFIRMED_RATE_TABLE`
+and :func:`rate_basis_for`, which is the seam a dated rate authority (KB-167,
+different repository) plugs into. This module takes no dependency on that work
+and asserts nothing about the law in the meantime.
+
+@Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import random
+from contextlib import contextmanager
+from decimal import ROUND_HALF_UP, Context, Decimal, localcontext
+from typing import Any, Literal
+
+import structlog
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from wc_caseload_engine.seeds import (
+    PAY_PERIODS_PER_YEAR,
+    SETTLEMENT_GROSS_MINIMUM,
+    CaseSeed,
+    WageScenario,
+    derive_seed,
+)
+
+log = structlog.get_logger(__name__)
+
+CENTS = Decimal("0.01")
+"""Quantum every currency figure is rounded to."""
+
+ZERO = Decimal("0.00")
+
+_ARITHMETIC_CONTEXT = Context(prec=28, rounding=ROUND_HALF_UP)
+"""Precision every inexact money operation runs under.
+
+:mod:`decimal`'s context is process- *and thread-local mutable state*: any
+caller — this package is a library — can set ``getcontext().prec`` and every
+division and square root after it answers differently. That is a determinism
+leak of exactly the shape this engine has already been bitten by twice
+(``PYTHONHASHSEED``, the substrate's ``date.today()``): correct on the machine
+that wrote it, wrong somewhere else, and invisible to a same-process double run.
+
+Pinned locally rather than globally, because setting the global context would
+make this module the shared mutable state instead of curing it.
+"""
+
+
+@contextmanager
+def _exact() -> Any:
+    """Run a block under :data:`_ARITHMETIC_CONTEXT`."""
+    with localcontext(_ARITHMETIC_CONTEXT):
+        yield
+
+
+def money(value: Any) -> Decimal:
+    """Coerce *value* to a cents-quantized :class:`~decimal.Decimal`.
+
+    Routed through ``str`` rather than constructed from the float directly.
+    ``Decimal(1200.10)`` is the binary expansion and prints eighteen digits of
+    noise; ``Decimal("1200.10")`` is the number the seed author wrote. Since a
+    seed states money as an ordinary YAML number, ``str`` is the only conversion
+    that preserves what they meant.
+    """
+    with _exact():
+        return Decimal(str(value)).quantize(CENTS, rounding=ROUND_HALF_UP)
+
+
+def _whole_dollars(value: Decimal) -> Decimal:
+    """Round *value* to whole dollars, still cents-quantized.
+
+    Only settlement grosses go through this, and the reason is the paper. The
+    substrate's compromise and release draws its gross with ``random.randint``
+    and derives the fee, the costs, the set-aside and the net from it in its own
+    code; the interception that pins the gross can therefore only hand it an
+    integer. A ledger carrying ``88000.99`` under a release printing ``$88,000``
+    is a manifest contradicting the document it labels — measured, and by 99
+    cents, which is a real difference in an arithmetic check.
+
+    So the ledger records what the paper can show. A seed stating cents is
+    refused rather than silently rounded here; see
+    :class:`~wc_caseload_engine.seeds.SettlementScenario`.
+    """
+    with _exact():
+        return value.quantize(Decimal("1"), rounding=ROUND_HALF_UP).quantize(CENTS)
+
+
+def _dollars(value: Decimal) -> str:
+    """A currency figure as the manifest publishes it: an exact decimal string.
+
+    Strings rather than floats, and this is not fussiness. A manifest is the
+    eval label; a label that has been through binary floating point is a label
+    that can disagree with the document it grades by a cent, and a cent is a
+    real difference in an arithmetic check.
+    """
+    with _exact():
+        return f"{value.quantize(CENTS, rounding=ROUND_HALF_UP):f}"
+
+
+# ---------------------------------------------------------------------------
+# Statutory bindings — every one of them unconfirmed
+# ---------------------------------------------------------------------------
+
+
+class RateBasis(BaseModel):
+    """The statutory parameters a comp rate is computed under, for one vintage.
+
+    Keyed to the date of injury, because that is the axis on which these numbers
+    actually move: a caseload spans many years and the current figures are the
+    wrong answer for most files in it. A rate table with no date on it is not a
+    simplification, it is a different (and wrong) table for every case but the
+    newest.
+
+    ``counsel_confirmed`` is the field that keeps this module honest. Nothing
+    the engine ships sets it true. It is published in the manifest so that no
+    downstream consumer can mistake a placeholder binding for a verified one,
+    and a seed that carries a genuinely verified authority says so itself.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    label: str
+    """Human name of the vintage, e.g. ``"doi-2023"``."""
+
+    effective_from: dt.date
+    effective_to: dt.date | None = None
+
+    td_fraction: Decimal
+    """Fraction of AWW that becomes the temporary-disability weekly rate."""
+
+    td_max_weekly: Decimal
+    td_min_weekly: Decimal
+    pd_fraction: Decimal
+    pd_max_weekly: Decimal
+    pd_min_weekly: Decimal
+
+    authority: str
+    """The citation these numbers are said to come from — prose, not a promise."""
+
+    counsel_confirmed: bool = False
+    """Whether counsel has verified this binding. False for everything shipped."""
+
+    source: Literal["engine_default_table", "seed", "mixed"] = "engine_default_table"
+    """Where the numbers came from, so a reader can tell authored from defaulted.
+
+    Three values, not two, and the third was a review finding. A partial
+    override — ``rate_basis: {td_fraction: 0.5}`` — merges one authored number
+    into five defaulted ones and used to publish ``source: seed`` for the whole
+    binding, beside a ``basisLabel`` still naming the engine vintage the other
+    five came from. As an extraction label that is simply false: an analyzer
+    scored on ``basisSource`` would learn that ``seed`` means "somewhere between
+    one and six of these figures were authored", which is not a fact about
+    anything. ``mixed`` names the shape that actually occurs, and ``seed`` now
+    means what it says — every figure in the binding was authored.
+    """
+
+    @model_validator(mode="after")
+    def _bounds_are_ordered(self) -> RateBasis:
+        """No floor may sit above its own ceiling. Checked on the **merged** basis.
+
+        On the model rather than only on the seed override, because a partial
+        override is the shape that gets this wrong: a seed stating one number
+        merges it into five defaulted ones, and a pairwise check on the override
+        alone sees a floor with no ceiling beside it and passes. Measured before
+        this validator existed — ``rate_basis: {td_min_weekly: 5000}`` merged to
+        a $5,000 floor under a $1,539.71 ceiling and :func:`_bounded` returned a
+        temporary-disability rate above the maximum, recorded as ``min``.
+
+        Every construction path reaches it: the shipped table, and the merge in
+        :func:`_apply_rate_basis_override`, which rebuilds through the
+        constructor precisely so this runs. ``model_copy(update=...)`` would not
+        have — it skips validation, which is what let the defect through.
+        """
+        for low, high, name in (
+            (self.td_min_weekly, self.td_max_weekly, "td"),
+            (self.pd_min_weekly, self.pd_max_weekly, "pd"),
+        ):
+            if low > high:
+                raise ValueError(
+                    f"rate basis {self.label!r} has {name}_min_weekly {low} above "
+                    f"{name}_max_weekly {high} — a floor cannot sit above its own "
+                    "ceiling, and a rate clamped up to it would exceed the maximum. "
+                    f"Lower {name}_min_weekly, or raise {name}_max_weekly."
+                )
+        return self
+
+    def covers(self, when: dt.date) -> bool:
+        if when < self.effective_from:
+            return False
+        return self.effective_to is None or when <= self.effective_to
+
+
+UNCONFIRMED_RATE_TABLE: tuple[RateBasis, ...] = (
+    RateBasis(
+        label="doi-pre-2014",
+        # Open at the bottom, so the row :func:`rate_basis_for` falls back to is
+        # a row that actually *covers* the date it was handed. Written as
+        # 1900-01-01 it returned a basis whose own ``covers()`` said no — a
+        # fallback contradicting itself, which is a worse answer than either
+        # raising or answering.
+        effective_from=dt.date.min,
+        effective_to=dt.date(2013, 12, 31),
+        td_fraction=Decimal("0.6667"),
+        td_max_weekly=money(1066.72),
+        td_min_weekly=money(160.00),
+        pd_fraction=Decimal("0.6667"),
+        pd_max_weekly=money(270.00),
+        pd_min_weekly=money(160.00),
+        authority=(
+            "Temporary and permanent disability indemnity rates for dates of injury "
+            "before 2014. COUNSEL-UNCONFIRMED placeholder — the figures, the fraction "
+            "and the bracket boundaries are all unverified."
+        ),
+    ),
+    RateBasis(
+        label="doi-2014-2018",
+        effective_from=dt.date(2014, 1, 1),
+        effective_to=dt.date(2018, 12, 31),
+        td_fraction=Decimal("0.6667"),
+        td_max_weekly=money(1215.27),
+        td_min_weekly=money(182.29),
+        pd_fraction=Decimal("0.6667"),
+        pd_max_weekly=money(290.00),
+        pd_min_weekly=money(160.00),
+        authority=(
+            "Temporary and permanent disability indemnity rates for dates of injury "
+            "2014-2018. COUNSEL-UNCONFIRMED placeholder."
+        ),
+    ),
+    RateBasis(
+        label="doi-2019-2022",
+        effective_from=dt.date(2019, 1, 1),
+        effective_to=dt.date(2022, 12, 31),
+        td_fraction=Decimal("0.6667"),
+        td_max_weekly=money(1539.71),
+        td_min_weekly=money(230.95),
+        pd_fraction=Decimal("0.6667"),
+        pd_max_weekly=money(290.00),
+        pd_min_weekly=money(160.00),
+        authority=(
+            "Temporary and permanent disability indemnity rates for dates of injury "
+            "2019-2022. COUNSEL-UNCONFIRMED placeholder."
+        ),
+    ),
+    RateBasis(
+        label="doi-2023-onward",
+        effective_from=dt.date(2023, 1, 1),
+        effective_to=None,
+        td_fraction=Decimal("0.6667"),
+        td_max_weekly=money(1619.15),
+        td_min_weekly=money(242.86),
+        pd_fraction=Decimal("0.6667"),
+        pd_max_weekly=money(290.00),
+        pd_min_weekly=money(160.00),
+        authority=(
+            "Temporary and permanent disability indemnity rates for dates of injury "
+            "2023 onward. COUNSEL-UNCONFIRMED placeholder."
+        ),
+    ),
+)
+"""Engine-default rate vintages. **Every row is unverified.**
+
+Shipped so that a seed need not restate the law to render a coherent document,
+and named ``UNCONFIRMED_`` so that nobody reaches for it believing otherwise.
+Three things follow from that name and are enforced by tests:
+
+1. no row may set ``counsel_confirmed``;
+2. every row's ``authority`` says so in its own text;
+3. the manifest publishes the flag, so a consumer sees the caveat without
+   reading this file.
+
+The date brackets are themselves unverified. A vintage boundary is a legal
+question — several provisions changed materially and the change is keyed to the
+date of injury — and getting the boundary wrong is as consequential as getting
+the number wrong. :func:`rate_basis_for` is the seam where a dated rate
+authority (KB-167) replaces the whole table; nothing else in this package reads
+it directly.
+"""
+
+
+def rate_basis_for(doi: dt.date) -> RateBasis:
+    """The rate vintage covering *doi*. **The seam.**
+
+    This function is the single point at which the engine asks "what are the
+    statutory parameters for this date of injury", and the only reader of
+    :data:`UNCONFIRMED_RATE_TABLE`. A verified dated authority replaces it by
+    replacing this function's body — the caller passes a date and receives a
+    :class:`RateBasis`, which is the whole contract.
+
+    Deliberately no network, no import of an authority package, and no
+    configuration hook: the seam is a function signature, so this ticket takes
+    no dependency on work running in another repository, and that work needs no
+    knowledge of this one beyond the shape it returns.
+
+    Falls back to the earliest vintage for a date before the table opens, rather
+    than raising. A synthetic corpus should not be un-generatable because a seed
+    reached back further than the placeholder table does.
+    """
+    for basis in UNCONFIRMED_RATE_TABLE:
+        if basis.covers(doi):
+            return basis
+    return UNCONFIRMED_RATE_TABLE[0]
+
+
+#: The six numbers that make a rate binding. A seed stating all six has authored
+#: the binding; stating some of them has mixed its own figures with the table's.
+_RATE_BASIS_FIGURES: tuple[str, ...] = (
+    "td_fraction",
+    "td_max_weekly",
+    "td_min_weekly",
+    "pd_fraction",
+    "pd_max_weekly",
+    "pd_min_weekly",
+)
+
+
+def _apply_rate_basis_override(basis: RateBasis, seed: CaseSeed) -> RateBasis:
+    """Fold a seed's ``rate_basis`` block over the table's answer.
+
+    Field by field, so a seed that confirms one number does not have to restate
+    the other five. ``source`` records which of the three provenances the merged
+    binding actually has: ``seed`` when every figure was authored, ``mixed``
+    when some were, ``engine_default_table`` when none were. The middle value
+    was added by review — a partial override published ``seed`` over five
+    engine numbers, which is a published label no reader could act on.
+
+    Two rules keep the provenance honest, and both were written after a probe
+    showed the block could lie:
+
+    **A block that states nothing overrides nothing.** An override carrying only
+    ``counsel_confirmed: true`` used to publish every engine-default number as
+    counsel-confirmed, under an ``authority`` still reading
+    ``COUNSEL-UNCONFIRMED``. That is the exact claim this module says it can
+    never make. An empty block now returns the table's own answer untouched, and
+    :class:`~wc_caseload_engine.seeds.RateBasisOverride` refuses confirmation
+    without a complete numeric binding and an authority to go with it.
+
+    **The merged basis is validated, not merely assembled.** Rebuilt through the
+    constructor rather than ``model_copy(update=...)``, which skips validation —
+    that is how a $5,000 floor merged under a $1,539.71 ceiling and produced a
+    rate above the maximum.
+    """
+    wages = seed.scenario.wages
+    override = wages.rate_basis if wages is not None else None
+    if override is None:
+        return basis
+
+    changes: dict[str, Any] = {}
+    for name in _RATE_BASIS_FIGURES:
+        value = getattr(override, name)
+        if value is not None:
+            changes[name] = money(value) if name.endswith("_weekly") else Decimal(str(value))
+    if override.authority is not None:
+        changes["authority"] = override.authority
+    # Every numeric figure authored, or only some, or none? That distinction is
+    # the whole content of ``basisSource``. ``authority`` is prose *about* the
+    # numbers rather than one of them, so it neither makes a binding wholly
+    # authored nor makes an unauthored one mixed.
+    #
+    # There used to be an ``if not changes: return basis`` short-circuit above
+    # this, from the round-1 fix for an override that authored nothing. Once the
+    # three-valued provenance below existed it computed the same answer on the
+    # same inputs, and re-running the round-1 mutation campaign proved it: the
+    # mutant that removes the short-circuit stopped going red. Collapsed into
+    # the one provable path, exactly as round 1 collapsed the redundant
+    # ``_whole_dollars`` call — a guard whose removal no probe can detect is an
+    # unverified claim that reads like one.
+    numeric = {name for name in changes if name != "authority"}
+    if not numeric:
+        # Authority alone authors no figure, so the binding is still the table's
+        # and ``mixed`` would be describing a mixture of one thing. Review found
+        # this: the empty-block early return above is keyed on *any* change, and
+        # an authority-only block passes it. The prose is still adopted — it is
+        # the citation for these numbers — but the provenance of the numbers is
+        # unchanged, which is what ``source`` is about.
+        changes["source"] = "engine_default_table"
+    else:
+        changes["source"] = "seed" if numeric == set(_RATE_BASIS_FIGURES) else "mixed"
+    changes["counsel_confirmed"] = override.counsel_confirmed
+    return RateBasis(**{**basis.model_dump(), **changes})
+
+
+# ---------------------------------------------------------------------------
+# Wage facts
+# ---------------------------------------------------------------------------
+
+
+class EarningsPeriod(BaseModel):
+    """One pay period as the wage statement prints it.
+
+    The unit an analyzer extracts. Everything the average weekly wage is
+    computed from is on this record, which is what makes the average
+    *derivable* from the document rather than merely asserted beside it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    period_start: dt.date
+    period_end: dt.date
+    weeks: Decimal
+    """Weeks this period covers — the denominator's contribution."""
+
+    regular_gross: Decimal
+    overtime_gross: Decimal
+    concurrent: bool = False
+    """True when this period is a second, concurrent employer's payroll."""
+
+    @property
+    def gross(self) -> Decimal:
+        """Total gross for the period. Overtime included, as payroll prints it."""
+        with _exact():
+            return (self.regular_gross + self.overtime_gross).quantize(
+                CENTS, rounding=ROUND_HALF_UP
+            )
+
+
+class InKindWage(BaseModel):
+    """Non-cash wages at their weekly value."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: str
+    weekly_value: Decimal
+
+
+class AwwComputation(BaseModel):
+    """How the average weekly wage was reached, and by which named method.
+
+    Carries its own inputs rather than only its result. The acceptance test for
+    this whole layer is that a reader holding the wage statement can reproduce
+    the number, so every operand is recorded: the periods considered, the weeks
+    they cover, the gross over them, and whatever was added on top.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    method: str
+    """The named method. Ground truth — the label the analyzer is scored against."""
+
+    method_source: Literal["seed", "derived"]
+    """Whether the seed named the method or the engine selected it."""
+
+    method_reason: str
+    """Why this method and not another — in words, for the document to print."""
+
+    periods_considered: int
+    weeks_considered: Decimal
+    gross_considered: Decimal
+    in_kind_weekly: Decimal
+    aww: Decimal
+    """The result. Cents-quantized.
+
+    The figure that reaches the published ledger as
+    ``caseFacts.money.wage.averageWeeklyWage`` and appears on the wage
+    statement. Nothing downstream recomputes it — an average that is derived
+    twice is an average that can disagree with itself.
+    """
+
+
+class CompRate(BaseModel):
+    """The weekly indemnity rates, under a named method and a dated basis.
+
+    Both bounds are recorded as *outcomes* (``td_bound``, ``pd_bound``) rather
+    than left for a reader to re-derive. Whether a rate was capped is the single
+    most consequential fact about it — a capped rate is the same number for every
+    high earner in the corpus, so an analyzer that recovers the number without
+    recovering the cap has learnt nothing about the wage behind it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    aww: Decimal
+    td_weekly_rate: Decimal
+    td_bound: Literal["max", "min", "unbounded"]
+    pd_weekly_rate: Decimal
+    pd_bound: Literal["max", "min", "unbounded"]
+    basis: RateBasis
+
+
+def _bounded(
+    raw: Decimal, floor: Decimal, ceiling: Decimal
+) -> tuple[Decimal, Literal["max", "min", "unbounded"]]:
+    """Clamp *raw* into ``[floor, ceiling]`` and say which bound bound it.
+
+    Ceiling before floor. When a (mis-stated) basis inverts the two, the ceiling
+    is the binding the statute is written around and the floor is the relief, so
+    letting the floor win would produce a rate above the maximum — a number no
+    file can contain.
+
+    :meth:`RateBasis._bounds_are_ordered` now rejects an inverted pair on the
+    *merged* basis, so this ordering is the belt behind that brace rather than
+    the only guard. It was the only guard once: the seed-level check compared
+    the override's own pair, saw a floor with no ceiling beside it in a partial
+    override, and passed a $5,000 floor under a $1,539.71 ceiling through to
+    here — where this function dutifully returned $5,000 and labelled it
+    ``min``.
+    """
+    if raw > ceiling:
+        return ceiling, "max"
+    if raw < floor:
+        return floor, "min"
+    return raw, "unbounded"
+
+
+class WageFacts(BaseModel):
+    """The earnings history and everything computed from it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    periods: tuple[EarningsPeriod, ...] = ()
+    in_kind: tuple[InKindWage, ...] = ()
+    employment_start: dt.date | None = None
+    concurrent_employment: bool = False
+    pattern: str = "regular"
+    """Shape of the earnings history. Ground truth, like ``method``.
+
+    A *described* history takes the seed's word for it: the shape knob is what
+    drew the periods, so it is authored by construction. A **listed** history
+    has no such word to take. The seed cannot state a pattern beside explicit
+    earnings — the two would disagree and the periods would win — so the pattern
+    is *derived* from the periods themselves, by the same coefficient of
+    variation :func:`select_method` uses.
+
+    Left as the field default, this published `regular` over a listed history
+    alternating $100 and $3,900 a fortnight (coefficient 0.9500) while the same
+    facts selected ``irregular_earnings_average`` — a manifest labelling one
+    history two contradictory ways, and neither the author's fault nor their
+    doing. ``pattern_source`` records which happened, exactly as
+    ``method_source`` does.
+    """
+
+    pattern_source: Literal["seed", "derived"] = "seed"
+    """Whether the seed's shape knob set the pattern or it was read off the periods."""
+
+    computation: AwwComputation
+    rate: CompRate
+
+    @property
+    def aww(self) -> Decimal:
+        return self.computation.aww
+
+    @property
+    def primary_periods(self) -> tuple[EarningsPeriod, ...]:
+        return tuple(p for p in self.periods if not p.concurrent)
+
+    @property
+    def concurrent_periods(self) -> tuple[EarningsPeriod, ...]:
+        return tuple(p for p in self.periods if p.concurrent)
+
+
+# ---------------------------------------------------------------------------
+# Benefit ledger
+# ---------------------------------------------------------------------------
+
+
+class TdPeriod(BaseModel):
+    """One stretch of temporary disability, and when it was actually paid."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    start: dt.date
+    end: dt.date
+    weeks: Decimal
+    weekly_rate: Decimal
+    amount: Decimal
+    date_due: dt.date
+    """When this period's payment fell due — :data:`TD_PAYMENT_DUE_DAYS` after it ended.
+
+    Carried as a fact rather than recomputed by a reader, because ``days_late``
+    is measured against it and a lateness figure whose baseline is invisible is
+    not checkable. Without it the record publishes an effect (``days_late``)
+    whose cause is a module constant nothing in the output names — which is the
+    asserted-not-derived shape this whole layer exists to remove, in miniature.
+    It is what lets Wave 3 recompute exposure from the published ledger instead
+    of trusting the number beside it.
+    """
+
+    date_paid: dt.date | None = None
+    """``None`` means the period was never paid — an interruption, not a delay."""
+
+    days_late: int = Field(default=0, ge=0)
+    """Days past the period's own due date. Zero for a timely payment."""
+
+    @property
+    def late(self) -> bool:
+        return self.days_late > 0
+
+
+class PdAdvance(BaseModel):
+    """One permanent-disability advance paid before any award."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    date_due: dt.date
+    """When this advance was scheduled. The operand ``days_late`` is measured from.
+
+    Carried for the same reason :attr:`TdPeriod.date_due` is, and it was missing
+    here after that one was added — the fix had been applied to the half a
+    reviewer named rather than to the class of defect. Without it a reader sees
+    four advances dated 08-30, 10-14, 11-28 and 11-11, three of them marked 62
+    days late, and nothing on the page says late *against what*. The apparent
+    disorder is the point: an advance delayed past a later on-time one is an
+    ordinary fact of a neglected file, and it only reads as a fact rather than a
+    mistake once the schedule it slipped from is visible. The ledger is ordered
+    by ``date_due``.
+    """
+
+    date_paid: dt.date
+    amount: Decimal
+    weekly_rate: Decimal
+    weeks: Decimal
+    days_late: int = Field(default=0, ge=0)
+
+    @property
+    def late(self) -> bool:
+        return self.days_late > 0
+
+
+class BenefitGap(BaseModel):
+    """A deliberate hole in the benefit series.
+
+    Recorded as a fact rather than left implicit in the dates. A gap that a
+    reader has to notice by subtracting two dates is a gap the eval cannot
+    score, and this whole layer exists so that exposure is *known*.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    start: dt.date
+    end: dt.date
+    days: int = Field(ge=1)
+
+
+class BenefitLedger(BaseModel):
+    """Everything paid on the claim, with its interruptions and its lateness."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    td_periods: tuple[TdPeriod, ...] = ()
+    pd_advances: tuple[PdAdvance, ...] = ()
+    gaps: tuple[BenefitGap, ...] = ()
+
+    @property
+    def td_total(self) -> Decimal:
+        with _exact():
+            return sum((p.amount for p in self.td_periods), ZERO).quantize(
+                CENTS, rounding=ROUND_HALF_UP
+            )
+
+    @property
+    def pd_total(self) -> Decimal:
+        with _exact():
+            return sum((a.amount for a in self.pd_advances), ZERO).quantize(
+                CENTS, rounding=ROUND_HALF_UP
+            )
+
+    @property
+    def late_payment_count(self) -> int:
+        return sum(1 for p in self.td_periods if p.late) + sum(
+            1 for a in self.pd_advances if a.late
+        )
+
+    @property
+    def max_days_late(self) -> int:
+        everything = [p.days_late for p in self.td_periods] + [
+            a.days_late for a in self.pd_advances
+        ]
+        return max(everything, default=0)
+
+    @property
+    def unpaid_period_count(self) -> int:
+        return sum(1 for p in self.td_periods if p.date_paid is None)
+
+
+# ---------------------------------------------------------------------------
+# Settlement
+# ---------------------------------------------------------------------------
+
+
+class SettlementFact(BaseModel):
+    """How the money ended: what kind, how much, approved when, funded when.
+
+    ``approval_date`` and ``funding_date`` are separate fields, and that
+    separation is the point of modelling this object in Wave 1 rather than in
+    either lens ticket. They are separate events — a Board approves, and later
+    somebody funds — and the interval between them is the whole substance of a
+    late-funding argument. A single ``settlement_date`` would delete that
+    argument from the corpus while looking like a simplification.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["c_and_r", "stipulations"]
+    gross_amount: Decimal
+    approval_date: dt.date | None = None
+    funding_date: dt.date | None = None
+
+    @property
+    def funding_lag_days(self) -> int | None:
+        """Days from approval to funding, or ``None`` while either is unknown."""
+        if self.approval_date is None or self.funding_date is None:
+            return None
+        return (self.funding_date - self.approval_date).days
+
+
+class MoneyFacts(BaseModel):
+    """The money spine of one case, decided once.
+
+    Derived at plan time beside :class:`~wc_caseload_engine.case_facts.CaseFacts`
+    and carried on the plan, so the planner, the renderer and the manifest read
+    one answer rather than three. Present only for a seed that asked for it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    wages: WageFacts
+    benefits: BenefitLedger = Field(default_factory=BenefitLedger)
+    settlement: SettlementFact | None = None
+
+    @property
+    def aww(self) -> Decimal:
+        return self.wages.aww
+
+    @property
+    def method(self) -> str:
+        return self.wages.computation.method
+
+    @property
+    def td_weekly_rate(self) -> Decimal:
+        return self.wages.rate.td_weekly_rate
+
+
+# ---------------------------------------------------------------------------
+# Derivation
+# ---------------------------------------------------------------------------
+
+
+def _rng(seed: CaseSeed, salt: str) -> random.Random:
+    """A private stream under the ``money:`` namespace.
+
+    A namespace of its own, not a ``facts:`` salt. The clinical ledger's streams
+    are already consumed by documents that render today; borrowing one would move
+    their bytes the moment a seed grew a wage block, turning a money knob into a
+    silent change to a diagnostic report.
+    """
+    return random.Random(derive_seed(seed.rng_seed, f"money:{salt}"))
+
+
+#: Weekly wage band a derived history varies around when the seed states none.
+#:
+#: Wide on purpose: a corpus whose earners all sit under the indemnity ceiling
+#: never poses the capped-rate case, and one whose earners all sit above it never
+#: poses the uncapped one. Both are ordinary files and the corpus needs both.
+_DERIVED_WEEKLY_WAGE_RANGE: tuple[int, int] = (520, 2600)
+
+#: How far a period's gross may stray from the base, per earnings pattern.
+#:
+#: ``irregular`` reaches zero — a week with no work at all is exactly what makes
+#: method selection a live question rather than a formality — and reaches well
+#: above the base, because irregular means irregular in both directions.
+_PATTERN_SPREAD: dict[str, tuple[float, float]] = {
+    "regular": (0.98, 1.02),
+    "irregular": (0.00, 1.80),
+    "seasonal": (0.35, 1.45),
+}
+
+#: Coefficient of variation above which a derived history counts as irregular.
+#:
+#: **An engine heuristic, not a legal test.** It decides which *label* this
+#: package attaches when a seed does not name a method, so that the label is
+#: produced by a stated rule rather than by a draw. A seed that disagrees names
+#: its method and the seed wins.
+IRREGULARITY_THRESHOLD: Decimal = Decimal("0.25")
+
+#: Weeks of employment below which the short-history method is selected.
+#:
+#: Also an engine heuristic. Named and testable rather than buried in a
+#: comparison, because the selection rule is itself ground truth: an analyzer is
+#: scored on recovering the label, so the label has to be produced by something
+#: a reader could in principle reproduce.
+SHORT_HISTORY_WEEKS: Decimal = Decimal("26")
+
+
+def _period_bounds(
+    wages: WageScenario, doi: dt.date
+) -> tuple[list[tuple[dt.date, dt.date, Decimal]], dt.date]:
+    """Pay-period windows ending at the injury, newest last, with their weeks.
+
+    Walks backwards from the day before the injury so no period straddles it,
+    then reverses — a wage statement reads oldest first, and the analyzer reads
+    it in that order.
+    """
+    per_year = PAY_PERIODS_PER_YEAR[wages.pay_frequency]
+    days = round(365 / per_year)
+    weeks = (Decimal(days) / Decimal(7)).quantize(Decimal("0.0001"))
+    count = max(1, round(wages.lookback_weeks * per_year / 52))
+
+    floor = wages.employment_start
+    windows: list[tuple[dt.date, dt.date, Decimal]] = []
+    cursor = doi - dt.timedelta(days=1)
+    for _ in range(count):
+        start = cursor - dt.timedelta(days=days - 1)
+        if floor is not None and start < floor:
+            # The employment had not begun. A partial first period would put a
+            # fraction of a pay cycle on the statement, which no payroll system
+            # prints; stopping is what makes ``employment_start`` produce a
+            # genuinely short history rather than a diluted full one.
+            break
+        windows.append((start, cursor, weeks))
+        cursor = start - dt.timedelta(days=1)
+    windows.reverse()
+    return windows, doi
+
+
+def _derive_periods(
+    seed: CaseSeed, wages: WageScenario, doi: dt.date
+) -> tuple[EarningsPeriod, ...]:
+    """Build the earnings history: the seed's own, or one drawn to its shape."""
+    if wages.earnings:
+        return tuple(
+            EarningsPeriod(
+                period_start=entry.period_start,
+                period_end=entry.period_end,
+                weeks=(
+                    Decimal((entry.period_end - entry.period_start).days + 1) / Decimal(7)
+                ).quantize(Decimal("0.0001")),
+                regular_gross=money(entry.gross - entry.overtime),
+                overtime_gross=money(entry.overtime),
+                concurrent=entry.concurrent,
+            )
+            for entry in wages.earnings
+        )
+
+    windows, _ = _period_bounds(wages, doi)
+    rng = _rng(seed, "earnings")
+    per_year = PAY_PERIODS_PER_YEAR[wages.pay_frequency]
+    base_weekly = money(
+        wages.base_weekly_wage
+        if wages.base_weekly_wage is not None
+        else rng.randint(*_DERIVED_WEEKLY_WAGE_RANGE)
+    )
+    low, high = _PATTERN_SPREAD[wages.pattern]
+
+    periods: list[EarningsPeriod] = []
+    for index, (start, end, weeks) in enumerate(windows):
+        if wages.pattern == "seasonal":
+            # A season is a position in the year, not a coin. Derived from the
+            # period's index so the same history always has its peak in the same
+            # place — a "seasonal" pattern whose peak moved with the seed would
+            # be indistinguishable from an irregular one.
+            phase = (index % per_year) / per_year
+            swing = Decimal(str(low)) + (Decimal(str(high)) - Decimal(str(low))) * Decimal(
+                str(round(0.5 - 0.5 * _cosine(phase), 6))
+            )
+            factor = swing
+        else:
+            factor = Decimal(str(round(rng.uniform(low, high), 6)))
+        gross = money(base_weekly * weeks * factor)
+        overtime = money(gross * Decimal(str(wages.overtime_share)))
+        periods.append(
+            EarningsPeriod(
+                period_start=start,
+                period_end=end,
+                weeks=weeks,
+                regular_gross=money(gross - overtime),
+                overtime_gross=overtime,
+            )
+        )
+
+    if wages.concurrent_employment:
+        concurrent_weekly = money(
+            wages.concurrent_weekly_wage
+            if wages.concurrent_weekly_wage is not None
+            else rng.randint(_DERIVED_WEEKLY_WAGE_RANGE[0] // 2, _DERIVED_WEEKLY_WAGE_RANGE[0])
+        )
+        for start, end, weeks in windows:
+            gross = money(concurrent_weekly * weeks)
+            periods.append(
+                EarningsPeriod(
+                    period_start=start,
+                    period_end=end,
+                    weeks=weeks,
+                    regular_gross=gross,
+                    overtime_gross=ZERO,
+                    concurrent=True,
+                )
+            )
+
+    return tuple(periods)
+
+
+def _cosine(phase: float) -> float:
+    """``cos(2*pi*phase)`` without importing :mod:`math` for one call.
+
+    A four-term Taylor expansion would drift; the real cosine is exact enough and
+    deterministic, so this is simply :func:`math.cos` wrapped to keep the import
+    local to the one place a seasonal history needs it.
+    """
+    import math
+
+    return math.cos(2 * math.pi * phase)
+
+
+def _coefficient_of_variation(periods: tuple[EarningsPeriod, ...]) -> Decimal:
+    """Spread of per-week earnings relative to their mean, as a Decimal.
+
+    Zero for a history with fewer than two periods or no earnings at all — a
+    single period has no spread, and calling that "regular" is the honest read.
+    """
+    with _exact():
+        weekly = [(p.gross / p.weeks) for p in periods if p.weeks > 0]
+        if len(weekly) < 2:
+            return Decimal("0")
+        mean = sum(weekly, ZERO) / Decimal(len(weekly))
+        if mean == 0:
+            return Decimal("0")
+        variance = sum(((value - mean) ** 2 for value in weekly), ZERO) / Decimal(len(weekly))
+        return (variance.sqrt() / mean).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+
+def select_method(
+    wages: WageScenario, periods: tuple[EarningsPeriod, ...]
+) -> tuple[str, Literal["seed", "derived"], str]:
+    """Choose the named method, and say why. **The label the analyzer is scored on.**
+
+    Returns ``(method, source, reason)``. A seed that names a method wins
+    outright and the reason records that it was authored, because "the author
+    said so" is a complete and checkable explanation.
+
+    The derived rule is ordered, and the order is itself the ground truth:
+
+    1. **concurrent employment** — earnings from more than one employer are
+       aggregated before anything else is asked, because the question "is this
+       history irregular" is meaningless over the wrong set of earnings;
+    2. **short history** — an employment shorter than
+       :data:`SHORT_HISTORY_WEEKS` cannot be averaged over the lookback without
+       diluting it with weeks the applicant was not employed;
+    3. **irregular earnings** — a coefficient of variation above
+       :data:`IRREGULARITY_THRESHOLD`;
+    4. otherwise **actual weekly earnings**.
+
+    ``earning_capacity`` is never derived. It is the catch-all a human argues
+    for when none of the arithmetic fits, and an engine that reached for it
+    unprompted would be asserting a legal conclusion rather than computing.
+    """
+    with _exact():
+        return _select_method(wages, periods)
+
+
+def _select_method(
+    wages: WageScenario, periods: tuple[EarningsPeriod, ...]
+) -> tuple[str, Literal["seed", "derived"], str]:
+    """The body of :func:`select_method`, under the pinned arithmetic context.
+
+    Split out for the pin rather than left inline, because the week total below
+    is a ``Decimal`` sum compared against a threshold: under a short ambient
+    context the sum rounds, and a history sitting near
+    :data:`SHORT_HISTORY_WEEKS` can be labelled with a different method by a
+    caller who merely had a report writer's precision set. The method is the
+    eval label, so that is a wrong *label*, not a rounding difference.
+    """
+    if wages.method is not None:
+        return wages.method, "seed", f"method stated in the seed as {wages.method!r}"
+
+    if wages.concurrent_employment or any(p.concurrent for p in periods):
+        return (
+            "concurrent_aggregate",
+            "derived",
+            "earnings from concurrent employments are aggregated",
+        )
+
+    weeks = sum((p.weeks for p in periods if not p.concurrent), Decimal("0"))
+    if weeks < SHORT_HISTORY_WEEKS:
+        return (
+            "short_history_projection",
+            "derived",
+            f"employment history of {weeks.normalize()} week(s) is shorter than the "
+            f"{SHORT_HISTORY_WEEKS.normalize()}-week threshold",
+        )
+
+    variation = _coefficient_of_variation(tuple(p for p in periods if not p.concurrent))
+    if variation > IRREGULARITY_THRESHOLD:
+        return (
+            "irregular_earnings_average",
+            "derived",
+            f"weekly earnings vary with a coefficient of {variation}, above the "
+            f"{IRREGULARITY_THRESHOLD} irregularity threshold",
+        )
+    return (
+        "actual_weekly_earnings",
+        "derived",
+        f"weekly earnings are steady (coefficient of variation {variation})",
+    )
+
+
+def _covered_weeks(periods: tuple[EarningsPeriod, ...]) -> Decimal:
+    """Weeks the *union* of these periods covers, counting each calendar day once.
+
+    The denominator for ``concurrent_aggregate``, and it has to be the union
+    rather than the primary employment's own weeks. Both employers' earnings go
+    in the numerator; dividing them by one employer's weeks is only right when
+    the two histories cover the same calendar, which the docstring assumed and
+    nothing checked. Measured: a two-week primary period paying $2,000 beside a
+    fifty-two-week concurrent history paying $52,000 published
+    ``grossConsidered: 54000.00`` over ``weeksConsidered: 2.0000`` — an average
+    weekly wage of **$27,000**, capped to the statutory maximum and recorded as
+    ``tdBound: max``, which is the shape of an answer that has stopped meaning
+    anything.
+
+    Counting days rather than summing period weeks is also what makes this
+    correct for more than two employers, which a boolean ``concurrent`` cannot
+    otherwise express: three overlapping histories still cover one calendar.
+    Where the histories *do* align — every derived history, and every
+    well-formed listed one — the union is the primary's own span and the answer
+    is unchanged.
+    """
+    days: set[dt.date] = set()
+    for period in periods:
+        cursor = period.period_start
+        while cursor <= period.period_end:
+            days.add(cursor)
+            cursor += dt.timedelta(days=1)
+    with _exact():
+        return (Decimal(len(days)) / Decimal(7)).quantize(Decimal("0.0001"))
+
+
+def _pattern_of(
+    wages: WageScenario, periods: tuple[EarningsPeriod, ...]
+) -> tuple[str, Literal["seed", "derived"]]:
+    """The earnings pattern and where it came from.
+
+    A described history is authored: the knob drew the periods. A listed one is
+    read off its own periods with :data:`IRREGULARITY_THRESHOLD`, the same
+    yardstick :func:`select_method` applies — one threshold, so the pattern and
+    the method cannot contradict each other on the same history, which is
+    exactly what the field default used to let them do.
+
+    ``seasonal`` is never derived. Reading a season off a spread would be
+    guessing at a *reason* rather than measuring a shape, and the same argument
+    that keeps ``earning_capacity`` out of the derived branch keeps it out of
+    this one: a seed that means seasonal describes its history and says so.
+    """
+    if not wages.earnings:
+        # ``model_fields_set``, not the value. ``pattern`` has a default, so a
+        # seed that never mentioned it published ``patternSource: seed`` over a
+        # label Pydantic supplied — provenance asserting an author who never
+        # spoke. A described history that states no pattern is a *derived*
+        # ``regular``: the periods were drawn to that shape, so the label is
+        # still true, but nobody authored it.
+        source: Literal["seed", "derived"] = (
+            "seed" if "pattern" in wages.model_fields_set else "derived"
+        )
+        return wages.pattern, source
+    variation = _coefficient_of_variation(tuple(p for p in periods if not p.concurrent))
+    return ("irregular" if variation > IRREGULARITY_THRESHOLD else "regular"), "derived"
+
+
+def compute_aww(
+    wages: WageScenario, periods: tuple[EarningsPeriod, ...]
+) -> AwwComputation:
+    """Average weekly wage under the selected method, with every operand kept.
+
+    Each method differs in *which earnings it counts and over how many weeks*,
+    which is the only axis on which they can differ arithmetically:
+
+    * ``actual_weekly_earnings`` — the primary employer's gross over the weeks
+      the periods cover.
+    * ``irregular_earnings_average`` — the same arithmetic over the same
+      periods. Identical here **on purpose**: the two methods differ in the
+      argument for using them, not in the sum, and inventing a difference so the
+      numbers look distinct would make the label unrecoverable from the paper
+      for the wrong reason. The distinction the corpus carries is the recorded
+      label plus the spread of the underlying periods.
+    * ``short_history_projection`` — gross over the weeks actually worked, so a
+      history truncated by a hire date is not diluted by weeks before it.
+    * ``concurrent_aggregate`` — every employer's gross over the weeks the
+      *primary* employment covers, since concurrent periods overlap it rather
+      than extending it.
+    * ``earning_capacity`` — the stated figure, and **only** the stated figure.
+      No arithmetic, no operands, and nothing added on top: the seed author's
+      number *is* the average weekly wage. The other four methods publish the
+      earnings they were computed from; this one publishes zeroes, because
+      claiming 26 periods and 52 weeks were "considered" for a figure none of
+      them produced is an operand set that does not reach the answer — and the
+      one property this layer exists to guarantee is that a reader holding the
+      paper can reproduce the number from what is printed beside it.
+
+    Wrapped in :func:`_exact` in its entirety. The three sums below are
+    ``Decimal`` additions of cent-quantized money, which round under a short
+    ambient context: measured, a caller at ``prec=6`` moved a published
+    ``gross_considered`` from ``58732.37`` to ``58732.30``, and ``prec`` 2 to 5
+    raised ``InvalidOperation`` outright.
+    """
+    with _exact():
+        return _compute_aww(wages, periods)
+
+
+def _compute_aww(
+    wages: WageScenario, periods: tuple[EarningsPeriod, ...]
+) -> AwwComputation:
+    """The body of :func:`compute_aww`, under the pinned arithmetic context."""
+    method, source, reason = select_method(wages, periods)
+
+    primary = tuple(p for p in periods if not p.concurrent)
+    considered = periods if method == "concurrent_aggregate" else primary
+    weeks = (
+        _covered_weeks(considered)
+        if method == "concurrent_aggregate"
+        else sum((p.weeks for p in primary), Decimal("0"))
+    )
+    gross = sum((p.gross for p in considered), ZERO)
+    in_kind_weekly = sum((money(item.weekly_value) for item in wages.in_kind), ZERO)
+
+    if method == "earning_capacity":
+        return AwwComputation(
+            method=method,
+            method_source=source,
+            method_reason=reason,
+            periods_considered=0,
+            weeks_considered=Decimal("0.0000"),
+            gross_considered=ZERO,
+            in_kind_weekly=ZERO,
+            aww=money(wages.earning_capacity_weekly or 0),
+        )
+
+    if weeks <= 0 or not considered:
+        # No history the average can rest on. Say zero rather than divide: an
+        # unearned number here would be the asserted average this whole layer
+        # exists to remove. The seed validators keep a wage block from reaching
+        # this state; it stands as the guard behind them.
+        base = ZERO
+    else:
+        base = (gross / weeks).quantize(CENTS, rounding=ROUND_HALF_UP)
+
+    return AwwComputation(
+        method=method,
+        method_source=source,
+        method_reason=reason,
+        periods_considered=len(considered),
+        weeks_considered=weeks.quantize(Decimal("0.0001")),
+        gross_considered=money(gross),
+        in_kind_weekly=money(in_kind_weekly),
+        aww=money(base + in_kind_weekly),
+    )
+
+
+def compute_comp_rate(aww: Decimal, basis: RateBasis) -> CompRate:
+    """AWW to weekly indemnity rates under *basis*, recording which bound bound."""
+    with _exact():
+        td_raw = (aww * basis.td_fraction).quantize(CENTS, rounding=ROUND_HALF_UP)
+        pd_raw = (aww * basis.pd_fraction).quantize(CENTS, rounding=ROUND_HALF_UP)
+    td_rate, td_bound = _bounded(td_raw, basis.td_min_weekly, basis.td_max_weekly)
+    pd_rate, pd_bound = _bounded(pd_raw, basis.pd_min_weekly, basis.pd_max_weekly)
+    return CompRate(
+        aww=aww,
+        td_weekly_rate=td_rate,
+        td_bound=td_bound,
+        pd_weekly_rate=pd_rate,
+        pd_bound=pd_bound,
+        basis=basis,
+    )
+
+
+#: How much lateness each diligence band produces when the seed states none.
+#:
+#: ``(late payment count, worst lateness in days)``. Deliberately parallel to
+#: :data:`~wc_caseload_engine.case_facts.DILIGENCE_WINDOW_FRACTIONS`, which does
+#: the same job for benefit *notices*: one persona, driving both the paperwork
+#: and the payments, so a file cannot describe an attentive administrator who
+#: never paid anybody.
+DILIGENCE_LATENESS: dict[str, tuple[int, int]] = {
+    "attentive": (0, 0),
+    "ordinary": (1, 9),
+    "negligent": (3, 62),
+}
+
+#: Days after approval a settlement is funded, per diligence band.
+DILIGENCE_FUNDING_DAYS: dict[str, int] = {
+    "attentive": 14,
+    "ordinary": 30,
+    "negligent": 96,
+}
+
+#: Days after a temporary-disability period ends by which payment is due.
+#:
+#: **Counsel-unconfirmed**, like everything else here with a number attached. It
+#: is the yardstick ``days_late`` is measured against, so it is named and
+#: published rather than folded into an arithmetic expression: a lateness figure
+#: whose baseline is invisible is not checkable.
+TD_PAYMENT_DUE_DAYS: int = 14
+
+#: The authority :data:`TD_PAYMENT_DUE_DAYS` is said to come from — prose, not a promise.
+#:
+#: A due-day count is a statutory binding exactly as a rate ceiling is, and it
+#: was the one number in this module carrying no authority of its own.
+#: ``rate.counselConfirmed`` says nothing about it: that flag governs the rate
+#: basis, and a consumer reading a *benefits* figure under a *rate* caveat is
+#: reading a caveat that does not cover it. Published beside the interval so the
+#: caveat travels with the number it qualifies.
+TD_PAYMENT_DUE_AUTHORITY: str = (
+    "Interval after a temporary-disability period ends by which the payment is due. "
+    "COUNSEL-UNCONFIRMED placeholder — the interval, and whether it runs from the "
+    "period's end at all, are both unverified."
+)
+
+#: Days between scheduled permanent-disability advances.
+#:
+#: **An engine schedule, not a statutory deadline**, and the distinction is
+#: load-bearing for Wave 3. A temporary-disability payment has a due date the law
+#: has an opinion about; an advance is discretionary, so the cadence here is a
+#: plausible carrier practice this engine invented to give the ledger a shape.
+#: ``PdAdvance.days_late`` is therefore lateness *against that schedule* — a real,
+#: recomputable fact about the file, and **not** by itself a measure of legal
+#: exposure. Published with its own authority text so no downstream consumer has
+#: to guess which of the two it is holding.
+PD_ADVANCE_INTERVAL_DAYS: int = 45
+
+#: What :data:`PD_ADVANCE_INTERVAL_DAYS` is, said in the manifest.
+PD_ADVANCE_SCHEDULE_AUTHORITY: str = (
+    "Interval between scheduled permanent-disability advances. ENGINE SCHEDULE, not a "
+    "statutory deadline: advances are discretionary, so pdAdvances[].daysLate measures "
+    "lateness against this cadence and is not by itself a measure of legal exposure. "
+    "COUNSEL-UNCONFIRMED."
+)
+
+
+def _derive_benefits(
+    seed: CaseSeed,
+    wages_facts: WageFacts,
+    timeline: Any,
+    diligence: str,
+) -> BenefitLedger:
+    """The payment history: what was paid, when, how late, and what was missed."""
+    scenario = seed.scenario.benefits
+    onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
+    horizon = (
+        getattr(timeline, "resolution_date", None)
+        or getattr(timeline, "application_filed_date", None)
+        or onset
+    )
+    rng = _rng(seed, "benefits")
+
+    available_weeks = max(0, (horizon - onset).days // 7)
+    stated_weeks = scenario.td_weeks if scenario is not None else None
+    if stated_weeks is None:
+        # Two thirds of the runway, capped, so a long file does not pay
+        # temporary disability for its entire length. Drawn on the money stream
+        # rather than fixed, because a corpus of identically-long TD runs is a
+        # corpus with one TD fact in it.
+        td_weeks = min(available_weeks, rng.randint(6, 52)) if available_weeks else 0
+    else:
+        td_weeks = min(stated_weeks, available_weeks) if available_weeks else 0
+
+    late_count, worst_late = DILIGENCE_LATENESS[diligence]
+    if scenario is not None and scenario.late_payments is not None:
+        late_count = scenario.late_payments
+    if scenario is not None and scenario.max_days_late is not None:
+        worst_late = scenario.max_days_late
+    elif late_count > 0 and worst_late == 0:
+        # A seed asked for lateness on an attentive administrator. Honour the
+        # count — an explicit control wins, loudly, per ISC-29 — and give it the
+        # smallest lateness that is still lateness rather than silently zeroing.
+        worst_late = 1
+
+    gap_days = scenario.td_gap_days if scenario is not None else None
+    if gap_days is None:
+        gap_days = 0
+
+    rate = wages_facts.rate.td_weekly_rate
+    periods: list[TdPeriod] = []
+    gaps: list[BenefitGap] = []
+
+    # Paid in four-week blocks, which is how indemnity is actually issued and
+    # what gives a gap something to sit between.
+    block_weeks = 4
+    cursor = onset + dt.timedelta(days=3)
+    remaining = td_weeks
+    block_index = 0
+    gap_after_block = 1 if gap_days else -1
+    pending_gap: BenefitGap | None = None
+
+    # The last date any money event in this file may carry. The *timeline's*
+    # horizon, not the benefit window above: a payment is dated by when it
+    # cleared, and the document that reports it is clamped to this. A payment
+    # past it is one no document in the case can reach — measured, a loadable
+    # seed put a temporary-disability payment **588 days** beyond it, and
+    # `timeline.clamp` then dated the payment record before its own payment,
+    # because clamping cannot repair a future event.
+    ceiling = getattr(timeline, "horizon", None)
+
+    def reached(when: dt.date) -> bool:
+        return ceiling is None or when <= ceiling
+
+    while remaining > 0:
+        weeks = min(block_weeks, remaining)
+        start = cursor
+        end = start + dt.timedelta(days=weeks * 7 - 1)
+        due = end + dt.timedelta(days=TD_PAYMENT_DUE_DAYS)
+        late = worst_late if block_index < late_count else 0
+        paid = due + dt.timedelta(days=late)
+        if not reached(paid):
+            # Same rule the advances below already followed, applied to the
+            # periods too: a payment past the file's own horizon is not a late
+            # payment, it is one this case never reached.
+            break
+        if pending_gap is not None:
+            # The gap is banked when the period on its far side is *emitted*,
+            # not when it is planned. Appended eagerly it could outlive the run
+            # it was meant to interrupt: the next block would then be dropped by
+            # the check above and the ledger ended on a gap reaching past the
+            # horizon, printed on a payment record dated before most of it. A
+            # hole in a series needs a series on both sides of it.
+            gaps.append(pending_gap)
+            pending_gap = None
+        periods.append(
+            TdPeriod(
+                start=start,
+                end=end,
+                weeks=Decimal(weeks),
+                weekly_rate=rate,
+                amount=money(rate * Decimal(weeks)),
+                date_due=due,
+                date_paid=paid,
+                days_late=late,
+            )
+        )
+        remaining -= weeks
+        block_index += 1
+        cursor = end + dt.timedelta(days=1)
+        if block_index == gap_after_block and gap_days and remaining > 0:
+            gap_start = cursor
+            cursor = cursor + dt.timedelta(days=gap_days)
+            pending_gap = BenefitGap(
+                start=gap_start, end=cursor - dt.timedelta(days=1), days=gap_days
+            )
+
+    advances_wanted = scenario.pd_advances if scenario is not None else None
+    if advances_wanted is None:
+        advances_wanted = 2 if seed.lifecycle.resolution.type != "pending" else 0
+
+    pd_rate = wages_facts.rate.pd_weekly_rate
+    advances: list[PdAdvance] = []
+    advance_cursor = (periods[-1].end if periods else onset) + dt.timedelta(days=15)
+    for index in range(advances_wanted):
+        late = worst_late if index < max(0, late_count - len(periods)) else 0
+        paid = advance_cursor + dt.timedelta(days=late)
+        if advance_cursor > horizon or not reached(paid):
+            # An advance past the file's own horizon is not a late advance, it
+            # is one this case never reached. Same rule the clinical ledger
+            # applies to a benefit notice, and for the same reason: clamping
+            # would manufacture a payment out of a short runway. The *paid* date
+            # is checked too, not only the schedule — a 730-day delay on an
+            # advance due inside the window still lands outside it.
+            break
+        advances.append(
+            PdAdvance(
+                date_due=advance_cursor,
+                date_paid=paid,
+                amount=money(pd_rate * Decimal(4)),
+                weekly_rate=pd_rate,
+                weeks=Decimal(4),
+                days_late=late,
+            )
+        )
+        advance_cursor = advance_cursor + dt.timedelta(days=PD_ADVANCE_INTERVAL_DAYS)
+
+    return BenefitLedger(
+        td_periods=tuple(periods), pd_advances=tuple(advances), gaps=tuple(gaps)
+    )
+
+
+#: How long after the Application is filed a settlement may first be approved.
+#: A working assumption about how quickly a file can reach the Board, stated
+#: here rather than dressed up as a rule, and it exists so the instrument has a
+#: date to occupy between the Application and its own approval.
+SETTLEMENT_INSTRUMENT_LEAD_DAYS = 21
+
+
+def _earliest_approval(timeline: Any) -> dt.date | None:
+    """The first date this file could plausibly have had a settlement approved.
+
+    The Application for Adjudication, because the settlement instrument recites
+    it as already filed, plus the lead the instrument needs. Falls back to the
+    claim and then to nothing, so a timeline shape without these fields loses
+    the check rather than raising on it.
+    """
+    anchor = getattr(timeline, "application_filed_date", None) or getattr(
+        timeline, "claim_filed_date", None
+    )
+    if anchor is None:
+        return None
+    return anchor + dt.timedelta(days=SETTLEMENT_INSTRUMENT_LEAD_DAYS)
+
+
+def _derive_settlement(
+    seed: CaseSeed,
+    wages_facts: WageFacts,
+    benefits: BenefitLedger,
+    timeline: Any,
+    diligence: str,
+) -> SettlementFact | None:
+    """The settlement object, when this case settled.
+
+    ``None`` for anything that did not — a trial award and a take-nothing are
+    endings, but neither is a settlement anybody approves and funds, and giving
+    them a settlement object would put an approval date in the ledger for an
+    order the file does not contain.
+    """
+    resolution = seed.lifecycle.resolution.type
+    if resolution not in ("c_and_r", "stipulations"):
+        return None
+
+    scenario = seed.scenario.settlement
+    approval_shift = 0
+    approval = getattr(timeline, "award_date", None) or getattr(
+        timeline, "resolution_date", None
+    )
+    if scenario is not None and scenario.approval_date is not None:
+        # An authored approval still has to be an approval this file could have
+        # reached. Review found `approval_date: 2021-06-15` on a case whose claim
+        # was filed 2021-06-27 and whose Application was filed 2021-10-05: the
+        # settlement instrument was dragged back to meet it, and then recited an
+        # Application that would not exist for another eleven weeks. The earlier
+        # fix floored the instrument and the floor was defeated by the very
+        # clamp that kept the chain ordered.
+        #
+        # So the floor is applied to the *approval* instead, where it belongs —
+        # the chain starts here — and the adjustment is reported rather than made
+        # in silence, because a stated control that is quietly moved is the
+        # defect ISC-184 exists to prevent. `SETTLEMENT_INSTRUMENT_LEAD_DAYS`
+        # leaves the instrument somewhere to stand between the two.
+        earliest = _earliest_approval(timeline)
+        if earliest is not None and scenario.approval_date < earliest:
+            approval = earliest
+        else:
+            approval = scenario.approval_date
+        approval_shift = (approval - scenario.approval_date).days
+
+    if scenario is not None and scenario.gross_amount is not None:
+        gross = money(scenario.gross_amount)
+    else:
+        # Anchored to the file's own money rather than drawn free: a settlement
+        # is negotiated against the indemnity exposure, so a gross unrelated to
+        # the comp rate would be the first number in this module that follows
+        # from nothing.
+        rng = _rng(seed, "settlement")
+        weeks = Decimal(rng.randint(20, 120))
+        gross = money(wages_facts.rate.pd_weekly_rate * weeks + benefits.td_total)
+
+    # One rounding, after both branches, rather than one on each. Mutation
+    # testing is why: a copy on the stated branch could be deleted without any
+    # test noticing, because the seed schema already refuses cents there, and a
+    # guard no probe can reach is not a guard — it is an unverified claim that
+    # reads like one. Here it covers the derived branch, where it is the only
+    # thing standing between the ledger and a release that prints whole dollars,
+    # and the derived probe turns red the moment it goes.
+    # The floor the stipulated award needs to print two whole-dollar components
+    # with an exact fee. A *stated* gross below it is refused at the seed; a
+    # derived one is raised to it, because a derivation is not an author's
+    # instruction and a degenerate wage history should not make the document
+    # unrepresentable.
+    # Whole dollars, at or above the floor. A derivation is not an author's
+    # instruction, so it is rounded rather than refused.
+    gross = money(max(_whole_dollars(gross), Decimal(SETTLEMENT_GROSS_MINIMUM)))
+
+    funding: dt.date | None = None
+    if approval is not None:
+        if scenario is not None and scenario.funding_date is not None:
+            # Carried by the same shift, because the pair states an *interval*
+            # and moving one end of it would silently rewrite that interval into
+            # something the author did not ask for. Review found the approval
+            # moving forward while a stated funding date stayed put, publishing
+            # `fundingLagDays: -117` — money moving four months before the Board
+            # approved it, which is the exact impossibility ISC-179 paired these
+            # two fields to prevent.
+            funding = scenario.funding_date + dt.timedelta(days=approval_shift)
+        else:
+            lag = (
+                scenario.funding_days
+                if scenario is not None and scenario.funding_days is not None
+                else DILIGENCE_FUNDING_DAYS[diligence]
+            )
+            funding = approval + dt.timedelta(days=lag)
+        ceiling = getattr(timeline, "horizon", None)
+        if ceiling is not None and funding > ceiling:
+            # Not yet funded, as of the date this engine calls today. A *stated*
+            # funding date past the anchor is refused at the seed; a *derived*
+            # one is a different fact — the approval is real, the lag is real,
+            # and the money simply has not arrived inside the window the file
+            # covers. ``funding_date`` is optional precisely so that state has a
+            # value, and ``funding_lag_days`` goes to ``None`` with it rather
+            # than reporting an interval that has not elapsed. The planner
+            # reports the dropped control; see ``_money_control_warnings``.
+            funding = None
+
+    return SettlementFact(
+        kind="c_and_r" if resolution == "c_and_r" else "stipulations",
+        gross_amount=gross,
+        approval_date=approval,
+        funding_date=funding,
+    )
+
+
+def derive_money_facts(
+    seed: CaseSeed, timeline: Any, diligence: str = "ordinary"
+) -> MoneyFacts | None:
+    """Decide, once, what money this case involves. ``None`` when it involves none.
+
+    Args:
+        seed: the case seed. ``scenario.wages`` is the gate: no block, no money.
+        timeline: the built ``CaseTimeline``, so payments hang off the same
+            spine the documents do.
+        diligence: the resolved adjuster persona, passed in rather than
+            re-resolved so the money and the clinical ledger cannot disagree
+            about who handled the file.
+
+    Returns:
+        A frozen :class:`MoneyFacts`, or ``None``. The ``None`` is load-bearing:
+        every consumer short-circuits on it, which is what makes "a seed with no
+        wage block produces zero artifacts of this layer" a property of the code path
+        rather than a claim about it.
+    """
+    wages = seed.scenario.wages
+    if wages is None:
+        return None
+
+    with _exact():
+        return _derive_money_facts(seed, wages, timeline, diligence)
+
+
+def _derive_money_facts(
+    seed: CaseSeed, wages: WageScenario, timeline: Any, diligence: str
+) -> MoneyFacts:
+    """The body of :func:`derive_money_facts`, under the pinned arithmetic context."""
+    doi = getattr(timeline, "injury_date", None) or seed.injury.onset_date
+    periods = _derive_periods(seed, wages, doi)
+    computation = compute_aww(wages, periods)
+    basis = _apply_rate_basis_override(rate_basis_for(doi), seed)
+    rate = compute_comp_rate(computation.aww, basis)
+
+    pattern, pattern_source = _pattern_of(wages, periods)
+    wage_facts = WageFacts(
+        periods=periods,
+        in_kind=tuple(
+            InKindWage(kind=item.kind, weekly_value=money(item.weekly_value))
+            for item in wages.in_kind
+        ),
+        employment_start=wages.employment_start,
+        concurrent_employment=wages.concurrent_employment
+        or any(p.concurrent for p in periods),
+        pattern=pattern,
+        pattern_source=pattern_source,
+        computation=computation,
+        rate=rate,
+    )
+
+    benefits = _derive_benefits(seed, wage_facts, timeline, diligence)
+    settlement = _derive_settlement(seed, wage_facts, benefits, timeline, diligence)
+
+    facts = MoneyFacts(wages=wage_facts, benefits=benefits, settlement=settlement)
+    log.debug(
+        "money.derived",
+        case_id=seed.case_id,
+        method=facts.method,
+        aww=str(facts.aww),
+        td_rate=str(facts.td_weekly_rate),
+        td_bound=facts.wages.rate.td_bound,
+        periods=len(periods),
+        td_periods=len(benefits.td_periods),
+        settled=settlement is not None,
+    )
+    return facts
+
+
+# ---------------------------------------------------------------------------
+# Publication
+# ---------------------------------------------------------------------------
+
+#: The only money fields a manifest may publish, and the document that renders each.
+#:
+#: The same rule the clinical ledger holds itself to: a published fact is a
+#: promise the documents keep, so a field nothing renders stays on the model and
+#: out of the output. Every group below is printed on a governed document —
+#: ``wage`` and ``rate`` on the wage statement, ``benefits`` on the payment
+#: records, ``settlement`` on the compromise-and-release and the payment record
+#: that funds it — which is what lets a reader check the manifest against the
+#: folder beside it.
+#:
+#: **Benefits publish events, not only counts, and the naming says which.** The
+#: first cut published ``tdPeriods: 3`` — a key named for a collection holding a
+#: cardinality. Three costs, and the third is the expensive one: a reader cannot
+#: tell which payment was late, Wave 3 cannot recompute an exposure it was given
+#: only a total of, and turning the key into the records it is named for later
+#: would be a breaking change to an *extraction label* — the one class of change
+#: this schema exists to avoid, since the analyzer is scored against these
+#: names. Counts are still published, under ``*Count``; the records sit under
+#: the plural names, and every field on them is a column the payment record
+#: prints, so the governance rule holds for the arrays exactly as for the
+#: scalars.
+GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
+    "wage": (
+        "method",
+        "methodSource",
+        "methodReason",
+        "averageWeeklyWage",
+        "periodsConsidered",
+        "weeksConsidered",
+        "grossConsidered",
+        "inKindWeekly",
+        "pattern",
+        "patternSource",
+        "concurrentEmployment",
+    ),
+    "rate": (
+        "tdWeeklyRate",
+        "tdBound",
+        "pdWeeklyRate",
+        "pdBound",
+        "basisLabel",
+        "basisAuthority",
+        "counselConfirmed",
+        "basisSource",
+    ),
+    "benefits": (
+        "tdPeriodCount",
+        "tdPeriods",
+        "tdTotal",
+        "pdAdvanceCount",
+        "pdAdvances",
+        "pdTotal",
+        "gaps",
+        "latePaymentCount",
+        "maxDaysLate",
+        "gapDays",
+        "tdPaymentDueDays",
+        "tdPaymentDueAuthority",
+        "tdPaymentDueConfirmed",
+        "pdAdvanceIntervalDays",
+        "pdAdvanceScheduleAuthority",
+    ),
+    "settlement": ("kind", "grossAmount", "approvalDate", "fundingDate", "fundingLagDays"),
+}
+
+
+def money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
+    """The ``caseFacts.money`` object a manifest publishes.
+
+    Currency as exact decimal strings, never floats — see :func:`_dollars`.
+    Restricted to :data:`GOVERNED_MONEY_FIELDS`, and the restriction is checked
+    by the same validator that checks the clinical ledger's.
+    """
+    with _exact():
+        return _money_manifest_block(facts)
+
+
+def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
+    """The body of :func:`money_manifest_block`, under the pinned context."""
+    wage = facts.wages
+    computation = wage.computation
+    rate = wage.rate
+    benefits = facts.benefits
+
+    block: dict[str, Any] = {
+        "wage": {
+            "method": computation.method,
+            "methodSource": computation.method_source,
+            "methodReason": computation.method_reason,
+            "averageWeeklyWage": _dollars(computation.aww),
+            "periodsConsidered": computation.periods_considered,
+            "weeksConsidered": f"{computation.weeks_considered.normalize():f}",
+            "grossConsidered": _dollars(computation.gross_considered),
+            "inKindWeekly": _dollars(computation.in_kind_weekly),
+            "pattern": wage.pattern,
+            "patternSource": wage.pattern_source,
+            "concurrentEmployment": wage.concurrent_employment,
+        },
+        "rate": {
+            "tdWeeklyRate": _dollars(rate.td_weekly_rate),
+            "tdBound": rate.td_bound,
+            "pdWeeklyRate": _dollars(rate.pd_weekly_rate),
+            "pdBound": rate.pd_bound,
+            "basisLabel": rate.basis.label,
+            "basisAuthority": rate.basis.authority,
+            # Published so a consumer meets the caveat without reading the
+            # source. Everything this engine ships is false here.
+            "counselConfirmed": rate.basis.counsel_confirmed,
+            "basisSource": rate.basis.source,
+        },
+        "benefits": {
+            "tdPeriodCount": len(benefits.td_periods),
+            "tdPeriods": [
+                {
+                    "start": period.start.isoformat(),
+                    "end": period.end.isoformat(),
+                    "weeks": f"{period.weeks.normalize():f}",
+                    "weeklyRate": _dollars(period.weekly_rate),
+                    "amount": _dollars(period.amount),
+                    "dateDue": period.date_due.isoformat(),
+                    "datePaid": (
+                        period.date_paid.isoformat() if period.date_paid else None
+                    ),
+                    "daysLate": period.days_late,
+                }
+                for period in benefits.td_periods
+            ],
+            "tdTotal": _dollars(benefits.td_total),
+            "pdAdvanceCount": len(benefits.pd_advances),
+            "pdAdvances": [
+                {
+                    "dateDue": advance.date_due.isoformat(),
+                    "datePaid": advance.date_paid.isoformat(),
+                    "weeks": f"{advance.weeks.normalize():f}",
+                    "weeklyRate": _dollars(advance.weekly_rate),
+                    "amount": _dollars(advance.amount),
+                    "daysLate": advance.days_late,
+                }
+                for advance in benefits.pd_advances
+            ],
+            "pdTotal": _dollars(benefits.pd_total),
+            "gaps": [
+                {
+                    "start": gap.start.isoformat(),
+                    "end": gap.end.isoformat(),
+                    "days": gap.days,
+                }
+                for gap in benefits.gaps
+            ],
+            # ``latePaymentCount``, not ``latePayments``: ISC-174 moved
+            # ``tdPeriods: 3`` to ``tdPeriodCount`` because a plural name holding
+            # a cardinality is an extraction label that has to break later. This
+            # one was left behind in that rename and found by review.
+            "latePaymentCount": benefits.late_payment_count,
+            "maxDaysLate": benefits.max_days_late,
+            "gapDays": sum(gap.days for gap in benefits.gaps),
+            "tdPaymentDueDays": TD_PAYMENT_DUE_DAYS,
+            # The caveat travels with the number it qualifies. `rate.counselConfirmed`
+            # governs the rate basis and says nothing about a benefits interval.
+            "tdPaymentDueAuthority": TD_PAYMENT_DUE_AUTHORITY,
+            "tdPaymentDueConfirmed": False,
+            "pdAdvanceIntervalDays": PD_ADVANCE_INTERVAL_DAYS,
+            "pdAdvanceScheduleAuthority": PD_ADVANCE_SCHEDULE_AUTHORITY,
+        },
+    }
+    if facts.settlement is not None:
+        settlement = facts.settlement
+        block["settlement"] = {
+            "kind": settlement.kind,
+            "grossAmount": _dollars(settlement.gross_amount),
+            "approvalDate": (
+                settlement.approval_date.isoformat() if settlement.approval_date else None
+            ),
+            "fundingDate": (
+                settlement.funding_date.isoformat() if settlement.funding_date else None
+            ),
+            "fundingLagDays": settlement.funding_lag_days,
+        }
+    return block
+
+
+__all__ = [
+    "CENTS",
+    "DILIGENCE_FUNDING_DAYS",
+    "DILIGENCE_LATENESS",
+    "GOVERNED_MONEY_FIELDS",
+    "IRREGULARITY_THRESHOLD",
+    "PD_ADVANCE_INTERVAL_DAYS",
+    "PD_ADVANCE_SCHEDULE_AUTHORITY",
+    "SHORT_HISTORY_WEEKS",
+    "TD_PAYMENT_DUE_AUTHORITY",
+    "TD_PAYMENT_DUE_DAYS",
+    "UNCONFIRMED_RATE_TABLE",
+    "AwwComputation",
+    "BenefitGap",
+    "BenefitLedger",
+    "CompRate",
+    "EarningsPeriod",
+    "InKindWage",
+    "MoneyFacts",
+    "PdAdvance",
+    "RateBasis",
+    "SettlementFact",
+    "TdPeriod",
+    "WageFacts",
+    "compute_aww",
+    "compute_comp_rate",
+    "derive_money_facts",
+    "money",
+    "money_manifest_block",
+    "rate_basis_for",
+    "select_method",
+]

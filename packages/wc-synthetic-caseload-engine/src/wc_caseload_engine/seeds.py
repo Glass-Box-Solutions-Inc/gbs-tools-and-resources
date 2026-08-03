@@ -28,8 +28,9 @@ import random
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
+from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import structlog
 import yaml
@@ -844,6 +845,750 @@ class DiscoveryScenario(_Model):
     """
 
 
+#: The named methods by which an average weekly wage may be computed.
+#:
+#: **These are engine labels, not statutory citations.** Each names the
+#: *arithmetic* the engine performs, so the analyzer (AJC-38) is scored against a
+#: label whose meaning is defined by this package's own code rather than by a
+#: statutory subdivision nobody here has confirmed. The controlling authority for
+#: each method is carried separately, as counsel-unconfirmed prose, on
+#: :class:`~wc_caseload_engine.money.RateBasis`.
+#:
+#: The method name is ground truth. It is recorded explicitly on the ledger and
+#: printed on the wage statement; it is never inferred by a reader from the
+#: numbers, because two methods can coincide on one earnings history and a label
+#: that is only sometimes recoverable is not a label.
+type AwwMethod = Literal[
+    "actual_weekly_earnings",
+    "irregular_earnings_average",
+    "short_history_projection",
+    "concurrent_aggregate",
+    "earning_capacity",
+]
+
+AWW_METHODS: tuple[str, ...] = (
+    "actual_weekly_earnings",
+    "irregular_earnings_average",
+    "short_history_projection",
+    "concurrent_aggregate",
+    "earning_capacity",
+)
+"""Runtime mirror of :data:`AwwMethod`, for iteration and error messages."""
+
+type EarningsPattern = Literal["regular", "irregular", "seasonal"]
+type PayFrequency = Literal["weekly", "biweekly", "semimonthly", "monthly"]
+
+PAY_PERIODS_PER_YEAR: Mapping[str, int] = {
+    "weekly": 52,
+    "biweekly": 26,
+    "semimonthly": 24,
+    "monthly": 12,
+}
+"""Pay periods a year, per frequency — the divisor the wage statement rows use."""
+
+
+class EarningsEntry(_Model):
+    """One pay period, stated by the seed rather than derived.
+
+    Stating periods explicitly is how a test — or a seed author reproducing a
+    real file — pins an earnings history exactly. Anything left unstated is
+    derived from :class:`WageScenario`'s shape knobs instead, and the two are
+    mutually exclusive by construction: a seed either lists its periods or
+    describes them.
+
+    ``gross`` is the period's **total**, overtime included, because that is what
+    a payroll record prints. ``overtime`` breaks out how much of that total was
+    premium pay, which is the figure an analyzer has to recover separately when
+    method selection turns on it.
+    """
+
+    period_start: date
+    period_end: date
+    gross: float = Field(ge=0, le=1_000_000)
+    """Total gross for the period, in dollars. Overtime included."""
+
+    overtime: float = Field(default=0.0, ge=0, le=1_000_000)
+    """How much of ``gross`` was overtime premium pay."""
+
+    concurrent: bool = False
+    """True when this period is earnings from a *second*, concurrent employer."""
+
+    @model_validator(mode="after")
+    def _period_is_ordered_and_overtime_fits(self) -> EarningsEntry:
+        if self.period_end < self.period_start:
+            raise ValueError(
+                f"scenario.wages.earnings has a period ending {self.period_end} before it "
+                f"starts {self.period_start}. Swap the two dates, or correct whichever one "
+                "is mistyped."
+            )
+        if self.overtime > self.gross:
+            raise ValueError(
+                f"scenario.wages.earnings has overtime {self.overtime} greater than the "
+                f"period's gross {self.gross} — gross is the total and overtime is part of "
+                "it. Raise gross to at least the overtime, or lower the overtime."
+            )
+        return self
+
+
+def _days_covered(entry: EarningsEntry) -> Iterable[date]:
+    """Every calendar day one earnings period spans, inclusive of both ends."""
+    cursor = entry.period_start
+    while cursor <= entry.period_end:
+        yield cursor
+        cursor += timedelta(days=1)
+
+
+class InKindEntry(_Model):
+    """Non-cash wages — board, lodging, a vehicle — at their weekly value.
+
+    Modelled because in-kind wages are one of the standing arguments about what
+    an average weekly wage includes, and a corpus that cannot express them
+    cannot pose the question.
+    """
+
+    kind: str = Field(min_length=1, max_length=64)
+    weekly_value: float = Field(gt=0, le=10_000)
+
+
+class RateBasisOverride(_Model):
+    """Seed-supplied statutory rate parameters for this case's date of injury.
+
+    **Every number here is a legal binding and none of them is confirmed.** The
+    engine ships a default table so a seed need not restate the law, but that
+    table is explicitly counsel-unconfirmed and this block is the seam by which
+    a verified authority replaces it per case. See
+    :mod:`wc_caseload_engine.money` for the module-level seam KB-167 will fill.
+
+    A seed that sets this block owns the numbers. The ledger records the source
+    as ``seed`` so a reader can tell an authored binding from a defaulted one.
+    """
+
+    td_fraction: float | None = Field(default=None, gt=0, le=1)
+    """Fraction of AWW that becomes the temporary-disability weekly rate."""
+
+    td_max_weekly: float | None = Field(default=None, gt=0, le=100_000)
+    td_min_weekly: float | None = Field(default=None, ge=0, le=100_000)
+    pd_fraction: float | None = Field(default=None, gt=0, le=1)
+    pd_max_weekly: float | None = Field(default=None, gt=0, le=100_000)
+    pd_min_weekly: float | None = Field(default=None, ge=0, le=100_000)
+
+    authority: str | None = Field(default=None, max_length=400)
+    """The citation these numbers came from, in the author's own words."""
+
+    counsel_confirmed: bool = False
+    """Whether counsel has verified this binding. Defaults false, deliberately.
+
+    A seed author may flip it, and the ledger publishes whatever it says; the
+    engine's own table can never set it true.
+    """
+
+    #: Every number a complete statutory binding states.
+    NUMERIC_FIELDS: ClassVar[tuple[str, ...]] = (
+        "td_fraction",
+        "td_max_weekly",
+        "td_min_weekly",
+        "pd_fraction",
+        "pd_max_weekly",
+        "pd_min_weekly",
+    )
+
+    @model_validator(mode="after")
+    def _bounds_are_ordered(self) -> RateBasisOverride:
+        """A bound is stated with the bound it is bounded by, and in order.
+
+        The pairing requirement is the half that was missing. A lone
+        ``td_min_weekly`` merges against a *defaulted* ceiling this block never
+        saw, so a pairwise check on the override alone finds a floor with
+        nothing beside it and passes — measured, a $5,000 floor went through
+        under the $1,539.71 default ceiling and produced a temporary-disability
+        rate above the maximum published in the same basis, recorded as ``min``.
+
+        Requiring the pair is what makes the ordering check meaningful here
+        rather than only in :class:`~wc_caseload_engine.money.RateBasis`, where
+        it is now also enforced on the merged result. An author overriding one
+        end of a range has an opinion about the range; stating both is the cost
+        of that opinion, and it is one line of YAML.
+        """
+        for low, high, name in (
+            (self.td_min_weekly, self.td_max_weekly, "td"),
+            (self.pd_min_weekly, self.pd_max_weekly, "pd"),
+        ):
+            if (low is None) != (high is None):
+                stated, missing = (
+                    (f"{name}_min_weekly", f"{name}_max_weekly")
+                    if high is None
+                    else (f"{name}_max_weekly", f"{name}_min_weekly")
+                )
+                raise ValueError(
+                    f"scenario.wages.rate_basis sets {stated} without {missing} — the "
+                    "other end of the range would come from the engine's unverified "
+                    "default table, where it may sit on the wrong side of the figure "
+                    f"you stated. Add {missing}, or remove {stated}."
+                )
+            if low is not None and high is not None and low > high:
+                raise ValueError(
+                    f"scenario.wages.rate_basis has {name}_min_weekly {low} above "
+                    f"{name}_max_weekly {high} — a floor cannot sit above its own ceiling. "
+                    "Swap the two values, or raise the maximum."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _confirmation_covers_a_whole_binding(self) -> RateBasisOverride:
+        """Confirmation is a claim about numbers, so it needs the numbers.
+
+        The engine's table is counsel-unconfirmed in every row and says so in
+        its own authority text. A block carrying nothing but
+        ``counsel_confirmed: true`` used to publish that entire table as
+        confirmed — engine numbers, engine authority string still reading
+        ``COUNSEL-UNCONFIRMED``, and ``counselConfirmed: true`` on the manifest
+        above it. That is the one assertion this package promises it can never
+        make, and it was reachable in five words of YAML.
+
+        Confirming therefore means stating what is confirmed: all six figures
+        and the authority they come from. Anything less is an override of the
+        numbers it names, defaulted for the rest, and unconfirmed — which is
+        what a partially authored binding actually is.
+        """
+        if not self.counsel_confirmed:
+            return self
+        missing = [name for name in self.NUMERIC_FIELDS if getattr(self, name) is None]
+        if self.authority is None:
+            missing.append("authority")
+        if missing:
+            raise ValueError(
+                "scenario.wages.rate_basis sets counsel_confirmed: true but leaves "
+                f"{', '.join(missing)} unset — the engine's own figures are unverified "
+                "placeholders, so confirming a binding means stating the binding rather "
+                "than adopting theirs. Supply every rate_basis figure and the authority "
+                "they come from, or set counsel_confirmed to false."
+            )
+        return self
+
+
+class WageScenario(_Model):
+    """The earnings history behind this file's money. **The gate.**
+
+    Presence of this block is what turns the money spine on. A seed without it
+    derives no money facts at all, publishes no money in its manifest, and
+    renders every document through the code path it took before this block
+    existed — which is the anti-criterion the money layer is held to.
+
+    Two ways to state a history, and they do not mix:
+
+    * ``earnings`` — list the pay periods outright. Exact, and how a test or a
+      reproduction of a real file pins the numbers.
+    * the shape knobs (``pattern``, ``base_weekly_wage``, ``lookback_weeks``,
+      ``pay_frequency``, ``overtime_share``) — describe the history and let the
+      engine derive periods on its own deterministic stream.
+
+    ``method`` is the one field that is ground truth rather than input. Left
+    unset it is *selected* from the wage facts by a stated, testable rule and
+    recorded with the reason; set, it is taken as given and recorded as authored.
+    Either way the answer is written down rather than left to be inferred.
+    """
+
+    #: The knobs that *describe* a history, and so cannot sit beside a listed one.
+    #:
+    #: Named as data rather than checked one by one, because the set is what the
+    #: class docstring promises and a list that drifts from the prose is how four
+    #: of these six went unenforced. :meth:`_history_is_stated_one_way` reads
+    #: this against ``model_fields_set``, which is the only way to see a knob
+    #: whose stated value happens to equal its default.
+    SHAPE_KNOBS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "pattern",
+            "base_weekly_wage",
+            "lookback_weeks",
+            "pay_frequency",
+            "overtime_share",
+            "concurrent_weekly_wage",
+        }
+    )
+
+    earnings: list[EarningsEntry] = Field(default_factory=list, max_length=60)
+    """Explicit pay periods. Mutually exclusive with the shape knobs."""
+
+    pattern: EarningsPattern = "regular"
+    """Shape of a derived history — steady, irregular, or seasonal."""
+
+    base_weekly_wage: float | None = Field(default=None, gt=0, le=100_000)
+    """Weekly wage a derived history varies around. Derived when unset."""
+
+    lookback_weeks: int = Field(default=52, ge=4, le=260)
+    """Weeks of history the statement covers, counting back from the injury."""
+
+    pay_frequency: PayFrequency = "biweekly"
+    """How often the applicant was paid — the row granularity of the statement."""
+
+    overtime_share: float = Field(default=0.0, ge=0, le=0.6)
+    """Fraction of gross that is overtime premium, on average, in a derived history."""
+
+    employment_start: date | None = None
+    """When this employment began. Earlier than the lookback means a full
+    history; later truncates it, which is what makes the short-history method
+    reachable."""
+
+    concurrent_employment: bool = False
+    """Whether a second, concurrent employer's earnings belong in the average."""
+
+    concurrent_weekly_wage: float | None = Field(default=None, gt=0, le=100_000)
+    """Weekly wage of the concurrent employment. Derived when unset."""
+
+    in_kind: list[InKindEntry] = Field(default_factory=list, max_length=6)
+    """Non-cash wages, at weekly value, added to the computed average."""
+
+    method: AwwMethod | None = None
+    """The named method. ``None`` means *select it* from the wage facts."""
+
+    earning_capacity_weekly: float | None = Field(default=None, gt=0, le=100_000)
+    """Required by, and only by, ``method: earning_capacity``.
+
+    The catch-all method exists precisely because no arithmetic over the
+    earnings history produces the right answer, so the answer has to be stated.
+    """
+
+    rate_basis: RateBasisOverride | None = None
+    """Per-case override of the statutory rate parameters. See the class."""
+
+    @model_validator(mode="after")
+    def _dependent_fields_have_their_enabler(self) -> WageScenario:
+        """A figure only one setting consumes is refused without that setting.
+
+        Both fields document themselves as required by, and *only* by, something
+        else — and both were accepted and ignored without it.
+        ``earning_capacity_weekly: 7777`` beside a described history published
+        ``996.73`` under ``actual_weekly_earnings``; ``concurrent_weekly_wage:
+        8888`` published no concurrent employment at all. A seed author reading
+        either manifest would have to work out that the engine had discarded a
+        number they wrote, which is ISC-29's rule inverted.
+        """
+        if self.earning_capacity_weekly is not None and self.method != "earning_capacity":
+            stated = "unset" if self.method is None else repr(self.method)
+            raise ValueError(
+                f"scenario.wages sets earning_capacity_weekly but method is {stated} — the "
+                "figure is consumed by, and only by, the earning_capacity method, so "
+                "nothing here would read it. Set scenario.wages.method to "
+                "'earning_capacity', or remove earning_capacity_weekly."
+            )
+        if self.concurrent_weekly_wage is not None and not self.concurrent_employment:
+            raise ValueError(
+                "scenario.wages sets concurrent_weekly_wage but concurrent_employment is "
+                "false — there is no second employment for that wage to belong to. Set "
+                "scenario.wages.concurrent_employment to true, or remove "
+                "concurrent_weekly_wage."
+            )
+        if self.method == "concurrent_aggregate" and not (
+            self.concurrent_employment or any(e.concurrent for e in self.earnings)
+        ):
+            # A seed may name any method — the author's argument wins over the
+            # engine's rule, which is why ``method`` is authored at all. This one
+            # is different in kind: the other four label an *argument* about how
+            # to average one history, and could be argued over any history.
+            # ``concurrent_aggregate`` labels a *fact* — that earnings from more
+            # than one employer were combined — and over a single employment
+            # there was nothing to combine. Measured: the seed loaded and
+            # published ``method: concurrent_aggregate`` beside
+            # ``concurrentEmployment: false`` on a computation containing only
+            # primary earnings, which is a ground-truth label the manifest
+            # contradicts one field later.
+            raise ValueError(
+                "scenario.wages.method is 'concurrent_aggregate' but this history has no "
+                "concurrent employment — the method names earnings combined across "
+                "employers, and there is only one here, so the label would assert an "
+                "aggregation that did not happen. Set "
+                "scenario.wages.concurrent_employment to true, or mark the second "
+                "employer's periods 'concurrent: true', or choose a method that averages "
+                "one employment."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _history_is_stated_one_way(self) -> WageScenario:
+        if not self.earnings:
+            if self.method == "earning_capacity" and self.earning_capacity_weekly is None:
+                raise ValueError(
+                    "scenario.wages.method is 'earning_capacity' but "
+                    "scenario.wages.earning_capacity_weekly is unset — the catch-all method "
+                    "exists because no arithmetic over the earnings history gives the "
+                    "answer, so the answer has to be stated. Set "
+                    "scenario.wages.earning_capacity_weekly, or choose a method that "
+                    "computes."
+                )
+            return self
+
+        # Read from the *set* fields, not from the values. Four of the six shape
+        # knobs carry defaults, so "is it None" cannot tell a knob the author
+        # wrote from one Pydantic filled in — which is why the first cut of this
+        # validator policed only the two nullable ones and let the other four
+        # through. ``pattern`` is the sharp case: it is a **published ground
+        # truth label**, so a seed listing a steady history under
+        # ``pattern: irregular`` shipped a wrong label to the analyzer, silently.
+        stated = sorted(self.model_fields_set & set(self.SHAPE_KNOBS))
+        if stated:
+            raise ValueError(
+                f"scenario.wages lists explicit earnings and also sets "
+                f"{', '.join(stated)} — a history is either listed or described, "
+                "never both, because the two would disagree and the listed periods "
+                f"would win silently. Remove the listed earnings, or remove "
+                f"{', '.join(stated)}."
+            )
+        if not any(not entry.concurrent for entry in self.earnings):
+            raise ValueError(
+                "scenario.wages.earnings marks every period 'concurrent: true' — the "
+                "average weekly wage is computed over the weeks of the *primary* "
+                "employment, so a history with no primary period averages a real gross "
+                "over zero weeks and publishes an average weekly wage of 0.00. Set "
+                "'concurrent: false' on the primary employer's periods, or add them."
+            )
+        primary_days = {
+            day
+            for entry in self.earnings
+            if not entry.concurrent
+            for day in _days_covered(entry)
+        }
+        concurrent_days = {
+            day
+            for entry in self.earnings
+            if entry.concurrent
+            for day in _days_covered(entry)
+        }
+        if concurrent_days and concurrent_days != primary_days:
+            # One gross over one denominator cannot express two employments that
+            # ran for different lengths. Measured: a two-week primary job at
+            # $1,000/week beside a fifty-two-week second job at $1,000/week
+            # aggregated to $54,000, and *any* single denominator is wrong for
+            # it — 2 weeks says $27,000, 52 weeks says $1,038.46, and the answer
+            # a reader would defend is $2,000, the sum of the two weekly rates
+            # while both were running. Reaching that needs per-employment
+            # operands, which needs employer identity: a boolean cannot say
+            # *which* employer a period belongs to, so it cannot group them.
+            #
+            # Refused rather than approximated. An additive Wave-2 field can
+            # open this shape properly; publishing a number here that no
+            # arithmetic on the page reproduces would put exactly the asserted
+            # figure this layer exists to remove into the one method whose whole
+            # point is combining employments.
+            raise ValueError(
+                "scenario.wages.earnings has concurrent periods covering different dates "
+                "from the primary ones — the aggregate is one gross over one span, so two "
+                "employments of different lengths cannot both be right in it. Replace the "
+                "concurrent periods with ones covering the primary dates, or drop them "
+                "and describe the second employment with concurrent_employment instead."
+            )
+        if self.method == "earning_capacity" and self.earning_capacity_weekly is None:
+            raise ValueError(
+                "scenario.wages.method is 'earning_capacity' but "
+                "scenario.wages.earning_capacity_weekly is unset — the catch-all method "
+                "exists because no arithmetic over the earnings history gives the answer, "
+                "so the answer has to be stated. Set "
+                "scenario.wages.earning_capacity_weekly, or choose a method that computes."
+            )
+        if self.concurrent_employment and not any(e.concurrent for e in self.earnings):
+            raise ValueError(
+                "scenario.wages.concurrent_employment is true but no listed earnings entry "
+                "is marked 'concurrent: true' — the aggregate would be over one employer. "
+                "Set 'concurrent: true' on the second employer's periods, or set "
+                "concurrent_employment to false."
+            )
+        return self
+
+
+class BenefitsScenario(_Model):
+    """What was actually paid, and how badly.
+
+    The knobs here are the ones a delay-and-penalty file turns on. They exist so
+    that lateness and interruption are *stated facts of the seed* with the days
+    recorded, rather than something a reader has to infer from payment dates —
+    which is what lets Wave 3 compute a penalty against a known exposure instead
+    of against a guess.
+
+    Every field left unset derives from ``scenario.adjuster.diligence``, so the
+    persona already in the schema drives the money without a second, independent
+    knob that could contradict it.
+    """
+
+    td_weeks: int | None = Field(default=None, ge=0, le=520)
+    """Weeks of temporary disability paid. Derived from the timeline when unset."""
+
+    td_gap_days: int | None = Field(default=None, ge=0, le=1_000)
+    """A deliberate interruption in the temporary-disability series, in days."""
+
+    late_payments: int | None = Field(default=None, ge=0, le=52)
+    """How many payments issued after their due date. Derived from diligence."""
+
+    max_days_late: int | None = Field(default=None, ge=1, le=730)
+    """The worst single lateness, in days. Derived from diligence when unset."""
+
+    pd_advances: int | None = Field(default=None, ge=0, le=52)
+    """Permanent-disability advances paid before any award. Derived when unset."""
+
+    #: Blocks of temporary disability a gap needs on either side of it.
+    #:
+    #: Payments issue in four-week blocks and a gap sits *between* two of them,
+    #: so eight weeks is the shortest run that can hold one.
+    GAP_MINIMUM_WEEKS: ClassVar[int] = 8
+
+    @model_validator(mode="after")
+    def _lateness_is_coherent(self) -> BenefitsScenario:
+        if self.late_payments == 0 and self.max_days_late is not None:
+            raise ValueError(
+                "scenario.benefits.late_payments is 0 but max_days_late is "
+                f"{self.max_days_late} — no payment was late, so none can be late by a "
+                "number of days. Raise late_payments above zero, or drop max_days_late."
+            )
+        if self.max_days_late is not None and self.late_payments is None:
+            # The pair is the fact, exactly as approval and funding are. Alone,
+            # ``max_days_late`` is measured against a count that comes from the
+            # adjuster persona — so on an `attentive` file it described a delay
+            # of sixty-two days across zero late payments, and published no
+            # lateness at all without a word.
+            raise ValueError(
+                f"scenario.benefits sets max_days_late to {self.max_days_late} without "
+                "late_payments — how many payments were late comes from "
+                "scenario.adjuster.diligence otherwise, and on an attentive administrator "
+                "that is none, so the delay would be dropped in silence. Add "
+                "scenario.benefits.late_payments, or drop max_days_late and let diligence "
+                "decide both."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _every_stated_control_can_be_honoured(self) -> BenefitsScenario:
+        """A control the ledger cannot honour is refused, not quietly dropped.
+
+        ISC-29's rule — an explicit control wins loudly — applied to the money
+        knobs. Measured before this validator: ``{td_weeks: 0, pd_advances: 0,
+        late_payments: 3, max_days_late: 62}`` loaded and published
+        ``latePayments: 0``, and ``{td_weeks: 0, td_gap_days: 90}`` published
+        ``gapDays: 0``. The seed asked for a delay file and got a clean one,
+        with nothing anywhere saying the request had been dropped.
+
+        Only what the seed alone can decide is checked here. Truncation against
+        the case's own runway needs the timeline, so the planner reports that as
+        a warning instead — see ``planner._money_control_warnings``.
+        """
+        if self.td_weeks == 0 and self.pd_advances == 0:
+            for name in ("late_payments", "max_days_late"):
+                value = getattr(self, name)
+                if value:
+                    raise ValueError(
+                        f"scenario.benefits sets {name} to {value} but pays nothing — "
+                        "td_weeks and pd_advances are both 0, so there is no payment to "
+                        f"be late. Raise td_weeks or pd_advances above zero, or drop "
+                        f"{name}."
+                    )
+        if self.td_gap_days and (self.td_weeks or 0) < self.GAP_MINIMUM_WEEKS:
+            stated = "0" if self.td_weeks == 0 else str(self.td_weeks)
+            raise ValueError(
+                f"scenario.benefits sets td_gap_days to {self.td_gap_days} with td_weeks "
+                f"{stated} — payments issue in four-week blocks and a gap sits between "
+                f"two of them, so a run shorter than {self.GAP_MINIMUM_WEEKS} weeks has "
+                "nowhere to put one and the gap would be dropped in silence. Raise "
+                f"td_weeks to {self.GAP_MINIMUM_WEEKS} or more, or drop td_gap_days."
+            )
+        return self
+
+
+#: The smallest settlement gross the documents can represent: the stipulated
+#: award splits it into a permanent-disability award and a self-procured
+#: reimbursement, each at least a whole dollar.
+#:
+#: There was briefly a twenty-dollar *step* here too, adopted so the fifteen
+#: percent attorney fee both documents truncate to whole dollars would be exact.
+#: Review was right that it was the wrong abstraction: real settlements are not
+#: multiples of twenty, and narrowing a **published** field to work around a
+#: renderer's rounding makes the corpus systematically unrealistic in a figure
+#: the analyzer is scored on. The fee is printed to cents instead.
+#:
+#: Which moved the binding constraint. The release subtracts more than the award
+#: does, so the award's two-dollar split is no longer what decides the floor —
+#: see :func:`settlement_deductions` and the search below. The floor is derived
+#: from the deduction rule rather than asserted beside it, because the last three
+#: defects in this module were all a bound somebody chose once and then stopped
+#: re-deriving when the arithmetic under it moved.
+
+#: The release's three deductions. Costs and the set-aside are fractions of the
+#: gross rather than the substrate's flat $500-$3,000 and $5,000-$25,000 draws,
+#: which knew nothing about the settlement they were subtracted from and printed
+#: a negative net on a small one. Each is floored at a dollar so its row prints.
+SETTLEMENT_FEE_RATE = Decimal("0.15")
+SETTLEMENT_COSTS_DIVISOR = 40
+SETTLEMENT_SET_ASIDE_DIVISOR = 5
+
+
+def settlement_deductions(gross: int) -> tuple[Decimal, int, int]:
+    """Fee, costs and Medicare set-aside for *gross*.
+
+    One definition, imported by the renderer that prints these figures and by
+    the floor derived from them, so the two cannot drift apart. The set-aside is
+    returned whether or not the file has one; the caller drops it when
+    ``lifecycle.resolution.msa`` is false, and the floor keeps it because the
+    worst case is the case that pays it.
+    """
+    fee = (Decimal(gross) * SETTLEMENT_FEE_RATE).quantize(Decimal("0.01"))
+    return fee, max(gross // SETTLEMENT_COSTS_DIVISOR, 1), max(
+        gross // SETTLEMENT_SET_ASIDE_DIVISOR, 1
+    )
+
+
+def _smallest_gross_the_documents_can_carry() -> int:
+    """Search up from the award's own two-line minimum until the release closes.
+
+    Searched rather than stated. Both constraints are real — the award needs a
+    dollar on each of its two lines, and the release must leave the applicant
+    something after fee, costs and set-aside — and which of them binds depends
+    on arithmetic three modules away. A search re-derives the answer every
+    import; a literal would have to be remembered.
+    """
+    for gross in range(2, 1000):
+        fee, costs, set_aside = settlement_deductions(gross)
+        if Decimal(gross) - fee - Decimal(costs) - Decimal(set_aside) > 0:
+            return gross
+    raise AssertionError(
+        "no settlement gross under $1,000 leaves the applicant money after the "
+        "deductions in settlement_deductions — the deduction rule is wrong"
+    )
+
+
+SETTLEMENT_GROSS_MINIMUM = _smallest_gross_the_documents_can_carry()
+
+class SettlementScenario(_Model):
+    """How the money side of the case ended.
+
+    Defined in Wave 1 rather than alongside the disbursement work, so the
+    defense-lens and applicant-lens tickets can both attach to a settled object
+    without waiting on each other.
+
+    ``approval_date`` and ``funding_date`` are separate fields on purpose. They
+    are separate events in a real file — the Board approves, and then somebody
+    cuts a cheque — and the interval between them is exactly the fact a late
+    funding argument is made of. Collapsing them into one date would delete the
+    argument from the corpus.
+    """
+
+    gross_amount: float | None = Field(default=None, ge=0, le=10_000_000)
+    """Gross settlement, before any deduction. Derived when unset."""
+
+    approval_date: date | None = None
+    """When the Board approved. Defaults to the file's own approval order date."""
+
+    funding_days: int | None = Field(default=None, ge=0, le=730)
+    """Days from approval to funding. Derived from diligence when unset."""
+
+    funding_date: date | None = None
+    """When the settlement was actually funded. Overrides ``funding_days``."""
+
+    @model_validator(mode="after")
+    def _gross_is_whole_dollars(self) -> SettlementScenario:
+        """A gross the release cannot print is a gross the ledger must not claim.
+
+        The substrate's compromise and release draws its gross as an integer and
+        derives the fee, costs, set-aside and net from it; the engine pins that
+        draw, and an integer is all it can pin. A ledger stating ``88000.99``
+        therefore labels a document reading ``$88,000`` — measured, and off by
+        99 cents, which in an arithmetic check is simply wrong.
+
+        Refused rather than rounded, because rounding is the engine quietly
+        overruling an explicit control. The author is told which way to go.
+        """
+        if self.gross_amount is None:
+            return self
+        if self.gross_amount != int(self.gross_amount):
+            raise ValueError(
+                f"scenario.settlement.gross_amount is {self.gross_amount} — the release "
+                "that carries this figure prints whole dollars, so a ledger holding cents "
+                "would label a document that contradicts it. State "
+                f"scenario.settlement.gross_amount as a whole number of dollars "
+                f"(for example {int(self.gross_amount)})."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _gross_is_large_enough_for_a_document_to_print(self) -> SettlementScenario:
+        """A settlement too small to have components is one no award can state.
+
+        `gross_amount: 0` and `1` were accepted here while the stipulated award
+        silently skipped its reconciliation for them and printed a $27,581
+        permanent-disability award beside a published $0.00. "Unreachable from a
+        sane seed" is not a boundary when the schema accepts the value; either
+        the schema refuses it or the document reconciles it.
+
+        The floor is derived rather than invented. The stipulated award prints a
+        permanent-disability award and a self-procured reimbursement that must
+        sum to this figure, each at least a whole dollar, and the award carries
+        a fifteen percent fee the substrate truncates to an integer — so the
+        award must be a multiple of twenty for that fee to be the fifteen
+        percent it says it is. Twenty plus one is the smallest total satisfying
+        both.
+        """
+        if self.gross_amount is None:
+            return self
+        gross = int(self.gross_amount)
+        if gross < SETTLEMENT_GROSS_MINIMUM:
+            raise ValueError(
+                f"scenario.settlement.gross_amount is {gross}, which is too small for "
+                "the documents that carry it to print: the stipulated award splits it "
+                "into a permanent-disability award and a self-procured reimbursement, "
+                "each at least a whole dollar, and the release subtracts an attorney "
+                "fee, costs and a Medicare set-aside from it and must still leave the "
+                f"applicant money. Raise scenario.settlement.gross_amount to "
+                f"{SETTLEMENT_GROSS_MINIMUM} or more, or remove scenario.settlement if "
+                "this case did not settle for money."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _funding_is_stated_one_way(self) -> SettlementScenario:
+        if self.funding_date is not None and self.funding_days is not None:
+            raise ValueError(
+                "scenario.settlement sets both funding_date and funding_days — the two "
+                "would disagree the moment the approval date moves. Keep funding_date for "
+                "an exact date, or funding_days for an interval, and drop the other."
+            )
+        for name in ("approval_date", "funding_date"):
+            stated = getattr(self, name)
+            if stated is not None and stated > ANCHOR_DATE:
+                # Every document in the case is clamped to the anchor, so a
+                # settlement dated past it is an event no paper in the folder can
+                # report. Measured: `approval_date: 2099-01-01` loaded, published
+                # a 2099 approval and a 2099 funding, and left every document in
+                # the case dated 2026-01-01 or earlier.
+                raise ValueError(
+                    f"scenario.settlement.{name} is {stated}, after the anchor date "
+                    f"{ANCHOR_DATE} this engine treats as today — every document in the "
+                    "case is dated on or before it, so no paper in the folder could "
+                    f"report this event. Move scenario.settlement.{name} to on or before "
+                    f"{ANCHOR_DATE}."
+                )
+        if self.funding_date is not None and self.approval_date is None:
+            # An exact funding date is only meaningful against the approval it
+            # follows, and the approval it would otherwise be measured against is
+            # derived from the timeline — which the seed cannot see. Left
+            # unpaired, a 2024 funding date under a 2021 derived approval loaded
+            # cleanly and published a negative funding lag; only ``validate --out``
+            # caught it, one whole generation later.
+            raise ValueError(
+                "scenario.settlement sets funding_date without approval_date — the "
+                "interval between them is the fact this pair exists to carry, and the "
+                "approval it would be measured against is derived from the timeline, "
+                "where this seed cannot see it. Add scenario.settlement.approval_date, "
+                "or state funding_days instead and let the approval date lead it."
+            )
+        if (
+            self.funding_date is not None
+            and self.approval_date is not None
+            and self.funding_date < self.approval_date
+        ):
+            raise ValueError(
+                f"scenario.settlement.funding_date {self.funding_date} precedes "
+                f"approval_date {self.approval_date} — money does not move before the "
+                "Board approves. Move funding_date to on or after the approval, or correct "
+                "the approval date."
+            )
+        return self
+
+
 class ScenarioSpec(_Model):
     """Seed-surfaced case facts.
 
@@ -857,6 +1602,20 @@ class ScenarioSpec(_Model):
     adjuster: AdjusterScenario = Field(default_factory=AdjusterScenario)
     attorney: AttorneyScenario = Field(default_factory=AttorneyScenario)
     discovery: DiscoveryScenario = Field(default_factory=DiscoveryScenario)
+    wages: WageScenario | None = None
+    """The money gate. ``None`` — the default — means this case has no money layer.
+
+    Deliberately ``None`` rather than a default-constructed block. A present
+    empty block and an absent one would be indistinguishable, and the whole
+    anti-criterion rests on the engine being able to tell "the author asked for
+    wage facts" from "the author said nothing".
+    """
+
+    benefits: BenefitsScenario | None = None
+    """What was paid. Requires ``wages`` — see :meth:`_money_needs_a_wage_block`."""
+
+    settlement: SettlementScenario | None = None
+    """How the money ended. Requires ``wages`` — see the same validator."""
     surgery: Literal["none", "performed", "recommended", "denied_by_ur"] | None = None
     """``None`` means *derive it* — preserving the substrate's 35% coin exactly.
 
@@ -864,6 +1623,32 @@ class ScenarioSpec(_Model):
     was proposed and is pending, the other was proposed and refused. Neither
     emits an operative document, and ``validate`` enforces their absence.
     """
+
+    @model_validator(mode="after")
+    def _money_needs_a_wage_block(self) -> ScenarioSpec:
+        """One gate for the whole money layer, and it is the wage block.
+
+        ``benefits`` and ``settlement`` both describe money moving. A benefit
+        payment has a rate, and a rate is derived from an average weekly wage —
+        so a benefits block with no wage facts behind it is exactly the asserted
+        number this layer exists to replace with a derived one. The settlement
+        is held to the same gate rather than a looser one of its own, because
+        one gate is what makes "a seed with no wage block produces zero money
+        artifacts" a single checkable sentence instead of three.
+        """
+        if self.wages is not None:
+            return self
+        stated = [
+            name for name in ("benefits", "settlement") if getattr(self, name) is not None
+        ]
+        if stated:
+            raise ValueError(
+                f"scenario.{' and scenario.'.join(stated)} needs scenario.wages — a "
+                "benefit rate and a settlement both rest on an average weekly wage, and "
+                "without an earnings history this engine would have to assert one. Add a "
+                f"scenario.wages block, or remove scenario.{stated[0]}."
+            )
+        return self
 
     @model_validator(mode="after")
     def _never_treated_implies_no_surgery(self) -> ScenarioSpec:
@@ -951,6 +1736,43 @@ class CaseSeed(_Model):
         return value
 
     @model_validator(mode="after")
+    def _a_fatal_injury_has_no_disability_benefits_to_pay(self) -> CaseSeed:
+        """Money on a death claim is a different benefit class, and it is not built yet.
+
+        ``scenario.wages`` on a fatal injury loaded cleanly and derived ordinary
+        temporary and permanent disability from it. Measured: a death on
+        2023-01-19 published a first temporary-disability period running
+        2023-01-22 to 2023-02-18 — begun three days after the worker died —
+        thirteen periods totalling $39,133.85, and two permanent-disability
+        advances. Permanent disability is a rating of a living worker's residual
+        capacity and temporary disability replaces wages the worker would have
+        earned; neither survives the worker.
+
+        What a fatal claim actually pays is dependency benefits and burial
+        expenses, which are a different computation with different rules and no
+        model here. So this is refused rather than approximated, on the rule
+        that governs the rest of this schema: an impossible seed is rejected,
+        not absorbed. The dependency ontology is a Wave 2 ticket; when it lands
+        this validator is what gets replaced.
+        """
+        if self.injury.type != "death":
+            return self
+        stated = [
+            name
+            for name in ("wages", "benefits", "settlement")
+            if getattr(self.scenario, name, None) is not None
+        ]
+        if stated:
+            raise ValueError(
+                f"injury.type is 'death' but scenario states {', '.join(sorted(stated))} — "
+                "the money layer computes temporary and permanent disability, which are "
+                "benefits of a living worker, and a fatal claim pays dependency benefits "
+                "instead. Remove the money blocks from this seed, or change injury.type "
+                "to 'specific' or 'cumulative_trauma'."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _check_scenario_against_the_lifecycle(self) -> CaseSeed:
         """Cross-validate the scenario against fields it cannot see from inside.
 
@@ -1010,6 +1832,48 @@ class CaseSeed(_Model):
                     "pending. ('upheld' and 'overturned' are the only values; the seed "
                     "speaks from the dispute's point of view, so 'upheld' means the UR "
                     "denial was upheld.)"
+                )
+
+        if scenario.settlement is not None and self.lifecycle.resolution.type not in (
+            "c_and_r",
+            "stipulations",
+        ):
+            # A settlement object on a case that did not settle would publish an
+            # approval date for an order the file does not contain. The two
+            # resolution types that *are* settlements are named rather than
+            # inferred, because ``findings_award`` and ``take_nothing`` are also
+            # endings and neither is one anybody funds.
+            raise ValueError(
+                "scenario.settlement is set but lifecycle.resolution.type is "
+                f"{self.lifecycle.resolution.type!r} — only a compromise and release or "
+                "stipulations is a settlement anybody approves and funds. Set "
+                "'lifecycle: {resolution: {type: c_and_r}}' (or 'stipulations'), or remove "
+                "scenario.settlement."
+            )
+
+        if scenario.wages is not None:
+            wages = scenario.wages
+            start = wages.employment_start
+            if start is not None and start > self.injury.onset_date:
+                raise ValueError(
+                    f"scenario.wages.employment_start {start} is after the injury on "
+                    f"{self.injury.onset_date} — nobody is hurt at a job they have not "
+                    "started. Move employment_start to on or before the injury, or correct "
+                    "the injury date."
+                )
+            after = sorted(
+                str(entry.period_end)
+                for entry in wages.earnings
+                if entry.period_end > self.injury.onset_date
+            )
+            if after:
+                raise ValueError(
+                    "scenario.wages.earnings has "
+                    f"{len(after)} period(s) ending after the injury on "
+                    f"{self.injury.onset_date} (first: {after[0]}) — the average weekly "
+                    "wage is computed from earnings *before* the injury, so a later period "
+                    "would silently be ignored. Remove those periods, or move "
+                    "injury.date_of_injury later."
                 )
 
         return self
@@ -1909,9 +2773,11 @@ def stage_order(stage: str) -> int:
 
 __all__ = [
     "ANCHOR_DATE",
+    "AWW_METHODS",
     "BODY_PART_CATALOG",
     "DEFAULT_FORMAT_MIX",
     "DISTRIBUTIONS",
+    "PAY_PERIODS_PER_YEAR",
     "POST_RESOLUTION_RUNWAY_DAYS",
     "RESOLVED_RUNWAY_DAYS",
     "STAGE_RUNWAY_DAYS",
@@ -1921,6 +2787,7 @@ __all__ = [
     "AttorneyProfile",
     "AttorneyScenario",
     "AutoSpec",
+    "BenefitsScenario",
     "BodyPart",
     "CarrierProfile",
     "CaseProfile",
@@ -1932,20 +2799,25 @@ __all__ = [
     "DistributionProfile",
     "DocumentControls",
     "DocumentOverride",
+    "EarningsEntry",
     "EmployerProfile",
+    "InKindEntry",
     "InjurySpec",
     "LienSpec",
     "LifecycleSpec",
     "OutputSpec",
     "PageRange",
     "PhysicianProfile",
+    "RateBasisOverride",
     "ReconsiderationSpec",
     "ResolutionSpec",
     "ScenarioSpec",
     "SeedError",
     "SeedValidationError",
+    "SettlementScenario",
     "TreatmentScenario",
     "UrDispute",
+    "WageScenario",
     "apply_defaults",
     "deep_merge",
     "derive_auto_seeds",

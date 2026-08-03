@@ -27,6 +27,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 import structlog
@@ -759,6 +760,37 @@ def build_case_cast(seed: CaseSeed, timeline: CaseTimeline, case_number: int = 1
     return cast
 
 
+def align_employer_wage(case: Any, money: Any) -> None:
+    """Make the substrate's employer wage the wage the manifest publishes.
+
+    ``data/fake_data_generator.py`` draws ``employer.hourly_rate`` from $18 to
+    $55 with reference to nothing, and it is not a decoration: three document
+    families compute money from it. The personnel file prints a pay-rate
+    history; the settlement memo derives its whole temporary-disability
+    paragraph from ``hourly_rate * weekly_hours``; the deposition has the
+    applicant say *"I was making $X per hour"*. All three contradicted
+    ``caseFacts.money.wage.averageWeeklyWage`` on the same case — $42.79 an hour
+    against a published average weekly wage of $1,151.33, which is $28.78.
+
+    Found by the sibling sweep rather than by review, and it is the sweep's
+    point: the money layer had governed the documents it knew about. These were
+    documents nobody had looked at, contradicting a *governed* fact through a
+    field two packages away.
+
+    A wage-free seed derives no money and reaches none of this, so the corpus
+    that has no money layer is untouched.
+    """
+    if money is None or getattr(money, "wages", None) is None:
+        return
+    hours = Decimal(str(getattr(case.employer, "weekly_hours", 40) or 40))
+    if hours <= 0:  # pragma: no cover - the substrate ships 40.0
+        return
+    average = Decimal(str(money.wages.computation.aww))
+    case.employer.hourly_rate = float(
+        (average / hours).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    )
+
+
 __all__ = [
     "DEFAULT_APPLICANT_FIRM",
     "PROVENANCE_ENGINE",
@@ -767,6 +799,7 @@ __all__ = [
     "PROVENANCE_SEED_DENYLISTED",
     "SYNTHETIC_PROVENANCE",
     "CaseCast",
+    "align_employer_wage",
     "build_case_cast",
     "synthetic_carrier_name",
     "synthetic_firm_name",

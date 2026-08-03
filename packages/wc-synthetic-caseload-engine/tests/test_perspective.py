@@ -21,7 +21,11 @@ import pytest
 from pydantic import ValidationError
 
 from conftest import requires_substrate
-from wc_caseload_engine.doc_controls import DocumentCandidate, resolve_document_controls
+from wc_caseload_engine.doc_controls import (
+    DocumentCandidate,
+    resolve_document_controls,
+    verify_forced_subtypes,
+)
 from wc_caseload_engine.lifecycle_bridge import (
     ROLE_APPLICANT_ATTORNEY,
     ROLE_COURT,
@@ -247,7 +251,14 @@ def test_suppression_reasons_reach_the_control_resolver() -> None:
         pre_dropped={"CLIENT_STATUS_LETTERS": "defense perspective (applicant-only)"},
     )
     assert resolution.count_for("CLIENT_STATUS_LETTERS") == 1
-    assert any("defense perspective" in w for w in resolution.warnings)
+    # Round 10 moved this verdict to the caller — whether a forced subtype
+    # survives to the file is not something the resolver can see — so the
+    # explanation now travels as data and is rendered by `verify_forced_subtypes`.
+    # The claim is unchanged: the perspective's reason must reach the sentence.
+    rendered = verify_forced_subtypes(
+        resolution.forced_checks, {"CLIENT_STATUS_LETTERS": 1}
+    )
+    assert any("defense perspective" in w for w in rendered), rendered
 
 
 # ---------------------------------------------------------------------------

@@ -108,6 +108,16 @@ lifecycle:
                                # ab5_dynamex, lc4664_prior_award
                                # -> each injects citation + argument into matching
                                #    subtypes; see "Doctrine hooks" below
+scenario:                      # resolved case facts — see "The CaseFacts ledger"
+  diagnostics: {performed: [], absent: []}
+  treatment:   {status, providers}
+  surgery:     none | performed | recommended | denied_by_ur
+  adjuster:    {diligence}
+  attorney:    {cadence}
+  discovery:   {subpoena_sets, pages_per_set}
+  wages:       {...}           # the money gate — absent by default, see "The money spine"
+  benefits:    {...}           # requires wages
+  settlement:  {...}           # requires wages
 documents:
   global_cap: 120
   format_mix: {pdf: 0.6, scanned_pdf: 0.25, eml: 0.1, docx: 0.05}
@@ -837,6 +847,261 @@ Treating reports follow one trajectory (improving, plateau or worsening) across
 the case rather than re-rolling a mood per document, so a three-report file reads
 as one story instead of three.
 
+### The money spine — `scenario.wages`, `scenario.benefits`, `scenario.settlement`
+
+Money is the only part of a workers' compensation file where a claim is
+**arithmetically** checkable. A comp rate either follows from the wage data or it
+does not, and there is no register in which a wrong one reads as a judgement
+call. That is what makes it worth generating properly — and what the substrate's
+own wage statement was doing instead is worth stating plainly, because it is the
+sharpest instance of the defect this whole package exists to remove. It drew
+eight to twelve pay periods from `random.randint`, averaged them, and printed a
+rate under a hardcoded fraction and a hardcoded ceiling that no date of injury
+ever reached.
+
+**`scenario.wages` is the gate for the entire layer.** Without it a seed derives
+no money facts, publishes no `caseFacts.money`, and renders every document
+through the code path it took before the layer existed. The full demo caseload
+is byte-identical across this change — 353 files, 0 differences.
+
+```yaml
+scenario:
+  wages:
+    # Either list the periods...
+    earnings:
+      - {period_start: 2021-01-04, period_end: 2021-01-17, gross: 2400, overtime: 300}
+    # ...or describe the history. Never both.
+    pattern: irregular           # regular | irregular | seasonal
+    base_weekly_wage: 1150
+    lookback_weeks: 52           # 4–260
+    pay_frequency: biweekly      # weekly | biweekly | semimonthly | monthly
+    overtime_share: 0.15         # 0–0.6 of gross, on average
+    employment_start: 2020-11-02 # later than the lookback truncates the history
+    concurrent_employment: true
+    concurrent_weekly_wage: 415
+    in_kind:
+      - {kind: lodging, weekly_value: 140}
+    method: irregular_earnings_average   # omit to have it selected
+    earning_capacity_weekly: 1465        # required by, and only by, earning_capacity
+    rate_basis:                          # per-case statutory override — see below
+      td_max_weekly: 2500
+      authority: "verified by counsel, memo of 2026-07-01"
+      counsel_confirmed: true
+  benefits:
+    td_weeks: 32
+    td_gap_days: 75              # a deliberate interruption
+    late_payments: 3
+    max_days_late: 54
+    pd_advances: 2
+  settlement:
+    gross_amount: 88000
+    approval_date: 2024-01-18
+    funding_days: 30             # or funding_date, never both
+```
+
+`benefits` and `settlement` both require `wages`. A benefit rate rests on an
+average weekly wage, and without an earnings history the engine would have to
+assert one — which is the failure the layer exists to remove. One gate, so "a
+seed with no wage block produces zero artifacts of this layer, and moves no output
+byte" is one checkable sentence
+rather than three.
+
+#### The named method is ground truth
+
+| method | selected when |
+|---|---|
+| `concurrent_aggregate` | earnings come from more than one employer |
+| `short_history_projection` | the employment is shorter than 26 weeks |
+| `irregular_earnings_average` | weekly earnings vary above the irregularity threshold |
+| `actual_weekly_earnings` | none of the above — a steady history |
+| `earning_capacity` | **never derived.** Only an author may name it |
+
+The order is the rule, and the rule is itself ground truth: the aggregate is
+asked first because "is this history irregular" is meaningless over the wrong set
+of earnings. Whichever way the method is decided, it is recorded explicitly —
+`caseFacts.money.wage.method`, `methodSource` (`seed` or `derived`) and
+`methodReason` in words — and printed on the wage statement. It is the label the
+analyzer is scored against, so it is never left to be inferred from the numbers:
+two methods can coincide on one earnings history, and a label that is only
+sometimes recoverable is not a label.
+
+Concurrent employment is expressed with a boolean, which means the engine can
+say *that* a period belongs to a second employer but not *which* one. Where both
+histories cover the same dates that is enough — the aggregate is one gross over
+one span, and a reader can reproduce it from the printed table. Where they do not,
+no single denominator is right, so the seed is refused rather than given a number
+no arithmetic on the page reproduces. Employer identity is an additive Wave-2
+field and opens that shape properly.
+
+`earning_capacity` is the catch-all a human argues for when no arithmetic over
+the history gives the right answer. An engine reaching for it unprompted would be
+asserting a legal conclusion rather than computing one, so the seed has to name
+both the method and the figure. And the figure it names is the whole answer:
+this method publishes `periodsConsidered`, `weeksConsidered`, `grossConsidered`
+and `inKindWeekly` as zero, because operands that reach a *different* number than
+the one published are worse than no operands at all. Every other method publishes
+the earnings its average was computed from, and a reader can divide them to get
+back to it.
+
+#### Every statutory number here is unverified
+
+**Read this before you rely on a rate.** The fraction, the ceiling, the floor and
+the date brackets they hang on are unverified professional knowledge. They live
+in one table, `money.UNCONFIRMED_RATE_TABLE`, every row of which carries
+`counsel_confirmed=False` and says `COUNSEL-UNCONFIRMED` in its own authority
+text — so a reader who copies the citation out of a manifest cannot lose the
+caveat on the way. The flag is published on every case at
+`caseFacts.money.rate.counselConfirmed`.
+
+A seed carrying a genuinely verified authority states it under
+`scenario.wages.rate_basis` and sets `counsel_confirmed: true` — and to set that
+flag it must state the **whole** binding: all six figures and the authority they
+come from. Confirming is a claim about numbers, so it takes the numbers. Adopting
+the engine's unverified table and calling it confirmed is refused, and a block
+that states nothing overrides nothing. The engine's own table can never set the
+flag under any seed.
+
+A rate bound is also stated as a pair. Overriding one end alone would merge
+against an *engine default* at the other end, which may sit on the wrong side of
+the figure you stated; `RateBasis` validates the merged result as well, so no
+construction path can produce a floor above its own ceiling.
+
+No money event may fall past the anchor. A payment is dated by when it cleared
+and the document reporting it is clamped to the case's horizon, so a payment
+beyond that horizon is one no paper in the folder can report — dropped from the
+ledger rather than clamped into it, because clamping would date the record before
+its own payment. Settlement dates are refused outright past the anchor for the
+same reason.
+
+`money.rate_basis_for(doi)` is the seam: the single point at which the engine asks
+what the parameters are for a date of injury, and the only reader of the table. A
+verified dated authority replaces it by replacing that function's body. It is
+deliberately a plain function signature with no network call and no configuration
+hook, so this package takes no dependency on the authority work running elsewhere
+and that work needs no knowledge of this package beyond the shape it returns.
+
+**Out of range, the placeholder table answers rather than raises**, and that is a
+deliberate call with a recorded reason: a synthetic corpus should not become
+un-generatable because a seed reached back further than a placeholder does. It is
+also narrower than it sounds — a date of injury *after* the anchor is already
+refused by the seed's own runway validation, so only a direct call can reach the
+forward edge. A dated authority that fails closed in both directions is a
+different contract, and whoever lands one owns that decision at the seam rather
+than inheriting this default silently.
+
+The rate is keyed to the **date of injury** because that is the axis these
+numbers actually move on. A caseload spans years, and the current figures are the
+wrong answer for most files in it.
+
+#### Both bounds are recorded, not just the rate
+
+`caseFacts.money.rate` publishes `tdBound` and `pdBound` as `max`, `min` or
+`unbounded`. A capped rate is the same number for every high earner in a vintage,
+so an analyzer that recovers the number without recovering the cap has learnt
+nothing about the wage behind it. The wage statement prints both the readable
+form — "(at statutory maximum)" — and the token itself, on its own row. The token
+is there because the readable form has nothing to say for `unbounded`: it renders
+as an empty parenthetical, which made the fact recoverable from the page only in
+the cases where it happened to be true.
+
+#### The ledger records exposure rather than implying it
+
+Gaps and lateness are stated facts with their days attached — `BenefitGap`,
+`TdPeriod.days_late`, `PdAdvance.days_late` — not something a reader has to infer
+by subtracting payment dates. Every knob defaults off `scenario.adjuster.diligence`,
+so the persona already in the schema drives the money instead of a second knob
+that could contradict it: an `attentive` administrator produces no lateness at
+all, a `negligent` one accumulates it. That is what lets Wave 3 compute a penalty
+against a *known* exposure.
+
+Lateness carries its own yardstick. `TdPeriod.date_due` is on the record and
+`tdPaymentDueDays` on the manifest, so `days_late` can be recomputed from the
+published facts — `datePaid - dateDue` — instead of taken on trust against a
+constant nothing publishes. The payment record prints a `Due` column beside the
+`Paid` one for the same reason: a delay a reader cannot check is a delay the
+corpus only claims.
+
+`caseFacts.money.benefits` publishes the **events**, not only how many there
+were. `tdPeriods` and `pdAdvances` are arrays of records — dates, weeks, weekly
+rate, amount, due, paid, days late — with the cardinalities under
+`tdPeriodCount` and `pdAdvanceCount`, and `gaps` carrying each interruption.
+Wave 3 computes a penalty per late transaction, and a total cannot say which
+transaction it was.
+
+Advances carry `date_due` too, and the ledger is ordered by it rather than by
+the date each was paid. Their cadence is an **engine schedule, not a statutory
+deadline** — an advance is discretionary — so `pdAdvances[].daysLate` measures
+lateness against that cadence and is not by itself a measure of legal exposure.
+`pdAdvanceScheduleAuthority` says so in the manifest, because Wave 3 must not
+read the two kinds of lateness the same way. A delayed advance can land *after* a later on-time one —
+that is an ordinary fact of a neglected file, not a sorting mistake — but it only
+reads as a fact once the schedule it slipped from is on the page beside it.
+
+The due-day interval carries its own caveat, `tdPaymentDueAuthority` and
+`tdPaymentDueConfirmed`, rather than borrowing the rate basis's.
+`rate.counselConfirmed` is a claim about the rate table and says nothing about a
+benefits rule, so a reader taking it as cover for the interval would be reading a
+caveat that does not reach it.
+
+`approval_date` and `funding_date` are separate fields on the settlement. They are
+separate events in a real file, and the interval between them is the whole
+substance of a late-funding argument.
+
+Each of those facts is printed by the document that effects it, and by no
+earlier one — and by a document whose *body* supports it, which is a separate
+requirement that cost a review round to learn. A subtype whose name fits and
+whose date fits can still render something that contradicts the fact: the
+substrate's `ORDER_APPROVING_SETTLEMENT` is generic hearing minutes that say the
+parties reached no settlement, and its `BENEFIT_PAYMENT_LEDGER` is a provider's
+medical bill. Both are engine-owned renders here for that reason. A compromise and release is signed before the Board approves it, so
+it carries the settlement type and gross and neither date; the
+`ORDER_APPROVING_SETTLEMENT` is issued *on* the approval date and carries it;
+and a `BENEFIT_PAYMENT_LEDGER` dated after the draft clears carries the funding
+date and the interval. `validate --out` refuses a published date with no
+document dated on or after it, which is the ISC-175 payment-record rule — no
+document is dated before what it prints — stated generally. A published interval
+whose evidence is on no page is the asserted figure this layer exists to remove;
+a page asserting its own future is worse, because it reads as evidence.
+
+`settlement.grossAmount` is **the total resolution value**, and it means that
+on both branches. On a compromise and release it is the settlement figure; on a
+stipulated award it is the total the award resolves to, and the award's own cash
+components — the permanent-disability gross and the self-procured medical
+reimbursement — are reconciled to sum to it, with the total printed under its
+own label so the arithmetic is checkable off the page. The SJDB voucher is a
+training benefit rather than money out of the award and is left as the substrate
+draws it; disbursement past that line belongs to AJC-46.
+
+The settlement's events form a chain — `instrument <= approval == order <=
+funding <= ledger` — and it is planned and validated as a chain, not as
+independent links. Checking each document against its own event date is not
+enough: an order correctly pinned to an authored approval once landed 677 days
+before the stipulations it recites as "filed herein", with every local relation
+satisfied.
+
+A seed with `injury.type: death` may not carry `scenario.wages`,
+`scenario.benefits` or `scenario.settlement`. Temporary disability replaces
+wages the worker would have earned and permanent disability rates a living
+worker's residual capacity; a fatal claim pays dependency benefits, which this
+layer does not model. Before the rule, a death on 2023-01-19 derived a first
+temporary-disability period beginning 2023-01-22.
+
+`method: concurrent_aggregate` is the one method a seed may not simply assert.
+The other four name an *argument* about how to average a history and can be
+argued over any history; this one names a *fact* — that earnings from more than
+one employer were combined — so it is refused unless the history actually has
+concurrent employment.
+
+#### Not in scope here
+
+Rating. `case_facts.py`'s `wpi` and `pd` are still the fabricated figures they
+have always been, the rate derivation does not depend on them, and correcting
+them is a separate piece of work. Reserves, disbursement, billing lines and
+penalty computation are likewise elsewhere.
+
+See `examples/money-showcase.yaml` for seven cases covering all five methods,
+both bounds and four rate vintages.
+
 ### What is fact-aware, and what that costs
 
 Fifteen subtypes dispatch to engine-owned subclasses that read the ledger:
@@ -844,6 +1109,14 @@ Fifteen subtypes dispatch to engine-owned subclasses that read the ledger:
 five QME/AME report flavours, `TREATING_PHYSICIAN_REPORT_PR2`/`_PR4`, and the
 five UR/RFA subtypes. Each overrides the narrowest method that rolled the
 offending draw and delegates the rest to the substrate, which stays read-only.
+
+Fourteen more join them for the money spine (0.8.0): the three
+`WAGE_STATEMENTS_*` and five `*_PAYMENT_RECORD_*` subtypes, and the six
+`COMPROMISE_AND_RELEASE*` flavours. These read `MoneyFacts` rather than
+`CaseFacts`, and they are registered whether or not the case has a money layer —
+so "a wage-free seed produces no money artifacts" is achieved by the subclass
+delegating on `None`, not by dodging the registry, which would leave the
+guarantee resting on dispatch luck.
 
 Which substrate sites are governed, and which are deliberately not, is
 enumerated in `modality_audit.py` — with a test that greps the substrate and
@@ -1112,6 +1385,36 @@ chasing a late benefit, because the substrate template does not read the `author
 engine plans the document with. Same class as the lien and reconsideration templates already
 documented above as variants rather than bespoke: correct-looking documents in the wrong
 register. The fix is an engine-owned subclass, not a seed change.
+
+### `examples/money-showcase.yaml` — the money spine
+
+Seven cases exercising `scenario.wages`, `scenario.benefits` and
+`scenario.settlement`, which the demo caseload also never touches. Live-verified
+at 516 documents, `validate --out` clean with zero fallbacks; double-run and
+`TZ=Australia/Sydney` runs identical at 538 files.
+
+```bash
+wc-caseload generate --spec examples/money-showcase.yaml --out /tmp/wcce-money
+wc-caseload validate --out /tmp/wcce-money
+```
+
+| Case | What it shows | Manifest evidence |
+|------|---------------|-------------------|
+| `steady-earner` | The baseline — a flat history inside both bounds | `actual_weekly_earnings`, AWW `1151.42`, TD `767.65`, `tdBound: unbounded` |
+| `irregular-earner` | Variable weeks plus overtime and lodging | `irregular_earnings_average`, AWW `968.23`, `inKindWeekly: 140.00` |
+| `new-hire` | Employment starting eleven weeks before the injury | `short_history_projection`, AWW `1323.04` |
+| `two-jobs` | A second, concurrent employer | `concurrent_aggregate`, AWW `1174.78` |
+| `capped-executive` | Earnings above the indemnity ceiling | TD `1539.71` with `tdBound: max` |
+| `neglected-file` | A negligent administrator's payment history | `gapDays: 75`, `latePaymentCount: 3`, `maxDaysLate: 54`, funding lag 118 days |
+| `atypical-earner` | The one method the engine will never select | `earning_capacity` with `methodSource: seed`, AWW `1465.00` — the stated figure exactly, with every "considered" operand zero |
+
+The dates of injury span four rate vintages on purpose. A caseload rated under
+one vintage regardless of its dates is the defect a date-keyed basis exists to
+remove, and a spec whose cases all sat in one bracket could not show that it had
+been.
+
+Every one of those rate lines is **counsel-unconfirmed**, and every manifest says
+so. See "Every statutory number here is unverified" above before relying on one.
 
 ---
 
