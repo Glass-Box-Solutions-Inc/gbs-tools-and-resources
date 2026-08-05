@@ -23,6 +23,7 @@ jobs:
       agent-swarm: ${{ steps.filter.outputs.agent-swarm }}
       agentic-debugger: ${{ steps.filter.outputs.agentic-debugger }}
       awesome-claude-code: ${{ steps.filter.outputs.awesome-claude-code }}
+      case-analysis-engine: ${{ steps.filter.outputs.case-analysis-engine }}
       compliance-auditor: ${{ steps.filter.outputs.compliance-auditor }}
       gbs-integration-validator: ${{ steps.filter.outputs.gbs-integration-validator }}
       hindsight: ${{ steps.filter.outputs.hindsight }}
@@ -49,6 +50,8 @@ jobs:
               - 'packages/agentic-debugger/**'
             awesome-claude-code:
               - 'packages/awesome-claude-code/**'
+            case-analysis-engine:
+              - 'packages/case-analysis-engine/**'
             compliance-auditor:
               - 'packages/compliance-auditor/**'
             gbs-integration-validator:
@@ -341,6 +344,26 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt 2>/dev/null || true
       - run: python -m pytest tests/ -x || echo "No tests yet"
+
+  case-analysis-engine:
+    name: "case-analysis-engine"
+    needs: changes
+    if: needs.changes.outputs.case-analysis-engine == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/case-analysis-engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Lint (ruff)
+        run: python -m ruff check src/ tests/
+      - name: Test
+        run: python -m pytest tests/ -x --tb=short -q
 
   wc-synthetic-caseload-engine:
     name: "wc-synthetic-caseload-engine"

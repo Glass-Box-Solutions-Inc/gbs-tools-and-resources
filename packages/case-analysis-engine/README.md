@@ -47,10 +47,41 @@ Any JSON/YAML object or array is accepted. Extraction systems can improve proven
 `evidence` on a claim. A payload without those fields remains usable: the input file and JSON/YAML
 path become its provenance, and the engine labels the evidence as limited rather than inventing it.
 
-The package recognizes these generator conventions automatically:
+The package recognizes these conventions automatically:
 
 - `manifest.json` with `caseFacts`, `documents`, and `provenance`.
 - `case_facts.yaml`, the resolved case ledger that mirrors `manifest.caseFacts`.
+- Its own `normalize` output (`{"facts": [...]}`), deserialized losslessly — a
+  normalize-then-analyze pipeline keeps every fact ID, source, location, page,
+  excerpt, and confidence exactly as first recorded.
+
+## Confidence policy
+
+A claim keeps the confidence its input supplied. Generator artifacts default to
+`1.0` because the generator ledger is its own system of record. A generic claim
+with no supplied score is recorded with `confidence: null` — the engine never
+invents a probability — and validation reports it as a `limited_evidence`
+warning so unscored claims stay visible rather than silently passing.
+
+## Source identity and reproducibility
+
+Facts are identified by a logical source label, not by the path the caller
+typed: the shortest trailing path suffix that distinguishes the inputs from one
+another (`manifest.json`, or `TC-001/manifest.json` when two cases each supply
+one). The same inputs therefore produce byte-identical reports whether they are
+referenced relatively, absolutely, or from a different checkout, so long as the
+distinguishing directories travel with the corpus.
+
+## Conflict scope
+
+Conflict and duplicate detection compares case-level claims only — facts whose
+source path carries no list index. A field repeated across list records
+(`documents[0].subtype` vs `documents[1].subtype`) describes distinct entities
+and is never reported as a contradiction. A generic single-word leaf (`status`,
+`name`) is qualified by its parent segment, so `treatment.status` and
+`surgery.status` are different properties; self-descriptive multi-word fields
+(`date_of_injury`, `averageWeeklyWage`) compare across sources and naming
+dialects regardless of nesting.
 
 ## Library API
 

@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0,<10.0"]
+dev = ["pytest>=8.0,<10.0", "ruff>=0.5"]
 
 [project.scripts]
 case-analysis = "case_analysis_engine.cli:cli"

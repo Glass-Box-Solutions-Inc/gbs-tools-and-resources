@@ -3,7 +3,6 @@ from pathlib import Path
 from case_analysis_engine.analysis import analyze_paths
 from case_analysis_engine.render import render_json, render_markdown
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 

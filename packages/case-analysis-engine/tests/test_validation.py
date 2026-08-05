@@ -27,4 +27,9 @@ def test_detects_conflicts_duplicates_low_confidence_and_chronology_questions() 
     assert "conflicting_fact" in codes
     assert "low_confidence" in codes
     assert "chronology_question" in codes
-    assert [event["date"] for event in chronology(facts)] == ["2025-01-15", "2025-02-01", "2025-02-01", "2025-02-02"]
+    assert [event["date"] for event in chronology(facts)] == [
+        "2025-01-15",
+        "2025-02-01",
+        "2025-02-01",
+        "2025-02-02",
+    ]

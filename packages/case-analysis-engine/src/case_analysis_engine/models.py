@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 Severity = Literal["error", "warning", "info"]
@@ -10,11 +10,15 @@ Severity = Literal["error", "warning", "info"]
 
 @dataclass(frozen=True, slots=True)
 class Evidence:
-    """Where a fact came from, without claiming more certainty than the input provides."""
+    """Where a fact came from, without claiming more certainty than the input provides.
+
+    ``confidence`` is ``None`` when the input supplied no score; the engine never
+    invents a probability for evidence it did not receive.
+    """
 
     source_id: str
     location: str
-    confidence: float
+    confidence: float | None
     source_type: str = "document_intake"
     page: str | None = None
     excerpt: str | None = None
@@ -32,7 +36,7 @@ class Fact:
     field: str
     value: Any
     source_path: str
-    confidence: float
+    confidence: float | None
     evidence: tuple[Evidence, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:

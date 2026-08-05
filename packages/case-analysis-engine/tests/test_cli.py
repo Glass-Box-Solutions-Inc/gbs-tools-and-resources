@@ -4,7 +4,6 @@ from click.testing import CliRunner
 
 from case_analysis_engine.cli import cli
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -14,7 +13,9 @@ def test_cli_normalize_analyze_validate_and_angles(tmp_path: Path) -> None:
     report_json = tmp_path / "report.json"
     report_markdown = tmp_path / "report.md"
 
-    normalize_result = runner.invoke(cli, ["normalize", str(FIXTURES / "intake.json"), "--out", str(normalized)])
+    normalize_result = runner.invoke(
+        cli, ["normalize", str(FIXTURES / "intake.json"), "--out", str(normalized)]
+    )
     analyze_result = runner.invoke(
         cli,
         [
@@ -28,7 +29,9 @@ def test_cli_normalize_analyze_validate_and_angles(tmp_path: Path) -> None:
         ],
     )
     validate_result = runner.invoke(cli, ["validate", str(FIXTURES / "intake.json")])
-    angles_result = runner.invoke(cli, ["angles", str(FIXTURES / "intake.json"), "--angle", "defense"])
+    angles_result = runner.invoke(
+        cli, ["angles", str(FIXTURES / "intake.json"), "--angle", "defense"]
+    )
 
     assert normalize_result.exit_code == 0, normalize_result.output
     assert analyze_result.exit_code == 0, analyze_result.output

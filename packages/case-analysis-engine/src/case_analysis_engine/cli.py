@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
@@ -36,9 +37,17 @@ def cli() -> None:
 
 
 @cli.command()
-@click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument(
+    "inputs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
 @click.option("--out", type=click.Path(dir_okay=False, path_type=Path), default=None)
-@click.option("--format", "output_format", type=click.Choice(["json", "yaml"]), default="json", show_default=True)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["json", "yaml"]),
+    default="json",
+    show_default=True,
+)
 def normalize(inputs: tuple[Path, ...], out: Path | None, output_format: str) -> None:
     """Normalize JSON/YAML claims into evidence-bearing facts."""
     facts = normalize_paths(_paths(inputs))
@@ -46,27 +55,34 @@ def normalize(inputs: tuple[Path, ...], out: Path | None, output_format: str) ->
     content = (
         yaml.safe_dump(payload, sort_keys=True, allow_unicode=False)
         if output_format == "yaml"
-        else __import__("json").dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
+        else json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
     )
     _write_or_echo(content, out)
 
 
 @cli.command()
-@click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument(
+    "inputs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
 @click.option("--out", type=click.Path(dir_okay=False, path_type=Path), default=None)
 def validate(inputs: tuple[Path, ...], out: Path | None) -> None:
     """Report conflicts, duplicates, missing provenance, and chronology questions."""
     findings = validate_facts(normalize_paths(_paths(inputs)))
-    content = __import__("json").dumps(
-        {"findings": [finding.as_dict() for finding in findings]}, indent=2, sort_keys=True
-    ) + "\n"
+    content = (
+        json.dumps(
+            {"findings": [finding.as_dict() for finding in findings]}, indent=2, sort_keys=True
+        )
+        + "\n"
+    )
     _write_or_echo(content, out)
     if any(finding.severity == "error" for finding in findings):
         raise click.exceptions.Exit(1)
 
 
 @cli.command()
-@click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument(
+    "inputs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
 @click.option("--json-out", type=click.Path(dir_okay=False, path_type=Path), default=None)
 @click.option("--markdown-out", type=click.Path(dir_okay=False, path_type=Path), default=None)
 def analyze(inputs: tuple[Path, ...], json_out: Path | None, markdown_out: Path | None) -> None:
@@ -82,7 +98,9 @@ def analyze(inputs: tuple[Path, ...], json_out: Path | None, markdown_out: Path 
 
 
 @cli.command()
-@click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument(
+    "inputs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
 @click.option("--angle", type=click.Choice(["applicant", "defense", "neutral"]), default=None)
 def angles(inputs: tuple[Path, ...], angle: str | None) -> None:
     """Show supplied-evidence observations from applicant, defense, and neutral viewpoints."""
@@ -92,4 +110,5 @@ def angles(inputs: tuple[Path, ...], angle: str | None) -> None:
         click.echo(f"{item.name}:")
         for observation in item.observations:
             click.echo(f"  - {observation}")
+        click.echo(f"  - Facts: {', '.join(item.fact_ids) or 'none'}")
         click.echo(f"  - Caveat: {item.caveat}")

@@ -3,13 +3,30 @@
   "adjNumber": "ADJ1234567",
   "applicant": "Jordan Doe",
   "employer": "Acme Delivery LLC",
-  "documents": [{"subtype": "TREATING_PHYSICIAN_REPORT", "documentDate": "2025-02-01"}],
+  "documents": [
+    {"subtype": "TREATING_PHYSICIAN_REPORT", "documentDate": "2025-02-01"},
+    {"subtype": "QME_COMPREHENSIVE_REPORT", "documentDate": "2025-04-15"}
+  ],
   "caseFacts": {
     "treatment": {"status": "active", "dischargeDate": null},
-    "diagnostics": [{"modality": "mri", "display": "MRI", "performed": true}],
+    "diagnostics": [
+      {"modality": "mri", "display": "MRI", "performed": true},
+      {"modality": "emg", "display": "EMG", "performed": false}
+    ],
     "surgery": {"status": "none", "cptCode": null},
-    "providers": [{"name": "Dr. Rivera", "specialty": "Orthopedics", "facility": "Rivera Clinic"}],
-    "money": {"averageWeeklyWage": 1200, "temporaryDisabilityRate": 800, "settlementGross": 25000}
+    "providers": [
+      {"name": "Dr. Rivera", "specialty": "Orthopedics", "facility": "Rivera Clinic"},
+      {"name": "Dr. Chen", "specialty": "Neurology", "facility": "Chen Neurology Group"}
+    ],
+    "money": {
+      "averageWeeklyWage": 1200,
+      "temporaryDisabilityRate": 800,
+      "settlementGross": 25000,
+      "benefitEvents": [
+        {"type": "td_payment", "date": "2025-02-14", "amount": 800},
+        {"type": "td_payment", "date": "2025-02-28", "amount": 800}
+      ]
+    }
   },
   "provenance": {"generator": "wc-synthetic-caseload-engine@0.3.0", "rngSeed": 42}
 }

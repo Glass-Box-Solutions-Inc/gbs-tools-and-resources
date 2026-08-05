@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections import defaultdict
 from datetime import date
 from typing import Any
 
 from case_analysis_engine.models import Fact, Finding
+from case_analysis_engine.text import canonical_field, stable_value
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _STAGES = (
@@ -21,13 +21,26 @@ _STAGES = (
 
 
 def validate_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
-    """Find data defects while keeping mere ambiguity distinct from a hard conflict."""
+    """Find data defects while keeping mere ambiguity distinct from a hard conflict.
+
+    Conflict and duplicate grouping covers case-level claims only — facts whose
+    source path holds no list index. A field repeated across list records
+    (``documents[0].subtype`` vs ``documents[1].subtype``) describes distinct
+    entities, not two assertions about one thing, and is not compared. A generic
+    single-word leaf (``status``, ``name``) is qualified by its parent segment,
+    so ``treatment.status`` and ``surgery.status`` are different properties;
+    self-descriptive multi-word fields (``date_of_injury``) compare across
+    sources regardless of nesting.
+    """
     findings: list[Finding] = []
     by_key: dict[tuple[str, str], list[Fact]] = defaultdict(list)
     by_exact: dict[tuple[str, str, str], list[Fact]] = defaultdict(list)
     for fact in facts:
-        by_key[(fact.category, _canonical_field(fact.field))].append(fact)
-        by_exact[(fact.category, _canonical_field(fact.field), _stable_value(fact.value))].append(fact)
+        if _is_case_level(fact):
+            by_key[(fact.category, _comparison_field(fact))].append(fact)
+            by_exact[(fact.category, _comparison_field(fact), stable_value(fact.value))].append(
+                fact
+            )
         if not fact.evidence:
             findings.append(
                 Finding(
@@ -38,12 +51,15 @@ def validate_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
                     category="evidence_quality",
                 )
             )
-        elif all(item.source_id == "" for item in fact.evidence):
+        elif fact.confidence is None:
             findings.append(
                 Finding(
-                    code="missing_evidence_source",
+                    code="limited_evidence",
                     severity="warning",
-                    message=f"{fact.field} has evidence metadata but no identified source document.",
+                    message=(
+                        f"{fact.field} carries no supplied confidence; its provenance is the "
+                        "input record only and it should be treated as unscored."
+                    ),
                     fact_ids=(fact.id,),
                     category="evidence_quality",
                 )
@@ -65,19 +81,25 @@ def validate_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
                 Finding(
                     code="duplicate_fact",
                     severity="info",
-                    message=f"{field} is repeated with the same normalized value in {len(group)} sources.",
+                    message=(
+                        f"{field} is repeated with the same normalized value "
+                        f"in {len(group)} sources."
+                    ),
                     fact_ids=tuple(sorted(item.id for item in group)),
                     category=group[0].category,
                 )
             )
     for (_, field), group in sorted(by_key.items()):
-        values = {_stable_value(item.value) for item in group}
+        values = {stable_value(item.value) for item in group}
         if len(values) > 1:
             findings.append(
                 Finding(
                     code="conflicting_fact",
                     severity="error",
-                    message=f"{field} has {len(values)} incompatible asserted values; resolve against source evidence.",
+                    message=(
+                        f"{field} has {len(values)} incompatible asserted values; "
+                        "resolve against source evidence."
+                    ),
                     fact_ids=tuple(sorted(item.id for item in group)),
                     category=group[0].category,
                 )
@@ -91,7 +113,9 @@ def chronology(facts: tuple[Fact, ...] | list[Fact]) -> tuple[dict[str, Any], ..
     events: list[dict[str, Any]] = []
     for fact in facts:
         parsed = _date_value(fact.value)
-        if parsed is not None and ("date" in _canonical_field(fact.field) or fact.field.lower() == "doi"):
+        if parsed is not None and (
+            "date" in canonical_field(fact.field) or fact.field.lower() == "doi"
+        ):
             events.append(
                 {
                     "date": parsed.isoformat(),
@@ -114,7 +138,7 @@ def _chronology_findings(facts: tuple[Fact, ...]) -> list[Finding]:
     findings: list[Finding] = []
     present = [stage for stage in _STAGES if staged.get(stage[0])]
     for index, earlier in enumerate(present):
-        for later in present[index + 1:]:
+        for later in present[index + 1 :]:
             early_events, late_events = staged[earlier[0]], staged[later[0]]
             if min(date_value for date_value, _ in early_events) > min(
                 date_value for date_value, _ in late_events
@@ -128,7 +152,8 @@ def _chronology_findings(facts: tuple[Fact, ...]) -> list[Finding]:
                         code="chronology_question",
                         severity="warning",
                         message=(
-                            f"{later[0]} is dated before {earlier[0]}; this may be valid but needs source review."
+                            f"{later[0]} is dated before {earlier[0]}; "
+                            "this may be valid but needs source review."
                         ),
                         fact_ids=tuple(item.id for item in paired),
                         category="procedure",
@@ -137,12 +162,22 @@ def _chronology_findings(facts: tuple[Fact, ...]) -> list[Finding]:
     return findings
 
 
-def _canonical_field(field: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", field.lower()).strip("_")
+def _is_case_level(fact: Fact) -> bool:
+    return "[" not in fact.source_path
 
 
-def _stable_value(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=True, sort_keys=True, default=str, separators=(",", ":"))
+def _comparison_field(fact: Fact) -> str:
+    """The identity under which two case-level claims count as the same property."""
+    leaf = canonical_field(fact.field)
+    if "_" in leaf:
+        return leaf
+    parent = _parent_segment(fact.source_path)
+    return canonical_field(f"{parent}_{leaf}") if parent else leaf
+
+
+def _parent_segment(path: str) -> str:
+    parts = [part for part in path.split(".") if part and part != "$"]
+    return parts[-2] if len(parts) >= 2 else ""
 
 
 def _date_value(value: Any) -> date | None:
@@ -155,5 +190,5 @@ def _date_value(value: Any) -> date | None:
 
 
 def _stage_for(field: str) -> str | None:
-    normalized = _canonical_field(field)
+    normalized = canonical_field(field)
     return next((stage for stage, fields in _STAGES if normalized in fields), None)
