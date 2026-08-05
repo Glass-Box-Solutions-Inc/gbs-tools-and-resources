@@ -23,24 +23,23 @@ _STAGES = (
 def validate_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
     """Find data defects while keeping mere ambiguity distinct from a hard conflict.
 
-    Conflict and duplicate grouping covers case-level claims only — facts whose
-    source path holds no list index. A field repeated across list records
-    (``documents[0].subtype`` vs ``documents[1].subtype``) describes distinct
-    entities, not two assertions about one thing, and is not compared. A generic
-    single-word leaf (``status``, ``name``) is qualified by its parent segment,
-    so ``treatment.status`` and ``surgery.status`` are different properties;
-    self-descriptive multi-word fields (``date_of_injury``) compare across
-    sources regardless of nesting.
+    Conflict and duplicate grouping covers ``claim`` and ``case`` scoped facts;
+    ``entity`` facts — attributes of one element of a repeated collection, such
+    as ``documents[1].subtype`` — describe distinct entities and are never
+    compared against their siblings. Within a group sharing one canonical field,
+    two facts are the same property only when their qualifier chains are
+    suffix-compatible: ``caseFacts.money.averageWeeklyWage`` matches
+    ``money.averageWeeklyWage`` and bare ``employer`` matches ``case.employer``,
+    while ``applicant.phone_number`` never merges with
+    ``adjuster.phone_number``. An explicit claim record names its field
+    directly, so it carries an empty chain and compares everywhere its field
+    appears.
     """
     findings: list[Finding] = []
-    by_key: dict[tuple[str, str], list[Fact]] = defaultdict(list)
-    by_exact: dict[tuple[str, str, str], list[Fact]] = defaultdict(list)
+    comparable: dict[tuple[str, str], list[Fact]] = defaultdict(list)
     for fact in facts:
-        if _is_case_level(fact):
-            by_key[(fact.category, _comparison_field(fact))].append(fact)
-            by_exact[(fact.category, _comparison_field(fact), stable_value(fact.value))].append(
-                fact
-            )
+        if fact.scope in ("claim", "case"):
+            comparable[(fact.category, canonical_field(fact.field))].append(fact)
         if not fact.evidence:
             findings.append(
                 Finding(
@@ -57,8 +56,8 @@ def validate_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
                     code="limited_evidence",
                     severity="warning",
                     message=(
-                        f"{fact.field} carries no supplied confidence; its provenance is the "
-                        "input record only and it should be treated as unscored."
+                        f"{fact.field} carries no usable supplied confidence; "
+                        "it should be treated as unscored."
                     ),
                     fact_ids=(fact.id,),
                     category="evidence_quality",
@@ -75,37 +74,71 @@ def validate_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
                 )
             )
 
-    for (_, field, _), group in sorted(by_exact.items()):
-        if len(group) > 1:
+    for (_, field), group in sorted(comparable.items()):
+        conflicting_ids, duplicate_ids_by_value = _compare_group(group)
+        for value, ids in sorted(duplicate_ids_by_value.items()):
             findings.append(
                 Finding(
                     code="duplicate_fact",
                     severity="info",
                     message=(
-                        f"{field} is repeated with the same normalized value "
-                        f"in {len(group)} sources."
+                        f"{field} is repeated with the same normalized value in {len(ids)} sources."
                     ),
-                    fact_ids=tuple(sorted(item.id for item in group)),
+                    fact_ids=tuple(sorted(ids)),
                     category=group[0].category,
                 )
             )
-    for (_, field), group in sorted(by_key.items()):
-        values = {stable_value(item.value) for item in group}
-        if len(values) > 1:
+        if conflicting_ids:
+            distinct = {stable_value(item.value) for item in group if item.id in conflicting_ids}
             findings.append(
                 Finding(
                     code="conflicting_fact",
                     severity="error",
                     message=(
-                        f"{field} has {len(values)} incompatible asserted values; "
+                        f"{field} has {len(distinct)} incompatible asserted values; "
                         "resolve against source evidence."
                     ),
-                    fact_ids=tuple(sorted(item.id for item in group)),
+                    fact_ids=tuple(sorted(conflicting_ids)),
                     category=group[0].category,
                 )
             )
     findings.extend(_chronology_findings(tuple(facts)))
     return tuple(sorted(findings, key=lambda item: (item.severity, item.code, item.fact_ids)))
+
+
+def _compare_group(group: list[Fact]) -> tuple[set[str], dict[str, set[str]]]:
+    """Pairwise comparison under chain compatibility: conflicts and per-value duplicates."""
+    conflicting: set[str] = set()
+    duplicates: dict[str, set[str]] = defaultdict(set)
+    chains = [_qualifier_chain(fact) for fact in group]
+    for index, first in enumerate(group):
+        for offset, second in enumerate(group[index + 1 :], start=index + 1):
+            if not _chains_compatible(chains[index], chains[offset]):
+                continue
+            if stable_value(first.value) == stable_value(second.value):
+                duplicates[stable_value(first.value)].update((first.id, second.id))
+            else:
+                conflicting.update((first.id, second.id))
+    return conflicting, duplicates
+
+
+def _qualifier_chain(fact: Fact) -> tuple[str, ...]:
+    """The canonicalized parent segments that qualify a fact's leaf field.
+
+    A ``claim`` names its field directly and carries no chain. For flattened
+    scalars the chain is every dotted segment above the leaf, index-stripped and
+    canonicalized, with the root marker removed.
+    """
+    if fact.scope == "claim":
+        return ()
+    parts = [part for part in fact.source_path.split(".") if part and part != "$"]
+    segments = (canonical_field(part.split("[", 1)[0]) for part in parts[:-1])
+    return tuple(segment for segment in segments if segment)
+
+
+def _chains_compatible(first: tuple[str, ...], second: tuple[str, ...]) -> bool:
+    shorter, longer = (first, second) if len(first) <= len(second) else (second, first)
+    return longer[len(longer) - len(shorter) :] == shorter
 
 
 def chronology(facts: tuple[Fact, ...] | list[Fact]) -> tuple[dict[str, Any], ...]:
@@ -160,24 +193,6 @@ def _chronology_findings(facts: tuple[Fact, ...]) -> list[Finding]:
                     )
                 )
     return findings
-
-
-def _is_case_level(fact: Fact) -> bool:
-    return "[" not in fact.source_path
-
-
-def _comparison_field(fact: Fact) -> str:
-    """The identity under which two case-level claims count as the same property."""
-    leaf = canonical_field(fact.field)
-    if "_" in leaf:
-        return leaf
-    parent = _parent_segment(fact.source_path)
-    return canonical_field(f"{parent}_{leaf}") if parent else leaf
-
-
-def _parent_segment(path: str) -> str:
-    parts = [part for part in path.split(".") if part and part != "$"]
-    return parts[-2] if len(parts) >= 2 else ""
 
 
 def _date_value(value: Any) -> date | None:

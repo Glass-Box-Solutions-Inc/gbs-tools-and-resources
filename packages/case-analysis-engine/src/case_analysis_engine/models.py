@@ -27,9 +27,19 @@ class Evidence:
         return asdict(self)
 
 
+FactScope = Literal["claim", "case", "entity"]
+
+
 @dataclass(frozen=True, slots=True)
 class Fact:
-    """One normalized assertion, preserving its original path and all available evidence."""
+    """One normalized assertion, preserving its original path and all available evidence.
+
+    ``scope`` records what kind of assertion this is, decided at normalization:
+    ``claim`` — an explicit claim record naming its own field; ``case`` — a
+    case-level scalar flattened from an unindexed path; ``entity`` — an
+    attribute of one element of a repeated collection (a document, a provider),
+    which is never compared against its siblings' attributes.
+    """
 
     id: str
     category: str
@@ -38,6 +48,7 @@ class Fact:
     source_path: str
     confidence: float | None
     evidence: tuple[Evidence, ...] = ()
+    scope: FactScope = "case"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -47,6 +58,7 @@ class Fact:
             "value": self.value,
             "sourcePath": self.source_path,
             "confidence": self.confidence,
+            "scope": self.scope,
             "evidence": [item.as_dict() for item in self.evidence],
         }
 

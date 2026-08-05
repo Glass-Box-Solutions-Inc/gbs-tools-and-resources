@@ -453,6 +453,7 @@ jobs:
       - agent-swarm
       - agentic-debugger
       - awesome-claude-code
+      - case-analysis-engine
       - compliance-auditor
       - gbs-integration-validator
       - hindsight
@@ -474,6 +475,7 @@ jobs:
             "${{ needs.agent-swarm.result }}"
             "${{ needs.agentic-debugger.result }}"
             "${{ needs.awesome-claude-code.result }}"
+            "${{ needs.case-analysis-engine.result }}"
             "${{ needs.compliance-auditor.result }}"
             "${{ needs.gbs-integration-validator.result }}"
             "${{ needs.hindsight.result }}"

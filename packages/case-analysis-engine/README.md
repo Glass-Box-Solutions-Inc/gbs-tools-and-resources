@@ -52,16 +52,19 @@ The package recognizes these conventions automatically:
 - `manifest.json` with `caseFacts`, `documents`, and `provenance`.
 - `case_facts.yaml`, the resolved case ledger that mirrors `manifest.caseFacts`.
 - Its own `normalize` output (`{"facts": [...]}`), deserialized losslessly — a
-  normalize-then-analyze pipeline keeps every fact ID, source, location, page,
-  excerpt, and confidence exactly as first recorded.
+  normalize-then-analyze pipeline keeps every fact ID, scope, source, location,
+  page, excerpt, and confidence exactly as first recorded.
 
 ## Confidence policy
 
 A claim keeps the confidence its input supplied. Generator artifacts default to
-`1.0` because the generator ledger is its own system of record. A generic claim
-with no supplied score is recorded with `confidence: null` — the engine never
-invents a probability — and validation reports it as a `limited_evidence`
-warning so unscored claims stay visible rather than silently passing.
+`1.0` because the generator ledger is its own system of record — but only when
+no confidence key is present at all. A generic claim with no supplied score is
+recorded with `confidence: null` — the engine never invents a probability — and
+validation reports it as a `limited_evidence` warning so unscored claims stay
+visible rather than silently passing. A confidence that is supplied but unusable
+(a boolean, an unparseable string, a value outside `[0, 1]`) is also recorded as
+`null` and reported; malformed metadata is never promoted to a default score.
 
 ## Source identity and reproducibility
 
@@ -74,14 +77,20 @@ distinguishing directories travel with the corpus.
 
 ## Conflict scope
 
-Conflict and duplicate detection compares case-level claims only — facts whose
-source path carries no list index. A field repeated across list records
-(`documents[0].subtype` vs `documents[1].subtype`) describes distinct entities
-and is never reported as a contradiction. A generic single-word leaf (`status`,
-`name`) is qualified by its parent segment, so `treatment.status` and
-`surgery.status` are different properties; self-descriptive multi-word fields
-(`date_of_injury`, `averageWeeklyWage`) compare across sources and naming
-dialects regardless of nesting.
+Every fact carries a `scope` decided at normalization: `claim` (an explicit
+claim record naming its own field, wherever it lives — including inside a
+`facts[]` list), `case` (a scalar flattened from an unindexed path), or
+`entity` (an attribute of one element of a repeated collection). Conflict and
+duplicate detection compares `claim` and `case` facts; `entity` facts describe
+distinct things (`documents[0].subtype` vs `documents[1].subtype`) and are
+never reported as contradictions.
+
+Within one canonical field — camelCase, PascalCase, and snake_case merge into
+one vocabulary — two facts are the same property only when their qualifier
+chains are suffix-compatible: `caseFacts.money.averageWeeklyWage` matches
+`money.averageWeeklyWage`, bare `employer` matches `case.employer`, and a claim
+record compares everywhere its field appears; `applicant.phone_number` never
+merges with `adjuster.phone_number`.
 
 ## Library API
 

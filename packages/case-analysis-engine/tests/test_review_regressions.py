@@ -97,3 +97,102 @@ def test_report_bytes_do_not_depend_on_path_spelling(tmp_path: Path, monkeypatch
 
     assert absolute == relative == other_checkout
     assert "checkout-a" not in absolute
+
+
+def test_claim_records_in_lists_still_conflict(tmp_path: Path) -> None:
+    """Explicit claim records keep conflict detection even though they live in a list."""
+    payload = {
+        "facts": [
+            {"field": "date_of_injury", "value": "2025-02-01", "confidence": 0.9},
+            {"field": "date_of_injury", "value": "2025-03-05", "confidence": 0.8},
+        ]
+    }
+    source = tmp_path / "claims.json"
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    facts = normalize_paths([source])
+    assert all(fact.scope == "claim" for fact in facts)
+    assert any(finding.code == "conflicting_fact" for finding in validate_facts(facts))
+
+
+def test_differently_parented_fields_do_not_merge(tmp_path: Path) -> None:
+    """applicant.phone_number and adjuster.phone_number are different properties."""
+    source = tmp_path / "parties.json"
+    source.write_text(
+        json.dumps(
+            {
+                "applicant": {"phone_number": "555-0100"},
+                "adjuster": {"phone_number": "555-0199"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = validate_facts(normalize_paths([source]))
+    assert not any(finding.code == "conflicting_fact" for finding in findings)
+
+
+def test_container_nesting_does_not_hide_conflicts(tmp_path: Path) -> None:
+    """A bare field and the same field under a container qualifier still conflict."""
+    (tmp_path / "a.json").write_text(json.dumps({"case": {"employer": "Acme"}}), encoding="utf-8")
+    (tmp_path / "b.json").write_text(json.dumps({"employer": "Zenith"}), encoding="utf-8")
+
+    findings = validate_facts(normalize_paths([tmp_path / "a.json", tmp_path / "b.json"]))
+    assert any(finding.code == "conflicting_fact" for finding in findings)
+
+
+def test_yaml_native_dates_normalize_and_enter_chronology(tmp_path: Path) -> None:
+    """Unquoted YAML dates become ISO strings: JSON output stays valid, chronology sees them."""
+    source = tmp_path / "intake.yaml"
+    source.write_text(
+        "date_of_injury: 2025-01-15\nsurgery_datetime: 2025-03-01 09:30:00\n", encoding="utf-8"
+    )
+
+    facts = normalize_paths([source])
+    values = {fact.field: fact.value for fact in facts}
+    assert values["date_of_injury"] == "2025-01-15"
+    assert isinstance(values["surgery_datetime"], str)
+
+    result = CliRunner().invoke(cli, ["normalize", str(source)])
+    assert result.exit_code == 0, result.output
+    json.loads(result.output)
+
+    report = analyze_paths([source])
+    assert any(event["date"] == "2025-01-15" for event in report.chronology)
+
+
+def test_duplicate_inputs_keep_reports_path_free(tmp_path: Path) -> None:
+    """The same file supplied twice falls back to occurrence labels, never absolute paths."""
+    case_dir = tmp_path / "TC-001"
+    case_dir.mkdir()
+    shutil.copy(FIXTURES / "generator_manifest.json", case_dir / "manifest.json")
+    target = case_dir / "manifest.json"
+
+    rendered = render_json(analyze_paths([target, target]))
+    assert "input-0:manifest.json" in rendered
+    assert str(tmp_path) not in rendered
+
+
+def test_invalid_confidence_never_promotes(tmp_path: Path) -> None:
+    """Present-but-invalid confidence stays unscored — even where the default is 1.0."""
+    manifest = json.loads((FIXTURES / "generator_manifest.json").read_text(encoding="utf-8"))
+    manifest["caseFacts"]["money"]["confidence"] = "high"
+    high = tmp_path / "manifest.json"
+    high.write_text(json.dumps(manifest), encoding="utf-8")
+
+    money_facts = [
+        fact
+        for fact in normalize_paths([high])
+        if fact.source_path.startswith("$.caseFacts.money.") and "[" not in fact.source_path
+    ]
+    assert money_facts and all(fact.confidence is None for fact in money_facts)
+
+    for bad in (True, 1.7, -0.2):
+        manifest["caseFacts"]["money"]["confidence"] = bad
+        high.write_text(json.dumps(manifest), encoding="utf-8")
+        facts = [
+            fact
+            for fact in normalize_paths([high])
+            if fact.source_path.startswith("$.caseFacts.money.") and "[" not in fact.source_path
+        ]
+        assert facts and all(fact.confidence is None for fact in facts), bad

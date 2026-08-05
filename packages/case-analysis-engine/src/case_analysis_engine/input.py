@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from case_analysis_engine.models import Evidence, Fact
+from case_analysis_engine.models import Evidence, Fact, FactScope
 from case_analysis_engine.text import stable_value, tokens
+
+#: Sentinel distinguishing an absent confidence key from an explicit null.
+_ABSENT = object()
 
 _METADATA_KEYS = frozenset(
     {
@@ -37,11 +41,26 @@ def load_payload(path: Path) -> Any:
     """Load one JSON or YAML payload without imposing a vendor-specific extraction schema."""
     text = path.read_text(encoding="utf-8")
     try:
-        value = json.loads(text) if path.suffix.lower() == ".json" else yaml.safe_load(text)
+        if path.suffix.lower() == ".json":
+            value = json.loads(text)
+        else:
+            # YAML parses unquoted ISO dates natively; canonicalize to strings so
+            # chronology, comparison, and JSON serialization see one vocabulary.
+            value = _stringify_dates(yaml.safe_load(text))
     except (json.JSONDecodeError, yaml.YAMLError) as exc:
         raise ValueError(f"{path}: invalid structured input: {exc}") from exc
     if value is None:
         raise ValueError(f"{path}: input is empty")
+    return value
+
+
+def _stringify_dates(value: Any) -> Any:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _stringify_dates(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_stringify_dates(item) for item in value]
     return value
 
 
@@ -94,7 +113,9 @@ def logical_source_ids(paths: list[Path]) -> dict[int, str]:
         if len(set(labels)) == len(labels):
             break
     if len(set(labels)) != len(labels):
-        labels = [f"input-{index}:{label}" for index, label in enumerate(labels)]
+        # Identical resolved paths can never grow distinct suffixes; fall back to
+        # occurrence order plus basename so no absolute path reaches a report.
+        labels = [f"input-{index}:{path.name}" for index, path in enumerate(resolved)]
     return dict(enumerate(labels))
 
 
@@ -160,10 +181,15 @@ def normalize_payload(
     ) -> None:
         field = str(record.get("field") or record.get("name") or record.get("key"))
         context = _merged_context(inherited, record)
-        add_scalar(path, record["value"], context, field=field)
+        add_scalar(path, record["value"], context, field=field, scope="claim")
 
     def add_scalar(
-        path: str, value: Any, context: Mapping[str, Any] | None, *, field: str | None = None
+        path: str,
+        value: Any,
+        context: Mapping[str, Any] | None,
+        *,
+        field: str | None = None,
+        scope: FactScope | None = None,
     ) -> None:
         rendered_field = field or _path_field(path)
         category = classify(rendered_field, path)
@@ -178,6 +204,7 @@ def normalize_payload(
                 source_path=path,
                 confidence=min(supplied) if supplied else None,
                 evidence=evidence,
+                scope=scope or _scope_for_path(path),
             )
         )
 
@@ -316,24 +343,33 @@ def _fact_from_record(record: Mapping[str, Any]) -> Fact:
         for item in record.get("evidence", ())
         if isinstance(item, Mapping)
     )
+    source_path = str(record.get("sourcePath", record.get("source_path", "")))
+    scope = record.get("scope")
     return Fact(
         id=str(record["id"]),
         category=str(record["category"]),
         field=str(record["field"]),
         value=record["value"],
-        source_path=str(record.get("sourcePath", record.get("source_path", ""))),
+        source_path=source_path,
         confidence=_optional_float(record.get("confidence")),
         evidence=evidence,
+        scope=scope if scope in ("claim", "case", "entity") else _scope_for_path(source_path),
     )
 
 
+def _scope_for_path(path: str) -> FactScope:
+    return "entity" if "[" in path else "case"
+
+
 def _optional_float(value: Any) -> float | None:
-    if value is None:
+    """A confidence in [0, 1], or None. Booleans and out-of-range values are invalid."""
+    if value is None or isinstance(value, bool):
         return None
     try:
-        return max(0.0, min(1.0, float(value)))
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    return parsed if 0.0 <= parsed <= 1.0 else None
 
 
 def _merged_context(parent: Mapping[str, Any] | None, child: Mapping[str, Any]) -> dict[str, Any]:
@@ -363,10 +399,15 @@ def _evidence_for(
     evidence: list[Evidence] = []
     for item in records:
         entry = item if isinstance(item, Mapping) else {}
-        raw_confidence = entry.get("confidence", context.get("confidence", default_confidence))
-        confidence = _optional_float(raw_confidence)
-        if confidence is None and raw_confidence is not None:
+        raw_confidence = entry.get("confidence", context.get("confidence", _ABSENT))
+        if raw_confidence is _ABSENT or raw_confidence is None:
+            # Nothing supplied: the source-type default applies (1.0 for the
+            # generator ledger, None — unscored — for generic intake).
             confidence = default_confidence
+        else:
+            # Supplied but invalid parses to None and stays None: malformed
+            # metadata must never be promoted to a default score.
+            confidence = _optional_float(raw_confidence)
         source = str(
             entry.get("source_document")
             or entry.get("sourceDocument")
