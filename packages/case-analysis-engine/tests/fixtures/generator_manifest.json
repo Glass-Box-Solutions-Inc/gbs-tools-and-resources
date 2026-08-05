@@ -1,0 +1,15 @@
+{
+  "caseId": "TC-001",
+  "adjNumber": "ADJ1234567",
+  "applicant": "Jordan Doe",
+  "employer": "Acme Delivery LLC",
+  "documents": [{"subtype": "TREATING_PHYSICIAN_REPORT", "documentDate": "2025-02-01"}],
+  "caseFacts": {
+    "treatment": {"status": "active", "dischargeDate": null},
+    "diagnostics": [{"modality": "mri", "display": "MRI", "performed": true}],
+    "surgery": {"status": "none", "cptCode": null},
+    "providers": [{"name": "Dr. Rivera", "specialty": "Orthopedics", "facility": "Rivera Clinic"}],
+    "money": {"averageWeeklyWage": 1200, "temporaryDisabilityRate": 800, "settlementGross": 25000}
+  },
+  "provenance": {"generator": "wc-synthetic-caseload-engine@0.3.0", "rngSeed": 42}
+}

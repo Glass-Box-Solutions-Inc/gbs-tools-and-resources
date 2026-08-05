@@ -1,0 +1,18 @@
+treatment:
+  status: active
+  dischargeDate: null
+diagnostics:
+  - modality: mri
+    display: MRI
+    performed: true
+surgery:
+  status: none
+  cptCode: null
+providers:
+  - name: Dr. Rivera
+    specialty: Orthopedics
+    facility: Rivera Clinic
+money:
+  averageWeeklyWage: 1200
+  temporaryDisabilityRate: 800
+  settlementGross: 25000
