@@ -177,13 +177,10 @@ def normalize_paths_report(paths: Iterable[Path]) -> NormalizedInput:
             payload, source_id=labels[index], source_type=source_kind(payload, path)
         )
         facts.extend(result.facts)
-        # A raw path entry (starts at the root marker) gains this input's label;
-        # an entry re-ingested from normalize output is already source-qualified
-        # and must not be double-prefixed.
-        skipped.extend(
-            f"{labels[index]}:{entry}" if entry.startswith("$") else entry
-            for entry in result.skipped
-        )
+        # Entries arrive fully qualified from normalize_payload_report — raw
+        # payloads were qualified at origin, normalized payloads verbatim — so
+        # no first-character guessing happens here.
+        skipped.extend(result.skipped)
     return NormalizedInput(
         tuple(
             sorted(
@@ -312,7 +309,11 @@ def normalize_payload_report(
                 key=lambda fact: (fact.category, fact.field, stable_value(fact.value), fact.id),
             )
         ),
-        tuple(sorted(skipped)),
+        # Qualified at origin: this payload is raw, so every skipped path gains
+        # this source's label. A recognized normalized payload returns its
+        # already-qualified entries verbatim (see the branch above) — origin,
+        # not string shape, decides.
+        tuple(sorted(f"{source_id}:{entry}" for entry in skipped)),
     )
 
 

@@ -173,3 +173,46 @@ def test_claim_container_status_resets_at_intermediate_mappings(tmp_path: Path) 
     )
     facts = normalize_paths([source])
     assert all(fact.scope == "entity" for fact in facts)
+
+
+def test_dollar_prefixed_filenames_do_not_double_qualify(tmp_path: Path) -> None:
+    """Qualification is decided by payload origin, never by an entry's first character."""
+    source = tmp_path / "$case.json"
+    source.write_text(json.dumps({"applicant_name": "Jordan", "page": 3}), encoding="utf-8")
+    direct = analyze_paths([source])
+    assert direct.skipped == ("$case.json:$.page",)
+
+    cli_out = CliRunner().invoke(cli, ["normalize", str(source)])
+    assert cli_out.exit_code == 0, cli_out.output
+    preserved = tmp_path / "normalized.json"
+    preserved.write_text(cli_out.output, encoding="utf-8")
+    replayed = analyze_paths([preserved])
+    assert replayed.skipped == direct.skipped
+    assert render_json(replayed) == render_json(direct)
+
+
+def test_versions_agree_everywhere(tmp_path: Path) -> None:
+    """pyproject, __version__, and the CLI identify one build."""
+    import tomllib
+
+    import case_analysis_engine
+
+    pyproject = tomllib.loads(
+        (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert case_analysis_engine.__version__ == pyproject["project"]["version"]
+
+    result = CliRunner().invoke(cli, ["--version"])
+    assert result.exit_code == 0, result.output
+    assert pyproject["project"]["version"] in result.output
+
+
+def test_invalid_skipped_shapes_are_rejected(tmp_path: Path) -> None:
+    """A versioned payload with a malformed skipped list errors clearly."""
+    import pytest
+
+    for bad in ("nope", [1], {"a": 1}):
+        source = tmp_path / "bad.json"
+        source.write_text(json.dumps({"version": 1, "facts": [], "skipped": bad}), encoding="utf-8")
+        with pytest.raises(ValueError, match="skipped"):
+            normalize_paths([source])
