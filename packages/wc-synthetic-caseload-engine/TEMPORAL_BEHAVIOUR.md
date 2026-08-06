@@ -40,6 +40,7 @@ with `wc-caseload generate --spec <spec> --out <dir>`.
 | **DOI shift** | `docs/measurements/doi-shift.yaml` | 1 | seed `424242` at `resolved`, DOI `2022-12-29`. Compared against stage-delta B's L1 run (DOI `2023-03-14`), which is its baseline — no separate manifest |
 | **Clamp probe** | `docs/measurements/clamp-probe.yaml` | 1 | seed `111111`, `active_treatment`, DOI `2025-06-15`, `eval_type: none` — 200 days of runway to the anchor |
 | **DOI rigidity** | `docs/measurements/doi-rigidity.yaml` | 4 | Added in review round 1 for §4: `rng_seed: 555001` at `resolved` under three DOIs, plus a different-seed control at DOI A |
+| **Surgery past-anchor** | `docs/measurements/surgery-past-anchor.yaml` | 1 | Added in review round 5 for §10: seed `660001`, `intake`, `eval_type: none`, `surgery: performed`, DOI `2025-11-20`. **Not** part of the §2 aggregate — a single-purpose probe |
 
 `docs/measurements/clamp-probe-eval-qme-rejected.yaml` is the same clamp probe without
 `eval_type: none`. It is committed because it **does not load** — it is the §6 footgun as a
@@ -440,15 +441,23 @@ said it was.
 
 1. Generate the seed at a DOI **well earlier** than you intend to use — early enough that the case
    plainly cannot reach 2026-01-01.
-2. **Take the latest date over the non-lien documents only.** Post-resolution lien tracks are
-   *designed* to run past the anchor (§10), so including them would make a legitimately-extended
-   case look unmeasurable. If the seed sets no `liens.post_resolution_litigation`, this is simply
-   the latest `documentDate`.
+2. **Take the latest date, excluding only an intentionally-extended lien track.** The partition
+   depends on one flag:
+   - `liens.post_resolution_litigation: false` (or absent) — **measure over all documents.**
+     Ordinary concurrent liens are bounded by the anchor like anything else and can legitimately
+     be the plan's true tail, so excluding them would let a clamped lien pass unnoticed.
+   - `liens.post_resolution_litigation: true` — **exclude that track only.** It is *designed* to
+     run past the anchor (§10), so counting it would make a legitimately-extended case look
+     permanently unmeasurable.
+
+   *(An earlier draft excluded **every** lien document. That was overbroad and reintroduced the
+   very defect this section exists to prevent: a concurrent lien could clamp while the non-lien
+   tail sat before the anchor, and step 4 would accept the clamped baseline.)*
 3. **If that date is on _or after_ the anchor, reject the run: the measurement is invalid.** Shift
    the DOI earlier and repeat from step 1. Both branches matter — a case whose core clamps while
    its lien track overruns has a latest date *after* the anchor, and an earlier draft of this
    procedure tested only for *equal to* and was therefore undefined for that configuration.
-4. Only once that date falls **strictly before** the anchor is `natural_span = latest_non_lien − DOI`
+4. Only once that date falls **strictly before** the anchor is `natural_span = that_date − DOI`
    the true requirement.
 5. Choose the working DOI so `available_runway >= natural_span + margin`.
 
@@ -677,8 +686,7 @@ because the two are easy to conflate and the difference is the whole point of th
 
 **Mechanism verified. Measured once, and it produced nothing past the anchor.**
 
-`lien_machine.py:180-207` (`_track_window`) is the only path in the engine that lets documents
-run past the anchor, and it does so deliberately:
+`lien_machine.py:180-207` (`_track_window`) is the only *deliberate* path past the anchor:
 
 ```python
 floor = resolution_date + timedelta(days=1) if post_resolution else timeline.injury_date
@@ -694,6 +702,35 @@ horizon **to whatever the chain needs** — and no further. `README.md` document
 intentional and notes a test
 (`test_liens_without_post_resolution_litigation_run_alongside_the_case`) asserting the default
 path never crosses the horizon.
+
+> **A second, undeliberate path exists — and it is not a lien.** *(Found in review round 5; not
+> previously documented anywhere.)* `planner.py:1908-1912` floors an operative document when
+> `scenario.surgery: "performed"` and the walk produced none:
+>
+> ```python
+> when = facts.surgery.date or timeline.injury_date + timedelta(days=210)
+> shaped.append((when, "OPERATIVE_HOSPITAL_RECORDS", TRACK_CORE, "treating_physician"))
+> ```
+>
+> This append carries **no `timeline.clamp(...)`**, unlike the per-machine dating at
+> `lifecycle_bridge.py:766`. So an accepted seed whose validated runway is shorter than 210 days —
+> `target_stage: intake` needs only 30 — emits a **core, non-lien** document past the anchor.
+>
+> **Measured** (`docs/measurements/surgery-past-anchor.yaml`, review round 5). Seed `660001`,
+> `target_stage: intake`, `eval_type: none`, `scenario.surgery: performed`, DOI **2025-11-20** —
+> 42 days of runway against a 30-day floor, so the seed **validates and generates cleanly**:
+>
+> | | |
+> |---|---|
+> | Documents | 14 |
+> | Liens | 0 |
+> | Documents past 2026-01-01 | **1** |
+> | The document | `OPERATIVE_HOSPITAL_RECORDS`, **2026-06-18** = DOI + 210 exactly, **169 days past the anchor** |
+>
+> Unlike the lien extension, this looks unintended — a missing clamp rather than a declared
+> exception — and it means **runway validation does not bound output**: a seed can pass every
+> floor and still emit past the horizon. Worth an **AJC ticket against the engine**; the tracker is
+> AJC and no ticket number is invented here.
 
 **What was measured.** `examples/demo-caseload.yaml:82` sets
 `post_resolution_litigation: true` on `nguyen-cr-three-liens` — one of the seven canonical
