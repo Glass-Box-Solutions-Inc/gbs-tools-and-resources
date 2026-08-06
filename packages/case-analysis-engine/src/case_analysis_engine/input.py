@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -102,7 +103,9 @@ def is_normalized_payload(payload: Any) -> bool:
     Recognized so a normalize-then-analyze pipeline round-trips facts losslessly
     instead of re-flattening them and replacing their original provenance.
     """
-    if not isinstance(payload, Mapping) or not ({"facts"} <= set(payload) <= {"facts", "version"}):
+    if not isinstance(payload, Mapping) or not (
+        {"facts"} <= set(payload) <= {"facts", "version", "skipped"}
+    ):
         return False
     records = payload["facts"]
     if not isinstance(records, list):
@@ -143,35 +146,75 @@ def logical_source_ids(paths: list[Path]) -> dict[int, str]:
     return dict(enumerate(labels))
 
 
+@dataclass(frozen=True, slots=True)
+class NormalizedInput:
+    """Facts plus a complete accounting of input keys not normalized as facts."""
+
+    facts: tuple[Fact, ...]
+    skipped: tuple[str, ...] = ()
+
+
+#: Container names whose list items may use ``name``/``key`` claim shorthand.
+#: Outside these, only an explicit ``field`` key promotes a mapping to a claim —
+#: ``{"name": ..., "value": ...}`` is an entity-row shape everywhere else.
+_CLAIM_CONTAINERS = frozenset({"facts", "claims", "assertions", "extractions", "extracted_facts"})
+
+
 def normalize_paths(paths: Iterable[Path]) -> tuple[Fact, ...]:
     """Load and normalize one or more inputs in caller order, then sort deterministically."""
+    return normalize_paths_report(paths).facts
+
+
+def normalize_paths_report(paths: Iterable[Path]) -> NormalizedInput:
+    """Like :func:`normalize_paths`, also returning the skipped-key accounting."""
     ordered = [Path(path) for path in paths]
     labels = logical_source_ids(ordered)
     facts: list[Fact] = []
+    skipped: list[str] = []
     for index, path in enumerate(ordered):
         payload = load_payload(path)
-        facts.extend(
-            normalize_payload(
-                payload, source_id=labels[index], source_type=source_kind(payload, path)
+        result = normalize_payload_report(
+            payload, source_id=labels[index], source_type=source_kind(payload, path)
+        )
+        facts.extend(result.facts)
+        skipped.extend(f"{labels[index]}:{entry}" for entry in result.skipped)
+    return NormalizedInput(
+        tuple(
+            sorted(
+                facts,
+                key=lambda fact: (fact.category, fact.field, stable_value(fact.value), fact.id),
             )
-        )
-    return tuple(
-        sorted(
-            facts, key=lambda fact: (fact.category, fact.field, stable_value(fact.value), fact.id)
-        )
+        ),
+        tuple(sorted(skipped)),
     )
 
 
 def normalize_payload(
     payload: Any, *, source_id: str, source_type: str = "document_intake"
 ) -> tuple[Fact, ...]:
-    """Turn every scalar in a JSON/YAML payload into an independently traceable fact.
+    """Turn every scalar in a JSON/YAML payload into an independently traceable fact."""
+    return normalize_payload_report(payload, source_id=source_id, source_type=source_type).facts
+
+
+def normalize_payload_report(
+    payload: Any, *, source_id: str, source_type: str = "document_intake"
+) -> NormalizedInput:
+    """Normalize one payload, returning facts plus the skipped-key accounting.
 
     Three shapes are understood directly: this engine's own ``normalize`` output
-    (deserialized losslessly, provenance intact), a common intake shape (a mapping
-    containing ``facts`` records with ``value`` and ``evidence``), and generator
-    artifacts. Everything else is flattened conservatively, retaining its
-    structured path as provenance rather than guessing at a proprietary schema.
+    (deserialized losslessly, provenance intact), claim records (an explicit
+    ``field`` key promotes anywhere; ``name``/``key`` shorthand only inside a
+    recognized claim container such as ``facts[]`` — an entity row like
+    ``{"name": "td_payment", "value": 800}`` is never read as an assertion), and
+    generator artifacts. Everything else is flattened conservatively, retaining
+    its structured path as provenance rather than guessing at a proprietary
+    schema.
+
+    Metadata vocabulary (``confidence``, ``source_document``, ``page``, …) is
+    treated as claim metadata only where it has sibling data to describe; a
+    mapping holding nothing but metadata-named keys is data
+    (``referral.source`` is an assertion, not provenance). Every key skipped as
+    metadata is recorded in ``skipped`` — nothing is dropped silently.
 
     Confidence policy: a claim keeps the confidence its input supplied. A
     generator artifact defaults to ``1.0`` because the ledger is its own system
@@ -179,24 +222,46 @@ def normalize_payload(
     invented number — and validation reports it as unscored.
     """
     if is_normalized_payload(payload):
-        return _facts_from_normalized(payload)
+        return NormalizedInput(_facts_from_normalized(payload))
     default_confidence = 1.0 if source_type.startswith("wc_generator") else None
     facts: list[Fact] = []
+    skipped: list[str] = []
 
-    def visit(value: Any, path: str, context: Mapping[str, Any] | None = None) -> None:
+    def visit(
+        value: Any,
+        path: str,
+        context: Mapping[str, Any] | None = None,
+        in_claims: bool = False,
+    ) -> None:
         if isinstance(value, Mapping):
-            if "value" in value and ("field" in value or "name" in value or "key" in value):
+            if "value" in value and (
+                "field" in value or (in_claims and ("name" in value or "key" in value))
+            ):
                 add_claim(value, path, context)
                 return
-            child_context = _merged_context(context, value)
-            for key in sorted(value, key=str):
-                if str(key) not in _METADATA_KEYS:
-                    segment = escape_segment(str(key))
-                    visit(value[key], f"{path}.{segment}" if path else segment, child_context)
+            keys = sorted(value, key=str)
+            data_keys = [key for key in keys if str(key) not in _METADATA_KEYS]
+            # Metadata names describe sibling data. With no sibling data to
+            # describe, every key here is data in its own right.
+            treat_as_metadata = bool(data_keys) and len(data_keys) < len(keys)
+            child_context = _merged_context(context, value) if treat_as_metadata else context
+            if treat_as_metadata:
+                for key in keys:
+                    if str(key) in _METADATA_KEYS:
+                        segment = escape_segment(str(key))
+                        skipped.append(f"{path}.{segment}" if path else segment)
+            for key in data_keys if treat_as_metadata else keys:
+                segment = escape_segment(str(key))
+                visit(
+                    value[key],
+                    f"{path}.{segment}" if path else segment,
+                    child_context,
+                    in_claims=canonical_field(str(key)) in _CLAIM_CONTAINERS,
+                )
             return
         if isinstance(value, list):
             for index, item in enumerate(value):
-                visit(item, f"{path}[{index}]", context)
+                visit(item, f"{path}[{index}]", context, in_claims=in_claims)
             return
         if value is not None:
             add_scalar(path, value, context)
@@ -234,10 +299,14 @@ def normalize_payload(
         )
 
     visit(payload, "$")
-    return tuple(
-        sorted(
-            facts, key=lambda fact: (fact.category, fact.field, stable_value(fact.value), fact.id)
-        )
+    return NormalizedInput(
+        tuple(
+            sorted(
+                facts,
+                key=lambda fact: (fact.category, fact.field, stable_value(fact.value), fact.id),
+            )
+        ),
+        tuple(sorted(skipped)),
     )
 
 
@@ -467,7 +536,13 @@ def _evidence_for(
     )
     evidence: list[Evidence] = []
     for item in records:
-        entry = item if isinstance(item, Mapping) else {}
+        if isinstance(item, Mapping):
+            entry: Mapping[str, Any] = item
+        elif isinstance(item, str) and item:
+            # A bare string in `evidence` names the source document.
+            entry = {"source_document": item}
+        else:
+            entry = {}
         raw_confidence = entry.get("confidence", context.get("confidence", _ABSENT))
         if raw_confidence is _ABSENT:
             # No confidence key at all: the source-type default applies (1.0 for

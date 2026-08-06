@@ -29,6 +29,7 @@ def render_markdown(report: AnalysisReport) -> str:
         f"- Normalized facts: {len(report.facts)}",
         f"- Findings: {counts['error']} error(s), {counts['warning']} warning(s), "
         f"{counts['info']} info note(s)",
+        f"- Skipped metadata keys: {len(report.skipped)}",
         "",
         "## Analysis domains",
         "",

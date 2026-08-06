@@ -110,6 +110,7 @@ class AnalysisReport:
     domains: dict[str, dict[str, Any]]
     chronology: tuple[dict[str, Any], ...]
     angles: tuple[Angle, ...]
+    skipped: tuple[str, ...] = ()
     caveat: str = (
         "This report organizes supplied evidence and identifies data-quality questions. "
         "It does not state legal conclusions, deadlines, entitlement, or legal advice."
@@ -123,4 +124,5 @@ class AnalysisReport:
             "domains": self.domains,
             "chronology": list(self.chronology),
             "angles": [angle.as_dict() for angle in self.angles],
+            "skippedKeys": list(self.skipped),
         }
