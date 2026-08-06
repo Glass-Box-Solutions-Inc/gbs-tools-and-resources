@@ -381,8 +381,10 @@ are identical.
 **Method, part 2 (`docs/measurements/doi-rigidity.yaml`, review round 1).** The probe above
 shifts the DOI *away* from the anchor, so it can only ever gain room. To find the boundary,
 seed `555001` at `target_stage: resolved` was run at three DOIs. Definitions, all measured
-from the DOI so the arithmetic is visible: **available runway** = anchor − DOI; **natural span**
-= last document date − DOI, the length the plan wants; **slack** = runway − span.
+from the DOI so the arithmetic is visible: **available runway** = anchor − DOI; **natural span** =
+the length the plan wants, which equals `last document date − DOI` **only on an unclamped run**
+(see the note under the table — on a clamped run that subtraction returns the clamped span, not
+the requirement); **slack** = runway − span, and it may be negative.
 
 | Case | DOI | Available runway | Natural span | Slack | Result |
 |---|---|---:|---:|---:|---|
@@ -427,11 +429,26 @@ The floor asks whether the *chain* fits; slack asks whether the *whole plan* fit
 available_runway >= natural_span + margin
 ```
 
-where `natural_span` is measured **per seed**, from a first generation, not assumed. Concretely:
-generate once, read the last `documentDate`, compute `natural_span = last − DOI`, and only then
-choose a DOI that leaves that span plus a margin before 2026-01-01. Shifting the DOI *later*
-(toward the anchor) spends slack and starts clamping the tail; shifting it *earlier* is always
-safe for shape, and costs only calendar realism.
+where `natural_span` is measured **per seed** — but it can only be measured from a run that was
+**not itself clamped**. `last − DOI` is the natural span only when the plan was never truncated;
+on a clamped run it returns the *clamped* span and silently understates the requirement. Measuring
+B directly would yield 977 and report zero slack, hiding the same 42-day shortfall this section
+exists to expose. **A single generation is not sufficient**, and an earlier draft of this procedure
+said it was.
+
+**The procedure, stated so it cannot return a clamped baseline:**
+
+1. Generate the seed at a DOI **well earlier** than you intend to use — early enough that the case
+   plainly cannot reach 2026-01-01.
+2. Read the last `documentDate`. **If it lands on or at the anchor, the run was clamped: the
+   measurement is invalid.** Shift the DOI earlier and repeat from step 1.
+3. Only once the latest document falls **strictly before** the anchor is `natural_span = last − DOI`
+   the true requirement.
+4. Choose the working DOI so `available_runway >= natural_span + margin`.
+
+Shifting the DOI *later* (toward the anchor) spends slack and begins clamping the tail. Shifting it
+*earlier* is safe for shape **on seeds with no authored absolute dates** — see the caveat below —
+and costs only calendar realism.
 
 **Not covered by this measurement:** a seed with authored absolute dates — for example
 `scenario.settlement.approval_date` — where the DOI moves but the authored date does not. Those
@@ -715,8 +732,9 @@ depending on an unmeasured quantity.
 2. **Mass is front-loaded 3×–15×**, bimodally — not a smooth band. Aim a case's start into your
    window, not its end. (§2)
 3. **DOI shifting is exact while there is slack.** One measure-and-shift pass aims a whole
-   timeline — after you have measured that seed's natural span and left room for it. Shifting
-   toward the anchor clamps the tail silently. (§4)
+   timeline — but measure the natural span from a run that was **not clamped**, or you will read
+   the clamped span back as the requirement and miss the shortfall entirely. Shifting toward the
+   anchor clamps the tail silently. (§4)
 4. **`eval_type` defaults to `qme`**, so every default lifecycle silently needs 240 days of
    runway. Write `eval_type: none` when you do not need an evaluation. (§6)
 5. **The anchor is a real input that provenance does not record.** Two runs at different anchors
