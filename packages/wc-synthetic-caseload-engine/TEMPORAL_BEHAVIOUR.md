@@ -440,11 +440,22 @@ said it was.
 
 1. Generate the seed at a DOI **well earlier** than you intend to use — early enough that the case
    plainly cannot reach 2026-01-01.
-2. Read the last `documentDate`. **If it lands on or at the anchor, the run was clamped: the
-   measurement is invalid.** Shift the DOI earlier and repeat from step 1.
-3. Only once the latest document falls **strictly before** the anchor is `natural_span = last − DOI`
+2. **Take the latest date over the non-lien documents only.** Post-resolution lien tracks are
+   *designed* to run past the anchor (§10), so including them would make a legitimately-extended
+   case look unmeasurable. If the seed sets no `liens.post_resolution_litigation`, this is simply
+   the latest `documentDate`.
+3. **If that date is on _or after_ the anchor, reject the run: the measurement is invalid.** Shift
+   the DOI earlier and repeat from step 1. Both branches matter — a case whose core clamps while
+   its lien track overruns has a latest date *after* the anchor, and an earlier draft of this
+   procedure tested only for *equal to* and was therefore undefined for that configuration.
+4. Only once that date falls **strictly before** the anchor is `natural_span = latest_non_lien − DOI`
    the true requirement.
-4. Choose the working DOI so `available_runway >= natural_span + margin`.
+5. Choose the working DOI so `available_runway >= natural_span + margin`.
+
+> **Why reject a date sitting exactly on the anchor?** It does not *prove* clamping — a plan can
+> legitimately end there with zero slack. But the two cases are indistinguishable from the output
+> alone, and treating a clamped run as natural is the error this whole section exists to prevent.
+> Rejecting is conservative, and the only cost is one more generation at an earlier DOI.
 
 Shifting the DOI *later* (toward the anchor) spends slack and begins clamping the tail. Shifting it
 *earlier* is safe for shape **on seeds with no authored absolute dates** — see the caveat below —
