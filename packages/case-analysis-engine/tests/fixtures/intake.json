@@ -1,0 +1,13 @@
+{
+  "case": {
+    "applicant": {"value": "Jordan Doe", "field": "applicant_name", "confidence": 0.98, "source_document": "application.pdf", "page": 1},
+    "employer": "Acme Delivery LLC",
+    "date_of_injury": "2025-01-15",
+    "injury": {"body_part": "left shoulder", "mechanism": "lifting"},
+    "treatment_events": [
+      {"treatment_date": "2025-02-01", "provider": "Dr. Rivera", "treatment": "physical therapy"}
+    ],
+    "financial": {"average_weekly_wage": 1200, "temporary_disability_rate": 800},
+    "settlement": {"amount": 25000}
+  }
+}
