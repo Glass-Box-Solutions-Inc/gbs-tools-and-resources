@@ -105,15 +105,18 @@ def is_normalized_payload(payload: Any) -> bool:
     if not isinstance(payload, Mapping) or not ({"facts"} <= set(payload) <= {"facts", "version"}):
         return False
     records = payload["facts"]
-    return (
-        isinstance(records, list)
-        and bool(records)
-        and all(
-            isinstance(record, Mapping)
-            and _NORMALIZED_FACT_KEYS <= set(record)
-            and ("sourcePath" in record or "source_path" in record)
-            for record in records
-        )
+    if not isinstance(records, list):
+        return False
+    if "version" in payload:
+        # A version marker makes the shape authoritative — including an empty
+        # ledger. Version dispatch and record validation happen with clear
+        # errors in _facts_from_normalized, never by silent reinterpretation.
+        return True
+    return bool(records) and all(
+        isinstance(record, Mapping)
+        and _NORMALIZED_FACT_KEYS <= set(record)
+        and ("sourcePath" in record or "source_path" in record)
+        for record in records
     )
 
 
@@ -343,8 +346,28 @@ def classify(field: str, path: str = "") -> str:
     return next((category for category, markers in rules if words & markers), "other")
 
 
+#: Keys a version-1 record must carry; sourcePath/source_path is checked separately.
+_V1_REQUIRED_KEYS = _NORMALIZED_FACT_KEYS | {"scope"}
+
+
 def _facts_from_normalized(payload: Mapping[str, Any]) -> tuple[Fact, ...]:
-    facts = tuple(_fact_from_record(record) for record in payload["facts"])
+    version = payload.get("version")
+    if version is not None and version != 1:
+        raise ValueError(
+            f"unsupported normalized schema version {version!r}; this engine reads version 1"
+        )
+    records = payload["facts"]
+    if version == 1:
+        for index, record in enumerate(records):
+            if not isinstance(record, Mapping):
+                raise ValueError(f"facts[{index}] is not a valid version-1 normalized record")
+            missing = sorted(_V1_REQUIRED_KEYS - set(record))
+            if missing or not ("sourcePath" in record or "source_path" in record):
+                raise ValueError(
+                    f"facts[{index}] is not a valid version-1 normalized record"
+                    f" (missing {missing or ['sourcePath']})"
+                )
+    facts = tuple(_fact_from_record(record) for record in records)
     return tuple(
         sorted(
             facts, key=lambda fact: (fact.category, fact.field, stable_value(fact.value), fact.id)
@@ -483,8 +506,17 @@ def _evidence_for(
 
 
 def _path_field(path: str) -> str:
+    """The leaf field named by a path: "value" for a root scalar, else the decoded leaf.
+
+    An empty-key leaf decodes to ``""`` and stays ``""`` — it must not fall back
+    to the root-scalar name, or ``{"": ...}`` would collide with a real
+    ``value`` key.
+    """
     part = path.rsplit(".", 1)[-1]
-    return unescape_segment(_strip_indexes(part).lstrip("$")) or "value"
+    stripped = _strip_indexes(part)
+    if stripped == "$":
+        return "value"
+    return unescape_segment(stripped)
 
 
 def _strip_indexes(part: str) -> str:

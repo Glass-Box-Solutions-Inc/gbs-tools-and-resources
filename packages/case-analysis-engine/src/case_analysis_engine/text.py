@@ -40,15 +40,22 @@ def stable_value(value: Any) -> str:
 _SEGMENT_ESCAPES = (("~", "~0"), (".", "~1"), ("[", "~2"), ("]", "~3"), ("$", "~4"))
 
 
+#: Encoded form of the empty key. A literal "~5" key escapes to "~05", so the
+#: sentinel can never be forged by input.
+_EMPTY_SEGMENT = "~5"
+
+
 def escape_segment(key: str) -> str:
     """Make a mapping key safe to embed as one dotted-path segment."""
     for char, escaped in _SEGMENT_ESCAPES:
         key = key.replace(char, escaped)
-    return key
+    return key or _EMPTY_SEGMENT
 
 
 def unescape_segment(segment: str) -> str:
     """Recover the original mapping key from an escaped path segment."""
+    if segment == _EMPTY_SEGMENT:
+        return ""
     for char, escaped in reversed(_SEGMENT_ESCAPES):
         segment = segment.replace(escaped, char)
     return segment

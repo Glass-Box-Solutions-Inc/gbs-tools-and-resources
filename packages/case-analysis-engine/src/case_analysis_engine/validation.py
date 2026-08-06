@@ -171,8 +171,7 @@ def _qualifier_chain(fact: Fact) -> tuple[str, ...]:
     if fact.scope == "claim":
         return ()
     parts = [part for part in fact.source_path.split(".") if part and part != "$"]
-    segments = (canonical_field(unescape_segment(part.split("[", 1)[0])) for part in parts[:-1])
-    return tuple(segment for segment in segments if segment)
+    return tuple(canonical_field(unescape_segment(part.split("[", 1)[0])) for part in parts[:-1])
 
 
 def _chains_compatible(first: tuple[str, ...], second: tuple[str, ...]) -> bool:

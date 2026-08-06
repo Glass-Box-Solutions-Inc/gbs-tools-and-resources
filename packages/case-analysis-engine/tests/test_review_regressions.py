@@ -341,3 +341,44 @@ def test_explicit_null_confidence_stays_unscored(tmp_path: Path) -> None:
     assert money_facts and all(fact.confidence is None for fact in money_facts)
     findings = validate_facts(normalize_paths([source]))
     assert any(finding.code == "limited_evidence" for finding in findings)
+
+
+def test_versioned_schema_is_enforced(tmp_path: Path) -> None:
+    """Empty versioned ledgers round-trip; unknown versions and bad v1 records error."""
+    import pytest
+
+    empty_source = tmp_path / "empty.json"
+    empty_source.write_text(json.dumps({}), encoding="utf-8")
+    result = CliRunner().invoke(cli, ["normalize", str(empty_source)])
+    assert result.exit_code == 0, result.output
+    round_trip = tmp_path / "roundtrip.json"
+    round_trip.write_text(result.output, encoding="utf-8")
+    assert normalize_paths([round_trip]) == ()
+
+    future = tmp_path / "future.json"
+    future.write_text(json.dumps({"version": 2, "facts": []}), encoding="utf-8")
+    with pytest.raises(ValueError, match="unsupported normalized schema version"):
+        normalize_paths([future])
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text(
+        json.dumps({"version": 1, "facts": [{"id": "x", "value": 1}]}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="not a valid version-1 normalized record"):
+        normalize_paths([malformed])
+
+
+def test_empty_key_keeps_distinct_field_identity(tmp_path: Path) -> None:
+    """An empty key is not the root-scalar fallback and never conflicts with 'value'."""
+    source = tmp_path / "empty_key.json"
+    source.write_text(json.dumps({"": "empty", "value": "real"}), encoding="utf-8")
+
+    facts = normalize_paths([source])
+    fields = sorted(fact.field for fact in facts)
+    assert fields == ["", "value"]
+    assert not any(f.code == "conflicting_fact" for f in validate_facts(facts))
+
+    nested = tmp_path / "nested_empty.json"
+    nested.write_text(json.dumps({"": {"x": "1"}}), encoding="utf-8")
+    nested_facts = normalize_paths([nested])
+    assert [fact.source_path for fact in nested_facts] == ["$.~5.x"]
