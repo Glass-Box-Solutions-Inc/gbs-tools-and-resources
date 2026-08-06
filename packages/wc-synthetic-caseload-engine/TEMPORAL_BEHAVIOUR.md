@@ -49,14 +49,16 @@ runnable artefact, and it produces no manifest.
 **Fifteen case manifests** back the aggregate column in §2: the 7 canonical plus the 8 above
 from stage-delta A, stage-delta B, the gentle pair, the DOI shift and the clamp probe.
 
-> **Correction (review round 1).** An earlier draft said "thirteen case manifests in total".
-> The count was wrong — the roster describes 15, and 19 including the DOI-rigidity run added
-> in this round. The §2 aggregate figures are unchanged: they reproduce exactly on the
-> 15-manifest set, so the error was in the count, not in the sample.
+> **Correction (review rounds 1 and 6).** An earlier draft said "thirteen case manifests in
+> total". The count was wrong — the roster describes 15 aggregate-bearing manifests, and **20
+> in total**: 15 plus the four DOI-rigidity runs added in round 1 and the surgery past-anchor
+> probe added in round 5. The §2 aggregate figures are unchanged throughout: they reproduce
+> exactly on the 15-manifest set, so the error was in the count, not in the sample.
 
 The four DOI-rigidity manifests are **excluded** from every §2 aggregate. They are one seed
 re-dated three times plus a control; including them would weight a single case four ways in a
-distribution statistic.
+distribution statistic. The surgery past-anchor manifest is excluded for the same reason —
+one deliberately boundary-seeded case is not a sample.
 
 ---
 
@@ -437,34 +439,25 @@ B directly would yield 977 and report zero slack, hiding the same 42-day shortfa
 exists to expose. **A single generation is not sufficient**, and an earlier draft of this procedure
 said it was.
 
-**The procedure, stated so it cannot return a clamped baseline:**
+**The hazard, stated without a recipe.** Three things are true and none of them can be turned
+into a reliable output-side rule today:
 
-1. Generate the seed at a DOI **well earlier** than you intend to use — early enough that the case
-   plainly cannot reach 2026-01-01.
-2. **Take the latest date, excluding only an intentionally-extended lien track.** The partition
-   depends on one flag:
-   - `liens.post_resolution_litigation: false` (or absent) — **measure over all documents.**
-     Ordinary concurrent liens are bounded by the anchor like anything else and can legitimately
-     be the plan's true tail, so excluding them would let a clamped lien pass unnoticed.
-   - `liens.post_resolution_litigation: true` — **exclude that track only.** It is *designed* to
-     run past the anchor (§10), so counting it would make a legitimately-extended case look
-     permanently unmeasurable.
+1. **A clamped run silently understates the natural span.** The run succeeds, the manifest looks
+   normal, and `last − DOI` returns the clamped length rather than the requirement.
+2. **Measure the span only from a run you have confirmed ends strictly before the anchor**,
+   generated at a deliberately early DOI — not from the first run you happen to have.
+3. **No output-side rule is currently airtight.** At least one core path (the forced operative
+   record, §10) emits past the anchor *unclamped*, and §10's inventory of such paths has been
+   revised in two consecutive rounds — in both directions, once adding a path and once ruling
+   two candidates out. Any rule of the form "these document classes are anchor-bounded" is a
+   claim about an inventory nobody has swept mechanically.
 
-   *(An earlier draft excluded **every** lien document. That was overbroad and reintroduced the
-   very defect this section exists to prevent: a concurrent lien could clamp while the non-lien
-   tail sat before the anchor, and step 4 would accept the clamped baseline.)*
-3. **If that date is on _or after_ the anchor, reject the run: the measurement is invalid.** Shift
-   the DOI earlier and repeat from step 1. Both branches matter — a case whose core clamps while
-   its lien track overruns has a latest date *after* the anchor, and an earlier draft of this
-   procedure tested only for *equal to* and was therefore undefined for that configuration.
-4. Only once that date falls **strictly before** the anchor is `natural_span = that_date − DOI`
-   the true requirement.
-5. Choose the working DOI so `available_runway >= natural_span + margin`.
-
-> **Why reject a date sitting exactly on the anchor?** It does not *prove* clamping — a plan can
-> legitimately end there with zero slack. But the two cases are indistinguishable from the output
-> alone, and treating a clamped run as natural is the error this whole section exists to prevent.
-> Rejecting is conservative, and the only cost is one more generation at an earlier DOI.
+*(Earlier drafts of this section carried a five-step calibration procedure. It was cut in review
+round 6 after four successive formulations each proved subtly wrong — the recipe was prose
+compensation for a missing engine capability. **The real fix belongs in the engine**: a
+`clampedDocuments` count in the manifest, or a `validate --check-clamp`, would make calibration a
+single machine-checkable assertion instead of an inference from black-box output. That is worth an
+AJC ticket alongside the §10 defect.)*
 
 Shifting the DOI *later* (toward the anchor) spends slack and begins clamping the tail. Shifting it
 *earlier* is safe for shape **on seeds with no authored absolute dates** — see the caveat below —
@@ -725,12 +718,34 @@ path never crosses the horizon.
 > | Documents | 14 |
 > | Liens | 0 |
 > | Documents past 2026-01-01 | **1** |
-> | The document | `OPERATIVE_HOSPITAL_RECORDS`, **2026-06-18** = DOI + 210 exactly, **169 days past the anchor** |
+> | The document | `OPERATIVE_HOSPITAL_RECORDS`, **2026-06-18** = DOI + 210 exactly, **168 days past the anchor** |
 >
 > Unlike the lien extension, this looks unintended — a missing clamp rather than a declared
 > exception — and it means **runway validation does not bound output**: a seed can pass every
 > floor and still emit past the horizon. Worth an **AJC ticket against the engine**; the tracker is
 > AJC and no ticket number is invented here.
+
+> **Two candidate paths were checked in review round 6 and are *not* past-anchor paths.**
+> Recorded because they look like one on a grep for `timeline.clamp`, and the absence of that
+> call is what made them suspicious:
+>
+> | Path | Site | Why it is bounded anyway |
+> |---|---|---|
+> | `PETITION_FOR_PENALTIES` | `planner.py:493` | `when = max(horizon, latest + 1d)` where `horizon = resolution_date or application_filed`. `_derive_late_benefit_events` drops events past the horizon, so `latest <= horizon`; the worst case is **one day** past the resolution date |
+> | `DEMAND_LETTER_FORMAL` | `planner.py:884` | `when = max(horizon, event.actual_date + 1d)`, same shape, `horizon = resolution_date or timeline.horizon` |
+>
+> `CaseTimeline.horizon` defaults to `ANCHOR_DATE` and `build_timeline` never assigns it
+> anything else (`lifecycle_bridge.py:375`, `:583`), so both are anchored transitively. The
+> ISC-136 comment at `planner.py:494-513` is explicit that its bound is *deliberately* a
+> floor-over-ceiling rather than a clamp. **This is a different shape from the surgery append**,
+> which has no bound at all.
+>
+> **What is still not established is that the inventory is complete.** `planner.py` has 9 dating
+> sites and 6 carry a visible bound; the remaining three were read individually rather than by
+> any mechanical sweep, and this section has been revised in two consecutive review rounds.
+> Treat "the surgery append is the only unclamped path" as *the strongest claim currently
+> supported*, not as a census — the sweep that would settle it is the same engine work the
+> observability ticket asks for.
 
 **What was measured.** `examples/demo-caseload.yaml:82` sets
 `post_resolution_litigation: true` on `nguyen-cr-three-liens` — one of the seven canonical
@@ -810,6 +825,25 @@ independently reproduced from the manifests and the source before being applied.
 Every correction is labelled as a correction in place, and nothing measured in this round was
 folded into an earlier claim without saying so. Two findings made the document's conclusions
 weaker rather than stronger (§4 rigidity, §10 liens); both are stated in the weaker form.
+
+**Rounds 2–6 — alternating cross-family review, 2026-08-06.** Five further rounds, each with the
+analyst and the adversarial gate in different model families. What they changed:
+
+| Round | Finding | Resolution |
+|---|---|---|
+| 2–3 | §3's "19 documents vanish" was false. Decoding the PDFs showed the documents are **rewritten in place** under an identical subtype and `documentDate` — different vitals under the same header | 18 rewritten + 1 re-dated + **0 vanished** |
+| 3–4 | §10's lien carve-out was first too narrow, then too broad — round 4's rewrite excluded *all* liens when only post-resolution tracks can overrun, reintroducing the round-3 defect | Scoped to the post-resolution track alone |
+| 5 | §5's "the whole timeline compresses" mischaracterised the clamp. 92 of 94 documents keep their exact DOI-relative offsets; exactly two pin to the anchor | Restated as **tail-clamping**, not compression |
+| 5 | §4's "natural span 977, slack 0" was circular — it read a *clamped* output back as the requirement | Re-measured from a confirmed-unclamped run: span **1019**, slack **−42** |
+| 5 | `clamp-probe-eval-qme-rejected.yaml` contradicted itself, writing `eval_type: qme` explicitly while claiming to demonstrate the hidden default | Field omitted; re-verified it still fails naming a constraint the seed never writes |
+| 5 | **New engine defect found**: the forced-operative append emits past the anchor unclamped | §10; measured; the strongest result of the whole exercise |
+| 6 | §4 carried a five-step calibration recipe. Four successive formulations each proved subtly wrong | **Cut.** The recipe was prose compensating for a missing engine capability |
+| 6 | Two more sites looked unclamped on a grep | Read individually — both **are** horizon-bounded. Recorded in §10 as a negative result |
+| 6 | Off-by-one: 169 days past the anchor (counted inclusively); roster total stale at 19 | **168**; **20** |
+
+The pattern worth carrying forward: **every round that produced a durable improvement produced
+it by measuring something, and every round that tried to improve the prose alone had to be
+reverted by the next one.** Round 6's cut is that lesson applied to the document itself.
 
 ---
 
