@@ -8,7 +8,7 @@ from datetime import date
 from typing import Any
 
 from case_analysis_engine.models import Fact, Finding
-from case_analysis_engine.text import canonical_field, stable_value
+from case_analysis_engine.text import canonical_field, stable_value, unescape_segment
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _STAGES = (
@@ -171,7 +171,7 @@ def _qualifier_chain(fact: Fact) -> tuple[str, ...]:
     if fact.scope == "claim":
         return ()
     parts = [part for part in fact.source_path.split(".") if part and part != "$"]
-    segments = (canonical_field(part.split("[", 1)[0]) for part in parts[:-1])
+    segments = (canonical_field(unescape_segment(part.split("[", 1)[0])) for part in parts[:-1])
     return tuple(segment for segment in segments if segment)
 
 

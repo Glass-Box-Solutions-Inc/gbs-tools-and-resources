@@ -254,7 +254,7 @@ def test_legacy_normalized_claims_recover_scope(tmp_path: Path) -> None:
     assert any(finding.code == "conflicting_fact" for finding in validate_facts(restored))
 
 
-def test_colliding_or_structural_keys_are_rejected(tmp_path: Path) -> None:
+def test_colliding_keys_are_rejected(tmp_path: Path) -> None:
     """Keys that would collide into one fact ID fail loudly instead of merging."""
     import pytest
 
@@ -268,10 +268,62 @@ def test_colliding_or_structural_keys_are_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="duplicate mapping key"):
         normalize_paths([int_twins])
 
-    dotted = tmp_path / "dotted.json"
-    dotted.write_text(json.dumps({"a.b": 1}), encoding="utf-8")
-    with pytest.raises(ValueError, match="unsupported mapping key"):
-        normalize_paths([dotted])
+
+def test_structural_keys_are_escaped_not_rejected(tmp_path: Path) -> None:
+    """$schema, dotted, bracketed, and empty keys normalize with unique, grammar-safe IDs."""
+    vendor = tmp_path / "vendor.json"
+    vendor.write_text(
+        json.dumps(
+            {"$schema": "v2", "patient.name": "Jordan Doe", "items[0]": "first", "": "empty"}
+        ),
+        encoding="utf-8",
+    )
+    facts = normalize_paths([vendor])
+    assert len(facts) == 4
+    assert len({fact.id for fact in facts}) == 4
+    assert any(fact.field == "patient.name" for fact in facts)
+
+    flat = tmp_path / "flat.json"
+    nested = tmp_path / "nested.json"
+    flat.write_text(json.dumps({"a.b": 1}), encoding="utf-8")
+    nested.write_text(json.dumps({"a": {"b": 2}}), encoding="utf-8")
+    paths = {fact.source_path for fact in normalize_paths([flat, nested])}
+    assert len(paths) == 2
+
+
+def test_legacy_ambiguous_scope_is_refused(tmp_path: Path) -> None:
+    """A scope-less claim under a same-named list key errors instead of silently demoting."""
+    import pytest
+
+    source = tmp_path / "claims.json"
+    source.write_text(
+        json.dumps({"injury_date": [{"field": "injury_date", "value": "2025-01-01"}]}),
+        encoding="utf-8",
+    )
+    original = normalize_paths([source])
+    assert [fact.scope for fact in original] == ["claim"]
+
+    records = []
+    for fact in original:
+        record = fact.as_dict()
+        del record["scope"]
+        records.append(record)
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(json.dumps({"facts": records}), encoding="utf-8")
+    with pytest.raises(ValueError, match="cannot reconstruct the scope"):
+        normalize_paths([legacy])
+
+
+def test_normalize_output_carries_version(tmp_path: Path) -> None:
+    """The normalize CLI stamps a schema version and its output still round-trips."""
+    result = CliRunner().invoke(cli, ["normalize", str(FIXTURES / "intake.json")])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["version"] == 1
+
+    versioned = tmp_path / "versioned.json"
+    versioned.write_text(result.output, encoding="utf-8")
+    assert normalize_paths([versioned]) == normalize_paths([FIXTURES / "intake.json"])
 
 
 def test_explicit_null_confidence_stays_unscored(tmp_path: Path) -> None:

@@ -44,10 +44,14 @@ case-analysis validate intake.json
 
 Any JSON/YAML object or array is accepted. Unquoted YAML dates — values and
 keys — are canonicalized to ISO strings at load. Mapping keys are forced to
-strings and must stay collision-safe: a key whose canonical form duplicates a
-sibling's (a date key beside its quoted twin, `1` beside `"1"`) or that
-contains `.`, `[`, `]`, or `$` is rejected with a clear error, because it would
-make two distinct assertions share one fact ID. Extraction systems can improve provenance by supplying
+strings; a key whose canonical form duplicates a sibling's (a date key beside
+its quoted twin, `1` beside `"1"`) is rejected with a clear error, because it
+would make two distinct assertions share one fact ID. Keys containing
+path-structural characters (`$schema`, `patient.name`, `items[0]`) are
+legitimate input: they are kept as field provenance and escaped
+JSON-Pointer-style inside source paths, so they can never collide with the
+path grammar. `normalize` output carries `"version": 1` so future schema
+changes can migrate deterministically. Extraction systems can improve provenance by supplying
 `value`, `field`/`name`, `confidence`, `source_document`/`document_id`, `page`, `excerpt`, and
 `evidence` on a claim. A payload without those fields remains usable: the input file and JSON/YAML
 path become its provenance, and the engine labels the evidence as limited rather than inventing it.

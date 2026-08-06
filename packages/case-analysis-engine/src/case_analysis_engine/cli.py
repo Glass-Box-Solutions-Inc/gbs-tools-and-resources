@@ -51,7 +51,7 @@ def cli() -> None:
 def normalize(inputs: tuple[Path, ...], out: Path | None, output_format: str) -> None:
     """Normalize JSON/YAML claims into evidence-bearing facts."""
     facts = normalize_paths(_paths(inputs))
-    payload = {"facts": [fact.as_dict() for fact in facts]}
+    payload = {"version": 1, "facts": [fact.as_dict() for fact in facts]}
     content = (
         yaml.safe_dump(payload, sort_keys=True, allow_unicode=False)
         if output_format == "yaml"

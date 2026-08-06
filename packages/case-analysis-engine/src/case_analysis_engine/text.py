@@ -32,3 +32,23 @@ def tokens(value: str) -> frozenset[str]:
 def stable_value(value: Any) -> str:
     """A deterministic string form for grouping and sorting arbitrary JSON scalars."""
     return json.dumps(value, ensure_ascii=True, sort_keys=True, default=str, separators=(",", ":"))
+
+
+#: JSON-Pointer-style escaping for path segments: keys may legitimately contain
+#: the characters the dotted-path grammar reserves ('.', '[', ']', '$'), so those
+#: are escaped when a key becomes a path segment. '~0' must decode last.
+_SEGMENT_ESCAPES = (("~", "~0"), (".", "~1"), ("[", "~2"), ("]", "~3"), ("$", "~4"))
+
+
+def escape_segment(key: str) -> str:
+    """Make a mapping key safe to embed as one dotted-path segment."""
+    for char, escaped in _SEGMENT_ESCAPES:
+        key = key.replace(char, escaped)
+    return key
+
+
+def unescape_segment(segment: str) -> str:
+    """Recover the original mapping key from an escaped path segment."""
+    for char, escaped in reversed(_SEGMENT_ESCAPES):
+        segment = segment.replace(escaped, char)
+    return segment

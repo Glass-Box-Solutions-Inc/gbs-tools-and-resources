@@ -11,7 +11,13 @@ from typing import Any
 import yaml
 
 from case_analysis_engine.models import Evidence, Fact, FactScope
-from case_analysis_engine.text import canonical_field, stable_value, tokens
+from case_analysis_engine.text import (
+    canonical_field,
+    escape_segment,
+    stable_value,
+    tokens,
+    unescape_segment,
+)
 
 #: Sentinel distinguishing an absent confidence key from an explicit null.
 _ABSENT = object()
@@ -52,18 +58,17 @@ def load_payload(path: Path) -> Any:
         raise ValueError(f"{path}: {exc}") from exc
 
 
-_FORBIDDEN_KEY_CHARS = frozenset(".[]$")
-
-
 def _canonical_payload(value: Any) -> Any:
     """Canonicalize a loaded payload into one vocabulary before traversal.
 
     YAML parses unquoted ISO dates natively, so date/datetime scalars — values
-    and keys alike — become ISO strings. Keys are forced to strings and must be
-    collision-safe: a key whose canonical form duplicates a sibling's (a date
-    key next to its quoted twin, integer ``1`` next to ``"1"``) or that carries
-    path-structural characters would make two distinct assertions share one
-    fact ID, so both are rejected with a clear error rather than absorbed.
+    and keys alike — become ISO strings. Keys are forced to strings; a key whose
+    canonical form duplicates a sibling's (a date key next to its quoted twin,
+    integer ``1`` next to ``"1"``) would make two distinct assertions share one
+    fact ID and is rejected with a clear error rather than absorbed. Keys
+    containing path-structural characters are legitimate vendor input
+    (``$schema``, ``patient.name``) — they are kept and escaped at path-building
+    time instead of rejected.
     """
     if isinstance(value, (datetime, date)):
         return value.isoformat()
@@ -71,11 +76,6 @@ def _canonical_payload(value: Any) -> Any:
         result: dict[str, Any] = {}
         for key, item in value.items():
             canonical_key = key.isoformat() if isinstance(key, (datetime, date)) else str(key)
-            if not canonical_key or _FORBIDDEN_KEY_CHARS & set(canonical_key):
-                raise ValueError(
-                    f"unsupported mapping key {canonical_key!r}: keys must be non-empty "
-                    "and must not contain '.', '[', ']', or '$'"
-                )
             if canonical_key in result:
                 raise ValueError(f"duplicate mapping key {canonical_key!r} after canonicalization")
             result[canonical_key] = _canonical_payload(item)
@@ -102,7 +102,7 @@ def is_normalized_payload(payload: Any) -> bool:
     Recognized so a normalize-then-analyze pipeline round-trips facts losslessly
     instead of re-flattening them and replacing their original provenance.
     """
-    if not isinstance(payload, Mapping) or set(payload) != {"facts"}:
+    if not isinstance(payload, Mapping) or not ({"facts"} <= set(payload) <= {"facts", "version"}):
         return False
     records = payload["facts"]
     return (
@@ -188,7 +188,8 @@ def normalize_payload(
             child_context = _merged_context(context, value)
             for key in sorted(value, key=str):
                 if str(key) not in _METADATA_KEYS:
-                    visit(value[key], f"{path}.{key}" if path else str(key), child_context)
+                    segment = escape_segment(str(key))
+                    visit(value[key], f"{path}.{segment}" if path else segment, child_context)
             return
         if isinstance(value, list):
             for index, item in enumerate(value):
@@ -389,10 +390,20 @@ def _legacy_scope(source_path: str, field: str) -> FactScope:
     A flattened scalar's field is always derived from its path leaf, so a
     record whose field differs from that leaf can only have been an explicit
     claim — restore it as one instead of demoting it to ``entity`` for living
-    in a list.
+    in a list. A record whose path ends at a bare list element AND whose field
+    equals that leaf is genuinely ambiguous (a claim element under a same-named
+    key is indistinguishable from a bare-list scalar), so it is refused rather
+    than silently assigned a scope that may drop it from conflict detection.
     """
     if canonical_field(field) != canonical_field(_path_field(source_path)):
         return "claim"
+    if source_path.endswith("]"):
+        raise ValueError(
+            f"cannot reconstruct the scope of legacy normalized record at {source_path!r}: "
+            "a claim element under a same-named list key is indistinguishable from a "
+            "bare-list scalar. Re-normalize from the original sources, or add an explicit "
+            "'scope' to the record."
+        )
     return _scope_for_path(source_path)
 
 
@@ -473,7 +484,7 @@ def _evidence_for(
 
 def _path_field(path: str) -> str:
     part = path.rsplit(".", 1)[-1]
-    return _strip_indexes(part).lstrip("$") or "value"
+    return unescape_segment(_strip_indexes(part).lstrip("$")) or "value"
 
 
 def _strip_indexes(part: str) -> str:
