@@ -388,7 +388,15 @@ from the DOI so the arithmetic is visible: **available runway** = anchor − DOI
 |---|---|---:|---:|---:|---|
 | `doi-a-2023-01-15` | 2023-01-15 | 1082 | 1019 | 63 | rigid |
 | `doi-c-earlier` | 2022-06-01 | 1310 | 1019 | 291 | rigid — DOI-relative offsets **identical to A**, all 94 documents, subtype for subtype |
-| `doi-b-plus105` | 2023-04-30 | 977 | 977 | 0 | **the tail clamps** |
+| `doi-b-plus105` | 2023-04-30 | 977 | 1019 | **−42** | **the tail clamps** |
+
+**On B's natural span.** It is **1019**, not the 977 it emitted. 977 is B's *clamped* span — the
+length it was forced into — and reading that back as its requirement would be circular. The
+natural span is established by A and C, which ran the same seed unclamped and both wanted 1019.
+So B is **42 days short**, and that number predicts the result exactly: the two documents the
+plan wanted at +994 and +1019 are the two that exceed 977, and both are pinned onto the anchor.
+Slack is negative, not zero. *(Corrected in review round 2 — an earlier draft recorded span 977 /
+slack 0, which is the clamped output mistaken for the requirement.)*
 
 In `doi-b-plus105`, 92 of the 94 documents keep their DOI-relative offset exactly. The other
 two do not:
@@ -668,7 +676,7 @@ cases. Its output:
 | Documents | 60 |
 | Span | 2022-08-03 → 2025-04-11 |
 | Documents after the 2026-01-01 anchor | **0** |
-| Lien-track documents | 17, running 2024-07-26 → 2025-04-11 |
+| Lien-track documents | **15** — three tracks of five — running 2024-07-26 → 2025-04-11 |
 
 The last lien document lands 265 days *before* the anchor. The ceiling extension is
 `max(timeline.horizon, needed, …)` — it engages only when the chain genuinely needs to overrun,
@@ -729,7 +737,7 @@ independently reproduced from the manifests and the source before being applied.
 | §2 | "five to ten times" — a band containing none of the seven measured ratios | Measured range 3×–15×, bimodal, with the window convention stated |
 | §3 | Non-disjoint categories: "true-new" absorbed the re-dated document's counterpart, off by one in both experiments | Three consuming passes; genuinely-new 28→**27** (A) and 30→**29** (B), backfill recomputed, both totals shown closing |
 | §3 | Mechanism: "pools candidates … before anything is dated" at `planner.py:1939` | `:1939` is the definition, collection is `:1974-1986`, and candidates arrive already dated (`lifecycle_bridge.py:758-767`) |
-| §4 | "DOI shift is perfectly rigid" stated as a universal guarantee | Rigid **with slack**; new 4-case run shows the tail clamping at zero slack, with all three DOIs clearing the statutory floor |
+| §4 | "DOI shift is perfectly rigid" stated as a universal guarantee | Rigid **while slack is positive**; new 4-case run shows the tail clamping at **negative** slack, with all three DOIs clearing the statutory floor |
 | §7 | "Mid-life flow cannot be aimed" — an inference presented as a finding, resting on a misreading of `clamp` | Replaced with the measured density (median 4, range 2–7); aimability moved to §10 as unmeasured |
 | §8/§10 | "145.2 KB" (binary value, decimal label); 25% presented as an outcome; "no seed was generated with `post_resolution_litigation: true`" | 148.7 kB decimal; 25% configured vs 22.7% realized; one canonical case **does** set the flag and produced **zero** past-anchor documents |
 

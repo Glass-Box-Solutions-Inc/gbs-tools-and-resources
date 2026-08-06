@@ -21,5 +21,8 @@ cases:
     lifecycle:
       target_stage: active_treatment
       claim_response: accepted
-      eval_type: qme
+      # eval_type is deliberately OMITTED. It defaults to "qme" (seeds.py:491),
+      # which silently imposes a 240-day DOI floor (EVAL_RUNWAY_DAYS, seeds.py:198)
+      # on a seed whose stated target_stage only needs 180. That is the footgun:
+      # this spec is rejected at load for a constraint the author never wrote.
       resolution: {type: pending}
