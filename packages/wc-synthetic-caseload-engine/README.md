@@ -1301,9 +1301,11 @@ never crosses the horizon, so the extension cannot leak into ordinary cases.
 
 `TEMPORAL_BEHAVIOUR.md` records what the engine measurably does to dates, as distinct from what
 this section specifies: where document mass actually falls across a case's life, what advancing
-`target_stage` does to a corpus already generated, how exactly a DOI shift moves a timeline, and
-what a timeline that overruns the anchor looks like. Read it before choosing seeds to land
-documents inside a date window.
+`target_stage` does to a corpus already generated, what was measured about how a DOI shift moves
+a timeline and under which conditions that held, and what a timeline that overruns the anchor
+looks like. Every claim there names the run behind it, and the specs are committed under
+`docs/measurements/` so each one can be re-run. Read it before choosing seeds to land documents
+inside a date window.
 
 ---
 
