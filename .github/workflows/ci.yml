@@ -9,6 +9,10 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Manual dispatch for when webhook-triggered runs are unavailable (e.g. the
+  # 2026-08-06 Actions outage). paths-filter diffs against the default branch
+  # on dispatch, so package detection stays correct.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}

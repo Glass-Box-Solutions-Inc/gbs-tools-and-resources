@@ -114,6 +114,9 @@ class AnalysisReport:
         "This report organizes supplied evidence and identifies data-quality questions. "
         "It does not state legal conclusions, deadlines, entitlement, or legal advice."
     )
+    # Deliberately after `caveat`: the sixth positional argument stays the caveat
+    # for any caller built against the original constructor shape.
+    skipped: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -123,4 +126,5 @@ class AnalysisReport:
             "domains": self.domains,
             "chronology": list(self.chronology),
             "angles": [angle.as_dict() for angle in self.angles],
+            "skippedKeys": list(self.skipped),
         }

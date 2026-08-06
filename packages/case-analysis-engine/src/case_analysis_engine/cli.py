@@ -10,7 +10,7 @@ import yaml
 
 from case_analysis_engine import __version__
 from case_analysis_engine.analysis import analyze_paths
-from case_analysis_engine.input import normalize_paths
+from case_analysis_engine.input import normalize_paths, normalize_paths_report
 from case_analysis_engine.render import render_json, render_markdown
 from case_analysis_engine.validation import validate_facts
 
@@ -50,8 +50,12 @@ def cli() -> None:
 )
 def normalize(inputs: tuple[Path, ...], out: Path | None, output_format: str) -> None:
     """Normalize JSON/YAML claims into evidence-bearing facts."""
-    facts = normalize_paths(_paths(inputs))
-    payload = {"version": 1, "facts": [fact.as_dict() for fact in facts]}
+    normalized = normalize_paths_report(_paths(inputs))
+    payload = {
+        "version": 1,
+        "facts": [fact.as_dict() for fact in normalized.facts],
+        "skipped": list(normalized.skipped),
+    }
     content = (
         yaml.safe_dump(payload, sort_keys=True, allow_unicode=False)
         if output_format == "yaml"
