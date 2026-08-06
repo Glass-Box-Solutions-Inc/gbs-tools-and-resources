@@ -1297,6 +1297,14 @@ The extension is strictly opt-in, and the two halves stay separable:
 `test_liens_without_post_resolution_litigation_run_alongside_the_case` asserts the default path
 never crosses the horizon, so the extension cannot leak into ordinary cases.
 
+### Measured date behaviour
+
+`TEMPORAL_BEHAVIOUR.md` records what the engine measurably does to dates, as distinct from what
+this section specifies: where document mass actually falls across a case's life, what advancing
+`target_stage` does to a corpus already generated, how exactly a DOI shift moves a timeline, and
+what a timeline that overruns the anchor looks like. Read it before choosing seeds to land
+documents inside a date window.
+
 ---
 
 ## Example caseload walkthrough
