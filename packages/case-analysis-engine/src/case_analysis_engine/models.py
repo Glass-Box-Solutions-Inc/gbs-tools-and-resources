@@ -110,11 +110,13 @@ class AnalysisReport:
     domains: dict[str, dict[str, Any]]
     chronology: tuple[dict[str, Any], ...]
     angles: tuple[Angle, ...]
-    skipped: tuple[str, ...] = ()
     caveat: str = (
         "This report organizes supplied evidence and identifies data-quality questions. "
         "It does not state legal conclusions, deadlines, entitlement, or legal advice."
     )
+    # Deliberately after `caveat`: the sixth positional argument stays the caveat
+    # for any caller built against the original constructor shape.
+    skipped: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {

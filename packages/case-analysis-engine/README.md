@@ -47,7 +47,9 @@ claim record wherever it appears. The `name`/`key` shorthand promotes only
 inside a recognized claim container (`facts[]`, `claims[]`, `assertions[]`,
 `extractions[]`) — `{"name": "td_payment", "value": 800}` in any other list is
 an entity row, never an assertion, so itemized lists cannot manufacture
-conflicts.
+conflicts. Container status carries through nested lists but resets at any
+intermediate non-container mapping key: records grouped under
+`facts.by_topic.medical[]` use explicit `field`.
 
 **Metadata scope.** Metadata vocabulary (`confidence`, `source_document`,
 `page`, `evidence`, …) is treated as claim metadata only where it has sibling

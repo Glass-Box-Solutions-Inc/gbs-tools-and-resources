@@ -177,7 +177,13 @@ def normalize_paths_report(paths: Iterable[Path]) -> NormalizedInput:
             payload, source_id=labels[index], source_type=source_kind(payload, path)
         )
         facts.extend(result.facts)
-        skipped.extend(f"{labels[index]}:{entry}" for entry in result.skipped)
+        # A raw path entry (starts at the root marker) gains this input's label;
+        # an entry re-ingested from normalize output is already source-qualified
+        # and must not be double-prefixed.
+        skipped.extend(
+            f"{labels[index]}:{entry}" if entry.startswith("$") else entry
+            for entry in result.skipped
+        )
     return NormalizedInput(
         tuple(
             sorted(
@@ -222,7 +228,7 @@ def normalize_payload_report(
     invented number — and validation reports it as unscored.
     """
     if is_normalized_payload(payload):
-        return NormalizedInput(_facts_from_normalized(payload))
+        return NormalizedInput(_facts_from_normalized(payload), _skipped_from_normalized(payload))
     default_confidence = 1.0 if source_type.startswith("wc_generator") else None
     facts: list[Fact] = []
     skipped: list[str] = []
@@ -470,6 +476,14 @@ def _fact_from_record(record: Mapping[str, Any]) -> Fact:
         evidence=evidence,
         scope=scope if scope in ("claim", "case", "entity") else _legacy_scope(source_path, field),
     )
+
+
+def _skipped_from_normalized(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    """The skipped-key accounting a normalized payload carries, validated."""
+    raw = payload.get("skipped", [])
+    if not isinstance(raw, list) or not all(isinstance(entry, str) for entry in raw):
+        raise ValueError("normalized payload 'skipped' must be a list of strings")
+    return tuple(sorted(raw))
 
 
 def _scope_for_path(path: str) -> FactScope:

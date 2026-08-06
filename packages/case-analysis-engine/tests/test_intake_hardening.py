@@ -123,3 +123,53 @@ def test_normalize_output_with_skipped_still_round_trips(tmp_path: Path) -> None
     round_trip = tmp_path / "normalized.json"
     round_trip.write_text(cli_out.output, encoding="utf-8")
     assert normalize_paths([round_trip]) == normalize_paths([source])
+
+
+def test_skipped_accounting_survives_round_trip(tmp_path: Path) -> None:
+    """Analyzing preserved normalize output reports the same skipped keys as direct analysis."""
+    import yaml
+
+    source = tmp_path / "mixed.json"
+    source.write_text(
+        json.dumps({"applicant_name": "Jordan", "page": 3, "source_document": "application.pdf"}),
+        encoding="utf-8",
+    )
+    direct = analyze_paths([source])
+    cli_out = CliRunner().invoke(cli, ["normalize", str(source)])
+    assert cli_out.exit_code == 0, cli_out.output
+
+    as_json = tmp_path / "normalized.json"
+    as_json.write_text(cli_out.output, encoding="utf-8")
+    as_yaml = tmp_path / "normalized.yaml"
+    as_yaml.write_text(yaml.safe_dump(json.loads(cli_out.output), sort_keys=True), encoding="utf-8")
+
+    for preserved in (as_json, as_yaml):
+        replayed = analyze_paths([preserved])
+        assert replayed.skipped == direct.skipped
+        assert any(f.code == "skipped_metadata_keys" for f in replayed.findings)
+        assert "- Skipped metadata keys: 2" in __import__(
+            "case_analysis_engine.render", fromlist=["render_markdown"]
+        ).render_markdown(replayed)
+
+
+def test_analysis_report_positional_constructor_is_stable() -> None:
+    """The sixth positional argument remains the caveat; skipped stays keyword-safe."""
+    from case_analysis_engine.models import AnalysisReport
+
+    report = AnalysisReport((), (), {}, (), (), "custom caveat")
+    assert report.caveat == "custom caveat"
+    assert report.skipped == ()
+    assert report.as_dict()["skippedKeys"] == []
+
+
+def test_claim_container_status_resets_at_intermediate_mappings(tmp_path: Path) -> None:
+    """name/value under facts.by_topic.medical[] is an entity row, not a claim."""
+    source = tmp_path / "grouped.json"
+    source.write_text(
+        json.dumps(
+            {"facts": {"by_topic": {"medical": [{"name": "mmi_date", "value": "2025-06-01"}]}}}
+        ),
+        encoding="utf-8",
+    )
+    facts = normalize_paths([source])
+    assert all(fact.scope == "entity" for fact in facts)
