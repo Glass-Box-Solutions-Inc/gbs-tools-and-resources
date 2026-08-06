@@ -1,0 +1,25 @@
+caseload_id: e3
+defaults:
+  documents:
+    format_mix: {pdf: 0.7, scanned_pdf: 0.25, docx: 0.05}
+  output:
+    filename_style: corpus
+    formats: [pdf, scanned_pdf, docx]
+cases:
+  - case_id: probe
+    rng_seed: 424242
+    profile:
+      applicant: {name: Rosa Alvarez, age: 47, occupation: Warehouse Associate, tenure_years: 6.5}
+      employer: {name: Inland Valley Distribution, industry: Warehousing, county: San Bernardino}
+      carrier: {name: Calderport Compensation Insurance Company}
+    injury:
+      type: specific
+      date_of_injury: 2022-12-29
+      mechanism: struck by falling inventory during a restock
+      body_parts:
+        - {part: lumbar_spine, icd10: M54.5, detail: L4-L5 disc protrusion}
+    lifecycle:
+      target_stage: resolved
+      claim_response: accepted
+      eval_type: qme
+      resolution: {type: stipulations}
