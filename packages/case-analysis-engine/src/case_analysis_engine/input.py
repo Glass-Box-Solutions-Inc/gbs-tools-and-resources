@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 from case_analysis_engine.models import Evidence, Fact, FactScope
-from case_analysis_engine.text import stable_value, tokens
+from case_analysis_engine.text import canonical_field, stable_value, tokens
 
 #: Sentinel distinguishing an absent confidence key from an explicit null.
 _ABSENT = object()
@@ -41,26 +41,47 @@ def load_payload(path: Path) -> Any:
     """Load one JSON or YAML payload without imposing a vendor-specific extraction schema."""
     text = path.read_text(encoding="utf-8")
     try:
-        if path.suffix.lower() == ".json":
-            value = json.loads(text)
-        else:
-            # YAML parses unquoted ISO dates natively; canonicalize to strings so
-            # chronology, comparison, and JSON serialization see one vocabulary.
-            value = _stringify_dates(yaml.safe_load(text))
+        raw = json.loads(text) if path.suffix.lower() == ".json" else yaml.safe_load(text)
     except (json.JSONDecodeError, yaml.YAMLError) as exc:
         raise ValueError(f"{path}: invalid structured input: {exc}") from exc
-    if value is None:
+    if raw is None:
         raise ValueError(f"{path}: input is empty")
-    return value
+    try:
+        return _canonical_payload(raw)
+    except ValueError as exc:
+        raise ValueError(f"{path}: {exc}") from exc
 
 
-def _stringify_dates(value: Any) -> Any:
+_FORBIDDEN_KEY_CHARS = frozenset(".[]$")
+
+
+def _canonical_payload(value: Any) -> Any:
+    """Canonicalize a loaded payload into one vocabulary before traversal.
+
+    YAML parses unquoted ISO dates natively, so date/datetime scalars — values
+    and keys alike — become ISO strings. Keys are forced to strings and must be
+    collision-safe: a key whose canonical form duplicates a sibling's (a date
+    key next to its quoted twin, integer ``1`` next to ``"1"``) or that carries
+    path-structural characters would make two distinct assertions share one
+    fact ID, so both are rejected with a clear error rather than absorbed.
+    """
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, dict):
-        return {key: _stringify_dates(item) for key, item in value.items()}
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            canonical_key = key.isoformat() if isinstance(key, (datetime, date)) else str(key)
+            if not canonical_key or _FORBIDDEN_KEY_CHARS & set(canonical_key):
+                raise ValueError(
+                    f"unsupported mapping key {canonical_key!r}: keys must be non-empty "
+                    "and must not contain '.', '[', ']', or '$'"
+                )
+            if canonical_key in result:
+                raise ValueError(f"duplicate mapping key {canonical_key!r} after canonicalization")
+            result[canonical_key] = _canonical_payload(item)
+        return result
     if isinstance(value, list):
-        return [_stringify_dates(item) for item in value]
+        return [_canonical_payload(item) for item in value]
     return value
 
 
@@ -344,21 +365,35 @@ def _fact_from_record(record: Mapping[str, Any]) -> Fact:
         if isinstance(item, Mapping)
     )
     source_path = str(record.get("sourcePath", record.get("source_path", "")))
+    field = str(record["field"])
     scope = record.get("scope")
     return Fact(
         id=str(record["id"]),
         category=str(record["category"]),
-        field=str(record["field"]),
+        field=field,
         value=record["value"],
         source_path=source_path,
         confidence=_optional_float(record.get("confidence")),
         evidence=evidence,
-        scope=scope if scope in ("claim", "case", "entity") else _scope_for_path(source_path),
+        scope=scope if scope in ("claim", "case", "entity") else _legacy_scope(source_path, field),
     )
 
 
 def _scope_for_path(path: str) -> FactScope:
     return "entity" if "[" in path else "case"
+
+
+def _legacy_scope(source_path: str, field: str) -> FactScope:
+    """Scope for a normalized record serialized before ``scope`` existed.
+
+    A flattened scalar's field is always derived from its path leaf, so a
+    record whose field differs from that leaf can only have been an explicit
+    claim — restore it as one instead of demoting it to ``entity`` for living
+    in a list.
+    """
+    if canonical_field(field) != canonical_field(_path_field(source_path)):
+        return "claim"
+    return _scope_for_path(source_path)
 
 
 def _optional_float(value: Any) -> float | None:
@@ -400,13 +435,14 @@ def _evidence_for(
     for item in records:
         entry = item if isinstance(item, Mapping) else {}
         raw_confidence = entry.get("confidence", context.get("confidence", _ABSENT))
-        if raw_confidence is _ABSENT or raw_confidence is None:
-            # Nothing supplied: the source-type default applies (1.0 for the
-            # generator ledger, None — unscored — for generic intake).
+        if raw_confidence is _ABSENT:
+            # No confidence key at all: the source-type default applies (1.0 for
+            # the generator ledger, None — unscored — for generic intake).
             confidence = default_confidence
         else:
-            # Supplied but invalid parses to None and stays None: malformed
-            # metadata must never be promoted to a default score.
+            # A supplied value — including an explicit null — is the author's
+            # statement. Null and invalid both stay None: deliberately unscored
+            # or malformed metadata is never promoted to a default score.
             confidence = _optional_float(raw_confidence)
         source = str(
             entry.get("source_document")

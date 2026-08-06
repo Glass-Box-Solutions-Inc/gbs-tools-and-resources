@@ -42,7 +42,12 @@ case-analysis validate intake.json
 
 ## Input conventions
 
-Any JSON/YAML object or array is accepted. Extraction systems can improve provenance by supplying
+Any JSON/YAML object or array is accepted. Unquoted YAML dates — values and
+keys — are canonicalized to ISO strings at load. Mapping keys are forced to
+strings and must stay collision-safe: a key whose canonical form duplicates a
+sibling's (a date key beside its quoted twin, `1` beside `"1"`) or that
+contains `.`, `[`, `]`, or `$` is rejected with a clear error, because it would
+make two distinct assertions share one fact ID. Extraction systems can improve provenance by supplying
 `value`, `field`/`name`, `confidence`, `source_document`/`document_id`, `page`, `excerpt`, and
 `evidence` on a claim. A payload without those fields remains usable: the input file and JSON/YAML
 path become its provenance, and the engine labels the evidence as limited rather than inventing it.
@@ -65,6 +70,9 @@ validation reports it as a `limited_evidence` warning so unscored claims stay
 visible rather than silently passing. A confidence that is supplied but unusable
 (a boolean, an unparseable string, a value outside `[0, 1]`) is also recorded as
 `null` and reported; malformed metadata is never promoted to a default score.
+An explicit `confidence: null` is the author's statement that the claim is
+unscored and is preserved as such — the generator default applies only when the
+key is entirely absent.
 
 ## Source identity and reproducibility
 

@@ -74,9 +74,10 @@ def validate_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
                 )
             )
 
+    by_id = {fact.id: fact for fact in facts}
     for (_, field), group in sorted(comparable.items()):
-        conflicting_ids, duplicate_ids_by_value = _compare_group(group)
-        for value, ids in sorted(duplicate_ids_by_value.items()):
+        conflict_sets, duplicate_sets = _compare_group(group)
+        for ids in duplicate_sets:
             findings.append(
                 Finding(
                     code="duplicate_fact",
@@ -84,12 +85,12 @@ def validate_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
                     message=(
                         f"{field} is repeated with the same normalized value in {len(ids)} sources."
                     ),
-                    fact_ids=tuple(sorted(ids)),
+                    fact_ids=ids,
                     category=group[0].category,
                 )
             )
-        if conflicting_ids:
-            distinct = {stable_value(item.value) for item in group if item.id in conflicting_ids}
+        for ids in conflict_sets:
+            distinct = {stable_value(by_id[fact_id].value) for fact_id in ids}
             findings.append(
                 Finding(
                     code="conflicting_fact",
@@ -98,7 +99,7 @@ def validate_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
                         f"{field} has {len(distinct)} incompatible asserted values; "
                         "resolve against source evidence."
                     ),
-                    fact_ids=tuple(sorted(conflicting_ids)),
+                    fact_ids=ids,
                     category=group[0].category,
                 )
             )
@@ -106,20 +107,58 @@ def validate_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
     return tuple(sorted(findings, key=lambda item: (item.severity, item.code, item.fact_ids)))
 
 
-def _compare_group(group: list[Fact]) -> tuple[set[str], dict[str, set[str]]]:
-    """Pairwise comparison under chain compatibility: conflicts and per-value duplicates."""
-    conflicting: set[str] = set()
-    duplicates: dict[str, set[str]] = defaultdict(set)
-    chains = [_qualifier_chain(fact) for fact in group]
-    for index, first in enumerate(group):
-        for offset, second in enumerate(group[index + 1 :], start=index + 1):
-            if not _chains_compatible(chains[index], chains[offset]):
-                continue
-            if stable_value(first.value) == stable_value(second.value):
-                duplicates[stable_value(first.value)].update((first.id, second.id))
-            else:
-                conflicting.update((first.id, second.id))
-    return conflicting, duplicates
+def _compare_group(
+    group: list[Fact],
+) -> tuple[tuple[tuple[str, ...], ...], tuple[tuple[str, ...], ...]]:
+    """Conflict and duplicate fact-id sets, each internally mutually compatible.
+
+    Facts are partitioned by exact qualifier chain; every fact within a chain
+    class is mutually compatible, and two classes whose chains are
+    suffix-compatible form a mutually compatible pool. Findings are emitted per
+    class (internal disagreement) and per compatible class pair (cross-class
+    disagreement), never unioned across incompatible chains — ``(a, b)`` and
+    ``(c, b)`` may each conflict with ``(b)`` without ever being conflated into
+    one three-way finding.
+    """
+    by_chain: dict[tuple[str, ...], list[Fact]] = defaultdict(list)
+    for fact in group:
+        by_chain[_qualifier_chain(fact)].append(fact)
+    chains = sorted(by_chain)
+    conflicts: set[tuple[str, ...]] = set()
+    duplicates: set[tuple[str, ...]] = set()
+    for index, chain in enumerate(chains):
+        _compare_within(by_chain[chain], conflicts, duplicates)
+        for other in chains[index + 1 :]:
+            if _chains_compatible(chain, other):
+                _compare_across(by_chain[chain], by_chain[other], conflicts, duplicates)
+    return tuple(sorted(conflicts)), tuple(sorted(duplicates))
+
+
+def _compare_within(
+    pool: list[Fact], conflicts: set[tuple[str, ...]], duplicates: set[tuple[str, ...]]
+) -> None:
+    values = {stable_value(fact.value) for fact in pool}
+    if len(values) > 1:
+        conflicts.add(tuple(sorted(fact.id for fact in pool)))
+    for value in values:
+        ids = [fact.id for fact in pool if stable_value(fact.value) == value]
+        if len(ids) > 1:
+            duplicates.add(tuple(sorted(ids)))
+
+
+def _compare_across(
+    first: list[Fact],
+    second: list[Fact],
+    conflicts: set[tuple[str, ...]],
+    duplicates: set[tuple[str, ...]],
+) -> None:
+    first_values = {stable_value(fact.value) for fact in first}
+    second_values = {stable_value(fact.value) for fact in second}
+    if first_values ^ second_values:
+        conflicts.add(tuple(sorted(fact.id for fact in first + second)))
+    for value in first_values & second_values:
+        ids = [fact.id for fact in first + second if stable_value(fact.value) == value]
+        duplicates.add(tuple(sorted(ids)))
 
 
 def _qualifier_chain(fact: Fact) -> tuple[str, ...]:

@@ -196,3 +196,96 @@ def test_invalid_confidence_never_promotes(tmp_path: Path) -> None:
             if fact.source_path.startswith("$.caseFacts.money.") and "[" not in fact.source_path
         ]
         assert facts and all(fact.confidence is None for fact in facts), bad
+
+
+def test_findings_never_mix_incompatible_chains(tmp_path: Path) -> None:
+    """Each finding's facts are mutually compatible; incompatible chains never aggregate."""
+    triple = tmp_path / "triple.json"
+    triple.write_text(
+        json.dumps(
+            {"a": {"b": {"status": "X"}}, "b": {"status": "Y"}, "c": {"b": {"status": "Z"}}}
+        ),
+        encoding="utf-8",
+    )
+    facts = normalize_paths([triple])
+    conflicts = [f for f in validate_facts(facts) if f.code == "conflicting_fact"]
+    assert len(conflicts) == 2
+    assert all(len(finding.fact_ids) == 2 for finding in conflicts)
+    for finding in conflicts:
+        joined = " ".join(finding.fact_ids)
+        assert not ("$.a.b." in joined and "$.c.b." in joined)
+
+    parties = tmp_path / "parties.json"
+    parties.write_text(
+        json.dumps({"applicant": {"status": "employed"}, "adjuster": {"status": "employed"}}),
+        encoding="utf-8",
+    )
+    findings = validate_facts(normalize_paths([parties]))
+    assert not any(f.code in ("duplicate_fact", "conflicting_fact") for f in findings)
+
+
+def test_legacy_normalized_claims_recover_scope(tmp_path: Path) -> None:
+    """Serialized facts without a scope key restore claims as claims, entities as entities."""
+    claims = tmp_path / "claims.json"
+    claims.write_text(
+        json.dumps(
+            {
+                "facts": [
+                    {"field": "date_of_injury", "value": "2025-02-01", "confidence": 0.9},
+                    {"field": "date_of_injury", "value": "2025-03-05", "confidence": 0.8},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    original = normalize_paths([claims, FIXTURES / "generator_manifest.json"])
+
+    legacy_records = []
+    for fact in original:
+        record = fact.as_dict()
+        del record["scope"]
+        legacy_records.append(record)
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(json.dumps({"facts": legacy_records}), encoding="utf-8")
+
+    restored = normalize_paths([legacy])
+    scopes = {fact.id: fact.scope for fact in restored}
+    assert {fact.id: fact.scope for fact in original} == scopes
+    assert any(finding.code == "conflicting_fact" for finding in validate_facts(restored))
+
+
+def test_colliding_or_structural_keys_are_rejected(tmp_path: Path) -> None:
+    """Keys that would collide into one fact ID fail loudly instead of merging."""
+    import pytest
+
+    date_twins = tmp_path / "dates.yaml"
+    date_twins.write_text("2025-01-15: a\n'2025-01-15': b\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate mapping key"):
+        normalize_paths([date_twins])
+
+    int_twins = tmp_path / "ints.yaml"
+    int_twins.write_text("1: a\n'1': b\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate mapping key"):
+        normalize_paths([int_twins])
+
+    dotted = tmp_path / "dotted.json"
+    dotted.write_text(json.dumps({"a.b": 1}), encoding="utf-8")
+    with pytest.raises(ValueError, match="unsupported mapping key"):
+        normalize_paths([dotted])
+
+
+def test_explicit_null_confidence_stays_unscored(tmp_path: Path) -> None:
+    """confidence: null is the author's unscored statement, never the generator default."""
+    manifest = json.loads((FIXTURES / "generator_manifest.json").read_text(encoding="utf-8"))
+    manifest["caseFacts"]["money"]["confidence"] = None
+    source = tmp_path / "manifest.json"
+    source.write_text(json.dumps(manifest), encoding="utf-8")
+
+    money_facts = [
+        fact
+        for fact in normalize_paths([source])
+        if fact.source_path.startswith("$.caseFacts.money.") and fact.scope == "case"
+    ]
+    assert money_facts and all(fact.confidence is None for fact in money_facts)
+    findings = validate_facts(normalize_paths([source]))
+    assert any(finding.code == "limited_evidence" for finding in findings)
