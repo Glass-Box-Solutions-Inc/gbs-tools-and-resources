@@ -7,11 +7,11 @@ from pathlib import Path
 import yaml
 from click.testing import CliRunner
 
-from case_analysis_engine.analysis import analyze_paths
-from case_analysis_engine.cli import cli
-from case_analysis_engine.input import normalize_paths
-from case_analysis_engine.render import render_json, render_markdown
-from case_analysis_engine.validation import validate_facts
+from adjudica_case_analysis_engine.analysis import analyze_paths
+from adjudica_case_analysis_engine.cli import cli
+from adjudica_case_analysis_engine.input import normalize_paths
+from adjudica_case_analysis_engine.render import render_json, render_markdown
+from adjudica_case_analysis_engine.validation import validate_facts
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

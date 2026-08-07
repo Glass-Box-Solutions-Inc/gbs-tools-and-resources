@@ -7,8 +7,8 @@ from collections import defaultdict
 from datetime import date
 from typing import Any
 
-from case_analysis_engine.models import Fact, Finding
-from case_analysis_engine.text import canonical_field, stable_value, unescape_segment
+from adjudica_case_analysis_engine.models import Fact, Finding
+from adjudica_case_analysis_engine.text import canonical_field, stable_value, unescape_segment
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _STAGES = (

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from case_analysis_engine.cli import cli
+from adjudica_case_analysis_engine.cli import cli
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

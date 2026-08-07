@@ -8,11 +8,11 @@ from pathlib import Path
 import click
 import yaml
 
-from case_analysis_engine import __version__
-from case_analysis_engine.analysis import analyze_paths
-from case_analysis_engine.input import normalize_paths, normalize_paths_report
-from case_analysis_engine.render import render_json, render_markdown
-from case_analysis_engine.validation import validate_facts
+from adjudica_case_analysis_engine import __version__
+from adjudica_case_analysis_engine.analysis import analyze_paths
+from adjudica_case_analysis_engine.input import normalize_paths, normalize_paths_report
+from adjudica_case_analysis_engine.render import render_json, render_markdown
+from adjudica_case_analysis_engine.validation import validate_facts
 
 
 def _paths(values: tuple[Path, ...]) -> list[Path]:
