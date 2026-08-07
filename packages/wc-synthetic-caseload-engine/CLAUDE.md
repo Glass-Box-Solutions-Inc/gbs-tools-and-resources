@@ -3,7 +3,9 @@
 **Seed-driven generator of complete synthetic CA workers' compensation attorney case files.**
 Tickets: **AJC-34** (engine), **AJC-36** (docs), **AJC-35** (review remediation). See `README.md` for the product surface,
 `docs/user-guide/index.html` for the operator guide — including the per-doctrine "needed seeds"
-reference — and `ISA.md` for the criteria contract.
+reference — `ISA.md` for the criteria contract, and `TEMPORAL_BEHAVIOUR.md` for the measured
+date behaviour (anchor, front-loaded document mass, stage-advance re-planning, DOI aiming,
+clamping). Read that one before planning any corpus around a calendar.
 
 ---
 

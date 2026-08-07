@@ -1,0 +1,35 @@
+# Review round 5, §10: does the forced-operative floor emit past the anchor?
+#
+# `planner.py:1908-1912` appends OPERATIVE_HOSPITAL_RECORDS at
+# `injury_date + 210 days` when scenario.surgery is "performed" and the walk
+# produced no operative document — WITHOUT timeline.clamp(). `target_stage:
+# intake` validates on only 30 days of runway, so a DOI 42 days before the
+# 2026-01-01 anchor is accepted while the forced surgery lands at DOI + 210.
+#
+# If a non-lien document appears after 2026-01-01, the post-resolution lien
+# track is NOT the only path past the anchor.
+caseload_id: surgery-past-anchor
+
+defaults:
+  documents:
+    format_mix: {pdf: 1.0}
+  output:
+    filename_style: corpus
+    formats: [pdf]
+
+cases:
+  - case_id: surgery-forced-operative
+    rng_seed: 660001
+    injury:
+      type: specific
+      date_of_injury: 2025-11-20   # 42 days of runway; intake needs 30
+      mechanism: struck by falling inventory during a restock
+      body_parts:
+        - {part: lumbar_spine, icd10: M54.5, detail: L4-L5 disc protrusion}
+    lifecycle:
+      target_stage: intake
+      claim_response: accepted
+      eval_type: none              # avoid the 240-day qme floor (section 6)
+      resolution: {type: pending}
+    scenario:
+      surgery: performed

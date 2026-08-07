@@ -1,0 +1,81 @@
+# Is DOI shift a pure rigid translation, or does the case reshape?
+# Same rng_seed, same lifecycle, same profile. ONLY date_of_injury varies.
+# All three DOIs clear the 540d resolved floor against the 2026-01-01 anchor.
+caseload_id: doi-rigidity
+
+defaults:
+  documents:
+    format_mix: {pdf: 0.7, scanned_pdf: 0.25, docx: 0.05}
+  output:
+    filename_style: corpus
+    formats: [pdf, scanned_pdf, docx]
+
+cases:
+  - case_id: doi-a-2023-01-15
+    rng_seed: 555001
+    profile:
+      applicant: {name: Rosa Alvarez, age: 47, occupation: Warehouse Associate, tenure_years: 6.5}
+      employer: {name: Inland Valley Distribution, industry: Warehousing, county: San Bernardino}
+    injury:
+      type: specific
+      date_of_injury: 2023-01-15
+      mechanism: struck by falling inventory during a restock
+      body_parts:
+        - {part: lumbar_spine, icd10: M54.5, detail: L4-L5 disc protrusion}
+    lifecycle:
+      target_stage: resolved
+      claim_response: accepted
+      eval_type: qme
+      resolution: {type: stipulations}
+
+  - case_id: doi-b-plus105
+    rng_seed: 555001
+    profile:
+      applicant: {name: Rosa Alvarez, age: 47, occupation: Warehouse Associate, tenure_years: 6.5}
+      employer: {name: Inland Valley Distribution, industry: Warehousing, county: San Bernardino}
+    injury:
+      type: specific
+      date_of_injury: 2023-04-30
+      mechanism: struck by falling inventory during a restock
+      body_parts:
+        - {part: lumbar_spine, icd10: M54.5, detail: L4-L5 disc protrusion}
+    lifecycle:
+      target_stage: resolved
+      claim_response: accepted
+      eval_type: qme
+      resolution: {type: stipulations}
+
+  - case_id: doi-c-earlier
+    rng_seed: 555001
+    profile:
+      applicant: {name: Rosa Alvarez, age: 47, occupation: Warehouse Associate, tenure_years: 6.5}
+      employer: {name: Inland Valley Distribution, industry: Warehousing, county: San Bernardino}
+    injury:
+      type: specific
+      date_of_injury: 2022-06-01
+      mechanism: struck by falling inventory during a restock
+      body_parts:
+        - {part: lumbar_spine, icd10: M54.5, detail: L4-L5 disc protrusion}
+    lifecycle:
+      target_stage: resolved
+      claim_response: accepted
+      eval_type: qme
+      resolution: {type: stipulations}
+
+  # Control: same DOI as A, DIFFERENT seed — isolates what rng_seed varies
+  - case_id: seed-control-diff
+    rng_seed: 777002
+    profile:
+      applicant: {name: Rosa Alvarez, age: 47, occupation: Warehouse Associate, tenure_years: 6.5}
+      employer: {name: Inland Valley Distribution, industry: Warehousing, county: San Bernardino}
+    injury:
+      type: specific
+      date_of_injury: 2023-01-15
+      mechanism: struck by falling inventory during a restock
+      body_parts:
+        - {part: lumbar_spine, icd10: M54.5, detail: L4-L5 disc protrusion}
+    lifecycle:
+      target_stage: resolved
+      claim_response: accepted
+      eval_type: qme
+      resolution: {type: stipulations}

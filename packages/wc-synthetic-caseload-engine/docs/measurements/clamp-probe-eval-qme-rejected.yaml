@@ -1,0 +1,28 @@
+caseload_id: e4
+defaults:
+  documents:
+    format_mix: {pdf: 0.7, scanned_pdf: 0.25, docx: 0.05}
+  output:
+    filename_style: corpus
+    formats: [pdf, scanned_pdf, docx]
+cases:
+  - case_id: probe
+    rng_seed: 111111
+    profile:
+      applicant: {name: Rosa Alvarez, age: 47, occupation: Warehouse Associate, tenure_years: 6.5}
+      employer: {name: Inland Valley Distribution, industry: Warehousing, county: San Bernardino}
+      carrier: {name: Calderport Compensation Insurance Company}
+    injury:
+      type: specific
+      date_of_injury: 2025-06-15
+      mechanism: struck by falling inventory during a restock
+      body_parts:
+        - {part: lumbar_spine, icd10: M54.5, detail: L4-L5 disc protrusion}
+    lifecycle:
+      target_stage: active_treatment
+      claim_response: accepted
+      # eval_type is deliberately OMITTED. It defaults to "qme" (seeds.py:491),
+      # which silently imposes a 240-day DOI floor (EVAL_RUNWAY_DAYS, seeds.py:198)
+      # on a seed whose stated target_stage only needs 180. That is the footgun:
+      # this spec is rejected at load for a constraint the author never wrote.
+      resolution: {type: pending}
