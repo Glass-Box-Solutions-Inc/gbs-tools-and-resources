@@ -29,6 +29,7 @@ from data.lifecycle_engine import (
 from data.taxonomy import DocumentSubtype
 from pdf_templates.medical.operative_record import (
     BODY_PART_TO_SURGERY_CATEGORY,
+    UNLISTED_SURGICAL_CPT,
     _select_surgical_cpts,
 )
 
@@ -440,10 +441,12 @@ class TestSelectSurgicalCPTs:
         """Spine body parts should return spine surgery CPT codes."""
         cpts = _select_surgical_cpts(["Lumbar Spine"])
         codes = [c for c, _ in cpts]
-        # Should contain spine surgery codes, not shoulder/knee
-        assert any(c in codes for c in ["63030", "22551", "64483", "62323"])
+        # Should contain spine surgery codes, not shoulder/knee — and not
+        # injections: an epidural is not an operation (AJC-55).
+        assert any(c in codes for c in ["63030", "22551"])
         assert "29827" not in codes  # no shoulder
         assert "29881" not in codes  # no knee
+        assert not {"64483", "62323"} & set(codes)  # no injections
 
     def test_shoulder_returns_shoulder_codes(self) -> None:
         """Shoulder body parts should return shoulder surgery CPT codes."""
@@ -457,15 +460,16 @@ class TestSelectSurgicalCPTs:
         codes = [c for c, _ in cpts]
         assert any(c in codes for c in ["29881", "27447"])
 
-    def test_unknown_body_part_returns_fallback(self) -> None:
-        """Unknown body parts should fall back to all surgical CPT codes."""
-        cpts = _select_surgical_cpts(["finger"])
-        assert len(cpts) > 0
+    def test_unknown_body_part_returns_unlisted_only(self) -> None:
+        """AJC-55: an unmapped part gets the unlisted-procedure entry, never
+        another region's surgery."""
+        cpts = _select_surgical_cpts(["psyche"])
+        assert cpts == [UNLISTED_SURGICAL_CPT]
 
-    def test_empty_body_parts_returns_fallback(self) -> None:
-        """Empty body parts list should fall back to all surgical CPT codes."""
+    def test_empty_body_parts_returns_unlisted_only(self) -> None:
+        """AJC-55: no body parts means no region may be claimed."""
         cpts = _select_surgical_cpts([])
-        assert len(cpts) > 0
+        assert cpts == [UNLISTED_SURGICAL_CPT]
 
     def test_multiple_body_parts_unions_categories(self) -> None:
         """Multiple body parts should union their CPT categories."""
@@ -475,6 +479,63 @@ class TestSelectSurgicalCPTs:
         has_spine = any(c in codes for c in ["63030", "22551"])
         has_shoulder = any(c in codes for c in ["29827", "23412"])
         assert has_spine and has_shoulder
+
+    # AJC-55 — the regression class: wrist and elbow cases were drawing rotator
+    # cuff repairs through the retired "upper extremity fallback"; hip, ankle
+    # and foot borrowed knee surgery the same way. Each region now stays home.
+
+    SHOULDER_CODES = {"29827", "23412"}
+    KNEE_CODES = {"29881", "27447"}
+
+    def test_wrist_never_draws_shoulder_surgery(self) -> None:
+        codes = {c for c, _ in _select_surgical_cpts(["Right Wrist"])}
+        assert "64721" in codes
+        assert not codes & self.SHOULDER_CODES
+
+    def test_hand_never_draws_shoulder_surgery(self) -> None:
+        codes = {c for c, _ in _select_surgical_cpts(["Left Hand"])}
+        assert "64721" in codes
+        assert not codes & self.SHOULDER_CODES
+
+    def test_elbow_never_draws_shoulder_surgery(self) -> None:
+        codes = {c for c, _ in _select_surgical_cpts(["Left Elbow"])}
+        assert "24357" in codes
+        assert not codes & self.SHOULDER_CODES
+
+    def test_hip_never_draws_knee_surgery(self) -> None:
+        codes = {c for c, _ in _select_surgical_cpts(["Right Hip"])}
+        assert "27130" in codes
+        assert not codes & self.KNEE_CODES
+
+    def test_ankle_and_foot_never_draw_knee_surgery(self) -> None:
+        for part in ("Left Ankle", "Right Foot"):
+            codes = {c for c, _ in _select_surgical_cpts([part])}
+            assert "27822" in codes, part
+            assert not codes & self.KNEE_CODES, part
+
+    def test_neck_and_back_map_to_spine(self) -> None:
+        """Natural-language parts common in standalone corpora reach the spine
+        pools instead of the unlisted fallback."""
+        for part in ("Neck", "Low Back"):
+            codes = {c for c, _ in _select_surgical_cpts([part])}
+            assert codes & {"63030", "22551"}, part
+
+    def test_no_body_part_draws_injection_codes_as_surgery(self) -> None:
+        """AJC-55: the surgery selector must never offer an injection CPT —
+        the wcce ledger publishes these draws as performed operations."""
+        injection_codes = {"64483", "62323"}
+        for part in BODY_PART_TO_SURGERY_CATEGORY:
+            codes = {c for c, _ in _select_surgical_cpts([part])}
+            assert not codes & injection_codes, part
+
+    def test_every_mapped_category_has_a_pool(self) -> None:
+        """A map entry naming a category CPT_CODES lacks would silently become
+        the unlisted fallback; keep the two structures in lockstep."""
+        from data.wc_constants import CPT_CODES
+
+        for part, cats in BODY_PART_TO_SURGERY_CATEGORY.items():
+            for cat in cats:
+                assert CPT_CODES.get(cat), f"{part} -> {cat} has no CPT pool"
 
 
 class TestComplexStageCaps:
