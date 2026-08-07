@@ -1,5 +1,5 @@
-from case_analysis_engine.models import Evidence, Fact
-from case_analysis_engine.validation import chronology, validate_facts
+from adjudica_case_analysis_engine.models import Evidence, Fact
+from adjudica_case_analysis_engine.validation import chronology, validate_facts
 
 
 def _fact(identifier: str, field: str, value: object, confidence: float = 0.9) -> Fact:

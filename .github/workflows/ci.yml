@@ -27,7 +27,7 @@ jobs:
       agent-swarm: ${{ steps.filter.outputs.agent-swarm }}
       agentic-debugger: ${{ steps.filter.outputs.agentic-debugger }}
       awesome-claude-code: ${{ steps.filter.outputs.awesome-claude-code }}
-      case-analysis-engine: ${{ steps.filter.outputs.case-analysis-engine }}
+      adjudica-case-analysis-engine: ${{ steps.filter.outputs.adjudica-case-analysis-engine }}
       compliance-auditor: ${{ steps.filter.outputs.compliance-auditor }}
       gbs-integration-validator: ${{ steps.filter.outputs.gbs-integration-validator }}
       hindsight: ${{ steps.filter.outputs.hindsight }}
@@ -54,8 +54,8 @@ jobs:
               - 'packages/agentic-debugger/**'
             awesome-claude-code:
               - 'packages/awesome-claude-code/**'
-            case-analysis-engine:
-              - 'packages/case-analysis-engine/**'
+            adjudica-case-analysis-engine:
+              - 'packages/adjudica-case-analysis-engine/**'
             compliance-auditor:
               - 'packages/compliance-auditor/**'
             gbs-integration-validator:
@@ -349,14 +349,14 @@ jobs:
       - run: pip install -r requirements.txt 2>/dev/null || true
       - run: python -m pytest tests/ -x || echo "No tests yet"
 
-  case-analysis-engine:
-    name: "case-analysis-engine"
+  adjudica-case-analysis-engine:
+    name: "adjudica-case-analysis-engine"
     needs: changes
-    if: needs.changes.outputs.case-analysis-engine == 'true'
+    if: needs.changes.outputs.adjudica-case-analysis-engine == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/case-analysis-engine
+        working-directory: packages/adjudica-case-analysis-engine
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -457,7 +457,7 @@ jobs:
       - agent-swarm
       - agentic-debugger
       - awesome-claude-code
-      - case-analysis-engine
+      - adjudica-case-analysis-engine
       - compliance-auditor
       - gbs-integration-validator
       - hindsight
@@ -479,7 +479,7 @@ jobs:
             "${{ needs.agent-swarm.result }}"
             "${{ needs.agentic-debugger.result }}"
             "${{ needs.awesome-claude-code.result }}"
-            "${{ needs.case-analysis-engine.result }}"
+            "${{ needs.adjudica-case-analysis-engine.result }}"
             "${{ needs.compliance-auditor.result }}"
             "${{ needs.gbs-integration-validator.result }}"
             "${{ needs.hindsight.result }}"

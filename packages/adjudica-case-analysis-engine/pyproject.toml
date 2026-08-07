@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "case-analysis-engine"
+name = "adjudica-case-analysis-engine"
 version = "0.2.0"
 description = "Evidence-first deterministic analysis of extracted case facts"
 readme = "README.md"
@@ -17,7 +17,7 @@ dependencies = [
 dev = ["pytest>=8.0,<10.0", "ruff>=0.5"]
 
 [project.scripts]
-case-analysis = "case_analysis_engine.cli:cli"
+adjudica-case-analysis = "adjudica_case_analysis_engine.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

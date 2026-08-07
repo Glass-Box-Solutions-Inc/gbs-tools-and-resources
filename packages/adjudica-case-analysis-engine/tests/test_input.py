@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from case_analysis_engine.input import normalize_paths
+from adjudica_case_analysis_engine.input import normalize_paths
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

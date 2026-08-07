@@ -1,6 +1,6 @@
 # Case Analysis Engine
 
-`case-analysis-engine` turns document-intake extraction JSON/YAML and
+`adjudica-case-analysis-engine` turns document-intake extraction JSON/YAML and
 `wc-synthetic-caseload-engine` artifacts into one deterministic, evidence-first case view.
 It is a standalone package: it does not import either upstream engine and it does not make legal
 conclusions.
@@ -23,21 +23,21 @@ unsourced legal rule or outcome.
 ## Install and use
 
 ```bash
-cd packages/case-analysis-engine
+cd packages/adjudica-case-analysis-engine
 python -m pip install -e ".[dev]"
 
 # Preserve the canonical ledger as normalized facts.
-case-analysis normalize path/to/intake.json --out normalized.json
+adjudica-case-analysis normalize path/to/intake.json --out normalized.json
 
 # Review intake plus a generated case manifest and ledger together.
-case-analysis analyze intake.json generated/TC-001/manifest.json generated/TC-001/case_facts.yaml \
+adjudica-case-analysis analyze intake.json generated/TC-001/manifest.json generated/TC-001/case_facts.yaml \
   --json-out report.json --markdown-out report.md
 
 # Print only applicant, defense, or neutral observations.
-case-analysis angles intake.yaml --angle defense
+adjudica-case-analysis angles intake.yaml --angle defense
 
 # Return nonzero only for error-severity integrity failures.
-case-analysis validate intake.json
+adjudica-case-analysis validate intake.json
 ```
 
 ## Input conventions
@@ -125,7 +125,7 @@ merges with `adjuster.phone_number`.
 
 ```python
 from pathlib import Path
-from case_analysis_engine import analyze_paths, render_json, render_markdown
+from adjudica_case_analysis_engine import analyze_paths, render_json, render_markdown
 
 report = analyze_paths([Path("intake.json"), Path("manifest.json")])
 Path("report.json").write_text(render_json(report), encoding="utf-8")

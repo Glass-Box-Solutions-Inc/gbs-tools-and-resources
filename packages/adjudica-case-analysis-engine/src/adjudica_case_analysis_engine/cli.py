@@ -8,11 +8,11 @@ from pathlib import Path
 import click
 import yaml
 
-from case_analysis_engine import __version__
-from case_analysis_engine.analysis import analyze_paths
-from case_analysis_engine.input import normalize_paths, normalize_paths_report
-from case_analysis_engine.render import render_json, render_markdown
-from case_analysis_engine.validation import validate_facts
+from adjudica_case_analysis_engine import __version__
+from adjudica_case_analysis_engine.analysis import analyze_paths
+from adjudica_case_analysis_engine.input import normalize_paths, normalize_paths_report
+from adjudica_case_analysis_engine.render import render_json, render_markdown
+from adjudica_case_analysis_engine.validation import validate_facts
 
 
 def _paths(values: tuple[Path, ...]) -> list[Path]:
@@ -30,8 +30,10 @@ def _write_or_echo(content: str, out: Path | None) -> None:
     click.echo(f"wrote: {out}")
 
 
-@click.group(name="case-analysis", context_settings={"help_option_names": ["-h", "--help"]})
-@click.version_option(__version__, prog_name="case-analysis")
+@click.group(
+    name="adjudica-case-analysis", context_settings={"help_option_names": ["-h", "--help"]}
+)
+@click.version_option(__version__, prog_name="adjudica-case-analysis")
 def cli() -> None:
     """Analyze supplied case facts without asserting unsourced legal conclusions."""
 
