@@ -39,3 +39,17 @@ def test_cli_normalize_analyze_validate_and_angles(tmp_path: Path) -> None:
     assert angles_result.exit_code == 0, angles_result.output
     assert normalized.is_file() and report_json.is_file() and report_markdown.is_file()
     assert "defense:" in angles_result.output
+
+
+def test_cli_advertises_canonical_program_name() -> None:
+    """PR #33 review: help and version must use the renamed command, not the retired one."""
+    runner = CliRunner()
+    version_result = runner.invoke(cli, ["--version"])
+    help_result = runner.invoke(cli, ["--help"])
+
+    assert version_result.exit_code == 0, version_result.output
+    assert version_result.output.startswith("adjudica-case-analysis, version "), (
+        version_result.output
+    )
+    assert help_result.exit_code == 0, help_result.output
+    assert "Usage: adjudica-case-analysis" in help_result.output
