@@ -456,8 +456,9 @@ into a reliable output-side rule today:
 round 6 after four successive formulations each proved subtly wrong — the recipe was prose
 compensation for a missing engine capability. **The real fix belongs in the engine**: a
 `clampedDocuments` count in the manifest, or a `validate --check-clamp`, would make calibration a
-single machine-checkable assertion instead of an inference from black-box output. That is worth an
-AJC ticket alongside the §10 defect.)*
+single machine-checkable assertion instead of an inference from black-box output. Filed as
+[AJC-58](https://linear.app/adjudica-ai/issue/AJC-58), sibling to the §10 defect
+[AJC-57](https://linear.app/adjudica-ai/issue/AJC-57).)*
 
 Shifting the DOI *later* (toward the anchor) spends slack and begins clamping the tail. Shifting it
 *earlier* is safe for shape **on seeds with no authored absolute dates** — see the caveat below —
@@ -722,8 +723,13 @@ path never crosses the horizon.
 >
 > Unlike the lien extension, this looks unintended — a missing clamp rather than a declared
 > exception — and it means **runway validation does not bound output**: a seed can pass every
-> floor and still emit past the horizon. Worth an **AJC ticket against the engine**; the tracker is
-> AJC and no ticket number is invented here.
+> floor and still emit past the horizon.
+>
+> **Filed as [AJC-57](https://linear.app/adjudica-ai/issue/AJC-57).** Two defects on one path:
+> no runway floor for `scenario.surgery` (date-spine rule 4) and no `timeline.clamp` on the
+> append (rule 2). The fix is prescribed by this package's own `CLAUDE.md`; note that adding the
+> floor is a **breaking change for existing short-runway seeds**, which is the correct failure
+> but should land deliberately.
 
 > **Two candidate paths were checked in review round 6 and are *not* past-anchor paths.**
 > Recorded because they look like one on a grep for `timeline.clamp`, and the absence of that
