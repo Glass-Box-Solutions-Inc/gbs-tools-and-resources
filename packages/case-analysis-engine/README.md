@@ -42,6 +42,23 @@ case-analysis validate intake.json
 
 ## Input conventions
 
+**Claim promotion.** A mapping with an explicit `field` key beside `value` is a
+claim record wherever it appears. The `name`/`key` shorthand promotes only
+inside a recognized claim container (`facts[]`, `claims[]`, `assertions[]`,
+`extractions[]`) — `{"name": "td_payment", "value": 800}` in any other list is
+an entity row, never an assertion, so itemized lists cannot manufacture
+conflicts. Container status carries through nested lists but resets at any
+intermediate non-container mapping key: records grouped under
+`facts.by_topic.medical[]` use explicit `field`.
+
+**Metadata scope.** Metadata vocabulary (`confidence`, `source_document`,
+`page`, `evidence`, …) is treated as claim metadata only where it has sibling
+data to describe; a mapping holding nothing but metadata-named keys is data in
+its own right (`referral.source` is an assertion, not provenance). Every key
+skipped as metadata is recorded — in `normalize` output under `skipped`, in
+analysis reports under `skippedKeys` with an info finding — never dropped
+silently. A bare string in `evidence` names the source document.
+
 Any JSON/YAML object or array is accepted. Unquoted YAML dates — values and
 keys — are canonicalized to ISO strings at load. Mapping keys are forced to
 strings; a key whose canonical form duplicates a sibling's (a date key beside

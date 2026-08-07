@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from case_analysis_engine.input import normalize_paths
+from case_analysis_engine.input import normalize_paths_report
 from case_analysis_engine.models import AnalysisReport, Angle, Fact, Finding
 from case_analysis_engine.validation import chronology, validate_facts
 
@@ -21,13 +21,35 @@ _DOMAINS = (
 
 def analyze_paths(paths: list[Path] | tuple[Path, ...]) -> AnalysisReport:
     """Normalize paths and produce a report without relying on upstream package imports."""
-    return analyze_facts(normalize_paths(paths))
+    normalized = normalize_paths_report(paths)
+    return analyze_facts(normalized.facts, skipped=normalized.skipped)
 
 
-def analyze_facts(facts: tuple[Fact, ...] | list[Fact]) -> AnalysisReport:
+def analyze_facts(
+    facts: tuple[Fact, ...] | list[Fact], *, skipped: tuple[str, ...] = ()
+) -> AnalysisReport:
     """Analyze supplied facts only; legal conclusions need a separate sourced authority adapter."""
     canonical_facts = tuple(sorted(facts, key=lambda item: (item.category, item.field, item.id)))
     findings = validate_facts(canonical_facts)
+    if skipped:
+        findings = tuple(
+            sorted(
+                findings
+                + (
+                    Finding(
+                        code="skipped_metadata_keys",
+                        severity="info",
+                        message=(
+                            f"{len(skipped)} input key(s) were treated as claim metadata and "
+                            "not normalized as facts; see skippedKeys for the full accounting."
+                        ),
+                        fact_ids=(),
+                        category="evidence_quality",
+                    ),
+                ),
+                key=lambda item: (item.severity, item.code, item.fact_ids),
+            )
+        )
     domains = _domain_summary(canonical_facts, findings)
     return AnalysisReport(
         facts=canonical_facts,
@@ -35,6 +57,7 @@ def analyze_facts(facts: tuple[Fact, ...] | list[Fact]) -> AnalysisReport:
         domains=domains,
         chronology=chronology(canonical_facts),
         angles=_angles(canonical_facts, findings),
+        skipped=skipped,
     )
 
 
