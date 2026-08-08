@@ -935,3 +935,568 @@ class TestValidateChecksTheLedger:
         )
         report = validate_output_tree(tmp_path)
         assert not report.ok
+
+
+def _tamper_ledger_copies(case_dir: Path, mutate: Any) -> None:
+    """Apply one mutation to BOTH published copies of the ledger.
+
+    The two copies are compared for drift before anything else is believed, so
+    a single-sided tamper reports the drift, not the malformation. Keeping the
+    copies in agreement is what routes the test through the shape checks.
+    """
+    import yaml
+
+    _tamper(case_dir / MANIFEST_NAME, lambda m: mutate(m["caseFacts"]))
+    facts_path = case_dir / CASE_FACTS_NAME
+    payload = yaml.safe_load(facts_path.read_text(encoding="utf-8"))
+    mutate(payload)
+    facts_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+class TestValidateRejectsMalformedUncodedShapes:
+    """Round-3 review: ``uncoded`` is load-bearing, so every malformed shape a
+    post-generation edit could produce must be named — whichever of the two
+    published ledger copies it lands in."""
+
+    def _rendered(self, tmp_path: Path, case_id: str, status: str = "performed") -> Path:
+        seed = _seed(case_id, {"surgery": status})
+        _render(seed, tmp_path)
+        return tmp_path / seed.case_id
+
+    def test_a_non_boolean_marker_fails(self, tmp_path: Path) -> None:
+        case_dir = self._rendered(tmp_path, "shape-nonbool")
+
+        def poison(facts: dict[str, Any]) -> None:
+            facts["surgery"]["uncoded"] = "yes"
+
+        _tamper_ledger_copies(case_dir, poison)
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("not a boolean" in p for p in report.problems), report.problems
+
+    def test_an_uncoded_claim_naming_a_cpt_fails(self, tmp_path: Path) -> None:
+        """The contradiction class: the marker asserts no code exists while the
+        block names one. Lumbar+shoulder anatomy always codes, so the rendered
+        CPT is real and only the marker is the lie."""
+        case_dir = self._rendered(tmp_path, "shape-contradict")
+
+        def poison(facts: dict[str, Any]) -> None:
+            facts["surgery"]["uncoded"] = True
+
+        _tamper_ledger_copies(case_dir, poison)
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("uncoded yet names CPT" in p for p in report.problems), report.problems
+
+    def test_a_named_cpt_without_a_description_fails(self, tmp_path: Path) -> None:
+        case_dir = self._rendered(tmp_path, "shape-nodesc")
+
+        def poison(facts: dict[str, Any]) -> None:
+            facts["surgery"]["cptDescription"] = None
+
+        _tamper_ledger_copies(case_dir, poison)
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("without a description" in p for p in report.problems), report.problems
+
+    def test_a_proposed_surgery_with_neither_code_nor_marker_fails(self, tmp_path: Path) -> None:
+        """``recommended`` and ``denied_by_ur`` name a procedure by definition;
+        a block that names none and does not declare it uncoded is malformed."""
+        case_dir = self._rendered(tmp_path, "shape-proposed", "recommended")
+
+        def poison(facts: dict[str, Any]) -> None:
+            facts["surgery"]["cptCode"] = None
+            facts["surgery"]["cptDescription"] = None
+
+        _tamper_ledger_copies(case_dir, poison)
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any(
+            "does not declare the operation uncoded" in p for p in report.problems
+        ), report.problems
+
+    def test_a_no_surgery_case_with_the_marker_fails(self, tmp_path: Path) -> None:
+        case_dir = self._rendered(tmp_path, "shape-none", "none")
+
+        def poison(facts: dict[str, Any]) -> None:
+            facts["surgery"]["uncoded"] = True
+
+        _tamper_ledger_copies(case_dir, poison)
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("asserted operation" in p for p in report.problems), report.problems
+
+    def test_empty_string_cpt_fields_fail_in_every_status(self, tmp_path: Path) -> None:
+        """Round-4 review: '' passed the truthiness checks as "no code" while
+        presenting a non-null field to consumers — including on no-surgery
+        records. Both fields, all three status families."""
+        for status, case_id in (
+            ("performed", "shape-empty-perf"),
+            ("recommended", "shape-empty-reco"),
+            ("none", "shape-empty-none"),
+        ):
+            case_dir = self._rendered(tmp_path, case_id, status)
+
+            def poison(facts: dict[str, Any]) -> None:
+                facts["surgery"]["cptCode"] = ""
+                facts["surgery"]["cptDescription"] = ""
+
+            _tamper_ledger_copies(case_dir, poison)
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        shape_problems = [p for p in report.problems if "null or a non-empty string" in p]
+        assert len(shape_problems) >= 6, report.problems
+
+    def test_an_uncoded_marker_with_empty_string_fields_fails(self, tmp_path: Path) -> None:
+        """The exact round-4 bypass: uncoded true with ''-valued CPT fields
+        validated as a well-formed uncoded operation."""
+        case_dir = self._rendered(tmp_path, "shape-uncoded-empty")
+
+        def poison(facts: dict[str, Any]) -> None:
+            facts["surgery"]["uncoded"] = True
+            facts["surgery"]["cptCode"] = ""
+            facts["surgery"]["cptDescription"] = ""
+
+        _tamper_ledger_copies(case_dir, poison)
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("null or a non-empty string" in p for p in report.problems), report.problems
+        assert any("uncoded yet names" in p for p in report.problems), report.problems
+
+    def test_a_whitespace_only_cpt_fails(self, tmp_path: Path) -> None:
+        case_dir = self._rendered(tmp_path, "shape-blank")
+
+        def poison(facts: dict[str, Any]) -> None:
+            facts["surgery"]["cptCode"] = "   "
+
+        _tamper_ledger_copies(case_dir, poison)
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("cptCode is '   '" in p for p in report.problems), report.problems
+
+    def test_a_non_string_cpt_fails(self, tmp_path: Path) -> None:
+        case_dir = self._rendered(tmp_path, "shape-int")
+
+        def poison(facts: dict[str, Any]) -> None:
+            facts["surgery"]["cptCode"] = 63030
+
+        _tamper_ledger_copies(case_dir, poison)
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("cptCode is 63030" in p for p in report.problems), report.problems
+
+    def test_a_yaml_only_marker_edit_is_caught_as_drift(self, tmp_path: Path) -> None:
+        """A mutation in only ONE copy is the drift check's job — proven here
+        so the dual-tamper helper above is known to be necessary, not merely
+        convenient."""
+        import yaml
+
+        case_dir = self._rendered(tmp_path, "shape-drift")
+        facts_path = case_dir / CASE_FACTS_NAME
+        payload = yaml.safe_load(facts_path.read_text(encoding="utf-8"))
+        payload["surgery"]["uncoded"] = True
+        facts_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+        report = validate_output_tree(tmp_path)
+        assert not report.ok
+        assert any("disagree" in p for p in report.problems), report.problems
+
+
+# ---------------------------------------------------------------------------
+# AJC-55 — the ledger's procedure stays in the injured part's anatomy
+# ---------------------------------------------------------------------------
+
+#: Independent per-part anatomical oracle over every part the seed catalog can
+#: produce, maintained by hand on purpose: deriving it from the substrate's own
+#: pools would make the assertion a tautology. ``None`` means the part supports
+#: no coded operation at all — its substrate pool must be empty.
+PART_ORACLE: dict[str, set[str] | None] = {
+    "lumbar_spine": {"63030"},
+    "cervical_spine": {"63075", "22551"},
+    "thoracic_spine": {"63055"},
+    "shoulder": {"29827", "23412"},
+    "wrist": {"64721"},
+    "elbow": {"24357", "64718"},
+    "hand": {"26055"},
+    "knee": {"29881", "27447"},
+    "ankle": {"27822"},
+    "hip": {"27130"},
+    "foot": {"28285"},
+    "psyche": None,
+    "head": None,
+    "internal": None,
+}
+
+
+def _assert_part(part: str, code: str) -> None:
+    allowed = PART_ORACLE[part]
+    assert allowed is not None and code in allowed, (
+        f"{part}: CPT {code} is outside the part's allowed set "
+        f"{sorted(allowed) if allowed else '(none permitted)'}"
+    )
+
+
+class TestTheProcedureMatchesTheInjuredPart:
+    def test_the_oracle_covers_the_whole_seed_catalog(self) -> None:
+        """A catalog part the oracle does not know is an untested anatomy."""
+        from wc_caseload_engine.seeds import BODY_PART_CATALOG
+
+        catalog_parts = {p for entries in BODY_PART_CATALOG.values() for p, _, _ in entries}
+        assert catalog_parts <= set(PART_ORACLE), sorted(catalog_parts - set(PART_ORACLE))
+
+    def test_every_catalog_part_draws_only_its_own_anatomy(self) -> None:
+        """The substrate pool per part is a subset of that part's allowed
+        codes, and parts with no permitted operation get an empty pool — the
+        wrist->23412 and thoracic->lumbar regression classes."""
+        from wc_caseload_engine.case_facts import import_substrate
+
+        operative = import_substrate("pdf_templates.medical.operative_record")
+        for part, allowed in PART_ORACLE.items():
+            pool = operative._select_surgical_cpts([part])
+            if allowed is None:
+                assert pool == [], f"{part}: no operation is permitted, got {pool}"
+                continue
+            assert pool, part
+            for code, _description in pool:
+                _assert_part(part, code)
+
+    def test_the_ledger_cpt_stays_in_part_across_seeds(self) -> None:
+        """End to end, for every part with a permitted operation: whenever
+        derivation says surgery happened, the ledger CPT belongs to that part."""
+        surgical_parts = sorted(p for p, allowed in PART_ORACLE.items() if allowed)
+        for part in surgical_parts:
+            performed = 0
+            for rng_seed in range(9100, 9140):
+                seed = _seed(
+                    "part-probe",
+                    {},
+                    rng_seed=rng_seed,
+                    injury={
+                        "type": "specific",
+                        "date_of_injury": "2022-04-11",
+                        "body_parts": [{"part": part}],
+                    },
+                )
+                facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+                if facts.surgery.status in {"performed", "recommended", "denied_by_ur"}:
+                    performed += 1
+                    assert facts.surgery.body_part == part
+                    _assert_part(part, facts.surgery.cpt_code)
+                if performed >= 3:
+                    break
+            assert performed, f"{part}: no probe seed produced a surgical case; widen the range"
+
+    def test_positive_control_the_oracle_can_fail(self) -> None:
+        """Wrong-region AND wrong-segment pairings must trip the assertion,
+        proving the oracle is not vacuous."""
+        with pytest.raises(AssertionError):
+            _assert_part("wrist", "29827")  # wrong region
+        with pytest.raises(AssertionError):
+            _assert_part("thoracic_spine", "63030")  # wrong segment, same region
+        with pytest.raises(AssertionError):
+            _assert_part("psyche", "64999")  # no operation permitted at all
+
+
+class TestMultiPartAttribution:
+    """Round-2 review HIGH: the part and its procedure are chosen atomically —
+    a lumbar-plus-shoulder case must never publish a shoulder CPT "of the
+    lumbar spine"."""
+
+    def test_the_cpt_belongs_to_the_recorded_part(self) -> None:
+        found = 0
+        for rng_seed in range(9200, 9260):
+            seed = _seed(
+                "multi-part",
+                {},
+                rng_seed=rng_seed,
+                injury={
+                    "type": "specific",
+                    "date_of_injury": "2022-04-11",
+                    "body_parts": [{"part": "lumbar_spine"}, {"part": "shoulder"}],
+                },
+            )
+            facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+            if facts.surgery.names_a_procedure:
+                found += 1
+                _assert_part(facts.surgery.body_part, facts.surgery.cpt_code)
+        assert found, "no probe seed produced a surgical case; widen the range"
+
+    def test_an_unsupported_part_never_wins_the_attribution(self) -> None:
+        found = 0
+        for rng_seed in range(9200, 9260):
+            seed = _seed(
+                "psyche-shoulder",
+                {"surgery": "performed"},
+                rng_seed=rng_seed,
+                injury={
+                    "type": "specific",
+                    "date_of_injury": "2022-04-11",
+                    "body_parts": [{"part": "psyche"}, {"part": "shoulder"}],
+                },
+            )
+            facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+            assert facts.surgery.performed
+            found += 1
+            assert facts.surgery.body_part == "shoulder"
+            _assert_part("shoulder", facts.surgery.cpt_code)
+        assert found
+
+    def test_the_operative_narrative_names_the_operated_part(self, tmp_path: Path) -> None:
+        """Round-3 review: the approach paragraph borrowed the whole
+        injured-part list, so a shoulder arthroscopy read "approach to the
+        lumbar spine, shoulder". The narrative must name the part the ledger's
+        CPT operates on — and only that part — while the diagnosis lines keep
+        the full list."""
+        seed = None
+        for rng_seed in range(9400, 9460):
+            candidate = _seed(
+                "multi-op",
+                {"surgery": "performed"},
+                rng_seed=rng_seed,
+                documents={
+                    "overrides": [{"subtype": "OPERATIVE_HOSPITAL_RECORDS", "count": 1}],
+                    "format_mix": {"pdf": 1.0},
+                },
+            )
+            facts = derive_case_facts(candidate, build_case_plan(candidate).timeline)
+            if facts.surgery.body_part == "shoulder":
+                seed = candidate
+                break
+        assert seed is not None, (
+            "no probe seed attributed the operation to the shoulder; widen the range"
+        )
+
+        manifest, texts = _render(seed, tmp_path)
+        surgery = manifest["caseFacts"]["surgery"]
+        _assert_part("shoulder", surgery["cptCode"])
+        operative = _flat(texts["OPERATIVE_HOSPITAL_RECORDS"])
+        assert "a surgical approach to the shoulder was made" in operative
+        assert "approach to the lumbar" not in operative
+        assert f"cpt {surgery['cptCode']}" in operative
+
+    def test_the_discharge_summary_prints_the_ledger_operation(self, tmp_path: Path) -> None:
+        """Round-4 review HIGH: the discharge summary reused the substrate
+        operative template directly, bypassing the ledger pinning, so a
+        shoulder case could discharge a different shoulder operation than the
+        one performed. rng_seed 9501 is the reproduction: ledger 23412, the
+        unpinned draw produced 29827."""
+        seed = _seed(
+            "ds-pin",
+            {"surgery": "performed"},
+            rng_seed=9501,
+            documents={
+                "overrides": [
+                    {"subtype": s, "count": 1}
+                    for s in ("OPERATIVE_HOSPITAL_RECORDS", "DISCHARGE_SUMMARY")
+                ],
+                "format_mix": {"pdf": 1.0},
+            },
+        )
+        facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+        assert facts.surgery.performed and facts.surgery.cpt_code
+
+        manifest, texts = _render(seed, tmp_path)
+        ledger = manifest["caseFacts"]["surgery"]["cptCode"]
+        assert ledger == facts.surgery.cpt_code
+        operated = (facts.surgery.body_part or "").replace("_", " ")
+        other_codes = {
+            code for allowed in PART_ORACLE.values() if allowed for code in allowed
+        } - {ledger}
+        for subtype in ("OPERATIVE_HOSPITAL_RECORDS", "DISCHARGE_SUMMARY"):
+            flat = _flat(texts[subtype])
+            assert f"cpt {ledger}" in flat, subtype
+            assert f"a surgical approach to the {operated} was made" in flat, subtype
+            for code in sorted(other_codes):
+                assert f"cpt {code}" not in flat, (subtype, code)
+
+
+class TestUncodedOperations:
+    """Round-2 review HIGH: a stated surgery on anatomy with no coded pool is
+    published as an UNCODED operation, honored by ledger, manifest, renderer,
+    and validator alike — no source fabricates 64999."""
+
+    def _psyche_surgery_seed(self, rng_seed: int = 4242) -> Any:
+        return _seed(
+            "uncoded-op",
+            {"surgery": "performed"},
+            rng_seed=rng_seed,
+            injury={
+                "type": "specific",
+                "date_of_injury": "2022-04-11",
+                "body_parts": [{"part": "psyche"}],
+            },
+            documents={
+                "overrides": [
+                    {"subtype": s, "count": 1}
+                    for s in (*FACT_AWARE_PROBE_SUBTYPES, "OPERATIVE_HOSPITAL_RECORDS")
+                ],
+                "format_mix": {"pdf": 1.0},
+            },
+        )
+
+    def test_the_ledger_publishes_the_operation_without_a_code(self) -> None:
+        seed = self._psyche_surgery_seed()
+        facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+        assert facts.surgery.performed
+        assert facts.surgery.uncoded
+        assert facts.surgery.cpt_code is None
+        assert facts.surgery.body_part == "psyche"
+
+    def test_the_rendered_case_validates_and_names_no_code(self, tmp_path: Path) -> None:
+        seed = self._psyche_surgery_seed()
+        manifest, texts = _render(seed, tmp_path)
+        surgery = manifest["caseFacts"]["surgery"]
+        assert surgery["status"] == "performed"
+        assert surgery["cptCode"] is None
+        assert surgery["uncoded"] is True
+        report = validate_output_tree(tmp_path)
+        assert report.ok, report.problems
+        operative = _flat(texts.get("OPERATIVE_HOSPITAL_RECORDS", ""))
+        assert "unlisted surgical procedure" in operative
+        assert "64999" not in operative
+
+    #: Any rendering of a numeric procedure code, in every shape a leak has
+    #: actually taken: the engine's parenthetical ("(CPT 72148)"), the
+    #: substrate TPR's bullet ("72148 — MRI lumbar spine") and the substrate
+    #: UR's bullet ("72148: MRI lumbar spine"). Five contiguous digits followed
+    #: by a separator do not occur in dates, zips, phones or claim numbers as
+    #: these templates format them.
+    _CODED_PROCEDURE_SHAPES = (
+        re.compile(r"cpt\s*\d"),
+        re.compile(r"\d{5}\s*[—\u2013:]"),  # em dash, en dash, colon
+    )
+
+    @pytest.mark.parametrize("status", ["performed", "recommended", "denied_by_ur"])
+    def test_every_document_of_an_uncoded_case_speaks_uncoded(
+        self, tmp_path: Path, status: str
+    ) -> None:
+        """Round-3 review HIGH: with forced-choice gated off for a code-less
+        surgery, the UR wrapper fell through to the substrate's flat sampler
+        and adjudicated procedures the ledger refuses to name. Every document
+        of an uncoded case — in all three asserting states — must speak the
+        ledger's uncoded language and render no numeric CPT anywhere."""
+        subtypes = [*FACT_AWARE_PROBE_SUBTYPES, "UTILIZATION_REVIEW_DECISION_REGULAR"]
+        if status == "performed":
+            subtypes.extend(("OPERATIVE_HOSPITAL_RECORDS", "DISCHARGE_SUMMARY"))
+        lifecycle: dict[str, Any] = {"target_stage": "medical_legal", "eval_type": "qme"}
+        if status == "denied_by_ur":
+            # The seed contract refuses a denial with no review to issue it.
+            lifecycle["ur_dispute"] = {"enabled": True, "decision": "upheld"}
+        seed = _seed(
+            f"uncoded-{status.replace('_', '-')}",
+            {"surgery": status},
+            injury={
+                "type": "specific",
+                "date_of_injury": "2022-04-11",
+                "body_parts": [{"part": "psyche"}],
+            },
+            lifecycle=lifecycle,
+            documents={
+                "overrides": [{"subtype": s, "count": 1} for s in subtypes],
+                "format_mix": {"pdf": 1.0},
+            },
+        )
+        manifest, texts = _render(seed, tmp_path)
+        surgery = manifest["caseFacts"]["surgery"]
+        assert surgery["status"] == status
+        assert surgery["uncoded"] is True
+        assert surgery["cptCode"] is None
+        assert surgery["cptDescription"] is None
+        report = validate_output_tree(tmp_path)
+        assert report.ok, report.problems
+        assert set(subtypes) <= set(texts), sorted(set(subtypes) - set(texts))
+
+        # Scanned: the forced fact-aware subtypes — the documents that speak
+        # about the operation. The rest of the planner's walk legitimately
+        # carries non-surgical codes (a first report requesting an MRI is
+        # billing reality, not a fabricated operation); whether THOSE codes
+        # match the injured anatomy is the analyzer's job (AJC-56).
+        for subtype in sorted(subtypes):
+            flat = _flat(texts[subtype])
+            assert "cpt none" not in flat, subtype
+            assert "none (cpt" not in flat, subtype
+            assert "64999" not in flat, subtype
+            for shape in self._CODED_PROCEDURE_SHAPES:
+                match = shape.search(flat)
+                assert match is None, (
+                    subtype,
+                    flat[max(0, match.start() - 60) : match.end() + 60] if match else "",
+                )
+
+        # The documents that speak about the operation all speak the ledger's
+        # phrase. The QME's surgical history exists only for performed surgery,
+        # and the operative record renders only in a performed case.
+        speaking = {"TREATING_PHYSICIAN_REPORT_PR2", "UTILIZATION_REVIEW_DECISION_REGULAR"}
+        substrate_voiced = {"OPERATIVE_HOSPITAL_RECORDS", "DISCHARGE_SUMMARY"}
+        if status == "performed":
+            speaking |= {"QME_COMPREHENSIVE_REPORT"} | substrate_voiced
+        for subtype in sorted(speaking):
+            assert "unlisted surgical procedure" in _flat(texts[subtype]), subtype
+        # Engine-rendered prose adds the explicit marker; the operative record
+        # and the discharge summary are the substrate's own documents and deny
+        # the code as "CPT N/A".
+        for subtype in sorted(speaking - substrate_voiced):
+            assert "unlisted surgical procedure (uncoded)" in _flat(texts[subtype]), subtype
+
+    def test_the_coin_never_operates_on_uncodeable_anatomy(self) -> None:
+        for rng_seed in range(9300, 9330):
+            seed = _seed(
+                "internal-only",
+                {},
+                rng_seed=rng_seed,
+                injury={
+                    "type": "specific",
+                    "date_of_injury": "2022-04-11",
+                    "body_parts": [{"part": "internal"}],
+                },
+            )
+            facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+            assert facts.surgery.status == "none", rng_seed
+
+class TestSharedCodeDescriptionsAgree:
+    def test_substrate_and_table_descriptions_lockstep(self) -> None:
+        """A code both sources can emit must carry one description, or the
+        fallback path drifts from the substrate path in rendered prose."""
+        from wc_caseload_engine.case_facts import SURGERY_CPT_CODES, import_substrate
+
+        constants = import_substrate("data.wc_constants")
+        substrate = {
+            code: desc
+            for pool in constants.SURGICAL_CPT_POOLS.values()
+            for code, desc in pool
+        }
+        for part, (code, desc) in SURGERY_CPT_CODES.items():
+            if code in substrate:
+                assert substrate[code] == desc, f"{part}/{code}: {substrate[code]!r} != {desc!r}"
+
+
+class TestVersionDeclarationsAgree:
+    """Round-3 review: the version is declared in pyproject, ``__version__``
+    and the manifest ``generator`` line, and recorded in the changelog. One
+    value, everywhere, or the provenance line lies."""
+
+    def test_the_declarations_are_one_value(self) -> None:
+        import tomllib
+
+        from wc_caseload_engine import __version__
+        from wc_caseload_engine.manifests import GENERATOR
+
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+        assert declared == __version__
+        expected = f"wc-synthetic-caseload-engine@{__version__}"
+        assert expected == GENERATOR
+
+    def test_the_changelog_records_the_current_version(self) -> None:
+        from wc_caseload_engine import __version__
+
+        changelog = Path(__file__).resolve().parents[1] / "CHANGELOG.md"
+        assert f"## [{__version__}]" in changelog.read_text(encoding="utf-8")
+
+    def test_a_generated_manifest_carries_the_generator_version(self, tmp_path: Path) -> None:
+        from wc_caseload_engine import __version__
+        from wc_caseload_engine.manifests import GENERATOR
+
+        seed = _seed("version-probe", {"surgery": "none"})
+        manifest, _ = _render(seed, tmp_path)
+        assert manifest["provenance"]["generator"] == GENERATOR
+        assert manifest["provenance"]["generator"].endswith(f"@{__version__}")

@@ -28,7 +28,7 @@ from data.lifecycle_engine import (
 )
 from data.taxonomy import DocumentSubtype
 from pdf_templates.medical.operative_record import (
-    BODY_PART_TO_SURGERY_CATEGORY,
+    BODY_PART_ALIASES,
     _select_surgical_cpts,
 )
 
@@ -434,47 +434,87 @@ class TestRC5Chronology:
 
 
 class TestSelectSurgicalCPTs:
-    """Tests for body-part-aware CPT selection in operative_record.py."""
+    """AJC-55: the surgical pool is per injured part — never another part's
+    operation, never an injection, never a substring accident."""
 
-    def test_spine_returns_spine_codes(self) -> None:
-        """Spine body parts should return spine surgery CPT codes."""
-        cpts = _select_surgical_cpts(["Lumbar Spine"])
-        codes = [c for c, _ in cpts]
-        # Should contain spine surgery codes, not shoulder/knee
-        assert any(c in codes for c in ["63030", "22551", "64483", "62323"])
-        assert "29827" not in codes  # no shoulder
-        assert "29881" not in codes  # no knee
+    def _codes(self, parts: list[str]) -> set[str]:
+        return {c for c, _ in _select_surgical_cpts(parts)}
 
-    def test_shoulder_returns_shoulder_codes(self) -> None:
-        """Shoulder body parts should return shoulder surgery CPT codes."""
-        cpts = _select_surgical_cpts(["Right Shoulder"])
-        codes = [c for c, _ in cpts]
-        assert any(c in codes for c in ["29827", "23412"])
+    # -- per-segment spine ---------------------------------------------------
 
-    def test_knee_returns_knee_codes(self) -> None:
-        """Knee body parts should return knee surgery CPT codes."""
-        cpts = _select_surgical_cpts(["Left Knee"])
-        codes = [c for c, _ in cpts]
-        assert any(c in codes for c in ["29881", "27447"])
+    def test_lumbar_gets_only_lumbar_procedures(self) -> None:
+        assert self._codes(["Lumbar Spine"]) == {"63030"}
 
-    def test_unknown_body_part_returns_fallback(self) -> None:
-        """Unknown body parts should fall back to all surgical CPT codes."""
-        cpts = _select_surgical_cpts(["finger"])
-        assert len(cpts) > 0
+    def test_cervical_gets_only_cervical_procedures(self) -> None:
+        assert self._codes(["Cervical Spine"]) == {"63075", "22551"}
 
-    def test_empty_body_parts_returns_fallback(self) -> None:
-        """Empty body parts list should fall back to all surgical CPT codes."""
-        cpts = _select_surgical_cpts([])
-        assert len(cpts) > 0
+    def test_thoracic_gets_only_thoracic_procedures(self) -> None:
+        assert self._codes(["Thoracic Spine"]) == {"63055"}
 
-    def test_multiple_body_parts_unions_categories(self) -> None:
-        """Multiple body parts should union their CPT categories."""
-        cpts = _select_surgical_cpts(["Lumbar Spine", "Right Shoulder"])
-        codes = [c for c, _ in cpts]
-        # Should include both spine AND shoulder codes
-        has_spine = any(c in codes for c in ["63030", "22551"])
-        has_shoulder = any(c in codes for c in ["29827", "23412"])
-        assert has_spine and has_shoulder
+    def test_bare_spine_is_ambiguous_and_gets_nothing(self) -> None:
+        """Which segment? The selector must not guess."""
+        assert _select_surgical_cpts(["Spine"]) == []
+        assert _select_surgical_cpts(["Back"]) == []
+
+    # -- extremities stay home ----------------------------------------------
+
+    def test_shoulder_pool(self) -> None:
+        assert self._codes(["Right Shoulder"]) == {"29827", "23412"}
+
+    def test_knee_pool(self) -> None:
+        assert self._codes(["Left Knee"]) == {"29881", "27447"}
+
+    def test_wrist_and_hand_are_distinct_parts(self) -> None:
+        assert self._codes(["Right Wrist"]) == {"64721"}
+        assert self._codes(["Left Hand"]) == {"26055"}
+
+    def test_ankle_and_foot_are_distinct_parts(self) -> None:
+        assert self._codes(["Left Ankle"]) == {"27822"}
+        assert self._codes(["Right Foot"]) == {"28285"}
+
+    def test_elbow_and_hip_pools(self) -> None:
+        assert self._codes(["Left Elbow"]) == {"24357", "64718"}
+        assert self._codes(["Right Hip"]) == {"27130"}
+
+    def test_aliases_reach_their_segment(self) -> None:
+        assert self._codes(["Low Back"]) == {"63030"}
+        assert self._codes(["Neck"]) == {"63075", "22551"}
+
+    # -- nothing sneaks in ---------------------------------------------------
+
+    def test_no_pool_contains_injection_codes(self) -> None:
+        """An epidural is not an operation (AJC-55)."""
+        from data.wc_constants import SURGICAL_CPT_POOLS
+
+        injections = {"64483", "62323"}
+        for part, pool in SURGICAL_CPT_POOLS.items():
+            assert not {c for c, _ in pool} & injections, part
+
+    def test_substring_lookalikes_get_no_pool(self) -> None:
+        """Token matching, not substring: 'background' is not 'back'."""
+        for phony in (
+            "background radiation exposure",
+            "secondhand smoke exposure",
+            "leadership role injury",
+            "chipped tooth",
+        ):
+            assert _select_surgical_cpts([phony]) == [], phony
+
+    def test_unknown_and_empty_get_no_pool(self) -> None:
+        assert _select_surgical_cpts(["psyche"]) == []
+        assert _select_surgical_cpts(["internal"]) == []
+        assert _select_surgical_cpts([]) == []
+
+    def test_multiple_parts_union_their_own_pools_exactly(self) -> None:
+        assert self._codes(["Lumbar Spine", "Right Shoulder"]) == {"63030", "29827", "23412"}
+
+    def test_every_alias_targets_an_existing_pool(self) -> None:
+        """An alias naming a part SURGICAL_CPT_POOLS lacks would KeyError at
+        selection time; keep the two structures in lockstep."""
+        from data.wc_constants import SURGICAL_CPT_POOLS
+
+        for alias, part in BODY_PART_ALIASES.items():
+            assert SURGICAL_CPT_POOLS.get(part), f"{alias} -> {part} has no pool"
 
 
 class TestComplexStageCaps:

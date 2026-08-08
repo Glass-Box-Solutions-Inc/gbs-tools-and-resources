@@ -5,60 +5,79 @@ Operative Record Template
 """
 
 import random
+import re
+
 from pdf_templates.base_template import BaseTemplate
 from reportlab.platypus import Paragraph, Spacer
 from reportlab.lib.units import inch
-from data.wc_constants import CPT_CODES
+from data.wc_constants import SURGICAL_CPT_POOLS
 
 
-# Body-part-aware CPT category mapping
-BODY_PART_TO_SURGERY_CATEGORY: dict[str, list[str]] = {
-    "cervical spine": ["surgery_spine", "spine_injection"],
-    "lumbar spine": ["surgery_spine", "spine_injection"],
-    "thoracic spine": ["surgery_spine", "spine_injection"],
-    "spine": ["surgery_spine", "spine_injection"],
-    "shoulder": ["surgery_shoulder"],
-    "knee": ["surgery_knee"],
-    "wrist": ["surgery_shoulder"],  # upper extremity fallback
-    "hand": ["surgery_shoulder"],
-    "elbow": ["surgery_shoulder"],
-    "hip": ["surgery_knee"],  # lower extremity fallback
-    "ankle": ["surgery_knee"],
-    "foot": ["surgery_knee"],
+# Body-part aliases → canonical SURGICAL_CPT_POOLS part (AJC-55). Matching is
+# by whole word-token sequence, never raw substring: "background" must not
+# match "back", "secondhand" must not match "hand". Ambiguous generic terms
+# ("spine", "back" alone — which segment?) are deliberately unmapped: an
+# operative record for a part this table cannot place claims no specific
+# procedure at all rather than guessing one from the wrong segment or region.
+BODY_PART_ALIASES: dict[str, str] = {
+    "lumbar spine": "lumbar_spine",
+    "low back": "lumbar_spine",
+    "cervical spine": "cervical_spine",
+    "neck": "cervical_spine",
+    "thoracic spine": "thoracic_spine",
+    "shoulder": "shoulder",
+    "knee": "knee",
+    "wrist": "wrist",
+    "hand": "hand",
+    "elbow": "elbow",
+    "hip": "hip",
+    "ankle": "ankle",
+    "foot": "foot",
+}
+
+
+def _tokens(text: str) -> list[str]:
+    """Lower-cased word tokens with all separators normalized away."""
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).split()
+
+
+def _contains_token_sequence(haystack: list[str], needle: list[str]) -> bool:
+    if not needle or len(needle) > len(haystack):
+        return False
+    return any(
+        haystack[i : i + len(needle)] == needle for i in range(len(haystack) - len(needle) + 1)
+    )
+
+
+#: Reverse lookup: which part a pool code operates on, for narrative
+#: provenance — the approach line must name the operated part, not the whole
+#: injured-part list (AJC-55 round 3).
+PART_BY_CPT: dict[str, str] = {
+    code: part for part, pool in SURGICAL_CPT_POOLS.items() for code, _ in pool
 }
 
 
 def _select_surgical_cpts(body_parts: list[str]) -> list[tuple[str, str]]:
-    """Select CPT codes matching the case's injured body parts."""
-    # Try body-part-gated selection first
-    matched_categories: list[str] = []
+    """Surgical CPT pool for the case's injured body parts, one region each.
+
+    Returns the union of ``SURGICAL_CPT_POOLS`` entries for every recognized
+    part, and an **empty list** when no part is recognized: a body part this
+    module cannot place anatomically gets no procedure code at all — never a
+    borrowed one. Callers decide how to render the absence.
+    """
+    matched_parts: list[str] = []
     for bp in body_parts:
-        bp_lower = bp.lower()
-        for key, cats in BODY_PART_TO_SURGERY_CATEGORY.items():
-            if key in bp_lower:
-                matched_categories.extend(cats)
+        bp_tokens = _tokens(bp)
+        for alias, part in BODY_PART_ALIASES.items():
+            if _contains_token_sequence(bp_tokens, _tokens(alias)) and part not in matched_parts:
+                matched_parts.append(part)
 
-    if matched_categories:
-        surgical_cpts = []
-        for cat in set(matched_categories):
-            if cat in CPT_CODES:
-                surgical_cpts.extend(CPT_CODES[cat])
-        if surgical_cpts:
-            return surgical_cpts
-
-    # Fallback: all surgical CPT codes (original behavior)
-    surgical_cpts = []
-    for cat, code_list in CPT_CODES.items():
-        if any(word in cat for word in ['surgery', 'injection']):
-            surgical_cpts.extend(code_list)
-        else:
-            for code, desc in code_list:
-                if any(word in desc.lower() for word in ['surgery', 'repair', 'arthroscop', 'fusion', 'replacement', 'discectomy']):
-                    surgical_cpts.append((code, desc))
-    if not surgical_cpts:
-        all_cpts = [(code, desc) for cat_list in CPT_CODES.values() for code, desc in cat_list]
-        surgical_cpts = all_cpts[:5]
-    return surgical_cpts
+    pool: list[tuple[str, str]] = []
+    for part in sorted(matched_parts):
+        for entry in SURGICAL_CPT_POOLS[part]:
+            if entry not in pool:
+                pool.append(entry)
+    return pool
 
 
 class OperativeRecord(BaseTemplate):
@@ -100,10 +119,19 @@ class OperativeRecord(BaseTemplate):
         anesthesiologist = f"Dr. {random.choice(['Lisa', 'John', 'Maria', 'Thomas'])} "
         anesthesiologist += random.choice(['Chang', 'Rodriguez', 'Kim', 'Anderson'])
 
-        # Select surgical procedure — body-part-aware CPT selection
+        # Select surgical procedure — body-part-aware CPT selection. A part
+        # the alias table cannot place yields no pool; the record then names an
+        # unlisted procedure WITHOUT fabricating a coded operation from some
+        # other anatomy (AJC-55).
         body_parts = injury.body_parts if injury else ["Spine"]
         surgical_cpts = _select_surgical_cpts(body_parts)
-        procedure_code, procedure_name = random.choice(surgical_cpts)
+        if surgical_cpts:
+            procedure_code, procedure_name = random.choice(surgical_cpts)
+        else:
+            procedure_code, procedure_name = "N/A", "Unlisted surgical procedure"
+        # The approach narrative names the part the chosen procedure operates
+        # on; the full injured-part list stays in the diagnosis lines only.
+        operated_part = PART_BY_CPT.get(procedure_code, "").replace("_", " ") or body_part.lower()
 
         story.append(Paragraph(f"<b>Date of Surgery:</b> {doc_spec.doc_date.strftime('%B %d, %Y')}", self.styles['BodyText14']))
         story.append(Paragraph(f"<b>Surgeon:</b> {surgeon_name}, MD", self.styles['BodyText14']))
@@ -135,7 +163,7 @@ class OperativeRecord(BaseTemplate):
             "After appropriate anesthesia was administered, the patient was positioned and standard sterile "
             "preparation and draping was performed.",
 
-            f"A surgical approach to the {body_part.lower()} was made using standard technique. "
+            f"A surgical approach to the {operated_part} was made using standard technique. "
             f"Careful dissection was carried down through the subcutaneous tissues with hemostasis maintained throughout. "
             f"The operative field was thoroughly inspected.",
         ]
