@@ -935,3 +935,219 @@ class TestValidateChecksTheLedger:
         )
         report = validate_output_tree(tmp_path)
         assert not report.ok
+
+
+# ---------------------------------------------------------------------------
+# AJC-55 — the ledger's procedure stays in the injured part's anatomy
+# ---------------------------------------------------------------------------
+
+#: Independent per-part anatomical oracle over every part the seed catalog can
+#: produce, maintained by hand on purpose: deriving it from the substrate's own
+#: pools would make the assertion a tautology. ``None`` means the part supports
+#: no coded operation at all — its substrate pool must be empty.
+PART_ORACLE: dict[str, set[str] | None] = {
+    "lumbar_spine": {"63030"},
+    "cervical_spine": {"63075", "22551"},
+    "thoracic_spine": {"63055"},
+    "shoulder": {"29827", "23412"},
+    "wrist": {"64721"},
+    "elbow": {"24357", "64718"},
+    "hand": {"26055"},
+    "knee": {"29881", "27447"},
+    "ankle": {"27822"},
+    "hip": {"27130"},
+    "foot": {"28285"},
+    "psyche": None,
+    "head": None,
+    "internal": None,
+}
+
+
+def _assert_part(part: str, code: str) -> None:
+    allowed = PART_ORACLE[part]
+    assert allowed is not None and code in allowed, (
+        f"{part}: CPT {code} is outside the part's allowed set "
+        f"{sorted(allowed) if allowed else '(none permitted)'}"
+    )
+
+
+class TestTheProcedureMatchesTheInjuredPart:
+    def test_the_oracle_covers_the_whole_seed_catalog(self) -> None:
+        """A catalog part the oracle does not know is an untested anatomy."""
+        from wc_caseload_engine.seeds import BODY_PART_CATALOG
+
+        catalog_parts = {p for entries in BODY_PART_CATALOG.values() for p, _, _ in entries}
+        assert catalog_parts <= set(PART_ORACLE), sorted(catalog_parts - set(PART_ORACLE))
+
+    def test_every_catalog_part_draws_only_its_own_anatomy(self) -> None:
+        """The substrate pool per part is a subset of that part's allowed
+        codes, and parts with no permitted operation get an empty pool — the
+        wrist->23412 and thoracic->lumbar regression classes."""
+        from wc_caseload_engine.case_facts import import_substrate
+
+        operative = import_substrate("pdf_templates.medical.operative_record")
+        for part, allowed in PART_ORACLE.items():
+            pool = operative._select_surgical_cpts([part])
+            if allowed is None:
+                assert pool == [], f"{part}: no operation is permitted, got {pool}"
+                continue
+            assert pool, part
+            for code, _description in pool:
+                _assert_part(part, code)
+
+    def test_the_ledger_cpt_stays_in_part_across_seeds(self) -> None:
+        """End to end, for every part with a permitted operation: whenever
+        derivation says surgery happened, the ledger CPT belongs to that part."""
+        surgical_parts = sorted(p for p, allowed in PART_ORACLE.items() if allowed)
+        for part in surgical_parts:
+            performed = 0
+            for rng_seed in range(9100, 9140):
+                seed = _seed(
+                    "part-probe",
+                    {},
+                    rng_seed=rng_seed,
+                    injury={
+                        "type": "specific",
+                        "date_of_injury": "2022-04-11",
+                        "body_parts": [{"part": part}],
+                    },
+                )
+                facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+                if facts.surgery.status in {"performed", "recommended", "denied_by_ur"}:
+                    performed += 1
+                    assert facts.surgery.body_part == part
+                    _assert_part(part, facts.surgery.cpt_code)
+                if performed >= 3:
+                    break
+            assert performed, f"{part}: no probe seed produced a surgical case; widen the range"
+
+    def test_positive_control_the_oracle_can_fail(self) -> None:
+        """Wrong-region AND wrong-segment pairings must trip the assertion,
+        proving the oracle is not vacuous."""
+        with pytest.raises(AssertionError):
+            _assert_part("wrist", "29827")  # wrong region
+        with pytest.raises(AssertionError):
+            _assert_part("thoracic_spine", "63030")  # wrong segment, same region
+        with pytest.raises(AssertionError):
+            _assert_part("psyche", "64999")  # no operation permitted at all
+
+
+class TestMultiPartAttribution:
+    """Round-2 review HIGH: the part and its procedure are chosen atomically —
+    a lumbar-plus-shoulder case must never publish a shoulder CPT "of the
+    lumbar spine"."""
+
+    def test_the_cpt_belongs_to_the_recorded_part(self) -> None:
+        found = 0
+        for rng_seed in range(9200, 9260):
+            seed = _seed(
+                "multi-part",
+                {},
+                rng_seed=rng_seed,
+                injury={
+                    "type": "specific",
+                    "date_of_injury": "2022-04-11",
+                    "body_parts": [{"part": "lumbar_spine"}, {"part": "shoulder"}],
+                },
+            )
+            facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+            if facts.surgery.names_a_procedure:
+                found += 1
+                _assert_part(facts.surgery.body_part, facts.surgery.cpt_code)
+        assert found, "no probe seed produced a surgical case; widen the range"
+
+    def test_an_unsupported_part_never_wins_the_attribution(self) -> None:
+        found = 0
+        for rng_seed in range(9200, 9260):
+            seed = _seed(
+                "psyche-shoulder",
+                {"surgery": "performed"},
+                rng_seed=rng_seed,
+                injury={
+                    "type": "specific",
+                    "date_of_injury": "2022-04-11",
+                    "body_parts": [{"part": "psyche"}, {"part": "shoulder"}],
+                },
+            )
+            facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+            assert facts.surgery.performed
+            found += 1
+            assert facts.surgery.body_part == "shoulder"
+            _assert_part("shoulder", facts.surgery.cpt_code)
+        assert found
+
+class TestUncodedOperations:
+    """Round-2 review HIGH: a stated surgery on anatomy with no coded pool is
+    published as an UNCODED operation, honored by ledger, manifest, renderer,
+    and validator alike — no source fabricates 64999."""
+
+    def _psyche_surgery_seed(self, rng_seed: int = 4242) -> Any:
+        return _seed(
+            "uncoded-op",
+            {"surgery": "performed"},
+            rng_seed=rng_seed,
+            injury={
+                "type": "specific",
+                "date_of_injury": "2022-04-11",
+                "body_parts": [{"part": "psyche"}],
+            },
+            documents={
+                "overrides": [
+                    {"subtype": s, "count": 1}
+                    for s in (*FACT_AWARE_PROBE_SUBTYPES, "OPERATIVE_HOSPITAL_RECORDS")
+                ],
+                "format_mix": {"pdf": 1.0},
+            },
+        )
+
+    def test_the_ledger_publishes_the_operation_without_a_code(self) -> None:
+        seed = self._psyche_surgery_seed()
+        facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+        assert facts.surgery.performed
+        assert facts.surgery.uncoded
+        assert facts.surgery.cpt_code is None
+        assert facts.surgery.body_part == "psyche"
+
+    def test_the_rendered_case_validates_and_names_no_code(self, tmp_path: Path) -> None:
+        seed = self._psyche_surgery_seed()
+        manifest, texts = _render(seed, tmp_path)
+        surgery = manifest["caseFacts"]["surgery"]
+        assert surgery["status"] == "performed"
+        assert surgery["cptCode"] is None
+        assert surgery["uncoded"] is True
+        report = validate_output_tree(tmp_path)
+        assert report.ok, report.problems
+        operative = _flat(texts.get("OPERATIVE_HOSPITAL_RECORDS", ""))
+        assert "unlisted surgical procedure" in operative
+        assert "64999" not in operative
+
+    def test_the_coin_never_operates_on_uncodeable_anatomy(self) -> None:
+        for rng_seed in range(9300, 9330):
+            seed = _seed(
+                "internal-only",
+                {},
+                rng_seed=rng_seed,
+                injury={
+                    "type": "specific",
+                    "date_of_injury": "2022-04-11",
+                    "body_parts": [{"part": "internal"}],
+                },
+            )
+            facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+            assert facts.surgery.status == "none", rng_seed
+
+class TestSharedCodeDescriptionsAgree:
+    def test_substrate_and_table_descriptions_lockstep(self) -> None:
+        """A code both sources can emit must carry one description, or the
+        fallback path drifts from the substrate path in rendered prose."""
+        from wc_caseload_engine.case_facts import SURGERY_CPT_CODES, import_substrate
+
+        constants = import_substrate("data.wc_constants")
+        substrate = {
+            code: desc
+            for pool in constants.SURGICAL_CPT_POOLS.values()
+            for code, desc in pool
+        }
+        for part, (code, desc) in SURGERY_CPT_CODES.items():
+            if code in substrate:
+                assert substrate[code] == desc, f"{part}/{code}: {substrate[code]!r} != {desc!r}"

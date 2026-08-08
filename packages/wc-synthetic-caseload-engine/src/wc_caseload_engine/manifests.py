@@ -1063,7 +1063,12 @@ def _validate_case_facts(
             isinstance(d, dict) and d.get("subtype") in OPERATIVE_SUBTYPES for d in documents
         )
         if status == "performed":
-            if not surgery.get("cptCode"):
+            if surgery.get("uncoded") and surgery.get("cptCode"):
+                problems.append(
+                    f"{case_label}: caseFacts calls the surgery uncoded yet names CPT "
+                    f"{surgery.get('cptCode')!r}"
+                )
+            if not surgery.get("cptCode") and not surgery.get("uncoded"):
                 problems.append(
                     f"{case_label}: caseFacts says surgery was performed but names no CPT"
                 )
@@ -1080,7 +1085,7 @@ def _validate_case_facts(
                     "holds no operative document to support it"
                 )
         elif status in ("recommended", "denied_by_ur"):
-            if not surgery.get("cptCode"):
+            if not surgery.get("cptCode") and not surgery.get("uncoded"):
                 problems.append(
                     f"{case_label}: caseFacts says surgery was {status} but names no CPT — "
                     "a request names the procedure it asks for"
@@ -1091,6 +1096,11 @@ def _validate_case_facts(
                     "not happen, but the case holds an operative document"
                 )
         elif status == "none":
+            if surgery.get("uncoded"):
+                problems.append(
+                    f"{case_label}: caseFacts marks no-surgery as uncoded — the marker "
+                    "belongs only on an asserted operation"
+                )
             if surgery.get("cptCode"):
                 problems.append(
                     f"{case_label}: caseFacts says no surgery but still names CPT "

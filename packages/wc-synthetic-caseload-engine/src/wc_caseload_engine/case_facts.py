@@ -90,14 +90,17 @@ IMAGING_MODALITIES: tuple[str, ...] = ("mri", "ct", "xray")
 _DERIVABLE_MODALITIES: tuple[str, ...] = IMAGING_MODALITIES
 
 SURGERY_CPT_CODES: dict[str, tuple[str, str]] = {
-    "lumbar_spine": ("63030", "Lumbar laminotomy with decompression"),
+    "lumbar_spine": ("63030", "Lumbar laminotomy/discectomy"),
     "cervical_spine": ("63075", "Cervical discectomy, anterior approach"),
     "thoracic_spine": ("63055", "Thoracic laminectomy with decompression"),
     "shoulder": ("29827", "Arthroscopic rotator cuff repair"),
-    "knee": ("29881", "Arthroscopic partial medial meniscectomy"),
+    "knee": ("29881", "Arthroscopic meniscectomy"),
     "wrist": ("64721", "Carpal tunnel release"),
+    "hand": ("26055", "Trigger finger release"),
     "ankle": ("27822", "Open treatment of ankle fracture"),
+    "foot": ("28285", "Hammertoe correction"),
     "elbow": ("24357", "Lateral epicondylitis release"),
+    "hip": ("27130", "Total hip arthroplasty"),
 }
 """Body part -> (CPT, description) for a surgery the ledger says happened.
 
@@ -105,9 +108,6 @@ The CPT is the single figure the coherence harness checks across documents: an
 operative report, a QME's surgical history and a treating physician's plan must
 all name the same procedure or the file is describing two different operations.
 """
-
-_DEFAULT_CPT: tuple[str, str] = ("64999", "Unlisted procedure, nervous system")
-
 
 class DiagnosticFact(BaseModel):
     """One diagnostic study — performed, or deliberately not.
@@ -162,6 +162,16 @@ class SurgeryFact(BaseModel):
     def names_a_procedure(self) -> bool:
         """Any state in which a CPT belongs in the ledger."""
         return self.status != "none"
+
+    @property
+    def uncoded(self) -> bool:
+        """An operation the ledger asserts without a procedure code.
+
+        Only a seed-stated surgery on anatomy with no coded pool produces this
+        state (AJC-55): the knob still reaches, but no source may fabricate a
+        code for it — renderer and validator both honor the absence.
+        """
+        return self.names_a_procedure and self.cpt_code is None
 
 
 class ProviderFact(BaseModel):
@@ -680,22 +690,30 @@ def resolve_surgery_status(seed: CaseSeed) -> str:
     psych = any(part == "psyche" for part in parts) or (
         "lc3208_3_psych" in seed.lifecycle.doctrine_hooks
     )
-    return "performed" if (seed.injury.type != "death" and not psych and coin) else "none"
+    # AJC-55: a *derived* operation additionally requires anatomy that can name
+    # its procedure. A stated ``scenario.surgery`` above still beats this — the
+    # knob reaches — and lands as an uncoded operation instead.
+    codeable = any(part in SURGERY_CPT_CODES for part in parts)
+    return (
+        "performed"
+        if (seed.injury.type != "death" and not psych and codeable and coin)
+        else "none"
+    )
 
 
 def _derive_surgery(seed: CaseSeed, timeline: Any) -> SurgeryFact:
     """Ledger entry for the surgery, off the one shared resolution."""
     parts = _body_parts(seed)
-    part = parts[0] if parts else "lumbar_spine"
     status = resolve_surgery_status(seed)
 
     if status == "none":
         return SurgeryFact(status="none")
 
+    part, code, description = _pick_operation(seed, parts)
+
     if status != "performed":
         # Proposed, not done: the CPT is what the RFA asked for, and there is no
         # operative date because there was no operation.
-        code, description = _pick_cpt(seed, parts, part)
         return SurgeryFact(
             status=status,  # type: ignore[arg-type]
             body_part=part,
@@ -703,7 +721,6 @@ def _derive_surgery(seed: CaseSeed, timeline: Any) -> SurgeryFact:
             cpt_description=description,
         )
 
-    code, description = _pick_cpt(seed, parts, part)
     onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
     return SurgeryFact(
         status="performed",
@@ -714,27 +731,41 @@ def _derive_surgery(seed: CaseSeed, timeline: Any) -> SurgeryFact:
     )
 
 
-def _pick_cpt(seed: CaseSeed, parts: list[str], primary: str) -> tuple[str, str]:
-    """The operation this case had, drawn from the substrate's own pool.
+def _pick_operation(seed: CaseSeed, parts: list[str]) -> tuple[str | None, str | None, str | None]:
+    """``(body_part, cpt, description)`` for the case's operation, atomically.
 
-    ``operative_record._select_surgical_cpts`` maps body parts to CPT
-    categories and the template then picks from that list. Drawing the ledger's
-    CPT from the *same* pool is what lets the operative record be pinned to it
-    (ISC-93) instead of the two disagreeing — a ledger CPT the template's pool
-    does not contain could only be forced by contradicting the template's own
-    body-part logic.
+    The part and its procedure are chosen together so the ledger can never
+    attribute one part's CPT to another — the round-2 review defect: drawing
+    from a pooled union while always recording ``parts[0]`` let a
+    lumbar-plus-shoulder case publish a rotator cuff repair "of the lumbar
+    spine".
 
-    Falls back to the local table if the substrate is unavailable or the pool
-    comes back empty, so the ledger always names some procedure.
+    Pools come from ``operative_record._select_surgical_cpts`` queried **per
+    part** (ISC-93: the ledger draws from the pool the operative template
+    renders from), falling back to this package's own table only when the
+    substrate is unavailable. When no injured part has a coded pool — a stated
+    surgery on psyche, head, or internal anatomy — the operation is published
+    UNCODED: ``(first part, None, None)``. No source fabricates a code.
     """
+    pools: dict[str, list[tuple[str, str]]] = {}
     try:
         operative = import_substrate("pdf_templates.medical.operative_record")
-        pool = list(operative._select_surgical_cpts(parts) or ())
+        for part in parts:
+            pool = list(operative._select_surgical_cpts([part]) or ())
+            if pool:
+                pools[part] = pool
     except Exception:
-        pool = []
-    if pool:
-        return tuple(_rng(seed, "surgery").choice(pool))  # type: ignore[return-value]
-    return SURGERY_CPT_CODES.get(primary, _DEFAULT_CPT)
+        for part in parts:
+            if part in SURGERY_CPT_CODES:
+                pools[part] = [SURGERY_CPT_CODES[part]]
+
+    if not pools:
+        return (parts[0] if parts else None), None, None
+
+    rng = _rng(seed, "surgery")
+    part = rng.choice(sorted(pools))
+    code, description = tuple(rng.choice(pools[part]))
+    return part, code, description
 
 
 def _derive_providers(
@@ -1027,6 +1058,7 @@ def facts_manifest_block(facts: CaseFacts, money: Any = None) -> dict[str, Any]:
             "status": facts.surgery.status,
             "cptCode": facts.surgery.cpt_code,
             "cptDescription": facts.surgery.cpt_description,
+            "uncoded": facts.surgery.uncoded,
         },
         "providers": [
             {"name": p.name, "specialty": p.specialty, "facility": p.facility}
@@ -1054,7 +1086,7 @@ GOVERNED_LEDGER_FIELDS: dict[str, tuple[str, ...]] = {
     "attorney": ("cadence",),
     "treatment": ("status", "trajectory", "dischargeDate", "gapStart", "gapEnd"),
     "diagnostics": ("modality", "display", "performed"),
-    "surgery": ("status", "cptCode", "cptDescription"),
+    "surgery": ("status", "cptCode", "cptDescription", "uncoded"),
     "providers": ("name", "specialty", "facility"),
 }
 
