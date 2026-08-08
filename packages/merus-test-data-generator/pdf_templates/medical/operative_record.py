@@ -5,63 +5,71 @@ Operative Record Template
 """
 
 import random
+import re
+
 from pdf_templates.base_template import BaseTemplate
 from reportlab.platypus import Paragraph, Spacer
 from reportlab.lib.units import inch
-from data.wc_constants import CPT_CODES
+from data.wc_constants import SURGICAL_CPT_POOLS
 
 
-# Body-part-aware CPT category mapping. Every mapped part points only at its
-# own anatomical region: an operative report must never borrow another region's
-# procedure (AJC-55 — wrist cases were drawing rotator cuff repairs through the
-# old "upper extremity fallback").
-BODY_PART_TO_SURGERY_CATEGORY: dict[str, list[str]] = {
-    # spine_injection deliberately absent: an epidural injection is not an
-    # operation, and this selector feeds operative records and the wcce
-    # ledger's SurgeryFact. Injections keep their own CPT_CODES category for
-    # non-surgical delivery paths.
-    "cervical spine": ["surgery_spine"],
-    "lumbar spine": ["surgery_spine"],
-    "thoracic spine": ["surgery_spine"],
-    "spine": ["surgery_spine"],
-    "neck": ["surgery_spine"],
-    "back": ["surgery_spine"],
-    "shoulder": ["surgery_shoulder"],
-    "knee": ["surgery_knee"],
-    "wrist": ["surgery_wrist_hand"],
-    "hand": ["surgery_wrist_hand"],
-    "elbow": ["surgery_elbow"],
-    "hip": ["surgery_hip"],
-    "ankle": ["surgery_ankle_foot"],
-    "foot": ["surgery_ankle_foot"],
+# Body-part aliases → canonical SURGICAL_CPT_POOLS part (AJC-55). Matching is
+# by whole word-token sequence, never raw substring: "background" must not
+# match "back", "secondhand" must not match "hand". Ambiguous generic terms
+# ("spine", "back" alone — which segment?) are deliberately unmapped: an
+# operative record for a part this table cannot place claims no specific
+# procedure at all rather than guessing one from the wrong segment or region.
+BODY_PART_ALIASES: dict[str, str] = {
+    "lumbar spine": "lumbar_spine",
+    "low back": "lumbar_spine",
+    "cervical spine": "cervical_spine",
+    "neck": "cervical_spine",
+    "thoracic spine": "thoracic_spine",
+    "shoulder": "shoulder",
+    "knee": "knee",
+    "wrist": "wrist",
+    "hand": "hand",
+    "elbow": "elbow",
+    "hip": "hip",
+    "ankle": "ankle",
+    "foot": "foot",
 }
 
-# The only procedure an unmapped body part may claim. Anatomically honest by
-# construction; also the same default the wc-synthetic-caseload-engine ledger
-# uses, so the two sources cannot disagree on the fallback.
-UNLISTED_SURGICAL_CPT: tuple[str, str] = ("64999", "Unlisted procedure, nervous system")
+
+def _tokens(text: str) -> list[str]:
+    """Lower-cased word tokens with all separators normalized away."""
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).split()
+
+
+def _contains_token_sequence(haystack: list[str], needle: list[str]) -> bool:
+    if not needle or len(needle) > len(haystack):
+        return False
+    return any(
+        haystack[i : i + len(needle)] == needle for i in range(len(haystack) - len(needle) + 1)
+    )
 
 
 def _select_surgical_cpts(body_parts: list[str]) -> list[tuple[str, str]]:
-    """Select CPT codes matching the case's injured body parts.
+    """Surgical CPT pool for the case's injured body parts, one region each.
 
-    Unmapped parts (and mapped parts whose category pool is empty) fall back to
-    ``UNLISTED_SURGICAL_CPT`` — never to another region's surgery list.
+    Returns the union of ``SURGICAL_CPT_POOLS`` entries for every recognized
+    part, and an **empty list** when no part is recognized: a body part this
+    module cannot place anatomically gets no procedure code at all — never a
+    borrowed one. Callers decide how to render the absence.
     """
-    matched_categories: list[str] = []
+    matched_parts: list[str] = []
     for bp in body_parts:
-        bp_lower = bp.lower()
-        for key, cats in BODY_PART_TO_SURGERY_CATEGORY.items():
-            if key in bp_lower:
-                matched_categories.extend(cats)
+        bp_tokens = _tokens(bp)
+        for alias, part in BODY_PART_ALIASES.items():
+            if _contains_token_sequence(bp_tokens, _tokens(alias)) and part not in matched_parts:
+                matched_parts.append(part)
 
-    surgical_cpts: list[tuple[str, str]] = []
-    for cat in sorted(set(matched_categories)):
-        surgical_cpts.extend(CPT_CODES.get(cat, []))
-    if surgical_cpts:
-        return surgical_cpts
-
-    return [UNLISTED_SURGICAL_CPT]
+    pool: list[tuple[str, str]] = []
+    for part in sorted(matched_parts):
+        for entry in SURGICAL_CPT_POOLS[part]:
+            if entry not in pool:
+                pool.append(entry)
+    return pool
 
 
 class OperativeRecord(BaseTemplate):
@@ -103,10 +111,16 @@ class OperativeRecord(BaseTemplate):
         anesthesiologist = f"Dr. {random.choice(['Lisa', 'John', 'Maria', 'Thomas'])} "
         anesthesiologist += random.choice(['Chang', 'Rodriguez', 'Kim', 'Anderson'])
 
-        # Select surgical procedure — body-part-aware CPT selection
+        # Select surgical procedure — body-part-aware CPT selection. A part
+        # the alias table cannot place yields no pool; the record then names an
+        # unlisted procedure WITHOUT fabricating a coded operation from some
+        # other anatomy (AJC-55).
         body_parts = injury.body_parts if injury else ["Spine"]
         surgical_cpts = _select_surgical_cpts(body_parts)
-        procedure_code, procedure_name = random.choice(surgical_cpts)
+        if surgical_cpts:
+            procedure_code, procedure_name = random.choice(surgical_cpts)
+        else:
+            procedure_code, procedure_name = "N/A", "Unlisted surgical procedure"
 
         story.append(Paragraph(f"<b>Date of Surgery:</b> {doc_spec.doc_date.strftime('%B %d, %Y')}", self.styles['BodyText14']))
         story.append(Paragraph(f"<b>Surgeon:</b> {surgeon_name}, MD", self.styles['BodyText14']))

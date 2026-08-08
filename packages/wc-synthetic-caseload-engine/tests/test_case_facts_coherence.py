@@ -938,65 +938,94 @@ class TestValidateChecksTheLedger:
 
 
 # ---------------------------------------------------------------------------
-# AJC-55 — the ledger's procedure stays in the injured region
+# AJC-55 — the ledger's procedure stays in the injured part's anatomy
 # ---------------------------------------------------------------------------
 
-#: Independent anatomical oracle, maintained by hand on purpose: deriving it
-#: from the substrate's own pools would make the assertion a tautology.
-REGION_CPTS: dict[str, set[str]] = {
-    "lumbar_spine": {"63030", "22551"},
-    "cervical_spine": {"63030", "22551"},
-    "thoracic_spine": {"63030", "22551"},
+#: Independent per-part anatomical oracle over every part the seed catalog can
+#: produce, maintained by hand on purpose: deriving it from the substrate's own
+#: pools would make the assertion a tautology. ``None`` means the part supports
+#: no coded operation at all — its substrate pool must be empty.
+PART_ORACLE: dict[str, set[str] | None] = {
+    "lumbar_spine": {"63030"},
+    "cervical_spine": {"63075", "22551"},
+    "thoracic_spine": {"63055"},
     "shoulder": {"29827", "23412"},
-    "knee": {"29881", "27447"},
-    "wrist": {"64721", "26055"},
+    "wrist": {"64721"},
     "elbow": {"24357", "64718"},
-    "ankle": {"27822", "28285"},
+    "hand": {"26055"},
+    "knee": {"29881", "27447"},
+    "ankle": {"27822"},
+    "hip": {"27130"},
+    "foot": {"28285"},
+    "psyche": None,
+    "head": None,
+    "internal": None,
 }
 
 
-def _assert_region(part: str, code: str) -> None:
-    assert code in REGION_CPTS[part], (
-        f"{part}: CPT {code} is outside the region's allowed set {sorted(REGION_CPTS[part])}"
+def _assert_part(part: str, code: str) -> None:
+    allowed = PART_ORACLE[part]
+    assert allowed is not None and code in allowed, (
+        f"{part}: CPT {code} is outside the part's allowed set "
+        f"{sorted(allowed) if allowed else '(none permitted)'}"
     )
 
 
-class TestTheProcedureMatchesTheInjuredRegion:
-    def test_every_seedable_part_draws_only_its_own_region(self) -> None:
-        """The substrate pool a wrist (elbow, hip...) case draws from must not
-        contain another region's surgery — the wrist->23412 regression class."""
-        from wc_caseload_engine.case_facts import SURGERY_CPT_CODES, import_substrate
+class TestTheProcedureMatchesTheInjuredPart:
+    def test_the_oracle_covers_the_whole_seed_catalog(self) -> None:
+        """A catalog part the oracle does not know is an untested anatomy."""
+        from wc_caseload_engine.seeds import BODY_PART_CATALOG
+
+        catalog_parts = {p for entries in BODY_PART_CATALOG.values() for p, _, _ in entries}
+        assert catalog_parts <= set(PART_ORACLE), sorted(catalog_parts - set(PART_ORACLE))
+
+    def test_every_catalog_part_draws_only_its_own_anatomy(self) -> None:
+        """The substrate pool per part is a subset of that part's allowed
+        codes, and parts with no permitted operation get an empty pool — the
+        wrist->23412 and thoracic->lumbar regression classes."""
+        from wc_caseload_engine.case_facts import import_substrate
 
         operative = import_substrate("pdf_templates.medical.operative_record")
-        for part in SURGERY_CPT_CODES:
+        for part, allowed in PART_ORACLE.items():
             pool = operative._select_surgical_cpts([part])
+            if allowed is None:
+                assert pool == [], f"{part}: no operation is permitted, got {pool}"
+                continue
             assert pool, part
             for code, _description in pool:
-                _assert_region(part, code)
+                _assert_part(part, code)
 
-    def test_the_ledger_cpt_stays_in_region_across_seeds(self) -> None:
-        """End to end: whenever derivation says surgery was performed, the CPT
-        the ledger publishes belongs to the injured body part's region."""
-        performed = 0
-        for rng_seed in range(9100, 9140):
-            seed = _seed(
-                "region-probe",
-                {},
-                rng_seed=rng_seed,
-                injury={
-                    "type": "specific",
-                    "date_of_injury": "2022-04-11",
-                    "body_parts": [{"part": "wrist"}],
-                },
-            )
-            facts = derive_case_facts(seed, build_case_plan(seed).timeline)
-            if facts.surgery.status in {"performed", "recommended", "denied_by_ur"}:
-                performed += 1
-                _assert_region("wrist", facts.surgery.cpt_code)
-        assert performed, "no probe seed produced a surgical case; widen the seed range"
+    def test_the_ledger_cpt_stays_in_part_across_seeds(self) -> None:
+        """End to end, for every part with a permitted operation: whenever
+        derivation says surgery happened, the ledger CPT belongs to that part."""
+        surgical_parts = sorted(p for p, allowed in PART_ORACLE.items() if allowed)
+        for part in surgical_parts:
+            performed = 0
+            for rng_seed in range(9100, 9140):
+                seed = _seed(
+                    "part-probe",
+                    {},
+                    rng_seed=rng_seed,
+                    injury={
+                        "type": "specific",
+                        "date_of_injury": "2022-04-11",
+                        "body_parts": [{"part": part}],
+                    },
+                )
+                facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+                if facts.surgery.status in {"performed", "recommended", "denied_by_ur"}:
+                    performed += 1
+                    _assert_part(part, facts.surgery.cpt_code)
+                if performed >= 3:
+                    break
+            assert performed, f"{part}: no probe seed produced a surgical case; widen the range"
 
     def test_positive_control_the_oracle_can_fail(self) -> None:
-        """A wrong-region pairing must trip the assertion, proving the oracle
-        is not vacuous."""
+        """Wrong-region AND wrong-segment pairings must trip the assertion,
+        proving the oracle is not vacuous."""
         with pytest.raises(AssertionError):
-            _assert_region("wrist", "29827")
+            _assert_part("wrist", "29827")  # wrong region
+        with pytest.raises(AssertionError):
+            _assert_part("thoracic_spine", "63030")  # wrong segment, same region
+        with pytest.raises(AssertionError):
+            _assert_part("psyche", "64999")  # no operation permitted at all

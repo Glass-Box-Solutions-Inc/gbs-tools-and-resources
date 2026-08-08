@@ -96,8 +96,11 @@ SURGERY_CPT_CODES: dict[str, tuple[str, str]] = {
     "shoulder": ("29827", "Arthroscopic rotator cuff repair"),
     "knee": ("29881", "Arthroscopic partial medial meniscectomy"),
     "wrist": ("64721", "Carpal tunnel release"),
+    "hand": ("26055", "Trigger finger release"),
     "ankle": ("27822", "Open treatment of ankle fracture"),
+    "foot": ("28285", "Hammertoe correction"),
     "elbow": ("24357", "Lateral epicondylitis release"),
+    "hip": ("27130", "Total hip arthroplasty"),
 }
 """Body part -> (CPT, description) for a surgery the ledger says happened.
 

@@ -223,16 +223,37 @@ CPT_CODES = {
     "surgery_spine": [("63030", "Lumbar laminotomy/discectomy"), ("22551", "Anterior cervical discectomy & fusion")],
     "surgery_shoulder": [("29827", "Arthroscopic rotator cuff repair"), ("23412", "Open rotator cuff repair")],
     "surgery_knee": [("29881", "Arthroscopic meniscectomy"), ("27447", "Total knee arthroplasty")],
-    # AJC-55: per-region pools so extremity cases never borrow another region's
-    # surgery. Codes shared with the wc-synthetic-caseload-engine ledger keep
-    # its exact descriptions so the two sources agree verbatim.
-    "surgery_wrist_hand": [("64721", "Carpal tunnel release"), ("26055", "Trigger finger release")],
-    "surgery_elbow": [("24357", "Lateral epicondylitis release"), ("64718", "Ulnar nerve transposition at elbow")],
-    "surgery_hip": [("27130", "Total hip arthroplasty")],
-    "surgery_ankle_foot": [("27822", "Open treatment of ankle fracture"), ("28285", "Hammertoe correction")],
     "physical_therapy": [("97110", "Therapeutic exercises"), ("97140", "Manual therapy"), ("97530", "Therapeutic activities")],
     "emg_ncv": [("95907", "Nerve conduction study, 1-2 nerves"), ("95910", "Nerve conduction study, 5-6 nerves")],
     "qme_eval": [("99456", "Work-related disability exam, established"), ("99455", "Work-related disability exam, initial")],
+}
+
+# AJC-55: surgical procedure pools keyed by canonical injured body part, one
+# pool per part so no case can publish another part's operation — the shared
+# spine pool alone guaranteed every thoracic case a wrong-segment procedure.
+# Deliberately NOT part of CPT_CODES: billing, treating-physician and UR
+# templates sample that mapping flat, and operative procedures must never leak
+# into those documents through vocabulary growth. Codes shared with the
+# wc-synthetic-caseload-engine ledger keep its exact descriptions so the two
+# sources agree verbatim.
+SURGICAL_CPT_POOLS: dict[str, list[tuple[str, str]]] = {
+    "lumbar_spine": [("63030", "Lumbar laminotomy/discectomy")],
+    "cervical_spine": [
+        ("63075", "Cervical discectomy, anterior approach"),
+        ("22551", "Anterior cervical discectomy & fusion"),
+    ],
+    "thoracic_spine": [("63055", "Thoracic laminectomy with decompression")],
+    "shoulder": [("29827", "Arthroscopic rotator cuff repair"), ("23412", "Open rotator cuff repair")],
+    "knee": [("29881", "Arthroscopic meniscectomy"), ("27447", "Total knee arthroplasty")],
+    "wrist": [("64721", "Carpal tunnel release")],
+    "hand": [("26055", "Trigger finger release")],
+    "elbow": [
+        ("24357", "Lateral epicondylitis release"),
+        ("64718", "Ulnar nerve transposition at elbow"),
+    ],
+    "hip": [("27130", "Total hip arthroplasty")],
+    "ankle": [("27822", "Open treatment of ankle fracture")],
+    "foot": [("28285", "Hammertoe correction")],
 }
 
 # Common WC medications
