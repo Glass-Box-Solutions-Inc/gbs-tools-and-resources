@@ -11,8 +11,8 @@ from typing import Any
 
 import yaml
 
-from case_analysis_engine.models import Evidence, Fact, FactScope
-from case_analysis_engine.text import (
+from adjudica_case_analysis_engine.models import Evidence, Fact, FactScope
+from adjudica_case_analysis_engine.text import (
     canonical_field,
     escape_segment,
     stable_value,

@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from case_analysis_engine.input import normalize_paths_report
-from case_analysis_engine.models import AnalysisReport, Angle, Fact, Finding
-from case_analysis_engine.validation import chronology, validate_facts
+from adjudica_case_analysis_engine.input import normalize_paths_report
+from adjudica_case_analysis_engine.models import AnalysisReport, Angle, Fact, Finding
+from adjudica_case_analysis_engine.validation import chronology, validate_facts
 
 _DOMAINS = (
     ("identity_parties", "Identity and parties"),

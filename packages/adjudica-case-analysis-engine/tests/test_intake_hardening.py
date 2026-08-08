@@ -5,11 +5,11 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from case_analysis_engine.analysis import analyze_paths
-from case_analysis_engine.cli import cli
-from case_analysis_engine.input import normalize_paths, normalize_paths_report
-from case_analysis_engine.render import render_json
-from case_analysis_engine.validation import validate_facts
+from adjudica_case_analysis_engine.analysis import analyze_paths
+from adjudica_case_analysis_engine.cli import cli
+from adjudica_case_analysis_engine.input import normalize_paths, normalize_paths_report
+from adjudica_case_analysis_engine.render import render_json
+from adjudica_case_analysis_engine.validation import validate_facts
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -148,13 +148,13 @@ def test_skipped_accounting_survives_round_trip(tmp_path: Path) -> None:
         assert replayed.skipped == direct.skipped
         assert any(f.code == "skipped_metadata_keys" for f in replayed.findings)
         assert "- Skipped metadata keys: 2" in __import__(
-            "case_analysis_engine.render", fromlist=["render_markdown"]
+            "adjudica_case_analysis_engine.render", fromlist=["render_markdown"]
         ).render_markdown(replayed)
 
 
 def test_analysis_report_positional_constructor_is_stable() -> None:
     """The sixth positional argument remains the caveat; skipped stays keyword-safe."""
-    from case_analysis_engine.models import AnalysisReport
+    from adjudica_case_analysis_engine.models import AnalysisReport
 
     report = AnalysisReport((), (), {}, (), (), "custom caveat")
     assert report.caveat == "custom caveat"
@@ -195,12 +195,12 @@ def test_versions_agree_everywhere(tmp_path: Path) -> None:
     """pyproject, __version__, and the CLI identify one build."""
     import tomllib
 
-    import case_analysis_engine
+    import adjudica_case_analysis_engine
 
     pyproject = tomllib.loads(
         (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
     )
-    assert case_analysis_engine.__version__ == pyproject["project"]["version"]
+    assert adjudica_case_analysis_engine.__version__ == pyproject["project"]["version"]
 
     result = CliRunner().invoke(cli, ["--version"])
     assert result.exit_code == 0, result.output

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 
-from case_analysis_engine.models import AnalysisReport
+from adjudica_case_analysis_engine.models import AnalysisReport
 
 
 def render_json(report: AnalysisReport) -> str:
