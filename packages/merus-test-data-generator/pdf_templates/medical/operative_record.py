@@ -49,6 +49,14 @@ def _contains_token_sequence(haystack: list[str], needle: list[str]) -> bool:
     )
 
 
+#: Reverse lookup: which part a pool code operates on, for narrative
+#: provenance — the approach line must name the operated part, not the whole
+#: injured-part list (AJC-55 round 3).
+PART_BY_CPT: dict[str, str] = {
+    code: part for part, pool in SURGICAL_CPT_POOLS.items() for code, _ in pool
+}
+
+
 def _select_surgical_cpts(body_parts: list[str]) -> list[tuple[str, str]]:
     """Surgical CPT pool for the case's injured body parts, one region each.
 
@@ -121,6 +129,9 @@ class OperativeRecord(BaseTemplate):
             procedure_code, procedure_name = random.choice(surgical_cpts)
         else:
             procedure_code, procedure_name = "N/A", "Unlisted surgical procedure"
+        # The approach narrative names the part the chosen procedure operates
+        # on; the full injured-part list stays in the diagnosis lines only.
+        operated_part = PART_BY_CPT.get(procedure_code, "").replace("_", " ") or body_part.lower()
 
         story.append(Paragraph(f"<b>Date of Surgery:</b> {doc_spec.doc_date.strftime('%B %d, %Y')}", self.styles['BodyText14']))
         story.append(Paragraph(f"<b>Surgeon:</b> {surgeon_name}, MD", self.styles['BodyText14']))
@@ -152,7 +163,7 @@ class OperativeRecord(BaseTemplate):
             "After appropriate anesthesia was administered, the patient was positioned and standard sterile "
             "preparation and draping was performed.",
 
-            f"A surgical approach to the {body_part.lower()} was made using standard technique. "
+            f"A surgical approach to the {operated_part} was made using standard technique. "
             f"Careful dissection was carried down through the subcutaneous tissues with hemostasis maintained throughout. "
             f"The operative field was thoroughly inspected.",
         ]

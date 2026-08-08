@@ -1062,49 +1062,52 @@ def _validate_case_facts(
         has_operative = any(
             isinstance(d, dict) and d.get("subtype") in OPERATIVE_SUBTYPES for d in documents
         )
+        uncoded = surgery.get("uncoded", False)
+        cpt = surgery.get("cptCode")
+        description = surgery.get("cptDescription")
+        if not isinstance(uncoded, bool):
+            problems.append(
+                f"{case_label}: caseFacts.surgery.uncoded is {uncoded!r}, not a boolean"
+            )
+            uncoded = bool(uncoded)
+        if (cpt is None) != (description is None):
+            missing = (
+                "a CPT without a description"
+                if description is None
+                else "a description without a CPT"
+            )
+            problems.append(f"{case_label}: caseFacts.surgery names {missing}")
+        if status in ("performed", "recommended", "denied_by_ur"):
+            if uncoded and cpt:
+                problems.append(
+                    f"{case_label}: caseFacts calls the surgery uncoded yet names CPT {cpt!r}"
+                )
+            if not cpt and not uncoded:
+                problems.append(
+                    f"{case_label}: caseFacts says surgery was {status} but names no CPT "
+                    "and does not declare the operation uncoded"
+                )
         if status == "performed":
-            if surgery.get("uncoded") and surgery.get("cptCode"):
-                problems.append(
-                    f"{case_label}: caseFacts calls the surgery uncoded yet names CPT "
-                    f"{surgery.get('cptCode')!r}"
-                )
-            if not surgery.get("cptCode") and not surgery.get("uncoded"):
-                problems.append(
-                    f"{case_label}: caseFacts says surgery was performed but names no CPT"
-                )
-            # The forward direction, closed in 0.4.0 by the planner floor. It is
-            # still only asserted for a *stated* surgery: a derived one keeps
-            # the substrate's probabilistic emission, where surgery can resolve
-            # true with no operative document, and failing that here would make
-            # ``validate`` red on this package's own demo. ``surgeryStated``
-            # records which case this is, so the rule can tell them apart from
-            # the output alone.
             if scenario_stated and not has_operative:
                 problems.append(
                     f"{case_label}: the seed states surgery was performed but the case "
                     "holds no operative document to support it"
                 )
         elif status in ("recommended", "denied_by_ur"):
-            if not surgery.get("cptCode") and not surgery.get("uncoded"):
-                problems.append(
-                    f"{case_label}: caseFacts says surgery was {status} but names no CPT — "
-                    "a request names the procedure it asks for"
-                )
             if has_operative:
                 problems.append(
                     f"{case_label}: caseFacts says surgery was {status}, which means it did "
                     "not happen, but the case holds an operative document"
                 )
         elif status == "none":
-            if surgery.get("uncoded"):
+            if uncoded:
                 problems.append(
                     f"{case_label}: caseFacts marks no-surgery as uncoded — the marker "
                     "belongs only on an asserted operation"
                 )
-            if surgery.get("cptCode"):
+            if cpt:
                 problems.append(
-                    f"{case_label}: caseFacts says no surgery but still names CPT "
-                    f"{surgery.get('cptCode')!r}"
+                    f"{case_label}: caseFacts says no surgery but still names CPT {cpt!r}"
                 )
             if has_operative:
                 problems.append(
