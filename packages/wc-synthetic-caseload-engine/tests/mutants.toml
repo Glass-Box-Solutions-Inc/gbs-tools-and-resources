@@ -1373,3 +1373,12 @@ replace = '''    hook_warnings = verify_unsupported_hooks(
         {hook: 1 for hook, _ in unsupported_hooks(seed.lifecycle.doctrine_hooks, seed)},
     )'''
 note = "The sixth site of one class and the only one outside doc_controls, which is why five rounds inside that module never reached it. 'Its language will be rendered' is a claim about the finished file; doctrine text arrives only through content_flags on a surviving document, and the sentence never consulted the document set. Measured across 24 warning-firing configurations, language rendered in ZERO — and the rate is total rather than rare because the condition that makes a hook unsupported is generally the same one that removes its carrier documents (`eval_type: none` is both why ogilvie is unsupported and why no QME report exists to argue it). Feeding the verifier a fabricated carrier count restores the promise."
+
+[[mutant]]
+id = 'm13-1'
+title = "a wrist case's ledger publishes a shoulder operation again"
+file = '../merus-test-data-generator/pdf_templates/medical/operative_record.py'
+test = 'tests/test_case_facts_coherence.py::TestTheProcedureMatchesTheInjuredPart::test_every_catalog_part_draws_only_its_own_anatomy'
+find = '''    "wrist": "wrist",'''
+replace = '''    "wrist": "shoulder",'''
+note = "AJC-55. The substrate's alias table is the single seam through which every operative record and, via _pick_cpt's substrate-first preference (ISC-93), the wcce ledger's SurgeryFact acquire their procedure. The retired 'upper extremity fallback' mapped wrist/hand/elbow to surgery_shoulder here, which is exactly this edit; the guard's per-part oracle is hand-maintained so the pool cannot vouch for itself. First cross-package mutant: the file lives in merus-test-data-generator, the guard in this package, because the defect and its blast radius straddle the bridge."

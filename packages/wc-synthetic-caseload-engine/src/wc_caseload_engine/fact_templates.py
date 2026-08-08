@@ -124,6 +124,18 @@ class _SpecCapture:
         return super().generate(output_path, doc_spec)  # type: ignore[misc]
 
 
+def _procedure_phrase(surgery: Any) -> str:
+    """The one rendering of the ledger's procedure, coded or uncoded.
+
+    Every fact-aware document that names the operation goes through this, so
+    an uncoded operation (AJC-55) reads identically everywhere and no renderer
+    can interpolate a literal ``None``.
+    """
+    if surgery.cpt_code:
+        return f"{surgery.cpt_description} (CPT {surgery.cpt_code})"
+    return "an unlisted surgical procedure (uncoded)"
+
+
 def _facts_of(template: Any) -> CaseFacts | None:
     """The ledger for the document being rendered, if the context carries one."""
     context = getattr(getattr(template, "doc_spec", None), "context", None)
@@ -1364,12 +1376,12 @@ def build_fact_aware_templates() -> dict[str, type]:
 
             elements.extend(self.make_section("DIAGNOSTIC REVIEW", "\n".join(findings)))
 
-            if facts.surgery.performed and facts.surgery.cpt_code:
+            if facts.surgery.performed:
                 elements.extend(
                     self.make_section(
                         "SURGICAL HISTORY",
-                        f"The applicant underwent {facts.surgery.cpt_description} "
-                        f"(CPT {facts.surgery.cpt_code}) of the "
+                        f"The applicant underwent {_procedure_phrase(facts.surgery)} "
+                        f"of the "
                         f"{(facts.surgery.body_part or '').replace('_', ' ')}"
                         + (
                             f" on {facts.surgery.date.strftime('%B %d, %Y')}."
@@ -1439,8 +1451,8 @@ def build_fact_aware_templates() -> dict[str, type]:
             region = (surgery.body_part or "the affected region").replace("_", " ")
             dated = f" on {surgery.date.strftime('%B %d, %Y')}" if surgery.date else ""
             content = (
-                f"The applicant is status post {surgery.cpt_description} "
-                f"(CPT {surgery.cpt_code}) of the {region}{dated}. Care is directed "
+                f"The applicant is status post {_procedure_phrase(surgery)} "
+                f"of the {region}{dated}. Care is directed "
                 "at post-operative rehabilitation rather than further conservative "
                 "management.\n\n"
                 "<b>Treatment Plan:</b>\n"
@@ -1467,15 +1479,15 @@ def build_fact_aware_templates() -> dict[str, type]:
             region = (surgery.body_part or "the affected region").replace("_", " ")
             if surgery.status == "denied_by_ur":
                 outcome = (
-                    f"A Request for Authorization for {surgery.cpt_description} "
-                    f"(CPT {surgery.cpt_code}) of the {region} was submitted and "
+                    f"A Request for Authorization for {_procedure_phrase(surgery)} "
+                    f"of the {region} was submitted and "
                     "denied on utilization review as not medically necessary. The "
                     "applicant remains symptomatic and the denial is under appeal."
                 )
             else:
                 outcome = (
                     f"Surgical consultation has been obtained and "
-                    f"{surgery.cpt_description} (CPT {surgery.cpt_code}) of the "
+                    f"{_procedure_phrase(surgery)} of the "
                     f"{region} is recommended. A Request for Authorization has been "
                     "submitted and no determination has issued."
                 )
@@ -1601,6 +1613,21 @@ def build_fact_aware_templates() -> dict[str, type]:
                 return list(super()._build_request_details(body_parts))
 
             surgery = facts.surgery
+            if not surgery.cpt_code:
+                # An uncoded operation (AJC-55): the request must say so in the
+                # ledger's own words. Delegating to the substrate here would
+                # free-draw coded procedures the ledger refuses to name.
+                region = (surgery.body_part or "the injured body part").replace("_", " ")
+                bp_str = ", ".join(body_parts).lower() if body_parts else region
+                content = (
+                    f"<b>Requesting Physician:</b> {self.case.treating_physician.full_name}, "
+                    f"{self.case.treating_physician.specialty}\n\n"
+                    f"<b>Body Part(s):</b> {bp_str}\n\n"
+                    "<b>Treatment Requested:</b>\n"
+                    f"\u2022 Authorization for an unlisted surgical procedure (uncoded) "
+                    f"of the {region}; no procedure code is asserted for this request."
+                )
+                return list(self.make_section("REQUEST DETAILS", content))
             forced = _ForcedChoice(
                 [(surgery.cpt_code, surgery.cpt_description)],
                 lambda seq: bool(seq)
@@ -1619,7 +1646,7 @@ def build_fact_aware_templates() -> dict[str, type]:
                 log.warning("fact_templates.ur_procedure_not_forced", cpt=surgery.cpt_code)
             return story
 
-    class FactAwareDischargeSummary(_SpecCapture, operative_module.OperativeRecord):  # type: ignore[misc,name-defined]
+    class FactAwareDischargeSummary(FactAwareOperativeRecord):
         """A discharge summary that does not call itself an operative report.
 
         ``DISCHARGE_SUMMARY`` is mapped to ``OperativeRecord`` with a
@@ -1632,6 +1659,11 @@ def build_fact_aware_templates() -> dict[str, type]:
         body is left exactly as the substrate wrote it: a discharge summary
         legitimately recites the course of care, and rewriting all of it here
         would be forking the template to fix a title.
+
+        Subclasses ``FactAwareOperativeRecord`` — not the substrate template —
+        so the body inherits the ledger's CPT pinning (round-4 review: the
+        direct substrate parent let a shoulder case discharge a different
+        shoulder operation than the one the file performed).
         """
 
         def build_story(self, doc_spec: Any) -> list[Any]:
