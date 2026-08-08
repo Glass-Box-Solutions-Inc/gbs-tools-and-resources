@@ -1015,6 +1015,7 @@ class TestTheProcedureMatchesTheInjuredPart:
                 facts = derive_case_facts(seed, build_case_plan(seed).timeline)
                 if facts.surgery.status in {"performed", "recommended", "denied_by_ur"}:
                     performed += 1
+                    assert facts.surgery.body_part == part
                     _assert_part(part, facts.surgery.cpt_code)
                 if performed >= 3:
                     break
@@ -1029,3 +1030,124 @@ class TestTheProcedureMatchesTheInjuredPart:
             _assert_part("thoracic_spine", "63030")  # wrong segment, same region
         with pytest.raises(AssertionError):
             _assert_part("psyche", "64999")  # no operation permitted at all
+
+
+class TestMultiPartAttribution:
+    """Round-2 review HIGH: the part and its procedure are chosen atomically —
+    a lumbar-plus-shoulder case must never publish a shoulder CPT "of the
+    lumbar spine"."""
+
+    def test_the_cpt_belongs_to_the_recorded_part(self) -> None:
+        found = 0
+        for rng_seed in range(9200, 9260):
+            seed = _seed(
+                "multi-part",
+                {},
+                rng_seed=rng_seed,
+                injury={
+                    "type": "specific",
+                    "date_of_injury": "2022-04-11",
+                    "body_parts": [{"part": "lumbar_spine"}, {"part": "shoulder"}],
+                },
+            )
+            facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+            if facts.surgery.names_a_procedure:
+                found += 1
+                _assert_part(facts.surgery.body_part, facts.surgery.cpt_code)
+        assert found, "no probe seed produced a surgical case; widen the range"
+
+    def test_an_unsupported_part_never_wins_the_attribution(self) -> None:
+        found = 0
+        for rng_seed in range(9200, 9260):
+            seed = _seed(
+                "psyche-shoulder",
+                {"surgery": "performed"},
+                rng_seed=rng_seed,
+                injury={
+                    "type": "specific",
+                    "date_of_injury": "2022-04-11",
+                    "body_parts": [{"part": "psyche"}, {"part": "shoulder"}],
+                },
+            )
+            facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+            assert facts.surgery.performed
+            found += 1
+            assert facts.surgery.body_part == "shoulder"
+            _assert_part("shoulder", facts.surgery.cpt_code)
+        assert found
+
+class TestUncodedOperations:
+    """Round-2 review HIGH: a stated surgery on anatomy with no coded pool is
+    published as an UNCODED operation, honored by ledger, manifest, renderer,
+    and validator alike — no source fabricates 64999."""
+
+    def _psyche_surgery_seed(self, rng_seed: int = 4242) -> Any:
+        return _seed(
+            "uncoded-op",
+            {"surgery": "performed"},
+            rng_seed=rng_seed,
+            injury={
+                "type": "specific",
+                "date_of_injury": "2022-04-11",
+                "body_parts": [{"part": "psyche"}],
+            },
+            documents={
+                "overrides": [
+                    {"subtype": s, "count": 1}
+                    for s in (*FACT_AWARE_PROBE_SUBTYPES, "OPERATIVE_HOSPITAL_RECORDS")
+                ],
+                "format_mix": {"pdf": 1.0},
+            },
+        )
+
+    def test_the_ledger_publishes_the_operation_without_a_code(self) -> None:
+        seed = self._psyche_surgery_seed()
+        facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+        assert facts.surgery.performed
+        assert facts.surgery.uncoded
+        assert facts.surgery.cpt_code is None
+        assert facts.surgery.body_part == "psyche"
+
+    def test_the_rendered_case_validates_and_names_no_code(self, tmp_path: Path) -> None:
+        seed = self._psyche_surgery_seed()
+        manifest, texts = _render(seed, tmp_path)
+        surgery = manifest["caseFacts"]["surgery"]
+        assert surgery["status"] == "performed"
+        assert surgery["cptCode"] is None
+        assert surgery["uncoded"] is True
+        report = validate_output_tree(tmp_path)
+        assert report.ok, report.problems
+        operative = _flat(texts.get("OPERATIVE_HOSPITAL_RECORDS", ""))
+        assert "unlisted surgical procedure" in operative
+        assert "64999" not in operative
+
+    def test_the_coin_never_operates_on_uncodeable_anatomy(self) -> None:
+        for rng_seed in range(9300, 9330):
+            seed = _seed(
+                "internal-only",
+                {},
+                rng_seed=rng_seed,
+                injury={
+                    "type": "specific",
+                    "date_of_injury": "2022-04-11",
+                    "body_parts": [{"part": "internal"}],
+                },
+            )
+            facts = derive_case_facts(seed, build_case_plan(seed).timeline)
+            assert facts.surgery.status == "none", rng_seed
+
+class TestSharedCodeDescriptionsAgree:
+    def test_substrate_and_table_descriptions_lockstep(self) -> None:
+        """A code both sources can emit must carry one description, or the
+        fallback path drifts from the substrate path in rendered prose."""
+        from wc_caseload_engine.case_facts import SURGERY_CPT_CODES, import_substrate
+
+        constants = import_substrate("data.wc_constants")
+        substrate = {
+            code: desc
+            for pool in constants.SURGICAL_CPT_POOLS.values()
+            for code, desc in pool
+        }
+        for part, (code, desc) in SURGERY_CPT_CODES.items():
+            if code in substrate:
+                assert substrate[code] == desc, f"{part}/{code}: {substrate[code]!r} != {desc!r}"

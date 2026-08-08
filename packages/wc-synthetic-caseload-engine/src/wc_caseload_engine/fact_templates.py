@@ -1597,7 +1597,10 @@ def build_fact_aware_templates() -> dict[str, type]:
 
         def _build_request_details(self, body_parts: Any) -> list[Any]:
             facts = _facts_of(self)
-            if facts is None or not facts.surgery.names_a_procedure:
+            if facts is None or not facts.surgery.names_a_procedure or not facts.surgery.cpt_code:
+                # Uncoded operations included: forcing a (None, None) answer can
+                # never match, and the fallback free-draw would invent a code
+                # the ledger refuses to name (AJC-55).
                 return list(super()._build_request_details(body_parts))
 
             surgery = facts.surgery
