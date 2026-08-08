@@ -1646,7 +1646,7 @@ def build_fact_aware_templates() -> dict[str, type]:
                 log.warning("fact_templates.ur_procedure_not_forced", cpt=surgery.cpt_code)
             return story
 
-    class FactAwareDischargeSummary(_SpecCapture, operative_module.OperativeRecord):  # type: ignore[misc,name-defined]
+    class FactAwareDischargeSummary(FactAwareOperativeRecord):
         """A discharge summary that does not call itself an operative report.
 
         ``DISCHARGE_SUMMARY`` is mapped to ``OperativeRecord`` with a
@@ -1659,6 +1659,11 @@ def build_fact_aware_templates() -> dict[str, type]:
         body is left exactly as the substrate wrote it: a discharge summary
         legitimately recites the course of care, and rewriting all of it here
         would be forking the template to fix a title.
+
+        Subclasses ``FactAwareOperativeRecord`` — not the substrate template —
+        so the body inherits the ledger's CPT pinning (round-4 review: the
+        direct substrate parent let a shoulder case discharge a different
+        shoulder operation than the one the file performed).
         """
 
         def build_story(self, doc_spec: Any) -> list[Any]:

@@ -1070,6 +1070,17 @@ def _validate_case_facts(
                 f"{case_label}: caseFacts.surgery.uncoded is {uncoded!r}, not a boolean"
             )
             uncoded = bool(uncoded)
+        # Each CPT field is exactly null or a non-empty string. An empty or
+        # whitespace-only string is a third state the contract does not have —
+        # and truthiness would silently read it as "no code" while consumers
+        # see a non-null field (round-4 review). Every check below therefore
+        # tests ``is None``, never truthiness.
+        for field, value in (("cptCode", cpt), ("cptDescription", description)):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                problems.append(
+                    f"{case_label}: caseFacts.surgery.{field} is {value!r} — "
+                    "must be null or a non-empty string"
+                )
         if (cpt is None) != (description is None):
             missing = (
                 "a CPT without a description"
@@ -1078,11 +1089,11 @@ def _validate_case_facts(
             )
             problems.append(f"{case_label}: caseFacts.surgery names {missing}")
         if status in ("performed", "recommended", "denied_by_ur"):
-            if uncoded and cpt:
+            if uncoded and cpt is not None:
                 problems.append(
                     f"{case_label}: caseFacts calls the surgery uncoded yet names CPT {cpt!r}"
                 )
-            if not cpt and not uncoded:
+            if cpt is None and not uncoded:
                 problems.append(
                     f"{case_label}: caseFacts says surgery was {status} but names no CPT "
                     "and does not declare the operation uncoded"
@@ -1105,7 +1116,7 @@ def _validate_case_facts(
                     f"{case_label}: caseFacts marks no-surgery as uncoded — the marker "
                     "belongs only on an asserted operation"
                 )
-            if cpt:
+            if cpt is not None:
                 problems.append(
                     f"{case_label}: caseFacts says no surgery but still names CPT {cpt!r}"
                 )
