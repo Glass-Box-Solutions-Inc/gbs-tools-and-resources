@@ -35,8 +35,8 @@
     "truth/steady-earner.truth.json",
     "truth/two-jobs.truth.json"
   ],
-  "corpusTree": "477d486745c3a9028353448f5a319f20f6ac97ac0bf76231e99a72f9c8d6198c",
-  "caseload": "3694503b6125bfd5fe71e4d952c710bc605c6ef32824397256318586e4403d75",
+  "corpusTree": "87829e39c99720e65ebc561b1e5143a86ab7279a747bdb80a8bacdf589655395",
+  "caseload": "9e44477f8497ed8d80aab704ea2c89f310a597475d23e724ae114e39c40a2f0a",
   "cases": {
     "atypical-earner": {
       "documentCount": 64,
@@ -72,10 +72,10 @@
       "documentCount": 87,
       "distinctSubtypes": 49,
       "fileCount": 90,
-      "tree": "cb87e40df2a79764f3f9559af675c0b9899c94fce5a45b1e8e775e6e9d92ecbe",
-      "documents": "4df6062831ad77b87d2674b41bb844b83f117a4f0bcc4af08f8c7b0ba291ebc6",
-      "manifest": "06cdbaf3f691cbd75b2e5e61eb27027c112a9d6e03a306f2502c9e31a9f13dda",
-      "seed": "213853ab1d3ff45525685eaabb08c9efa6b055ef621d8734804b9ea9e42e6df7",
+      "tree": "d71fa15c2f11f15d584e98b4ac5f9d724730600b43c42373e1c862a64f7248d5",
+      "documents": "7ae9c3e2273d2fc970a9086df6c484ad5eec83cfcaf6b092bd867067e159b6f6",
+      "manifest": "991a4a902dc14faa35093a9b13c4e0d5247b82007211133a5c0af3e4078a16b0",
+      "seed": "aeab96c44f1e7be4b656bc7b2218a0bc0775aafc3cebf5c54682311ea513919e",
       "facts": "fad389cfe1f40078a5c3ce139a23e573f46d2b13789a906e3e7a0acfced3b6a8"
     },
     "new-hire": {
