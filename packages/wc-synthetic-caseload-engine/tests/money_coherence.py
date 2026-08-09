@@ -60,9 +60,12 @@ def ledger_value(money: Mapping[str, Any], path: str) -> Decimal:
     if parts[0] == "money":
         parts = parts[1:]
     for part in parts:
-        if not isinstance(node, Mapping):
-            raise TypeError(f"{'.'.join(parts)} crosses a non-mapping at {part!r}")
-        node = node[part]
+        if isinstance(node, Mapping):
+            node = node[part]
+        elif isinstance(node, list) and part.isdigit():
+            node = node[int(part)]
+        else:
+            raise TypeError(f"{'.'.join(parts)} crosses a non-container at {part!r}")
     return Decimal(node)
 
 
@@ -72,12 +75,19 @@ def sweep(
     rules: Mapping[str, tuple[re.Pattern[str], str]],
 ) -> SweepResult:
     """Find every governed paper surface without making an assertion."""
-    expected_by_fact = {
-        fact: ledger_value(money, path) for fact, (_pattern, path) in rules.items()
-    }
+    expected_by_fact: dict[str, Decimal] = {}
+    for fact, (_pattern, path) in rules.items():
+        try:
+            expected_by_fact[fact] = ledger_value(money, path)
+        except (IndexError, KeyError):
+            # Optional governed groups are absent, never null. A rule for such a
+            # group applies only to the opted-in cases that publish its ledger.
+            continue
     surfaces: list[Surface] = []
     for subtype, page in sorted(texts.items()):
         for fact, (pattern, _path) in rules.items():
+            if fact not in expected_by_fact:
+                continue
             expected = expected_by_fact[fact]
             surfaces.extend(
                 Surface(
@@ -134,6 +144,30 @@ GOVERNED_ON_THE_PAGE: dict[str, tuple[re.Pattern[str], str]] = {
     "gross_target": (
         re.compile(r"Recommended Settlement Target: \$([\d,]+)"),
         "money.settlement.grossAmount",
+    ),
+    "penalty_principal": (
+        re.compile(r"§4650\(d\) Principal Assessed:? \$([\d,]+\.\d\d)"),
+        "money.penalties.principalAssessed",
+    ),
+    "penalty_assessment_1": (
+        re.compile(
+            r"§4650\(d\) (?:TD period|PD advance) 1 Increase:? \$([\d,]+\.\d\d)"
+        ),
+        "money.penalties.assessments.0.amount",
+    ),
+    "penalty_assessment_2": (
+        re.compile(
+            r"§4650\(d\) (?:TD period|PD advance) 2 Increase:? \$([\d,]+\.\d\d)"
+        ),
+        "money.penalties.assessments.1.amount",
+    ),
+    "penalty_fraction": (
+        re.compile(r"§4650\(d\) Increase Fraction:? ([\d]+(?:\.\d+)?)"),
+        "money.penalties.increaseFraction",
+    ),
+    "penalty_total": (
+        re.compile(r"§4650\(d\) Total Increase:? \$([\d,]+\.\d\d)"),
+        "money.penalties.totalIncrease",
     ),
 }
 

@@ -20,6 +20,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added a reusable money coherence harness spanning capped stipulations and
   older-vintage delayed-benefit cases, binding scorer truth to the public
   manifest and every matching paper surface with per-fact one-cent controls.
+- Added the opt-in `scenario.penalties` LC §4650(d) slice: pure cents-quantized
+  assessments from recorded TD/PD lateness, DOI-keyed counsel-unconfirmed basis
+  metadata, benefit-ledger rendering, validation, planted 45-day positive
+  control and absence/empty-ledger byte-identity guards.
+- Bumped only the additive money channel minor from `1.0.0` to `1.1.0`;
+  `schemaVersion` remains `1.0.0`, and same-major consumers remain accepted.
 
 ## [0.9.0] — 2026-08-08
 

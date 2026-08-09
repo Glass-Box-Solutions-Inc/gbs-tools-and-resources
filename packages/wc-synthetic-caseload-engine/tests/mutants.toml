@@ -1424,3 +1424,60 @@ test = 'tests/test_money_coherence.py::test_one_cent_perturbation_is_reported_fo
 find = '''        return self.printed == self.expected'''
 replace = '''        return True'''
 note = 'AJC-48 Round B anti-criterion. The harness must itself fail red when a governed ledger figure moves by exactly one cent; the parametrized control repeats that proof for every governed rule with a paper surface.'
+
+[[mutant]]
+id = 'm15-1'
+title = 'the automatic increase forgets to multiply the late-payment principal by its fraction'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_the_planted_positive_control_assesses_the_stated_45_day_delay'
+find = '''        with _exact():
+            amount = money(period.amount * basis.increase_fraction)'''
+replace = '''        with _exact():
+            amount = money(period.amount)'''
+note = 'AJC-48 Round C. The assessment is useful as ground truth only if its amount is the cents-quantized principal times the published statutory fraction; copying principal would produce a plausible currency value with no legal arithmetic behind it.'
+
+[[mutant]]
+id = 'm15-2'
+title = 'a never-paid temporary-disability interruption is assessed as a late payment'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_a_never_paid_period_is_not_assessed_as_a_delay'
+find = '''        if period.date_paid is None or period.days_late < 1:
+            continue'''
+replace = '''        if period.date_paid is None:
+            period = period.model_copy(update={"days_late": 1})
+        if period.days_late < 0:
+            continue'''
+note = 'AJC-48 Round C. A TdPeriod without date_paid is the benefit model’s interruption state, not a delay: there is no paid principal and no endpoint from which lateness can be counted. The planted unpaid record must leave the assessment tuple empty.'
+
+[[mutant]]
+id = 'm15-3'
+title = 'penalties are published when the seed did not opt in'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_absence_and_an_empty_assessment_are_different_public_facts'
+find = '''    if facts.penalties is not None:
+        penalties = facts.penalties
+        block["penalties"] = {'''
+replace = '''    if True:
+        penalties = facts.penalties or PenaltyLedger(basis=penalty_basis_for(dt.date.min))
+        block["penalties"] = {'''
+note = 'AJC-48 Round C anti-criterion. The PenaltyScenario block is the gate: a case that did not ask has no penalties key at all, while an opted-in timely case publishes an empty ledger. Collapsing those states breaks backward compatibility.'
+
+[[mutant]]
+id = 'm15-4'
+title = 'manifest validation trusts a planted wrong assessment amount'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_the_manifest_validator_recomputes_every_penalty_aggregate'
+find = '''            if published_amount != computed_amount:'''
+replace = '''            if False:'''
+note = 'AJC-48 Round C. This independent multiplication is the reason the validator adds value. The guard keeps totalIncrease internally consistent with the planted wrong amount, so only recomputing principal times fraction can kill the mutant.'
+
+[[mutant]]
+id = 'm15-5'
+title = 'an empty opted-in penalty ledger changes the benefit document'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_coherence.py::test_empty_penalty_ledger_leaves_the_benefit_document_byte_unchanged'
+find = '''            if ledger_penalties is not None and ledger_penalties.assessments:
+                for assessment in ledger_penalties.assessments:'''
+replace = '''            if ledger_penalties is not None:
+                for assessment in ledger_penalties.assessments:'''
+note = 'AJC-48 Round C byte gate. The document gains penalty rows only when an assessment exists; “asked and found none” remains a manifest fact but must render exactly like the pre-penalty benefit record.'

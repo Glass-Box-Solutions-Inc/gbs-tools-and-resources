@@ -847,7 +847,7 @@ Treating reports follow one trajectory (improving, plateau or worsening) across
 the case rather than re-rolling a mood per document, so a three-report file reads
 as one story instead of three.
 
-### The money spine — `scenario.wages`, `scenario.benefits`, `scenario.settlement`
+### The money spine — `scenario.wages`, benefits, settlement and penalties
 
 Money is the only part of a workers' compensation file where a claim is
 **arithmetically** checkable. A comp rate either follows from the wage data or it
@@ -897,14 +897,27 @@ scenario:
     gross_amount: 88000
     approval_date: 2024-01-18
     funding_days: 30             # or funding_date, never both
+  penalties:                     # opt in to LC §4650(d) late-payment increases
+    increase_fraction: 0.10      # optional; omit to use the dated table
+    authority: "verified authority prose" # optional table override
+    counsel_confirmed: false
 ```
 
-`benefits` and `settlement` both require `wages`. A benefit rate rests on an
+`benefits`, `settlement` and `penalties` all require `wages`. A benefit rate rests on an
 average weekly wage, and without an earnings history the engine would have to
 assert one — which is the failure the layer exists to remove. One gate, so "a
 seed with no wage block produces zero artifacts of this layer, and moves no output
 byte" is one checkable sentence
 rather than three.
+
+`scenario.penalties` is a second, explicit gate inside the money layer. When it
+is absent, no `penalties` key is published or rendered. When present, the engine
+walks the already-decided TD periods and PD advances and assesses each paid item
+whose `days_late` is at least one. The §4650(d) amount is the payment principal
+times the dated increase fraction, quantized to cents. A never-paid TD period is
+an interruption rather than a delay and is not assessed. An opted-in case with
+no late payment publishes an empty ledger and `$0.00`, while leaving the benefit
+record byte-identical to an unopted case.
 
 #### The named method is ground truth
 
@@ -945,13 +958,21 @@ back to it.
 
 #### Every statutory number here is unverified
 
-**Read this before you rely on a rate.** The fraction, the ceiling, the floor and
+**Read this before you rely on a rate or penalty.** The fraction, the ceiling, the floor and
 the date brackets they hang on are unverified professional knowledge. They live
 in one table, `money.UNCONFIRMED_RATE_TABLE`, every row of which carries
 `counsel_confirmed=False` and says `COUNSEL-UNCONFIRMED` in its own authority
 text — so a reader who copies the citation out of a manifest cannot lose the
 caveat on the way. The flag is published on every case at
 `caseFacts.money.rate.counselConfirmed`.
+
+The §4650(d) fraction, trigger and date brackets are equally unverified. They
+live behind `money.penalty_basis_for(doi)` in
+`UNCONFIRMED_PENALTY_TABLE`; the manifest publishes its authority,
+`basisSource` and `counselConfirmed` beside every opted-in penalty ledger. A
+seed may override the fraction and/or authority. It may set
+`counsel_confirmed: true` only with authority prose that is no longer marked
+unconfirmed.
 
 A seed carrying a genuinely verified authority states it under
 `scenario.wages.rate_basis` and sets `counsel_confirmed: true` — and to set that
@@ -1114,8 +1135,10 @@ Use `--no-truth-manifest` when an output should contain no scorer artifacts.
 
 Envelope schema `1.0.0` carries an open `channels` mapping, and each channel has
 its own version. Consumers MUST ignore channels they do not recognize and MUST
-NOT fail on an unknown channel key. The current `money` channel is a lossless
-serialization of `MoneyFacts`; planned additive successors are `defects` (the
+NOT fail on an unknown channel key. The current `money` channel is version
+`1.1.0`, an additive minor that includes the optional penalty basis and
+assessment ledger, and is a lossless serialization of `MoneyFacts`; planned
+additive successors are `defects` (the
 Phase 3 defect-injection manifest) and `assertions` (medical-story M4
 assertion-quality labels). A case without `scenario.wages` has empty channels,
 not a null or empty money channel.

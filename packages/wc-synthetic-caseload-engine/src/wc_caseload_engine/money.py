@@ -150,6 +150,12 @@ _dollars = dollars
 # Statutory bindings — every one of them unconfirmed
 # ---------------------------------------------------------------------------
 
+PENALTY_INCREASE_AUTHORITY = (
+    "Automatic self-imposed increase on indemnity paid after its due date. "
+    "COUNSEL-UNCONFIRMED placeholder — the fraction, the trigger and the "
+    "date brackets are all unverified."
+)
+
 
 class RateBasis(BaseModel):
     """The statutory parameters a comp rate is computed under, for one vintage.
@@ -237,6 +243,58 @@ class RateBasis(BaseModel):
         if when < self.effective_from:
             return False
         return self.effective_to is None or when <= self.effective_to
+
+
+class PenaltyBasis(BaseModel):
+    """The automatic late-indemnity increase binding for one DOI vintage.
+
+    This mirrors :class:`RateBasis` because the legal-number problem is the
+    same: a fraction without its date bracket, authority caveat and provenance
+    is not a usable extraction label. Nothing shipped here is counsel-confirmed.
+    A seed can replace the fraction or authority, and rebuilding the merged
+    object through this constructor keeps validation on that seam.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    label: str
+    effective_from: dt.date
+    effective_to: dt.date | None = None
+    increase_fraction: Decimal
+    authority: str
+    counsel_confirmed: bool = False
+    source: Literal["engine_default_table", "seed", "mixed"] = "engine_default_table"
+
+    def covers(self, when: dt.date) -> bool:
+        return when >= self.effective_from and (
+            self.effective_to is None or when <= self.effective_to
+        )
+
+
+UNCONFIRMED_PENALTY_TABLE: tuple[PenaltyBasis, ...] = (
+    PenaltyBasis(
+        label="doi-all-unconfirmed",
+        effective_from=dt.date.min,
+        increase_fraction=Decimal("0.10"),
+        authority=PENALTY_INCREASE_AUTHORITY,
+    ),
+)
+"""DOI-keyed §4650(d) placeholders; every row is counsel-unconfirmed."""
+
+
+def penalty_basis_for(doi: dt.date) -> PenaltyBasis:
+    """Return the penalty vintage covering *doi*: the authority replacement seam.
+
+    Only this function reads :data:`UNCONFIRMED_PENALTY_TABLE`. A verified dated
+    authority can therefore replace the table without changing derivation,
+    publication or rendering, all of which consume the validated basis object.
+    The earliest row opens at :data:`datetime.date.min`, but the fallback keeps
+    this seam total if a future replacement table accidentally leaves a hole.
+    """
+    for basis in UNCONFIRMED_PENALTY_TABLE:
+        if basis.covers(doi):
+            return basis
+    return UNCONFIRMED_PENALTY_TABLE[0]
 
 
 UNCONFIRMED_RATE_TABLE: tuple[RateBasis, ...] = (
@@ -722,6 +780,64 @@ class BenefitLedger(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Automatic late-indemnity increase
+# ---------------------------------------------------------------------------
+
+
+class PenaltyAssessment(BaseModel):
+    """One late payment and the automatic increase computed from its principal.
+
+    The source and one-based ordinal point back to the corresponding benefit
+    series without duplicating that record. Due, paid and late-day fields remain
+    here because they are the trigger a scorer must be able to verify before it
+    judges the multiplication.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: Literal["td_period", "pd_advance"]
+    ordinal: int = Field(ge=1)
+    principal: Decimal
+    date_due: dt.date
+    date_paid: dt.date | None = None
+    days_late: int = Field(ge=1)
+    increase_fraction: Decimal
+    amount: Decimal
+
+
+class PenaltyLedger(BaseModel):
+    """The complete automatic-increase assessment requested by the seed.
+
+    An empty ledger is meaningful: the author asked for the statutory test and
+    the decided benefit ledger contained no late payment. It therefore stays
+    distinct from ``None``, which means the author did not ask for this layer.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    basis: PenaltyBasis
+    assessments: tuple[PenaltyAssessment, ...] = ()
+
+    @property
+    def total_increase(self) -> Decimal:
+        with _exact():
+            return sum((item.amount for item in self.assessments), ZERO).quantize(
+                CENTS, rounding=ROUND_HALF_UP
+            )
+
+    @property
+    def assessed_count(self) -> int:
+        return len(self.assessments)
+
+    @property
+    def principal_assessed(self) -> Decimal:
+        with _exact():
+            return sum((item.principal for item in self.assessments), ZERO).quantize(
+                CENTS, rounding=ROUND_HALF_UP
+            )
+
+
+# ---------------------------------------------------------------------------
 # Settlement
 # ---------------------------------------------------------------------------
 
@@ -765,6 +881,7 @@ class MoneyFacts(BaseModel):
     wages: WageFacts
     benefits: BenefitLedger = Field(default_factory=BenefitLedger)
     settlement: SettlementFact | None = None
+    penalties: PenaltyLedger | None = None
 
     @property
     def aww(self) -> Decimal:
@@ -1542,6 +1659,77 @@ def _derive_settlement(
     )
 
 
+def _derive_penalties(seed: CaseSeed, benefits: BenefitLedger, doi: dt.date) -> PenaltyLedger:
+    """Assess the seed-requested automatic increase from decided payment facts.
+
+    There is deliberately no random input. Lateness, principal and dates have
+    already been decided in :class:`BenefitLedger`; this layer merely applies a
+    validated DOI-keyed fraction to each late payment. Rebuilding an overridden
+    basis through its constructor matters because Pydantic's
+    ``model_copy(update=...)`` skips validation at precisely the authority seam
+    where a seed can replace a statutory figure.
+    """
+    scenario = seed.scenario.penalties
+    if scenario is None:
+        raise ValueError("_derive_penalties requires an opted-in scenario.penalties block")
+
+    basis = penalty_basis_for(doi)
+    changes: dict[str, Any] = {}
+    authored: set[str] = set()
+    if scenario.increase_fraction is not None:
+        changes["increase_fraction"] = scenario.increase_fraction
+        authored.add("increase_fraction")
+    if scenario.authority is not None:
+        changes["authority"] = scenario.authority
+        authored.add("authority")
+    if authored:
+        changes["source"] = (
+            "seed" if authored == {"increase_fraction", "authority"} else "mixed"
+        )
+    changes["counsel_confirmed"] = scenario.counsel_confirmed
+    basis = PenaltyBasis(**{**basis.model_dump(), **changes})
+
+    assessments: list[PenaltyAssessment] = []
+    for ordinal, period in enumerate(benefits.td_periods, 1):
+        # An unpaid TD period is an interruption, not a delayed payment. There
+        # is no paid principal to increase and no second date from which a delay
+        # can be measured, so assessing it would turn absence into arithmetic.
+        if period.date_paid is None or period.days_late < 1:
+            continue
+        with _exact():
+            amount = money(period.amount * basis.increase_fraction)
+        assessments.append(
+            PenaltyAssessment(
+                source="td_period",
+                ordinal=ordinal,
+                principal=period.amount,
+                date_due=period.date_due,
+                date_paid=period.date_paid,
+                days_late=period.days_late,
+                increase_fraction=basis.increase_fraction,
+                amount=amount,
+            )
+        )
+    for ordinal, advance in enumerate(benefits.pd_advances, 1):
+        if advance.days_late < 1:
+            continue
+        with _exact():
+            amount = money(advance.amount * basis.increase_fraction)
+        assessments.append(
+            PenaltyAssessment(
+                source="pd_advance",
+                ordinal=ordinal,
+                principal=advance.amount,
+                date_due=advance.date_due,
+                date_paid=advance.date_paid,
+                days_late=advance.days_late,
+                increase_fraction=basis.increase_fraction,
+                amount=amount,
+            )
+        )
+    return PenaltyLedger(basis=basis, assessments=tuple(assessments))
+
+
 def derive_money_facts(
     seed: CaseSeed, timeline: Any, diligence: str = "ordinary"
 ) -> MoneyFacts | None:
@@ -1596,8 +1784,18 @@ def _derive_money_facts(
 
     benefits = _derive_benefits(seed, wage_facts, timeline, diligence)
     settlement = _derive_settlement(seed, wage_facts, benefits, timeline, diligence)
+    penalties = (
+        _derive_penalties(seed, benefits, doi)
+        if seed.scenario.penalties is not None
+        else None
+    )
 
-    facts = MoneyFacts(wages=wage_facts, benefits=benefits, settlement=settlement)
+    facts = MoneyFacts(
+        wages=wage_facts,
+        benefits=benefits,
+        settlement=settlement,
+        penalties=penalties,
+    )
     log.debug(
         "money.derived",
         case_id=seed.case_id,
@@ -1608,6 +1806,7 @@ def _derive_money_facts(
         periods=len(periods),
         td_periods=len(benefits.td_periods),
         settled=settlement is not None,
+        penalties=penalties.assessed_count if penalties is not None else None,
     )
     return facts
 
@@ -1679,6 +1878,17 @@ GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
         "pdAdvanceScheduleAuthority",
     ),
     "settlement": ("kind", "grossAmount", "approvalDate", "fundingDate", "fundingLagDays"),
+    "penalties": (
+        "assessmentCount",
+        "assessments",
+        "totalIncrease",
+        "principalAssessed",
+        "increaseFraction",
+        "basisLabel",
+        "basisAuthority",
+        "counselConfirmed",
+        "basisSource",
+    ),
 }
 
 
@@ -1792,6 +2002,33 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
             ),
             "fundingLagDays": settlement.funding_lag_days,
         }
+    if facts.penalties is not None:
+        penalties = facts.penalties
+        block["penalties"] = {
+            "assessmentCount": penalties.assessed_count,
+            "assessments": [
+                {
+                    "source": assessment.source,
+                    "ordinal": assessment.ordinal,
+                    "principal": _dollars(assessment.principal),
+                    "dateDue": assessment.date_due.isoformat(),
+                    "datePaid": (
+                        assessment.date_paid.isoformat() if assessment.date_paid else None
+                    ),
+                    "daysLate": assessment.days_late,
+                    "increaseFraction": f"{assessment.increase_fraction.normalize():f}",
+                    "amount": _dollars(assessment.amount),
+                }
+                for assessment in penalties.assessments
+            ],
+            "totalIncrease": _dollars(penalties.total_increase),
+            "principalAssessed": _dollars(penalties.principal_assessed),
+            "increaseFraction": f"{penalties.basis.increase_fraction.normalize():f}",
+            "basisLabel": penalties.basis.label,
+            "basisAuthority": penalties.basis.authority,
+            "counselConfirmed": penalties.basis.counsel_confirmed,
+            "basisSource": penalties.basis.source,
+        }
     return block
 
 
@@ -1806,6 +2043,7 @@ __all__ = [
     "SHORT_HISTORY_WEEKS",
     "TD_PAYMENT_DUE_AUTHORITY",
     "TD_PAYMENT_DUE_DAYS",
+    "UNCONFIRMED_PENALTY_TABLE",
     "UNCONFIRMED_RATE_TABLE",
     "AwwComputation",
     "BenefitGap",
@@ -1815,6 +2053,9 @@ __all__ = [
     "InKindWage",
     "MoneyFacts",
     "PdAdvance",
+    "PenaltyAssessment",
+    "PenaltyBasis",
+    "PenaltyLedger",
     "RateBasis",
     "SettlementFact",
     "TdPeriod",
@@ -1826,6 +2067,7 @@ __all__ = [
     "exact",
     "money",
     "money_manifest_block",
+    "penalty_basis_for",
     "rate_basis_for",
     "select_method",
 ]

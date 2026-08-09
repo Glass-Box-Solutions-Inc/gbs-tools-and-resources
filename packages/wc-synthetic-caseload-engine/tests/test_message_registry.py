@@ -304,6 +304,41 @@ REGISTRY: dict[str, RegisteredMessage] = {
         resolution={"scenario": {"wages": {"base_weekly_wage": 900}}},
         note="The first of the two offered edits; the second removes the benefits block.",
     ),
+    "penalty_fraction_outside_share": RegisteredMessage(
+        where="PenaltyScenario._fraction_is_a_positive_share",
+        directives=(
+            "state the increase as a positive fraction, such as 0.10, or remove it to use "
+            "the dated table",
+        ),
+        trigger={
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "penalties": {"increase_fraction": 0},
+            }
+        },
+        resolution={"scenario": {"penalties": {"increase_fraction": 0.10}}},
+    ),
+    "penalty_confirmation_needs_verified_authority": RegisteredMessage(
+        where="PenaltyScenario._confirmed_authority_is_real",
+        directives=(
+            "add verified authority prose without the UNCONFIRMED marker, or set "
+            "counsel_confirmed to false",
+        ),
+        trigger={
+            "scenario": {
+                "wages": {"base_weekly_wage": 900},
+                "penalties": {
+                    "authority": "COUNSEL-UNCONFIRMED draft",
+                    "counsel_confirmed": True,
+                },
+            }
+        },
+        resolution={
+            "scenario": {
+                "penalties": {"authority": "Verified by counsel, memo of 2026-08-08"}
+            }
+        },
+    ),
     "earnings_and_shape_knobs": RegisteredMessage(
         where="WageScenario._history_is_stated_one_way",
         directives=("Remove the listed earnings, or remove {}",),

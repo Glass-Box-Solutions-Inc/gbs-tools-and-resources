@@ -1589,6 +1589,50 @@ class SettlementScenario(_Model):
         return self
 
 
+class PenaltyScenario(_Model):
+    """Opt in to the automatic self-imposed increase on late indemnity.
+
+    The block is deliberately optional. Its presence asks the engine to assess
+    the late temporary-disability periods and permanent-disability advances the
+    benefit ledger already decided; its absence preserves the pre-penalty code
+    path and publishes no penalty claim. The default fraction is a
+    counsel-unconfirmed statutory placeholder, so a seed may replace the figure
+    and its authority without changing the arithmetic or inventing lateness.
+    """
+
+    increase_fraction: Decimal | None = None
+    """Override the dated table's fraction; ``None`` keeps the table figure."""
+
+    authority: str | None = Field(default=None, max_length=400)
+    """Override the table's authority prose."""
+
+    counsel_confirmed: bool = False
+
+    @model_validator(mode="after")
+    def _fraction_is_a_positive_share(self) -> PenaltyScenario:
+        if self.increase_fraction is not None and not (
+            Decimal("0") < self.increase_fraction <= Decimal("1")
+        ):
+            raise ValueError(
+                "scenario.penalties.increase_fraction must be greater than 0 and no more "
+                "than 1 — state the increase as a positive fraction, such as 0.10, or "
+                "remove it to use the dated table."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _confirmed_authority_is_real(self) -> PenaltyScenario:
+        if self.counsel_confirmed and (
+            self.authority is None or "UNCONFIRMED" in self.authority.upper()
+        ):
+            raise ValueError(
+                "scenario.penalties.counsel_confirmed is true but its authority is absent "
+                "or still marked unconfirmed — add verified authority prose without the "
+                "UNCONFIRMED marker, or set counsel_confirmed to false."
+            )
+        return self
+
+
 class ScenarioSpec(_Model):
     """Seed-surfaced case facts.
 
@@ -1616,6 +1660,8 @@ class ScenarioSpec(_Model):
 
     settlement: SettlementScenario | None = None
     """How the money ended. Requires ``wages`` — see the same validator."""
+    penalties: PenaltyScenario | None = None
+    """Automatic late-indemnity increases. Requires ``wages`` — see the same validator."""
     surgery: Literal["none", "performed", "recommended", "denied_by_ur"] | None = None
     """``None`` means *derive it* — preserving the substrate's 35% coin exactly.
 
@@ -1628,7 +1674,7 @@ class ScenarioSpec(_Model):
     def _money_needs_a_wage_block(self) -> ScenarioSpec:
         """One gate for the whole money layer, and it is the wage block.
 
-        ``benefits`` and ``settlement`` both describe money moving. A benefit
+        ``benefits``, ``settlement`` and ``penalties`` describe money moving. A benefit
         payment has a rate, and a rate is derived from an average weekly wage —
         so a benefits block with no wage facts behind it is exactly the asserted
         number this layer exists to replace with a derived one. The settlement
@@ -1639,7 +1685,9 @@ class ScenarioSpec(_Model):
         if self.wages is not None:
             return self
         stated = [
-            name for name in ("benefits", "settlement") if getattr(self, name) is not None
+            name
+            for name in ("benefits", "settlement", "penalties")
+            if getattr(self, name) is not None
         ]
         if stated:
             raise ValueError(

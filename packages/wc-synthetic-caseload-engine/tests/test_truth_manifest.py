@@ -133,12 +133,15 @@ def money_plans() -> tuple[Any, ...]:
                 "late_payments": 2,
                 "max_days_late": 30,
             },
+            "penalties": {},
         },
         rng_seed=4304,
     )
     assert complex_plan.money_facts is not None
     assert complex_plan.money_facts.benefits.late_payment_count > 0
     assert complex_plan.money_facts.benefits.gaps
+    assert complex_plan.money_facts.penalties is not None
+    assert complex_plan.money_facts.penalties.assessments
     return regular, explicit, capped, complex_plan
 
 
@@ -209,10 +212,26 @@ def test_unknown_channel_is_ignored_and_money_major_is_guarded(
     with pytest.raises(TruthManifestError) as raised:
         money_facts_from_truth(incompatible)
     assert "2.4.0" in str(raised.value)
-    assert "1.0.0" in str(raised.value)
+    assert "1.1.0" in str(raised.value)
 
     with pytest.raises(TruthManifestError, match=r"channels[.]money must be an object"):
         money_facts_from_truth({"channels": {"money": []}})
+
+
+def test_additive_1_1_money_channel_keeps_same_major_acceptance(
+    money_plans: tuple[Any, ...],
+) -> None:
+    """A 1.0 contract consumer accepts the additive 1.1 penalty channel by major."""
+    plan = money_plans[-1]
+    document = build_case_truth_manifest(plan)
+    channel = document["channels"]["money"]
+    assert channel["channelVersion"] == "1.1.0"
+    assert "penalties" in channel
+    assert money_facts_from_truth(document) == plan.money_facts
+
+    prior_minor = copy.deepcopy(document)
+    prior_minor["channels"]["money"]["channelVersion"] = "1.0.0"
+    assert money_facts_from_truth(prior_minor) == plan.money_facts
 
 
 def test_rollup_indexes_money_and_non_money_cases_and_resolves_paths(

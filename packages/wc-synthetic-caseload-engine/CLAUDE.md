@@ -46,7 +46,7 @@ package is built on. Flagged and accepted as an explicit stack decision.
 | `renderer.py` | Template dispatch, format assignment, per-document reproducibility. |
 | `determinism.py` | The three reproducibility fixes (hash seed, docx ZIP times, PDF `/ID`). |
 | `manifests.py` | Output tree, manifests, `validate --out`. |
-| `truth_manifest.py` | Versioned scorer-only truth envelopes, lossless money-channel serialization and re-import, and the caseload truth index. |
+| `truth_manifest.py` | Versioned scorer-only truth envelopes, lossless money-channel serialization/re-import (including opt-in §4650(d) penalties), and the caseload truth index. |
 | `schema_audit.py` | The "not yet honoured" docstring marker sweep (ISC-137). Parses `seeds.py` from the syntax tree, never from `model_fields`. |
 | `message_audit.py` | The actionable-message sweep (ISC-129). Every message `seeds.py` can raise, one level of helper indirection resolved, classified into *instructs* vs *reports*. |
 | `cli.py` | Click commands. |
@@ -207,7 +207,7 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_schema_honesty.py` | The "not yet honoured" marker sweep, its inertness probes, and the planted control (ISC-137) |
 | `test_message_registry.py` | Every actionable seed message paired with the edit that resolves it, completeness both ways, and the planted control (ISC-129) |
 | `test_money_sweep.py` | The document/money matrix derived from `pdf_templates.registry`, and the cross-document sweep: every governed money fact asserted equal on every surface that prints it (ISC-239, ISC-240) |
-| `test_money_coherence.py` | The reusable multi-scenario paper/manifest/truth money harness, including capped and delayed-benefit shapes and one-cent live controls (AJC-48) |
+| `test_money_coherence.py` | The reusable paper/manifest/truth money harness, including capped, delayed and §4650(d)-penalised shapes, byte gates and one-cent live controls (AJC-48) |
 | `test_truth_manifest.py` | Lossless money round trips, open-channel versioning, timeless envelopes, rollup completeness, and the scorer-only subtree boundary (AJC-48) |
 
 ### The mutation gate

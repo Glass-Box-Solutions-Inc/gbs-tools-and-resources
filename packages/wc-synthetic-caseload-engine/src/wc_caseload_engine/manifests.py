@@ -30,6 +30,7 @@ import re
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,9 @@ from wc_caseload_engine.case_facts import (
 from wc_caseload_engine.money import (
     GOVERNED_MONEY_FIELDS,
     MoneyFacts,
+)
+from wc_caseload_engine.money import (
+    money as quantized_money,
 )
 from wc_caseload_engine.planner import (
     CADENCE_ANCHOR_SUBTYPES,
@@ -596,8 +600,16 @@ def _validate_money(block: dict[str, Any], documents: list[Any], case_label: str
     if not isinstance(money, dict):
         return [f"{case_label}: caseFacts.money is {type(money).__name__}, expected a mapping"]
 
+    penalty_section = money.get("penalties")
+    if isinstance(penalty_section, dict) and "counselConfirmed" not in penalty_section:
+        problems.append(
+            f"{case_label}: caseFacts.money.penalties.counselConfirmed is missing, while "
+            "the statutory binding publishes no caveat — add counselConfirmed so a "
+            "consumer can distinguish verified authority from an unconfirmed placeholder"
+        )
+
     for key, fields in GOVERNED_MONEY_FIELDS.items():
-        if key == "settlement" and money.get(key) is None:
+        if key in ("settlement", "penalties") and money.get(key) is None:
             # Absent for a case that did not settle — see SettlementFact. Absent
             # is fine; *present* was being skipped along with it, so a settlement
             # was the one group whose shape and governance nothing checked. An
@@ -829,6 +841,103 @@ def _validate_money(block: dict[str, Any], documents: list[Any], case_label: str
             problems.append(
                 f"{case_label}: a benefit gap runs {start} to {end} ({spanned} day(s)) "
                 f"but records days {days!r} — a gap runs forwards and lasts at least a day"
+            )
+
+    penalties = money.get("penalties")
+    if penalties is not None:
+        assessments = penalties.get("assessments")
+        assessment_count = penalties.get("assessmentCount")
+        if not isinstance(assessments, list):
+            problems.append(
+                f"{case_label}: caseFacts.money.penalties.assessments is "
+                f"{type(assessments).__name__}, expected a list of assessed late payments — "
+                "publish the assessment records under the plural field"
+            )
+            assessments = []
+        if assessment_count != len(assessments):
+            problems.append(
+                f"{case_label}: caseFacts.money.penalties.assessmentCount is "
+                f"{assessment_count!r} but assessments holds {len(assessments)} record(s) — "
+                "set the count to the number of published assessments"
+            )
+        if not (subtypes & MONEY_BENEFIT_DOCUMENTS):
+            problems.append(
+                f"{case_label}: caseFacts.money.penalties publishes {assessment_count!r} "
+                "assessment(s) but the case holds 0 benefit-payment documents — add a "
+                "benefit-payment surface or remove the penalties block"
+            )
+
+        assessed_amounts: list[Decimal] = []
+        assessed_principals: list[Decimal] = []
+        for index, assessment in enumerate(assessments, 1):
+            if not isinstance(assessment, dict):
+                problems.append(
+                    f"{case_label}: caseFacts.money.penalties.assessments[{index}] is a "
+                    f"{type(assessment).__name__}, expected a record — publish the late "
+                    "payment operands and computed amount together"
+                )
+                continue
+            days_late = assessment.get("daysLate")
+            if type(days_late) is not int or days_late < 1:
+                problems.append(
+                    f"{case_label}: caseFacts.money.penalties.assessments[{index}].daysLate "
+                    f"is {days_late!r}, but an assessed payment must be at least 1 day late — "
+                    "remove the assessment or correct daysLate from its due and paid dates"
+                )
+            try:
+                principal = Decimal(str(assessment.get("principal")))
+                fraction = Decimal(str(assessment.get("increaseFraction")))
+                published_amount = Decimal(str(assessment.get("amount")))
+                computed_amount = quantized_money(principal * fraction)
+            except (InvalidOperation, TypeError, ValueError):
+                problems.append(
+                    f"{case_label}: caseFacts.money.penalties.assessments[{index}] has "
+                    f"principal {assessment.get('principal')!r}, increaseFraction "
+                    f"{assessment.get('increaseFraction')!r} and amount "
+                    f"{assessment.get('amount')!r}, which cannot be read as decimals — "
+                    "publish exact decimal strings for all three fields"
+                )
+                continue
+            assessed_principals.append(principal)
+            assessed_amounts.append(published_amount)
+            if published_amount != computed_amount:
+                problems.append(
+                    f"{case_label}: caseFacts.money.penalties.assessments[{index}].amount is "
+                    f"{published_amount} but principal {principal} x increaseFraction "
+                    f"{fraction} is {computed_amount} to cents — replace amount with the "
+                    "cents-quantized product"
+                )
+
+        try:
+            published_total = Decimal(str(penalties.get("totalIncrease")))
+            computed_total = quantized_money(sum(assessed_amounts, Decimal("0.00")))
+            if published_total != computed_total:
+                problems.append(
+                    f"{case_label}: caseFacts.money.penalties.totalIncrease is "
+                    f"{published_total} but assessment amounts sum to {computed_total} — "
+                    "replace totalIncrease with the cents-quantized assessment sum"
+                )
+        except (InvalidOperation, TypeError, ValueError):
+            problems.append(
+                f"{case_label}: caseFacts.money.penalties.totalIncrease is "
+                f"{penalties.get('totalIncrease')!r}, while the assessment sum is decimal — "
+                "publish totalIncrease as an exact decimal string"
+            )
+        try:
+            published_principal = Decimal(str(penalties.get("principalAssessed")))
+            computed_principal = quantized_money(sum(assessed_principals, Decimal("0.00")))
+            if published_principal != computed_principal:
+                problems.append(
+                    f"{case_label}: caseFacts.money.penalties.principalAssessed is "
+                    f"{published_principal} but assessment principals sum to "
+                    f"{computed_principal} — replace principalAssessed with the "
+                    "cents-quantized principal sum"
+                )
+        except (InvalidOperation, TypeError, ValueError):
+            problems.append(
+                f"{case_label}: caseFacts.money.penalties.principalAssessed is "
+                f"{penalties.get('principalAssessed')!r}, while the principal sum is decimal — "
+                "publish principalAssessed as an exact decimal string"
             )
 
     settlement = money.get("settlement")

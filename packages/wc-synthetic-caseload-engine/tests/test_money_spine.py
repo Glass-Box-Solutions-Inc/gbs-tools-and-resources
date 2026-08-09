@@ -62,6 +62,7 @@ from wc_caseload_engine.money import (
     exact,
     money,
     money_manifest_block,
+    penalty_basis_for,
     rate_basis_for,
     select_method,
 )
@@ -206,9 +207,13 @@ class TestTheGateIsTheWageBlock:
     def test_a_seed_with_wages_derives_money(self) -> None:
         assert _facts({"wages": WAGES}) is not None
 
-    @pytest.mark.parametrize("block", ["benefits", "settlement"])
+    @pytest.mark.parametrize("block", ["benefits", "settlement", "penalties"])
     def test_money_without_a_wage_block_is_rejected(self, block: str) -> None:
-        payload = {"td_weeks": 10} if block == "benefits" else {"gross_amount": 40000}
+        payload = (
+            {"td_weeks": 10}
+            if block == "benefits"
+            else ({"gross_amount": 40000} if block == "settlement" else {})
+        )
         with pytest.raises(Exception) as raised:
             parse_case_seed(_seed_body({block: payload}))
         message = str(raised.value)
@@ -1297,6 +1302,158 @@ class TestTheBenefitLedger:
 # ---------------------------------------------------------------------------
 
 
+class TestTheAutomaticLateIndemnityIncrease:
+    """The §4650(d) ledger is pure arithmetic over the decided payment ledger."""
+
+    @staticmethod
+    def _penalised() -> Any:
+        return _facts(
+            {
+                "wages": WAGES,
+                "benefits": {
+                    "td_weeks": 24,
+                    "td_gap_days": 45,
+                    "late_payments": 2,
+                    "max_days_late": 45,
+                },
+                "penalties": {},
+            }
+        )
+
+    def test_the_planted_positive_control_assesses_the_stated_45_day_delay(self) -> None:
+        """Planted control: at least one late payment must carry a §4650(d) increase."""
+        facts = self._penalised()
+        ledger = facts.penalties
+        assert ledger is not None
+        assert ledger.assessed_count == 2
+        assert {item.days_late for item in ledger.assessments} == {45}
+        assert [(item.source, item.ordinal) for item in ledger.assessments] == [
+            ("td_period", 1),
+            ("td_period", 2),
+        ]
+        for assessment in ledger.assessments:
+            assert assessment.amount == money(
+                assessment.principal * assessment.increase_fraction
+            )
+        assert ledger.total_increase == money(sum(item.amount for item in ledger.assessments))
+        assert ledger.principal_assessed == money(
+            sum(item.principal for item in ledger.assessments)
+        )
+
+    @pytest.mark.parametrize(
+        ("override", "source"),
+        [
+            ({}, "engine_default_table"),
+            ({"increase_fraction": "0.25"}, "mixed"),
+            ({"authority": "seed authority"}, "mixed"),
+            (
+                {"increase_fraction": "0.25", "authority": "seed authority"},
+                "seed",
+            ),
+        ],
+    )
+    def test_the_basis_records_how_much_the_seed_authored(
+        self, override: dict[str, Any], source: str
+    ) -> None:
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {"td_weeks": 8, "late_payments": 1, "max_days_late": 45},
+                "penalties": override,
+            }
+        )
+        assert facts.penalties is not None
+        assert facts.penalties.basis.source == source
+        if "increase_fraction" in override:
+            assert facts.penalties.basis.increase_fraction == Decimal("0.25")
+
+    def test_absence_and_an_empty_assessment_are_different_public_facts(self) -> None:
+        absent = self._penalised().model_copy(update={"penalties": None})
+        assert "penalties" not in money_manifest_block(absent)
+
+        timely = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {"td_weeks": 8, "late_payments": 0},
+                "penalties": {},
+            }
+        )
+        assert timely.penalties is not None
+        assert timely.penalties.assessments == ()
+        published = money_manifest_block(timely)
+        assert published["penalties"]["assessmentCount"] == 0
+        assert published["penalties"]["assessments"] == []
+        assert published["penalties"]["totalIncrease"] == "0.00"
+
+    def test_a_never_paid_period_is_not_assessed_as_a_delay(self) -> None:
+        never_paid = money_module.TdPeriod(
+            start=date(2021, 6, 17),
+            end=date(2021, 7, 14),
+            weeks=Decimal("4"),
+            weekly_rate=Decimal("100.00"),
+            amount=Decimal("400.00"),
+            date_due=date(2021, 7, 28),
+            date_paid=None,
+            days_late=0,
+        )
+        benefits = money_module.BenefitLedger(td_periods=(never_paid,))
+        seed = parse_case_seed(
+            _seed_body({"wages": WAGES, "penalties": {}}, case_id="never-paid-penalty")
+        )
+
+        ledger = money_module._derive_penalties(seed, benefits, date(2021, 6, 14))
+
+        assert ledger.assessments == ()
+
+    def test_the_manifest_validator_recomputes_every_penalty_aggregate(self) -> None:
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = self._penalised()
+        documents = _docs(
+            MONEY_WAGE_SUBTYPE,
+            MONEY_TD_SUBTYPE,
+            settlement=money_manifest_block(facts).get("settlement"),
+        )
+        clean = {"money": money_manifest_block(facts)}
+        assert not _validate_money(clean, documents, "penalty-case")
+
+        probes = (
+            ("assessmentCount", lambda p: p.__setitem__("assessmentCount", 99)),
+            (
+                "amount",
+                lambda p: p["assessments"][0].__setitem__("amount", "0.01"),
+            ),
+            ("totalIncrease", lambda p: p.__setitem__("totalIncrease", "0.01")),
+            ("principalAssessed", lambda p: p.__setitem__("principalAssessed", "0.01")),
+            (
+                "daysLate",
+                lambda p: p["assessments"][0].__setitem__("daysLate", 0),
+            ),
+        )
+        for field, alter in probes:
+            block = {"money": money_manifest_block(facts)}
+            alter(block["money"]["penalties"])
+            if field == "amount":
+                block["money"]["penalties"]["totalIncrease"] = dollars(
+                    sum(
+                        Decimal(item["amount"])
+                        for item in block["money"]["penalties"]["assessments"]
+                    )
+                )
+            problems = _validate_money(block, documents, "penalty-case")
+            assert any(field in problem for problem in problems), (field, problems)
+
+        no_surface = _validate_money(
+            clean, _docs(MONEY_WAGE_SUBTYPE, carriers=False), "penalty-case"
+        )
+        assert any("0 benefit-payment documents" in problem for problem in no_surface)
+
+        missing_flag = {"money": money_manifest_block(facts)}
+        del missing_flag["money"]["penalties"]["counselConfirmed"]
+        problems = _validate_money(missing_flag, documents, "penalty-case")
+        assert any("penalties.counselConfirmed" in problem for problem in problems)
+
+
 class TestTheSettlementObject:
     """Approval and funding are two events, and the interval between them."""
 
@@ -1509,6 +1666,7 @@ class TestDeterminism:
             "dollars": lambda: dollars(Decimal("1234.567")),
             "exact": inside_exact,
             "rate_basis_for": lambda: rate_basis_for(doi),
+            "penalty_basis_for": lambda: penalty_basis_for(doi),
             "select_method": lambda: select_method(wages, periods),
             "compute_aww": lambda: compute_aww(wages, periods),
             "compute_comp_rate": lambda: compute_comp_rate(money(1234.56), basis),
@@ -2797,6 +2955,7 @@ class TestTheGovernanceTableBindsBothWays:
                     "approval_date": "2025-01-06",
                     "funding_date": "2025-02-05",
                 },
+                "penalties": {},
             }
         )
         return {"money": money_manifest_block(facts)}

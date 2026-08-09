@@ -36,6 +36,9 @@ from wc_caseload_engine.money import (
     InKindWage,
     MoneyFacts,
     PdAdvance,
+    PenaltyAssessment,
+    PenaltyBasis,
+    PenaltyLedger,
     RateBasis,
     SettlementFact,
     TdPeriod,
@@ -53,7 +56,7 @@ if TYPE_CHECKING:
 TRUTH_DIR = "truth"
 CASELOAD_TRUTH_NAME = "caseload.truth.json"
 SCHEMA_VERSION = "1.0.0"
-MONEY_CHANNEL_VERSION = "1.0.0"
+MONEY_CHANNEL_VERSION = "1.1.0"
 AUDIENCE = "analyzer-scorer"
 LEAKAGE_RULE = "Scorer-only ground truth; never use this artifact as an input to document analysis."
 GENERATOR = f"wc-synthetic-caseload-engine@{__version__}"
@@ -191,6 +194,36 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
             "grossAmount": dollars(settlement.gross_amount),
             "approvalDate": _date(settlement.approval_date),
             "fundingDate": _date(settlement.funding_date),
+        }
+    if facts.penalties is not None:
+        penalties = facts.penalties
+        penalty_basis = penalties.basis
+        channel["penalties"] = {
+            "basis": {
+                "label": penalty_basis.label,
+                "effectiveFrom": penalty_basis.effective_from.isoformat(),
+                "effectiveTo": _date(penalty_basis.effective_to),
+                "increaseFraction": _decimal(penalty_basis.increase_fraction),
+                "authority": penalty_basis.authority,
+                "counselConfirmed": penalty_basis.counsel_confirmed,
+                "source": penalty_basis.source,
+            },
+            "assessmentCount": penalties.assessed_count,
+            "assessments": [
+                {
+                    "source": assessment.source,
+                    "ordinal": assessment.ordinal,
+                    "principal": dollars(assessment.principal),
+                    "dateDue": assessment.date_due.isoformat(),
+                    "datePaid": _date(assessment.date_paid),
+                    "daysLate": assessment.days_late,
+                    "increaseFraction": _decimal(assessment.increase_fraction),
+                    "amount": dollars(assessment.amount),
+                }
+                for assessment in penalties.assessments
+            ],
+            "totalIncrease": dollars(penalties.total_increase),
+            "principalAssessed": dollars(penalties.principal_assessed),
         }
     return channel
 
@@ -552,7 +585,59 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
                     "channels.money.settlement",
                 )
             )
-        return MoneyFacts(wages=wage, benefits=benefits, settlement=settlement)
+        penalties = None
+        if "penalties" in channel:
+            penalties_doc = _mapping(channel["penalties"], "channels.money.penalties")
+            penalty_basis_doc = _mapping(
+                _required(penalties_doc, "basis", "channels.money.penalties"),
+                "channels.money.penalties.basis",
+            )
+            penalty_basis = PenaltyBasis(
+                **_model_data(
+                    penalty_basis_doc,
+                    {
+                        "label": "label",
+                        "effectiveFrom": "effective_from",
+                        "effectiveTo": "effective_to",
+                        "increaseFraction": "increase_fraction",
+                        "authority": "authority",
+                        "counselConfirmed": "counsel_confirmed",
+                        "source": "source",
+                    },
+                    "channels.money.penalties.basis",
+                )
+            )
+            assessments = tuple(
+                PenaltyAssessment(
+                    **_model_data(
+                        _mapping(item, f"channels.money.penalties.assessments[{index}]"),
+                        {
+                            "source": "source",
+                            "ordinal": "ordinal",
+                            "principal": "principal",
+                            "dateDue": "date_due",
+                            "datePaid": "date_paid",
+                            "daysLate": "days_late",
+                            "increaseFraction": "increase_fraction",
+                            "amount": "amount",
+                        },
+                        f"channels.money.penalties.assessments[{index}]",
+                    )
+                )
+                for index, item in enumerate(
+                    _sequence(
+                        _required(penalties_doc, "assessments", "channels.money.penalties"),
+                        "channels.money.penalties.assessments",
+                    )
+                )
+            )
+            penalties = PenaltyLedger(basis=penalty_basis, assessments=assessments)
+        return MoneyFacts(
+            wages=wage,
+            benefits=benefits,
+            settlement=settlement,
+            penalties=penalties,
+        )
     except TruthManifestError:
         raise
     except (TypeError, ValueError, ValidationError) as exc:
