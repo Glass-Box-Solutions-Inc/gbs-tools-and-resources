@@ -53,7 +53,7 @@ package. Override discovery with `WC_CASELOAD_SUBSTRATE=/abs/path` if it lives e
 | `wc-caseload generate ... --seed N` | Override `auto.rng_seed` for this run (explicit case seeds untouched) |
 | `wc-caseload seed --template [--kind case\|caseload]` | Print an annotated seed covering every controllable field |
 | `wc-caseload validate --spec S` | Schema, cross-field rules and document-control key validity |
-| `wc-caseload validate --out D` | Every manifest subtype canonical + parent-valid, every file present, every MD5 matching, every document rendered by its own template (`--allow-fallback` to permit fallbacks) |
+| `wc-caseload validate --out D` | Case manifests, document taxonomy/checksums/templates, and—when present—the scorer-only `truth/` index, case correspondence, seed provenance, public projection, and penalty arithmetic (`--allow-fallback` to permit fallbacks) |
 | `wc-caseload taxonomy-check` | Diff the engine taxonomy against the classifier source; nonzero exit on drift |
 
 Generation never touches the network and never writes outside `--out`.
@@ -1138,6 +1138,15 @@ analyzer scorer only and must never be supplied to document analysis. Keeping
 the artifacts outside `<out>/<case_id>/` is the leakage guard: a document
 analyzer can receive the complete case directory without receiving its labels.
 Use `--no-truth-manifest` when an output should contain no scorer artifacts.
+
+`wc-caseload validate --out <out>` validates this optional subtree when it is
+present. It requires one truth file per case and no strays, a complete
+`caseload.truth.json` index whose `truthFile` paths exist, matching seed hashes,
+and equality between the analyzer's `caseFacts.money` and the truth channel's
+published projection after scorer-only penalties are removed. It also
+recomputes penalty amounts, late-day intervals, assessment eligibility, schedule
+counts, and ledger totals. An older output tree with no `truth/` directory
+remains valid.
 
 Envelope schema `1.0.0` carries an open `channels` mapping, and each channel has
 its own version. Consumers MUST ignore channels they do not recognize and MUST

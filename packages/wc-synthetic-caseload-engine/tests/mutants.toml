@@ -1553,3 +1553,30 @@ test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_p
 find = '''            (date_paid - statutory_due_date).days if statutorily_late else 0'''
 replace = '''            (date_paid - operational_due_date).days if statutorily_late else 0'''
 note = 'AJC-48 Round E. The assessment daysLate operand is the represented statutoryDueDate, never the engine cadence date carried beside it for contrast.'
+
+[[mutant]]
+id = 'm15-11'
+title = 'truth validation trusts a wrong penalty assessment amount'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_truth_manifest.py::test_output_validator_recomputes_truth_penalty_amount'
+find = '''        if published_amount != computed_amount:'''
+replace = '''        if False:'''
+note = 'AJC-48 Round G. The scorer artifact is the only remaining home of penalty assessments, so validate --out must independently recompute principal times fraction there instead of certifying a planted one-cent error.'
+
+[[mutant]]
+id = 'm15-12'
+title = 'a case may silently lose its per-case truth manifest'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_truth_manifest.py::test_output_validator_reports_missing_and_stray_case_truth_files'
+find = '''    for case_id in sorted(case_ids - truth_case_ids):'''
+replace = '''    for case_id in sorted(set()):'''
+note = 'AJC-48 Round G. A scorer corpus is incomplete when an analyzer-visible case has no matching label file; correspondence must be checked from the case side as well as the truth side.'
+
+[[mutant]]
+id = 'm15-13'
+title = 'truth published facts may drift from the analyzer case manifest'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_truth_manifest.py::test_output_validator_reports_truth_published_projection_drift'
+find = '''        if analyzer_projection != manifest_money:'''
+replace = '''        if False:'''
+note = 'AJC-48 Round G. Removing scorer-only penalties from channels.money.published must produce exactly caseFacts.money; otherwise the analyzer input and scorer label describe different worlds.'

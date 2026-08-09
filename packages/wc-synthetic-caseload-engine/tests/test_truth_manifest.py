@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -89,6 +90,59 @@ def _plan(
         parse_case_seed(_seed_body(case_id, scenario=scenario, doi=doi, rng_seed=rng_seed)),
         case_number=1,
     )
+
+
+@pytest.fixture(scope="module")
+def generated_penalty_tree(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One real on-disk scorer tree, copied before each corruption probe."""
+    out_dir = tmp_path_factory.mktemp("truth-validator")
+    body = _seed_body(
+        "truth-penalty-validator",
+        scenario={
+            "wages": {"pattern": "regular", "base_weekly_wage": 1500.0},
+            "benefits": {
+                "td_weeks": 24,
+                "td_gap_days": 45,
+                "late_payments": 2,
+                "max_days_late": 30,
+            },
+            "penalties": {},
+        },
+        rng_seed=4310,
+    )
+    carriers = [
+        "WAGE_STATEMENTS_PRE_INJURY",
+        "TD_PAYMENT_RECORD_ONGOING",
+        "COMPROMISE_AND_RELEASE",
+        "ORDER_APPROVING_SETTLEMENT",
+        "BENEFIT_PAYMENT_LEDGER",
+    ]
+    body["documents"] = {
+        "format_mix": {"pdf": 1.0},
+        "include_only": carriers,
+        "overrides": [{"subtype": subtype, "count": 1} for subtype in carriers],
+        "global_cap": len(carriers),
+    }
+    seed = parse_case_seed(body)
+    generate_caseload("truth-validator", (seed,), out_dir, truth=True)
+    truth = read_truth_manifest(out_dir / TRUTH_DIR / "truth-penalty-validator.truth.json")
+    assert truth["channels"]["money"]["penalties"]["assessments"]
+    assert validate_output_tree(out_dir).problems == []
+    return out_dir
+
+
+def _copy_generated_tree(source: Path, tmp_path: Path, name: str = "out") -> Path:
+    target = tmp_path / name
+    shutil.copytree(source, target)
+    return target
+
+
+def _truth_path(out_dir: Path) -> Path:
+    return out_dir / TRUTH_DIR / "truth-penalty-validator.truth.json"
+
+
+def _rewrite_json(path: Path, document: dict[str, Any]) -> None:
+    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -326,6 +380,10 @@ def test_rollup_indexes_money_and_non_money_cases_and_resolves_paths(
     rollup_path = write_caseload_truth_manifest("truth-rollup", results, truth_dir)
     assert rollup_path.name == CASELOAD_TRUTH_NAME
     rollup = read_truth_manifest(rollup_path)
+    assert [entry["caseId"] for entry in rollup["cases"]] == [
+        "truth-regular",
+        "truth-rollup-empty",
+    ]
     channel = rollup["channels"]["money"]
     assert channel["caseCount"] == 2
     assert channel["moneyCaseCount"] == 1
@@ -346,7 +404,9 @@ def test_rollup_indexes_money_and_non_money_cases_and_resolves_paths(
         truth_path=empty_path,
     )
     empty_rollup = write_caseload_truth_manifest("truth-empty", [empty_result], empty_truth_dir)
-    assert read_truth_manifest(empty_rollup)["channels"] == {}
+    empty_document = read_truth_manifest(empty_rollup)
+    assert empty_document["channels"] == {}
+    assert empty_document["cases"][0]["caseId"] == "truth-rollup-empty"
 
 
 def test_rollup_omits_unsettled_amount_but_keeps_settled_amount(
@@ -370,6 +430,131 @@ def test_rollup_omits_unsettled_amount_but_keeps_settled_amount(
     entries = rollup["channels"]["money"]["cases"]
     assert "settlementGrossAmount" not in entries[0]
     assert entries[1]["settlementGrossAmount"] == "88000.00"
+
+
+def test_output_validator_recomputes_truth_penalty_amount(
+    tmp_path: Path, generated_penalty_tree: Path
+) -> None:
+    out_dir = _copy_generated_tree(generated_penalty_tree, tmp_path)
+    path = _truth_path(out_dir)
+    truth = read_truth_manifest(path)
+    assessment = truth["channels"]["money"]["penalties"]["assessments"][0]
+    assessment["amount"] = f"{Decimal(assessment['amount']) + Decimal('0.01'):.2f}"
+    _rewrite_json(path, truth)
+
+    problems = validate_output_tree(out_dir).problems
+
+    assert any(
+        "assessments[1].amount is" in problem and "product" in problem
+        for problem in problems
+    )
+
+
+def test_output_validator_recomputes_truth_penalty_days_late(
+    tmp_path: Path, generated_penalty_tree: Path
+) -> None:
+    out_dir = _copy_generated_tree(generated_penalty_tree, tmp_path)
+    path = _truth_path(out_dir)
+    truth = read_truth_manifest(path)
+    assessment = truth["channels"]["money"]["penalties"]["assessments"][0]
+    assessment["daysLate"] += 1
+    _rewrite_json(path, truth)
+
+    problems = validate_output_tree(out_dir).problems
+
+    assert any("daysLate is" in problem and "statutoryDueDate" in problem for problem in problems)
+
+
+def test_output_validator_rejects_assessment_for_unpaid_schedule_entry(
+    tmp_path: Path, generated_penalty_tree: Path
+) -> None:
+    out_dir = _copy_generated_tree(generated_penalty_tree, tmp_path)
+    path = _truth_path(out_dir)
+    truth = read_truth_manifest(path)
+    penalties = truth["channels"]["money"]["penalties"]
+    assessment = penalties["assessments"][0]
+    schedule_entry = next(
+        item
+        for item in penalties["schedule"]
+        if (item["source"], item["ordinal"])
+        == (assessment["source"], assessment["ordinal"])
+    )
+    schedule_entry["unpaid"] = True
+    _rewrite_json(path, truth)
+
+    problems = validate_output_tree(out_dir).problems
+
+    assert any("unpaid" in problem and "remove assessments" in problem for problem in problems)
+
+
+def test_output_validator_reports_missing_and_stray_case_truth_files(
+    tmp_path: Path, generated_penalty_tree: Path
+) -> None:
+    missing = _copy_generated_tree(generated_penalty_tree, tmp_path, "missing")
+    _truth_path(missing).unlink()
+    missing_problems = validate_output_tree(missing).problems
+    assert any(
+        "truth-penalty-validator" in problem and "truth manifest is missing" in problem
+        for problem in missing_problems
+    )
+
+    stray = _copy_generated_tree(generated_penalty_tree, tmp_path, "stray")
+    shutil.copyfile(_truth_path(stray), stray / TRUTH_DIR / "not-a-case.truth.json")
+    stray_problems = validate_output_tree(stray).problems
+    assert any(
+        "not-a-case" in problem and "case directory is missing" in problem
+        for problem in stray_problems
+    )
+
+
+def test_output_validator_reports_truth_published_projection_drift(
+    tmp_path: Path, generated_penalty_tree: Path
+) -> None:
+    out_dir = _copy_generated_tree(generated_penalty_tree, tmp_path)
+    path = _truth_path(out_dir)
+    truth = read_truth_manifest(path)
+    published = truth["channels"]["money"]["published"]
+    published["wage"]["averageWeeklyWage"] = "0.01"
+    _rewrite_json(path, truth)
+
+    problems = validate_output_tree(out_dir).problems
+
+    assert any(
+        "published minus penalties" in problem and "caseFacts.money" in problem
+        for problem in problems
+    )
+
+
+def test_output_validator_reports_truth_seed_hash_drift(
+    tmp_path: Path, generated_penalty_tree: Path
+) -> None:
+    out_dir = _copy_generated_tree(generated_penalty_tree, tmp_path)
+    path = _truth_path(out_dir)
+    truth = read_truth_manifest(path)
+    truth["provenance"]["seedHash"] = "wrong-seed-hash"
+    _rewrite_json(path, truth)
+
+    problems = validate_output_tree(out_dir).problems
+
+    assert any(
+        "truth provenance.seedHash" in problem and "wrong-seed-hash" in problem
+        for problem in problems
+    )
+
+
+def test_output_validator_accepts_clean_truth_and_legacy_tree_without_truth(
+    tmp_path: Path, generated_penalty_tree: Path
+) -> None:
+    clean = _copy_generated_tree(generated_penalty_tree, tmp_path, "clean")
+    clean_report = validate_output_tree(clean)
+    assert clean_report.problems == []
+    assert clean_report.truth_manifests == 1
+
+    legacy = _copy_generated_tree(generated_penalty_tree, tmp_path, "legacy")
+    shutil.rmtree(legacy / TRUTH_DIR)
+    legacy_report = validate_output_tree(legacy)
+    assert legacy_report.problems == []
+    assert legacy_report.truth_manifests == 0
 
 
 def test_truth_directory_isolation_resolves_direct_and_traversal_paths(tmp_path: Path) -> None:
@@ -470,20 +655,11 @@ def test_case_tree_contains_no_scorer_only_vocabulary(tmp_path: Path) -> None:
 @pytest.mark.slow
 @requires_substrate
 def test_truth_subtree_is_outside_case_and_does_not_confuse_validator(
-    tmp_path: Path,
+    generated_penalty_tree: Path,
 ) -> None:
-    seed = parse_case_seed(
-        _seed_body(
-            "truth-boundary",
-            scenario=None,
-            rng_seed=4307,
-            stage="intake",
-        )
-    )
-    truth_dir = tmp_path / TRUTH_DIR
-    result = generate_case(seed, tmp_path, truth_dir=truth_dir)
+    truth_path = _truth_path(generated_penalty_tree)
+    case_dir = generated_penalty_tree / "truth-penalty-validator"
 
-    assert result.truth_path == truth_dir / "truth-boundary.truth.json"
-    assert result.truth_path.is_file()
-    assert not (result.directory / TRUTH_DIR).exists()
-    assert validate_output_tree(tmp_path).ok
+    assert truth_path.is_file()
+    assert not (case_dir / TRUTH_DIR).exists()
+    assert validate_output_tree(generated_penalty_tree).ok

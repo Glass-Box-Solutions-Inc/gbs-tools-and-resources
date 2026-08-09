@@ -357,6 +357,7 @@ def build_caseload_truth_manifest(
         "leakageRule": LEAKAGE_RULE,
         "caseloadId": caseload_id,
         "provenance": {"generator": GENERATOR, "substrateSha": substrate_git_sha()},
+        "cases": cases,
         "channels": channels,
     }
 
@@ -399,6 +400,15 @@ def read_truth_manifest(path: Path) -> dict[str, Any]:
     channels = payload.get("channels")
     if not isinstance(channels, dict):
         raise TruthManifestError(f"truth manifest {path} must contain an object at 'channels'")
+    if "money" in channels:
+        money_channel = _mapping(channels["money"], "channels.money")
+        _require_compatible_version(
+            money_channel,
+            key="channelVersion",
+            path="channels.money",
+            supported=MONEY_CHANNEL_VERSION,
+            label="money channel",
+        )
     return payload
 
 

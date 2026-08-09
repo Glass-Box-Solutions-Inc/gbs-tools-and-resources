@@ -30,6 +30,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   byte-identity guards cover the new shape.
 - Bumped only the additive money channel minor from `1.0.0` to `1.1.0`;
   `schemaVersion` remains `1.0.0`, and same-major consumers remain accepted.
+- Extended `validate --out` across the optional scorer-only `truth/` subtree:
+  it now rejects missing or stray case truth files, incomplete or dangling
+  caseload index entries, seed-provenance drift, disagreement between
+  `channels.money.published` (minus penalties) and analyzer-visible
+  `caseFacts.money`, and incoherent penalty schedules, dates, eligibility,
+  arithmetic, counts, or totals. Trees created without truth output remain
+  valid.
 
 ## [0.9.0] — 2026-08-08
 
