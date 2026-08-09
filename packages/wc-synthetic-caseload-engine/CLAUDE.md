@@ -301,8 +301,14 @@ exercised as shipped rather than hand-configured (determinism rule 6).
 **`--record` generates every selected corpus twice** and refuses to write unless the two runs
 agree. Recording from a single run asserts reproducibility without testing it — and if the
 corpus really had gone nondeterministic, that run is how the nondeterminism gets pinned as the
-baseline. It is also all-or-nothing, and it requires `--only`, `--tier` or `--all`: a bare
-`--record` is the fastest way to turn a red gate green, so the scope is stated on purpose.
+baseline. It requires `--only`, `--tier` or `--all`: a bare `--record` is the fastest way to
+turn a red gate green, so the scope is stated on purpose.
+
+It is all-or-nothing in **both** phases. Nothing is written until every selected corpus has
+been generated twice and proved reproducible, and the writes themselves stage beside their
+destination and land through `os.replace`, rolling every earlier file back if any replacement
+fails. A run interrupted between the second golden and the third leaves the committed set
+exactly as it was — never half describing the new code and half the old.
 
 **Changing rendered output is a re-record commit.** Run `--check` to see what moved, re-record
 only the corpora you meant to change, and commit the golden in the same PR. Re-recording all

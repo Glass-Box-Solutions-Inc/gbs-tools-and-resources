@@ -625,6 +625,80 @@ def test_record_records_when_both_runs_agree(
     assert SHA256_RE.match(written["corpusTree"])
 
 
+def test_a_failure_midway_through_writing_rolls_every_golden_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The generation phase is atomic; so is the write phase.
+
+    Proving all the corpora reproducible before writing any of them closes the
+    big window, and leaves a small one: the writes themselves. A full disk, a
+    permissions change or a Ctrl-C between the first file and the second leaves
+    exactly the incoherent set the design argues against, and no amount of
+    care in the phase before it helps.
+
+    The probe fails the *second* of two replacements, which is the only
+    arrangement that can tell a real rollback from a lucky ordering: the first
+    file has genuinely been replaced by the time the failure lands, so it can
+    only be byte-identical again if something put it back.
+    """
+    goldens = {"first": tmp_path / "first.json", "second": tmp_path / "second.json"}
+    for path in goldens.values():
+        path.write_text('{"format": 1, "sentinel": "original"}\n', encoding="utf-8")
+    before = {name: path.read_bytes() for name, path in goldens.items()}
+    monkeypatch.setattr(Corpus, "golden", property(lambda self: goldens[self.name]))
+    monkeypatch.setattr(
+        golden_gate, "generate_corpus", lambda _corpus, out_dir: _build_corpus(out_dir)
+    )
+    monkeypatch.setattr(golden_gate, "validate_corpus", lambda *_args: None)
+
+    real_replace = golden_gate.os.replace
+    calls = {"n": 0}
+
+    def _failing_replace(source: Any, destination: Any) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError(28, "No space left on device", str(destination))
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(golden_gate.os, "replace", _failing_replace)
+
+    corpora = [
+        Corpus(name="first", tier=SUITE_TIER, why="probe"),
+        Corpus(name="second", tier=SUITE_TIER, why="probe"),
+    ]
+    assert golden_gate.record(corpora) == 1
+    assert calls["n"] == 2, "the probe never reached the second replacement"
+    for name, path in goldens.items():
+        assert path.read_bytes() == before[name], (
+            f"{name}.json was left rewritten after the record run failed"
+        )
+    assert not list(tmp_path.glob(".*staged")), "a staged temporary was left behind"
+
+
+def test_a_format_one_golden_is_refused_rather_than_half_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An old golden carries no byte-level digest, so comparing it would lie.
+
+    Format 1 recorded only the manifest-derived digests. Reading one with this
+    tool and comparing the keys it happens to share would report clean while
+    checking strictly less than the gate claims — a passing verdict that has
+    quietly stopped covering the rendered bytes. Refusing is the only honest
+    answer, and the message has to name the way out.
+    """
+    golden_path = tmp_path / "legacy.json"
+    golden_path.write_text(
+        json.dumps({"format": 1, "corpus": "legacy", "cases": {}}) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(Corpus, "golden", property(lambda self: golden_path))
+
+    from golden_gate import _load_golden
+
+    with pytest.raises(GoldenError, match="format 1") as raised:
+        _load_golden(Corpus(name="legacy", tier=SUITE_TIER, why="probe"))
+    assert "--record --only legacy" in str(raised.value)
+
+
 def test_a_bare_record_is_a_usage_error() -> None:
     """Re-recording accepts new output as correct, so the scope is stated.
 

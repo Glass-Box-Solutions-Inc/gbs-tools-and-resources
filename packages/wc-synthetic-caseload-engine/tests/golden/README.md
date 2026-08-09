@@ -33,8 +33,12 @@ git add tests/golden/demo-caseload.json
 `--record` needs an explicit scope — `--only`, `--tier` or `--all`. It is the
 fastest way to turn a red gate green, so saying which corpus you meant to accept
 is what makes it a decision rather than a reflex. It also generates each corpus
-**twice** and refuses to write unless the two runs agree, and it is
-all-or-nothing across the corpora you selected.
+**twice** and refuses to write unless the two runs agree.
+
+It is all-or-nothing in both phases: nothing is written until every selected
+corpus has been proved reproducible, and the writes stage beside their
+destination and land through `os.replace`, rolling earlier files back if any
+replacement fails. Interrupt it and the committed set is exactly as it was.
 
 `--record` prints the changes it wrote, so the commit message can say what
 actually moved rather than "update goldens". Re-record only the corpora you

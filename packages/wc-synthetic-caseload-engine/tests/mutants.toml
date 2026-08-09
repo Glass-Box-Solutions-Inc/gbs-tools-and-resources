@@ -1454,3 +1454,21 @@ test = 'tests/test_golden_corpus.py::test_a_bare_record_is_a_usage_error'
 find = '''        if not (args.only or args.all or args.tier):'''
 replace = '''        if False:'''
 note = "Re-recording accepts new output as correct, and a bare --record is the fastest way to turn a red gate green: one word, four rewritten goldens, no statement of intent. Naming the scope is what makes the blessing a decision rather than a reflex."
+
+[[mutant]]
+id = 'm14-8'
+title = 'a failed record leaves the goldens it already replaced rewritten'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_a_failure_midway_through_writing_rolls_every_golden_back'
+find = '''        for path in committed:'''
+replace = '''        for path in []:'''
+note = "Proving every corpus reproducible before writing any of them closes the big window and leaves a small one: the writes themselves. A full disk, a permissions change or a Ctrl-C between the first replace and the second leaves exactly the incoherent set the design argues against, and no amount of care in the phase before helps. Skipping the restore loop reproduces it precisely — the staging still works, so a reader never sees a half-written file, but the first golden stays replaced."
+
+[[mutant]]
+id = 'm14-9'
+title = 'a format-1 golden is half-read instead of refused'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_a_format_one_golden_is_refused_rather_than_half_read'
+find = '''    if payload.get("format") != GOLDEN_FORMAT:'''
+replace = '''    if False:'''
+note = "Format 1 recorded only the manifest-derived digests, so comparing the keys a format-1 golden happens to share with this tool would report clean while checking strictly less than the gate claims — a passing verdict that has quietly stopped covering the rendered bytes. That is the one failure mode a gate may never have, so an unreadable golden is refused rather than partially believed."

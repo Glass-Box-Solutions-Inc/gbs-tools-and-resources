@@ -112,6 +112,7 @@ Exit codes: ``0`` clean, ``1`` drift (or a failed generation), ``2`` usage.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -690,9 +691,10 @@ def validate_corpus(corpus: Corpus, out_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_golden(corpus: Corpus, digest: dict[str, Any], provenance: dict[str, Any]) -> None:
-    """Write ``tests/golden/<corpus>.json``."""
-    GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
+def _golden_bytes(
+    corpus: Corpus, digest: dict[str, Any], provenance: dict[str, Any]
+) -> bytes:
+    """Serialize one golden. Pure — it touches no file."""
     payload = {
         "format": GOLDEN_FORMAT,
         "corpus": corpus.name,
@@ -701,9 +703,69 @@ def _write_golden(corpus: Corpus, digest: dict[str, Any], provenance: dict[str, 
         "recordedWith": provenance,
         **digest,
     }
-    corpus.golden.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    return (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _commit_goldens(payloads: list[tuple[Corpus, bytes]]) -> None:
+    """Write every golden, or leave every one of them exactly as it was.
+
+    The generation phase is already all-or-nothing — nothing is written until
+    every selected corpus has been generated twice and proved reproducible. This
+    closes the remaining window: the *writes themselves*. Half a dozen
+    sequential ``write_text`` calls can still be interrupted between the second
+    and the third by a full disk, a permissions change, or a Ctrl-C, and what it
+    leaves behind is precisely the incoherent set this command documents against
+    — some goldens describing the new code, some the old, and a ``git status``
+    that looks like a deliberate subset.
+
+    Two mechanisms, because either alone leaves a hole:
+
+    * Each file is written to a temporary beside its destination and moved into
+      place with :func:`os.replace`, which is atomic within a filesystem. A
+      reader never sees a half-written golden.
+    * The previous contents are held in memory and restored if any replacement
+      fails, so a failure on the third file un-does the first two.
+
+    The rollback is best-effort and never masks the original error: if restoring
+    also fails, the first failure is still what propagates, because that is the
+    one that explains what happened.
+    """
+    GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
+    originals: dict[Path, bytes | None] = {
+        corpus.golden: (corpus.golden.read_bytes() if corpus.golden.is_file() else None)
+        for corpus, _payload in payloads
+    }
+    committed: list[Path] = []
+    staged_paths: list[Path] = []
+    try:
+        for corpus, payload in payloads:
+            destination = corpus.golden
+            # Beside the destination, so os.replace stays within one filesystem.
+            staged = destination.with_name(f".{destination.name}.staged")
+            staged_paths.append(staged)
+            staged.write_bytes(payload)
+            os.replace(staged, destination)
+            committed.append(destination)
+    except OSError as exc:
+        # A replace that failed leaves its own staged file behind. Cleaning up
+        # matters more than it looks: the name is dotted, so it is invisible to
+        # a casual `ls` and to `git status`, and a leftover would sit in
+        # tests/golden/ indefinitely with nothing to say where it came from.
+        for staged in staged_paths:
+            with contextlib.suppress(OSError):  # cleanup's own failure is not the story
+                staged.unlink(missing_ok=True)
+        for path in committed:
+            original = originals[path]
+            with contextlib.suppress(OSError):  # the rollback's own failure is not the story
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_bytes(original)
+        raise GoldenError(
+            f"writing the goldens failed at {getattr(exc, 'filename', '<unknown>')} — "
+            f"{exc}. The goldens written before it were rolled back, so the committed "
+            "set is unchanged and still coherent."
+        ) from exc
 
 
 def _load_golden(corpus: Corpus) -> dict[str, Any]:
@@ -849,11 +911,12 @@ def _generate_twice(corpus: Corpus) -> dict[str, Any]:
 def record(corpora: list[Corpus]) -> int:
     """Regenerate each corpus twice and rewrite its golden. Returns an exit code.
 
-    Transactional: every selected corpus is generated, validated, proved
-    reproducible and digested *before* any golden is written. A partial record
-    is the worst artifact this command could leave behind — half the goldens
-    refreshed against new code, half still describing the old, and a `git
-    status` that looks like a deliberate subset.
+    Transactional in both phases. Every selected corpus is generated, validated,
+    proved reproducible and digested *before* any golden is written, and the
+    writes themselves go through :func:`_commit_goldens`, which stages and
+    rolls back. A partial record is the worst artifact this command could leave
+    behind — half the goldens refreshed against new code, half still describing
+    the old, and a ``git status`` that looks like a deliberate subset.
     """
     provenance = current_provenance()
     prepared: list[tuple[Corpus, dict[str, Any], dict[str, Any] | None]] = []
@@ -871,8 +934,15 @@ def record(corpora: list[Corpus]) -> int:
         prepared.append((corpus, digest, previous))
         print(f"verified {corpus.name:<20} reproducible across two runs")
 
+    try:
+        _commit_goldens(
+            [(corpus, _golden_bytes(corpus, digest, provenance)) for corpus, digest, _ in prepared]
+        )
+    except GoldenError as exc:
+        print(f"FAILED  {exc}")
+        return 1
+
     for corpus, digest, previous in prepared:
-        _write_golden(corpus, digest, provenance)
         changed = compare(corpus, previous, digest) if previous else []
         summary = (
             "new golden"
