@@ -213,7 +213,26 @@ def test_generate_writes_a_complete_case(
     assert (case_dir / "seed.yaml").is_file()
     assert (case_dir / "manifest.json").is_file()
     assert (out_dir / "caseload_manifest.json").is_file()
+    assert (out_dir / "truth" / "probe-001.truth.json").is_file()
+    assert (out_dir / "truth" / "caseload.truth.json").is_file()
+    assert f"truth    : {out_dir / 'truth'}" in result.output
     assert list((case_dir / "documents").iterdir())
+
+    no_truth_dir = tmp_path / "out-no-truth"
+    no_truth = runner.invoke(
+        cli,
+        [
+            "generate",
+            "--spec",
+            str(spec),
+            "--out",
+            str(no_truth_dir),
+            "--no-truth-manifest",
+        ],
+    )
+    assert no_truth.exit_code == 0, no_truth.output
+    assert not (no_truth_dir / "truth").exists()
+    assert "truth    :" not in no_truth.output
 
 
 def test_generate_validates_the_spec_before_writing_anything(

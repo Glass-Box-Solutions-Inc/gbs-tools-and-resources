@@ -336,8 +336,13 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
     version = _required(channel, "channelVersion", "channels.money")
     if not isinstance(version, str) or not version:
         raise TruthManifestError("malformed money channel: channelVersion must be a string")
+    version_parts = version.split(".")
+    if len(version_parts) != 3 or any(not part.isdigit() for part in version_parts):
+        raise TruthManifestError(
+            f"malformed money channel: channelVersion {version!r} must be major.minor.patch"
+        )
     expected_major = MONEY_CHANNEL_VERSION.partition(".")[0]
-    actual_major = version.partition(".")[0]
+    actual_major = version_parts[0]
     if actual_major != expected_major:
         raise TruthManifestError(
             f"unsupported money channel version {version!r}; "

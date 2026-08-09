@@ -200,12 +200,19 @@ def test_unknown_channel_is_ignored_and_money_major_is_guarded(
     document["channels"]["defects"] = {"channelVersion": "19.0.0"}
     assert money_facts_from_truth(document) == plan.money_facts
 
+    compatible = copy.deepcopy(document)
+    compatible["channels"]["money"]["channelVersion"] = "1.9.0"
+    assert money_facts_from_truth(compatible) == plan.money_facts
+
     incompatible = copy.deepcopy(document)
     incompatible["channels"]["money"]["channelVersion"] = "2.4.0"
     with pytest.raises(TruthManifestError) as raised:
         money_facts_from_truth(incompatible)
     assert "2.4.0" in str(raised.value)
     assert "1.0.0" in str(raised.value)
+
+    with pytest.raises(TruthManifestError, match=r"channels[.]money must be an object"):
+        money_facts_from_truth({"channels": {"money": []}})
 
 
 def test_rollup_indexes_money_and_non_money_cases_and_resolves_paths(

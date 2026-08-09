@@ -1102,6 +1102,24 @@ penalty computation are likewise elsewhere.
 See `examples/money-showcase.yaml` for seven cases covering all five methods,
 both bounds and four rate vintages.
 
+#### Scorer-only truth manifests
+
+Generation writes lossless money ground truth to
+`<out>/truth/<case_id>.truth.json` and a corpus index to
+`<out>/truth/caseload.truth.json`. These versioned JSON envelopes are for the
+analyzer scorer only and must never be supplied to document analysis. Keeping
+the artifacts outside `<out>/<case_id>/` is the leakage guard: a document
+analyzer can receive the complete case directory without receiving its labels.
+Use `--no-truth-manifest` when an output should contain no scorer artifacts.
+
+Envelope schema `1.0.0` carries an open `channels` mapping, and each channel has
+its own version. Consumers MUST ignore channels they do not recognize and MUST
+NOT fail on an unknown channel key. The current `money` channel is a lossless
+serialization of `MoneyFacts`; planned additive successors are `defects` (the
+Phase 3 defect-injection manifest) and `assertions` (medical-story M4
+assertion-quality labels). A case without `scenario.wages` has empty channels,
+not a null or empty money channel.
+
 ### What is fact-aware, and what that costs
 
 Fifteen subtypes dispatch to engine-owned subclasses that read the ledger:

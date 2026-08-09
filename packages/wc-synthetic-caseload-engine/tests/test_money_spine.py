@@ -58,6 +58,8 @@ from wc_caseload_engine.money import (
     compute_aww,
     compute_comp_rate,
     derive_money_facts,
+    dollars,
+    exact,
     money,
     money_manifest_block,
     rate_basis_for,
@@ -1498,8 +1500,14 @@ class TestDeterminism:
         basis = facts.wages.rate.basis
         doi = seed.injury.date_of_injury
 
+        def inside_exact() -> Decimal:
+            with exact():
+                return Decimal(1) / Decimal(3)
+
         calls = {
             "money": lambda: money(1234.567),
+            "dollars": lambda: dollars(Decimal("1234.567")),
+            "exact": inside_exact,
             "rate_basis_for": lambda: rate_basis_for(doi),
             "select_method": lambda: select_method(wages, periods),
             "compute_aww": lambda: compute_aww(wages, periods),

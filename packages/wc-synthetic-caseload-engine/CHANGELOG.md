@@ -9,6 +9,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the ground-truth export (**AJC-48**, money layer Wave 3)
+
+- Added versioned, scorer-only case truth manifests under `truth/` with a
+  lossless `MoneyFacts` channel and validated round-trip reader.
+- Added the caseload truth index, provenance, independent channel versioning,
+  and an ignore-unknown-channels contract for additive future label families.
+- Added the default-on CLI export switch and kept single-case library output
+  byte-compatible unless its caller explicitly supplies a truth directory.
+
 ## [0.9.0] — 2026-08-08
 
 ### Fixed — body-part-faithful operations (**AJC-55**)
