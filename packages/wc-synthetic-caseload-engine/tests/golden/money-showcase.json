@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "corpus": "money-showcase",
   "spec": "examples/money-showcase.yaml",
   "tier": "ci",
@@ -24,6 +24,17 @@
   "caseCount": 7,
   "documentCount": 517,
   "fileCount": 547,
+  "rootFiles": [
+    "caseload_manifest.json",
+    "truth/atypical-earner.truth.json",
+    "truth/capped-executive.truth.json",
+    "truth/caseload.truth.json",
+    "truth/irregular-earner.truth.json",
+    "truth/neglected-file.truth.json",
+    "truth/new-hire.truth.json",
+    "truth/steady-earner.truth.json",
+    "truth/two-jobs.truth.json"
+  ],
   "corpusTree": "477d486745c3a9028353448f5a319f20f6ac97ac0bf76231e99a72f9c8d6198c",
   "caseload": "3694503b6125bfd5fe71e4d952c710bc605c6ef32824397256318586e4403d75",
   "cases": {

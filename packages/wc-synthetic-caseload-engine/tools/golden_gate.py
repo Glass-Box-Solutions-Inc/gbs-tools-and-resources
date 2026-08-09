@@ -271,7 +271,7 @@ CASE_REDACTIONS: tuple[tuple[str, ...], ...] = (("provenance", "substrateSha"),)
 CASELOAD_REDACTIONS: tuple[tuple[str, ...], ...] = (("provenance", "substrateSha"),)
 """Paths redacted from the caseload manifest before digesting."""
 
-GOLDEN_FORMAT = 2
+GOLDEN_FORMAT = 3
 """Golden manifest format version.
 
 Bumped when the *shape* of a golden changes — a new per-case axis, a renamed
@@ -284,6 +284,12 @@ the files themselves rather than from the manifest's account of them — and
 stopped exempting the engine version. Format 1 goldens are refused rather than
 half-read: they record no byte-level digest at all, so comparing what they *do*
 carry would report clean while checking strictly less than the gate claims.
+
+Format 3 added ``rootFiles``: the sorted names of every file not owned by a
+case directory. Format 2 assumed that set contained only the caseload manifest,
+so it cannot account for a corpus carrying another root subtree. It is refused
+rather than half-read because silently supplying the old assumption would make
+the new whole-tree accounting claim false.
 """
 
 
@@ -484,6 +490,7 @@ def digest_corpus(out_dir: Path) -> dict[str, Any]:
     everything = file_digests(out_dir)
 
     cases: dict[str, Any] = {}
+    owned_by_cases: set[str] = set()
     total_documents = 0
     for manifest_path in sorted(out_dir.glob(f"*/{MANIFEST_NAME}")):
         case_dir = manifest_path.parent
@@ -495,6 +502,7 @@ def digest_corpus(out_dir: Path) -> dict[str, Any]:
         total_documents += len(documents)
 
         prefix = f"{case_label}/"
+        owned_by_cases.update(name for name in everything if name.startswith(prefix))
         owned = {
             name[len(prefix) :]: digest
             for name, digest in everything.items()
@@ -527,10 +535,14 @@ def digest_corpus(out_dir: Path) -> dict[str, Any]:
     if not cases:
         raise GoldenError(f"{out_dir}: no case manifests found (expected */{MANIFEST_NAME})")
 
+    # corpusTree already protects every file's bytes. rootFiles is the accounting
+    # record for files no case owns, not a second source of byte digests.
+    root_files = sorted(set(everything) - owned_by_cases)
     return {
         "caseCount": len(cases),
         "documentCount": total_documents,
         "fileCount": len(everything),
+        "rootFiles": root_files,
         "corpusTree": _tree_digest(everything),
         "caseload": normalized_manifest_digest(caseload_manifest, CASELOAD_REDACTIONS),
         "cases": cases,

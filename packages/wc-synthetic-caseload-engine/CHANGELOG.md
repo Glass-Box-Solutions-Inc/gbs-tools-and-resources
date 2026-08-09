@@ -37,6 +37,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `caseFacts.money`, and incoherent penalty schedules, dates, eligibility,
   arithmetic, counts, or totals. Trees created without truth output remain
   valid.
+- Bumped golden-corpus format 3 to record the sorted root files not owned by a
+  case. The strict file-total invariant now accounts by name for the truth
+  subtree and requires its caseload index plus one truth manifest per case.
 
 ## [0.9.0] — 2026-08-08
 

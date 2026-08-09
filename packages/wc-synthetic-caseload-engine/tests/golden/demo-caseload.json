@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "corpus": "demo-caseload",
   "spec": "examples/demo-caseload.yaml",
   "tier": "suite",
@@ -24,6 +24,17 @@
   "caseCount": 7,
   "documentCount": 331,
   "fileCount": 361,
+  "rootFiles": [
+    "caseload_manifest.json",
+    "truth/alvarez-denied-recon-remand.truth.json",
+    "truth/caseload.truth.json",
+    "truth/castellanos-trial-recon-denied.truth.json",
+    "truth/nguyen-cr-three-liens.truth.json",
+    "truth/okafor-ct-ur-imr.truth.json",
+    "truth/ramirez-death-dependency.truth.json",
+    "truth/whitaker-defense-qme-surveillance.truth.json",
+    "truth/whitfield-early-intake.truth.json"
+  ],
   "corpusTree": "b9d43aeb223b1e4c1346c82bcf048c7ff9c3641e0f4d5f8ad43b5a44fea0c012",
   "caseload": "d90519477ccd0d5e4edf8de8dc4115fccbead2bfcdc228e44699e01aa587eaf2",
   "cases": {

@@ -1432,6 +1432,26 @@ replace = '''        return True'''
 note = 'AJC-48 Round B anti-criterion. The harness must itself fail red when a governed ledger figure moves by exactly one cent; the parametrized control repeats that proof for every governed rule with a paper surface.'
 
 [[mutant]]
+id = 'm16-5'
+title = 'root-file accounting silently drops one unowned file'
+file = 'tests/golden/demo-caseload.json'
+test = 'tests/test_golden_corpus.py::test_every_registered_corpus_has_a_well_formed_golden'
+find = '''    "caseload_manifest.json",
+'''
+replace = ''''''
+note = 'AJC-48 Round H. The whole-tree file count must equal the sum of case-owned files and every root file recorded by name. Dropping even one accounting entry must make the strict well-formedness equality red; rootFiles is the explicit tree shape that replaces the false one-root-file assumption.'
+
+[[mutant]]
+id = 'm16-6'
+title = 'one case truth manifest disappears from root-file accounting'
+file = 'tests/golden/demo-caseload.json'
+test = 'tests/test_golden_corpus.py::test_truth_subtree_accounting_is_complete_when_present'
+find = '''    "truth/alvarez-denied-recon-remand.truth.json",
+'''
+replace = ''''''
+note = 'AJC-48 Round H. Once a corpus records any truth subtree, it must name exactly truth/caseload.truth.json and one truth/<case_id>.truth.json for every recorded case. Removing one per-case truth name must redden the dedicated completeness guard rather than being tolerated as an optional artifact.'
+
+[[mutant]]
 id = 'm15-1'
 title = 'the automatic increase forgets to multiply the late-payment principal by its fraction'
 file = 'src/wc_caseload_engine/money.py'
