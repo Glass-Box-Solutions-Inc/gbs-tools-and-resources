@@ -1,0 +1,814 @@
+#!/usr/bin/env python3
+"""Pin the shipped example corpora as checksum-verified goldens.
+
+This package's headline promise is that the same seed, the same engine and the
+same substrate produce byte-identical output forever. Until now that promise was
+enforced only *within* a run: :mod:`tests.test_rendering` generates the same tiny
+spec twice in two fresh interpreters and compares, and
+:mod:`tests.test_timezone_determinism` does the same under two timezones. Both
+prove the machinery has no leak **today**, against **itself**. Neither notices
+when today's output stops matching last month's — a reordered content pool, a
+retuned template, a new field in a manifest, a dependency that changed a PDF
+byte. That drift is exactly what a corpus consumer feels, and nothing was
+watching for it.
+
+So the four shipped corpora in ``examples/`` are recorded here, and CI compares
+against the recording. The gate's whole purpose is asymmetry:
+
+* **Unintended drift is loud.** A regression that moves one document in one case
+  fails a named CI step and says which case and which axis moved.
+* **Intended drift is a commit.** Re-record with ``--record``, commit the changed
+  golden, and a reviewer sees the change as a reviewable diff rather than as a
+  line in a log nobody read.
+
+## Why the goldens hash manifests instead of files
+
+Every rendered document's MD5 is *already* in its case manifest, and
+``validate --out`` re-hashes every file against it. Storing those thousands of
+hashes again would buy nothing and would make every deliberate re-record a
+thousand-line diff that no reviewer can read. Hashing the manifest covers the
+documents transitively — change one rendered byte and its MD5 changes, so the
+manifest changes, so the digest changes — while keeping a re-record down to a
+handful of lines.
+
+Four digests are kept per case rather than one, because "something drifted" is
+a much weaker report than "the documents drifted but the ledger did not":
+
+``documents``
+    The ordered ``(filename, md5)`` pairs. Moves when a rendered byte moves, a
+    document is added or removed, or the order changes.
+``manifest``
+    The whole normalized manifest. Moves for all of the above *plus* any change
+    to the published ledger, the cast, the counts or the track summaries.
+``seed``
+    ``seed.yaml``, the surfaced contract. Moves when auto-derivation or seed
+    materialization changes — which the manifest need not reflect.
+``facts``
+    ``case_facts.yaml``, the resolved clinical ledger as YAML. Moves when the
+    ledger changes *or* when its YAML serialization does.
+
+Plus two plain integers per case — ``documentCount`` and ``distinctSubtypes`` —
+because "55 documents recorded, 56 now" is a diagnosis and a changed digest is
+only a symptom.
+
+## Why the engine version and substrate SHA are recorded but not compared
+
+A golden is valid for one ``(engine version, substrateSha)`` pair, and both are
+recorded. Neither is *digested*, and that is deliberate.
+
+``provenance.generator`` carries the engine version and ``provenance.substrateSha``
+the substrate commit. Digesting them would mean a version bump alone reddens
+every case of every corpus — six identical "drifted" lines that say nothing
+about the output — and, far worse, that the re-record it forces would silently
+absorb any real drift shipped alongside it. The pair is metadata that *explains*
+drift, not content that *is* drift, so both are redacted from the digest and
+reported as context beside a failure instead.
+
+``substrateSha`` has a second problem that settles the question: it is read from
+``git log -1`` over the substrate directory, so it is a property of the checkout
+rather than of the substrate's content. It already disagrees with the committed
+``substrate_pin.txt`` in a clean tree, and a shallow CI checkout can produce a
+third answer again. A gate keyed on it would fail for reasons that have nothing
+to do with the bytes it exists to protect.
+
+The dependency versions that actually decide rendered bytes — ReportLab,
+python-docx, PyMuPDF, Pillow, Faker — are recorded for the same reason: when a
+corpus drifts, "reportlab 4.2.5 → 4.4.0" is usually the whole answer, and a gate
+that makes the reader go find that out themselves has done half a job.
+
+## Why generation goes through the CLI
+
+``ensure_stable_hashing()`` pins ``PYTHONHASHSEED`` by *re-executing the
+process*, and only the CLI entry point calls it (see ``CLAUDE.md``, determinism
+rule 6). A tool that imported the engine and generated in-process would either
+skip that pin — and record a golden off salted string hashing, which is not
+reproducible — or re-exec itself into ``python -m wc_caseload_engine``, which is
+the CLI with this tool's arguments.
+
+So generation is a subprocess of the shipped CLI, with the environment passed
+through untouched. The pin is deliberately *not* pre-set: letting the CLI re-exec
+itself means the gate covers the determinism machinery as shipped rather than a
+hand-configured environment.
+
+Usage::
+
+    python tools/golden_gate.py --list              # corpora and their tiers
+    python tools/golden_gate.py --record            # re-record every golden
+    python tools/golden_gate.py --record --only demo-caseload
+    python tools/golden_gate.py --check              # every corpus
+    python tools/golden_gate.py --check --tier suite # what the pytest gate covers
+    python tools/golden_gate.py --check --tier ci    # what the CI step covers
+    python tools/golden_gate.py --check --keep /tmp/drift   # retain the output
+
+Exit codes: ``0`` clean, ``1`` drift (or a failed generation), ``2`` usage.
+
+@Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from importlib import metadata
+from pathlib import Path
+from typing import Any
+
+PACKAGE = Path(__file__).resolve().parent.parent
+EXAMPLES = PACKAGE / "examples"
+GOLDEN_DIR = PACKAGE / "tests" / "golden"
+
+MANIFEST_NAME = "manifest.json"
+CASELOAD_MANIFEST_NAME = "caseload_manifest.json"
+SEED_NAME = "seed.yaml"
+CASE_FACTS_NAME = "case_facts.yaml"
+
+#: Names are duplicated from :mod:`wc_caseload_engine.manifests` rather than
+#: imported, and on purpose: this tool reads a finished output tree and must be
+#: able to say "the file the golden was recorded from is not there any more". A
+#: rename that this tool followed automatically is a rename the gate would never
+#: report, and the shipped layout is part of what a golden pins.
+
+SUITE_TIER = "suite"
+"""Checked from inside ``pytest tests/`` — so on every local run and in CI."""
+
+CI_TIER = "ci"
+"""Checked by a dedicated CI step only, to keep the local suite short."""
+
+
+@dataclass(frozen=True, slots=True)
+class Corpus:
+    """One shipped example corpus and how hard it is gated."""
+
+    name: str
+    tier: str
+    why: str
+
+    @property
+    def spec(self) -> Path:
+        """The committed spec this corpus is generated from."""
+        return EXAMPLES / f"{self.name}.yaml"
+
+    @property
+    def golden(self) -> Path:
+        """The committed golden manifest for this corpus."""
+        return GOLDEN_DIR / f"{self.name}.json"
+
+
+CORPORA: tuple[Corpus, ...] = (
+    Corpus(
+        name="demo-caseload",
+        tier=SUITE_TIER,
+        why="the flagship corpus; the medical-story M1 gate is written about this one",
+    ),
+    Corpus(
+        name="doctrine-showcase",
+        tier=SUITE_TIER,
+        why="every doctrine hook seeded and landing; the doctrine content pins live here",
+    ),
+    Corpus(
+        name="money-showcase",
+        tier=CI_TIER,
+        why="the money spine the analyzer's figures are scored against; 539 files",
+    ),
+    Corpus(
+        name="personas-showcase",
+        tier=CI_TIER,
+        why="the widest cast and format mix; 410 files",
+    ),
+)
+"""Every corpus in ``examples/``, in the order a report should list them.
+
+**Every corpus is gated on every pull request, exactly once.** The tiers decide
+*which process pays* for it, not whether it happens:
+
+* ``suite`` corpora are checked by ``test_golden_corpus.py``, so they are
+  covered by any ``pytest tests/`` — a developer's local run included. They are
+  the two a regression is most likely to reach first, and together they cost
+  about half a minute.
+* ``ci`` corpora are checked by a dedicated step in the package's CI job. They
+  are the two largest trees (539 and 410 files), and putting them in the suite
+  would add that cost to every local run for drift that a PR check catches
+  minutes later anyway.
+
+Nothing is checked twice, which is why the CI step passes ``--tier ci`` rather
+than re-running everything the test step already covered.
+
+``test_golden_corpus.py`` asserts this tuple lists **every** ``examples/*.yaml``,
+so adding a corpus without a golden fails a fast test rather than quietly
+shipping an ungated example.
+"""
+
+BYTE_AFFECTING_DISTRIBUTIONS: tuple[str, ...] = (
+    "reportlab",
+    "python-docx",
+    "pymupdf",
+    "pillow",
+    "faker",
+    "pyyaml",
+    "pydantic",
+)
+"""Installed distributions whose version can move a rendered byte.
+
+Recorded, never compared. ReportLab lays out the PDFs, python-docx and PyMuPDF
+write the DOCX and scanned-PDF containers, Pillow rasterizes, Faker supplies
+content, and PyYAML/pydantic decide how ``seed.yaml`` and ``case_facts.yaml``
+serialize. All are pinned by range in ``pyproject.toml``, so CI resolves the
+newest compatible release and a corpus can drift because a dependency shipped —
+which is real drift, and exactly what this gate should surface. Naming the
+versions turns an inscrutable red into a one-line diagnosis.
+"""
+
+REDACTED = "<redacted-for-golden>"
+"""Stand-in written over a volatile field before a manifest is digested."""
+
+CASE_REDACTIONS: tuple[tuple[str, ...], ...] = (
+    ("provenance", "generator"),
+    ("provenance", "substrateSha"),
+)
+"""Paths redacted from a case manifest before digesting. See the module docstring."""
+
+CASELOAD_REDACTIONS: tuple[tuple[str, ...], ...] = (
+    ("generator",),
+    ("provenance", "generator"),
+    ("provenance", "substrateSha"),
+)
+"""Paths redacted from the caseload manifest before digesting."""
+
+GOLDEN_FORMAT = 1
+"""Golden manifest format version.
+
+Bumped when the *shape* of a golden changes — a new per-case axis, a renamed
+key. ``--check`` refuses a golden it was not built to read rather than comparing
+half of it, because a partial comparison that reports clean is the one failure
+mode a gate may never have.
+"""
+
+
+class GoldenError(RuntimeError):
+    """A condition that makes a verdict impossible, as opposed to negative."""
+
+
+# ---------------------------------------------------------------------------
+# Digesting
+# ---------------------------------------------------------------------------
+
+
+def _sha256(payload: bytes) -> str:
+    """Hex SHA-256 of *payload*."""
+    return hashlib.sha256(payload).hexdigest()
+
+
+def canonical_json_bytes(payload: Any) -> bytes:
+    """Serialize exactly the way ``manifests._write_json`` does.
+
+    Matching it is the whole point: the digest is meant to stand in for the
+    file, so the round trip through :func:`json.loads` and back must reproduce
+    the file's bytes. :func:`normalized_manifest_digest` checks that it does
+    rather than assuming it.
+    """
+    return (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _redact(payload: dict[str, Any], path: tuple[str, ...], source: Path) -> None:
+    """Overwrite ``payload[path]`` with :data:`REDACTED`, in place.
+
+    Raises when the path is absent. A redaction path that no longer resolves
+    means the manifest shape moved underneath this tool, and continuing would
+    digest a *different* shape while reporting success — a gate quietly
+    measuring the wrong thing is worse than one that is loudly broken.
+    """
+    cursor: Any = payload
+    for key in path[:-1]:
+        if not isinstance(cursor, dict) or key not in cursor:
+            raise GoldenError(
+                f"{source}: no {'.'.join(path)} to redact — the manifest shape has "
+                "changed, so golden_gate.py's redaction paths are stale and its "
+                "digests would no longer mean what they claim"
+            )
+        cursor = cursor[key]
+    if not isinstance(cursor, dict) or path[-1] not in cursor:
+        raise GoldenError(
+            f"{source}: no {'.'.join(path)} to redact — the manifest shape has "
+            "changed, so golden_gate.py's redaction paths are stale and its "
+            "digests would no longer mean what they claim"
+        )
+    cursor[path[-1]] = REDACTED
+
+
+def normalized_manifest_digest(path: Path, redactions: tuple[tuple[str, ...], ...]) -> str:
+    """Digest a manifest with its volatile provenance neutralized.
+
+    Two properties make the result trustworthy:
+
+    * **Faithful.** Before redacting anything, the parsed object is re-serialized
+      and compared with the file's own bytes. If they differ the digest would be
+      a hash of something the file is not — a reformatted float, a lost
+      character — and this raises instead of returning it.
+    * **Ordered.** Keys are emitted in the order they were read, never sorted.
+      A manifest's key order is part of its bytes, and a reordering is a change
+      a consumer's diff would show, so the gate must show it too.
+    """
+    raw = path.read_bytes()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GoldenError(f"{path}: not valid JSON — {exc}") from exc
+
+    if canonical_json_bytes(payload) != raw:
+        raise GoldenError(
+            f"{path}: golden_gate.py cannot reproduce this file byte-for-byte after "
+            "a JSON round trip, so its digest would not stand in for the file. "
+            "Either manifests._write_json changed its formatting or the manifest "
+            "holds a value JSON cannot round-trip."
+        )
+
+    for redaction in redactions:
+        _redact(payload, redaction, path)
+    return _sha256(canonical_json_bytes(payload))
+
+
+def documents_digest(documents: list[Any], case_label: str) -> str:
+    """Digest the ordered ``(filename, md5)`` pairs of one case.
+
+    Derivable from the manifest digest, and kept anyway: when both move the
+    drift is in the rendered documents, and when only the manifest moves it is
+    in the ledger around them. One extra hash buys the difference between "this
+    case changed" and "this case's documents changed".
+    """
+    lines: list[str] = []
+    for entry in documents:
+        if not isinstance(entry, dict):
+            raise GoldenError(f"{case_label}: documents[] holds a non-mapping entry")
+        filename, md5 = entry.get("filename"), entry.get("md5Checksum")
+        if not isinstance(filename, str) or not isinstance(md5, str):
+            raise GoldenError(
+                f"{case_label}: a documents[] entry has no filename/md5Checksum pair"
+            )
+        lines.append(f"{filename}\t{md5}\n")
+    return _sha256("".join(lines).encode("utf-8"))
+
+
+def _file_digest(path: Path, case_label: str, what: str) -> str:
+    """Digest a per-case artifact, or fail saying which one is missing."""
+    if not path.is_file():
+        raise GoldenError(f"{case_label}: {what} is missing at {path}")
+    return _sha256(path.read_bytes())
+
+
+def digest_corpus(out_dir: Path) -> dict[str, Any]:
+    """Reduce a generated output tree to the compact record a golden stores."""
+    caseload_manifest = out_dir / CASELOAD_MANIFEST_NAME
+    if not caseload_manifest.is_file():
+        raise GoldenError(f"{out_dir}: no {CASELOAD_MANIFEST_NAME} — generation wrote nothing")
+
+    cases: dict[str, Any] = {}
+    total_documents = 0
+    for manifest_path in sorted(out_dir.glob(f"*/{MANIFEST_NAME}")):
+        case_dir = manifest_path.parent
+        case_label = case_dir.name
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        documents = manifest.get("documents")
+        if not isinstance(documents, list):
+            raise GoldenError(f"{case_label}: manifest has no documents[] array")
+        total_documents += len(documents)
+        cases[case_label] = {
+            "documentCount": len(documents),
+            "distinctSubtypes": len(
+                {d.get("subtype") for d in documents if isinstance(d, dict)}
+            ),
+            "documents": documents_digest(documents, case_label),
+            "manifest": normalized_manifest_digest(manifest_path, CASE_REDACTIONS),
+            "seed": _file_digest(case_dir / SEED_NAME, case_label, SEED_NAME),
+            "facts": _file_digest(case_dir / CASE_FACTS_NAME, case_label, CASE_FACTS_NAME),
+        }
+
+    if not cases:
+        raise GoldenError(f"{out_dir}: no case manifests found (expected */{MANIFEST_NAME})")
+
+    return {
+        "caseCount": len(cases),
+        "documentCount": total_documents,
+        "caseload": normalized_manifest_digest(caseload_manifest, CASELOAD_REDACTIONS),
+        "cases": cases,
+    }
+
+
+#: The per-case digest axes, in the order a drift report should read them:
+#: coarsest cause first, so "the documents moved" is stated before the manifest
+#: change that necessarily followed from it.
+AXES: tuple[tuple[str, str], ...] = (
+    ("documents", "rendered documents"),
+    ("seed", "seed.yaml"),
+    ("facts", "case_facts.yaml"),
+    ("manifest", "manifest.json"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Provenance
+# ---------------------------------------------------------------------------
+
+
+def _distribution_versions() -> dict[str, str]:
+    """Installed versions of the distributions that decide rendered bytes."""
+    versions: dict[str, str] = {}
+    for name in BYTE_AFFECTING_DISTRIBUTIONS:
+        try:
+            versions[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            versions[name] = "not-installed"
+    return versions
+
+
+def current_provenance() -> dict[str, Any]:
+    """The environment facts a golden records but never compares.
+
+    Imports the engine directly rather than reaching for the source tree: every
+    corpus is generated by ``python -m wc_caseload_engine.cli``, so the package
+    is already importable or nothing this tool does can work. Failing on the
+    import is the honest first failure.
+    """
+    from wc_caseload_engine import __version__
+    from wc_caseload_engine.substrate import read_substrate_pin, substrate_git_sha
+
+    return {
+        "engine": __version__,
+        "substratePin": read_substrate_pin() or "none",
+        "substrateSha": substrate_git_sha(),
+        "python": ".".join(str(part) for part in sys.version_info[:3]),
+        "dependencies": _distribution_versions(),
+    }
+
+
+def _provenance_notes(recorded: dict[str, Any], observed: dict[str, Any]) -> list[str]:
+    """Human-readable differences between the recording and this environment.
+
+    Never a verdict — every one of these is a legitimate thing to change. They
+    are printed beside a drift report because when a corpus moves, one of these
+    lines is usually the reason, and a gate that makes the reader go and find
+    that out themselves has done half its job.
+    """
+    notes: list[str] = []
+    for key, label in (
+        ("engine", "engine version"),
+        ("substratePin", "substrate pin"),
+        ("substrateSha", "substrate sha"),
+        ("python", "python"),
+    ):
+        was, now = recorded.get(key), observed.get(key)
+        if was != now:
+            notes.append(f"{label}: {was} -> {now}")
+    was_deps = recorded.get("dependencies") or {}
+    now_deps = observed.get("dependencies") or {}
+    for name in sorted(set(was_deps) | set(now_deps)):
+        if was_deps.get(name) != now_deps.get(name):
+            notes.append(
+                f"{name}: {was_deps.get(name, 'absent')} -> {now_deps.get(name, 'absent')}"
+            )
+    return notes
+
+
+# ---------------------------------------------------------------------------
+# Generation
+# ---------------------------------------------------------------------------
+
+
+def _run_cli(arguments: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run the shipped CLI as a subprocess of this interpreter.
+
+    The environment is passed through deliberately untouched — see the module
+    docstring on why ``PYTHONHASHSEED`` is left for the CLI's own re-exec.
+    """
+    return subprocess.run(
+        [sys.executable, "-m", "wc_caseload_engine.cli", *arguments],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(PACKAGE),
+    )
+
+
+def generate_corpus(corpus: Corpus, out_dir: Path) -> None:
+    """Generate *corpus* into *out_dir* through the CLI, or raise."""
+    if not corpus.spec.is_file():
+        raise GoldenError(f"{corpus.name}: spec {corpus.spec} is not on disk")
+    completed = _run_cli(
+        ["generate", "--spec", str(corpus.spec), "--out", str(out_dir)]
+    )
+    if completed.returncode != 0:
+        raise GoldenError(
+            f"{corpus.name}: generation failed (exit {completed.returncode})\n"
+            f"{completed.stdout[-2000:]}\n{completed.stderr[-2000:]}"
+        )
+
+
+def validate_corpus(corpus: Corpus, out_dir: Path) -> None:
+    """Refuse to record a golden from a corpus that does not validate.
+
+    Only ``--record`` runs this. A golden is a claim that this output is the
+    correct output, and recording one from a tree whose checksums or taxonomy
+    are already wrong would pin the defect in place and call it the baseline.
+    ``--check`` does not repeat it: the digests already pin every byte, and the
+    suite validates the demo tree separately.
+    """
+    completed = _run_cli(["validate", "--out", str(out_dir)])
+    if completed.returncode != 0:
+        raise GoldenError(
+            f"{corpus.name}: the generated corpus does not validate, so it must not "
+            f"be recorded as a golden (exit {completed.returncode})\n"
+            f"{completed.stdout[-2000:]}\n{completed.stderr[-2000:]}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Record / check
+# ---------------------------------------------------------------------------
+
+
+def _write_golden(corpus: Corpus, digest: dict[str, Any], provenance: dict[str, Any]) -> None:
+    """Write ``tests/golden/<corpus>.json``."""
+    GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "format": GOLDEN_FORMAT,
+        "corpus": corpus.name,
+        "spec": corpus.spec.relative_to(PACKAGE).as_posix(),
+        "tier": corpus.tier,
+        "recordedWith": provenance,
+        **digest,
+    }
+    corpus.golden.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+
+def _load_golden(corpus: Corpus) -> dict[str, Any]:
+    """Read a committed golden, or explain how to create it."""
+    if not corpus.golden.is_file():
+        raise GoldenError(
+            f"{corpus.name}: no golden at {corpus.golden.relative_to(PACKAGE)}. "
+            f"Record one:\n    python tools/golden_gate.py --record --only {corpus.name}"
+        )
+    payload = json.loads(corpus.golden.read_text(encoding="utf-8"))
+    if payload.get("format") != GOLDEN_FORMAT:
+        raise GoldenError(
+            f"{corpus.name}: golden is format {payload.get('format')!r}, this tool "
+            f"reads format {GOLDEN_FORMAT}. Re-record it:\n"
+            f"    python tools/golden_gate.py --record --only {corpus.name}"
+        )
+    return payload
+
+
+def compare(corpus: Corpus, golden: dict[str, Any], fresh: dict[str, Any]) -> list[str]:
+    """Every way *fresh* differs from *golden*, as report lines."""
+    problems: list[str] = []
+
+    for key, label in (("caseCount", "case count"), ("documentCount", "document count")):
+        if golden.get(key) != fresh.get(key):
+            problems.append(f"{label}: {golden.get(key)} recorded, {fresh.get(key)} now")
+
+    if golden.get("caseload") != fresh.get("caseload"):
+        problems.append(
+            f"{CASELOAD_MANIFEST_NAME}: digest changed "
+            f"({_short(golden.get('caseload'))} -> {_short(fresh.get('caseload'))})"
+        )
+
+    golden_cases: dict[str, Any] = golden.get("cases") or {}
+    fresh_cases: dict[str, Any] = fresh.get("cases") or {}
+
+    for missing in sorted(set(golden_cases) - set(fresh_cases)):
+        problems.append(f"{missing}: recorded in the golden but this run did not produce it")
+    for added in sorted(set(fresh_cases) - set(golden_cases)):
+        problems.append(f"{added}: produced by this run but absent from the golden")
+
+    for case_id in sorted(set(golden_cases) & set(fresh_cases)):
+        was, now = golden_cases[case_id], fresh_cases[case_id]
+        for key, label in (
+            ("documentCount", "documents"),
+            ("distinctSubtypes", "distinct subtypes"),
+        ):
+            if was.get(key) != now.get(key):
+                problems.append(
+                    f"{case_id}: {label} {was.get(key)} recorded, {now.get(key)} now"
+                )
+        for axis, label in AXES:
+            if was.get(axis) != now.get(axis):
+                problems.append(
+                    f"{case_id}: {label} drifted "
+                    f"({_short(was.get(axis))} -> {_short(now.get(axis))})"
+                )
+    return problems
+
+
+def _short(digest: Any) -> str:
+    """First twelve hex characters — enough to tell two digests apart by eye."""
+    return str(digest)[:12] if digest else "<absent>"
+
+
+@dataclass(frozen=True, slots=True)
+class Outcome:
+    """What happened to one corpus."""
+
+    corpus: Corpus
+    problems: list[str]
+    notes: list[str]
+    kept: Path | None = None
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """``True`` when the corpus matched its golden and nothing blew up."""
+        return not self.problems and self.error is None
+
+
+def _selected(only: str | None, tier: str | None) -> list[Corpus]:
+    """The corpora a run acts on, or raise on an unusable selection."""
+    corpora = list(CORPORA)
+    if only is not None:
+        corpora = [corpus for corpus in corpora if corpus.name == only]
+        if not corpora:
+            known = ", ".join(corpus.name for corpus in CORPORA)
+            raise GoldenError(f"unknown corpus {only!r}; known corpora are {known}")
+    if tier is not None:
+        corpora = [corpus for corpus in corpora if corpus.tier == tier]
+        if not corpora:
+            raise GoldenError(f"no corpus is in tier {tier!r}")
+    return corpora
+
+
+def record(corpora: list[Corpus]) -> int:
+    """Regenerate each corpus and rewrite its golden. Returns an exit code."""
+    provenance = current_provenance()
+    failures = 0
+    for corpus in corpora:
+        previous: dict[str, Any] | None = None
+        if corpus.golden.is_file():
+            previous = json.loads(corpus.golden.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory(prefix=f"golden-{corpus.name}-") as scratch:
+            out_dir = Path(scratch) / corpus.name
+            try:
+                generate_corpus(corpus, out_dir)
+                validate_corpus(corpus, out_dir)
+                digest = digest_corpus(out_dir)
+            except GoldenError as exc:
+                print(f"FAILED  {corpus.name}\n  {exc}")
+                failures += 1
+                continue
+        _write_golden(corpus, digest, provenance)
+        changed = compare(corpus, previous, digest) if previous else []
+        summary = (
+            "new golden"
+            if previous is None
+            else (f"{len(changed)} change(s)" if changed else "unchanged")
+        )
+        print(
+            f"RECORDED {corpus.name:<20} {digest['caseCount']} cases, "
+            f"{digest['documentCount']} documents — {summary}"
+        )
+        for line in changed:
+            print(f"    {line}")
+    return 1 if failures else 0
+
+
+def check(corpora: list[Corpus], keep: Path | None) -> int:
+    """Regenerate each corpus and compare with its golden. Returns an exit code."""
+    provenance = current_provenance()
+    outcomes: list[Outcome] = []
+
+    for corpus in corpora:
+        scratch = tempfile.mkdtemp(prefix=f"golden-{corpus.name}-")
+        out_dir = Path(scratch) / corpus.name
+        kept: Path | None = None
+        try:
+            try:
+                golden = _load_golden(corpus)
+                generate_corpus(corpus, out_dir)
+                fresh = digest_corpus(out_dir)
+            except GoldenError as exc:
+                outcomes.append(Outcome(corpus, [], [], error=str(exc)))
+                continue
+            problems = compare(corpus, golden, fresh)
+            notes = _provenance_notes(golden.get("recordedWith") or {}, provenance)
+            if problems and keep is not None:
+                kept = keep / corpus.name
+                kept.parent.mkdir(parents=True, exist_ok=True)
+                if kept.exists():
+                    shutil.rmtree(kept)
+                shutil.copytree(out_dir, kept)
+            outcomes.append(Outcome(corpus, problems, notes, kept=kept))
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+    return _report(outcomes)
+
+
+def _report(outcomes: list[Outcome]) -> int:
+    """Print the verdict for every corpus. Returns an exit code."""
+    for outcome in outcomes:
+        if outcome.error is not None:
+            print(f"ERROR   {outcome.corpus.name}\n  {outcome.error}\n")
+            continue
+        if outcome.ok:
+            print(f"OK      {outcome.corpus.name}")
+            continue
+
+        print("")
+        print(f"GOLDEN DRIFT — {outcome.corpus.name}")
+        print(f"  spec: {outcome.corpus.spec.relative_to(PACKAGE)}")
+        if outcome.notes:
+            print("")
+            print("  This environment differs from the one that recorded the golden.")
+            print("  None of these fails the gate on its own; one of them is usually why:")
+            for note in outcome.notes:
+                print(f"    {note}")
+        print("")
+        print(f"  {len(outcome.problems)} difference(s):")
+        for problem in outcome.problems:
+            print(f"    {problem}")
+        if outcome.kept is not None:
+            print("")
+            print(f"  The regenerated corpus was kept at {outcome.kept}")
+        print("")
+        print("  If this change was intended, re-record the golden and commit the diff")
+        print("  so a reviewer sees it:")
+        print(f"    python tools/golden_gate.py --record --only {outcome.corpus.name}")
+        print(f"    git add tests/golden/{outcome.corpus.name}.json")
+        print("")
+
+    drifted = [outcome.corpus.name for outcome in outcomes if not outcome.ok]
+    if drifted:
+        print(f"FAILED: {len(drifted)} of {len(outcomes)} corpora — {', '.join(drifted)}")
+        return 1
+    print(f"PASSED: {len(outcomes)} corpora byte-identical to their goldens")
+    return 0
+
+
+def list_corpora() -> int:
+    """Print the registered corpora, their tier and whether a golden exists."""
+    print(f"{'corpus':<20} {'tier':<6} {'golden':<9} why")
+    for corpus in CORPORA:
+        state = "recorded" if corpus.golden.is_file() else "MISSING"
+        print(f"{corpus.name:<20} {corpus.tier:<6} {state:<9} {corpus.why}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point. Returns the process exit code."""
+    parser = argparse.ArgumentParser(
+        prog="golden_gate.py",
+        description=(
+            "Record and verify byte-level goldens for the shipped example corpora."
+        ),
+    )
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
+        "--record",
+        action="store_true",
+        help="Regenerate the corpora and rewrite their goldens (commit the diff).",
+    )
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="Regenerate the corpora and fail on any difference from the goldens.",
+    )
+    mode.add_argument("--list", action="store_true", help="List the registered corpora.")
+    parser.add_argument("--only", metavar="CORPUS", help="Act on one corpus.")
+    parser.add_argument(
+        "--tier",
+        choices=(SUITE_TIER, CI_TIER),
+        help=(
+            f"Act only on corpora in this tier: {SUITE_TIER} is what the pytest gate "
+            f"covers, {CI_TIER} what the dedicated CI step covers. Omit for all of them."
+        ),
+    )
+    parser.add_argument(
+        "--keep",
+        type=Path,
+        metavar="DIR",
+        help="On drift, copy the regenerated corpus here for inspection.",
+    )
+    args = parser.parse_args(argv)
+
+    if args.list:
+        return list_corpora()
+
+    try:
+        corpora = _selected(args.only, args.tier)
+    except GoldenError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    if args.record:
+        return record(corpora)
+    return check(corpora, args.keep)
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised as a subprocess
+    os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+    sys.exit(main())

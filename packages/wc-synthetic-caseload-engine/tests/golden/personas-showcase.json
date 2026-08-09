@@ -1,0 +1,74 @@
+{
+  "format": 1,
+  "corpus": "personas-showcase",
+  "spec": "examples/personas-showcase.yaml",
+  "tier": "ci",
+  "recordedWith": {
+    "engine": "0.9.0",
+    "substratePin": "cb485354f16164ca2d422804fe9d40f9a2250920",
+    "substrateSha": "bce7e9657c5612d5f18149ad6930d326ed9965da",
+    "python": "3.12.13",
+    "dependencies": {
+      "reportlab": "4.5.1",
+      "python-docx": "1.2.0",
+      "pymupdf": "1.28.2",
+      "pillow": "11.3.0",
+      "faker": "34.0.2",
+      "pyyaml": "6.0.3",
+      "pydantic": "2.13.4"
+    }
+  },
+  "caseCount": 6,
+  "documentCount": 391,
+  "caseload": "193a43492d86f61b8c2ba38c625be300507ca64cca7916989a1f0b160670a822",
+  "cases": {
+    "personas-attentive-adjuster": {
+      "documentCount": 70,
+      "distinctSubtypes": 48,
+      "documents": "0a990b3084562d23f3e39411612fabbff20b6bff100cdbd6a04645be034d3a69",
+      "manifest": "92be0539253162a192cac9e7fab2b1cd7180f94d400f210f0821d3da2ffb694e",
+      "seed": "79bd10e66b88207927c5d35abf32fd1ce8b68b26d7cd8fd17ef894d8e64b9145",
+      "facts": "41e38c12bd3e644ef59c37cef5eea1f973e43960926e6c0fc995987b746e9106"
+    },
+    "personas-cadence-event-driven": {
+      "documentCount": 60,
+      "distinctSubtypes": 38,
+      "documents": "0bba8ce1f308b6707829eeafe81049bf852fe1ddd98ffc4f290eb31bb15ed498",
+      "manifest": "3aeb459bb3efef80f89a96382143140830e92e5f3e22635100cf01aef30c400d",
+      "seed": "3ab45525eab27a0600f44dec88751d6b6bd858572ba0f19e5b5a6254712794ff",
+      "facts": "75daff64bf772d2a5b2557c403f4b1fd5ccadd2a8d945d5d891a8df4ef4d74f8"
+    },
+    "personas-cadence-every-30-days": {
+      "documentCount": 60,
+      "distinctSubtypes": 36,
+      "documents": "40624ade43fe108785210c6821107895fed6e34834671979b47afdb7bcf56d34",
+      "manifest": "67c4dad3a68fb952e73992f6c2259cb01245f43c8f1caf5094899fe4beae24be",
+      "seed": "5ad1448b56913a8df3a015b92a7373d298d4c40cc0cd4fb7e4abaa4be5c8146c",
+      "facts": "2073f75377bdae683db88db94767509481387b2b96d0abdc53bead47d9dfba13"
+    },
+    "personas-cadence-sporadic": {
+      "documentCount": 60,
+      "distinctSubtypes": 39,
+      "documents": "94ed38a9ec52d043738f593fbd139616c80e0c6ac8e6043d9e137e3ef38a4e83",
+      "manifest": "46b05905b1bfbf9d3a1f721976340563950bcd846987849676f25b6d9a6a400b",
+      "seed": "273d3ff6cbed55f89937af2fb737cd22526730cdd34437e72b51242f05895ab0",
+      "facts": "0f33600799dcd89b0191f1b91c410d70965ce9b961ef2d14e3e56b764915a20a"
+    },
+    "personas-negligent-adjuster": {
+      "documentCount": 70,
+      "distinctSubtypes": 44,
+      "documents": "e6bc4c22bb682ddb90b67c78fcd226b5e1ef9428bd6303a7648f475dba85d4c4",
+      "manifest": "cc55bb37df732138a3f9ce3c71d57aac06f57a20e1d50cdeb8f5fb399549e41e",
+      "seed": "13d55758f65eed647f2f7c2d9dc8e0798950286955e472eb3f4f22c663c9f9af",
+      "facts": "cb7e355bfb8fce7f8803763cc6221d8f5d74ccf7faf233010b1f45057e2d561f"
+    },
+    "personas-scenario-depth": {
+      "documentCount": 71,
+      "distinctSubtypes": 48,
+      "documents": "0770aa6520e40c19259a393db580765e1a03705919273e6e82ef97e13e48aa7c",
+      "manifest": "31aafc5b129dd921cc4f7c79f4bf6dd076aad63daac3895751b31085cd140bce",
+      "seed": "730352395eae25d8d10b1604e0312d41e15cfb8031703675093e45737dc0b06d",
+      "facts": "0bf94ab715d0e6cbc93bd47b053795afd557724f3ef05282af3d680c756b98af"
+    }
+  }
+}

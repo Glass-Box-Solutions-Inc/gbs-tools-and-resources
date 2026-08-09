@@ -1,0 +1,82 @@
+{
+  "format": 1,
+  "corpus": "money-showcase",
+  "spec": "examples/money-showcase.yaml",
+  "tier": "ci",
+  "recordedWith": {
+    "engine": "0.9.0",
+    "substratePin": "cb485354f16164ca2d422804fe9d40f9a2250920",
+    "substrateSha": "bce7e9657c5612d5f18149ad6930d326ed9965da",
+    "python": "3.12.13",
+    "dependencies": {
+      "reportlab": "4.5.1",
+      "python-docx": "1.2.0",
+      "pymupdf": "1.28.2",
+      "pillow": "11.3.0",
+      "faker": "34.0.2",
+      "pyyaml": "6.0.3",
+      "pydantic": "2.13.4"
+    }
+  },
+  "caseCount": 7,
+  "documentCount": 517,
+  "caseload": "ad2d1fdd71997e7c9f4637db50924a30148f465ff0590b15b4b1d739f378b6f4",
+  "cases": {
+    "atypical-earner": {
+      "documentCount": 64,
+      "distinctSubtypes": 39,
+      "documents": "427ce7449c4c9ca84cad12991dca5f409bd166207d1a7f5521b187b3ae28bd86",
+      "manifest": "51439ee5bba82f473daab5974473ed1492b331bee4d42a2b2ec698181de343a3",
+      "seed": "2fa8f80d20c31b31e03260103a95a0ad734f91499fcf16073baa68c73ba4a979",
+      "facts": "1f82e3b04a3f550b4c25f3c3c3c1526f34d6e43853fa0f5438fe849b5edfdea4"
+    },
+    "capped-executive": {
+      "documentCount": 80,
+      "distinctSubtypes": 48,
+      "documents": "b6e00777ad369f3bc351ec458bcce8777acef32cf088e9428821cbab97e48f6e",
+      "manifest": "6f85a8e2885065f92368cc65f4a9f11236416b0185635a67350c745f0e783aa6",
+      "seed": "38358e9762c991dbddebb556bd61d8c1fe15cda939497f3fc4a3314fc8814762",
+      "facts": "32c9337699cc55ff4f0b27e9b74067b7a2d3cd749147b90d2b7e9582867f3641"
+    },
+    "irregular-earner": {
+      "documentCount": 75,
+      "distinctSubtypes": 51,
+      "documents": "5fc9fd51af860da0ad722a9275ab40fa3f52b3c9ff50de895c9fe768a2746e56",
+      "manifest": "905cc0db854347d73672fe25ee15a61300c1231ee90c60a9265a10c443ba9360",
+      "seed": "36d9efb81e7589fc35d5eaa5814a69ea52c97d20e40928e9043cfed8a503169b",
+      "facts": "2c1ba650fd1e0608315394fd2bc202ecb7016785d37de5be4510f885cc9ffd84"
+    },
+    "neglected-file": {
+      "documentCount": 87,
+      "distinctSubtypes": 49,
+      "documents": "4df6062831ad77b87d2674b41bb844b83f117a4f0bcc4af08f8c7b0ba291ebc6",
+      "manifest": "3b49f5f74bdb6922bf9d3a8241cf50b44ff0a111e34b4a15c8c599d3621265ec",
+      "seed": "213853ab1d3ff45525685eaabb08c9efa6b055ef621d8734804b9ea9e42e6df7",
+      "facts": "fad389cfe1f40078a5c3ce139a23e573f46d2b13789a906e3e7a0acfced3b6a8"
+    },
+    "new-hire": {
+      "documentCount": 58,
+      "distinctSubtypes": 37,
+      "documents": "7354668a31d45ddfef66fae76141a347caaeafeee435fec47bab2d075bdbb8bc",
+      "manifest": "6c506c7eafb348fe44ef3d213f34a43181ca98a1901e7ded50a9156ba9cacd12",
+      "seed": "1f29584a62d42a25479d03f40c9456cfab9c2785d7be3e8e3a62ceae19eb0808",
+      "facts": "ba02ebcd10686f31fad6d886827e5d7c64a9aa6f946d63c58f4bbfde7371112b"
+    },
+    "steady-earner": {
+      "documentCount": 91,
+      "distinctSubtypes": 59,
+      "documents": "8ce48c112db1774c5b0459f477f6df8b7f717680015a551e3d25a39d3bba8c08",
+      "manifest": "23264f4db6a8d949ebeb8112fa966c22ff9cd8e735107dd0b71e12b23e2e64e2",
+      "seed": "8a113011c87e7583c255c37dbfb7db77ddcf02b93a26a77c1d6cf239e2f18315",
+      "facts": "c9ee7b40f2032e914b62c2716c34f9c25e04ab6ec24273cb257ef3ee8acd5a2b"
+    },
+    "two-jobs": {
+      "documentCount": 62,
+      "distinctSubtypes": 39,
+      "documents": "78c309142ef5fcd73d2b9e9b7961cbbc93049364048c1231233f7681b1600130",
+      "manifest": "880d4c88e3c7cf46b02ab57ffcc7ce05fe302ce5887aaf10db449940677eee7e",
+      "seed": "8d6abe5e277c8a49ef218940e4741a74cd76b0df6653a6ffc6c58094028a300f",
+      "facts": "989ec4d991d155e983f1b0b51cc8e390cb766957b1abeeab804791916ab905f3"
+    }
+  }
+}
