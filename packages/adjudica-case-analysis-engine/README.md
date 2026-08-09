@@ -12,6 +12,8 @@ conclusions.
   generic extraction payloads.
 - Detects conflicting assertions, repeated assertions, weak or missing evidence, and potentially
   inconsistent chronology.
+- Runs consistency rule packs — domain checks that contradict the record from outside it, such as
+  a surgical procedure code that belongs to no injured body part.
 - Reviews identity/parties, injury/employment, medical treatment and diagnostics, procedure and
   deadlines, financial facts, evidence quality, and applicant/defense/neutral angles.
 - Produces byte-stable JSON and Markdown reports. All observations are traceable to fact IDs.
@@ -36,9 +38,60 @@ adjudica-case-analysis analyze intake.json generated/TC-001/manifest.json genera
 # Print only applicant, defense, or neutral observations.
 adjudica-case-analysis angles intake.yaml --angle defense
 
-# Return nonzero only for error-severity integrity failures.
+# Return nonzero only for error-severity findings (integrity or rule pack).
 adjudica-case-analysis validate intake.json
 ```
+
+## Consistency rule packs
+
+Integrity checks ask whether the record agrees with itself. A *rule pack* asks whether domain
+knowledge contradicts it, and reports only what that knowledge affirmatively rules out.
+
+`anatomical_coherence` is the first pack. It reports `anatomical_contradiction` when the record
+asserts an operation on anatomy nobody claims was injured — a wrist-injury file whose operative
+record bills 29827, an arthroscopic rotator cuff repair. Its CPT-to-anatomy table is maintained by
+hand in this package and is deliberately independent of any case generator's tables: the analyzer
+faces real case files, and a table derived from a generator would agree with it by construction —
+including when both are wrong. Overlapping *content* is expected, since 29827 is a shoulder
+operation as a matter of medical fact; shared *provenance* is what is excluded.
+
+The pack is built to stay quiet. It reads procedure codes only from facts that claim to describe an
+operation, because billing records, treating-physician reports, and utilization-review lines name
+codes independently of the injury — a lumbar case's billing record may legitimately cite a shoulder
+code. A five-digit value in a generic `*Code` field (`postalCode`, `authorizationCode`) is not a
+procedure code either. An unknown code, an uncoded procedure, an unlisted code that names no body
+area, an injection, an unrecognized body part, or an unsegmented "back" against a cervical code all
+yield nothing. A finding needs the table to place the operation outside *every* claimed injured
+region.
+
+A prior operation is not this case's operation either: `priorCptCode` and
+`medicalHistory.priorSurgeries[]` describe anatomy that is *expected* to differ. That is classified
+by namespace rather than by word — `priorAuthorization` and `historyAndPhysical` read historical
+token by token but hold current care, and a flat token scan dropped exactly the operations the pack
+exists to check.
+
+Namespaces are read from the fact outward and the nearest one decides, so a history block nested
+inside a current episode stays historical.
+
+It is equally careful about the other direction, where the failure is quieter. Injured anatomy is
+read only from an enumerated set of path shapes (`injury.body_parts[].part`, `injury.body_part`,
+`injuredPart`, `injurySite`, …), matched exactly once the `case.`/`caseFacts.` archive wrappers are
+stripped. A recognized leaf name in the wrong namespace does not qualify:
+`scenario.diagnostics[].body_part`, `exam.body_parts[].part` and
+`medicalHistory.priorInjury.injuredPart` all name anatomy without claiming this case injured it, and
+admitting one would silently clear a contradictory operation.
+
+Both selectors are closed worlds rather than vocabulary rules. The archive grammar is knowable, so it
+is enumerated; an unrecognized shape costs a finding rather than inventing one — the same trade the
+package already makes for unknown procedure codes. Free-form prose is not read for anatomy at all, in
+either direction: deciding whether "No evidence of injury to shoulder" asserts or denies the shoulder
+means resolving negation scope across clauses, and no proximity rule handles both "wrist sprain; no
+shoulder injury" and its reverse.
+
+Findings from every registered pack merge into `analyze` reports and into the `validate` exit code
+through one shared definition, so the report and the gate cannot disagree about whether a case is
+sound. Registering another pack is a new module exporting a `Rule` plus one entry in
+`adjudica_case_analysis_engine.rules.RULES`; no existing pack changes.
 
 ## Input conventions
 
