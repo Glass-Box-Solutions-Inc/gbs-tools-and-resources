@@ -12,6 +12,8 @@ conclusions.
   generic extraction payloads.
 - Detects conflicting assertions, repeated assertions, weak or missing evidence, and potentially
   inconsistent chronology.
+- Runs consistency rule packs — domain checks that contradict the record from outside it, such as
+  a surgical procedure code that belongs to no injured body part.
 - Reviews identity/parties, injury/employment, medical treatment and diagnostics, procedure and
   deadlines, financial facts, evidence quality, and applicant/defense/neutral angles.
 - Produces byte-stable JSON and Markdown reports. All observations are traceable to fact IDs.
@@ -36,9 +38,34 @@ adjudica-case-analysis analyze intake.json generated/TC-001/manifest.json genera
 # Print only applicant, defense, or neutral observations.
 adjudica-case-analysis angles intake.yaml --angle defense
 
-# Return nonzero only for error-severity integrity failures.
+# Return nonzero only for error-severity findings (integrity or rule pack).
 adjudica-case-analysis validate intake.json
 ```
+
+## Consistency rule packs
+
+Integrity checks ask whether the record agrees with itself. A *rule pack* asks whether domain
+knowledge contradicts it, and reports only what that knowledge affirmatively rules out.
+
+`anatomical_coherence` is the first pack. It reports `anatomical_contradiction` when the record
+asserts an operation on anatomy nobody claims was injured — a wrist-injury file whose operative
+record bills 29827, an arthroscopic rotator cuff repair. Its CPT-to-anatomy table is maintained by
+hand in this package and is deliberately independent of any case generator's tables: the analyzer
+faces real case files, and a table derived from a generator would agree with it by construction —
+including when both are wrong. Overlapping *content* is expected, since 29827 is a shoulder
+operation as a matter of medical fact; shared *provenance* is what is excluded.
+
+The pack is built to stay quiet. It reads procedure codes only from facts that claim to describe an
+operation, because billing records, treating-physician reports, and utilization-review lines name
+codes independently of the injury — a lumbar case's billing record may legitimately cite a shoulder
+code. An unknown code, an uncoded or unlisted procedure, an injection, an unrecognized body part, or
+an unsegmented "back" against a cervical code all yield nothing. A finding needs the table to place
+the operation outside *every* recognized injured region.
+
+Findings from every registered pack merge into `analyze` reports and into the `validate` exit code
+through one shared definition, so the report and the gate cannot disagree about whether a case is
+sound. Registering another pack is a new module exporting a `Rule` plus one entry in
+`adjudica_case_analysis_engine.rules.RULES`; no existing pack changes.
 
 ## Input conventions
 
