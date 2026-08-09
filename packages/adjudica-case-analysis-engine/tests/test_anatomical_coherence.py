@@ -30,6 +30,164 @@ from adjudica_case_analysis_engine.rules.anatomical_coherence import (
 FIXTURES = Path(__file__).parent / "fixtures"
 CODE = "anatomical_contradiction"
 
+# ── Independently committed table membership ─────────────────────────────────
+#
+# The behavioural matrices below generate their cases *from* the production tables, so
+# they cover additions but not deletions: removing or misspelling an entry takes its own
+# generated control away with it, and the suite stays green. Membership therefore has to
+# be pinned by something that does not move when the table moves.
+#
+# These literals are that anchor. Changing a production table means changing the matching
+# literal here, in the same commit, deliberately — which is the point.
+
+EXPECTED_INJURED_PART_PATH_SHAPES = frozenset(
+    {
+        "body_part_injured",
+        "body_parts_injured",
+        "injured_body_part",
+        "injured_body_parts",
+        "injured_body_parts[]",
+        "injured_part",
+        "injured_parts",
+        "injured_parts[]",
+        "injured_site",
+        "injuries[].body_part",
+        "injuries[].body_parts[]",
+        "injury.body_part",
+        "injury.body_parts",
+        "injury.body_parts[]",
+        "injury.body_parts[].part",
+        "injury.site",
+        "injury.sites[]",
+        "injury_body_part",
+        "injury_body_parts",
+        "injury_body_parts[]",
+        "injury_site",
+        "injury_sites",
+        "injury_sites[]",
+    }
+)
+
+EXPECTED_HISTORICAL_NAMESPACES = frozenset(
+    {
+        "history",
+        "medical_history",
+        "past_medical_history",
+        "past_surgeries",
+        "previous_surgeries",
+        "prior_injuries",
+        "prior_injury",
+        "prior_surgeries",
+        "prior_surgery",
+        "prior_treatment",
+        "surgical_history",
+    }
+)
+
+EXPECTED_CURRENT_CARE_NAMESPACES = frozenset(
+    {
+        "current_care",
+        "current_episode",
+        "current_surgery",
+        "current_treatment",
+        "history_and_physical",
+        "prior_authorization",
+        "prior_authorizations",
+    }
+)
+
+EXPECTED_HISTORICAL_CODE_FIELDS = frozenset(
+    {
+        "past_cpt_code",
+        "previous_cpt_code",
+        "previous_procedure_code",
+        "prior_cpt_code",
+        "prior_procedure_code",
+        "prior_surgical_code",
+    }
+)
+
+EXPECTED_OPERATIVE_CPT_ANATOMY = {
+    "22551": "cervical_spine",
+    "22554": "cervical_spine",
+    "22556": "thoracic_spine",
+    "22558": "lumbar_spine",
+    "22612": "lumbar_spine",
+    "22630": "lumbar_spine",
+    "23412": "shoulder",
+    "23430": "shoulder",
+    "23472": "shoulder",
+    "24342": "elbow",
+    "24357": "elbow",
+    "24358": "elbow",
+    "25000": "wrist",
+    "25111": "wrist",
+    "26055": "hand",
+    "26123": "hand",
+    "26160": "hand",
+    "27125": "hip",
+    "27130": "hip",
+    "27132": "hip",
+    "27446": "knee",
+    "27447": "knee",
+    "27650": "ankle",
+    "27792": "ankle",
+    "27822": "ankle",
+    "28060": "foot",
+    "28110": "foot",
+    "28285": "foot",
+    "28296": "foot",
+    "29806": "shoulder",
+    "29826": "shoulder",
+    "29827": "shoulder",
+    "29862": "hip",
+    "29880": "knee",
+    "29881": "knee",
+    "29888": "knee",
+    "29891": "ankle",
+    "63020": "cervical_spine",
+    "63030": "lumbar_spine",
+    "63042": "lumbar_spine",
+    "63046": "thoracic_spine",
+    "63047": "lumbar_spine",
+    "63055": "thoracic_spine",
+    "63075": "cervical_spine",
+    "63081": "cervical_spine",
+    "64718": "elbow",
+    "64721": "wrist",
+}
+
+EXPECTED_LOCALIZABLE_UNLISTED_CPT_ANATOMY = {
+    "22899": frozenset({"cervical_spine", "lumbar_spine", "spine", "thoracic_spine"}),
+    "23929": frozenset({"shoulder"}),
+    "24999": frozenset({"elbow", "shoulder"}),
+    "26989": frozenset({"hand"}),
+    "27299": frozenset({"hip"}),
+    "27599": frozenset({"hip", "knee"}),
+    "27899": frozenset({"ankle", "knee"}),
+    "28899": frozenset({"foot"}),
+}
+
+EXPECTED_NON_OPERATIVE_CPT_CODES = frozenset(
+    {
+        "20550",
+        "20551",
+        "20605",
+        "20610",
+        "62321",
+        "62323",
+        "64483",
+        "64484",
+        "64490",
+        "64493",
+        "72148",
+        "73721",
+        "95886",
+    }
+)
+
+EXPECTED_NONLOCALIZABLE_UNLISTED_CPT_CODES = frozenset({"29999", "64999"})
+
 
 def _findings(tmp_path: Path, payload: object, name: str = "case.json"):
     source = tmp_path / name
@@ -42,6 +200,67 @@ def _codes(findings) -> list[str]:
 
 
 # ── The knowledge table ──────────────────────────────────────────────────────
+
+
+def _assert_membership(actual, expected, table: str) -> None:
+    """Compare a production table against its committed literal, naming what drifted."""
+    removed = sorted(set(expected) - set(actual))
+    added = sorted(set(actual) - set(expected))
+    assert not removed, f"{table}: entries removed without updating the committed list: {removed}"
+    assert not added, f"{table}: entries added without updating the committed list: {added}"
+
+
+def test_the_injured_part_shape_table_matches_its_committed_membership() -> None:
+    """A deleted shape must fail here, where the generated matrices cannot see it."""
+    _assert_membership(
+        INJURED_PART_PATH_SHAPES, EXPECTED_INJURED_PART_PATH_SHAPES, "INJURED_PART_PATH_SHAPES"
+    )
+    assert len(INJURED_PART_PATH_SHAPES) == 23
+
+
+def test_the_namespace_tables_match_their_committed_membership() -> None:
+    """Historical and current-care classification is the boundary; pin both sides of it."""
+    _assert_membership(
+        HISTORICAL_NAMESPACES, EXPECTED_HISTORICAL_NAMESPACES, "HISTORICAL_NAMESPACES"
+    )
+    _assert_membership(
+        CURRENT_CARE_NAMESPACES, EXPECTED_CURRENT_CARE_NAMESPACES, "CURRENT_CARE_NAMESPACES"
+    )
+    _assert_membership(
+        HISTORICAL_CODE_FIELDS, EXPECTED_HISTORICAL_CODE_FIELDS, "HISTORICAL_CODE_FIELDS"
+    )
+    assert len(HISTORICAL_NAMESPACES) == 11
+    assert len(CURRENT_CARE_NAMESPACES) == 7
+    assert len(HISTORICAL_CODE_FIELDS) == 6
+
+
+def test_the_cpt_tables_match_their_committed_membership() -> None:
+    """Both the codes and the anatomy each one claims, so a silent re-mapping fails too."""
+    _assert_membership(
+        OPERATIVE_CPT_ANATOMY, EXPECTED_OPERATIVE_CPT_ANATOMY, "OPERATIVE_CPT_ANATOMY"
+    )
+    assert dict(OPERATIVE_CPT_ANATOMY) == EXPECTED_OPERATIVE_CPT_ANATOMY
+
+    _assert_membership(
+        LOCALIZABLE_UNLISTED_CPT_ANATOMY,
+        EXPECTED_LOCALIZABLE_UNLISTED_CPT_ANATOMY,
+        "LOCALIZABLE_UNLISTED_CPT_ANATOMY",
+    )
+    assert dict(LOCALIZABLE_UNLISTED_CPT_ANATOMY) == EXPECTED_LOCALIZABLE_UNLISTED_CPT_ANATOMY
+
+    _assert_membership(
+        NON_OPERATIVE_CPT_CODES, EXPECTED_NON_OPERATIVE_CPT_CODES, "NON_OPERATIVE_CPT_CODES"
+    )
+    _assert_membership(
+        NONLOCALIZABLE_UNLISTED_CPT_CODES,
+        EXPECTED_NONLOCALIZABLE_UNLISTED_CPT_CODES,
+        "NONLOCALIZABLE_UNLISTED_CPT_CODES",
+    )
+
+    assert len(OPERATIVE_CPT_ANATOMY) == 47
+    assert len(LOCALIZABLE_UNLISTED_CPT_ANATOMY) == 8
+    assert len(NON_OPERATIVE_CPT_CODES) == 13
+    assert len(NONLOCALIZABLE_UNLISTED_CPT_CODES) == 2
 
 
 def test_the_three_code_classes_are_disjoint() -> None:
