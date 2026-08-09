@@ -61,6 +61,12 @@ from wc_caseload_engine.taxonomy import (
     SUBSTRATE_ONLY_SUBTYPES,
     effective_taxonomy,
 )
+from wc_caseload_engine.truth_manifest import (
+    TRUTH_DIR,
+    _write_json,
+    write_case_truth_manifest,
+    write_caseload_truth_manifest,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -75,8 +81,12 @@ CASELOAD_MANIFEST_NAME = "caseload_manifest.json"
 SEED_NAME = "seed.yaml"
 
 SUBPOENAED_RECORDS_SUBTYPES: frozenset[str] = frozenset(
-    {"SUBPOENAED_RECORDS", "SUBPOENAED_RECORDS_MEDICAL", "SUBPOENAED_RECORDS_EMPLOYMENT",
-     "SUBPOENAED_RECORDS_OTHER"}
+    {
+        "SUBPOENAED_RECORDS",
+        "SUBPOENAED_RECORDS_MEDICAL",
+        "SUBPOENAED_RECORDS_EMPLOYMENT",
+        "SUBPOENAED_RECORDS_OTHER",
+    }
 )
 """The subtypes whose packets the provider round-robin advances over."""
 
@@ -146,6 +156,7 @@ class CaseResult:
     plan: CasePlan
     renders: tuple[RenderResult, ...]
     manifest: dict[str, object]
+    truth_path: Path | None = None
 
     @property
     def document_count(self) -> int:
@@ -230,18 +241,20 @@ def build_manifest(
     return ordered
 
 
-def _write_json(path: Path, payload: dict[str, object]) -> None:
-    """Write deterministic, human-diffable JSON."""
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-
-def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseResult:
+def generate_case(
+    seed: CaseSeed,
+    out_dir: Path,
+    case_number: int = 1,
+    truth_dir: Path | None = None,
+) -> CaseResult:
     """Generate one complete case: seed, documents and manifest.
 
     Args:
         seed: the case seed.
         out_dir: caseload output root; the case writes to ``out_dir/<case_id>``.
         case_number: 1-based position, used for corpus filenames.
+        truth_dir: scorer-only output directory, or ``None`` to preserve the
+            historical case tree exactly.
 
     Returns:
         A :class:`CaseResult`.
@@ -311,6 +324,7 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
 
     manifest = build_manifest(plan, renders)
     _write_json(case_dir / MANIFEST_NAME, manifest)
+    truth_path = write_case_truth_manifest(plan, truth_dir) if truth_dir is not None else None
 
     log.info(
         "case.generated",
@@ -325,6 +339,7 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
         plan=plan,
         renders=tuple(result for _name, result in renders),
         manifest=manifest,
+        truth_path=truth_path,
     )
 
 
@@ -407,15 +422,28 @@ def build_caseload_manifest(caseload_id: str, results: Sequence[CaseResult]) -> 
 
 
 def generate_caseload(
-    caseload_id: str, seeds: Iterable[CaseSeed], out_dir: Path
+    caseload_id: str,
+    seeds: Iterable[CaseSeed],
+    out_dir: Path,
+    truth: bool = True,
 ) -> list[CaseResult]:
     """Generate every case in a caseload and write the aggregate manifest."""
     check_substrate_pin()
     out_dir.mkdir(parents=True, exist_ok=True)
+    truth_dir = out_dir / TRUTH_DIR if truth else None
     results: list[CaseResult] = []
     for case_number, seed in enumerate(seeds, start=1):
-        results.append(generate_case(seed, out_dir, case_number=case_number))
+        results.append(
+            generate_case(
+                seed,
+                out_dir,
+                case_number=case_number,
+                truth_dir=truth_dir,
+            )
+        )
     _write_json(out_dir / CASELOAD_MANIFEST_NAME, build_caseload_manifest(caseload_id, results))
+    if truth_dir is not None:
+        write_caseload_truth_manifest(caseload_id, results, truth_dir)
     return results
 
 
@@ -547,9 +575,7 @@ def _document_date(doc: dict[str, Any]) -> date | None:
         return None
 
 
-def _validate_money(
-    block: dict[str, Any], documents: list[Any], case_label: str
-) -> list[str]:
+def _validate_money(block: dict[str, Any], documents: list[Any], case_label: str) -> list[str]:
     """Check the money spine against itself and against the folder.
 
     Skipped entirely when there is no ``money`` key, because absence is the
@@ -974,9 +1000,7 @@ def _validate_case_facts(
                 f"{performed!r}, expected a boolean"
             )
         elif modality in seen and seen[modality] != performed:
-            problems.append(
-                f"{case_label}: caseFacts calls {modality!r} both performed and absent"
-            )
+            problems.append(f"{case_label}: caseFacts calls {modality!r} both performed and absent")
         else:
             seen[modality] = performed
 
@@ -987,8 +1011,7 @@ def _validate_case_facts(
         extra = set(adjuster) - set(GOVERNED_LEDGER_FIELDS["adjuster"])
         if extra:
             problems.append(
-                f"{case_label}: caseFacts.adjuster publishes ungoverned field(s) "
-                f"{sorted(extra)}"
+                f"{case_label}: caseFacts.adjuster publishes ungoverned field(s) {sorted(extra)}"
             )
         # No ``diligence`` check: it is resolved on the ledger but deliberately
         # unpublished, because no rendered document reflects it and a reader
@@ -998,8 +1021,7 @@ def _validate_case_facts(
         # alone: a pleading alleging unreasonable delay needs a delay behind it.
         late = adjuster.get("lateBenefitEvents") or 0
         has_petition = any(
-            isinstance(d, dict) and d.get("subtype") == "PETITION_FOR_PENALTIES"
-            for d in documents
+            isinstance(d, dict) and d.get("subtype") == "PETITION_FOR_PENALTIES" for d in documents
         )
         if has_petition and not late:
             problems.append(
@@ -1019,8 +1041,7 @@ def _validate_case_facts(
         extra = set(treatment) - set(GOVERNED_LEDGER_FIELDS["treatment"])
         if extra:
             problems.append(
-                f"{case_label}: caseFacts.treatment publishes ungoverned field(s) "
-                f"{sorted(extra)}"
+                f"{case_label}: caseFacts.treatment publishes ungoverned field(s) {sorted(extra)}"
             )
         if treatment.get("status") not in TREATMENT_STATUSES:
             problems.append(
@@ -1278,9 +1299,7 @@ __all__ = [
 ]
 
 
-def _write_case_facts(
-    facts: CaseFacts, path: Path, money: MoneyFacts | None = None
-) -> None:
+def _write_case_facts(facts: CaseFacts, path: Path, money: MoneyFacts | None = None) -> None:
     """Write the resolved ledger beside the seed.
 
     YAML rather than JSON to match ``seed.yaml``: the two files are read

@@ -86,10 +86,17 @@ make this module the shared mutable state instead of curing it.
 
 
 @contextmanager
-def _exact() -> Any:
-    """Run a block under :data:`_ARITHMETIC_CONTEXT`."""
+def exact() -> Any:
+    """Run a block under the pinned arithmetic context.
+
+    Exporters use the same context as the calculations they serialize so a
+    caller's process-local decimal settings cannot alter a ground-truth label.
+    """
     with localcontext(_ARITHMETIC_CONTEXT):
         yield
+
+
+_exact = exact
 
 
 def money(value: Any) -> Decimal:
@@ -124,7 +131,7 @@ def _whole_dollars(value: Decimal) -> Decimal:
         return value.quantize(Decimal("1"), rounding=ROUND_HALF_UP).quantize(CENTS)
 
 
-def _dollars(value: Decimal) -> str:
+def dollars(value: Decimal) -> str:
     """A currency figure as the manifest publishes it: an exact decimal string.
 
     Strings rather than floats, and this is not fussiness. A manifest is the
@@ -134,6 +141,9 @@ def _dollars(value: Decimal) -> str:
     """
     with _exact():
         return f"{value.quantize(CENTS, rounding=ROUND_HALF_UP):f}"
+
+
+_dollars = dollars
 
 
 # ---------------------------------------------------------------------------
@@ -1094,9 +1104,7 @@ def _pattern_of(
     return ("irregular" if variation > IRREGULARITY_THRESHOLD else "regular"), "derived"
 
 
-def compute_aww(
-    wages: WageScenario, periods: tuple[EarningsPeriod, ...]
-) -> AwwComputation:
+def compute_aww(wages: WageScenario, periods: tuple[EarningsPeriod, ...]) -> AwwComputation:
     """Average weekly wage under the selected method, with every operand kept.
 
     Each method differs in *which earnings it counts and over how many weeks*,
@@ -1134,9 +1142,7 @@ def compute_aww(
         return _compute_aww(wages, periods)
 
 
-def _compute_aww(
-    wages: WageScenario, periods: tuple[EarningsPeriod, ...]
-) -> AwwComputation:
+def _compute_aww(wages: WageScenario, periods: tuple[EarningsPeriod, ...]) -> AwwComputation:
     """The body of :func:`compute_aww`, under the pinned arithmetic context."""
     method, source, reason = select_method(wages, periods)
 
@@ -1403,9 +1409,7 @@ def _derive_benefits(
         )
         advance_cursor = advance_cursor + dt.timedelta(days=PD_ADVANCE_INTERVAL_DAYS)
 
-    return BenefitLedger(
-        td_periods=tuple(periods), pd_advances=tuple(advances), gaps=tuple(gaps)
-    )
+    return BenefitLedger(td_periods=tuple(periods), pd_advances=tuple(advances), gaps=tuple(gaps))
 
 
 #: How long after the Application is filed a settlement may first be approved.
@@ -1451,9 +1455,7 @@ def _derive_settlement(
 
     scenario = seed.scenario.settlement
     approval_shift = 0
-    approval = getattr(timeline, "award_date", None) or getattr(
-        timeline, "resolution_date", None
-    )
+    approval = getattr(timeline, "award_date", None) or getattr(timeline, "resolution_date", None)
     if scenario is not None and scenario.approval_date is not None:
         # An authored approval still has to be an approval this file could have
         # reached. Review found `approval_date: 2021-06-15` on a case whose claim
@@ -1585,8 +1587,7 @@ def _derive_money_facts(
             for item in wages.in_kind
         ),
         employment_start=wages.employment_start,
-        concurrent_employment=wages.concurrent_employment
-        or any(p.concurrent for p in periods),
+        concurrent_employment=wages.concurrent_employment or any(p.concurrent for p in periods),
         pattern=pattern,
         pattern_source=pattern_source,
         computation=computation,
@@ -1735,9 +1736,7 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
                     "weeklyRate": _dollars(period.weekly_rate),
                     "amount": _dollars(period.amount),
                     "dateDue": period.date_due.isoformat(),
-                    "datePaid": (
-                        period.date_paid.isoformat() if period.date_paid else None
-                    ),
+                    "datePaid": (period.date_paid.isoformat() if period.date_paid else None),
                     "daysLate": period.days_late,
                 }
                 for period in benefits.td_periods
@@ -1823,6 +1822,8 @@ __all__ = [
     "compute_aww",
     "compute_comp_rate",
     "derive_money_facts",
+    "dollars",
+    "exact",
     "money",
     "money_manifest_block",
     "rate_basis_for",
