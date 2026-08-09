@@ -1,5 +1,5 @@
 {
-  "format": 1,
+  "format": 2,
   "corpus": "demo-caseload",
   "spec": "examples/demo-caseload.yaml",
   "tier": "suite",
@@ -23,61 +23,77 @@
   },
   "caseCount": 7,
   "documentCount": 331,
-  "caseload": "1648aec104da1616962fd28d560f57b1b72897bf5d746419e85f60e304eb9edc",
+  "fileCount": 353,
+  "corpusTree": "8649582bae2ab5de497dcfe35ac78c84d4326717d3a31ab38a95151b018a6438",
+  "caseload": "d90519477ccd0d5e4edf8de8dc4115fccbead2bfcdc228e44699e01aa587eaf2",
   "cases": {
     "alvarez-denied-recon-remand": {
       "documentCount": 55,
       "distinctSubtypes": 30,
+      "fileCount": 58,
+      "tree": "8b75b98c0d18533b5d9d4a91da8363374e3671f1fdc48ebe4a548b7b43b7eb00",
       "documents": "a2af04cb96d84af5cbe97808f8c492e2d41fc63bdc60d9e3847c48fd24d608de",
-      "manifest": "8289dc04083137160b69193c0040827d0c4e2e159d8ee8f481b4a0a232fd7565",
+      "manifest": "473c78c15b9e46a4ba6e137c46a666055a54440a580610c3b086dbaac272e7a2",
       "seed": "f34850ab271ff67e41039c2de988d75f9c0ed5f1e1d60d740ac7a1ae2d3bc5ae",
       "facts": "bcf08dafe29b2d141b02687264afd910657acbbfdb0f650015ba89c4d016c914"
     },
     "castellanos-trial-recon-denied": {
       "documentCount": 55,
       "distinctSubtypes": 25,
+      "fileCount": 58,
+      "tree": "b96301d6cb573d27dcf18d5ff23d6e83517db1f87c326fcef7db44d71d0fb6f4",
       "documents": "0c9cb6bbb9b687a034377bf46a81aa75ae479534e23bbaac4f47c1241fd952f9",
-      "manifest": "10ea793ca739c13037d5de11770ec83a1e0d5dd2f72046baf91454974aeb5ffe",
+      "manifest": "349d40b91ad99ae4f15a5f5bea70e42ed5c198391b6ec6863bf12d51bffb1b2e",
       "seed": "7bf7359544d80b44825ec94e2ad06febe60b0f9e60821a3d875d6bf82492e7f0",
       "facts": "2b9bd4bbc45250d002dbf36865af53799a7866af777d71029beeb2eca3e90407"
     },
     "nguyen-cr-three-liens": {
       "documentCount": 60,
       "distinctSubtypes": 35,
+      "fileCount": 63,
+      "tree": "680b05ef091b701845e00e4fd46a2ab22f1d5f3ee236c099b09a3c7d9909bb75",
       "documents": "4eddee5729b9ba87d3e5090cbf7b734b817532b9649616d8bd7cb7de896d78ac",
-      "manifest": "a6ee264466ad685643ba30c9a82bc3d2d05d25307a0704d793d51bd0a164c186",
+      "manifest": "d4d76cfdb6287165439f4440c8c75d58f957d607cccf6005e20ae9c2d05ada19",
       "seed": "4506c915893b208b5bfd10358356fa890e4b31a61724dded03a10806bff1f41e",
       "facts": "efbfc7b3fd786706977b893b598dc9740c075953b8e851d783fbccb30e8a8450"
     },
     "okafor-ct-ur-imr": {
       "documentCount": 50,
       "distinctSubtypes": 25,
+      "fileCount": 53,
+      "tree": "7462bbcf327369a1bc48aa9f60b4c61d4e5e01f891e251e8813bfc35ae2438dd",
       "documents": "6f0b8dd65bda7496a24a17724cf4c64201ca6318f161e4245474f7f822cde7ed",
-      "manifest": "e61ba21f41a306507d45fa70f90b232970ed9be1e483b6e5af62cbc7514d5562",
+      "manifest": "461138946afa6ddd198698d909a07101885072c96b14e951a7c4c560ed08cbd5",
       "seed": "d69e868aa098767789bcb64c038a6424d3cb7e7c0fa3883fed6a953c55e3b558",
       "facts": "944436340467a842cab8f0b0d6fdf826033344e09ac60011729572ca97ce527e"
     },
     "ramirez-death-dependency": {
       "documentCount": 40,
       "distinctSubtypes": 28,
+      "fileCount": 43,
+      "tree": "06630cff5779b6fefb813f0112fbe007e57f587f64d0bf45f063486df486446e",
       "documents": "e78ab055038b3553dcc2e09a9eec8b9837a3ca99c1c9b14a9b4e6ec0990e519d",
-      "manifest": "54560e5b001f52d87e98e2237e92fb6ce6411f622e4ded8cf4db24e0b518b718",
+      "manifest": "0cbbf85743049df22edb2a7d496d230483792247888da63265608b7c297ee650",
       "seed": "5cf102b8b3b6af1055a6f01753d2370f90946ecb875740c8675b317b37c30189",
       "facts": "7c53105764a27c578743979e1cb7bb9c7487f5c7f90306a88c9e752898e6c93b"
     },
     "whitaker-defense-qme-surveillance": {
       "documentCount": 55,
       "distinctSubtypes": 28,
+      "fileCount": 58,
+      "tree": "f87f27c8d2917deee7837e92617beaaa4f541509ecf3d2ec546a1343a222b98f",
       "documents": "a75b63abe057c7233f92008e2e4fde32b48f8d745b8890b405728e43f2f74f9c",
-      "manifest": "555a6530286d328a1c500b024aeb3a896917cb9a05d788ebca90201d5d22f150",
+      "manifest": "61b2c05486daa85f94e9f5b45e50bcdb814ec99502bfc22820d40ff9014d5dcb",
       "seed": "07b7e9103480960cedf5d7cd6d711c1eb353340eb8ec2d688a9788faa7e1ea5f",
       "facts": "d2eaac8496fbaacb90268331d15d0750bb53ec0b1ea392e8b8709e6275fb4592"
     },
     "whitfield-early-intake": {
       "documentCount": 16,
       "distinctSubtypes": 14,
+      "fileCount": 19,
+      "tree": "49078197f96733a331a40b6438a8eef9cb7ca3f2e213075bc2d48bbc34da1350",
       "documents": "0761ed764a77044522ed0629898ab0b30c949990927b3b7ed2feb1b3ba84dfa3",
-      "manifest": "65704e9403d33af647fbaff1b821d06e5f1f0a5314da5e18c17a0d9ab945533d",
+      "manifest": "d98cdb78a4a8504f3e5bde6e7554686f7ce7b6aed916222d74d9a7308427dd36",
       "seed": "a35b90fdff2342374f328c469e8ad184e715fc10d567d1dfbd7eb89d941e07b4",
       "facts": "e88bbd067a7cd4ee0423cd296d5548231ee1a2a86a7ec36f32ab812d728dc589"
     }

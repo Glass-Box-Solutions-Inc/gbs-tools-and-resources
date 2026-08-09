@@ -1,5 +1,5 @@
 {
-  "format": 1,
+  "format": 2,
   "corpus": "doctrine-showcase",
   "spec": "examples/doctrine-showcase.yaml",
   "tier": "suite",
@@ -23,53 +23,67 @@
   },
   "caseCount": 6,
   "documentCount": 210,
-  "caseload": "ea815bb366ed85902ceeb1c5b5753c139ef130028886b18b9b04e561a6038eb2",
+  "fileCount": 229,
+  "corpusTree": "7cac5425e4b97b6748c22ab4a19ec0f8c189004316b1da415dfef774135683dd",
+  "caseload": "ce973ccd45fe576276fb9b2eb587656cfc34cfc69124a711c37b85a8cdc3e758",
   "cases": {
     "showcase-death-dependency": {
       "documentCount": 30,
       "distinctSubtypes": 26,
+      "fileCount": 33,
+      "tree": "a9c05b1cdfcdb7fe01de18956e23990cd5c624232459690df5c0944f0fd07a59",
       "documents": "838ee2d8b01a1f4b6948a34d8d817fffe50ecdf2c3c0f59ae6d5e554271b902c",
-      "manifest": "a4a5297fbfdcb001f12268fff1759ad8d0dcfda0afe7064063b834c25dba3b98",
+      "manifest": "57be3797c7d7b1d5aadf29e036f199398850fee020050d63a3c42d70a1012172",
       "seed": "4d5b6ec8bed55bd97f573edcff725b25d9457d17c1fce61bc829a881f10a71c6",
       "facts": "25687ff9a5aecc892761fb6880501222917e5289e224083e7e24940ba2b2fee6"
     },
     "showcase-firefighter-presumption": {
       "documentCount": 30,
       "distinctSubtypes": 19,
+      "fileCount": 33,
+      "tree": "11003f2163e987ddeaaa9e8abe99fc684cf05b81842f64162609ac834fbe9c78",
       "documents": "13732e54ec2142278e2d80ce7ad1493faf1befc6c9b85aa7f4147afd0616252b",
-      "manifest": "581d35296ed73c8de2cc94e5a5724fcbc6f79d6a19d32356dbeddba5648763bf",
+      "manifest": "7e40f2f6a3ffe01488c5ede05fe51d832fb15f625155557fcff76422f12908a9",
       "seed": "881e3c7a31892415b7f38e5dc9dfdafbae078c8af21dbd51bff0b6bea6297edd",
       "facts": "adc73094e74f6759d519f8d8a6be2ebb7f4a8fb7f443009aeec27c386449db98"
     },
     "showcase-imr-challenge": {
       "documentCount": 30,
       "distinctSubtypes": 19,
+      "fileCount": 33,
+      "tree": "331979eb0d7f8fc0281141ac8bffb4e51a3492eeb481c92baf7ffbf5c0d4af82",
       "documents": "fcde58f43a2119bb84235a1ba316371831b27621cb1c7b64af2ab0276f68e082",
-      "manifest": "285108dddff02538002e28702d630468231754c3828c6bc7eb62a2371bab7c26",
+      "manifest": "a3eec1d665b87c644537008d294b727b8133f26b79409991b7df55733cc621ad",
       "seed": "21437b2fa454d98f3fce6967f88f40960ee2bde674a31678e3673a1063c073ae",
       "facts": "c5a228772922851c7f406340a7b1f5e0d493839176576290755630133031fd25"
     },
     "showcase-psychiatric": {
       "documentCount": 30,
       "distinctSubtypes": 15,
+      "fileCount": 33,
+      "tree": "9caaf4b7147bbf5cc619b7f1a1e4d5ab9620097f969db0034cf5269c0a09ad4f",
       "documents": "30ae6dbf78ca51bf7f42d6519cc5a209a1206dada27c759866a97fda3c0d246d",
-      "manifest": "4d07ea91f3cc7e1a33548e6cbee23fb8e15729cd061cc0f45e3606b784cf6823",
+      "manifest": "8a654cde0348fd3020b6c3f2209d7b7032596a8057948b1c90e1e07793d18c1d",
       "seed": "3167b1c529cac4aba4f05417f59fff352f6734cb7ef14b0945f334736cf75f99",
       "facts": "78e624131c53426aa72d6e3691bd6dbdc7a13c1477c33a52801453501c1a994c"
     },
     "showcase-rating-doctrines": {
       "documentCount": 60,
       "distinctSubtypes": 30,
+      "fileCount": 63,
+      "tree": "6e43282bf23d6c08b830ebc7b4ade79f01fe096941b1d9bd43cdf024f9001fa0",
       "documents": "c2582359e7ba8406eb4d4b37e80b9caf664b5c7bc20401b1196793415f32af00",
-      "manifest": "dbf27ef69eb4461a80cf6c11c32d304dda7ac331b1caeaffb8414aec1dfe4fae",
+      "manifest": "4d18d9264bfbb4eda368c387dc472b5f129e5288f4967f5f4f77db87d7677f94",
       "seed": "fd2032976e8a68e5fa888be150241d69b6bd77a09f20c7f7e1a44378318fe2ec",
       "facts": "4ada897a7709949606dfdcd9306f4411db2713a60876fc68d4d97dc5eb2d542d"
     },
     "showcase-threshold-defences": {
       "documentCount": 30,
       "distinctSubtypes": 15,
+      "fileCount": 33,
+      "tree": "80834fa5040f9d189c0234817c6a1b082668d01497012385fb3c2ddd81835905",
       "documents": "1587220c1af6c75d56791cc0cf49809475f0f30273747f812000fddf90c1a34c",
-      "manifest": "d9cb7589dcdf045cff855a833e39d5f7119dd4775cc53f89c7224fa38ef25459",
+      "manifest": "03b0b672e4fca3bad9881ab8419c32631914b782955f71060073693ae9b95c52",
       "seed": "7fe9a3863ca236a1a824076a2052f315973683c03398637f5f478c5e3c2f7130",
       "facts": "d8c792c1337c5bdd179b196179525c697cb543bd549770b5bea5329d133bceb2"
     }
