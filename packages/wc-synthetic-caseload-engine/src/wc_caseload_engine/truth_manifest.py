@@ -41,6 +41,8 @@ from wc_caseload_engine.money import (
     PenaltyLedger,
     RateBasis,
     SettlementFact,
+    StatutoryDeadlineBasis,
+    StatutoryDueDate,
     TdPeriod,
     WageFacts,
     dollars,
@@ -198,6 +200,7 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
     if facts.penalties is not None:
         penalties = facts.penalties
         penalty_basis = penalties.basis
+        deadline_basis = penalties.deadlines
         channel["penalties"] = {
             "basis": {
                 "label": penalty_basis.label,
@@ -208,14 +211,40 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
                 "counselConfirmed": penalty_basis.counsel_confirmed,
                 "source": penalty_basis.source,
             },
+            "deadlines": {
+                "label": deadline_basis.label,
+                "effectiveFrom": deadline_basis.effective_from.isoformat(),
+                "effectiveTo": _date(deadline_basis.effective_to),
+                "firstTdPaymentDays": deadline_basis.first_td_payment_days,
+                "subsequentTdPaymentDays": deadline_basis.subsequent_td_payment_days,
+                "firstPdPaymentDays": deadline_basis.first_pd_payment_days,
+                "authority": deadline_basis.authority,
+                "counselConfirmed": deadline_basis.counsel_confirmed,
+                "source": deadline_basis.source,
+            },
+            "schedule": [
+                {
+                    "source": item.source,
+                    "ordinal": item.ordinal,
+                    "rule": item.rule,
+                    "statutoryDueDate": _date(item.statutory_due_date),
+                    "operationalDueDate": item.operational_due_date.isoformat(),
+                    "datePaid": _date(item.date_paid),
+                    "daysLate": item.days_late,
+                    "unpaid": item.unpaid,
+                }
+                for item in penalties.schedule
+            ],
             "assessmentCount": penalties.assessed_count,
             "assessments": [
                 {
                     "source": assessment.source,
                     "ordinal": assessment.ordinal,
+                    "rule": assessment.rule,
                     "principal": dollars(assessment.principal),
-                    "dateDue": assessment.date_due.isoformat(),
-                    "datePaid": _date(assessment.date_paid),
+                    "statutoryDueDate": assessment.statutory_due_date.isoformat(),
+                    "operationalDueDate": assessment.operational_due_date.isoformat(),
+                    "datePaid": assessment.date_paid.isoformat(),
                     "daysLate": assessment.days_late,
                     "increaseFraction": _decimal(assessment.increase_fraction),
                     "amount": dollars(assessment.amount),
@@ -607,6 +636,51 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
                     "channels.money.penalties.basis",
                 )
             )
+            deadline_basis_doc = _mapping(
+                _required(penalties_doc, "deadlines", "channels.money.penalties"),
+                "channels.money.penalties.deadlines",
+            )
+            deadline_basis = StatutoryDeadlineBasis(
+                **_model_data(
+                    deadline_basis_doc,
+                    {
+                        "label": "label",
+                        "effectiveFrom": "effective_from",
+                        "effectiveTo": "effective_to",
+                        "firstTdPaymentDays": "first_td_payment_days",
+                        "subsequentTdPaymentDays": "subsequent_td_payment_days",
+                        "firstPdPaymentDays": "first_pd_payment_days",
+                        "authority": "authority",
+                        "counselConfirmed": "counsel_confirmed",
+                        "source": "source",
+                    },
+                    "channels.money.penalties.deadlines",
+                )
+            )
+            schedule = tuple(
+                StatutoryDueDate(
+                    **_model_data(
+                        _mapping(item, f"channels.money.penalties.schedule[{index}]"),
+                        {
+                            "source": "source",
+                            "ordinal": "ordinal",
+                            "rule": "rule",
+                            "statutoryDueDate": "statutory_due_date",
+                            "operationalDueDate": "operational_due_date",
+                            "datePaid": "date_paid",
+                            "daysLate": "days_late",
+                            "unpaid": "unpaid",
+                        },
+                        f"channels.money.penalties.schedule[{index}]",
+                    )
+                )
+                for index, item in enumerate(
+                    _sequence(
+                        _required(penalties_doc, "schedule", "channels.money.penalties"),
+                        "channels.money.penalties.schedule",
+                    )
+                )
+            )
             assessments = tuple(
                 PenaltyAssessment(
                     **_model_data(
@@ -614,8 +688,10 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
                         {
                             "source": "source",
                             "ordinal": "ordinal",
+                            "rule": "rule",
                             "principal": "principal",
-                            "dateDue": "date_due",
+                            "statutoryDueDate": "statutory_due_date",
+                            "operationalDueDate": "operational_due_date",
                             "datePaid": "date_paid",
                             "daysLate": "days_late",
                             "increaseFraction": "increase_fraction",
@@ -631,7 +707,12 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
                     )
                 )
             )
-            penalties = PenaltyLedger(basis=penalty_basis, assessments=assessments)
+            penalties = PenaltyLedger(
+                basis=penalty_basis,
+                deadlines=deadline_basis,
+                schedule=schedule,
+                assessments=assessments,
+            )
         return MoneyFacts(
             wages=wage,
             benefits=benefits,

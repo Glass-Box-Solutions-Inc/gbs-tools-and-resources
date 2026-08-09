@@ -21,9 +21,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   older-vintage delayed-benefit cases, binding scorer truth to the public
   manifest and every matching paper surface with per-fact one-cent controls.
 - Added the opt-in `scenario.penalties` LC §4650(d) slice: pure cents-quantized
-  assessments from recorded TD/PD lateness, DOI-keyed counsel-unconfirmed basis
-  metadata, benefit-ledger rendering, validation, planted 45-day positive
-  control and absence/empty-ledger byte-identity guards.
+  assessments from explicit statutory due dates, with separate DOI-keyed,
+  counsel-unconfirmed deadline-basis metadata and a lossless schedule carrying
+  both statutory and operational dates. Engine-cadence lateness no longer
+  creates legal exposure; discretionary later PD advances and unpaid gaps are
+  schedule data rather than assessments. Rendering, validation, truth-channel
+  round trips, the planted 45-day positive control, and absence/empty-ledger
+  byte-identity guards cover the new shape.
 - Bumped only the additive money channel minor from `1.0.0` to `1.1.0`;
   `schemaVersion` remains `1.0.0`, and same-major consumers remain accepted.
 

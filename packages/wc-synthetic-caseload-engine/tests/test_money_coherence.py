@@ -113,10 +113,9 @@ _SCENARIOS: dict[str, dict[str, Any]] = {
                 "pay_frequency": "biweekly",
             },
             "benefits": {
-                "td_weeks": 24,
-                "td_gap_days": 45,
+                "td_weeks": 8,
                 "late_payments": 2,
-                "max_days_late": 45,
+                "max_days_late": 15,
             },
             "penalties": {},
             "settlement": {"gross_amount": 92640},
@@ -306,7 +305,8 @@ def test_penalised_benefits_matches_ledger_paper_and_truth(
     rendered = _scenario(rendered_scenarios, "penalised-benefits")
     penalties = rendered.money["penalties"]
     assert penalties["assessmentCount"] >= 1
-    assert {item["daysLate"] for item in penalties["assessments"]} == {45}
+    assert [item["daysLate"] for item in penalties["assessments"]] == [45, 59]
+    assert penalties["assessments"][0]["daysLate"] == 45
     for assessment in penalties["assessments"]:
         expected = quantized_money(
             Decimal(assessment["principal"]) * Decimal(assessment["increaseFraction"])
@@ -346,7 +346,11 @@ def test_empty_penalty_ledger_leaves_the_benefit_document_byte_unchanged(
     tmp_path: Path,
 ) -> None:
     base = copy.deepcopy(_SCENARIOS["delayed-benefits"])
-    base["scenario"]["benefits"] = {"td_weeks": 8, "late_payments": 0}
+    base["scenario"]["benefits"] = {
+        "td_weeks": 0,
+        "pd_advances": 0,
+        "late_payments": 0,
+    }
     without = generate_case(parse_case_seed(base), tmp_path / "without", 1)
     base["scenario"]["penalties"] = {}
     empty = generate_case(parse_case_seed(base), tmp_path / "empty", 1)

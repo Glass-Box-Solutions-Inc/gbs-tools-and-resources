@@ -912,12 +912,15 @@ rather than three.
 
 `scenario.penalties` is a second, explicit gate inside the money layer. When it
 is absent, no `penalties` key is published or rendered. When present, the engine
-walks the already-decided TD periods and PD advances and assesses each paid item
-whose `days_late` is at least one. The §4650(d) amount is the payment principal
-times the dated increase fraction, quantized to cents. A never-paid TD period is
-an interruption rather than a delay and is not assessed. An opted-in case with
-no late payment publishes an empty ledger and `$0.00`, while leaving the benefit
-record byte-identical to an unopted case.
+builds a separate, lossless statutory schedule for every TD period and PD
+advance. Section 4650(d) is assessed only when a paid installment misses the
+represented statutory deadline; the amount is the payment principal times the
+dated increase fraction, quantized to cents. The DOI-keyed day counts and the
+events they run from are counsel-unconfirmed and published with their own basis
+and flag. Unpaid installments remain gap data in `schedule` and never become
+assessments. An opted-in case with no assessment publishes an empty assessment
+ledger and `$0.00`, while leaving the benefit record byte-identical to an
+unopted case.
 
 #### The named method is ground truth
 
@@ -1046,8 +1049,8 @@ corpus only claims.
 were. `tdPeriods` and `pdAdvances` are arrays of records — dates, weeks, weekly
 rate, amount, due, paid, days late — with the cardinalities under
 `tdPeriodCount` and `pdAdvanceCount`, and `gaps` carrying each interruption.
-Wave 3 computes a penalty per late transaction, and a total cannot say which
-transaction it was.
+The statutory schedule separately carries `statutoryDueDate` and
+`operationalDueDate`; §4650(d) uses only the former.
 
 Advances carry `date_due` too, and the ledger is ordered by it rather than by
 the date each was paid. Their cadence is an **engine schedule, not a statutory
@@ -1057,6 +1060,9 @@ lateness against that cadence and is not by itself a measure of legal exposure.
 read the two kinds of lateness the same way. A delayed advance can land *after* a later on-time one —
 that is an ordinary fact of a neglected file, not a sorting mistake — but it only
 reads as a fact once the schedule it slipped from is on the page beside it.
+Only the first PD advance has a represented statutory deadline. Later advances
+are `discretionary_advance` schedule entries with a null `statutoryDueDate`, zero
+statutory `daysLate`, and no assessment regardless of cadence lateness.
 
 The due-day interval carries its own caveat, `tdPaymentDueAuthority` and
 `tdPaymentDueConfirmed`, rather than borrowing the rate basis's.

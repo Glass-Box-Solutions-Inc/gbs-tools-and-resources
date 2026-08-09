@@ -607,6 +607,12 @@ def _validate_money(block: dict[str, Any], documents: list[Any], case_label: str
             "the statutory binding publishes no caveat — add counselConfirmed so a "
             "consumer can distinguish verified authority from an unconfirmed placeholder"
         )
+    if isinstance(penalty_section, dict) and "deadlineConfirmed" not in penalty_section:
+        problems.append(
+            f"{case_label}: caseFacts.money.penalties.deadlineConfirmed is missing, while "
+            "the statutory deadline binding publishes no caveat — add deadlineConfirmed "
+            "so a consumer can distinguish verified authority from a placeholder"
+        )
 
     for key, fields in GOVERNED_MONEY_FIELDS.items():
         if key in ("settlement", "penalties") and money.get(key) is None:
@@ -844,7 +850,38 @@ def _validate_money(block: dict[str, Any], documents: list[Any], case_label: str
             )
 
     penalties = money.get("penalties")
-    if penalties is not None:
+    if isinstance(penalties, dict):
+        schedule = penalties.get("schedule")
+        if not isinstance(schedule, list):
+            problems.append(
+                f"{case_label}: caseFacts.money.penalties.schedule is "
+                f"{type(schedule).__name__}, expected a list of every installment — "
+                "publish the complete statutory-deadline schedule"
+            )
+            schedule = []
+        expected_schedule_count = money.get("benefits", {}).get(
+            "tdPeriodCount", 0
+        ) + money.get("benefits", {}).get("pdAdvanceCount", 0)
+        if len(schedule) != expected_schedule_count:
+            problems.append(
+                f"{case_label}: caseFacts.money.penalties.schedule holds {len(schedule)} "
+                f"record(s), while benefits publish {expected_schedule_count} installment(s) — "
+                "publish one schedule entry for every TD period and PD advance"
+            )
+        actual_unpaid = sum(
+            1 for item in schedule if isinstance(item, dict) and item.get("unpaid") is True
+        )
+        if penalties.get("unpaidCount") != actual_unpaid:
+            problems.append(
+                f"{case_label}: caseFacts.money.penalties.unpaidCount is "
+                f"{penalties.get('unpaidCount')!r}, while schedule contains {actual_unpaid} "
+                "unpaid record(s) — set unpaidCount from schedule[].unpaid"
+            )
+        scheduled = {
+            (item.get("source"), item.get("ordinal")): item
+            for item in schedule
+            if isinstance(item, dict)
+        }
         assessments = penalties.get("assessments")
         assessment_count = penalties.get("assessmentCount")
         if not isinstance(assessments, list):
@@ -883,6 +920,47 @@ def _validate_money(block: dict[str, Any], documents: list[Any], case_label: str
                     f"{case_label}: caseFacts.money.penalties.assessments[{index}].daysLate "
                     f"is {days_late!r}, but an assessed payment must be at least 1 day late — "
                     "remove the assessment or correct daysLate from its due and paid dates"
+                )
+            statutory_due_raw = assessment.get("statutoryDueDate")
+            paid_raw = assessment.get("datePaid")
+            if statutory_due_raw is None:
+                problems.append(
+                    f"{case_label}: caseFacts.money.penalties.assessments[{index}]."
+                    "statutoryDueDate is null, while an assessment requires a statutory "
+                    "deadline — remove the assessment or publish its statutoryDueDate"
+                )
+            else:
+                try:
+                    statutory_due = date.fromisoformat(str(statutory_due_raw))
+                    paid = date.fromisoformat(str(paid_raw))
+                    computed_days_late = (paid - statutory_due).days
+                    if days_late != computed_days_late:
+                        problems.append(
+                            f"{case_label}: caseFacts.money.penalties.assessments[{index}]."
+                            f"daysLate is {days_late!r}, while datePaid {paid_raw!r} minus "
+                            f"statutoryDueDate {statutory_due_raw!r} is "
+                            f"{computed_days_late} — set daysLate from the statutory deadline"
+                        )
+                except (TypeError, ValueError):
+                    problems.append(
+                        f"{case_label}: caseFacts.money.penalties.assessments[{index}] has "
+                        f"statutoryDueDate {statutory_due_raw!r} and datePaid {paid_raw!r}, "
+                        "which are not ISO dates — publish both dates so daysLate is checkable"
+                    )
+            schedule_entry = scheduled.get(
+                (assessment.get("source"), assessment.get("ordinal"))
+            )
+            if schedule_entry is not None and (
+                schedule_entry.get("unpaid") is True
+                or schedule_entry.get("rule") == "discretionary_advance"
+            ):
+                problems.append(
+                    f"{case_label}: caseFacts.money.penalties.assessments[{index}] targets "
+                    f"schedule entry {assessment.get('source')!r}/"
+                    f"{assessment.get('ordinal')!r}, whose unpaid figure is "
+                    f"{schedule_entry.get('unpaid')!r} and rule is "
+                    f"{schedule_entry.get('rule')!r} — remove assessments for unpaid or "
+                    "discretionary installments"
                 )
             try:
                 principal = Decimal(str(assessment.get("principal")))

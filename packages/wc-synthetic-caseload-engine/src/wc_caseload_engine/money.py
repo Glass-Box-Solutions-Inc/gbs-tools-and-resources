@@ -156,6 +156,11 @@ PENALTY_INCREASE_AUTHORITY = (
     "date brackets are all unverified."
 )
 
+STATUTORY_DEADLINE_AUTHORITY = (
+    "LC 4650(a)-(c) payment deadlines. COUNSEL-UNCONFIRMED placeholder — "
+    "the 14-day counts and the events from which each count runs are all unverified."
+)
+
 
 class RateBasis(BaseModel):
     """The statutory parameters a comp rate is computed under, for one vintage.
@@ -271,6 +276,27 @@ class PenaltyBasis(BaseModel):
         )
 
 
+class StatutoryDeadlineBasis(BaseModel):
+    """DOI-keyed statutory deadline placeholders, separate from engine cadence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    label: str
+    effective_from: dt.date
+    effective_to: dt.date | None = None
+    first_td_payment_days: int
+    subsequent_td_payment_days: int
+    first_pd_payment_days: int
+    authority: str
+    counsel_confirmed: bool = False
+    source: Literal["engine_default_table", "seed", "mixed"] = "engine_default_table"
+
+    def covers(self, when: dt.date) -> bool:
+        return when >= self.effective_from and (
+            self.effective_to is None or when <= self.effective_to
+        )
+
+
 UNCONFIRMED_PENALTY_TABLE: tuple[PenaltyBasis, ...] = (
     PenaltyBasis(
         label="doi-all-unconfirmed",
@@ -295,6 +321,27 @@ def penalty_basis_for(doi: dt.date) -> PenaltyBasis:
         if basis.covers(doi):
             return basis
     return UNCONFIRMED_PENALTY_TABLE[0]
+
+
+UNCONFIRMED_STATUTORY_DEADLINE_TABLE: tuple[StatutoryDeadlineBasis, ...] = (
+    StatutoryDeadlineBasis(
+        label="doi-all-deadlines-unconfirmed",
+        effective_from=dt.date.min,
+        first_td_payment_days=14,
+        subsequent_td_payment_days=14,
+        first_pd_payment_days=14,
+        authority=STATUTORY_DEADLINE_AUTHORITY,
+    ),
+)
+"""DOI-keyed payment-deadline placeholders; every row is counsel-unconfirmed."""
+
+
+def statutory_deadline_basis_for(doi: dt.date) -> StatutoryDeadlineBasis:
+    """Return the deadline vintage covering *doi*: the sole table-reading seam."""
+    for basis in UNCONFIRMED_STATUTORY_DEADLINE_TABLE:
+        if basis.covers(doi):
+            return basis
+    return UNCONFIRMED_STATUTORY_DEADLINE_TABLE[0]
 
 
 UNCONFIRMED_RATE_TABLE: tuple[RateBasis, ...] = (
@@ -784,6 +831,26 @@ class BenefitLedger(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class StatutoryDueDate(BaseModel):
+    """One benefit installment and its represented statutory deadline, if any."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: Literal["td_period", "pd_advance"]
+    ordinal: int = Field(ge=1)
+    rule: Literal[
+        "first_td_payment",
+        "subsequent_td_payment",
+        "first_pd_payment",
+        "discretionary_advance",
+    ]
+    statutory_due_date: dt.date | None
+    operational_due_date: dt.date
+    date_paid: dt.date | None
+    days_late: int = Field(default=0, ge=0)
+    unpaid: bool = False
+
+
 class PenaltyAssessment(BaseModel):
     """One late payment and the automatic increase computed from its principal.
 
@@ -797,9 +864,16 @@ class PenaltyAssessment(BaseModel):
 
     source: Literal["td_period", "pd_advance"]
     ordinal: int = Field(ge=1)
+    rule: Literal[
+        "first_td_payment",
+        "subsequent_td_payment",
+        "first_pd_payment",
+        "discretionary_advance",
+    ]
     principal: Decimal
-    date_due: dt.date
-    date_paid: dt.date | None = None
+    statutory_due_date: dt.date
+    operational_due_date: dt.date
+    date_paid: dt.date
     days_late: int = Field(ge=1)
     increase_fraction: Decimal
     amount: Decimal
@@ -816,6 +890,8 @@ class PenaltyLedger(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     basis: PenaltyBasis
+    deadlines: StatutoryDeadlineBasis
+    schedule: tuple[StatutoryDueDate, ...] = ()
     assessments: tuple[PenaltyAssessment, ...] = ()
 
     @property
@@ -828,6 +904,10 @@ class PenaltyLedger(BaseModel):
     @property
     def assessed_count(self) -> int:
         return len(self.assessments)
+
+    @property
+    def unpaid_count(self) -> int:
+        return sum(1 for item in self.schedule if item.unpaid)
 
     @property
     def principal_assessed(self) -> Decimal:
@@ -1659,7 +1739,9 @@ def _derive_settlement(
     )
 
 
-def _derive_penalties(seed: CaseSeed, benefits: BenefitLedger, doi: dt.date) -> PenaltyLedger:
+def _derive_penalties(
+    seed: CaseSeed, benefits: BenefitLedger, doi: dt.date, onset: dt.date
+) -> PenaltyLedger:
     """Assess the seed-requested automatic increase from decided payment facts.
 
     There is deliberately no random input. Lateness, principal and dates have
@@ -1689,45 +1771,113 @@ def _derive_penalties(seed: CaseSeed, benefits: BenefitLedger, doi: dt.date) -> 
     changes["counsel_confirmed"] = scenario.counsel_confirmed
     basis = PenaltyBasis(**{**basis.model_dump(), **changes})
 
+    deadlines = statutory_deadline_basis_for(doi)
+    schedule: list[StatutoryDueDate] = []
     assessments: list[PenaltyAssessment] = []
+
+    def record(
+        *,
+        source: Literal["td_period", "pd_advance"],
+        ordinal: int,
+        rule: Literal[
+            "first_td_payment",
+            "subsequent_td_payment",
+            "first_pd_payment",
+            "discretionary_advance",
+        ],
+        statutory_due_date: dt.date | None,
+        operational_due_date: dt.date,
+        date_paid: dt.date | None,
+        principal: Decimal,
+    ) -> None:
+        statutorily_late = (
+            date_paid is not None
+            and statutory_due_date is not None
+            and date_paid > statutory_due_date
+        )
+        days_late = (
+            (date_paid - statutory_due_date).days if statutorily_late else 0
+        )
+        unpaid = date_paid is None
+        schedule.append(
+            StatutoryDueDate(
+                source=source,
+                ordinal=ordinal,
+                rule=rule,
+                statutory_due_date=statutory_due_date,
+                operational_due_date=operational_due_date,
+                date_paid=date_paid,
+                days_late=days_late,
+                unpaid=unpaid,
+            )
+        )
+        # Nothing was paid, so there is no late payment to increase. Recording
+        # absence as an assessment would turn a gap into invented arithmetic.
+        if unpaid:
+            return
+        if statutory_due_date is None or days_late == 0:
+            return
+        with _exact():
+            amount = money(principal * basis.increase_fraction)
+        assessments.append(
+            PenaltyAssessment(
+                source=source,
+                ordinal=ordinal,
+                rule=rule,
+                principal=principal,
+                statutory_due_date=statutory_due_date,
+                operational_due_date=operational_due_date,
+                date_paid=date_paid,
+                days_late=days_late,
+                increase_fraction=basis.increase_fraction,
+                amount=amount,
+            )
+        )
+
+    first_td_due = onset + dt.timedelta(days=deadlines.first_td_payment_days)
     for ordinal, period in enumerate(benefits.td_periods, 1):
-        # An unpaid TD period is an interruption, not a delayed payment. There
-        # is no paid principal to increase and no second date from which a delay
-        # can be measured, so assessing it would turn absence into arithmetic.
-        if period.date_paid is None or period.days_late < 1:
-            continue
-        with _exact():
-            amount = money(period.amount * basis.increase_fraction)
-        assessments.append(
-            PenaltyAssessment(
-                source="td_period",
-                ordinal=ordinal,
-                principal=period.amount,
-                date_due=period.date_due,
-                date_paid=period.date_paid,
-                days_late=period.days_late,
-                increase_fraction=basis.increase_fraction,
-                amount=amount,
-            )
+        statutory_due = first_td_due + dt.timedelta(
+            days=(ordinal - 1) * deadlines.subsequent_td_payment_days
         )
+        record(
+            source="td_period",
+            ordinal=ordinal,
+            rule="first_td_payment" if ordinal == 1 else "subsequent_td_payment",
+            statutory_due_date=statutory_due,
+            operational_due_date=period.date_due,
+            date_paid=period.date_paid,
+            principal=period.amount,
+        )
+
+    paid_td = [period for period in benefits.td_periods if period.date_paid is not None]
+    first_pd_anchor = (
+        paid_td[-1].date_paid
+        if paid_td
+        else benefits.td_periods[-1].end
+        if benefits.td_periods
+        else onset
+    )
     for ordinal, advance in enumerate(benefits.pd_advances, 1):
-        if advance.days_late < 1:
-            continue
-        with _exact():
-            amount = money(advance.amount * basis.increase_fraction)
-        assessments.append(
-            PenaltyAssessment(
-                source="pd_advance",
-                ordinal=ordinal,
-                principal=advance.amount,
-                date_due=advance.date_due,
-                date_paid=advance.date_paid,
-                days_late=advance.days_late,
-                increase_fraction=basis.increase_fraction,
-                amount=amount,
-            )
+        first = ordinal == 1
+        record(
+            source="pd_advance",
+            ordinal=ordinal,
+            rule="first_pd_payment" if first else "discretionary_advance",
+            statutory_due_date=(
+                first_pd_anchor + dt.timedelta(days=deadlines.first_pd_payment_days)
+                if first
+                else None
+            ),
+            operational_due_date=advance.date_due,
+            date_paid=advance.date_paid,
+            principal=advance.amount,
         )
-    return PenaltyLedger(basis=basis, assessments=tuple(assessments))
+    return PenaltyLedger(
+        basis=basis,
+        deadlines=deadlines,
+        schedule=tuple(schedule),
+        assessments=tuple(assessments),
+    )
 
 
 def derive_money_facts(
@@ -1761,7 +1911,8 @@ def _derive_money_facts(
     seed: CaseSeed, wages: WageScenario, timeline: Any, diligence: str
 ) -> MoneyFacts:
     """The body of :func:`derive_money_facts`, under the pinned arithmetic context."""
-    doi = getattr(timeline, "injury_date", None) or seed.injury.onset_date
+    onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
+    doi = onset
     periods = _derive_periods(seed, wages, doi)
     computation = compute_aww(wages, periods)
     basis = _apply_rate_basis_override(rate_basis_for(doi), seed)
@@ -1785,7 +1936,7 @@ def _derive_money_facts(
     benefits = _derive_benefits(seed, wage_facts, timeline, diligence)
     settlement = _derive_settlement(seed, wage_facts, benefits, timeline, diligence)
     penalties = (
-        _derive_penalties(seed, benefits, doi)
+        _derive_penalties(seed, benefits, doi, onset)
         if seed.scenario.penalties is not None
         else None
     )
@@ -1881,6 +2032,8 @@ GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
     "penalties": (
         "assessmentCount",
         "assessments",
+        "schedule",
+        "unpaidCount",
         "totalIncrease",
         "principalAssessed",
         "increaseFraction",
@@ -1888,6 +2041,13 @@ GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
         "basisAuthority",
         "counselConfirmed",
         "basisSource",
+        "deadlineLabel",
+        "deadlineAuthority",
+        "deadlineConfirmed",
+        "deadlineSource",
+        "firstTdPaymentDays",
+        "subsequentTdPaymentDays",
+        "firstPdPaymentDays",
     ),
 }
 
@@ -2006,15 +2166,33 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
         penalties = facts.penalties
         block["penalties"] = {
             "assessmentCount": penalties.assessed_count,
+            "schedule": [
+                {
+                    "source": item.source,
+                    "ordinal": item.ordinal,
+                    "rule": item.rule,
+                    "statutoryDueDate": (
+                        item.statutory_due_date.isoformat()
+                        if item.statutory_due_date is not None
+                        else None
+                    ),
+                    "operationalDueDate": item.operational_due_date.isoformat(),
+                    "datePaid": item.date_paid.isoformat() if item.date_paid else None,
+                    "daysLate": item.days_late,
+                    "unpaid": item.unpaid,
+                }
+                for item in penalties.schedule
+            ],
+            "unpaidCount": penalties.unpaid_count,
             "assessments": [
                 {
                     "source": assessment.source,
                     "ordinal": assessment.ordinal,
+                    "rule": assessment.rule,
                     "principal": _dollars(assessment.principal),
-                    "dateDue": assessment.date_due.isoformat(),
-                    "datePaid": (
-                        assessment.date_paid.isoformat() if assessment.date_paid else None
-                    ),
+                    "statutoryDueDate": assessment.statutory_due_date.isoformat(),
+                    "operationalDueDate": assessment.operational_due_date.isoformat(),
+                    "datePaid": assessment.date_paid.isoformat(),
                     "daysLate": assessment.days_late,
                     "increaseFraction": f"{assessment.increase_fraction.normalize():f}",
                     "amount": _dollars(assessment.amount),
@@ -2028,6 +2206,13 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
             "basisAuthority": penalties.basis.authority,
             "counselConfirmed": penalties.basis.counsel_confirmed,
             "basisSource": penalties.basis.source,
+            "deadlineLabel": penalties.deadlines.label,
+            "deadlineAuthority": penalties.deadlines.authority,
+            "deadlineConfirmed": penalties.deadlines.counsel_confirmed,
+            "deadlineSource": penalties.deadlines.source,
+            "firstTdPaymentDays": penalties.deadlines.first_td_payment_days,
+            "subsequentTdPaymentDays": penalties.deadlines.subsequent_td_payment_days,
+            "firstPdPaymentDays": penalties.deadlines.first_pd_payment_days,
         }
     return block
 
@@ -2045,6 +2230,7 @@ __all__ = [
     "TD_PAYMENT_DUE_DAYS",
     "UNCONFIRMED_PENALTY_TABLE",
     "UNCONFIRMED_RATE_TABLE",
+    "UNCONFIRMED_STATUTORY_DEADLINE_TABLE",
     "AwwComputation",
     "BenefitGap",
     "BenefitLedger",
@@ -2058,6 +2244,8 @@ __all__ = [
     "PenaltyLedger",
     "RateBasis",
     "SettlementFact",
+    "StatutoryDeadlineBasis",
+    "StatutoryDueDate",
     "TdPeriod",
     "WageFacts",
     "compute_aww",
@@ -2070,4 +2258,5 @@ __all__ = [
     "penalty_basis_for",
     "rate_basis_for",
     "select_method",
+    "statutory_deadline_basis_for",
 ]

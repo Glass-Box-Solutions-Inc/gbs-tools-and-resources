@@ -1431,9 +1431,9 @@ title = 'the automatic increase forgets to multiply the late-payment principal b
 file = 'src/wc_caseload_engine/money.py'
 test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_the_planted_positive_control_assesses_the_stated_45_day_delay'
 find = '''        with _exact():
-            amount = money(period.amount * basis.increase_fraction)'''
+            amount = money(principal * basis.increase_fraction)'''
 replace = '''        with _exact():
-            amount = money(period.amount)'''
+            amount = money(principal)'''
 note = 'AJC-48 Round C. The assessment is useful as ground truth only if its amount is the cents-quantized principal times the published statutory fraction; copying principal would produce a plausible currency value with no legal arithmetic behind it.'
 
 [[mutant]]
@@ -1441,12 +1441,11 @@ id = 'm15-2'
 title = 'a never-paid temporary-disability interruption is assessed as a late payment'
 file = 'src/wc_caseload_engine/money.py'
 test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_a_never_paid_period_is_not_assessed_as_a_delay'
-find = '''        if period.date_paid is None or period.days_late < 1:
-            continue'''
-replace = '''        if period.date_paid is None:
-            period = period.model_copy(update={"days_late": 1})
-        if period.days_late < 0:
-            continue'''
+find = '''        if unpaid:
+            return'''
+replace = '''        if unpaid:
+            date_paid = statutory_due_date + dt.timedelta(days=1)
+            days_late = 1'''
 note = 'AJC-48 Round C. A TdPeriod without date_paid is the benefit model’s interruption state, not a delay: there is no paid principal and no endpoint from which lateness can be counted. The planted unpaid record must leave the assessment tuple empty.'
 
 [[mutant]]
@@ -1458,7 +1457,10 @@ find = '''    if facts.penalties is not None:
         penalties = facts.penalties
         block["penalties"] = {'''
 replace = '''    if True:
-        penalties = facts.penalties or PenaltyLedger(basis=penalty_basis_for(dt.date.min))
+        penalties = facts.penalties or PenaltyLedger(
+            basis=penalty_basis_for(dt.date.min),
+            deadlines=statutory_deadline_basis_for(dt.date.min),
+        )
         block["penalties"] = {'''
 note = 'AJC-48 Round C anti-criterion. The PenaltyScenario block is the gate: a case that did not ask has no penalties key at all, while an opted-in timely case publishes an empty ledger. Collapsing those states breaks backward compatibility.'
 
@@ -1490,3 +1492,64 @@ test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::te
 find = '''        if key in ("settlement", "penalties") and money.get(key) is None:'''
 replace = '''        if key in ("settlement", "penalties") and (money.get(key) is None or key == "penalties"):'''
 note = 'AJC-48 Round D. Optional means an absent penalties group may be skipped; a present one must still be shape-checked and refused if it publishes an ungoverned extraction label.'
+
+[[mutant]]
+id = 'm15-7'
+title = 'the statutory assessment trigger uses the engine operational due date'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_operationally_late_but_statutorily_timely_is_not_assessed'
+find = '''        statutorily_late = (
+            date_paid is not None
+            and statutory_due_date is not None
+            and date_paid > statutory_due_date
+        )
+        days_late = (
+            (date_paid - statutory_due_date).days if statutorily_late else 0
+        )'''
+replace = '''        statutorily_late = (
+            date_paid is not None
+            and statutory_due_date is not None
+            and date_paid > operational_due_date
+        )
+        days_late = (
+            (date_paid - operational_due_date).days if statutorily_late else 0
+        )'''
+note = 'AJC-48 Round E finding guard. A payment can miss the invented carrier cadence and still meet the represented statutory deadline; operational lateness must never create a §4650(d) assessment.'
+
+[[mutant]]
+id = 'm15-8'
+title = 'a later discretionary PD advance is given an assessable deadline'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_only_first_pd_advance_can_have_a_statutory_assessment'
+find = '''            statutory_due_date=(
+                first_pd_anchor + dt.timedelta(days=deadlines.first_pd_payment_days)
+                if first
+                else None
+            ),'''
+replace = '''            statutory_due_date=(
+                first_pd_anchor + dt.timedelta(days=deadlines.first_pd_payment_days)
+                if first
+                else advance.date_due
+            ),'''
+note = 'AJC-48 Round E. Later PD advances are discretionary schedule facts with no statutory deadline, even when payment misses the 45-day engine cadence.'
+
+[[mutant]]
+id = 'm15-9'
+title = 'an unpaid installment is converted into an assessment'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_a_never_paid_period_is_not_assessed_as_a_delay'
+find = '''        if unpaid:
+            return'''
+replace = '''        if unpaid:
+            date_paid = statutory_due_date + dt.timedelta(days=1)
+            days_late = 1'''
+note = 'AJC-48 Round E. An unpaid installment is gap data: nothing was paid, so absence cannot be turned into late-payment arithmetic or a statutory increase.'
+
+[[mutant]]
+id = 'm15-10'
+title = 'statutory days late are subtracted from the operational baseline'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_paid_td_after_its_statutory_deadline_is_assessed_exactly'
+find = '''            (date_paid - statutory_due_date).days if statutorily_late else 0'''
+replace = '''            (date_paid - operational_due_date).days if statutorily_late else 0'''
+note = 'AJC-48 Round E. The assessment daysLate operand is the represented statutoryDueDate, never the engine cadence date carried beside it for contrast.'

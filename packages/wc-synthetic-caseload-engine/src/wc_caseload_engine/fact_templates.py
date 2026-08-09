@@ -736,8 +736,8 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
         # ``Due`` is here because ``Days Late`` is meaningless without it. The
         # first cut printed the lateness and kept its own yardstick — the due
         # date, computed one line above where it was discarded — off the page, so
-        # the single most consequential number on a delay file was asserted
-        # rather than derivable. Wave 3 computes a penalty against this column.
+        # the operational delay was asserted rather than derivable. This remains
+        # an engine-cadence fact; §4650(d) uses the separate statutory schedule.
         rows: list[list[Any]] = [
             [
                 "Benefit Period",
@@ -847,6 +847,18 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
                     [
                         f"§4650(d) {source} {assessment.ordinal} Principal:",
                         f"${assessment.principal:,.2f}",
+                    ],
+                    [
+                        f"§4650(d) {source} {assessment.ordinal} Statutory Due:",
+                        f"{assessment.statutory_due_date:%m/%d/%y}",
+                    ],
+                    [
+                        f"§4650(d) {source} {assessment.ordinal} Operational Due:",
+                        f"{assessment.operational_due_date:%m/%d/%y}",
+                    ],
+                    [
+                        f"§4650(d) {source} {assessment.ordinal} Paid / Statutory Days Late:",
+                        f"{assessment.date_paid:%m/%d/%y} / {assessment.days_late}",
                     ],
                     [
                         f"§4650(d) {source} {assessment.ordinal} Increase:",
@@ -2351,8 +2363,11 @@ def build_fact_aware_templates() -> dict[str, type]:
                     rows.append(
                         [
                             f"§4650(d) {source} {assessment.ordinal} Increase",
-                            f"Principal ${assessment.principal:,.2f}",
-                            f"{assessment.days_late} day(s) late",
+                            f"Principal ${assessment.principal:,.2f}; operational due "
+                            f"{assessment.operational_due_date:%m/%d/%y}",
+                            f"Statutory due {assessment.statutory_due_date:%m/%d/%y}; "
+                            f"paid {assessment.date_paid:%m/%d/%y}; "
+                            f"{assessment.days_late} statutory day(s) late",
                             f"${assessment.amount:,.2f}",
                         ]
                     )
