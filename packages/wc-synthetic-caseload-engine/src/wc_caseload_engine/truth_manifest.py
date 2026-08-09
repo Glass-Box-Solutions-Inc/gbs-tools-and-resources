@@ -20,7 +20,7 @@ money-channel consumers.  Neither future channel is implemented here.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -46,7 +46,6 @@ from wc_caseload_engine.money import (
     TdPeriod,
     WageFacts,
     dollars,
-    exact,
     money_manifest_block,
 )
 from wc_caseload_engine.planner import CasePlan
@@ -62,6 +61,24 @@ MONEY_CHANNEL_VERSION = "1.1.0"
 AUDIENCE = "analyzer-scorer"
 LEAKAGE_RULE = "Scorer-only ground truth; never use this artifact as an input to document analysis."
 GENERATOR = f"wc-synthetic-caseload-engine@{__version__}"
+SCORER_ONLY_ENVELOPE_KEY_NAMES = frozenset(
+    {"schemaVersion", "channelVersion", "channels", "audience", "leakageRule", "truthFile"}
+)
+PENALTY_ASSESSMENT_KEY_NAMES = frozenset(
+    {
+        "assessments",
+        "source",
+        "ordinal",
+        "rule",
+        "principal",
+        "statutoryDueDate",
+        "operationalDueDate",
+        "datePaid",
+        "daysLate",
+        "increaseFraction",
+        "amount",
+    }
+)
 
 
 class TruthManifestError(ValueError):
@@ -81,15 +98,28 @@ def case_truth_name(case_id: str) -> str:
     return f"{case_id}.truth.json"
 
 
+def check_truth_dir_is_isolated(
+    truth_dir: Path, out_dir: Path, case_ids: Iterable[str]
+) -> None:
+    """Reject a scorer directory that resolves into any analyzer-visible case tree."""
+    resolved_truth = truth_dir.resolve()
+    for case_id in case_ids:
+        case_dir = (out_dir / case_id).resolve()
+        if resolved_truth == case_dir or resolved_truth.is_relative_to(case_dir):
+            raise TruthManifestError(
+                f"truth directory {resolved_truth} resolves inside case directory {case_dir}; "
+                "choose a scorer-only directory outside every case directory instead"
+            )
+
+
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     """Write deterministic, human-diffable JSON for every manifest family."""
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _decimal(value: Any) -> str:
-    """Serialize a non-currency decimal under the engine's pinned context."""
-    with exact():
-        return f"{value.normalize():f}"
+def _channel_decimal(value: Any) -> str:
+    """Serialize a model Decimal exactly, without exponent notation or quantizing."""
+    return f"{value:f}"
 
 
 def _date(value: Any) -> str | None:
@@ -110,15 +140,15 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
                 {
                     "periodStart": period.period_start.isoformat(),
                     "periodEnd": period.period_end.isoformat(),
-                    "weeks": _decimal(period.weeks),
-                    "regularGross": dollars(period.regular_gross),
-                    "overtimeGross": dollars(period.overtime_gross),
+                    "weeks": _channel_decimal(period.weeks),
+                    "regularGross": _channel_decimal(period.regular_gross),
+                    "overtimeGross": _channel_decimal(period.overtime_gross),
                     "concurrent": period.concurrent,
                 }
                 for period in wage.periods
             ],
             "inKind": [
-                {"kind": item.kind, "weeklyValue": dollars(item.weekly_value)}
+                {"kind": item.kind, "weeklyValue": _channel_decimal(item.weekly_value)}
                 for item in wage.in_kind
             ],
             "employmentStart": _date(wage.employment_start),
@@ -130,27 +160,27 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
                 "methodSource": computation.method_source,
                 "methodReason": computation.method_reason,
                 "periodsConsidered": computation.periods_considered,
-                "weeksConsidered": _decimal(computation.weeks_considered),
-                "grossConsidered": dollars(computation.gross_considered),
-                "inKindWeekly": dollars(computation.in_kind_weekly),
-                "averageWeeklyWage": dollars(computation.aww),
+                "weeksConsidered": _channel_decimal(computation.weeks_considered),
+                "grossConsidered": _channel_decimal(computation.gross_considered),
+                "inKindWeekly": _channel_decimal(computation.in_kind_weekly),
+                "averageWeeklyWage": _channel_decimal(computation.aww),
             },
             "rate": {
-                "averageWeeklyWage": dollars(rate.aww),
-                "tdWeeklyRate": dollars(rate.td_weekly_rate),
+                "averageWeeklyWage": _channel_decimal(rate.aww),
+                "tdWeeklyRate": _channel_decimal(rate.td_weekly_rate),
                 "tdBound": rate.td_bound,
-                "pdWeeklyRate": dollars(rate.pd_weekly_rate),
+                "pdWeeklyRate": _channel_decimal(rate.pd_weekly_rate),
                 "pdBound": rate.pd_bound,
                 "basis": {
                     "label": basis.label,
                     "effectiveFrom": basis.effective_from.isoformat(),
                     "effectiveTo": _date(basis.effective_to),
-                    "tdFraction": _decimal(basis.td_fraction),
-                    "tdMaxWeekly": dollars(basis.td_max_weekly),
-                    "tdMinWeekly": dollars(basis.td_min_weekly),
-                    "pdFraction": _decimal(basis.pd_fraction),
-                    "pdMaxWeekly": dollars(basis.pd_max_weekly),
-                    "pdMinWeekly": dollars(basis.pd_min_weekly),
+                    "tdFraction": _channel_decimal(basis.td_fraction),
+                    "tdMaxWeekly": _channel_decimal(basis.td_max_weekly),
+                    "tdMinWeekly": _channel_decimal(basis.td_min_weekly),
+                    "pdFraction": _channel_decimal(basis.pd_fraction),
+                    "pdMaxWeekly": _channel_decimal(basis.pd_max_weekly),
+                    "pdMinWeekly": _channel_decimal(basis.pd_min_weekly),
                     "authority": basis.authority,
                     "counselConfirmed": basis.counsel_confirmed,
                     "source": basis.source,
@@ -162,9 +192,9 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
                 {
                     "start": period.start.isoformat(),
                     "end": period.end.isoformat(),
-                    "weeks": _decimal(period.weeks),
-                    "weeklyRate": dollars(period.weekly_rate),
-                    "amount": dollars(period.amount),
+                    "weeks": _channel_decimal(period.weeks),
+                    "weeklyRate": _channel_decimal(period.weekly_rate),
+                    "amount": _channel_decimal(period.amount),
                     "dateDue": period.date_due.isoformat(),
                     "datePaid": _date(period.date_paid),
                     "daysLate": period.days_late,
@@ -175,9 +205,9 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
                 {
                     "dateDue": advance.date_due.isoformat(),
                     "datePaid": advance.date_paid.isoformat(),
-                    "weeks": _decimal(advance.weeks),
-                    "weeklyRate": dollars(advance.weekly_rate),
-                    "amount": dollars(advance.amount),
+                    "weeks": _channel_decimal(advance.weeks),
+                    "weeklyRate": _channel_decimal(advance.weekly_rate),
+                    "amount": _channel_decimal(advance.amount),
                     "daysLate": advance.days_late,
                 }
                 for advance in facts.benefits.pd_advances
@@ -187,13 +217,15 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
                 for gap in facts.benefits.gaps
             ],
         },
+        # The public projection deliberately remains cents-formatted; its bytes
+        # are the existing ``money_manifest_block`` contract, unlike this lossless channel.
         "published": money_manifest_block(facts),
     }
     if facts.settlement is not None:
         settlement = facts.settlement
         channel["settlement"] = {
             "kind": settlement.kind,
-            "grossAmount": dollars(settlement.gross_amount),
+            "grossAmount": _channel_decimal(settlement.gross_amount),
             "approvalDate": _date(settlement.approval_date),
             "fundingDate": _date(settlement.funding_date),
         }
@@ -206,7 +238,7 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
                 "label": penalty_basis.label,
                 "effectiveFrom": penalty_basis.effective_from.isoformat(),
                 "effectiveTo": _date(penalty_basis.effective_to),
-                "increaseFraction": _decimal(penalty_basis.increase_fraction),
+                "increaseFraction": _channel_decimal(penalty_basis.increase_fraction),
                 "authority": penalty_basis.authority,
                 "counselConfirmed": penalty_basis.counsel_confirmed,
                 "source": penalty_basis.source,
@@ -241,18 +273,18 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
                     "source": assessment.source,
                     "ordinal": assessment.ordinal,
                     "rule": assessment.rule,
-                    "principal": dollars(assessment.principal),
+                    "principal": _channel_decimal(assessment.principal),
                     "statutoryDueDate": assessment.statutory_due_date.isoformat(),
                     "operationalDueDate": assessment.operational_due_date.isoformat(),
                     "datePaid": assessment.date_paid.isoformat(),
                     "daysLate": assessment.days_late,
-                    "increaseFraction": _decimal(assessment.increase_fraction),
-                    "amount": dollars(assessment.amount),
+                    "increaseFraction": _channel_decimal(assessment.increase_fraction),
+                    "amount": _channel_decimal(assessment.amount),
                 }
                 for assessment in penalties.assessments
             ],
-            "totalIncrease": dollars(penalties.total_increase),
-            "principalAssessed": dollars(penalties.principal_assessed),
+            "totalIncrease": _channel_decimal(penalties.total_increase),
+            "principalAssessed": _channel_decimal(penalties.principal_assessed),
         }
     return channel
 
@@ -304,13 +336,10 @@ def build_caseload_truth_manifest(
                     "tdWeeklyRate": dollars(facts.wages.rate.td_weekly_rate),
                     "tdBound": facts.wages.rate.td_bound,
                     "method": facts.wages.computation.method,
-                    "settlementGrossAmount": (
-                        dollars(facts.settlement.gross_amount)
-                        if facts.settlement is not None
-                        else None
-                    ),
                 }
             )
+            if facts.settlement is not None:
+                entry["settlementGrossAmount"] = dollars(facts.settlement.gross_amount)
         cases.append(entry)
 
     channels: dict[str, Any] = {}
@@ -360,6 +389,13 @@ def read_truth_manifest(path: Path) -> dict[str, Any]:
         raise TruthManifestError(f"cannot read truth manifest {path}: {exc}") from exc
     if not isinstance(payload, dict):
         raise TruthManifestError(f"truth manifest {path} must contain a JSON object")
+    _require_compatible_version(
+        payload,
+        key="schemaVersion",
+        path="$",
+        supported=SCHEMA_VERSION,
+        label="truth manifest envelope",
+    )
     channels = payload.get("channels")
     if not isinstance(channels, dict):
         raise TruthManifestError(f"truth manifest {path} must contain an object at 'channels'")
@@ -385,31 +421,59 @@ def _required(document: Mapping[str, Any], key: str, path: str) -> Any:
         raise TruthManifestError(f"malformed money channel: missing {path}.{key}") from exc
 
 
+def _require_compatible_version(
+    document: Mapping[str, Any],
+    *,
+    key: str,
+    path: str,
+    supported: str,
+    label: str,
+) -> str:
+    """Parse one contract semver and require the reader's supported major."""
+    location = key if path == "$" else f"{path}.{key}"
+    if key not in document:
+        raise TruthManifestError(f"malformed {label}: missing {location}")
+    version = document[key]
+    if not isinstance(version, str):
+        raise TruthManifestError(
+            f"malformed {label}: {location} {version!r} must be major.minor.patch"
+        )
+    parts = version.split(".")
+    if len(parts) != 3 or any(not part.isdigit() for part in parts):
+        raise TruthManifestError(
+            f"malformed {label}: {location} {version!r} must be major.minor.patch"
+        )
+    if parts[0] != supported.partition(".")[0]:
+        raise TruthManifestError(
+            f"unsupported {label} version {version!r}; reader supports {supported!r}"
+        )
+    return version
+
+
 def _model_data(document: Mapping[str, Any], names: Mapping[str, str], path: str) -> dict[str, Any]:
     return {field: _required(document, key, path) for key, field in names.items()}
 
 
 def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
     """Reconstruct validated money facts, ignoring every unrelated channel."""
+    _require_compatible_version(
+        document,
+        key="schemaVersion",
+        path="$",
+        supported=SCHEMA_VERSION,
+        label="truth manifest envelope",
+    )
     channels = _mapping(_required(document, "channels", "$"), "channels")
     if "money" not in channels:
         return None
     channel = _mapping(channels["money"], "channels.money")
-    version = _required(channel, "channelVersion", "channels.money")
-    if not isinstance(version, str) or not version:
-        raise TruthManifestError("malformed money channel: channelVersion must be a string")
-    version_parts = version.split(".")
-    if len(version_parts) != 3 or any(not part.isdigit() for part in version_parts):
-        raise TruthManifestError(
-            f"malformed money channel: channelVersion {version!r} must be major.minor.patch"
-        )
-    expected_major = MONEY_CHANNEL_VERSION.partition(".")[0]
-    actual_major = version_parts[0]
-    if actual_major != expected_major:
-        raise TruthManifestError(
-            f"unsupported money channel version {version!r}; "
-            f"reader supports {MONEY_CHANNEL_VERSION!r}"
-        )
+    _require_compatible_version(
+        channel,
+        key="channelVersion",
+        path="channels.money",
+        supported=MONEY_CHANNEL_VERSION,
+        label="money channel",
+    )
 
     try:
         wage_doc = _mapping(_required(channel, "wage", "channels.money"), "channels.money.wage")
@@ -727,11 +791,14 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
 
 __all__ = [
     "CASELOAD_TRUTH_NAME",
+    "PENALTY_ASSESSMENT_KEY_NAMES",
+    "SCORER_ONLY_ENVELOPE_KEY_NAMES",
     "TRUTH_DIR",
     "TruthManifestError",
     "build_case_truth_manifest",
     "build_caseload_truth_manifest",
     "case_truth_name",
+    "check_truth_dir_is_isolated",
     "money_facts_from_truth",
     "read_truth_manifest",
     "write_case_truth_manifest",

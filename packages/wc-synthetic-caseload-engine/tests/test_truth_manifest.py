@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,20 +21,32 @@ from typing import Any
 import pytest
 
 from conftest import requires_substrate
-from wc_caseload_engine.manifests import generate_case, validate_output_tree
+from wc_caseload_engine.manifests import generate_case, generate_caseload, validate_output_tree
 from wc_caseload_engine.money import money_manifest_block
 from wc_caseload_engine.planner import build_case_plan
 from wc_caseload_engine.seeds import parse_case_seed
 from wc_caseload_engine.truth_manifest import (
     CASELOAD_TRUTH_NAME,
+    PENALTY_ASSESSMENT_KEY_NAMES,
+    SCORER_ONLY_ENVELOPE_KEY_NAMES,
     TRUTH_DIR,
     TruthManifestError,
     build_case_truth_manifest,
+    check_truth_dir_is_isolated,
     money_facts_from_truth,
     read_truth_manifest,
     write_case_truth_manifest,
     write_caseload_truth_manifest,
 )
+
+LEGITIMATE_SCORER_VOCABULARY_OVERLAPS: dict[str, str] = {
+    # Keep this as a named ledger: every overlap must identify the public world-fact
+    # surface that makes the word analyzer input rather than scorer-only metadata.
+    "source": "PDF /Resources structure contains the substring but no assessment key",
+    "datePaid": "public benefit entries expose the payment date printed on documents",
+    "daysLate": "public benefit entries expose the lateness printed on documents",
+    "amount": "public wage and benefit entries expose printed currency facts",
+}
 
 
 def _seed_body(
@@ -157,6 +171,29 @@ def test_money_channel_round_trips_four_materially_different_plans(
     assert oldest_basis.effective_from.isoformat() == "0001-01-01"
 
 
+@pytest.mark.parametrize("decimal_field", ["listed_gross", "rate_fraction"])
+def test_money_channel_round_trip_preserves_subcent_model_values(
+    tmp_path: Path, money_plans: tuple[Any, ...], decimal_field: str
+) -> None:
+    """The scorer channel preserves model Decimals, even below the published cent."""
+    plan = money_plans[1]
+    assert plan.money_facts is not None
+    wages = plan.money_facts.wages
+    if decimal_field == "listed_gross":
+        period = wages.periods[0].model_copy(update={"regular_gross": Decimal("2400.00125")})
+        wages = wages.model_copy(update={"periods": (period, *wages.periods[1:])})
+    else:
+        basis = wages.rate.basis.model_copy(update={"td_fraction": Decimal("0.6666667")})
+        rate = wages.rate.model_copy(update={"basis": basis})
+        wages = wages.model_copy(update={"rate": rate})
+    facts = plan.money_facts.model_copy(update={"wages": wages})
+    precise_plan = replace(plan, money_facts=facts)
+
+    path = write_case_truth_manifest(precise_plan, tmp_path / decimal_field)
+
+    assert money_facts_from_truth(read_truth_manifest(path)) == facts
+
+
 def test_money_gate_omits_channel_and_reimports_as_none() -> None:
     plan = _plan("truth-no-money", scenario=None, rng_seed=4305)
     document = build_case_truth_manifest(plan)
@@ -215,7 +252,42 @@ def test_unknown_channel_is_ignored_and_money_major_is_guarded(
     assert "1.1.0" in str(raised.value)
 
     with pytest.raises(TruthManifestError, match=r"channels[.]money must be an object"):
-        money_facts_from_truth({"channels": {"money": []}})
+        money_facts_from_truth({"schemaVersion": "1.0.0", "channels": {"money": []}})
+
+
+@pytest.mark.parametrize("schema_version", [None, "1", "x.y.z", 1.0])
+def test_envelope_schema_version_is_required_and_well_formed(
+    tmp_path: Path, money_plans: tuple[Any, ...], schema_version: Any
+) -> None:
+    document = build_case_truth_manifest(money_plans[0])
+    if schema_version is None:
+        del document["schemaVersion"]
+    else:
+        document["schemaVersion"] = schema_version
+    path = tmp_path / "malformed.truth.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(TruthManifestError, match="schemaVersion"):
+        read_truth_manifest(path)
+    with pytest.raises(TruthManifestError, match="schemaVersion"):
+        money_facts_from_truth(document)
+
+
+def test_envelope_schema_version_accepts_minor_and_rejects_other_major(
+    tmp_path: Path, money_plans: tuple[Any, ...],
+) -> None:
+    compatible = build_case_truth_manifest(money_plans[0])
+    compatible["schemaVersion"] = "1.9.0"
+    path = tmp_path / "compatible.truth.json"
+    path.write_text(json.dumps(compatible), encoding="utf-8")
+    assert money_facts_from_truth(read_truth_manifest(path)) == money_plans[0].money_facts
+
+    incompatible = copy.deepcopy(compatible)
+    incompatible["schemaVersion"] = "2.0.0"
+    with pytest.raises(TruthManifestError) as raised:
+        money_facts_from_truth(incompatible)
+    assert "2.0.0" in str(raised.value)
+    assert "1.0.0" in str(raised.value)
 
 
 def test_additive_1_1_money_channel_keeps_same_major_acceptance(
@@ -275,6 +347,124 @@ def test_rollup_indexes_money_and_non_money_cases_and_resolves_paths(
     )
     empty_rollup = write_caseload_truth_manifest("truth-empty", [empty_result], empty_truth_dir)
     assert read_truth_manifest(empty_rollup)["channels"] == {}
+
+
+def test_rollup_omits_unsettled_amount_but_keeps_settled_amount(
+    tmp_path: Path, money_plans: tuple[Any, ...]
+) -> None:
+    settled = money_plans[0]
+    assert settled.money_facts is not None
+    assert settled.money_facts.settlement is not None
+    unsettled = replace(
+        money_plans[1],
+        money_facts=money_plans[1].money_facts.model_copy(update={"settlement": None}),
+    )
+    results = []
+    for plan in (unsettled, settled):
+        truth_path = write_case_truth_manifest(plan, tmp_path / TRUTH_DIR)
+        results.append(SimpleNamespace(case_id=plan.seed.case_id, plan=plan, truth_path=truth_path))
+
+    rollup = read_truth_manifest(
+        write_caseload_truth_manifest("absent-not-null", results, tmp_path / TRUTH_DIR)
+    )
+    entries = rollup["channels"]["money"]["cases"]
+    assert "settlementGrossAmount" not in entries[0]
+    assert entries[1]["settlementGrossAmount"] == "88000.00"
+
+
+def test_truth_directory_isolation_resolves_direct_and_traversal_paths(tmp_path: Path) -> None:
+    out_dir = tmp_path / "out"
+    case_dir = out_dir / "case-001"
+    with pytest.raises(TruthManifestError) as direct:
+        check_truth_dir_is_isolated(case_dir / "labels", out_dir, ("case-001",))
+    assert str((case_dir / "labels").resolve()) in str(direct.value)
+    assert str(case_dir.resolve()) in str(direct.value)
+    assert "outside" in str(direct.value)
+
+    check_truth_dir_is_isolated(out_dir / TRUTH_DIR, out_dir, ("case-001",))
+
+    traversal = out_dir / TRUTH_DIR / ".." / "case-001" / "labels"
+    with pytest.raises(TruthManifestError):
+        check_truth_dir_is_isolated(traversal, out_dir, ("case-001",))
+
+
+def test_generate_case_rejects_nested_truth_directory_before_writing(tmp_path: Path) -> None:
+    seed = parse_case_seed(_seed_body("nested-truth", scenario=None, stage="intake"))
+    case_dir = tmp_path / seed.case_id
+
+    with pytest.raises(TruthManifestError):
+        generate_case(seed, tmp_path, truth_dir=case_dir / "scorer")
+
+    assert not case_dir.exists()
+
+
+def test_disabled_truth_output_succeeds_when_no_truth_directory_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("wc_caseload_engine.manifests.check_substrate_pin", lambda: None)
+    out_dir = tmp_path / "clean"
+    assert generate_caseload("clean", (), out_dir, truth=False) == []
+    assert (out_dir / "caseload_manifest.json").is_file()
+    assert not (out_dir / TRUTH_DIR).exists()
+
+
+def test_disabled_truth_output_rejects_and_preserves_existing_truth_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("wc_caseload_engine.manifests.check_substrate_pin", lambda: None)
+    truth_dir = tmp_path / "stale" / TRUTH_DIR
+    truth_dir.mkdir(parents=True)
+    marker = truth_dir / "operator-file"
+    marker.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(TruthManifestError) as raised:
+        generate_caseload("stale", (), tmp_path / "stale", truth=False)
+    assert str(truth_dir) in str(raised.value)
+    assert "remove" in str(raised.value)
+    assert marker.read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.slow
+@requires_substrate
+def test_case_tree_contains_no_scorer_only_vocabulary(tmp_path: Path) -> None:
+    """Sweep scorer metadata, not legitimate facts used for document coherence.
+
+    The analyzer intentionally receives ``seed.yaml``, ``case_facts.yaml``, and
+    ``manifest.json``'s ``caseFacts`` world facts so it can compare documents with
+    those facts.  The separate truth channel protects scorer-only assessment and
+    provenance vocabulary, plus future defect and assertion-quality labels; this
+    probe therefore targets that vocabulary rather than pretending facts are secret.
+    """
+    seed = parse_case_seed(
+        _seed_body(
+            "leakage-probe",
+            scenario={
+                "wages": {"pattern": "regular", "base_weekly_wage": 1500},
+                "benefits": {"td_weeks": 8, "late_payments": 2, "max_days_late": 15},
+                "penalties": {},
+            },
+            rng_seed=4308,
+        )
+    )
+    result = generate_case(seed, tmp_path)
+    vocabulary = (
+        SCORER_ONLY_ENVELOPE_KEY_NAMES | PENALTY_ASSESSMENT_KEY_NAMES | {"truth"}
+    ) - LEGITIMATE_SCORER_VOCABULARY_OVERLAPS.keys()
+    artifacts = [
+        result.directory / "seed.yaml",
+        result.directory / "case_facts.yaml",
+        result.directory / "manifest.json",
+        *(result.directory / "documents").rglob("*"),
+    ]
+    leaks = {
+        term: str(path.relative_to(result.directory))
+        for path in artifacts
+        if path.is_file()
+        for term in vocabulary
+        if term.encode() in path.read_bytes()
+        or (term == "truth" and term.encode() in path.read_bytes().lower())
+    }
+    assert not leaks
 
 
 @pytest.mark.slow

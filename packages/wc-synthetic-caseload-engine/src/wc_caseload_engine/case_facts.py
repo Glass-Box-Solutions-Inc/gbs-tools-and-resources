@@ -1066,9 +1066,9 @@ def facts_manifest_block(facts: CaseFacts, money: Any = None) -> dict[str, Any]:
         ],
     }
     if money is not None:
-        from wc_caseload_engine.money import money_manifest_block
+        from wc_caseload_engine.money import analyzer_money_manifest_block
 
-        block["money"] = money_manifest_block(money)
+        block["money"] = analyzer_money_manifest_block(money)
     return block
 
 

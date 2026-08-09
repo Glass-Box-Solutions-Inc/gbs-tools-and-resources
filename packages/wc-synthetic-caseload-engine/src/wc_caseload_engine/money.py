@@ -2053,7 +2053,7 @@ GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
 
 
 def money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
-    """The ``caseFacts.money`` object a manifest publishes.
+    """The cents-formatted money projection embedded in scorer truth.
 
     Currency as exact decimal strings, never floats — see :func:`_dollars`.
     Restricted to :data:`GOVERNED_MONEY_FIELDS`, and the restriction is checked
@@ -2061,6 +2061,19 @@ def money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
     """
     with _exact():
         return _money_manifest_block(facts)
+
+
+def analyzer_money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
+    """Publish world facts while keeping penalty assessments scorer-only.
+
+    Wage, benefit, and settlement facts are analyzer inputs because documents
+    are checked against them.  The automatic-increase assessment is the label
+    used to score that analysis, so publishing it in the case tree would hand
+    the analyzer its answer.
+    """
+    block = money_manifest_block(facts)
+    block.pop("penalties", None)
+    return block
 
 
 def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
@@ -2248,6 +2261,7 @@ __all__ = [
     "StatutoryDueDate",
     "TdPeriod",
     "WageFacts",
+    "analyzer_money_manifest_block",
     "compute_aww",
     "compute_comp_rate",
     "derive_money_facts",

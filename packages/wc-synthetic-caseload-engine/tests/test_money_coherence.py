@@ -140,6 +140,11 @@ class RenderedScenario:
         """Return the public money ledger from the case manifest."""
         return self.manifest["caseFacts"]["money"]
 
+    @property
+    def scorer_money(self) -> dict[str, Any]:
+        """Return the cents-formatted scorer projection, including assessment labels."""
+        return self.truth["channels"]["money"]["published"]
+
 
 def _normalized_texts(result: CaseResult, manifest: dict[str, Any]) -> dict[str, str]:
     return {
@@ -191,7 +196,11 @@ def rendered_scenarios(
                 manifest=manifest,
                 truth=truth,
                 texts=texts,
-                sweep_result=sweep(texts, manifest["caseFacts"]["money"], GOVERNED_ON_THE_PAGE),
+                sweep_result=sweep(
+                    texts,
+                    truth["channels"]["money"]["published"],
+                    GOVERNED_ON_THE_PAGE,
+                ),
             )
         )
     return tuple(rendered)
@@ -255,8 +264,10 @@ def test_scorer_truth_equals_the_plan_manifest_and_paper(
         plan_facts = rendered.result.plan.money_facts
         assert plan_facts is not None
         truth_money = rendered.truth["channels"]["money"]
-        assert truth_money["published"] == rendered.money
         assert truth_money["published"] == money_manifest_block(plan_facts)
+        analyzer_facts = copy.deepcopy(truth_money["published"])
+        analyzer_facts.pop("penalties", None)
+        assert rendered.money == analyzer_facts
         assert money_facts_from_truth(rendered.truth) == plan_facts
         for surface in rendered.sweep_result.surfaces:
             assert surface.printed == surface.expected
@@ -288,7 +299,7 @@ def test_one_cent_perturbation_is_reported_for_every_swept_fact(
     )
     assert matching, f"the control scenario has no surface for {fact}"
     _pattern, path = GOVERNED_ON_THE_PAGE[fact]
-    perturbed = _perturb(rendered.money, path)
+    perturbed = _perturb(rendered.scorer_money, path)
     result = sweep(rendered.texts, perturbed, GOVERNED_ON_THE_PAGE)
     disagreements = tuple(surface for surface in result.disagreements if surface.fact == fact)
     assert disagreements, f"a one-cent change to {fact} was not detected"
@@ -303,7 +314,7 @@ def test_penalised_benefits_matches_ledger_paper_and_truth(
 ) -> None:
     """The ticket's 45-day planted positive control is arithmetically checkable."""
     rendered = _scenario(rendered_scenarios, "penalised-benefits")
-    penalties = rendered.money["penalties"]
+    penalties = rendered.scorer_money["penalties"]
     assert penalties["assessmentCount"] >= 1
     assert [item["daysLate"] for item in penalties["assessments"]] == [45, 59]
     assert penalties["assessments"][0]["daysLate"] == 45
@@ -328,7 +339,12 @@ def test_penalised_benefits_matches_ledger_paper_and_truth(
     assert penalty_facts <= rendered.sweep_result.facts_found
 
 
-def test_non_opted_outputs_are_byte_identical_and_penalty_free(tmp_path: Path) -> None:
+def test_non_opted_generation_is_byte_deterministic_and_penalty_free(tmp_path: Path) -> None:
+    """Two branch-local non-opt-in runs match byte for byte.
+
+    This guards deterministic generation only.  The systematic main-vs-branch
+    byte-identity invariant is not established by this test.
+    """
     body = copy.deepcopy(_SCENARIOS["delayed-benefits"])
     assert "penalties" not in body["scenario"]
     seed = parse_case_seed(body)

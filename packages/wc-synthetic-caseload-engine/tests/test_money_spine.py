@@ -55,6 +55,7 @@ from wc_caseload_engine.money import (
     SHORT_HISTORY_WEEKS,
     TD_PAYMENT_DUE_DAYS,
     UNCONFIRMED_RATE_TABLE,
+    analyzer_money_manifest_block,
     compute_aww,
     compute_comp_rate,
     derive_money_facts,
@@ -1819,6 +1820,7 @@ class TestDeterminism:
             "compute_comp_rate": lambda: compute_comp_rate(money(1234.56), basis),
             "derive_money_facts": lambda: derive_money_facts(seed, timeline, "ordinary"),
             "money_manifest_block": lambda: money_manifest_block(facts),
+            "analyzer_money_manifest_block": lambda: analyzer_money_manifest_block(facts),
         }
         exported = {
             name

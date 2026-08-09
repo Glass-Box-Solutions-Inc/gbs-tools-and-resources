@@ -67,7 +67,9 @@ from wc_caseload_engine.taxonomy import (
 )
 from wc_caseload_engine.truth_manifest import (
     TRUTH_DIR,
+    TruthManifestError,
     _write_json,
+    check_truth_dir_is_isolated,
     write_case_truth_manifest,
     write_caseload_truth_manifest,
 )
@@ -263,6 +265,8 @@ def generate_case(
     Returns:
         A :class:`CaseResult`.
     """
+    if truth_dir is not None:
+        check_truth_dir_is_isolated(truth_dir, out_dir, (seed.case_id,))
     plan = build_case_plan(seed, case_number=case_number)
     case_dir = out_dir / seed.case_id
     documents_dir = case_dir / DOCUMENTS_DIR
@@ -432,9 +436,18 @@ def generate_caseload(
     truth: bool = True,
 ) -> list[CaseResult]:
     """Generate every case in a caseload and write the aggregate manifest."""
+    seeds = tuple(seeds)
+    truth_path = out_dir / TRUTH_DIR
+    if not truth and truth_path.exists():
+        raise TruthManifestError(
+            f"truth output is disabled but {truth_path} already exists; remove that directory "
+            "or re-run with truth enabled so stale scorer artifacts cannot survive"
+        )
+    if truth:
+        check_truth_dir_is_isolated(truth_path, out_dir, (seed.case_id for seed in seeds))
     check_substrate_pin()
     out_dir.mkdir(parents=True, exist_ok=True)
-    truth_dir = out_dir / TRUTH_DIR if truth else None
+    truth_dir = truth_path if truth else None
     results: list[CaseResult] = []
     for case_number, seed in enumerate(seeds, start=1):
         results.append(
