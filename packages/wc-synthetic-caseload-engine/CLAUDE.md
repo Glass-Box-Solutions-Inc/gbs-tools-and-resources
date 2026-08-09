@@ -139,6 +139,11 @@ If an import breaks, fix the bridge — not by copying files.
    process and only the CLI entry point calls it. Anything importing this package as a library
    must call it first, or set `PYTHONHASHSEED=0` before the interpreter starts. Document this
    wherever a new entry point is added.
+7. **Determinism across *time* is a separate guarantee from determinism within a run.** Rules
+   1-5 prove two runs of the same code agree with each other; they cannot notice today's
+   output drifting away from what shipped last month. The golden corpora (below) close that,
+   and they are the reason a change to a template or a content pool cannot land silently.
+   Changing rendered output means re-recording a golden **on purpose**, in the same commit.
 
 ### Date-spine rules
 
@@ -206,6 +211,7 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_schema_honesty.py` | The "not yet honoured" marker sweep, its inertness probes, and the planted control (ISC-137) |
 | `test_message_registry.py` | Every actionable seed message paired with the edit that resolves it, completeness both ways, and the planted control (ISC-129) |
 | `test_money_sweep.py` | The document/money matrix derived from `pdf_templates.registry`, and the cross-document sweep: every governed money fact asserted equal on every surface that prints it (ISC-239, ISC-240) |
+| `test_golden_corpus.py` | The golden-corpus gate: digest faithfulness and sensitivity, redaction-path staleness, drift-report wording, and the `suite`-tier byte-identity check (AJC-59) |
 
 ### The mutation gate
 
@@ -245,6 +251,43 @@ direction that matters. Wiring up a field marked "not yet honoured" turns
 into a seed error turns `test_message_registry.py` red until somebody proves
 that following it works. Neither checks that documentation *was* updated — they
 make stale documentation impossible to leave behind.
+
+### The golden-corpus gate
+
+```bash
+python tools/golden_gate.py --list                       # corpora and their tiers
+python tools/golden_gate.py --check                      # all four, ~50 s
+python tools/golden_gate.py --check --tier suite         # what pytest covers
+python tools/golden_gate.py --check --tier ci            # what the CI step covers
+python tools/golden_gate.py --record --only demo-caseload
+```
+
+`tests/golden/*.json` pins what each shipped corpus in `examples/` produced when it was last
+deliberately accepted. Determinism rules 1-5 compare a run against another run; this compares
+a run against **what shipped**, which is the drift a corpus consumer actually feels.
+
+Per case it records four digests — rendered documents, `seed.yaml`, `case_facts.yaml`, the
+whole manifest — plus a document count and a distinct-subtype count, so a failure names the
+case *and* the axis rather than only that something moved. Hashing the manifests covers every
+rendered byte transitively, because each document's MD5 is already in there; storing all 1,449
+of them again would make every deliberate re-record an unreadable diff.
+
+**The engine version and `substrateSha` are recorded and deliberately not digested.** Digesting
+them would redden every case on a version bump, and the re-record that forced would silently
+absorb any real drift shipped alongside it. `substrateSha` also comes from `git log` over a
+directory, so it describes the checkout rather than the substrate — it already disagrees with
+`substrate_pin.txt` in a clean tree. Both are printed beside a failure as context, along with
+the ReportLab/python-docx/PyMuPDF/Pillow/Faker versions, because a dependency that shipped
+inside its `pyproject.toml` range is the usual answer to "why did this drift".
+
+Generation goes through the shipped CLI as a subprocess, so the `PYTHONHASHSEED` re-exec is
+exercised as shipped rather than hand-configured (determinism rule 6).
+
+**Changing rendered output is a re-record commit.** Run `--check` to see what moved, re-record
+only the corpora you meant to change, and commit the golden in the same PR. Re-recording all
+four to silence one is how a real regression rides along with an intended one. Adding an
+`examples/*.yaml` without registering it in `CORPORA` fails a fast test. See
+`tests/golden/README.md`.
 
 The demo caseload is generated **once per session** by the `demo_caseload` fixture in
 `conftest.py` (~70 s, 331 documents) and shared by four modules. Add demo-based assertions to
