@@ -305,10 +305,18 @@ baseline. It requires `--only`, `--tier` or `--all`: a bare `--record` is the fa
 turn a red gate green, so the scope is stated on purpose.
 
 It is all-or-nothing in **both** phases. Nothing is written until every selected corpus has
-been generated twice and proved reproducible, and the writes themselves stage beside their
-destination and land through `os.replace`, rolling every earlier file back if any replacement
-fails. A run interrupted between the second golden and the third leaves the committed set
-exactly as it was — never half describing the new code and half the old.
+been generated twice and proved reproducible, and the writes themselves stage every payload
+and back up every existing golden *before* the first replacement, then land through
+`os.replace`. A run interrupted between the second golden and the third leaves the committed
+set exactly as it was — never half describing the new code and half the old.
+
+The rollback catches `BaseException`, not `OSError`, and that breadth is the point:
+`KeyboardInterrupt` is not an `OSError`, so an earlier version promised Ctrl-C recovery in its
+own docstring and matched nothing on Ctrl-C. Anything that is not an I/O failure is re-raised
+unchanged once the tree is back — an interrupt should still stop the program, it should just
+not leave a mess. When the rollback itself fails the error says the set is **INCONSISTENT** and
+names what could not be restored; claiming a false all-clear there is the one sentence that
+would stop somebody looking.
 
 **Changing rendered output is a re-record commit.** Run `--check` to see what moved, re-record
 only the corpora you meant to change, and commit the golden in the same PR. Re-recording all

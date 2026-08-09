@@ -1460,9 +1460,11 @@ id = 'm14-8'
 title = 'a failed record leaves the goldens it already replaced rewritten'
 file = 'tools/golden_gate.py'
 test = 'tests/test_golden_corpus.py::test_a_failure_midway_through_writing_rolls_every_golden_back'
-find = '''        for path in committed:'''
-replace = '''        for path in []:'''
-note = "Proving every corpus reproducible before writing any of them closes the big window and leaves a small one: the writes themselves. A full disk, a permissions change or a Ctrl-C between the first replace and the second leaves exactly the incoherent set the design argues against, and no amount of care in the phase before helps. Skipping the restore loop reproduces it precisely — the staging still works, so a reader never sees a half-written file, but the first golden stays replaced."
+find = '''    for path in committed:
+        backup = backups.get(path)'''
+replace = '''    for path in []:
+        backup = backups.get(path)'''
+note = "Proving every corpus reproducible before writing any of them closes the big window and leaves a small one: the writes themselves. A full disk, a permissions change or a Ctrl-C between the first replace and the second leaves exactly the incoherent set the design argues against, and no amount of care in the phase before helps. Skipping the restore loop reproduces it precisely — the staging still works, so a reader never sees a half-written file, but the first golden stays replaced. Re-pointed once already: the round-3 rewrite lifted this loop out of the except block into _rollback(), and the gate scored PATCH-MISS rather than quietly passing, which is the whole reason the registry treats a miss as a finding."
 
 [[mutant]]
 id = 'm14-9'
@@ -1472,3 +1474,21 @@ test = 'tests/test_golden_corpus.py::test_a_format_one_golden_is_refused_rather_
 find = '''    if payload.get("format") != GOLDEN_FORMAT:'''
 replace = '''    if False:'''
 note = "Format 1 recorded only the manifest-derived digests, so comparing the keys a format-1 golden happens to share with this tool would report clean while checking strictly less than the gate claims — a passing verdict that has quietly stopped covering the rendered bytes. That is the one failure mode a gate may never have, so an unreadable golden is refused rather than partially believed."
+
+[[mutant]]
+id = 'm14-10'
+title = 'Ctrl-C slips past the rollback again'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_an_interrupt_midway_through_writing_rolls_back_and_still_stops_the_program'
+find = '''    except BaseException as exc:'''
+replace = '''    except OSError as exc:'''
+note = "The exact defect review found in the commit phase written to fix the previous one. KeyboardInterrupt inherits from BaseException, not Exception, so an OSError handler matches nothing on Ctrl-C: the interrupt skipped both the staged-file cleanup and the rollback while the docstring above it promised Ctrl-C recovery. A handler documenting a guarantee it does not implement is worse than no guarantee, because it is the reason nobody checks. Narrowing the catch reproduces it exactly — the interrupt still propagates, so the pytest.raises passes, and the byte-identity assertion after it is what goes red."
+
+[[mutant]]
+id = 'm14-11'
+title = 'a failed rollback is reported as a clean one'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_a_failed_rollback_is_reported_rather_than_described_as_clean'
+find = '''        if unrestored:'''
+replace = '''        if False:'''
+note = "When restoration itself fails the tree really is inconsistent, and 'the committed set is unchanged and still coherent' is then the single sentence that stops somebody going to look. An error message may be incomplete; it may not be confidently wrong about the state it leaves behind."

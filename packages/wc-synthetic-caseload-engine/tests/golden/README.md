@@ -36,9 +36,14 @@ is what makes it a decision rather than a reflex. It also generates each corpus
 **twice** and refuses to write unless the two runs agree.
 
 It is all-or-nothing in both phases: nothing is written until every selected
-corpus has been proved reproducible, and the writes stage beside their
-destination and land through `os.replace`, rolling earlier files back if any
-replacement fails. Interrupt it and the committed set is exactly as it was.
+corpus has been proved reproducible, and the writes stage every payload and back
+up every existing golden before the first replacement, then land through
+`os.replace`. Interrupt it — Ctrl-C included — and the committed set is exactly
+as it was, while the interrupt still stops the program.
+
+If the rollback itself fails, the error says the set is **INCONSISTENT** and
+names what could not be restored. `git status tests/golden/` shows it and
+`git checkout -- tests/golden/` undoes it.
 
 `--record` prints the changes it wrote, so the commit message can say what
 actually moved rather than "update goldens". Re-record only the corpora you

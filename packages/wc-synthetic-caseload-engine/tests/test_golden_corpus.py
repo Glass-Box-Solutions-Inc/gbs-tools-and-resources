@@ -667,12 +667,123 @@ def test_a_failure_midway_through_writing_rolls_every_golden_back(
         Corpus(name="second", tier=SUITE_TIER, why="probe"),
     ]
     assert golden_gate.record(corpora) == 1
-    assert calls["n"] == 2, "the probe never reached the second replacement"
+    # At least the two commits; the rollback restores through os.replace as well.
+    assert calls["n"] >= 2, "the probe never reached the second replacement"
     for name, path in goldens.items():
         assert path.read_bytes() == before[name], (
             f"{name}.json was left rewritten after the record run failed"
         )
-    assert not list(tmp_path.glob(".*staged")), "a staged temporary was left behind"
+    assert not list(tmp_path.glob(".*")), "a staged temporary was left behind"
+
+
+def _two_corpus_record_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[list[Corpus], dict[str, Path], dict[str, bytes]]:
+    """Two recordable corpora with committed goldens, and their original bytes."""
+    goldens = {"first": tmp_path / "first.json", "second": tmp_path / "second.json"}
+    for path in goldens.values():
+        path.write_text('{"format": 1, "sentinel": "original"}\n', encoding="utf-8")
+    before = {name: path.read_bytes() for name, path in goldens.items()}
+    monkeypatch.setattr(Corpus, "golden", property(lambda self: goldens[self.name]))
+    monkeypatch.setattr(
+        golden_gate, "generate_corpus", lambda _corpus, out_dir: _build_corpus(out_dir)
+    )
+    monkeypatch.setattr(golden_gate, "validate_corpus", lambda *_args: None)
+    corpora = [
+        Corpus(name="first", tier=SUITE_TIER, why="probe"),
+        Corpus(name="second", tier=SUITE_TIER, why="probe"),
+    ]
+    return corpora, goldens, before
+
+
+def _replace_failing_on(calls: dict[str, int], failures: dict[int, BaseException]) -> Any:
+    """An ``os.replace`` that raises on the numbered calls in *failures*."""
+    real_replace = golden_gate.os.replace
+
+    def _replace(source: Any, destination: Any) -> None:
+        calls["n"] += 1
+        failure = failures.get(calls["n"])
+        if failure is not None:
+            raise failure
+        return real_replace(source, destination)
+
+    return _replace
+
+
+def test_an_interrupt_midway_through_writing_rolls_back_and_still_stops_the_program(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ctrl-C is the interruption this function most needs to survive.
+
+    An earlier version caught ``OSError`` and promised Ctrl-C recovery in its
+    own docstring. ``KeyboardInterrupt`` inherits from ``BaseException``, not
+    ``Exception``, so it matched nothing: an interrupt after the first
+    replacement skipped the staged-file cleanup *and* the rollback, and left
+    exactly the half-updated set the docstring said it prevented. The handler
+    documenting a guarantee it does not implement is worse than no guarantee,
+    because it is the reason nobody checks.
+
+    Both halves are asserted, because either alone is satisfiable by a wrong
+    implementation: the tree must come back, **and** the interrupt must still
+    stop the program. Swallowing a Ctrl-C to tidy up is its own defect.
+    """
+    corpora, goldens, before = _two_corpus_record_fixture(tmp_path, monkeypatch)
+    calls = {"n": 0}
+    monkeypatch.setattr(
+        golden_gate.os,
+        "replace",
+        _replace_failing_on(calls, {2: KeyboardInterrupt()}),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        golden_gate.record(corpora)
+
+    # At least the two commits; the rollback restores through os.replace as well.
+    assert calls["n"] >= 2, "the probe never reached the second replacement"
+    for name, path in goldens.items():
+        assert path.read_bytes() == before[name], (
+            f"{name}.json was left rewritten after the run was interrupted"
+        )
+    assert not list(tmp_path.glob(".*")), "a staged temporary was left behind"
+
+
+def test_a_failed_rollback_is_reported_rather_than_described_as_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one thing the error message may never do is claim a false all-clear.
+
+    When restoration itself fails the tree really is inconsistent, and saying
+    "the committed set is unchanged" there would be the single sentence that
+    stops somebody going and looking. The message has to name what could not be
+    put back, and point at the command that shows it.
+    """
+    corpora, goldens, _before = _two_corpus_record_fixture(tmp_path, monkeypatch)
+    calls = {"n": 0}
+    monkeypatch.setattr(
+        golden_gate.os,
+        "replace",
+        _replace_failing_on(
+            calls,
+            {
+                # The commit of the second golden, then the rollback of the first.
+                2: OSError(28, "No space left on device", str(goldens["second"])),
+                3: OSError(13, "Permission denied", str(goldens["first"])),
+            },
+        ),
+    )
+
+    with pytest.raises(GoldenError) as raised:
+        golden_gate._commit_goldens(
+            [(corpus, b'{"payload": true}\n') for corpus in corpora]
+        )
+
+    message = str(raised.value)
+    assert "INCONSISTENT" in message, message
+    assert "first.json" in message, message
+    assert "unchanged and still coherent" not in message, (
+        "a failed rollback was described as a clean one"
+    )
+    assert not list(tmp_path.glob(".*")), "a staged temporary was left behind"
 
 
 def test_a_format_one_golden_is_refused_rather_than_half_read(

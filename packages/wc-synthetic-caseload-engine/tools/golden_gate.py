@@ -706,66 +706,125 @@ def _golden_bytes(
     return (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
+def _rollback(committed: list[Path], backups: dict[Path, Path | None]) -> list[Path]:
+    """Undo the replacements in *committed*. Returns the ones that could not be.
+
+    Restoration goes through :func:`os.replace` from a backup file rather than
+    re-writing remembered bytes, so putting a golden back is itself atomic: a
+    second interruption during the rollback cannot leave a half-restored file
+    where the original used to be.
+    """
+    unrestored: list[Path] = []
+    for path in committed:
+        backup = backups.get(path)
+        try:
+            if backup is None:
+                # There was no golden here before this run created one.
+                path.unlink(missing_ok=True)
+            else:
+                os.replace(backup, path)
+        except OSError:
+            unrestored.append(path)
+    return unrestored
+
+
 def _commit_goldens(payloads: list[tuple[Corpus, bytes]]) -> None:
     """Write every golden, or leave every one of them exactly as it was.
 
     The generation phase is already all-or-nothing — nothing is written until
     every selected corpus has been generated twice and proved reproducible. This
     closes the remaining window: the *writes themselves*. Half a dozen
-    sequential ``write_text`` calls can still be interrupted between the second
-    and the third by a full disk, a permissions change, or a Ctrl-C, and what it
-    leaves behind is precisely the incoherent set this command documents against
-    — some goldens describing the new code, some the old, and a ``git status``
-    that looks like a deliberate subset.
+    sequential writes can still be interrupted between the second and the third
+    by a full disk, a permissions change, or a Ctrl-C, and what that leaves
+    behind is precisely the incoherent set this command documents against — some
+    goldens describing the new code, some the old, and a ``git status`` that
+    looks like a deliberate subset.
 
-    Two mechanisms, because either alone leaves a hole:
+    Three mechanisms, because each one alone leaves a hole:
 
-    * Each file is written to a temporary beside its destination and moved into
-      place with :func:`os.replace`, which is atomic within a filesystem. A
-      reader never sees a half-written golden.
-    * The previous contents are held in memory and restored if any replacement
-      fails, so a failure on the third file un-does the first two.
+    * **Stage everything first.** Every payload is written to a temporary beside
+      its destination, and every existing golden is copied to a backup, *before*
+      the first replacement happens. The phase that can fail for ordinary
+      reasons — running out of space, hitting a permission — is therefore over
+      before any live file is touched.
+    * **Replace, never write in place.** :func:`os.replace` is atomic within a
+      filesystem, so a reader never sees a half-written golden, and restoring
+      from a backup uses the same call for the same reason.
+    * **Roll back on anything at all.** The handler catches ``BaseException``,
+      not ``OSError``. ``KeyboardInterrupt`` is not an ``OSError``, so an
+      earlier version of this function promised Ctrl-C recovery in its own
+      docstring and did not deliver it: an interrupt after the first replacement
+      skipped both the cleanup and the rollback. Anything that is not an I/O
+      failure is re-raised unchanged once the tree is back to where it started —
+      a Ctrl-C should still stop the program, it should just not leave a mess.
 
-    The rollback is best-effort and never masks the original error: if restoring
-    also fails, the first failure is still what propagates, because that is the
-    one that explains what happened.
+    When rollback itself fails, the error says so. Reporting "the set is
+    unchanged" while a file is in fact still rewritten would be the one lie that
+    stops somebody checking, so the message names what was restored and what was
+    not.
     """
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
-    originals: dict[Path, bytes | None] = {
-        corpus.golden: (corpus.golden.read_bytes() if corpus.golden.is_file() else None)
-        for corpus, _payload in payloads
-    }
+
+    staged: list[tuple[Path, Path]] = []
+    backups: dict[Path, Path | None] = {}
+    temporaries: list[Path] = []
     committed: list[Path] = []
-    staged_paths: list[Path] = []
+
+    def _discard_temporaries() -> None:
+        # Dotted names are invisible to a casual `ls` and to `git status`, so a
+        # leftover would sit in tests/golden/ indefinitely with nothing to say
+        # where it came from.
+        for path in temporaries:
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+
     try:
+        # Phase 1 — nothing live is touched. Every new payload is staged and
+        # every existing golden is backed up before the first replacement.
         for corpus, payload in payloads:
             destination = corpus.golden
-            # Beside the destination, so os.replace stays within one filesystem.
-            staged = destination.with_name(f".{destination.name}.staged")
-            staged_paths.append(staged)
-            staged.write_bytes(payload)
-            os.replace(staged, destination)
+            # Beside the destination, so every os.replace stays within one
+            # filesystem; across one, replace is not atomic and may not work.
+            incoming = destination.with_name(f".{destination.name}.incoming")
+            temporaries.append(incoming)
+            incoming.write_bytes(payload)
+            staged.append((incoming, destination))
+            if destination.is_file():
+                backup = destination.with_name(f".{destination.name}.backup")
+                temporaries.append(backup)
+                shutil.copy2(destination, backup)
+                backups[destination] = backup
+            else:
+                backups[destination] = None
+
+        # Phase 2 — replacements only. No file is created or written here.
+        for incoming, destination in staged:
+            os.replace(incoming, destination)
             committed.append(destination)
-    except OSError as exc:
-        # A replace that failed leaves its own staged file behind. Cleaning up
-        # matters more than it looks: the name is dotted, so it is invisible to
-        # a casual `ls` and to `git status`, and a leftover would sit in
-        # tests/golden/ indefinitely with nothing to say where it came from.
-        for staged in staged_paths:
-            with contextlib.suppress(OSError):  # cleanup's own failure is not the story
-                staged.unlink(missing_ok=True)
-        for path in committed:
-            original = originals[path]
-            with contextlib.suppress(OSError):  # the rollback's own failure is not the story
-                if original is None:
-                    path.unlink(missing_ok=True)
-                else:
-                    path.write_bytes(original)
-        raise GoldenError(
-            f"writing the goldens failed at {getattr(exc, 'filename', '<unknown>')} — "
-            f"{exc}. The goldens written before it were rolled back, so the committed "
-            "set is unchanged and still coherent."
-        ) from exc
+    except BaseException as exc:
+        unrestored = _rollback(committed, backups)
+        _discard_temporaries()
+        if not isinstance(exc, OSError):
+            # KeyboardInterrupt, SystemExit, a bug in this module — none of them
+            # are this function's to interpret. The tree is back to where it
+            # started; the exception continues on its way.
+            raise
+        where = getattr(exc, "filename", None) or "<unknown>"
+        if unrestored:
+            state = (
+                f"Rolling back ALSO failed for {', '.join(path.name for path in unrestored)}, "
+                f"so the golden set is INCONSISTENT and must be repaired by hand — "
+                f"`git status tests/golden/` and `git checkout -- tests/golden/` will show "
+                f"and undo it."
+            )
+        else:
+            state = (
+                "The goldens replaced before it were rolled back, so the committed set is "
+                "unchanged and still coherent."
+            )
+        raise GoldenError(f"writing the goldens failed at {where} — {exc}. {state}") from exc
+
+    _discard_temporaries()
 
 
 def _load_golden(corpus: Corpus) -> dict[str, Any]:
