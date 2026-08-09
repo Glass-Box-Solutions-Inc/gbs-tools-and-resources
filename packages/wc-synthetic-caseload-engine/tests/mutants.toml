@@ -450,8 +450,8 @@ id = 'm4-2'
 title = 'the settlement group is skipped by the governance loop again'
 file = 'src/wc_caseload_engine/manifests.py'
 test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_settlement_is_shape_checked_and_governed_like_everything_else'
-find = '''        if key == "settlement" and money.get(key) is None:'''
-replace = '''        if key == "settlement":'''
+find = '''        if key in ("settlement", "penalties") and money.get(key) is None:'''
+replace = '''        if key in ("settlement", "penalties"):'''
 
 [[mutant]]
 id = 'm4-3'
@@ -1481,3 +1481,12 @@ find = '''            if ledger_penalties is not None and ledger_penalties.asses
 replace = '''            if ledger_penalties is not None:
                 for assessment in ledger_penalties.assessments:'''
 note = 'AJC-48 Round C byte gate. The document gains penalty rows only when an assessment exists; “asked and found none” remains a manifest fact but must render exactly like the pre-penalty benefit record.'
+
+[[mutant]]
+id = 'm15-6'
+title = 'the penalties group is skipped by the governance loop again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_penalties_are_shape_checked_and_governed_like_everything_else'
+find = '''        if key in ("settlement", "penalties") and money.get(key) is None:'''
+replace = '''        if key in ("settlement", "penalties") and (money.get(key) is None or key == "penalties"):'''
+note = 'AJC-48 Round D. Optional means an absent penalties group may be skipped; a present one must still be shape-checked and refused if it publishes an ungoverned extraction label.'

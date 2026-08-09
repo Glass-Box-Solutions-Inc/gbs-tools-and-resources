@@ -4082,6 +4082,43 @@ class TestTheValidatorRefusesAnUncheckableClaim:
             problems = _refusals(block, documents, "c", given=label)
             assert any(expected in p for p in problems), (label, problems)
 
+    def test_penalties_are_shape_checked_and_governed_like_everything_else(self) -> None:
+        """A present penalties group is checked instead of skipped as optional."""
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {
+                    "td_weeks": 24,
+                    "td_gap_days": 45,
+                    "late_payments": 2,
+                    "max_days_late": 45,
+                },
+                "penalties": {},
+            }
+        )
+        clean = {"money": money_manifest_block(facts)}
+        documents = _docs(
+            MONEY_WAGE_SUBTYPE,
+            MONEY_TD_SUBTYPE,
+            settlement=clean["money"].get("settlement"),
+        )
+        assert not _validate_money(clean, documents, "c")
+
+        cases: list[tuple[str, Any, str]] = [
+            ("penalties is a list", [], "not a mapping"),
+            ("an ungoverned field", {"surprise": "x"}, "ungoverned"),
+        ]
+        for label, mutation, expected in cases:
+            block = {"money": money_manifest_block(facts)}
+            if isinstance(mutation, list):
+                block["money"]["penalties"] = mutation
+            else:
+                block["money"]["penalties"].update(mutation)
+            problems = _refusals(block, documents, "c", given=label)
+            assert any(expected in p for p in problems), (label, problems)
+
     def test_settlement_dates_need_a_document_that_could_know_them(self) -> None:
         """A carrier is a subtype *and* a date, and the first cut checked only the subtype.
 

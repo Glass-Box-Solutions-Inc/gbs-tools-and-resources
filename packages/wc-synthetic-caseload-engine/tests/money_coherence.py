@@ -104,7 +104,7 @@ def sweep(
 #: fact -> (pattern, how to read the ledger). Every pattern is anchored to the
 #: words around the figure, because an unanchored money regex matches the next
 #: number along and asserts nothing.
-GOVERNED_ON_THE_PAGE: dict[str, tuple[re.Pattern[str], str]] = {
+CORE_RULES: dict[str, tuple[re.Pattern[str], str]] = {
     "aww": (
         re.compile(r"Average Weekly Wage \(AWW\): \$([\d,]+\.\d\d)"),
         "money.wage.averageWeeklyWage",
@@ -145,6 +145,12 @@ GOVERNED_ON_THE_PAGE: dict[str, tuple[re.Pattern[str], str]] = {
         re.compile(r"Recommended Settlement Target: \$([\d,]+)"),
         "money.settlement.grossAmount",
     ),
+}
+
+#: Penalty figures are carried only by a case whose seed opted into
+#: ``scenario.penalties``. A sweep pinned to one non-penalised case must not
+#: treat their absence as a dead rule.
+PENALTY_RULES: dict[str, tuple[re.Pattern[str], str]] = {
     "penalty_principal": (
         re.compile(r"§4650\(d\) Principal Assessed:? \$([\d,]+\.\d\d)"),
         "money.penalties.principalAssessed",
@@ -171,6 +177,11 @@ GOVERNED_ON_THE_PAGE: dict[str, tuple[re.Pattern[str], str]] = {
     ),
 }
 
+GOVERNED_ON_THE_PAGE: dict[str, tuple[re.Pattern[str], str]] = {
+    **CORE_RULES,
+    **PENALTY_RULES,
+}
+
 #: The hourly rate is swept differently: a pay-rate *history* legitimately holds
 #: earlier, lower figures, so equality on every occurrence would be the wrong
 #: assertion. What it must not do is print a rate above the one the file says the
@@ -186,8 +197,10 @@ HOURLY_RATE = re.compile(
 
 
 __all__ = [
+    "CORE_RULES",
     "GOVERNED_ON_THE_PAGE",
     "HOURLY_RATE",
+    "PENALTY_RULES",
     "Surface",
     "SweepResult",
     "ledger_value",

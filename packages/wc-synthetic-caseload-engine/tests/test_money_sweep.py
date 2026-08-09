@@ -40,7 +40,7 @@ from typing import Any
 import pytest
 
 from conftest import extract_text, requires_substrate
-from money_coherence import GOVERNED_ON_THE_PAGE, HOURLY_RATE, sweep
+from money_coherence import CORE_RULES, GOVERNED_ON_THE_PAGE, HOURLY_RATE, sweep
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
 from wc_caseload_engine.seeds import parse_case_seed
 from wc_caseload_engine.substrate import install_substrate_path, substrate_path
@@ -288,8 +288,9 @@ class TestAGovernedFigureIsTheSameOnEverySurface:
         money = manifest["caseFacts"]["money"]
         result = sweep(texts, money, GOVERNED_ON_THE_PAGE)
         assert not result.disagreements, result.describe()
-        # A rule that matches nothing is a rule that has stopped sweeping.
-        dead = sorted(GOVERNED_ON_THE_PAGE.keys() - result.facts_found)
+        # This seed is non-penalised, so only an absent core rule has stopped
+        # sweeping; the full table above still compares any penalty that appears.
+        dead = sorted(CORE_RULES.keys() - result.facts_found)
         assert not dead, (
             f"these labels appear on no document: {dead}. Either the label moved "
             "and the pattern needs re-pointing, or the document stopped carrying "

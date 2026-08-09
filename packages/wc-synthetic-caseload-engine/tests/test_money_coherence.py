@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from conftest import extract_text, requires_substrate
-from money_coherence import GOVERNED_ON_THE_PAGE, SweepResult, sweep
+from money_coherence import GOVERNED_ON_THE_PAGE, PENALTY_RULES, SweepResult, sweep
 from wc_caseload_engine.manifests import CaseResult, generate_case
 from wc_caseload_engine.money import money as quantized_money
 from wc_caseload_engine.money import money_manifest_block
@@ -239,6 +239,13 @@ def test_each_scenario_sweeps_and_their_union_covers_every_rule(
     assert not dead, (
         f"these labels appear in neither scenario: {dead}. Either a label moved "
         "or a document stopped carrying the governed figure."
+    )
+    penalised = _scenario(rendered_scenarios, "penalised-benefits")
+    dead_penalties = sorted(PENALTY_RULES.keys() - penalised.sweep_result.facts_found)
+    assert not dead_penalties, (
+        f"these penalty labels do not appear in the penalised scenario: "
+        f"{dead_penalties}. Either a label moved or its document stopped carrying "
+        "the governed figure."
     )
 
 
