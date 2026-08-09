@@ -239,6 +239,32 @@ def test_the_gate_and_the_report_cannot_disagree_about_a_contradiction() -> None
     assert json.loads(result.output)["findings"] == [finding.as_dict() for finding in shared]
 
 
+def test_every_pack_sees_one_canonical_ledger_order(tmp_path: Path) -> None:
+    """The seam canonicalizes, so a pack's view cannot vary with how it was reached.
+
+    Observed at the seam rather than through a finding: with citations sorted, the
+    downstream contract is stable either way, and a guarantee no test can see is one
+    the next refactor deletes by accident.
+    """
+    facts = _facts(
+        tmp_path,
+        "case.json",
+        {"injury": {"body_part": "right wrist"}, "injuredPart": "left wrist"},
+    )
+    seen: list[tuple[str, ...]] = []
+
+    def detect(context: RuleContext):
+        seen.append(tuple(fact.id for fact in context.facts))
+        return ()
+
+    probe = Rule(name="probe", codes=frozenset({"probe_code"}), detect=detect)
+    run_rules(facts, rules=(probe,))
+    run_rules(tuple(reversed(facts)), rules=(probe,))
+
+    assert len(seen) == 2
+    assert seen[0] == seen[1]
+
+
 def test_the_finding_contract_never_depends_on_caller_order(tmp_path: Path) -> None:
     """Both surfaces canonicalize the ledger once, so factIds cannot diverge.
 
@@ -246,14 +272,19 @@ def test_the_finding_contract_never_depends_on_caller_order(tmp_path: Path) -> N
     sorts by value — so a rule accumulating citations in ledger order emitted the same
     finding with differently ordered factIds depending on which surface asked.
     """
+    # Two injured-part facts whose canonical (category, field) order is the reverse of
+    # their fact-id order, so canonicalizing the ledger and sorting the citations are
+    # each observable on their own.
     bodies = {
         "forward.json": {
-            "injury": {"body_parts": ["right wrist", "left wrist"]},
+            "injury": {"body_part": "right wrist"},
+            "injuredPart": "left wrist",
             "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}},
         },
         "reverse.json": {
             "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}},
-            "injury": {"body_parts": ["right wrist", "left wrist"]},
+            "injuredPart": "left wrist",
+            "injury": {"body_part": "right wrist"},
         },
     }
     for name, body in bodies.items():

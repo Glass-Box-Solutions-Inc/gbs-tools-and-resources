@@ -459,6 +459,34 @@ def test_current_care_records_are_not_historical(tmp_path: Path) -> None:
         assert _codes(findings) == [CODE], extra
 
 
+def test_current_care_wins_where_both_classifications_appear(tmp_path: Path) -> None:
+    """A surgery labelled current inside a history block is this case's operation.
+
+    Without this the current-care table is dead weight: whole-segment matching already
+    keeps `priorAuthorization` out of the historical set, so only a genuine overlap
+    exercises the override.
+    """
+    findings = _findings(
+        tmp_path,
+        {
+            "injury": {"body_part": "right wrist"},
+            "medicalHistory": {"currentSurgery": {"cptCode": "29827"}},
+        },
+    )
+
+    assert _codes(findings) == [CODE]
+
+    # And the same block without the current-care marker stays silent.
+    historical = _findings(
+        tmp_path,
+        {
+            "injury": {"body_part": "right wrist"},
+            "medicalHistory": {"priorSurgeries": [{"cptCode": "29827"}]},
+        },
+    )
+    assert CODE not in _codes(historical)
+
+
 def test_a_non_injury_region_field_is_not_an_injured_part(tmp_path: Path) -> None:
     """An examined or serviced region is not a claim that the region was injured."""
     for extra in (

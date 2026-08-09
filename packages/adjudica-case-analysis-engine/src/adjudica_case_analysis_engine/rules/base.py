@@ -61,6 +61,17 @@ def parent_path(source_path: str) -> str:
     return head if separator else source_path
 
 
+def canonical_order(facts: Iterable[Fact]) -> tuple[Fact, ...]:
+    """One ledger order for every consumer, whatever order the caller assembled.
+
+    Lives at the seam because it is a promise to *packs*: a detector accumulating
+    citations as it walks the ledger must produce the same bytes whether it was reached
+    through a report, which sorts facts by domain, or through the CLI, which sorts them
+    by value.
+    """
+    return tuple(sorted(facts, key=lambda item: (item.category, item.field, item.id)))
+
+
 def record_key(fact: Fact) -> tuple[str, str]:
     """The record a fact belongs to: its input label, plus that record's path.
 
@@ -98,8 +109,8 @@ class RuleContext:
 
     @classmethod
     def from_facts(cls, facts: Iterable[Fact]) -> RuleContext:
-        """Index a ledger for rule execution."""
-        ordered = tuple(facts)
+        """Index a ledger for rule execution, in one canonical order."""
+        ordered = canonical_order(facts)
         vocabulary = {fact.id: tokens(f"{fact.field} {fact.source_path}") for fact in ordered}
         record_keys = {fact.id: record_key(fact) for fact in ordered}
         grouped: dict[tuple[str, str], list[Fact]] = defaultdict(list)

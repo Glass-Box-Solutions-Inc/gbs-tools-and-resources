@@ -10,12 +10,17 @@ from collections.abc import Iterable, Sequence
 
 from adjudica_case_analysis_engine.models import Fact, Finding
 from adjudica_case_analysis_engine.rules import anatomical_coherence
-from adjudica_case_analysis_engine.rules.base import Rule, RuleContext, source_of
+from adjudica_case_analysis_engine.rules.base import (
+    Rule,
+    RuleContext,
+    canonical_order,
+    source_of,
+)
 
 #: Every detector class the engine runs, in registration order.
 RULES: tuple[Rule, ...] = (anatomical_coherence.RULE,)
 
-__all__ = ["RULES", "Rule", "RuleContext", "run_rules", "source_of"]
+__all__ = ["RULES", "Rule", "RuleContext", "canonical_order", "run_rules", "source_of"]
 
 
 def _validate_registry(rules: Sequence[Rule]) -> None:

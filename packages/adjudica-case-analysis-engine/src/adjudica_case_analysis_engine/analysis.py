@@ -7,7 +7,7 @@ from pathlib import Path
 
 from adjudica_case_analysis_engine.input import normalize_paths_report
 from adjudica_case_analysis_engine.models import AnalysisReport, Angle, Fact, Finding
-from adjudica_case_analysis_engine.rules import run_rules
+from adjudica_case_analysis_engine.rules import canonical_order, run_rules
 from adjudica_case_analysis_engine.validation import chronology, validate_facts
 
 _DOMAINS = (
@@ -28,11 +28,6 @@ def analyze_paths(paths: list[Path] | tuple[Path, ...]) -> AnalysisReport:
 
 def _in_report_order(findings: tuple[Finding, ...]) -> tuple[Finding, ...]:
     return tuple(sorted(findings, key=lambda item: (item.severity, item.code, item.fact_ids)))
-
-
-def canonical_order(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Fact, ...]:
-    """One ledger order for every consumer, independent of how the caller assembled it."""
-    return tuple(sorted(facts, key=lambda item: (item.category, item.field, item.id)))
 
 
 def review_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
