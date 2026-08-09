@@ -1382,3 +1382,45 @@ test = 'tests/test_case_facts_coherence.py::TestTheProcedureMatchesTheInjuredPar
 find = '''    "wrist": "wrist",'''
 replace = '''    "wrist": "shoulder",'''
 note = "AJC-55. The substrate's alias table is the single seam through which every operative record and, via _pick_cpt's substrate-first preference (ISC-93), the wcce ledger's SurgeryFact acquire their procedure. The retired 'upper extremity fallback' mapped wrist/hand/elbow to surgery_shoulder here, which is exactly this edit; the guard's per-part oracle is hand-maintained so the pool cannot vouch for itself. First cross-package mutant: the file lives in merus-test-data-generator, the guard in this package, because the defect and its blast radius straddle the bridge."
+
+[[mutant]]
+id = 'm14-1'
+title = 'an incompatible money-channel major version is silently accepted'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_unknown_channel_is_ignored_and_money_major_is_guarded'
+find = '''    if actual_major != expected_major:'''
+replace = '''    if False:'''
+note = 'AJC-48 Round B. Additive channels and compatible minor versions are open, but a new money major may change the meaning or shape of scorer labels. The reader must refuse it rather than reconstructing an apparently valid but semantically unknown MoneyFacts.'
+
+[[mutant]]
+id = 'm14-2'
+title = 'a case with no money facts emits an empty money channel instead of omitting it'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_money_gate_omits_channel_and_reimports_as_none'
+find = '''    channels: dict[str, Any] = {}
+    if plan.money_facts is not None:
+        channels["money"] = _money_channel(plan.money_facts)'''
+replace = '''    channels: dict[str, Any] = {}
+    if plan.money_facts is not None:
+        channels["money"] = _money_channel(plan.money_facts)
+    else:
+        channels["money"] = {}'''
+note = 'AJC-48 Round B. Channel presence means a label family exists for the case. An empty or null money channel invents a third state between absent and populated and makes scorer routing ambiguous.'
+
+[[mutant]]
+id = 'm14-3'
+title = 'the scorer-facing published block drifts away from the public money ledger'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_published_block_is_the_existing_public_contract'
+find = '''        "published": money_manifest_block(facts),'''
+replace = '''        "published": {},'''
+note = 'AJC-48 Round B. The scorer label and case manifest must be the same established public contract, not independently serialized approximations that can drift while each remains internally valid.'
+
+[[mutant]]
+id = 'm14-4'
+title = 'the coherence comparator declares a one-cent paper-to-ledger difference equal'
+file = 'tests/money_coherence.py'
+test = 'tests/test_money_coherence.py::test_one_cent_perturbation_is_reported_for_every_swept_fact[aww]'
+find = '''        return self.printed == self.expected'''
+replace = '''        return True'''
+note = 'AJC-48 Round B anti-criterion. The harness must itself fail red when a governed ledger figure moves by exactly one cent; the parametrized control repeats that proof for every governed rule with a paper surface.'

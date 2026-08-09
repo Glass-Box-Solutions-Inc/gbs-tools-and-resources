@@ -17,6 +17,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and an ignore-unknown-channels contract for additive future label families.
 - Added the default-on CLI export switch and kept single-case library output
   byte-compatible unless its caller explicitly supplies a truth directory.
+- Added a reusable money coherence harness spanning capped stipulations and
+  older-vintage delayed-benefit cases, binding scorer truth to the public
+  manifest and every matching paper surface with per-fact one-cent controls.
 
 ## [0.9.0] — 2026-08-08
 
