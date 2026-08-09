@@ -397,6 +397,18 @@ jobs:
           --spec examples/demo-caseload.yaml --out "${RUNNER_TEMP}/wcce-demo"
       - name: Validate the generated manifests
         run: python -m wc_caseload_engine.cli validate --out "${RUNNER_TEMP}/wcce-demo"
+      # Golden-corpus gate. "Same seed, same engine, same bytes" was enforced
+      # only within a run — two interpreters compared against each other — which
+      # never noticed output drifting away from what shipped last month. The
+      # goldens in tests/golden/ close that, and a red step here means either a
+      # regression or a deliberate change that has not been re-recorded yet.
+      #
+      # Only the ci-tier corpora, because tests/test_golden_corpus.py already
+      # checked the suite-tier ones inside the Test step above. Splitting them
+      # keeps a local `pytest tests/` about half a minute longer instead of a
+      # full minute, and still gates every shipped corpus exactly once per PR.
+      - name: Golden corpora are byte-identical to their goldens
+        run: python tools/golden_gate.py --check --tier ci
 
   # Mutation gate. A passing test proves nothing on its own — it passes on the
   # fixed code and it may well pass on the broken code too. Every registered

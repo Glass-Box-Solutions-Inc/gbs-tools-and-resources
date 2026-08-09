@@ -1,0 +1,91 @@
+{
+  "format": 2,
+  "corpus": "personas-showcase",
+  "spec": "examples/personas-showcase.yaml",
+  "tier": "ci",
+  "recordedWith": {
+    "engine": "0.9.0",
+    "substratePin": "cb485354f16164ca2d422804fe9d40f9a2250920",
+    "substrateSha": "bce7e9657c5612d5f18149ad6930d326ed9965da",
+    "python": "3.12.13",
+    "dependencies": {
+      "reportlab": "4.5.1",
+      "python-docx": "1.2.0",
+      "pymupdf": "1.28.2",
+      "pillow": "11.3.0",
+      "faker": "34.0.2",
+      "pyyaml": "6.0.3",
+      "pydantic": "2.13.4"
+    },
+    "systemFonts": {
+      "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf": "39c29931201f08dd"
+    }
+  },
+  "caseCount": 6,
+  "documentCount": 391,
+  "fileCount": 410,
+  "corpusTree": "d25da275e7c28f657c1a79f49a431e8836b50b081162ada05bde7f6718432552",
+  "caseload": "cd6fde68a4cd789532b684c1996e3d97ff3b291df6bb9344286d331e9c5f8395",
+  "cases": {
+    "personas-attentive-adjuster": {
+      "documentCount": 70,
+      "distinctSubtypes": 48,
+      "fileCount": 73,
+      "tree": "58519daf8d1250d8783d3312498944d142c3335eb8e11ce5f68b667a8a586339",
+      "documents": "0a990b3084562d23f3e39411612fabbff20b6bff100cdbd6a04645be034d3a69",
+      "manifest": "794afa6de829cc2c8e7d2ac6cb681e07099109715baed708fdcf18c4de0d3c3b",
+      "seed": "79bd10e66b88207927c5d35abf32fd1ce8b68b26d7cd8fd17ef894d8e64b9145",
+      "facts": "41e38c12bd3e644ef59c37cef5eea1f973e43960926e6c0fc995987b746e9106"
+    },
+    "personas-cadence-event-driven": {
+      "documentCount": 60,
+      "distinctSubtypes": 38,
+      "fileCount": 63,
+      "tree": "49190d0a075d30cab54fc4a9307b4462ba6d63cb573dda6d506a647fe8b2892d",
+      "documents": "0bba8ce1f308b6707829eeafe81049bf852fe1ddd98ffc4f290eb31bb15ed498",
+      "manifest": "cabedd0a459307e2b155216e9d7ce91bdc83f2dad94f61f49ff51e5e0a414543",
+      "seed": "3ab45525eab27a0600f44dec88751d6b6bd858572ba0f19e5b5a6254712794ff",
+      "facts": "75daff64bf772d2a5b2557c403f4b1fd5ccadd2a8d945d5d891a8df4ef4d74f8"
+    },
+    "personas-cadence-every-30-days": {
+      "documentCount": 60,
+      "distinctSubtypes": 36,
+      "fileCount": 63,
+      "tree": "f4a9674b75d1e1a9ad13807a393039dc53935f4eac7253f27fe8845ab4914d49",
+      "documents": "40624ade43fe108785210c6821107895fed6e34834671979b47afdb7bcf56d34",
+      "manifest": "c521e03930908b88a0ffef50e59e6d2169e04e626b52976125afadbf89617b44",
+      "seed": "5ad1448b56913a8df3a015b92a7373d298d4c40cc0cd4fb7e4abaa4be5c8146c",
+      "facts": "2073f75377bdae683db88db94767509481387b2b96d0abdc53bead47d9dfba13"
+    },
+    "personas-cadence-sporadic": {
+      "documentCount": 60,
+      "distinctSubtypes": 39,
+      "fileCount": 63,
+      "tree": "1dd7ecca153ecd3358d328d7aa654d95a9aaa4ac0f1a6412d010b7b1ddd27bcb",
+      "documents": "94ed38a9ec52d043738f593fbd139616c80e0c6ac8e6043d9e137e3ef38a4e83",
+      "manifest": "63cfd5ea7c9cc32a87ac113e9d3e4cb6e80ef8383c1decfe70ba5d818545a2c0",
+      "seed": "273d3ff6cbed55f89937af2fb737cd22526730cdd34437e72b51242f05895ab0",
+      "facts": "0f33600799dcd89b0191f1b91c410d70965ce9b961ef2d14e3e56b764915a20a"
+    },
+    "personas-negligent-adjuster": {
+      "documentCount": 70,
+      "distinctSubtypes": 44,
+      "fileCount": 73,
+      "tree": "bbaf642b00f21e35fc190fe7af6c74eea882c21fe21b1811f0e88c8951c476d5",
+      "documents": "e6bc4c22bb682ddb90b67c78fcd226b5e1ef9428bd6303a7648f475dba85d4c4",
+      "manifest": "fc90e95c5790381d02ebf7ad2eb60d4f91fbf400c1a72f8f0c697ebce6fc9174",
+      "seed": "13d55758f65eed647f2f7c2d9dc8e0798950286955e472eb3f4f22c663c9f9af",
+      "facts": "cb7e355bfb8fce7f8803763cc6221d8f5d74ccf7faf233010b1f45057e2d561f"
+    },
+    "personas-scenario-depth": {
+      "documentCount": 71,
+      "distinctSubtypes": 48,
+      "fileCount": 74,
+      "tree": "0a73e1b3521be9de081ee3bcb8d39ec7853d512c5a6bd8ecb535333905d34fdb",
+      "documents": "0770aa6520e40c19259a393db580765e1a03705919273e6e82ef97e13e48aa7c",
+      "manifest": "1a2cbac3d347da6ec939d894068cae40d5bcc7d2cea535e8892d110f31813f05",
+      "seed": "730352395eae25d8d10b1604e0312d41e15cfb8031703675093e45737dc0b06d",
+      "facts": "0bf94ab715d0e6cbc93bd47b053795afd557724f3ef05282af3d680c756b98af"
+    }
+  }
+}
