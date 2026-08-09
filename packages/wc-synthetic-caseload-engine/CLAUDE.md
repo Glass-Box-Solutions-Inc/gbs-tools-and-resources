@@ -313,9 +313,18 @@ set exactly as it was — never half describing the new code and half the old.
 The rollback catches `BaseException`, not `OSError`, and that breadth is the point:
 `KeyboardInterrupt` is not an `OSError`, so an earlier version promised Ctrl-C recovery in its
 own docstring and matched nothing on Ctrl-C. Anything that is not an I/O failure is re-raised
-unchanged once the tree is back — an interrupt should still stop the program, it should just
-not leave a mess. When the rollback itself fails the error says the set is **INCONSISTENT** and
-names what could not be restored; claiming a false all-clear there is the one sentence that
+once the tree is back — an interrupt should still stop the program, it should just not leave a
+mess.
+
+A destination is recorded as changed **before** its replacement is attempted. An interrupt can
+land between a successful `os.replace` and the very next instruction, so a list appended to
+afterwards would miss that file and leave exactly one golden updated. Restoring a destination
+whose replace never happened is a no-op, so the conservative order removes the window instead
+of narrowing it.
+
+When the rollback itself fails, **both** exits say so — the `GoldenError` in its message, a
+re-raised interrupt as a note on the exception. The set is reported **INCONSISTENT** with the
+files that could not be restored named; claiming a false all-clear is the one sentence that
 would stop somebody looking.
 
 **Changing rendered output is a re-record commit.** Run `--check` to see what moved, re-record

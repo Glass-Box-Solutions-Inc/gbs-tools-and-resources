@@ -696,14 +696,27 @@ def _two_corpus_record_fixture(
     return corpora, goldens, before
 
 
-def _replace_failing_on(calls: dict[str, int], failures: dict[int, BaseException]) -> Any:
-    """An ``os.replace`` that raises on the numbered calls in *failures*."""
+def _replace_failing_on(
+    calls: dict[str, int],
+    failures: dict[int, BaseException],
+    perform_first: frozenset[int] = frozenset(),
+) -> Any:
+    """An ``os.replace`` that raises on the numbered calls in *failures*.
+
+    A call listed in *perform_first* does the real replacement and *then*
+    raises, which is how an interrupt arriving between a successful replace and
+    the next instruction is reproduced. That distinction is the whole content of
+    the pre-tracking probe below: a failure before the replace and a failure
+    after it leave the filesystem in two different states.
+    """
     real_replace = golden_gate.os.replace
 
     def _replace(source: Any, destination: Any) -> None:
         calls["n"] += 1
         failure = failures.get(calls["n"])
         if failure is not None:
+            if calls["n"] in perform_first:
+                real_replace(source, destination)
             raise failure
         return real_replace(source, destination)
 
@@ -745,6 +758,78 @@ def test_an_interrupt_midway_through_writing_rolls_back_and_still_stops_the_prog
             f"{name}.json was left rewritten after the run was interrupted"
         )
     assert not list(tmp_path.glob(".*")), "a staged temporary was left behind"
+
+
+def test_a_replacement_that_succeeded_before_the_interrupt_is_still_rolled_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window between a successful replace and the record of it.
+
+    ``os.replace`` returning is not the same instant as the bookkeeping that
+    says it returned, and an interrupt can be delivered in between. A list
+    appended to *after* the call would not know that file had changed, so the
+    rollback would skip it and leave exactly one golden updated — the failure
+    this entire function exists to prevent, reached through a gap of one
+    bytecode instruction.
+
+    The probe performs the real replacement and *then* raises, which is the only
+    way to tell pre-tracking from post-tracking: under post-tracking the second
+    file is genuinely rewritten and stays that way.
+    """
+    corpora, goldens, before = _two_corpus_record_fixture(tmp_path, monkeypatch)
+    calls = {"n": 0}
+    monkeypatch.setattr(
+        golden_gate.os,
+        "replace",
+        _replace_failing_on(calls, {2: KeyboardInterrupt()}, perform_first=frozenset({2})),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        golden_gate.record(corpora)
+
+    for name, path in goldens.items():
+        assert path.read_bytes() == before[name], (
+            f"{name}.json was replaced before the interrupt and never rolled back"
+        )
+    assert not list(tmp_path.glob(".*")), "a staged temporary was left behind"
+
+
+def test_an_interrupt_names_the_files_a_failed_rollback_could_not_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An interrupt is the exception the operator actually sees, so it carries the news.
+
+    The I/O path already reported an incomplete rollback. The interrupt path
+    computed the same answer and threw it away — so a Ctrl-C that left a golden
+    rewritten propagated a bare ``KeyboardInterrupt``, which reads exactly like
+    the clean case. Two exits describing one tree, and only one of them
+    describing it.
+    """
+    corpora, goldens, _before = _two_corpus_record_fixture(tmp_path, monkeypatch)
+    calls = {"n": 0}
+    monkeypatch.setattr(
+        golden_gate.os,
+        "replace",
+        _replace_failing_on(
+            calls,
+            {
+                2: KeyboardInterrupt(),
+                # The rollback of the first golden, which cannot be put back.
+                3: OSError(13, "Permission denied", str(goldens["first"])),
+            },
+        ),
+    )
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        golden_gate._commit_goldens(
+            [(corpus, b'{"payload": true}\n') for corpus in corpora]
+        )
+
+    notes = getattr(raised.value, "__notes__", [])
+    assert any("INCONSISTENT" in note for note in notes), (
+        f"the interrupt said nothing about the incomplete rollback: {notes}"
+    )
+    assert any("first.json" in note for note in notes), notes
 
 
 def test_a_failed_rollback_is_reported_rather_than_described_as_clean(

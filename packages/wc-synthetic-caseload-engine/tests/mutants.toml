@@ -1489,6 +1489,28 @@ id = 'm14-11'
 title = 'a failed rollback is reported as a clean one'
 file = 'tools/golden_gate.py'
 test = 'tests/test_golden_corpus.py::test_a_failed_rollback_is_reported_rather_than_described_as_clean'
-find = '''        if unrestored:'''
-replace = '''        if False:'''
-note = "When restoration itself fails the tree really is inconsistent, and 'the committed set is unchanged and still coherent' is then the single sentence that stops somebody going to look. An error message may be incomplete; it may not be confidently wrong about the state it leaves behind."
+find = '''    if unrestored:
+        return ('''
+replace = '''    if False:
+        return ('''
+note = "When restoration itself fails the tree really is inconsistent, and 'the committed set is unchanged and still coherent' is then the single sentence that stops somebody going to look. An error message may be incomplete; it may not be confidently wrong about the state it leaves behind. Re-pointed in round 4, when the message was lifted into _rollback_state() so the interrupt path could share it — the gate scored PATCH-MISS rather than passing quietly."
+
+[[mutant]]
+id = 'm14-12'
+title = 'a replace that lands an instant before an interrupt is forgotten'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_a_replacement_that_succeeded_before_the_interrupt_is_still_rolled_back'
+find = '''            committed.append(destination)
+            os.replace(incoming, destination)'''
+replace = '''            os.replace(incoming, destination)
+            committed.append(destination)'''
+note = "os.replace returning is not the same instant as the bookkeeping that records it, and an interrupt can be delivered in between. Tracking after the call therefore misses a file that really did change, and the rollback leaves exactly one golden updated — the failure the whole function exists to prevent, reached through a gap of one bytecode instruction. Pre-tracking removes the window instead of narrowing it: restoring a destination whose replace never happened is a no-op, so the conservative order costs nothing. Swapping the two lines back is the defect verbatim."
+
+[[mutant]]
+id = 'm14-13'
+title = 'an interrupt hides the rollback it could not finish'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_an_interrupt_names_the_files_a_failed_rollback_could_not_restore'
+find = '''                exc.add_note(state)'''
+replace = '''                pass'''
+note = "The I/O path reported an incomplete rollback; the interrupt path computed the same answer and discarded it, so a Ctrl-C that left a golden rewritten propagated a bare KeyboardInterrupt indistinguishable from the clean case. An interrupt is the exception the operator actually sees, which makes it the one that has to carry the news."

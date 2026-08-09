@@ -41,9 +41,11 @@ up every existing golden before the first replacement, then land through
 `os.replace`. Interrupt it — Ctrl-C included — and the committed set is exactly
 as it was, while the interrupt still stops the program.
 
-If the rollback itself fails, the error says the set is **INCONSISTENT** and
-names what could not be restored. `git status tests/golden/` shows it and
-`git checkout -- tests/golden/` undoes it.
+If the rollback itself fails, the set is reported **INCONSISTENT** with the
+files that could not be restored named — in the error message for an I/O
+failure, and as a note on the exception for an interrupt.
+`git status tests/golden/` shows it and `git checkout -- tests/golden/` undoes
+it.
 
 `--record` prints the changes it wrote, so the commit message can say what
 actually moved rather than "update goldens". Re-record only the corpora you

@@ -728,6 +728,28 @@ def _rollback(committed: list[Path], backups: dict[Path, Path | None]) -> list[P
     return unrestored
 
 
+def _rollback_state(unrestored: list[Path]) -> str:
+    """What the tree looks like after a rollback, said plainly.
+
+    Built once and used on both exits — the ``GoldenError`` raised for an I/O
+    failure and the note attached to an interrupt — because the two paths were
+    describing the same tree and only one of them was describing it at all. An
+    incomplete rollback after a Ctrl-C is exactly as inconsistent as one after a
+    full disk, and exactly as much the operator's problem.
+    """
+    if unrestored:
+        return (
+            f"Rolling back ALSO failed for {', '.join(path.name for path in unrestored)}, "
+            "so the golden set is INCONSISTENT and must be repaired by hand — "
+            "`git status tests/golden/` and `git checkout -- tests/golden/` will show "
+            "and undo it."
+        )
+    return (
+        "The goldens replaced before it were rolled back, so the committed set is "
+        "unchanged and still coherent."
+    )
+
+
 def _commit_goldens(payloads: list[tuple[Corpus, bytes]]) -> None:
     """Write every golden, or leave every one of them exactly as it was.
 
@@ -755,13 +777,20 @@ def _commit_goldens(payloads: list[tuple[Corpus, bytes]]) -> None:
       earlier version of this function promised Ctrl-C recovery in its own
       docstring and did not deliver it: an interrupt after the first replacement
       skipped both the cleanup and the rollback. Anything that is not an I/O
-      failure is re-raised unchanged once the tree is back to where it started —
-      a Ctrl-C should still stop the program, it should just not leave a mess.
+      failure is re-raised once the tree is back to where it started — a Ctrl-C
+      should still stop the program, it should just not leave a mess.
 
-    When rollback itself fails, the error says so. Reporting "the set is
-    unchanged" while a file is in fact still rewritten would be the one lie that
-    stops somebody checking, so the message names what was restored and what was
-    not.
+    A destination is recorded as changed *before* its replacement is attempted,
+    not after. An interrupt can land between a successful ``os.replace`` and the
+    very next instruction, and a list appended to afterwards would miss that
+    file — leaving precisely one golden updated, which is the failure the whole
+    function exists to prevent. Restoring a destination whose replace never
+    happened is a no-op, so the conservative order costs nothing.
+
+    When rollback itself fails, both exits say so: the ``GoldenError`` carries
+    it in its message and a re-raised interrupt carries it as a note. Reporting
+    "the set is unchanged" while a file is in fact still rewritten would be the
+    one lie that stops somebody checking.
     """
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -799,29 +828,31 @@ def _commit_goldens(payloads: list[tuple[Corpus, bytes]]) -> None:
 
         # Phase 2 — replacements only. No file is created or written here.
         for incoming, destination in staged:
-            os.replace(incoming, destination)
+            # Tracked *before* the replace, deliberately. An interrupt can be
+            # delivered between a successful ``os.replace`` and the next
+            # bytecode instruction, so a list appended to afterwards would not
+            # know that this file had already changed, and the rollback would
+            # leave exactly one golden updated. Restoring a destination whose
+            # replace never happened is harmless — it puts back what is already
+            # there — so pre-tracking is strictly safer than post-tracking, and
+            # it removes the window rather than narrowing it.
             committed.append(destination)
+            os.replace(incoming, destination)
     except BaseException as exc:
         unrestored = _rollback(committed, backups)
         _discard_temporaries()
+        state = _rollback_state(unrestored)
         if not isinstance(exc, OSError):
             # KeyboardInterrupt, SystemExit, a bug in this module — none of them
-            # are this function's to interpret. The tree is back to where it
-            # started; the exception continues on its way.
+            # are this function's to interpret, so the exception continues on
+            # its way unchanged. But if the rollback did not fully succeed, the
+            # tree is *not* back to where it started, and an interrupt that says
+            # nothing about that is an interrupt nobody investigates. The note
+            # rides along on the exception the operator is actually going to see.
+            if unrestored:
+                exc.add_note(state)
             raise
         where = getattr(exc, "filename", None) or "<unknown>"
-        if unrestored:
-            state = (
-                f"Rolling back ALSO failed for {', '.join(path.name for path in unrestored)}, "
-                f"so the golden set is INCONSISTENT and must be repaired by hand — "
-                f"`git status tests/golden/` and `git checkout -- tests/golden/` will show "
-                f"and undo it."
-            )
-        else:
-            state = (
-                "The goldens replaced before it were rolled back, so the committed set is "
-                "unchanged and still coherent."
-            )
         raise GoldenError(f"writing the goldens failed at {where} — {exc}. {state}") from exc
 
     _discard_temporaries()
