@@ -35,6 +35,38 @@ def test_every_registered_pack_names_itself_and_declares_its_codes() -> None:
         assert rule.codes, f"{rule.name} declares no finding codes"
         assert all(code.islower() for code in rule.codes)
 
+    # A code belongs to exactly one class, or a scorecard cannot attribute it.
+    claimed: set[str] = set()
+    for rule in RULES:
+        assert not claimed & rule.codes, f"{rule.name} re-declares an owned code"
+        claimed |= rule.codes
+
+
+def test_two_packs_may_not_declare_the_same_finding_code() -> None:
+    """Ownership is what makes a code attributable, so a collision fails before execution."""
+
+    def detect(context: RuleContext):
+        return ()
+
+    first = Rule(name="first", codes=frozenset({"shared_code"}), detect=detect)
+    second = Rule(name="second", codes=frozenset({"shared_code"}), detect=detect)
+
+    with pytest.raises(ValueError, match="shared_code"):
+        run_rules((), rules=(first, second))
+
+
+def test_two_packs_may_not_share_a_name() -> None:
+    """The class key is the scorecard's bucket; two packs sharing one would merge scores."""
+
+    def detect(context: RuleContext):
+        return ()
+
+    first = Rule(name="duplicated", codes=frozenset({"a_code"}), detect=detect)
+    second = Rule(name="duplicated", codes=frozenset({"b_code"}), detect=detect)
+
+    with pytest.raises(ValueError, match="duplicated"):
+        run_rules((), rules=(first, second))
+
 
 def test_a_pack_may_not_emit_a_code_it_never_declared(tmp_path: Path) -> None:
     """An undeclared code would land in no detector class at all — that fails loudly."""
@@ -91,6 +123,53 @@ def test_the_context_hands_back_the_record_a_fact_belongs_to(tmp_path: Path) -> 
     siblings = {fact.field for fact in context.record_of(code_fact)}
     assert siblings == {"cptCode", "uncoded"}
     assert context.source_of(code_fact) == "case.json"
+
+
+def test_each_promoted_claim_is_its_own_record(tmp_path: Path) -> None:
+    """Claims in one list are separate assertions, not siblings of each other.
+
+    Grouping them at the dotted parent puts every claim in the file into one record,
+    so an unrelated claim's flag would speak for all of them.
+    """
+    facts = _facts(
+        tmp_path,
+        "claims.json",
+        {
+            "claims": [
+                {"field": "surgery_cpt_code", "value": "29827"},
+                {"field": "uncoded", "value": True},
+            ]
+        },
+    )
+    context = RuleContext.from_facts(facts)
+    code_fact = next(fact for fact in facts if fact.field == "surgery_cpt_code")
+
+    assert [fact.field for fact in context.record_of(code_fact)] == ["surgery_cpt_code"]
+
+
+def test_scalar_fields_inside_a_mapping_record_still_group(tmp_path: Path) -> None:
+    """The list fix must not break the grouping the detector relies on."""
+    facts = _facts(
+        tmp_path,
+        "case.json",
+        {"surgeries": [{"cptCode": "29827", "uncoded": True}, {"cptCode": "27447"}]},
+    )
+    context = RuleContext.from_facts(facts)
+
+    first = next(fact for fact in facts if fact.source_path == "$.surgeries[0].cptCode")
+    assert {fact.field for fact in context.record_of(first)} == {"cptCode", "uncoded"}
+
+    second = next(fact for fact in facts if fact.source_path == "$.surgeries[1].cptCode")
+    assert {fact.field for fact in context.record_of(second)} == {"cptCode"}
+
+
+def test_terminal_scalar_list_elements_are_not_one_record(tmp_path: Path) -> None:
+    """body_parts[0] and body_parts[1] are separate values, not a shared record."""
+    facts = _facts(tmp_path, "case.json", {"injury": {"body_parts": ["wrist", "knee"]}})
+    context = RuleContext.from_facts(facts)
+
+    first = next(fact for fact in facts if fact.source_path == "$.injury.body_parts[0]")
+    assert len(context.record_of(first)) == 1
 
 
 def test_an_empty_ledger_runs_every_pack_and_reports_nothing() -> None:

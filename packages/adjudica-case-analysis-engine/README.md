@@ -58,9 +58,17 @@ operation as a matter of medical fact; shared *provenance* is what is excluded.
 The pack is built to stay quiet. It reads procedure codes only from facts that claim to describe an
 operation, because billing records, treating-physician reports, and utilization-review lines name
 codes independently of the injury — a lumbar case's billing record may legitimately cite a shoulder
-code. An unknown code, an uncoded or unlisted procedure, an injection, an unrecognized body part, or
-an unsegmented "back" against a cervical code all yield nothing. A finding needs the table to place
-the operation outside *every* recognized injured region.
+code. A five-digit value in a generic `*Code` field (`postalCode`, `authorizationCode`) is not a
+procedure code either. An unknown code, an uncoded procedure, an unlisted code that names no body
+area, an injection, an unrecognized body part, or an unsegmented "back" against a cervical code all
+yield nothing. A finding needs the table to place the operation outside *every* claimed injured
+region.
+
+It is equally careful about the other direction, where the failure is quieter. Anatomy is read from
+fields whose own names claim to say what was injured, and denials near a mention disqualify it — so
+`injury.mechanism` reading "lifting to shoulder height", or a diagnosis reading "no shoulder
+injury", cannot clear a shoulder operation on a wrist case. A false negative is invisible; a false
+positive announces itself.
 
 Findings from every registered pack merge into `analyze` reports and into the `validate` exit code
 through one shared definition, so the report and the gate cannot disagree about whether a case is

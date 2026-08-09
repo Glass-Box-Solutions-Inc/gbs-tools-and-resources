@@ -30,28 +30,41 @@ That restraint is load-bearing rather than cautious. Those document families sam
 procedure codes independently of the injury, so a lumbar case's billing record may
 legitimately name a shoulder code. A detector that read every CPT in the ledger as an
 asserted operation would fire on a large share of clean cases — and precision on clean
-corpora is the measure this detector is scored against. The rule throughout is that
-silence is the default and a finding requires an affirmative contradiction:
+corpora is the measure this detector is scored against. Nor is a five-digit value in
+any field named ``*Code`` a procedure code: ``postalCode`` and ``authorizationCode``
+sit happily beside an operation, so a bare number needs its field to name CPT outright
+or pair "code" with procedure vocabulary.
+
+The rule throughout is that silence is the default and a finding requires an
+affirmative contradiction:
 
 * an operation is asserted on a surface that claims to describe an operation, **and**
-* the table knows that code's anatomy, **and**
-* at least one injured body part is recognized, **and**
-* no recognized injured part is compatible with the code's region.
+* the table knows what anatomy that code implies, **and**
+* at least one injured body part is affirmatively claimed, **and**
+* no claimed injured part is compatible with the code's anatomy.
 
-Anything less — an unknown code, an uncoded operation, an injection, an unrecognized
-body part, an unsegmented "back" against a cervical code — yields nothing at all. An
-unknown code raises no note either: one note per unclassified code would put noise on
-every case, and the table's real gap signal is recall measured over a scored corpus,
-not a per-case remark.
+Anything less — an unknown code, an uncoded operation, a nonlocalizable unlisted code,
+an injection, an unrecognized body part, an unsegmented "back" against a cervical code
+— yields nothing at all. An unknown code raises no note either: one note per
+unclassified code would put noise on every case, and the table's real gap signal is
+recall measured over a scored corpus, not a per-case remark.
+
+Restraint cuts the other way too, and the second failure mode is quieter. A body part
+merely *mentioned* is not one that was injured: ``injury.mechanism`` reading "lifting
+to shoulder height", or a diagnosis reading "no shoulder injury", would enter the
+injured set and clear a shoulder operation on a wrist case. Anatomy is therefore read
+from fields whose own names claim to say what was injured, and denials near a mention
+disqualify it. A false negative is invisible where a false positive announces itself.
 
 Maintenance contract
 --------------------
-* Every entry is a five-digit CPT code in exactly one of the three tables below —
-  operative (asserts an anatomical region), non-operative (an injection or diagnostic
-  study, never an operation), or unlisted (names no anatomy it can be held to).
-* Adding a code means adding it to exactly one table; the disjointness and shape of
-  the tables are asserted by the suite, so a typo cannot sit here silently matching
-  nothing.
+* Every entry is a five-digit CPT code in exactly one class — operative (implies one
+  anatomical region), non-operative (an injection or diagnostic study, never an
+  operation), localizable unlisted (names a body area but not a procedure), or
+  nonlocalizable unlisted (names neither).
+* Adding a code means adding it to exactly one table; disjointness, table shape, and
+  region reachability are asserted by the suite, so a typo cannot sit here silently
+  matching nothing.
 * Widening a region alias is the cheap fix for a false positive; deleting an operative
   entry is the cheap fix for a wrong one. Prefer both to loosening
   :func:`contradicts`, which is what keeps precision legible.
@@ -165,24 +178,39 @@ NON_OPERATIVE_CPT_CODES: frozenset[str] = frozenset(
     }
 )
 
-#: Unlisted-procedure codes, which name a body area but assert no specific operation.
+#: Unlisted-procedure codes that still name a body area, mapped to every region they
+#: are compatible with.
 #:
-#: An operation reached for an unlisted code precisely because it was not codeable, so
-#: reading anatomy back out of one would be inference dressed as a fact. They are
-#: recorded here to be excluded, never matched.
-UNLISTED_CPT_CODES: frozenset[str] = frozenset(
+#: An unlisted code says the *operation* was not codeable — it does not say the surgeon
+#: forgot where they were. "Unlisted procedure, shoulder" is a claim about the shoulder,
+#: so a wrist case reporting one is as incoherent as one reporting 29827. The region
+#: sets are deliberately permissive where the code's own body area spans joints (a femur
+#: code is compatible with hip and knee), because widening a set only withholds findings.
+LOCALIZABLE_UNLISTED_CPT_ANATOMY: Mapping[str, frozenset[str]] = MappingProxyType(
     {
-        "22899",  # Unlisted procedure, spine
-        "23929",  # Unlisted procedure, shoulder
-        "24999",  # Unlisted procedure, humerus or elbow
-        "26989",  # Unlisted procedure, hands or fingers
-        "27299",  # Unlisted procedure, pelvis or hip joint
-        "27599",  # Unlisted procedure, femur or knee
-        "27899",  # Unlisted procedure, leg or ankle
-        "28899",  # Unlisted procedure, foot or toes
-        "29999",  # Unlisted procedure, arthroscopy
-        "64999",  # Unlisted procedure, nervous system
+        # Unlisted procedure, spine — segment unnamed, so every segment is compatible.
+        "22899": frozenset({"spine", "cervical_spine", "thoracic_spine", "lumbar_spine"}),
+        "23929": frozenset({"shoulder"}),  # Unlisted procedure, shoulder
+        "24999": frozenset({"elbow", "shoulder"}),  # Unlisted procedure, humerus or elbow
+        "26989": frozenset({"hand"}),  # Unlisted procedure, hands or fingers
+        "27299": frozenset({"hip"}),  # Unlisted procedure, pelvis or hip joint
+        "27599": frozenset({"knee", "hip"}),  # Unlisted procedure, femur or knee
+        "27899": frozenset({"ankle", "knee"}),  # Unlisted procedure, leg or ankle
+        "28899": frozenset({"foot"}),  # Unlisted procedure, foot or toes
     }
+)
+
+#: Unlisted-procedure codes that name no body area at all, and so contradict nothing.
+NONLOCALIZABLE_UNLISTED_CPT_CODES: frozenset[str] = frozenset(
+    {
+        "29999",  # Unlisted procedure, arthroscopy — any joint
+        "64999",  # Unlisted procedure, nervous system — any nerve
+    }
+)
+
+#: Every unlisted-procedure code, both halves.
+UNLISTED_CPT_CODES: frozenset[str] = (
+    frozenset(LOCALIZABLE_UNLISTED_CPT_ANATOMY) | NONLOCALIZABLE_UNLISTED_CPT_CODES
 )
 
 #: Body-part phrase -> anatomical region, matched on whole word tokens.
@@ -249,24 +277,39 @@ _SPINE_SEGMENTS = frozenset({"cervical_spine", "thoracic_spine", "lumbar_spine"}
 #: and admitting it would pull every billed line into the operative surface.
 _OPERATION_MARKERS = frozenset({"surgery", "surgeries", "surgical", "operation", "operative"})
 
-#: Vocabulary marking a fact as describing what was injured.
-_INJURY_MARKERS = frozenset(
-    {
-        "body",
-        "part",
-        "parts",
-        "injury",
-        "injuries",
-        "injured",
-        "diagnosis",
-        "diagnoses",
-        "complaint",
-        "complaints",
-    }
+#: Leaf-field vocabulary naming an injured body part outright.
+#:
+#: Selection is on the field's own name, not on any ancestor: an ``injury`` ancestor
+#: covers ``injury.mechanism`` too, and "lifting to shoulder height" would then enter
+#: the injured set and clear a shoulder operation on a wrist case. Masking a real
+#: contradiction is the costlier failure, because a false negative is invisible.
+_BODY_PART_FIELD_MARKERS = frozenset(
+    {"body", "part", "parts", "site", "sites", "region", "regions", "injured"}
+)
+
+#: Leaf-field vocabulary for clinical prose that may name anatomy affirmatively.
+_CLINICAL_PROSE_FIELD_MARKERS = frozenset(
+    {"diagnosis", "diagnoses", "complaint", "complaints", "condition", "conditions"}
 )
 
 #: Field vocabulary that makes a bare five-digit value readable as a procedure code.
-_CODE_FIELD_MARKERS = frozenset({"cpt", "code", "codes"})
+#:
+#: A bare "code" is not enough. ``postalCode``, ``authorizationCode``, ``diagnosisCode``
+#: and ``facilityCode`` all hold five-digit values and all sit happily beside an
+#: operation, so the field has to name CPT outright or pair "code" with procedure
+#: vocabulary.
+_CPT_FIELD_MARKERS = frozenset({"cpt"})
+_CODE_NOUNS = frozenset({"code", "codes"})
+_PROCEDURE_QUALIFIERS = frozenset(
+    {"procedure", "procedures", "surgical", "surgery", "operation", "operative"}
+)
+
+#: Words that make a nearby anatomical mention a denial rather than an assertion.
+_NEGATIONS_BEFORE = frozenset(
+    {"no", "not", "denies", "denied", "deny", "without", "negative", "absent", "none", "never"}
+)
+_NEGATIONS_AFTER = frozenset({"ruled", "excluded", "negative", "resolved"})
+_NEGATION_WINDOW = 4
 
 _SEPARATORS = re.compile(r"[^a-z0-9]+")
 _BARE_CODE = re.compile(r"\d{5}")
@@ -288,8 +331,8 @@ _ALIAS_WORDS: tuple[tuple[tuple[str, ...], str], ...] = tuple(
 )
 
 
-def regions_named_by(text: str) -> frozenset[str]:
-    """Every anatomical region a body-part string names.
+def _anatomy_matches(text: str) -> tuple[tuple[str, int, int], ...]:
+    """Each anatomical region named by ``text``, with the word span that named it.
 
     Matching is on whole word-token sequences, never raw substrings, so "background"
     is not a back and "secondhand" is not a hand. The longest phrase wins and consumes
@@ -298,18 +341,46 @@ def regions_named_by(text: str) -> frozenset[str]:
     """
     words = _words(text)
     if not words:
-        return frozenset()
+        return ()
     claimed = [False] * len(words)
-    found: set[str] = set()
+    found: list[tuple[str, int, int]] = []
     for phrase, region in _ALIAS_WORDS:
         span = len(phrase)
         for start in range(len(words) - span + 1):
             if any(claimed[start : start + span]):
                 continue
             if words[start : start + span] == phrase:
-                found.add(region)
+                found.append((region, start, start + span))
                 claimed[start : start + span] = [True] * span
-    return frozenset(found)
+    return tuple(found)
+
+
+def regions_named_by(text: str) -> frozenset[str]:
+    """Every anatomical region a string names, whether or not it claims one."""
+    return frozenset(region for region, _, _ in _anatomy_matches(text))
+
+
+def _negated(words: tuple[str, ...], start: int, end: int) -> bool:
+    """Whether a denial sits close enough to this mention to be about it."""
+    before = words[max(0, start - _NEGATION_WINDOW) : start]
+    after = words[end : end + _NEGATION_WINDOW]
+    return bool(set(before) & _NEGATIONS_BEFORE or set(after) & _NEGATIONS_AFTER)
+
+
+def regions_asserted_by(text: str) -> frozenset[str]:
+    """Every anatomical region a string claims as injured.
+
+    Naming a region is not claiming it: "No shoulder injury" and "shoulder ruled out"
+    both name the shoulder in order to exclude it. Counting those as injured parts
+    would clear a shoulder operation on a wrist case, which is precisely the
+    contradiction this pack exists to find. The window is deliberately narrow so a
+    denial elsewhere in the same sentence does not discard an affirmative mention —
+    "Wrist sprain; no shoulder injury" still asserts the wrist.
+    """
+    words = _words(text)
+    return frozenset(
+        region for region, start, end in _anatomy_matches(text) if not _negated(words, start, end)
+    )
 
 
 def _compatible(procedure_region: str, injured_region: str) -> bool:
@@ -320,21 +391,41 @@ def _compatible(procedure_region: str, injured_region: str) -> bool:
     return _SPINE in pair and bool(pair & _SPINE_SEGMENTS)
 
 
+def compatible_regions(code: str) -> frozenset[str]:
+    """Every region a code is consistent with, or empty when it names no anatomy.
+
+    An operative code names exactly one region. A localizable unlisted code names a
+    body area without naming the operation — still a claim about where the surgeon was.
+    Everything else — unknown codes, injections, and unlisted codes that name no area —
+    returns empty and can contradict nothing.
+    """
+    region = OPERATIVE_CPT_ANATOMY.get(code)
+    if region is not None:
+        return frozenset({region})
+    return LOCALIZABLE_UNLISTED_CPT_ANATOMY.get(code, frozenset())
+
+
 def contradicts(code: str, injured_regions: frozenset[str]) -> bool:
     """Whether this table affirmatively places ``code`` outside every injured region.
 
-    False for everything the table cannot speak to: an unknown code, an injection, an
-    unlisted procedure, or a case with no recognized injured part. Unknown is not wrong.
+    False for everything the table cannot speak to: an unknown code, an injection, a
+    nonlocalizable unlisted procedure, or a case with no recognized injured part.
+    Unknown is not wrong.
     """
-    region = OPERATIVE_CPT_ANATOMY.get(code)
-    if region is None or not injured_regions:
+    candidates = compatible_regions(code)
+    if not candidates or not injured_regions:
         return False
-    return not any(_compatible(region, injured) for injured in injured_regions)
+    return not any(
+        _compatible(candidate, injured) for candidate in candidates for injured in injured_regions
+    )
 
 
 def _is_code_field(fact: Fact) -> bool:
     """Whether this field's own name says its value is a procedure code."""
-    return bool(tokens(fact.field) & _CODE_FIELD_MARKERS)
+    words = tokens(fact.field)
+    if words & _CPT_FIELD_MARKERS:
+        return True
+    return bool(words & _CODE_NOUNS and words & _PROCEDURE_QUALIFIERS)
 
 
 def _codes_asserted_by(fact: Fact) -> tuple[str, ...]:
@@ -373,8 +464,13 @@ def _declares_uncoded(context: RuleContext, fact: Fact) -> bool:
     return False
 
 
+def _names_injured_anatomy(fact: Fact) -> bool:
+    """Whether this fact's own field claims to say which body part was injured."""
+    return bool(tokens(fact.field) & (_BODY_PART_FIELD_MARKERS | _CLINICAL_PROSE_FIELD_MARKERS))
+
+
 def _injured_regions(context: RuleContext) -> tuple[frozenset[str], tuple[str, ...]]:
-    """Recognized injured regions, and the facts that named them.
+    """Recognized injured regions, and the facts that claimed them.
 
     Facts on the operation surface are excluded even when they name a body part:
     ``surgery.bodyPart`` records the part that was operated on, chosen together with
@@ -382,12 +478,14 @@ def _injured_regions(context: RuleContext) -> tuple[frozenset[str], tuple[str, .
     """
     regions: set[str] = set()
     cited: list[str] = []
-    for fact in context.matching(_INJURY_MARKERS):
-        if context.words(fact) & _OPERATION_MARKERS or not isinstance(fact.value, str):
+    for fact in context.facts:
+        if not isinstance(fact.value, str) or not _names_injured_anatomy(fact):
             continue
-        named = regions_named_by(fact.value)
-        if named:
-            regions |= named
+        if context.words(fact) & _OPERATION_MARKERS:
+            continue
+        claimed = regions_asserted_by(fact.value)
+        if claimed:
+            regions |= claimed
             cited.append(fact.id)
     return frozenset(regions), tuple(cited)
 
@@ -405,6 +503,18 @@ def _label(region: str) -> str:
     return region.replace("_", " ")
 
 
+def _procedure_label(code: str) -> str:
+    """How to name a code's anatomy in a message.
+
+    A code compatible with the whole spine is reported as the spine rather than as a
+    list of every segment it could be.
+    """
+    regions = compatible_regions(code)
+    if _SPINE in regions:
+        regions = frozenset({_SPINE})
+    return ", ".join(sorted(_label(region) for region in regions))
+
+
 def detect(context: RuleContext) -> Iterator[Finding]:
     """Report operations this record places on anatomy it never claims was injured."""
     injured, cited = _injured_regions(context)
@@ -419,7 +529,7 @@ def detect(context: RuleContext) -> Iterator[Finding]:
             severity="error",
             message=(
                 f"{fact.field} asserts CPT {code}, an operation on the "
-                f"{_label(OPERATIVE_CPT_ANATOMY[code])}, in {context.source_of(fact)}; "
+                f"{_procedure_label(code)}, in {context.source_of(fact)}; "
                 f"the recorded injured body part(s) are {injured_label}. "
                 "Resolve against source evidence."
             ),

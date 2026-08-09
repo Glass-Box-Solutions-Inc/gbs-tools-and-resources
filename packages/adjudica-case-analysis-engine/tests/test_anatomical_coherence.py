@@ -14,10 +14,13 @@ from adjudica_case_analysis_engine.cli import cli
 from adjudica_case_analysis_engine.input import normalize_paths
 from adjudica_case_analysis_engine.rules import run_rules
 from adjudica_case_analysis_engine.rules.anatomical_coherence import (
+    LOCALIZABLE_UNLISTED_CPT_ANATOMY,
     NON_OPERATIVE_CPT_CODES,
+    NONLOCALIZABLE_UNLISTED_CPT_CODES,
     OPERATIVE_CPT_ANATOMY,
     UNLISTED_CPT_CODES,
     contradicts,
+    regions_asserted_by,
     regions_named_by,
 )
 
@@ -44,6 +47,12 @@ def test_the_three_code_classes_are_disjoint() -> None:
     assert not operative & NON_OPERATIVE_CPT_CODES
     assert not operative & UNLISTED_CPT_CODES
     assert not NON_OPERATIVE_CPT_CODES & UNLISTED_CPT_CODES
+    # And the two halves of the unlisted class partition it exactly.
+    assert not set(LOCALIZABLE_UNLISTED_CPT_ANATOMY) & NONLOCALIZABLE_UNLISTED_CPT_CODES
+    assert (
+        set(LOCALIZABLE_UNLISTED_CPT_ANATOMY) | NONLOCALIZABLE_UNLISTED_CPT_CODES
+        == UNLISTED_CPT_CODES
+    )
 
 
 def test_every_table_entry_is_a_five_digit_code_naming_a_known_region() -> None:
@@ -52,6 +61,10 @@ def test_every_table_entry_is_a_five_digit_code_naming_a_known_region() -> None:
     assert all(len(code) == 5 and code.isdigit() for code in every_code)
     for code, region in OPERATIVE_CPT_ANATOMY.items():
         assert regions_named_by(region.replace("_", " ")), f"{code} names unmatchable {region!r}"
+    for code, regions in LOCALIZABLE_UNLISTED_CPT_ANATOMY.items():
+        assert regions, f"{code} is listed as localizable but names no region"
+        for region in regions:
+            assert regions_named_by(region.replace("_", " ")), f"{code}: unmatchable {region!r}"
 
 
 def test_the_codes_this_detector_exists_for_are_all_covered() -> None:
@@ -112,6 +125,33 @@ def test_an_unknown_or_non_operative_code_never_contradicts() -> None:
     assert not contradicts("64483", frozenset({"wrist"}))
     assert not contradicts("64999", frozenset({"wrist"}))
     assert not contradicts("29827", frozenset())
+
+
+def test_a_localizable_unlisted_code_is_still_checked() -> None:
+    """23929 is "unlisted procedure, shoulder" — it names an area even with no procedure."""
+    assert contradicts("23929", frozenset({"wrist"}))
+    assert not contradicts("23929", frozenset({"shoulder"}))
+    assert contradicts("28899", frozenset({"shoulder"}))
+    assert not contradicts("28899", frozenset({"foot"}))
+    assert contradicts("22899", frozenset({"knee"}))
+    assert not contradicts("22899", frozenset({"lumbar_spine"}))
+
+
+def test_a_nonlocalizable_unlisted_code_stays_silent() -> None:
+    """Codes meaning any arthroscopy or any nerve name no body area to contradict."""
+    assert not contradicts("29999", frozenset({"wrist"}))
+    assert not contradicts("64999", frozenset({"wrist"}))
+
+
+def test_negated_anatomy_is_not_an_assertion() -> None:
+    """A denial names a region without claiming it; regions_named_by stays purely lexical."""
+    assert regions_named_by("No shoulder injury") == frozenset({"shoulder"})
+    assert regions_asserted_by("No shoulder injury") == frozenset()
+    assert regions_asserted_by("Patient denies shoulder complaints") == frozenset()
+    assert regions_asserted_by("shoulder ruled out") == frozenset()
+    # An affirmative mention in the same string is kept.
+    assert regions_asserted_by("Wrist sprain; no shoulder injury") == frozenset({"wrist"})
+    assert regions_asserted_by("Lumbar strain") == frozenset({"lumbar_spine"})
 
 
 # ── The detector over a ledger ───────────────────────────────────────────────
@@ -301,6 +341,110 @@ def test_a_bare_number_outside_a_code_field_is_not_a_code(tmp_path: Path) -> Non
     assert CODE not in _codes(findings)
 
 
+def test_a_generic_code_field_is_not_a_procedure_code(tmp_path: Path) -> None:
+    """A postal code is not a CPT. "code" alone is not affirmative procedure vocabulary."""
+    for field in ("postalCode", "authorizationCode", "diagnosisCode", "facilityCode", "zipCode"):
+        findings = _findings(
+            tmp_path,
+            {
+                "injury": {"body_part": "right wrist"},
+                "caseFacts": {"surgery": {"status": "performed", field: "29827"}},
+            },
+        )
+        assert CODE not in _codes(findings), field
+
+
+def test_the_fields_that_do_name_procedure_codes_are_still_read(tmp_path: Path) -> None:
+    """Narrowing the code vocabulary must not disarm the detector on real code fields."""
+    for field in ("cptCode", "cpt", "procedureCode", "surgicalCode", "cpt_code"):
+        findings = _findings(
+            tmp_path,
+            {
+                "injury": {"body_part": "right wrist"},
+                "caseFacts": {"surgery": {"status": "performed", field: "29827"}},
+            },
+        )
+        assert _codes(findings) == [CODE], field
+
+
+def test_incidental_anatomy_in_prose_does_not_mask_a_contradiction(tmp_path: Path) -> None:
+    """A mechanism mentioning the shoulder does not make the shoulder injured.
+
+    Masking a real finding is the costlier failure: a false negative is invisible,
+    where a false positive at least announces itself.
+    """
+    findings = _findings(
+        tmp_path,
+        {
+            "injury": {"body_part": "right wrist", "mechanism": "lifting to shoulder height"},
+            "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}},
+        },
+    )
+
+    assert _codes(findings) == [CODE]
+
+
+def test_negated_anatomy_does_not_mask_a_contradiction(tmp_path: Path) -> None:
+    """A record that rules a region out has not claimed it as injured."""
+    for prose in (
+        "No shoulder injury",
+        "Patient denies shoulder complaints",
+        "shoulder ruled out",
+    ):
+        findings = _findings(
+            tmp_path,
+            {
+                "injury": {"body_part": "right wrist"},
+                "diagnosis": prose,
+                "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}},
+            },
+        )
+        assert _codes(findings) == [CODE], prose
+
+
+def test_an_affirmative_diagnosis_still_names_injured_anatomy(tmp_path: Path) -> None:
+    """The positive control: a real shoulder diagnosis must still clear a shoulder operation."""
+    findings = _findings(
+        tmp_path,
+        {
+            "diagnosis": "Full-thickness rotator cuff tear of the left shoulder",
+            "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}},
+        },
+    )
+
+    assert CODE not in _codes(findings)
+
+
+def test_an_unrelated_uncoded_claim_does_not_suppress_an_operation(tmp_path: Path) -> None:
+    """Each promoted claim is its own record; one claim's flag is not another claim's."""
+    findings = _findings(
+        tmp_path,
+        {
+            "claims": [
+                {"field": "injury_body_part", "value": "right wrist"},
+                {"field": "surgery_cpt_code", "value": "29827"},
+                {"field": "uncoded", "value": True},
+            ]
+        },
+    )
+
+    assert _codes(findings) == [CODE]
+
+
+def test_a_localizable_unlisted_operation_is_flagged(tmp_path: Path) -> None:
+    """An unlisted shoulder procedure on a wrist case is still the wrong body area."""
+    findings = _findings(
+        tmp_path,
+        {
+            "injury": {"body_part": "right wrist"},
+            "caseFacts": {"surgery": {"status": "performed", "cptCode": "23929"}},
+        },
+    )
+
+    assert _codes(findings) == [CODE]
+    assert "shoulder" in findings[0].message
+
+
 def test_wrong_segment_within_the_spine_is_flagged(tmp_path: Path) -> None:
     """A thoracic case publishing a lumbar discectomy is the subtler AJC-55 defect."""
     findings = _findings(
@@ -353,7 +497,12 @@ def test_a_matching_operation_across_two_inputs_is_clean() -> None:
 
 
 def test_a_contradiction_across_two_inputs_fails_the_validate_cli() -> None:
-    """An error-severity finding is what turns a corpus regression into a red gate."""
+    """An error-severity finding is what turns a corpus regression into a red gate.
+
+    Both exit codes are asserted exactly: "any nonzero" would be satisfied by a crash,
+    and a clean run that never asserts success cannot catch a detector that fires on
+    everything.
+    """
     result = CliRunner().invoke(
         cli,
         [
@@ -363,8 +512,13 @@ def test_a_contradiction_across_two_inputs_fails_the_validate_cli() -> None:
         ],
     )
 
-    assert result.exit_code != 0
-    assert CODE in result.output
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    contradictions = [item for item in payload["findings"] if item["code"] == CODE]
+    assert len(contradictions) == 1
+    assert contradictions[0]["severity"] == "error"
+    assert contradictions[0]["category"] == "medical"
+    assert contradictions[0]["factIds"]
 
     clean = CliRunner().invoke(
         cli,
@@ -374,4 +528,7 @@ def test_a_contradiction_across_two_inputs_fails_the_validate_cli() -> None:
             str(FIXTURES / "anatomy_manifest_wrist.json"),
         ],
     )
-    assert CODE not in clean.output
+    assert clean.exit_code == 0, clean.output
+    clean_payload = json.loads(clean.output)
+    assert isinstance(clean_payload["findings"], list)
+    assert CODE not in [item["code"] for item in clean_payload["findings"]]

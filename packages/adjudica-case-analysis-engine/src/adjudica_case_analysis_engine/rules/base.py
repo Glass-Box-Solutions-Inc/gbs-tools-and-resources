@@ -52,13 +52,31 @@ def source_of(fact: Fact) -> str:
 
 
 def parent_path(source_path: str) -> str:
-    """The path of the record a scalar hangs off.
+    """The path of the mapping a scalar hangs off.
 
     Mapping keys containing path-structural characters are escaped upstream, so
     splitting on the final separator can never cut a key in half.
     """
     head, separator, _ = source_path.rpartition(".")
     return head if separator else source_path
+
+
+def record_key(fact: Fact) -> tuple[str, str]:
+    """The record a fact belongs to: its input label, plus that record's path.
+
+    A promoted claim names its own field and is a self-contained assertion, and a
+    terminal scalar list element is a value in its own right — each is its own record.
+    Grouping either at the dotted parent would collapse every claim in a file, or every
+    element of one list, into a single record, letting an unrelated entry's flag speak
+    for all of them: one ``{"field": "uncoded", "value": true}`` claim would suppress
+    every other claim's operation.
+
+    A scalar field inside a mapping record keeps its parent, so ``surgeries[0].cptCode``
+    still sees ``surgeries[0].uncoded`` — which is the grouping detectors rely on.
+    """
+    if fact.scope == "claim" or fact.source_path.endswith("]"):
+        return (source_of(fact), fact.source_path)
+    return (source_of(fact), parent_path(fact.source_path))
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,9 +101,7 @@ class RuleContext:
         """Index a ledger for rule execution."""
         ordered = tuple(facts)
         vocabulary = {fact.id: tokens(f"{fact.field} {fact.source_path}") for fact in ordered}
-        record_keys = {
-            fact.id: (source_of(fact), parent_path(fact.source_path)) for fact in ordered
-        }
+        record_keys = {fact.id: record_key(fact) for fact in ordered}
         grouped: dict[tuple[str, str], list[Fact]] = defaultdict(list)
         for fact in ordered:
             grouped[record_keys[fact.id]].append(fact)
