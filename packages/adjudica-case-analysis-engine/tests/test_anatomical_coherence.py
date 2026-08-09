@@ -289,13 +289,19 @@ def test_a_case_with_no_recognized_injured_part_is_not_flagged(tmp_path: Path) -
 
 
 def test_the_operated_part_is_never_read_back_as_an_injured_part(tmp_path: Path) -> None:
-    """surgery.bodyPart is chosen with the code, so trusting it would disarm the detector."""
+    """An operation record's own body part is chosen with the code, so trusting it
+    would let the check answer itself.
+
+    Deliberately uses `injuredPart` under the surgery namespace: `surgery.bodyPart` is
+    already refused by shape, so it would no longer exercise the operation-surface
+    guard this test exists to cover.
+    """
     findings = _findings(
         tmp_path,
         {
             "injury": {"body_part": "right wrist"},
             "caseFacts": {
-                "surgery": {"status": "performed", "cptCode": "29827", "bodyPart": "shoulder"}
+                "surgery": {"status": "performed", "cptCode": "29827", "injuredPart": "shoulder"}
             },
         },
     )
@@ -398,6 +404,59 @@ def test_prose_alone_leaves_nothing_to_contradict(tmp_path: Path) -> None:
     )
 
     assert CODE not in _codes(findings)
+
+
+def test_injured_anatomy_is_read_only_from_enumerated_shapes(tmp_path: Path) -> None:
+    """A recognized leaf name in the wrong namespace is not an injury claim.
+
+    The generator seed really carries `scenario.diagnostics[].body_part` — a diagnostic
+    scoped to a region, including regions explicitly *not* imaged — and a history block
+    can carry `priorInjury.bodyPart`. Accepting a leaf name wherever it appeared let any
+    of them silently clear a contradiction.
+    """
+    for extra in (
+        {"scenario": {"diagnostics": {"absent": [{"body_part": "shoulder"}]}}},
+        {"scenario": {"diagnostics": [{"modality": "mri", "body_part": "shoulder"}]}},
+        {"exam": {"body_parts": [{"part": "shoulder"}]}},
+        {"medicalHistory": {"priorInjury": {"bodyPart": "shoulder"}}},
+    ):
+        findings = _findings(
+            tmp_path,
+            {
+                "injury": {"body_parts": [{"part": "right wrist"}]},
+                **extra,
+                "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}},
+            },
+        )
+        assert _codes(findings) == [CODE], extra
+
+
+def test_every_enumerated_shape_has_a_positive_control(tmp_path: Path) -> None:
+    """Each shape in the closed list must actually clear a matching operation."""
+    for payload in (
+        {"injury": {"body_part": "shoulder"}},
+        {"injury": {"body_parts": ["shoulder"]}},
+        {"injury": {"body_parts": [{"part": "shoulder"}]}},
+        {"case": {"injury": {"body_part": "shoulder"}}},
+        {"injuredPart": "shoulder"},
+        {"injurySite": "shoulder"},
+    ):
+        findings = _findings(
+            tmp_path,
+            {**payload, "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}}},
+        )
+        assert CODE not in _codes(findings), payload
+
+
+def test_current_care_records_are_not_historical(tmp_path: Path) -> None:
+    """`priorAuthorization` and `historyAndPhysical` read historical word by word but
+    describe care being requested or given now — the classification is by namespace."""
+    for extra in (
+        {"priorAuthorization": {"surgery": {"cptCode": "29827"}}},
+        {"historyAndPhysical": {"currentSurgery": {"cptCode": "29827"}}},
+    ):
+        findings = _findings(tmp_path, {"injury": {"body_part": "right wrist"}, **extra})
+        assert _codes(findings) == [CODE], extra
 
 
 def test_a_non_injury_region_field_is_not_an_injured_part(tmp_path: Path) -> None:

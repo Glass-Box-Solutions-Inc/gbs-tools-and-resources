@@ -65,20 +65,24 @@ yield nothing. A finding needs the table to place the operation outside *every* 
 region.
 
 A prior operation is not this case's operation either: `priorCptCode` and
-`medicalHistory.priorSurgeries[]` describe anatomy that is *expected* to differ, so historical
-vocabulary takes a fact out of consideration entirely.
+`medicalHistory.priorSurgeries[]` describe anatomy that is *expected* to differ. That is classified
+by namespace rather than by word — `priorAuthorization` and `historyAndPhysical` read historical
+token by token but hold current care, and a flat token scan dropped exactly the operations the pack
+exists to check.
 
 It is equally careful about the other direction, where the failure is quieter. Injured anatomy is
-read only from fields that state it outright — `bodyPart`, `body_parts`, `injuredPart`, `injurySite`,
-and the seed's `injury.body_parts[].part`. Free-form prose is not read for anatomy at all, in either
-direction, and neither are `examinedRegion`, `serviceRegion`, or `condition`: they pair anatomy
-vocabulary with a fact that is not an injury claim, and admitting one would silently clear a
+read only from an enumerated set of path shapes (`injury.body_parts[].part`, `injury.body_part`,
+`injuredPart`, `injurySite`, …). A recognized leaf name in the wrong namespace does not qualify:
+`scenario.diagnostics[].body_part`, `exam.body_parts[].part` and `medicalHistory.priorInjury.bodyPart`
+all name anatomy without claiming this case injured it, and admitting one would silently clear a
 contradictory operation.
 
-Declining prose is deliberate. Deciding whether "No evidence of injury to shoulder" asserts or denies
-the shoulder means resolving negation scope across clauses, and no proximity rule handles both
-"wrist sprain; no shoulder injury" and its reverse. Structured body-part fields are always
-materialized here, so the parsing problem is refused rather than half-solved.
+Both selectors are closed worlds rather than vocabulary rules. The archive grammar is knowable, so it
+is enumerated; an unrecognized shape costs a finding rather than inventing one — the same trade the
+package already makes for unknown procedure codes. Free-form prose is not read for anatomy at all, in
+either direction: deciding whether "No evidence of injury to shoulder" asserts or denies the shoulder
+means resolving negation scope across clauses, and no proximity rule handles both "wrist sprain; no
+shoulder injury" and its reverse.
 
 Findings from every registered pack merge into `analyze` reports and into the `validate` exit code
 through one shared definition, so the report and the gate cannot disagree about whether a case is

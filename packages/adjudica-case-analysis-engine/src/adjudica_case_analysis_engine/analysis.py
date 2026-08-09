@@ -30,13 +30,23 @@ def _in_report_order(findings: tuple[Finding, ...]) -> tuple[Finding, ...]:
     return tuple(sorted(findings, key=lambda item: (item.severity, item.code, item.fact_ids)))
 
 
+def canonical_order(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Fact, ...]:
+    """One ledger order for every consumer, independent of how the caller assembled it."""
+    return tuple(sorted(facts, key=lambda item: (item.category, item.field, item.id)))
+
+
 def review_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
     """Every finding a ledger yields: integrity checks plus every registered rule pack.
 
     The single definition of "what is wrong with this record", so the report and the
     ``validate`` exit code can never disagree about whether a case is sound.
+
+    The ledger is canonicalized here rather than by each caller. ``analyze_facts`` sorts
+    facts by domain while CLI normalization sorts them by value, so a rule accumulating
+    citations in ledger order emitted one finding with two different ``factIds``
+    orderings depending on which surface asked.
     """
-    ordered = tuple(facts)
+    ordered = canonical_order(facts)
     return _in_report_order(validate_facts(ordered) + run_rules(ordered))
 
 
@@ -44,7 +54,7 @@ def analyze_facts(
     facts: tuple[Fact, ...] | list[Fact], *, skipped: tuple[str, ...] = ()
 ) -> AnalysisReport:
     """Analyze supplied facts only; legal conclusions need a separate sourced authority adapter."""
-    canonical_facts = tuple(sorted(facts, key=lambda item: (item.category, item.field, item.id)))
+    canonical_facts = canonical_order(facts)
     findings = review_facts(canonical_facts)
     if skipped:
         findings = _in_report_order(

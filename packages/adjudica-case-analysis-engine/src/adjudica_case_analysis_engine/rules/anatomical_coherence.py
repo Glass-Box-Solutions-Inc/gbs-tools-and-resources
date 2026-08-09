@@ -50,24 +50,31 @@ unclassified code would put noise on every case, and the table's real gap signal
 recall measured over a scored corpus, not a per-case remark.
 
 A prior operation is likewise not this case's operation. ``priorCptCode`` and
-``medicalHistory.priorSurgeries[]`` describe anatomy that is *expected* to differ, and
-a history ledger makes them routine, so historical vocabulary on a fact's field or path
-takes it out of consideration entirely.
+``medicalHistory.priorSurgeries[]`` describe anatomy that is *expected* to differ, and a
+history ledger makes them routine. That is classified by **namespace**, not by token:
+``priorAuthorization`` and ``historyAndPhysical`` read historical word by word yet hold
+current care, and a flat token scan discarded exactly the operations this pack checks.
+See :data:`HISTORICAL_NAMESPACES` and :data:`CURRENT_CARE_NAMESPACES`.
 
 Restraint cuts the other way too, and that failure mode is quieter. A body part merely
-*mentioned* is not one that was injured, so injured anatomy is read **only** from
-fields that state it outright — ``bodyPart``, ``body_parts``, ``injuredPart``,
-``injurySite``, and the seed's ``injury.body_parts[].part``. Free-form prose is not read
-for anatomy at all, in either direction.
+*mentioned* is not one that was injured, so injured anatomy is read only from the
+enumerated path shapes in :data:`INJURED_PART_PATH_SHAPES`. A recognized leaf name in
+the wrong namespace does not qualify — ``scenario.diagnostics[].body_part``,
+``exam.body_parts[].part`` and ``medicalHistory.priorInjury.bodyPart`` all name anatomy
+without claiming this case injured it.
 
-That last point is a deliberate refusal rather than a gap. Deciding whether "No evidence
-of injury to shoulder" asserts or denies the shoulder means resolving negation scope
-across clauses, and every proximity rule tried got some ordering wrong — "wrist sprain;
-no shoulder injury" and its reverse cannot both be handled by a window. Since structured
-body-part fields are always materialized in this corpus, the parsing problem is declined
-outright instead of half-solved. ``examinedRegion``, ``serviceRegion`` and ``condition``
-are excluded for the same reason: they pair anatomy vocabulary with a fact that is not
-an injury claim, and admitting one would silently clear a contradictory operation.
+Both selectors are closed worlds rather than vocabulary rules, and that is deliberate.
+Three review rounds redrew the same boundary by adding and subtracting tokens, each time
+leaving another namespace on the wrong side of it. The archive grammar is knowable, so
+it is enumerated; an unrecognized shape costs a finding rather than inventing one, which
+is the trade this package already makes for unknown procedure codes.
+
+Free-form prose is not read for anatomy at all, in either direction, and that is a
+refusal rather than a gap. Deciding whether "No evidence of injury to shoulder" asserts
+or denies the shoulder means resolving negation scope across clauses, and no proximity
+rule handles both "wrist sprain; no shoulder injury" and its reverse. Structured
+body-part fields are always materialized in this corpus, so the parsing problem is
+declined outright instead of half-solved.
 
 Maintenance contract
 --------------------
@@ -93,8 +100,13 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from adjudica_case_analysis_engine.models import Fact, Finding
-from adjudica_case_analysis_engine.rules.base import Rule, RuleContext, parent_path
-from adjudica_case_analysis_engine.text import canonical_field, split_words, tokens
+from adjudica_case_analysis_engine.rules.base import Rule, RuleContext
+from adjudica_case_analysis_engine.text import (
+    canonical_field,
+    split_words,
+    tokens,
+    unescape_segment,
+)
 
 #: The finding code this pack owns.
 ANATOMICAL_CONTRADICTION = "anatomical_contradiction"
@@ -290,44 +302,100 @@ _SPINE_SEGMENTS = frozenset({"cervical_spine", "thoracic_spine", "lumbar_spine"}
 #: and admitting it would pull every billed line into the operative surface.
 _OPERATION_MARKERS = frozenset({"surgery", "surgeries", "surgical", "operation", "operative"})
 
-#: Canonical field names that state which body part was injured.
+#: The closed world of path shapes that assert *this case's* injured anatomy.
 #:
-#: An allowlist of explicit shapes rather than a token intersection. ``examinedRegion``,
-#: ``serviceRegion``, ``exam.site`` and ``condition`` all pair anatomy vocabulary with a
-#: fact that is not an injury claim, and any one of them would silently clear a
-#: contradictory operation. Only a field that says outright what was *injured* counts.
-_INJURED_PART_FIELDS = frozenset(
+#: A shape is a normalized path suffix: list indices collapse to ``[]`` and every segment
+#: is canonicalized, so ``$.case.injury.body_parts[0].part`` matches
+#: ``injury.body_parts[].part``. Matching a suffix tolerates the wrappers real archives
+#: add (``case.``, ``caseFacts.``) while keeping the namespace itself exact.
+#:
+#: **A leaf name alone never qualifies**, and that is the whole point. The generator seed
+#: carries ``scenario.diagnostics[].body_part`` — a diagnostic scoped to a region,
+#: including regions deliberately *not* imaged; an examination carries
+#: ``exam.body_parts[].part``; a history block carries
+#: ``medicalHistory.priorInjury.bodyPart``. Every one names anatomy without claiming this
+#: case injured it, and admitting any one silently clears a contradictory operation.
+#:
+#: Enumerating is affordable because the archive grammar is knowable, and an unrecognized
+#: shape costs a finding rather than inventing one — which is this package's standing
+#: trade everywhere else.
+INJURED_PART_PATH_SHAPES: frozenset[str] = frozenset(
     {
-        "body_part",
-        "body_parts",
+        # The generator seed's injury block (wc_caseload_engine InjurySpec.body_parts).
+        "injury.body_parts[].part",
+        "injury.body_parts[]",
+        "injury.body_parts",
+        # Document-intake extraction shapes.
+        "injury.body_part",
+        "injury.site",
+        "injury.sites[]",
+        "injuries[].body_part",
+        "injuries[].body_parts[]",
+        # Self-describing names, which carry the namespace inside the field itself.
         "injured_part",
         "injured_parts",
+        "injured_parts[]",
         "injured_body_part",
         "injured_body_parts",
+        "injured_body_parts[]",
         "injury_body_part",
         "injury_body_parts",
-        "body_part_injured",
-        "body_parts_injured",
+        "injury_body_parts[]",
         "injury_site",
         "injury_sites",
+        "injury_sites[]",
         "injured_site",
-        "injured_sites",
-        "part_of_body",
-        "parts_of_body",
+        "body_part_injured",
+        "body_parts_injured",
     }
 )
 
-#: Leaf names that carry the body part when the collection above them names the claim —
-#: the generator seed's ``injury.body_parts[].part`` shape.
-_PART_ELEMENT_FIELDS = frozenset({"part", "parts"})
+#: Namespaces whose contents describe the patient's past rather than this case.
+HISTORICAL_NAMESPACES: frozenset[str] = frozenset(
+    {
+        "medical_history",
+        "surgical_history",
+        "past_medical_history",
+        "prior_surgeries",
+        "prior_surgery",
+        "previous_surgeries",
+        "past_surgeries",
+        "prior_injury",
+        "prior_injuries",
+        "prior_treatment",
+        "history",
+    }
+)
 
-#: Vocabulary marking a fact as describing the past rather than this case.
+#: Namespaces that read as historical word by word but hold current-care records.
 #:
-#: A prior operation on other anatomy is ordinary content, and a medical-history ledger
-#: makes it routine, so reading one as this case's operation would fire on every file
-#: that records a patient's history.
-_HISTORICAL_MARKERS = frozenset(
-    {"prior", "priors", "previous", "previously", "history", "historical", "past"}
+#: ``priorAuthorization`` is a request to authorize an operation *now*, and
+#: ``historyAndPhysical`` is the admission note for the current episode. A flat token
+#: scan discarded both, silently dropping exactly the operations this pack exists to
+#: check — so classification is by whole namespace, and current care wins where both
+#: appear.
+CURRENT_CARE_NAMESPACES: frozenset[str] = frozenset(
+    {
+        "prior_authorization",
+        "prior_authorizations",
+        "history_and_physical",
+        "current_surgery",
+        "current_treatment",
+        "current_care",
+        "current_episode",
+    }
+)
+
+#: Field names marking the code itself as a record of a past operation.
+HISTORICAL_CODE_FIELDS: frozenset[str] = frozenset(
+    {
+        "prior_cpt_code",
+        "previous_cpt_code",
+        "past_cpt_code",
+        "prior_procedure_code",
+        "previous_procedure_code",
+        "prior_surgical_code",
+    }
 )
 
 #: Field vocabulary that makes a bare five-digit value readable as a procedure code.
@@ -472,16 +540,49 @@ def _declares_uncoded(context: RuleContext, fact: Fact) -> bool:
     return False
 
 
+def _shape_segments(source_path: str) -> tuple[str, ...]:
+    """A path reduced to its shape: indices collapse to ``[]``, segments canonicalize."""
+    segments: list[str] = []
+    for raw in source_path.split("."):
+        if not raw or raw == "$":
+            continue
+        name, bracket, _ = raw.partition("[")
+        canonical = canonical_field(unescape_segment(name))
+        segments.append(f"{canonical}[]" if bracket else canonical)
+    return tuple(segments)
+
+
+#: :data:`INJURED_PART_PATH_SHAPES`, pre-split for suffix comparison.
+_INJURED_PART_SHAPES: tuple[tuple[str, ...], ...] = tuple(
+    tuple(shape.split(".")) for shape in INJURED_PART_PATH_SHAPES
+)
+
+
 def _names_injured_anatomy(fact: Fact) -> bool:
-    """Whether this fact's own field states which body part was injured."""
-    name = canonical_field(fact.field)
-    if name in _INJURED_PART_FIELDS:
+    """Whether this fact sits at a shape that asserts this case's injured anatomy."""
+    if fact.scope == "claim":
+        # A promoted claim names its own field; its path is the container, not a shape.
+        return (canonical_field(fact.field),) in _INJURED_PART_SHAPES
+    segments = _shape_segments(fact.source_path)
+    return any(
+        len(shape) <= len(segments) and segments[len(segments) - len(shape) :] == shape
+        for shape in _INJURED_PART_SHAPES
+    )
+
+
+def _is_historical(fact: Fact) -> bool:
+    """Whether a fact records a past operation rather than this case's.
+
+    Classified by whole namespace rather than by token, because ``priorAuthorization``
+    and ``historyAndPhysical`` are current-care records whose names read historical word
+    by word. Current care wins wherever both classifications appear.
+    """
+    if canonical_field(fact.field) in HISTORICAL_CODE_FIELDS:
         return True
-    if name not in _PART_ELEMENT_FIELDS:
+    namespaces = {segment.removesuffix("[]") for segment in _shape_segments(fact.source_path)}
+    if namespaces & CURRENT_CARE_NAMESPACES:
         return False
-    # The seed's shape: the element holds the part, the collection makes it a claim.
-    words = tokens(parent_path(fact.source_path))
-    return "body" in words and bool(words & _PART_ELEMENT_FIELDS)
+    return bool(namespaces & HISTORICAL_NAMESPACES)
 
 
 def _injured_regions(context: RuleContext) -> tuple[frozenset[str], tuple[str, ...]]:
@@ -508,9 +609,7 @@ def _injured_regions(context: RuleContext) -> tuple[frozenset[str], tuple[str, .
 def _asserted_operations(context: RuleContext) -> Iterator[tuple[Fact, str]]:
     """Every procedure code asserted as this case's operation, in ledger order."""
     for fact in context.matching(_OPERATION_MARKERS):
-        if context.words(fact) & _HISTORICAL_MARKERS:
-            continue
-        if _declares_uncoded(context, fact):
+        if _is_historical(fact) or _declares_uncoded(context, fact):
             continue
         for code in _codes_asserted_by(fact):
             yield fact, code
@@ -550,7 +649,8 @@ def detect(context: RuleContext) -> Iterator[Finding]:
                 f"the recorded injured body part(s) are {injured_label}. "
                 "Resolve against source evidence."
             ),
-            fact_ids=(fact.id, *cited),
+            # Sorted so no ledger ordering can change the emitted contract's bytes.
+            fact_ids=(fact.id, *sorted(cited)),
             category="medical",
         )
 

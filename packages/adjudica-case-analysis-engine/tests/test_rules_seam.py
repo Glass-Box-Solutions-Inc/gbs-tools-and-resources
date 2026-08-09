@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from adjudica_case_analysis_engine.analysis import analyze_paths, review_facts
+from adjudica_case_analysis_engine.analysis import analyze_facts, analyze_paths, review_facts
 from adjudica_case_analysis_engine.cli import cli
 from adjudica_case_analysis_engine.input import normalize_paths
 from adjudica_case_analysis_engine.models import Finding
@@ -237,3 +237,46 @@ def test_the_gate_and_the_report_cannot_disagree_about_a_contradiction() -> None
     result = CliRunner().invoke(cli, ["validate", *(str(path) for path in inputs)])
     assert result.exit_code == 1
     assert json.loads(result.output)["findings"] == [finding.as_dict() for finding in shared]
+
+
+def test_the_finding_contract_never_depends_on_caller_order(tmp_path: Path) -> None:
+    """Both surfaces canonicalize the ledger once, so factIds cannot diverge.
+
+    `analyze_facts` re-sorts facts by (category, field, id) while CLI normalization
+    sorts by value — so a rule accumulating citations in ledger order emitted the same
+    finding with differently ordered factIds depending on which surface asked.
+    """
+    bodies = {
+        "forward.json": {
+            "injury": {"body_parts": ["right wrist", "left wrist"]},
+            "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}},
+        },
+        "reverse.json": {
+            "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}},
+            "injury": {"body_parts": ["right wrist", "left wrist"]},
+        },
+    }
+    for name, body in bodies.items():
+        source = tmp_path / name
+        source.write_text(json.dumps(body), encoding="utf-8")
+        facts = normalize_paths([source])
+
+        shared = [item for item in review_facts(facts) if item.code == "anatomical_contradiction"]
+        assert len(shared) == 1, name
+        # Citations are sorted, so no rule can make contract bytes ledger-order-dependent.
+        assert shared[0].fact_ids[1:] == tuple(sorted(shared[0].fact_ids[1:])), name
+
+        from_report = [
+            item
+            for item in analyze_facts(facts).findings
+            if item.code == "anatomical_contradiction"
+        ]
+        result = CliRunner().invoke(cli, ["validate", str(source)])
+        from_cli = [
+            item
+            for item in json.loads(result.output)["findings"]
+            if item["code"] == "anatomical_contradiction"
+        ]
+
+        assert from_report == shared, name
+        assert from_cli == [item.as_dict() for item in shared], name
