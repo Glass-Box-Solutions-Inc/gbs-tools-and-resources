@@ -7,6 +7,7 @@ from pathlib import Path
 
 from adjudica_case_analysis_engine.input import normalize_paths_report
 from adjudica_case_analysis_engine.models import AnalysisReport, Angle, Fact, Finding
+from adjudica_case_analysis_engine.rules import run_rules
 from adjudica_case_analysis_engine.validation import chronology, validate_facts
 
 _DOMAINS = (
@@ -25,29 +26,40 @@ def analyze_paths(paths: list[Path] | tuple[Path, ...]) -> AnalysisReport:
     return analyze_facts(normalized.facts, skipped=normalized.skipped)
 
 
+def _in_report_order(findings: tuple[Finding, ...]) -> tuple[Finding, ...]:
+    return tuple(sorted(findings, key=lambda item: (item.severity, item.code, item.fact_ids)))
+
+
+def review_facts(facts: tuple[Fact, ...] | list[Fact]) -> tuple[Finding, ...]:
+    """Every finding a ledger yields: integrity checks plus every registered rule pack.
+
+    The single definition of "what is wrong with this record", so the report and the
+    ``validate`` exit code can never disagree about whether a case is sound.
+    """
+    ordered = tuple(facts)
+    return _in_report_order(validate_facts(ordered) + run_rules(ordered))
+
+
 def analyze_facts(
     facts: tuple[Fact, ...] | list[Fact], *, skipped: tuple[str, ...] = ()
 ) -> AnalysisReport:
     """Analyze supplied facts only; legal conclusions need a separate sourced authority adapter."""
     canonical_facts = tuple(sorted(facts, key=lambda item: (item.category, item.field, item.id)))
-    findings = validate_facts(canonical_facts)
+    findings = review_facts(canonical_facts)
     if skipped:
-        findings = tuple(
-            sorted(
-                findings
-                + (
-                    Finding(
-                        code="skipped_metadata_keys",
-                        severity="info",
-                        message=(
-                            f"{len(skipped)} input key(s) were treated as claim metadata and "
-                            "not normalized as facts; see skippedKeys for the full accounting."
-                        ),
-                        fact_ids=(),
-                        category="evidence_quality",
+        findings = _in_report_order(
+            findings
+            + (
+                Finding(
+                    code="skipped_metadata_keys",
+                    severity="info",
+                    message=(
+                        f"{len(skipped)} input key(s) were treated as claim metadata and "
+                        "not normalized as facts; see skippedKeys for the full accounting."
                     ),
+                    fact_ids=(),
+                    category="evidence_quality",
                 ),
-                key=lambda item: (item.severity, item.code, item.fact_ids),
             )
         )
     domains = _domain_summary(canonical_facts, findings)
@@ -93,6 +105,7 @@ def _angles(facts: tuple[Fact, ...], findings: tuple[Finding, ...]) -> tuple[Ang
         for finding in findings
         if finding.code
         in {
+            "anatomical_contradiction",
             "conflicting_fact",
             "chronology_question",
             "low_confidence",

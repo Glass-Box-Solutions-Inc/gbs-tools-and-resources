@@ -9,10 +9,9 @@ import click
 import yaml
 
 from adjudica_case_analysis_engine import __version__
-from adjudica_case_analysis_engine.analysis import analyze_paths
+from adjudica_case_analysis_engine.analysis import analyze_paths, review_facts
 from adjudica_case_analysis_engine.input import normalize_paths, normalize_paths_report
 from adjudica_case_analysis_engine.render import render_json, render_markdown
-from adjudica_case_analysis_engine.validation import validate_facts
 
 
 def _paths(values: tuple[Path, ...]) -> list[Path]:
@@ -72,8 +71,13 @@ def normalize(inputs: tuple[Path, ...], out: Path | None, output_format: str) ->
 )
 @click.option("--out", type=click.Path(dir_okay=False, path_type=Path), default=None)
 def validate(inputs: tuple[Path, ...], out: Path | None) -> None:
-    """Report conflicts, duplicates, missing provenance, and chronology questions."""
-    findings = validate_facts(normalize_paths(_paths(inputs)))
+    """Report integrity defects and rule-pack contradictions in the supplied record.
+
+    Conflicts, duplicates, missing provenance, and chronology questions, plus every
+    registered consistency rule pack — so a corpus regression a pack detects turns
+    this command red rather than only appearing in a report nobody gates on.
+    """
+    findings = review_facts(normalize_paths(_paths(inputs)))
     content = (
         json.dumps(
             {"findings": [finding.as_dict() for finding in findings]}, indent=2, sort_keys=True

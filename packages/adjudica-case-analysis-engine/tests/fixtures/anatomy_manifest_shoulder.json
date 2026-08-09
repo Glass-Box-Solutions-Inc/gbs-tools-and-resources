@@ -1,0 +1,26 @@
+{
+  "caseId": "TC-902",
+  "adjNumber": "ADJ9020001",
+  "applicant": "Jordan Doe",
+  "employer": "Acme Delivery LLC",
+  "documents": [
+    {"subtype": "OPERATIVE_RECORD", "documentDate": "2025-06-02"},
+    {"subtype": "TREATING_PHYSICIAN_REPORT", "documentDate": "2025-02-03"}
+  ],
+  "caseFacts": {
+    "treatment": {"status": "active", "dischargeDate": null},
+    "diagnostics": [
+      {"modality": "mri", "display": "MRI", "performed": true}
+    ],
+    "surgery": {
+      "status": "performed",
+      "cptCode": "29827",
+      "cptDescription": "Arthroscopic rotator cuff repair",
+      "uncoded": false
+    },
+    "providers": [
+      {"name": "Dr. Rivera", "specialty": "Orthopedics", "facility": "Rivera Clinic"}
+    ]
+  },
+  "provenance": {"generator": "wc-synthetic-caseload-engine@0.9.0", "rngSeed": 42}
+}
