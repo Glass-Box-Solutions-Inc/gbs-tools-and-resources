@@ -1064,6 +1064,56 @@ Only the first PD advance has a represented statutory deadline. Later advances
 are `discretionary_advance` schedule entries with a null `statutoryDueDate`, zero
 statutory `daysLate`, and no assessment regardless of cadence lateness.
 
+**Advances past the first are deliberately unassessed, and that is an open
+question rather than a settled reading.** §4650(c) states a cadence for
+continuing payments, and whether it reaches a discretionary permanent-disability
+advance — and on what interval — is exactly the sort of question this package
+refuses to answer for itself. Until counsel confirms it, a later advance that
+misses the engine's own 45-day cadence produces schedule data and nothing else:
+`statutoryDueDate: null`, `daysLate: 0`, no `PenaltyAssessment`. That is
+deliberate **under-**assessment. A corpus consumer scoring an analyzer against
+these labels is being told "this engine does not claim these were late", not
+"these were timely". COUNSEL-UNCONFIRMED.
+
+### The two temporary-disability deadlines, and why only one assesses
+
+Every TD installment is due a fixed interval after **the accrual it pays for**
+closes: `statutoryDueDate = period.end + subsequentTdPaymentDays`, with
+`firstTdPaymentDays` used for installment 1. That is the deadline §4650(d) is
+assessed against, and it is the only anchor that keeps a deadline and the money
+it pays for in the same order.
+
+§4650(a) is separate, and it does **not** assess. It runs its fourteen days from
+the employer's knowledge of the injury **and** of disability — two events this
+engine does not model. The date of injury stands in, and the result is published
+under `caseFacts.money.penalties.firstPaymentRule`:
+
+```json
+"firstPaymentRule": {
+  "anchor": "date_of_injury",
+  "anchorDate": "2021-06-14",
+  "dueDate": "2021-06-28",
+  "datePaid": "2021-08-12",
+  "daysLate": 45,
+  "assessed": false,
+  "counselConfirmed": false
+}
+```
+
+`assessed` is typed as a constant `false`, not a flag. The engine issues
+temporary disability in four-week blocks paid after each block closes, so the
+first payment is structurally later than a strict §4650(a) reading on *every*
+file it generates — assessing that would convict the carrier on every case in
+the corpus for a modelling decision. The number is still exported, because a
+scorer should be able to see the question; it simply never reaches
+`assessments`, `totalIncrease` or `principalAssessed`.
+
+**The open question is the anchor, not only the count.** Whether §4650(a) runs
+from the date of injury or from knowledge of injury and disability decides
+whether that 45 is a violation or an artifact, and this engine does not have the
+facts to decide it. `openQuestion` carries that sentence into the scorer
+artifact so it cannot be lost between here and a consumer. COUNSEL-UNCONFIRMED.
+
 The due-day interval carries its own caveat, `tdPaymentDueAuthority` and
 `tdPaymentDueConfirmed`, rather than borrowing the rate basis's.
 `rate.counselConfirmed` is a claim about the rate table and says nothing about a

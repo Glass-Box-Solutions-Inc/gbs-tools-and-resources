@@ -33,6 +33,7 @@ from wc_caseload_engine.money import (
     BenefitLedger,
     CompRate,
     EarningsPeriod,
+    FirstPaymentRule,
     InKindWage,
     MoneyFacts,
     PdAdvance,
@@ -45,6 +46,7 @@ from wc_caseload_engine.money import (
     StatutoryDueDate,
     TdPeriod,
     WageFacts,
+    _first_payment_rule_block,
     dollars,
     money_manifest_block,
 )
@@ -286,6 +288,9 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
             "totalIncrease": _channel_decimal(penalties.total_increase),
             "principalAssessed": _channel_decimal(penalties.principal_assessed),
         }
+        channel["penalties"]["firstPaymentRule"] = _first_payment_rule_block(
+            penalties.first_payment_rule
+        )
     return channel
 
 
@@ -781,11 +786,34 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
                     )
                 )
             )
+            first_payment_rule = None
+            if penalties_doc.get("firstPaymentRule") is not None:
+                first_payment_rule = FirstPaymentRule(
+                    **_model_data(
+                        _mapping(
+                            penalties_doc["firstPaymentRule"],
+                            "channels.money.penalties.firstPaymentRule",
+                        ),
+                        {
+                            "anchor": "anchor",
+                            "anchorDate": "anchor_date",
+                            "dueDate": "due_date",
+                            "datePaid": "date_paid",
+                            "daysLate": "days_late",
+                            "assessed": "assessed",
+                            "counselConfirmed": "counsel_confirmed",
+                            "authority": "authority",
+                            "openQuestion": "open_question",
+                        },
+                        "channels.money.penalties.firstPaymentRule",
+                    )
+                )
             penalties = PenaltyLedger(
                 basis=penalty_basis,
                 deadlines=deadline_basis,
                 schedule=schedule,
                 assessments=assessments,
+                first_payment_rule=first_payment_rule,
             )
         return MoneyFacts(
             wages=wage,

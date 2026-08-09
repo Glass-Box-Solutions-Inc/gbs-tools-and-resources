@@ -47,6 +47,7 @@ from wc_caseload_engine.case_facts import (
 from wc_caseload_engine.money import (
     GOVERNED_MONEY_FIELDS,
     MoneyFacts,
+    exact,
 )
 from wc_caseload_engine.money import (
     money as quantized_money,
@@ -655,12 +656,51 @@ def _validate_penalties(
             f"{assessment_count!r} but assessments holds {len(assessments)} record(s) — "
             "set the count to the number of published assessments"
         )
-    if not (subtypes & MONEY_BENEFIT_DOCUMENTS):
+    # Gated on there being an assessment to read, exactly like the benefit-event
+    # rule this mirrors. Opting into the statutory test is not itself a claim: a
+    # ledger that asked and found nothing has no figure needing a document to
+    # support it, and firing on the block's mere presence made the documented
+    # "asked, and the answer was nothing" shape fail its own validator.
+    if assessments and not (subtypes & MONEY_BENEFIT_DOCUMENTS):
         problems.append(
             f"{label}: caseFacts.money.penalties publishes {assessment_count!r} "
             "assessment(s) but the case holds 0 benefit-payment documents — add a "
             "benefit-payment surface or remove the penalties block"
         )
+
+    first_payment_rule = penalties.get("firstPaymentRule")
+    if isinstance(first_payment_rule, Mapping):
+        # The one deadline the engine declines to decide must stay undecided.
+        # It is published so a scorer can see the question; an `assessed: true`
+        # here would be the DOI ladder coming back through the export.
+        if first_payment_rule.get("assessed") is not False:
+            problems.append(
+                f"{label}: caseFacts.money.penalties.firstPaymentRule.assessed is "
+                f"{first_payment_rule.get('assessed')!r}, while the §4650(a) anchor is "
+                "recorded and never assessed — publish assessed: false or remove the record"
+            )
+        due_raw = first_payment_rule.get("dueDate")
+        paid_raw = first_payment_rule.get("datePaid")
+        published_late = first_payment_rule.get("daysLate")
+        try:
+            expected_late = (
+                max(0, (date.fromisoformat(str(paid_raw)) - date.fromisoformat(str(due_raw))).days)
+                if paid_raw is not None
+                else 0
+            )
+        except (TypeError, ValueError):
+            problems.append(
+                f"{label}: caseFacts.money.penalties.firstPaymentRule has dueDate "
+                f"{due_raw!r} and datePaid {paid_raw!r}, which are not ISO dates — "
+                "publish both so daysLate is checkable"
+            )
+        else:
+            if published_late != expected_late:
+                problems.append(
+                    f"{label}: caseFacts.money.penalties.firstPaymentRule.daysLate is "
+                    f"{published_late!r}, while datePaid {paid_raw!r} against dueDate "
+                    f"{due_raw!r} is {expected_late} — set daysLate from the published dates"
+                )
 
     assessed_amounts: list[Decimal] = []
     assessed_principals: list[Decimal] = []
@@ -722,7 +762,12 @@ def _validate_penalties(
             principal = Decimal(str(assessment.get("principal")))
             fraction = Decimal(str(assessment.get("increaseFraction")))
             published_amount = Decimal(str(assessment.get("amount")))
-            computed_amount = quantized_money(principal * fraction)
+            # Recomputed in the producer's context, never the caller's. These
+            # figures are made inside `exact()`; checking them under whatever
+            # precision the host process happens to carry lets a hostile ambient
+            # context invent drift and condemn a correct corpus.
+            with exact():
+                computed_amount = quantized_money(principal * fraction)
         except (InvalidOperation, TypeError, ValueError):
             problems.append(
                 f"{label}: caseFacts.money.penalties.assessments[{index}] has "
@@ -744,7 +789,8 @@ def _validate_penalties(
 
     try:
         published_total = Decimal(str(penalties.get("totalIncrease")))
-        computed_total = quantized_money(sum(assessed_amounts, Decimal("0.00")))
+        with exact():
+            computed_total = quantized_money(sum(assessed_amounts, Decimal("0.00")))
         if published_total != computed_total:
             problems.append(
                 f"{label}: caseFacts.money.penalties.totalIncrease is "
@@ -759,7 +805,8 @@ def _validate_penalties(
         )
     try:
         published_principal = Decimal(str(penalties.get("principalAssessed")))
-        computed_principal = quantized_money(sum(assessed_principals, Decimal("0.00")))
+        with exact():
+            computed_principal = quantized_money(sum(assessed_principals, Decimal("0.00")))
         if published_principal != computed_principal:
             problems.append(
                 f"{label}: caseFacts.money.penalties.principalAssessed is "
@@ -1570,6 +1617,22 @@ def _validate_truth_tree(
                 if isinstance(entry, Mapping) and isinstance(entry.get("subtype"), str)
             }
             report.problems.extend(_validate_penalties(penalties, subtypes, case_id))
+
+            # The compact block is the shape a scorer reads, and it was checked
+            # by nothing: the analyzer projection pops `penalties` before the
+            # manifest is written, and the projection comparison above pops it
+            # again — so every assertion landed on the lossless twin while the
+            # shipped bytes went out unexamined. Running the same rules over
+            # `published.penalties` also makes the compact branch of
+            # `_validate_penalties` reachable from a produced artifact for the
+            # first time, rather than only from a hand-built mapping in a test.
+            published_penalties = (
+                published.get("penalties") if isinstance(published, Mapping) else None
+            )
+            if isinstance(published_penalties, Mapping):
+                report.problems.extend(
+                    _validate_penalties(published_penalties, subtypes, f"{case_id} published")
+                )
 
 
 def validate_output_tree(out_dir: Path, allow_fallback: bool = False) -> ValidationReport:

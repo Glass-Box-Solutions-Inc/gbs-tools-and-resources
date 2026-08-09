@@ -11,6 +11,7 @@ boundary test crosses the renderer.
 from __future__ import annotations
 
 import copy
+import decimal
 import json
 import shutil
 from dataclasses import replace
@@ -33,6 +34,7 @@ from wc_caseload_engine.truth_manifest import (
     TRUTH_DIR,
     TruthManifestError,
     build_case_truth_manifest,
+    build_caseload_truth_manifest,
     check_truth_dir_is_isolated,
     money_facts_from_truth,
     read_truth_manifest,
@@ -47,6 +49,19 @@ LEGITIMATE_SCORER_VOCABULARY_OVERLAPS: dict[str, str] = {
     "datePaid": "public benefit entries expose the payment date printed on documents",
     "daysLate": "public benefit entries expose the lateness printed on documents",
     "amount": "public wage and benefit entries expose printed currency facts",
+}
+
+ENVELOPE_KEYS_THAT_ARE_NOT_SENTINELS: dict[str, str] = {
+    # The completeness guard below forces every emitted envelope key to be
+    # classified. These are structure the truth manifests emit whose *names*
+    # also occur in analyzer-visible artifacts, so none of them can serve as a
+    # leakage sentinel — sweeping for them would fire on the case tree by design
+    # rather than on a leak.
+    "kind": "caseFacts.money.settlement.kind publishes the same word to the analyzer",
+    "caseId": "manifest.json names the case to the analyzer under this exact key",
+    "caseloadId": "the caseload identifier is the corpus's public name",
+    "provenance": "manifest.json carries its own provenance block for the analyzer",
+    "cases": "the caseload index lists cases the analyzer can already enumerate",
 }
 
 
@@ -522,6 +537,167 @@ def test_output_validator_reports_truth_published_projection_drift(
     assert any(
         "published minus penalties" in problem and "caseFacts.money" in problem
         for problem in problems
+    )
+
+
+def test_output_validator_recomputes_the_published_penalty_block(
+    tmp_path: Path, generated_penalty_tree: Path
+) -> None:
+    """The compact block that actually ships must be checked, not only its twin.
+
+    ``published.penalties`` is the shape a scorer reads, and it was validated by
+    nothing: the analyzer projection pops ``penalties`` before the manifest is
+    written, and the truth-tree check popped it again before comparing — so the
+    lossless channel carried every assertion while the shipped bytes carried
+    none. Perturbing only the published total is the difference between "the
+    same numbers twice" and "the numbers we hand out".
+    """
+    out_dir = _copy_generated_tree(generated_penalty_tree, tmp_path)
+    path = _truth_path(out_dir)
+    truth = read_truth_manifest(path)
+    published = truth["channels"]["money"]["published"]["penalties"]
+    assert published["assessments"], "the probe needs a published assessment"
+    published["totalIncrease"] = f"{Decimal(published['totalIncrease']) + Decimal('0.01'):.2f}"
+    _rewrite_json(path, truth)
+
+    problems = validate_output_tree(out_dir).problems
+
+    assert any(
+        "published" in problem and "totalIncrease" in problem for problem in problems
+    ), problems
+
+
+def test_penalty_validation_is_exact_under_a_reduced_ambient_precision(
+    tmp_path: Path,
+) -> None:
+    """The validator recomputes in the producer's context, not the caller's.
+
+    Every figure is produced inside ``exact()``. The three recomputations that
+    check them ran in whatever context the caller happened to be in, so a host
+    process with a reduced ``decimal`` precision would have the validator invent
+    drift and condemn a correct corpus. The operands below are exact and correct;
+    only the ambient precision is hostile.
+    """
+    from wc_caseload_engine.manifests import _validate_penalties
+
+    assessment = {
+        "source": "td_period",
+        "ordinal": 1,
+        "rule": "subsequent_td_payment",
+        "principal": "7974.24",
+        "statutoryDueDate": "2021-07-28",
+        "operationalDueDate": "2021-07-28",
+        "datePaid": "2021-08-12",
+        "daysLate": 15,
+        "increaseFraction": "0.1",
+        "amount": "797.42",
+    }
+    second = dict(assessment, ordinal=2)
+    penalties = {
+        "assessmentCount": 2,
+        "counselConfirmed": False,
+        "deadlineConfirmed": False,
+        "unpaidCount": 0,
+        "schedule": [
+            {
+                "source": "td_period",
+                "ordinal": ordinal,
+                "rule": "subsequent_td_payment",
+                "statutoryDueDate": "2021-07-28",
+                "operationalDueDate": "2021-07-28",
+                "datePaid": "2021-08-12",
+                "daysLate": 15,
+                "unpaid": False,
+            }
+            for ordinal in (1, 2)
+        ],
+        "assessments": [assessment, second],
+        # 797.42 + 797.42, and 7974.24 + 7974.24 — the second sum needs seven
+        # significant digits, which is what a six-digit context cannot hold.
+        "totalIncrease": "1594.84",
+        "principalAssessed": "15948.48",
+    }
+    surfaces = {"TD_PAYMENT_RECORD_ONGOING"}
+
+    assert _validate_penalties(penalties, surfaces, "precision-probe") == []
+
+    with decimal.localcontext(decimal.Context(prec=6)):
+        problems = _validate_penalties(penalties, surfaces, "precision-probe")
+
+    assert problems == [], problems
+
+
+def test_scorer_vocabulary_covers_every_emitted_truth_key(tmp_path: Path) -> None:
+    """The two frozensets must be derived from the builders, not remembered.
+
+    They are the sweep terms the case-tree leakage anti-probe runs on, so a key
+    the builders emit but the sets never learned about is a term nothing
+    watches. Equality in both directions: a new emitted key fails until it is
+    classified, and a set member nothing emits any more fails as stale.
+    """
+    plan = _plan(
+        "vocabulary-probe",
+        scenario={
+            "wages": {"pattern": "regular", "base_weekly_wage": 1500},
+            "benefits": {
+                "td_weeks": 24,
+                "td_gap_days": 45,
+                "late_payments": 2,
+                "max_days_late": 30,
+            },
+            "penalties": {},
+            "settlement": {"gross_amount": 90000},
+        },
+        rng_seed=4309,
+    )
+    envelope = build_case_truth_manifest(plan)
+    index = build_caseload_truth_manifest(
+        "vocabulary-probe-load",
+        (
+            SimpleNamespace(
+                case_id="vocabulary-probe", plan=plan, truth_path=tmp_path / "x.truth.json"
+            ),
+        ),
+    )
+
+    # The envelope *structure*: both manifests' own top-level keys, the version
+    # each channel stamps on itself, and the pointer an index record uses to
+    # name a scorer file. Money facts carried inside an index record are public
+    # world facts and are governed by GOVERNED_MONEY_FIELDS, not by this set.
+    structural = set(envelope) | set(index)
+    for document in (envelope, index):
+        for channel in document["channels"].values():
+            structural |= set(channel) & {"channelVersion"}
+    for record in index["cases"]:
+        structural |= set(record) & {"truthFile"}
+
+    unclassified = (
+        structural
+        - SCORER_ONLY_ENVELOPE_KEY_NAMES
+        - ENVELOPE_KEYS_THAT_ARE_NOT_SENTINELS.keys()
+    )
+    assert not unclassified, (
+        f"truth envelopes emit {sorted(unclassified)}, which neither "
+        "SCORER_ONLY_ENVELOPE_KEY_NAMES nor the exemption ledger accounts for — "
+        "classify the key as a scorer-only sentinel or record why it cannot be one"
+    )
+    stale = SCORER_ONLY_ENVELOPE_KEY_NAMES - structural
+    assert not stale, f"SCORER_ONLY_ENVELOPE_KEY_NAMES names unemitted keys {sorted(stale)}"
+
+    money_channel = envelope["channels"]["money"]
+    penalty_blocks = [
+        money_channel["penalties"],
+        money_channel["published"]["penalties"],
+    ]
+    emitted_assessment_keys: set[str] = {"assessments"}
+    for block in penalty_blocks:
+        assert block["assessments"], "the probe needs an assessment to walk"
+        for record in block["assessments"]:
+            emitted_assessment_keys |= set(record)
+
+    assert emitted_assessment_keys == PENALTY_ASSESSMENT_KEY_NAMES, (
+        "PENALTY_ASSESSMENT_KEY_NAMES must equal the keys the assessment builders "
+        f"emit; emitted {sorted(emitted_assessment_keys)}"
     )
 
 

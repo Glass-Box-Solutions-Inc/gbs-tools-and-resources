@@ -1455,7 +1455,7 @@ note = 'AJC-48 Round H. Once a corpus records any truth subtree, it must name ex
 id = 'm15-1'
 title = 'the automatic increase forgets to multiply the late-payment principal by its fraction'
 file = 'src/wc_caseload_engine/money.py'
-test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_the_planted_positive_control_assesses_the_stated_45_day_delay'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_the_planted_positive_control_assesses_the_authored_delay'
 find = '''        with _exact():
             amount = money(principal * basis.increase_fraction)'''
 replace = '''        with _exact():
@@ -1472,7 +1472,7 @@ find = '''        if unpaid:
 replace = '''        if unpaid:
             date_paid = statutory_due_date + dt.timedelta(days=1)
             days_late = 1'''
-note = 'AJC-48 Round C. A TdPeriod without date_paid is the benefit model’s interruption state, not a delay: there is no paid principal and no endpoint from which lateness can be counted. The planted unpaid record must leave the assessment tuple empty.'
+note = 'AJC-48 Rounds C and E. A TdPeriod without date_paid is the benefit model’s interruption state, not a delay: there is no paid principal and no endpoint from which lateness can be counted. The planted unpaid record must leave the assessment tuple empty. Round E registered this same edit again as m15-9 — same file, same find, same replace, same guard — so the registry counted one fix twice and a survivor would have been reported twice while proving one thing. m15-9 was dropped in the round-2 review round; both rounds are recorded here so the second finding is not lost with it.'
 
 [[mutant]]
 id = 'm15-3'
@@ -1558,18 +1558,6 @@ replace = '''            statutory_due_date=(
                 else advance.date_due
             ),'''
 note = 'AJC-48 Round E. Later PD advances are discretionary schedule facts with no statutory deadline, even when payment misses the 45-day engine cadence.'
-
-[[mutant]]
-id = 'm15-9'
-title = 'an unpaid installment is converted into an assessment'
-file = 'src/wc_caseload_engine/money.py'
-test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_a_never_paid_period_is_not_assessed_as_a_delay'
-find = '''        if unpaid:
-            return'''
-replace = '''        if unpaid:
-            date_paid = statutory_due_date + dt.timedelta(days=1)
-            days_late = 1'''
-note = 'AJC-48 Round E. An unpaid installment is gap data: nothing was paid, so absence cannot be turned into late-payment arithmetic or a statutory increase.'
 
 [[mutant]]
 id = 'm15-10'
@@ -1738,3 +1726,65 @@ test = 'tests/test_golden_corpus.py::test_an_interrupt_names_the_files_a_failed_
 find = '''                exc.add_note(state)'''
 replace = '''                pass'''
 note = "The I/O path reported an incomplete rollback; the interrupt path computed the same answer and discarded it, so a Ctrl-C that left a golden rewritten propagated a bare KeyboardInterrupt indistinguishable from the clean case. An interrupt is the exception the operator actually sees, which makes it the one that has to carry the news."
+
+[[mutant]]
+id = 'm15-19'
+title = 'the temporary-disability deadline goes back to a ladder from the date of injury'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheStatutoryDeadlineIsAnchoredToTheAccrualItPays::test_a_wholly_timely_temporary_disability_file_assesses_nothing'
+find = '''            statutory_due_date=period.end + dt.timedelta(days=interval),'''
+replace = '''            statutory_due_date=(
+                onset
+                + dt.timedelta(days=deadlines.first_td_payment_days)
+                + dt.timedelta(days=(ordinal - 1) * deadlines.subsequent_td_payment_days)
+            ),'''
+note = 'AJC-48 round-2 review, finding 1. The engine issues four-week blocks paid fourteen days after each block ends; a ladder run from the date of injury diverges from that by a fortnight per installment forever. Restoring it assessed every payment on a file with no authored lateness at all, produced the same $1,594.86 whatever the delay controls said, and dated installment 2 before the period it paid for. The guard is the negative that was missing: a wholly timely file must assess nothing.'
+
+[[mutant]]
+id = 'm15-20'
+title = 'the first permanent-disability deadline anchors on the last-listed payment again'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheStatutoryDeadlineIsAnchoredToTheAccrualItPays::test_the_first_pd_deadline_anchors_on_the_last_td_payment_made'
+find = '''        max(period.date_paid for period in paid_td)'''
+replace = '''        paid_td[-1].date_paid'''
+note = 'AJC-48 round-2 review, finding 4. The benefit ledger is ordered by accrual, not by payment, so front-loaded lateness leaves an early block paid after every later one. Reading list order as a chronology gives the permanent-disability deadline an anchor earlier than the event that starts it, and the deadline can expire before its own trigger.'
+
+[[mutant]]
+id = 'm15-21'
+title = 'the benefit-document requirement fires on an empty penalty ledger again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_the_benefit_document_requirement_is_gated_on_something_to_read'
+find = '''    if assessments and not (subtypes & MONEY_BENEFIT_DOCUMENTS):'''
+replace = '''    if not (subtypes & MONEY_BENEFIT_DOCUMENTS):'''
+note = 'AJC-48 round-2 review, finding 2. Opting into the statutory test is not a claim needing a document to support it. Ungated, the rule demanded a benefit-payment surface for zero assessments and failed the documented "asked, and the answer was nothing" shape — while its sibling over benefit events, gated on the event count, correctly said nothing.'
+
+[[mutant]]
+id = 'm15-22'
+title = 'the shipped compact penalty block goes back to being validated by nothing'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_truth_manifest.py::test_output_validator_recomputes_the_published_penalty_block'
+find = '''            if isinstance(published_penalties, Mapping):'''
+replace = '''            if False:'''
+note = 'AJC-48 round-2 review, finding 3. published.penalties is the shape a scorer reads. The analyzer projection pops penalties before the manifest is written and the projection comparison pops it again, so every assertion landed on the lossless twin and the shipped bytes went out unexamined. This is also the only path that reaches the compact branch of _validate_penalties from a produced artifact.'
+
+[[mutant]]
+id = 'm15-23'
+title = 'validator penalty arithmetic returns to the caller ambient decimal context'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_truth_manifest.py::test_penalty_validation_is_exact_under_a_reduced_ambient_precision'
+find = '''        with exact():
+            computed_principal = quantized_money(sum(assessed_principals, Decimal("0.00")))'''
+replace = '''        computed_principal = quantized_money(sum(assessed_principals, Decimal("0.00")))'''
+note = 'AJC-48 round-2 review, finding 5. Every published figure is produced inside exact(). Recomputing them under whatever precision the host process carries lets a hostile ambient context invent drift and condemn a correct corpus: at prec=6 a two-assessment principal sum reads 15948.50 against a correct 15948.48.'
+
+[[mutant]]
+id = 'm15-24'
+title = 'an emitted truth key escapes the scorer vocabulary without being classified'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_scorer_vocabulary_covers_every_emitted_truth_key'
+find = '''        "schemaVersion": SCHEMA_VERSION,
+        "kind": "case",'''
+replace = '''        "schemaVersion": SCHEMA_VERSION,
+        "scorerNote": "unclassified",
+        "kind": "case",'''
+note = 'AJC-48 round-2 review, finding 6. The two frozensets are the sweep terms the case-tree leakage anti-probe runs on, and they were hand-maintained with nothing tying them to the builders. A key the envelope emits but the sets never learned about is a term nothing watches; the completeness guard fails until the new key is classified as a sentinel or recorded as one that cannot be.'

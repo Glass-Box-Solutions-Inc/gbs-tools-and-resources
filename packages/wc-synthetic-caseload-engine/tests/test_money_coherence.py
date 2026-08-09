@@ -19,7 +19,7 @@ import pytest
 
 from conftest import extract_text, requires_substrate
 from money_coherence import GOVERNED_ON_THE_PAGE, PENALTY_RULES, SweepResult, sweep
-from wc_caseload_engine.manifests import CaseResult, generate_case
+from wc_caseload_engine.manifests import CaseResult, generate_case, validate_output_tree
 from wc_caseload_engine.money import money as quantized_money
 from wc_caseload_engine.money import money_manifest_block
 from wc_caseload_engine.seeds import parse_case_seed
@@ -312,12 +312,21 @@ def test_one_cent_perturbation_is_reported_for_every_swept_fact(
 def test_penalised_benefits_matches_ledger_paper_and_truth(
     rendered_scenarios: tuple[RenderedScenario, ...],
 ) -> None:
-    """The ticket's 45-day planted positive control is arithmetically checkable."""
+    """The planted positive control is arithmetically checkable on paper.
+
+    The scenario authors ``max_days_late: 15`` on two installments; the assessed
+    figures are that delay, measured against each installment's own accrual. The
+    45 and 59 this once asserted were the date-of-injury ladder's drift, not the
+    file's lateness — the corrected values are recomputed from the seed rather
+    than adjusted to keep the old numbers.
+    """
     rendered = _scenario(rendered_scenarios, "penalised-benefits")
     penalties = rendered.scorer_money["penalties"]
     assert penalties["assessmentCount"] >= 1
-    assert [item["daysLate"] for item in penalties["assessments"]] == [45, 59]
-    assert penalties["assessments"][0]["daysLate"] == 45
+    assert [item["daysLate"] for item in penalties["assessments"]] == [15, 15]
+    assert penalties["assessments"][0]["daysLate"] == 15
+    assert penalties["firstPaymentRule"]["assessed"] is False
+    assert penalties["firstPaymentRule"]["daysLate"] == 45
     for assessment in penalties["assessments"]:
         expected = quantized_money(
             Decimal(assessment["principal"]) * Decimal(assessment["increaseFraction"])
@@ -384,6 +393,37 @@ def test_empty_penalty_ledger_leaves_the_benefit_document_byte_unchanged(
         return (rendered.directory / "documents" / entry["filename"]).read_bytes()
 
     assert benefit_bytes(without) == benefit_bytes(empty)
+
+
+def test_an_opted_in_wholly_timely_case_validates_clean(tmp_path: Path) -> None:
+    """A documented-valid shape must not be reported as a defect.
+
+    ``penalties: {}`` on a file with no benefit events is the state the empty
+    ledger exists for: the author asked the statutory question and the answer
+    was "nothing". The benefit-document requirement fired on the mere presence
+    of the penalties block rather than on anything needing a document to be read
+    from, so the corpus's own showcase shape failed its own validator — while
+    the identical rule over benefit events, twenty lines away, was correctly
+    gated on the event count.
+    """
+    base = copy.deepcopy(_SCENARIOS["delayed-benefits"])
+    base["case_id"] = "money-coherence-timely-optin"
+    base["scenario"]["benefits"] = {
+        "td_weeks": 0,
+        "pd_advances": 0,
+        "late_payments": 0,
+    }
+    base["scenario"]["penalties"] = {}
+    result = generate_case(parse_case_seed(base), tmp_path / "out", 1)
+
+    assert result.plan.money_facts is not None
+    penalties = result.plan.money_facts.penalties
+    assert penalties is not None, "the seed opted in, so the ledger exists"
+    assert penalties.assessments == (), "the probe is only meaningful with nothing assessed"
+    assert penalties.schedule == (), "no installments means no schedule entries"
+
+    report = validate_output_tree(tmp_path / "out")
+    assert report.problems == [], report.problems
 
 
 def test_truth_manifest_is_byte_deterministic_from_the_same_plan(

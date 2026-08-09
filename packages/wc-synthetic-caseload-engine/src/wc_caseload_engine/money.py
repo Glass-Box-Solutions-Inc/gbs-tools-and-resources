@@ -161,6 +161,21 @@ STATUTORY_DEADLINE_AUTHORITY = (
     "the 14-day counts and the events from which each count runs are all unverified."
 )
 
+FIRST_TD_PAYMENT_ANCHOR_QUESTION = (
+    "LC 4650(a) runs its first-payment count from the employer's knowledge of the "
+    "injury AND of disability. This engine models neither date and substitutes the "
+    "date of injury, so a first payment issued on the accrual cadence cannot be "
+    "judged late from these facts. Recorded, never assessed. COUNSEL-UNCONFIRMED — "
+    "the anchor event is the open question, not only the count."
+)
+"""Why the §4650(a) deadline is exported as a flagged datum instead of an exposure.
+
+Every continuing installment is assessed against its own accrual (see
+:func:`_derive_penalties`); this is the one deadline the engine declines to
+decide, and the reason travels with it into the scorer artifact rather than
+living only in a docstring.
+"""
+
 
 class RateBasis(BaseModel):
     """The statutory parameters a comp rate is computed under, for one vintage.
@@ -879,6 +894,39 @@ class PenaltyAssessment(BaseModel):
     amount: Decimal
 
 
+class FirstPaymentRule(BaseModel):
+    """§4650(a)'s first-payment deadline: recorded, flagged, never assessed.
+
+    The statute runs its fourteen days from the employer's knowledge of the
+    injury **and** of disability. This engine models neither date, so the date of
+    injury stands in — enough to publish the question, not enough to answer it.
+
+    That gap is why ``assessed`` is typed ``Literal[False]`` rather than left as
+    a boolean somebody could flip. The engine issues temporary disability in
+    four-week blocks paid after each block closes, so the first payment is
+    structurally later than a strict reading of §4650(a) would allow on *every*
+    file it generates. Assessing that would turn a modelling decision into a
+    finding against the carrier on every case in the corpus, which is exactly the
+    defect the accrual-anchored schedule beside this record exists to remove.
+
+    The separation is the point: :attr:`PenaltyLedger.schedule` carries the
+    deadlines this engine will assess against, and this record carries the one it
+    will not, with the reason attached.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    anchor: Literal["date_of_injury"] = "date_of_injury"
+    anchor_date: dt.date
+    due_date: dt.date
+    date_paid: dt.date | None
+    days_late: int = Field(default=0, ge=0)
+    assessed: Literal[False] = False
+    counsel_confirmed: bool = False
+    authority: str
+    open_question: str
+
+
 class PenaltyLedger(BaseModel):
     """The complete automatic-increase assessment requested by the seed.
 
@@ -893,6 +941,7 @@ class PenaltyLedger(BaseModel):
     deadlines: StatutoryDeadlineBasis
     schedule: tuple[StatutoryDueDate, ...] = ()
     assessments: tuple[PenaltyAssessment, ...] = ()
+    first_payment_rule: FirstPaymentRule | None = None
 
     @property
     def total_increase(self) -> Decimal:
@@ -1834,24 +1883,62 @@ def _derive_penalties(
             )
         )
 
-    first_td_due = onset + dt.timedelta(days=deadlines.first_td_payment_days)
+    # Every installment is due a fixed interval after the accrual **it pays
+    # for** closes, which is the only anchor that keeps the deadline and the
+    # money in the same order.
+    #
+    # The first cut ran a ladder from the date of injury instead —
+    # ``onset + 14 + (n-1)*14`` — while the benefit ledger issues four-week
+    # blocks fourteen days after each block ends. Those two clocks diverge by a
+    # fortnight per installment forever, so the model assessed a file with no
+    # authored lateness on every payment, produced the same $1,594.86 whatever
+    # the delay controls said, and dated installment 2's deadline three days
+    # before the period it was paying for. A deadline that precedes its own
+    # accrual is not a strict reading of the statute; it is a different quantity
+    # wearing its name.
     for ordinal, period in enumerate(benefits.td_periods, 1):
-        statutory_due = first_td_due + dt.timedelta(
-            days=(ordinal - 1) * deadlines.subsequent_td_payment_days
+        interval = (
+            deadlines.first_td_payment_days
+            if ordinal == 1
+            else deadlines.subsequent_td_payment_days
         )
         record(
             source="td_period",
             ordinal=ordinal,
             rule="first_td_payment" if ordinal == 1 else "subsequent_td_payment",
-            statutory_due_date=statutory_due,
+            statutory_due_date=period.end + dt.timedelta(days=interval),
             operational_due_date=period.date_due,
             date_paid=period.date_paid,
             principal=period.amount,
         )
 
+    # §4650(a) is kept, separately, as the one deadline this engine will not
+    # decide: see :class:`FirstPaymentRule`. It never reaches ``assessments``.
+    first_payment_rule: FirstPaymentRule | None = None
+    if benefits.td_periods:
+        first_period = benefits.td_periods[0]
+        doi_anchored_due = onset + dt.timedelta(days=deadlines.first_td_payment_days)
+        first_payment_rule = FirstPaymentRule(
+            anchor_date=onset,
+            due_date=doi_anchored_due,
+            date_paid=first_period.date_paid,
+            days_late=(
+                max(0, (first_period.date_paid - doi_anchored_due).days)
+                if first_period.date_paid is not None
+                else 0
+            ),
+            counsel_confirmed=deadlines.counsel_confirmed,
+            authority=deadlines.authority,
+            open_question=FIRST_TD_PAYMENT_ANCHOR_QUESTION,
+        )
+
     paid_td = [period for period in benefits.td_periods if period.date_paid is not None]
+    # The **latest payment made**, not the last one listed. The ledger is ordered
+    # by accrual, so front-loaded lateness leaves an early block paid after every
+    # later one; reading list order as a chronology produced a permanent-
+    # disability deadline that expired before the payment supposed to start it.
     first_pd_anchor = (
-        paid_td[-1].date_paid
+        max(period.date_paid for period in paid_td)
         if paid_td
         else benefits.td_periods[-1].end
         if benefits.td_periods
@@ -1877,6 +1964,7 @@ def _derive_penalties(
         deadlines=deadlines,
         schedule=tuple(schedule),
         assessments=tuple(assessments),
+        first_payment_rule=first_payment_rule,
     )
 
 
@@ -2048,6 +2136,7 @@ GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
         "firstTdPaymentDays",
         "subsequentTdPaymentDays",
         "firstPdPaymentDays",
+        "firstPaymentRule",
     ),
 }
 
@@ -2227,7 +2316,35 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
             "subsequentTdPaymentDays": penalties.deadlines.subsequent_td_payment_days,
             "firstPdPaymentDays": penalties.deadlines.first_pd_payment_days,
         }
+        block["penalties"]["firstPaymentRule"] = _first_payment_rule_block(
+            penalties.first_payment_rule
+        )
     return block
+
+
+def _first_payment_rule_block(rule: FirstPaymentRule | None) -> dict[str, Any] | None:
+    """Publish the §4650(a) record, in one place, for both money channels.
+
+    ``None`` when the file paid no temporary disability at all: there is no first
+    payment for a deadline to attach to. Null rather than absent because this is
+    a *field inside* the penalties group, and every governed field is published
+    unconditionally — absence is how this schema says "this case has no such
+    group", which is a different fact and one the opted-in ledger has already
+    denied by existing.
+    """
+    if rule is None:
+        return None
+    return {
+        "anchor": rule.anchor,
+        "anchorDate": rule.anchor_date.isoformat(),
+        "dueDate": rule.due_date.isoformat(),
+        "datePaid": rule.date_paid.isoformat() if rule.date_paid is not None else None,
+        "daysLate": rule.days_late,
+        "assessed": rule.assessed,
+        "counselConfirmed": rule.counsel_confirmed,
+        "authority": rule.authority,
+        "openQuestion": rule.open_question,
+    }
 
 
 __all__ = [
@@ -2249,6 +2366,7 @@ __all__ = [
     "BenefitLedger",
     "CompRate",
     "EarningsPeriod",
+    "FirstPaymentRule",
     "InKindWage",
     "MoneyFacts",
     "PdAdvance",
