@@ -64,11 +64,21 @@ area, an injection, an unrecognized body part, or an unsegmented "back" against 
 yield nothing. A finding needs the table to place the operation outside *every* claimed injured
 region.
 
-It is equally careful about the other direction, where the failure is quieter. Anatomy is read from
-fields whose own names claim to say what was injured, and denials near a mention disqualify it — so
-`injury.mechanism` reading "lifting to shoulder height", or a diagnosis reading "no shoulder
-injury", cannot clear a shoulder operation on a wrist case. A false negative is invisible; a false
-positive announces itself.
+A prior operation is not this case's operation either: `priorCptCode` and
+`medicalHistory.priorSurgeries[]` describe anatomy that is *expected* to differ, so historical
+vocabulary takes a fact out of consideration entirely.
+
+It is equally careful about the other direction, where the failure is quieter. Injured anatomy is
+read only from fields that state it outright — `bodyPart`, `body_parts`, `injuredPart`, `injurySite`,
+and the seed's `injury.body_parts[].part`. Free-form prose is not read for anatomy at all, in either
+direction, and neither are `examinedRegion`, `serviceRegion`, or `condition`: they pair anatomy
+vocabulary with a fact that is not an injury claim, and admitting one would silently clear a
+contradictory operation.
+
+Declining prose is deliberate. Deciding whether "No evidence of injury to shoulder" asserts or denies
+the shoulder means resolving negation scope across clauses, and no proximity rule handles both
+"wrist sprain; no shoulder injury" and its reverse. Structured body-part fields are always
+materialized here, so the parsing problem is refused rather than half-solved.
 
 Findings from every registered pack merge into `analyze` reports and into the `validate` exit code
 through one shared definition, so the report and the gate cannot disagree about whether a case is

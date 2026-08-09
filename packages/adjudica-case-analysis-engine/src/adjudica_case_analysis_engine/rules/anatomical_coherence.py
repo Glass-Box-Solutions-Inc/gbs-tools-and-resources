@@ -49,12 +49,25 @@ an injection, an unrecognized body part, an unsegmented "back" against a cervica
 unclassified code would put noise on every case, and the table's real gap signal is
 recall measured over a scored corpus, not a per-case remark.
 
-Restraint cuts the other way too, and the second failure mode is quieter. A body part
-merely *mentioned* is not one that was injured: ``injury.mechanism`` reading "lifting
-to shoulder height", or a diagnosis reading "no shoulder injury", would enter the
-injured set and clear a shoulder operation on a wrist case. Anatomy is therefore read
-from fields whose own names claim to say what was injured, and denials near a mention
-disqualify it. A false negative is invisible where a false positive announces itself.
+A prior operation is likewise not this case's operation. ``priorCptCode`` and
+``medicalHistory.priorSurgeries[]`` describe anatomy that is *expected* to differ, and
+a history ledger makes them routine, so historical vocabulary on a fact's field or path
+takes it out of consideration entirely.
+
+Restraint cuts the other way too, and that failure mode is quieter. A body part merely
+*mentioned* is not one that was injured, so injured anatomy is read **only** from
+fields that state it outright — ``bodyPart``, ``body_parts``, ``injuredPart``,
+``injurySite``, and the seed's ``injury.body_parts[].part``. Free-form prose is not read
+for anatomy at all, in either direction.
+
+That last point is a deliberate refusal rather than a gap. Deciding whether "No evidence
+of injury to shoulder" asserts or denies the shoulder means resolving negation scope
+across clauses, and every proximity rule tried got some ordering wrong — "wrist sprain;
+no shoulder injury" and its reverse cannot both be handled by a window. Since structured
+body-part fields are always materialized in this corpus, the parsing problem is declined
+outright instead of half-solved. ``examinedRegion``, ``serviceRegion`` and ``condition``
+are excluded for the same reason: they pair anatomy vocabulary with a fact that is not
+an injury claim, and admitting one would silently clear a contradictory operation.
 
 Maintenance contract
 --------------------
@@ -80,8 +93,8 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from adjudica_case_analysis_engine.models import Fact, Finding
-from adjudica_case_analysis_engine.rules.base import Rule, RuleContext
-from adjudica_case_analysis_engine.text import split_words, tokens
+from adjudica_case_analysis_engine.rules.base import Rule, RuleContext, parent_path
+from adjudica_case_analysis_engine.text import canonical_field, split_words, tokens
 
 #: The finding code this pack owns.
 ANATOMICAL_CONTRADICTION = "anatomical_contradiction"
@@ -277,19 +290,44 @@ _SPINE_SEGMENTS = frozenset({"cervical_spine", "thoracic_spine", "lumbar_spine"}
 #: and admitting it would pull every billed line into the operative surface.
 _OPERATION_MARKERS = frozenset({"surgery", "surgeries", "surgical", "operation", "operative"})
 
-#: Leaf-field vocabulary naming an injured body part outright.
+#: Canonical field names that state which body part was injured.
 #:
-#: Selection is on the field's own name, not on any ancestor: an ``injury`` ancestor
-#: covers ``injury.mechanism`` too, and "lifting to shoulder height" would then enter
-#: the injured set and clear a shoulder operation on a wrist case. Masking a real
-#: contradiction is the costlier failure, because a false negative is invisible.
-_BODY_PART_FIELD_MARKERS = frozenset(
-    {"body", "part", "parts", "site", "sites", "region", "regions", "injured"}
+#: An allowlist of explicit shapes rather than a token intersection. ``examinedRegion``,
+#: ``serviceRegion``, ``exam.site`` and ``condition`` all pair anatomy vocabulary with a
+#: fact that is not an injury claim, and any one of them would silently clear a
+#: contradictory operation. Only a field that says outright what was *injured* counts.
+_INJURED_PART_FIELDS = frozenset(
+    {
+        "body_part",
+        "body_parts",
+        "injured_part",
+        "injured_parts",
+        "injured_body_part",
+        "injured_body_parts",
+        "injury_body_part",
+        "injury_body_parts",
+        "body_part_injured",
+        "body_parts_injured",
+        "injury_site",
+        "injury_sites",
+        "injured_site",
+        "injured_sites",
+        "part_of_body",
+        "parts_of_body",
+    }
 )
 
-#: Leaf-field vocabulary for clinical prose that may name anatomy affirmatively.
-_CLINICAL_PROSE_FIELD_MARKERS = frozenset(
-    {"diagnosis", "diagnoses", "complaint", "complaints", "condition", "conditions"}
+#: Leaf names that carry the body part when the collection above them names the claim —
+#: the generator seed's ``injury.body_parts[].part`` shape.
+_PART_ELEMENT_FIELDS = frozenset({"part", "parts"})
+
+#: Vocabulary marking a fact as describing the past rather than this case.
+#:
+#: A prior operation on other anatomy is ordinary content, and a medical-history ledger
+#: makes it routine, so reading one as this case's operation would fire on every file
+#: that records a patient's history.
+_HISTORICAL_MARKERS = frozenset(
+    {"prior", "priors", "previous", "previously", "history", "historical", "past"}
 )
 
 #: Field vocabulary that makes a bare five-digit value readable as a procedure code.
@@ -303,13 +341,6 @@ _CODE_NOUNS = frozenset({"code", "codes"})
 _PROCEDURE_QUALIFIERS = frozenset(
     {"procedure", "procedures", "surgical", "surgery", "operation", "operative"}
 )
-
-#: Words that make a nearby anatomical mention a denial rather than an assertion.
-_NEGATIONS_BEFORE = frozenset(
-    {"no", "not", "denies", "denied", "deny", "without", "negative", "absent", "none", "never"}
-)
-_NEGATIONS_AFTER = frozenset({"ruled", "excluded", "negative", "resolved"})
-_NEGATION_WINDOW = 4
 
 _SEPARATORS = re.compile(r"[^a-z0-9]+")
 _BARE_CODE = re.compile(r"\d{5}")
@@ -331,8 +362,13 @@ _ALIAS_WORDS: tuple[tuple[tuple[str, ...], str], ...] = tuple(
 )
 
 
-def _anatomy_matches(text: str) -> tuple[tuple[str, int, int], ...]:
-    """Each anatomical region named by ``text``, with the word span that named it.
+def regions_named_by(text: str) -> frozenset[str]:
+    """Every anatomical region a string names.
+
+    Purely lexical: it reports what the string mentions, never whether the string
+    claims it. Whether a mention is an injury claim is decided by *which field* the
+    string came from — see :data:`_INJURED_PART_FIELDS` — because deciding it from the
+    sentence would mean resolving negation scope across clauses.
 
     Matching is on whole word-token sequences, never raw substrings, so "background"
     is not a back and "secondhand" is not a hand. The longest phrase wins and consumes
@@ -341,46 +377,18 @@ def _anatomy_matches(text: str) -> tuple[tuple[str, int, int], ...]:
     """
     words = _words(text)
     if not words:
-        return ()
+        return frozenset()
     claimed = [False] * len(words)
-    found: list[tuple[str, int, int]] = []
+    found: set[str] = set()
     for phrase, region in _ALIAS_WORDS:
         span = len(phrase)
         for start in range(len(words) - span + 1):
             if any(claimed[start : start + span]):
                 continue
             if words[start : start + span] == phrase:
-                found.append((region, start, start + span))
+                found.add(region)
                 claimed[start : start + span] = [True] * span
-    return tuple(found)
-
-
-def regions_named_by(text: str) -> frozenset[str]:
-    """Every anatomical region a string names, whether or not it claims one."""
-    return frozenset(region for region, _, _ in _anatomy_matches(text))
-
-
-def _negated(words: tuple[str, ...], start: int, end: int) -> bool:
-    """Whether a denial sits close enough to this mention to be about it."""
-    before = words[max(0, start - _NEGATION_WINDOW) : start]
-    after = words[end : end + _NEGATION_WINDOW]
-    return bool(set(before) & _NEGATIONS_BEFORE or set(after) & _NEGATIONS_AFTER)
-
-
-def regions_asserted_by(text: str) -> frozenset[str]:
-    """Every anatomical region a string claims as injured.
-
-    Naming a region is not claiming it: "No shoulder injury" and "shoulder ruled out"
-    both name the shoulder in order to exclude it. Counting those as injured parts
-    would clear a shoulder operation on a wrist case, which is precisely the
-    contradiction this pack exists to find. The window is deliberately narrow so a
-    denial elsewhere in the same sentence does not discard an affirmative mention —
-    "Wrist sprain; no shoulder injury" still asserts the wrist.
-    """
-    words = _words(text)
-    return frozenset(
-        region for region, start, end in _anatomy_matches(text) if not _negated(words, start, end)
-    )
+    return frozenset(found)
 
 
 def _compatible(procedure_region: str, injured_region: str) -> bool:
@@ -465,8 +473,15 @@ def _declares_uncoded(context: RuleContext, fact: Fact) -> bool:
 
 
 def _names_injured_anatomy(fact: Fact) -> bool:
-    """Whether this fact's own field claims to say which body part was injured."""
-    return bool(tokens(fact.field) & (_BODY_PART_FIELD_MARKERS | _CLINICAL_PROSE_FIELD_MARKERS))
+    """Whether this fact's own field states which body part was injured."""
+    name = canonical_field(fact.field)
+    if name in _INJURED_PART_FIELDS:
+        return True
+    if name not in _PART_ELEMENT_FIELDS:
+        return False
+    # The seed's shape: the element holds the part, the collection makes it a claim.
+    words = tokens(parent_path(fact.source_path))
+    return "body" in words and bool(words & _PART_ELEMENT_FIELDS)
 
 
 def _injured_regions(context: RuleContext) -> tuple[frozenset[str], tuple[str, ...]]:
@@ -483,7 +498,7 @@ def _injured_regions(context: RuleContext) -> tuple[frozenset[str], tuple[str, .
             continue
         if context.words(fact) & _OPERATION_MARKERS:
             continue
-        claimed = regions_asserted_by(fact.value)
+        claimed = regions_named_by(fact.value)
         if claimed:
             regions |= claimed
             cited.append(fact.id)
@@ -493,6 +508,8 @@ def _injured_regions(context: RuleContext) -> tuple[frozenset[str], tuple[str, .
 def _asserted_operations(context: RuleContext) -> Iterator[tuple[Fact, str]]:
     """Every procedure code asserted as this case's operation, in ledger order."""
     for fact in context.matching(_OPERATION_MARKERS):
+        if context.words(fact) & _HISTORICAL_MARKERS:
+            continue
         if _declares_uncoded(context, fact):
             continue
         for code in _codes_asserted_by(fact):

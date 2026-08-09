@@ -20,7 +20,6 @@ from adjudica_case_analysis_engine.rules.anatomical_coherence import (
     OPERATIVE_CPT_ANATOMY,
     UNLISTED_CPT_CODES,
     contradicts,
-    regions_asserted_by,
     regions_named_by,
 )
 
@@ -143,15 +142,11 @@ def test_a_nonlocalizable_unlisted_code_stays_silent() -> None:
     assert not contradicts("64999", frozenset({"wrist"}))
 
 
-def test_negated_anatomy_is_not_an_assertion() -> None:
-    """A denial names a region without claiming it; regions_named_by stays purely lexical."""
+def test_region_matching_stays_purely_lexical() -> None:
+    """regions_named_by reports what a string names; whether it is *claimed* is decided
+    by which field the string came from, never by parsing the sentence."""
     assert regions_named_by("No shoulder injury") == frozenset({"shoulder"})
-    assert regions_asserted_by("No shoulder injury") == frozenset()
-    assert regions_asserted_by("Patient denies shoulder complaints") == frozenset()
-    assert regions_asserted_by("shoulder ruled out") == frozenset()
-    # An affirmative mention in the same string is kept.
-    assert regions_asserted_by("Wrist sprain; no shoulder injury") == frozenset({"wrist"})
-    assert regions_asserted_by("Lumbar strain") == frozenset({"lumbar_spine"})
+    assert regions_named_by("Lumbar strain") == frozenset({"lumbar_spine"})
 
 
 # ── The detector over a ledger ───────────────────────────────────────────────
@@ -227,9 +222,7 @@ def test_an_uncoded_declaration_suppresses_a_stray_code(tmp_path: Path) -> None:
         tmp_path,
         {
             "injury": {"body_part": "right wrist"},
-            "caseFacts": {
-                "surgery": {"status": "performed", "uncoded": True, "priorCptCode": "29827"}
-            },
+            "caseFacts": {"surgery": {"status": "performed", "uncoded": True, "cptCode": "29827"}},
         },
     )
 
@@ -367,43 +360,35 @@ def test_the_fields_that_do_name_procedure_codes_are_still_read(tmp_path: Path) 
         assert _codes(findings) == [CODE], field
 
 
-def test_incidental_anatomy_in_prose_does_not_mask_a_contradiction(tmp_path: Path) -> None:
-    """A mechanism mentioning the shoulder does not make the shoulder injured.
+def test_free_form_prose_never_contributes_anatomy(tmp_path: Path) -> None:
+    """Prose is not read for anatomy at all, in either direction.
 
-    Masking a real finding is the costlier failure: a false negative is invisible,
-    where a false positive at least announces itself.
+    Deciding whether "No evidence of injury to shoulder" asserts or denies the
+    shoulder means resolving negation scope across clauses, and every window rule
+    tried got some ordering wrong. This corpus always materializes structured
+    body-part fields, so the parsing problem is declined rather than half-solved.
     """
-    findings = _findings(
-        tmp_path,
-        {
-            "injury": {"body_part": "right wrist", "mechanism": "lifting to shoulder height"},
-            "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}},
-        },
-    )
-
-    assert _codes(findings) == [CODE]
-
-
-def test_negated_anatomy_does_not_mask_a_contradiction(tmp_path: Path) -> None:
-    """A record that rules a region out has not claimed it as injured."""
     for prose in (
-        "No shoulder injury",
-        "Patient denies shoulder complaints",
-        "shoulder ruled out",
+        "No evidence of injury to shoulder",
+        "lifting to shoulder height",
+        "denies shoulder complaints",
+        "wrist sprain; no shoulder injury",
+        "no shoulder injury; wrist sprain",
     ):
         findings = _findings(
             tmp_path,
             {
-                "injury": {"body_part": "right wrist"},
+                "injury": {"body_part": "right wrist", "mechanism": prose},
                 "diagnosis": prose,
+                "narrative": prose,
                 "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}},
             },
         )
         assert _codes(findings) == [CODE], prose
 
 
-def test_an_affirmative_diagnosis_still_names_injured_anatomy(tmp_path: Path) -> None:
-    """The positive control: a real shoulder diagnosis must still clear a shoulder operation."""
+def test_prose_alone_leaves_nothing_to_contradict(tmp_path: Path) -> None:
+    """The other direction: prose naming a region does not clear an operation either."""
     findings = _findings(
         tmp_path,
         {
@@ -413,6 +398,79 @@ def test_an_affirmative_diagnosis_still_names_injured_anatomy(tmp_path: Path) ->
     )
 
     assert CODE not in _codes(findings)
+
+
+def test_a_non_injury_region_field_is_not_an_injured_part(tmp_path: Path) -> None:
+    """An examined or serviced region is not a claim that the region was injured."""
+    for extra in (
+        {"diagnostic": {"examinedRegion": "shoulder"}},
+        {"provider": {"serviceRegion": "shoulder"}},
+        {"exam": {"site": "shoulder"}},
+        {"condition": "shoulder"},
+    ):
+        findings = _findings(
+            tmp_path,
+            {
+                "injury": {"body_part": "right wrist"},
+                **extra,
+                "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}},
+            },
+        )
+        assert _codes(findings) == [CODE], extra
+
+
+def test_every_structured_injured_part_shape_is_recognized(tmp_path: Path) -> None:
+    """The allowlist must cover every shape a real record uses, including the seed's."""
+    for payload in (
+        {"injuredPart": "shoulder"},
+        {"injurySite": "shoulder"},
+        {"injury": {"bodyPart": "shoulder"}},
+        {"injury": {"body_parts": ["shoulder"]}},
+        {"injury": {"body_parts": [{"part": "shoulder"}]}},
+    ):
+        findings = _findings(
+            tmp_path,
+            {**payload, "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}}},
+        )
+        assert CODE not in _codes(findings), payload
+
+
+def test_a_historical_operation_is_not_this_cases_operation(tmp_path: Path) -> None:
+    """Prior surgeries on other anatomy are legitimate content, not a contradiction.
+
+    The medical-history ledger will make them routine, so a detector that read them
+    as this case's operation would fire on every case that records a patient's past.
+    """
+    findings = _findings(
+        tmp_path,
+        {
+            "injury": {"body_part": "right wrist"},
+            "caseFacts": {
+                "surgery": {"status": "performed", "cptCode": "64721", "priorCptCode": "29827"}
+            },
+        },
+    )
+    assert CODE not in _codes(findings)
+
+    findings = _findings(
+        tmp_path,
+        {
+            "injury": {"body_part": "right wrist"},
+            "caseFacts": {"surgery": {"status": "performed", "cptCode": "64721"}},
+            "medicalHistory": {"priorSurgeries": [{"cptCode": "29827"}]},
+        },
+    )
+    assert CODE not in _codes(findings)
+
+    # The control: a current-surgery contradiction must still fire.
+    findings = _findings(
+        tmp_path,
+        {
+            "injury": {"body_part": "right wrist"},
+            "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}},
+        },
+    )
+    assert _codes(findings) == [CODE]
 
 
 def test_an_unrelated_uncoded_claim_does_not_suppress_an_operation(tmp_path: Path) -> None:
