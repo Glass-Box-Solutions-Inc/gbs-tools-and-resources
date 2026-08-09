@@ -143,6 +143,11 @@ def test_a_golden_records_the_provenance_needed_to_explain_a_drift() -> None:
         # PDFs out; when a corpus drifts for no reason in the diff, this is
         # usually where the reason is.
         assert recorded["dependencies"]["reportlab"] != "not-installed"
+        # And the font the substrate's scan simulator rasterizes its fax header
+        # with. It falls back to PIL's default *silently* when the DejaVu
+        # package is absent, which substitutes different pixels into every
+        # scanned PDF and would otherwise be an unexplainable golden failure.
+        assert recorded["systemFonts"], "no system-font provenance recorded"
 
 
 # ---------------------------------------------------------------------------

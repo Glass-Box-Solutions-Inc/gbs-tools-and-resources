@@ -16,6 +16,9 @@
       "faker": "34.0.2",
       "pyyaml": "6.0.3",
       "pydantic": "2.13.4"
+    },
+    "systemFonts": {
+      "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf": "39c29931201f08dd"
     }
   },
   "caseCount": 7,

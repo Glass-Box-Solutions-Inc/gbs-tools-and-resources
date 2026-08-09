@@ -225,6 +225,24 @@ which is real drift, and exactly what this gate should surface. Naming the
 versions turns an inscrutable red into a one-line diagnosis.
 """
 
+BYTE_AFFECTING_FONTS: tuple[str, ...] = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+)
+"""System font files the substrate rasterizes into scanned pages.
+
+Recorded, never compared, for the same reason as the dependency versions — but
+this one is worth its own list because the failure is *silent*. The substrate's
+scan simulator draws its fax-header strip with this font and catches ``OSError``
+to fall back on ``PIL.ImageFont.load_default()``. On a machine without the
+DejaVu package that fallback substitutes different pixels into every scanned
+PDF, with no warning anywhere: the corpus simply renders differently, and the
+only symptom is a golden that will not reproduce.
+
+Recording a digest turns "why does CI disagree with my laptop" into one line of
+the drift report. A missing font is recorded as ``absent``, which is the answer
+that explains the most.
+"""
+
 REDACTED = "<redacted-for-golden>"
 """Stand-in written over a volatile field before a manifest is digested."""
 
@@ -427,6 +445,17 @@ def _distribution_versions() -> dict[str, str]:
     return versions
 
 
+def _font_digests() -> dict[str, str]:
+    """Short digests of the system fonts that reach rendered bytes."""
+    digests: dict[str, str] = {}
+    for path in BYTE_AFFECTING_FONTS:
+        candidate = Path(path)
+        digests[path] = (
+            _sha256(candidate.read_bytes())[:16] if candidate.is_file() else "absent"
+        )
+    return digests
+
+
 def current_provenance() -> dict[str, Any]:
     """The environment facts a golden records but never compares.
 
@@ -444,6 +473,7 @@ def current_provenance() -> dict[str, Any]:
         "substrateSha": substrate_git_sha(),
         "python": ".".join(str(part) for part in sys.version_info[:3]),
         "dependencies": _distribution_versions(),
+        "systemFonts": _font_digests(),
     }
 
 
@@ -465,13 +495,15 @@ def _provenance_notes(recorded: dict[str, Any], observed: dict[str, Any]) -> lis
         was, now = recorded.get(key), observed.get(key)
         if was != now:
             notes.append(f"{label}: {was} -> {now}")
-    was_deps = recorded.get("dependencies") or {}
-    now_deps = observed.get("dependencies") or {}
-    for name in sorted(set(was_deps) | set(now_deps)):
-        if was_deps.get(name) != now_deps.get(name):
-            notes.append(
-                f"{name}: {was_deps.get(name, 'absent')} -> {now_deps.get(name, 'absent')}"
-            )
+    for section in ("dependencies", "systemFonts"):
+        was_section = recorded.get(section) or {}
+        now_section = observed.get(section) or {}
+        for name in sorted(set(was_section) | set(now_section)):
+            if was_section.get(name) != now_section.get(name):
+                notes.append(
+                    f"{name}: {was_section.get(name, 'absent')} -> "
+                    f"{now_section.get(name, 'absent')}"
+                )
     return notes
 
 

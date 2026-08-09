@@ -48,6 +48,14 @@ they differ from the recording environment. All are pinned by range in
 drift because a dependency shipped. That is real drift and the gate should
 surface it; naming the version turns an inscrutable red into a one-line answer.
 
+The same list carries `systemFonts`, and that one earns its place by being
+*silent*. The substrate's scan simulator draws its fax-header strip with
+`/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf` and catches `OSError` to
+fall back on PIL's default font. On a machine without the DejaVu package the
+fallback substitutes different pixels into every scanned PDF, warns nobody, and
+the only symptom is a golden that will not reproduce. A recorded digest — or
+`absent` — answers that in one line.
+
 ## What is deliberately not compared
 
 The engine version and the substrate SHA are recorded and never digested. A
