@@ -49,18 +49,20 @@ an injection, an unrecognized body part, an unsegmented "back" against a cervica
 unclassified code would put noise on every case, and the table's real gap signal is
 recall measured over a scored corpus, not a per-case remark.
 
-A prior operation is likewise not this case's operation. ``priorCptCode`` and
-``medicalHistory.priorSurgeries[]`` describe anatomy that is *expected* to differ, and a
-history ledger makes them routine. That is classified by **namespace**, not by token:
-``priorAuthorization`` and ``historyAndPhysical`` read historical word by word yet hold
-current care, and a flat token scan discarded exactly the operations this pack checks.
-See :data:`HISTORICAL_NAMESPACES` and :data:`CURRENT_CARE_NAMESPACES`.
+A prior operation — or a prior *injury* — is likewise not this case's. ``priorCptCode``
+and ``medicalHistory.priorSurgeries[]`` describe anatomy that is *expected* to differ,
+and a history ledger makes them routine. That is classified by **namespace**, not by
+token: ``priorAuthorization`` and ``historyAndPhysical`` read historical word by word yet
+hold current care, and a flat token scan discarded exactly the operations this pack
+checks. Namespaces are read from the fact outward and the nearest one decides, so a
+history block nested inside a current episode stays historical. See
+:data:`HISTORICAL_NAMESPACES` and :data:`CURRENT_CARE_NAMESPACES`.
 
 Restraint cuts the other way too, and that failure mode is quieter. A body part merely
 *mentioned* is not one that was injured, so injured anatomy is read only from the
-enumerated path shapes in :data:`INJURED_PART_PATH_SHAPES`. A recognized leaf name in
-the wrong namespace does not qualify — ``scenario.diagnostics[].body_part``,
-``exam.body_parts[].part`` and ``medicalHistory.priorInjury.bodyPart`` all name anatomy
+enumerated path shapes in :data:`INJURED_PART_PATH_SHAPES`, matched exactly. A recognized
+leaf name in the wrong namespace does not qualify — ``scenario.diagnostics[].body_part``,
+``exam.body_parts[].part`` and ``medicalHistory.priorInjury.injuredPart`` all name anatomy
 without claiming this case injured it.
 
 Both selectors are closed worlds rather than vocabulary rules, and that is deliberate.
@@ -304,10 +306,11 @@ _OPERATION_MARKERS = frozenset({"surgery", "surgeries", "surgical", "operation",
 
 #: The closed world of path shapes that assert *this case's* injured anatomy.
 #:
-#: A shape is a normalized path suffix: list indices collapse to ``[]`` and every segment
-#: is canonicalized, so ``$.case.injury.body_parts[0].part`` matches
-#: ``injury.body_parts[].part``. Matching a suffix tolerates the wrappers real archives
-#: add (``case.``, ``caseFacts.``) while keeping the namespace itself exact.
+#: A shape is a normalized path: list indices collapse to ``[]`` and every segment is
+#: canonicalized, so ``$.case.injury.body_parts[0].part`` matches
+#: ``injury.body_parts[].part``. Matching is **exact** once the wrappers in
+#: :data:`_ARCHIVE_WRAPPERS` are stripped — never an arbitrary suffix, which would let a
+#: one-segment shape such as ``injured_part`` match beneath any ancestor at all.
 #:
 #: **A leaf name alone never qualifies**, and that is the whole point. The generator seed
 #: carries ``scenario.diagnostics[].body_part`` — a diagnostic scoped to a region,
@@ -349,6 +352,12 @@ INJURED_PART_PATH_SHAPES: frozenset[str] = frozenset(
         "body_parts_injured",
     }
 )
+
+#: The only prefixes a shape may carry — archive wrappers, which name no record type.
+#:
+#: Anything else in front of a shape is a namespace, and a namespace is exactly what
+#: decides whether the anatomy belongs to this case.
+_ARCHIVE_WRAPPERS: frozenset[str] = frozenset({"case", "case_facts"})
 
 #: Namespaces whose contents describe the patient's past rather than this case.
 HISTORICAL_NAMESPACES: frozenset[str] = frozenset(
@@ -552,37 +561,53 @@ def _shape_segments(source_path: str) -> tuple[str, ...]:
     return tuple(segments)
 
 
-#: :data:`INJURED_PART_PATH_SHAPES`, pre-split for suffix comparison.
-_INJURED_PART_SHAPES: tuple[tuple[str, ...], ...] = tuple(
+#: :data:`INJURED_PART_PATH_SHAPES`, pre-split for exact comparison.
+_INJURED_PART_SHAPES: frozenset[tuple[str, ...]] = frozenset(
     tuple(shape.split(".")) for shape in INJURED_PART_PATH_SHAPES
 )
 
 
 def _names_injured_anatomy(fact: Fact) -> bool:
-    """Whether this fact sits at a shape that asserts this case's injured anatomy."""
+    """Whether this fact sits at a shape that asserts this case's injured anatomy.
+
+    Matched **exactly** once the supported archive wrappers are stripped, never as an
+    arbitrary suffix. A one-segment shape like ``injured_part`` names itself, and a
+    suffix rule let it match under any ancestor at all — so
+    ``medicalHistory.priorInjury.injuredPart`` was read as a current injury while the
+    equivalent ``bodyPart`` path was correctly refused.
+    """
     if fact.scope == "claim":
-        # A promoted claim names its own field; its path is the container, not a shape.
+        # A promoted claim names its own field; its path is the container, not a shape,
+        # so scoping it is left to the historical classification in _injured_regions.
         return (canonical_field(fact.field),) in _INJURED_PART_SHAPES
     segments = _shape_segments(fact.source_path)
-    return any(
-        len(shape) <= len(segments) and segments[len(segments) - len(shape) :] == shape
-        for shape in _INJURED_PART_SHAPES
-    )
+    index = 0
+    while index < len(segments) and segments[index] in _ARCHIVE_WRAPPERS:
+        index += 1
+    return segments[index:] in _INJURED_PART_SHAPES
 
 
 def _is_historical(fact: Fact) -> bool:
-    """Whether a fact records a past operation rather than this case's.
+    """Whether a fact records the patient's past rather than this case.
 
     Classified by whole namespace rather than by token, because ``priorAuthorization``
     and ``historyAndPhysical`` are current-care records whose names read historical word
-    by word. Current care wins wherever both classifications appear.
+    by word.
+
+    Namespaces are scanned **from the fact outward**, and the nearest recognized one
+    decides. An unordered scan let any current-care namespace anywhere reactivate a
+    history block nested inside it, so ``currentEpisode.medicalHistory.priorSurgeries``
+    read as current care.
     """
     if canonical_field(fact.field) in HISTORICAL_CODE_FIELDS:
         return True
-    namespaces = {segment.removesuffix("[]") for segment in _shape_segments(fact.source_path)}
-    if namespaces & CURRENT_CARE_NAMESPACES:
-        return False
-    return bool(namespaces & HISTORICAL_NAMESPACES)
+    segments = [segment.removesuffix("[]") for segment in _shape_segments(fact.source_path)]
+    for segment in reversed(segments):
+        if segment in CURRENT_CARE_NAMESPACES:
+            return False
+        if segment in HISTORICAL_NAMESPACES:
+            return True
+    return False
 
 
 def _injured_regions(context: RuleContext) -> tuple[frozenset[str], tuple[str, ...]]:
@@ -591,13 +616,17 @@ def _injured_regions(context: RuleContext) -> tuple[frozenset[str], tuple[str, .
     Facts on the operation surface are excluded even when they name a body part:
     ``surgery.bodyPart`` records the part that was operated on, chosen together with
     the code, so reading it back as an injury would make the check answer itself.
+
+    Historical facts are excluded too — a past injury is not current injured anatomy.
+    Shape matching already refuses a history-nested *path*, but a promoted claim carries
+    no path shape of its own, so its container is the only thing that can scope it.
     """
     regions: set[str] = set()
     cited: list[str] = []
     for fact in context.facts:
         if not isinstance(fact.value, str) or not _names_injured_anatomy(fact):
             continue
-        if context.words(fact) & _OPERATION_MARKERS:
+        if context.words(fact) & _OPERATION_MARKERS or _is_historical(fact):
             continue
         claimed = regions_named_by(fact.value)
         if claimed:

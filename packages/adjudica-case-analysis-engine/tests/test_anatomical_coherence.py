@@ -14,6 +14,10 @@ from adjudica_case_analysis_engine.cli import cli
 from adjudica_case_analysis_engine.input import normalize_paths
 from adjudica_case_analysis_engine.rules import run_rules
 from adjudica_case_analysis_engine.rules.anatomical_coherence import (
+    CURRENT_CARE_NAMESPACES,
+    HISTORICAL_CODE_FIELDS,
+    HISTORICAL_NAMESPACES,
+    INJURED_PART_PATH_SHAPES,
     LOCALIZABLE_UNLISTED_CPT_ANATOMY,
     NON_OPERATIVE_CPT_CODES,
     NONLOCALIZABLE_UNLISTED_CPT_CODES,
@@ -431,21 +435,188 @@ def test_injured_anatomy_is_read_only_from_enumerated_shapes(tmp_path: Path) -> 
         assert _codes(findings) == [CODE], extra
 
 
-def test_every_enumerated_shape_has_a_positive_control(tmp_path: Path) -> None:
-    """Each shape in the closed list must actually clear a matching operation."""
-    for payload in (
-        {"injury": {"body_part": "shoulder"}},
-        {"injury": {"body_parts": ["shoulder"]}},
-        {"injury": {"body_parts": [{"part": "shoulder"}]}},
-        {"case": {"injury": {"body_part": "shoulder"}}},
-        {"injuredPart": "shoulder"},
-        {"injurySite": "shoulder"},
+def _payload_for_shape(shape: str, value: str) -> dict:
+    """The minimal payload that materializes one path shape, built from the shape itself.
+
+    Generating rather than hand-listing is what keeps the matrix exhaustive: a shape
+    added to the table without a control cannot slip through, because the controls *are*
+    the table.
+    """
+    node: object = value
+    for segment in reversed(shape.split(".")):
+        node = {segment[:-2]: [node]} if segment.endswith("[]") else {segment: node}
+    return node  # type: ignore[return-value]
+
+
+_SHOULDER_OPERATION = {"caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}}}
+
+
+def test_every_enumerated_shape_clears_a_matching_operation(tmp_path: Path) -> None:
+    """Every shape in the closed list, exercised as a positive control."""
+    checked = set()
+    for shape in sorted(INJURED_PART_PATH_SHAPES):
+        payload = {**_payload_for_shape(shape, "shoulder"), **_SHOULDER_OPERATION}
+        assert CODE not in _codes(_findings(tmp_path, payload)), shape
+        checked.add(shape)
+
+    assert checked == set(INJURED_PART_PATH_SHAPES)
+
+
+def test_no_enumerated_shape_survives_a_foreign_namespace(tmp_path: Path) -> None:
+    """The same shapes, nested under a history block, must claim nothing.
+
+    Exactness is the whole guarantee: a shape is an assertion where the archive puts
+    injuries, and nowhere else.
+    """
+    checked = set()
+    for shape in sorted(INJURED_PART_PATH_SHAPES):
+        payload = {
+            "injury": {"body_part": "right wrist"},
+            "medicalHistory": _payload_for_shape(shape, "shoulder"),
+            **_SHOULDER_OPERATION,
+        }
+        assert _codes(_findings(tmp_path, payload)) == [CODE], shape
+        checked.add(shape)
+
+    assert checked == set(INJURED_PART_PATH_SHAPES)
+
+
+def test_an_archive_wrapper_is_the_only_accepted_prefix(tmp_path: Path) -> None:
+    """`case.` and `caseFacts.` are supported wrappers; nothing else may stand in front."""
+    for wrapper in ("case", "caseFacts"):
+        payload = {wrapper: {"injury": {"body_part": "shoulder"}}, **_SHOULDER_OPERATION}
+        assert CODE not in _codes(_findings(tmp_path, payload)), wrapper
+
+    for foreign in ("scenario", "exam", "medicalHistory", "priorInjury"):
+        payload = {
+            "injury": {"body_part": "right wrist"},
+            foreign: {"injury": {"body_part": "shoulder"}},
+            **_SHOULDER_OPERATION,
+        }
+        assert _codes(_findings(tmp_path, payload)) == [CODE], foreign
+
+
+def test_a_self_describing_shape_is_still_namespace_scoped(tmp_path: Path) -> None:
+    """A one-segment shape must not suffix-match its way into any ancestor.
+
+    `injuredPart` names itself, but `medicalHistory.priorInjury.injuredPart` is a past
+    injury — accepting it cleared a current contradiction that the equivalent
+    `bodyPart` path correctly refused.
+    """
+    for extra in (
+        {"medicalHistory": {"priorInjury": {"injuredPart": "shoulder"}}},
+        {"medicalHistory": {"injury": {"site": "shoulder"}}},
+        {"scenario": {"diagnostics": {"injuredPart": "shoulder"}}},
     ):
-        findings = _findings(
-            tmp_path,
-            {**payload, "caseFacts": {"surgery": {"status": "performed", "cptCode": "29827"}}},
-        )
-        assert CODE not in _codes(findings), payload
+        payload = {"injury": {"body_part": "right wrist"}, **extra, **_SHOULDER_OPERATION}
+        assert _codes(_findings(tmp_path, payload)) == [CODE], extra
+
+
+def test_a_claim_promoted_inside_a_history_block_is_not_current_anatomy(tmp_path: Path) -> None:
+    """A promoted claim names its own field, so only its container can scope it.
+
+    This is the one path where shape matching cannot help — the claim's own path is the
+    container, not an anatomy shape — so the historical classification has to carry it.
+    """
+    payload = {
+        "injury": {"body_part": "right wrist"},
+        "medicalHistory": {"claims": [{"field": "injured_part", "value": "shoulder"}]},
+        **_SHOULDER_OPERATION,
+    }
+
+    assert _codes(_findings(tmp_path, payload)) == [CODE]
+
+    # The same claim outside a history block is a current assertion.
+    current = {
+        "claims": [{"field": "injured_part", "value": "shoulder"}],
+        **_SHOULDER_OPERATION,
+    }
+    assert CODE not in _codes(_findings(tmp_path, current))
+
+
+def test_the_nearest_namespace_decides_not_any_namespace(tmp_path: Path) -> None:
+    """Nesting order matters: the namespace closest to the code wins.
+
+    An unordered scan let any current-care namespace anywhere reactivate a nested
+    history block, so `currentEpisode.medicalHistory.priorSurgeries` read as current.
+    """
+    for historical in (
+        {"currentEpisode": {"medicalHistory": {"priorSurgeries": [{"cptCode": "29827"}]}}},
+        {"historyAndPhysical": {"pastSurgeries": [{"cptCode": "29827"}]}},
+    ):
+        payload = {"injury": {"body_part": "right wrist"}, **historical}
+        assert CODE not in _codes(_findings(tmp_path, payload)), historical
+
+    # And the reverse nesting stays current.
+    payload = {
+        "injury": {"body_part": "right wrist"},
+        "medicalHistory": {"currentSurgery": {"cptCode": "29827"}},
+    }
+    assert _codes(_findings(tmp_path, payload)) == [CODE]
+
+
+def test_every_historical_namespace_silences_an_operation(tmp_path: Path) -> None:
+    """Each entry of the historical table, exercised."""
+    checked = set()
+    for namespace in sorted(HISTORICAL_NAMESPACES):
+        payload = {
+            "injury": {"body_part": "right wrist"},
+            namespace: {"surgery": {"cptCode": "29827"}},
+        }
+        assert CODE not in _codes(_findings(tmp_path, payload)), namespace
+        checked.add(namespace)
+
+    assert checked == set(HISTORICAL_NAMESPACES)
+
+
+def test_every_current_care_namespace_keeps_an_operation(tmp_path: Path) -> None:
+    """Each entry of the current-care table, exercised."""
+    checked = set()
+    for namespace in sorted(CURRENT_CARE_NAMESPACES):
+        payload = {
+            "injury": {"body_part": "right wrist"},
+            namespace: {"surgery": {"cptCode": "29827"}},
+        }
+        assert _codes(_findings(tmp_path, payload)) == [CODE], namespace
+        checked.add(namespace)
+
+    assert checked == set(CURRENT_CARE_NAMESPACES)
+
+
+def test_every_historical_code_field_silences_an_operation(tmp_path: Path) -> None:
+    """Each entry of the historical code-field table, exercised."""
+    checked = set()
+    for field in sorted(HISTORICAL_CODE_FIELDS):
+        payload = {
+            "injury": {"body_part": "right wrist"},
+            "caseFacts": {"surgery": {"status": "performed", field: "29827"}},
+        }
+        assert CODE not in _codes(_findings(tmp_path, payload)), field
+        checked.add(field)
+
+    assert checked == set(HISTORICAL_CODE_FIELDS)
+
+
+def test_every_cpt_table_entry_behaves_as_its_class_promises() -> None:
+    """Behavioural pin on all four code tables, entry by entry.
+
+    `test_every_table_entry_is_a_five_digit_code_naming_a_known_region` proves the rows
+    are well formed; this proves each one actually decides something.
+    """
+    for code, region in sorted(OPERATIVE_CPT_ANATOMY.items()):
+        mismatch = "shoulder" if region == "foot" else "foot"
+        assert contradicts(code, frozenset({mismatch})), code
+        assert not contradicts(code, frozenset({region})), code
+
+    for code, regions in sorted(LOCALIZABLE_UNLISTED_CPT_ANATOMY.items()):
+        mismatch = next(r for r in ("foot", "shoulder", "hand") if r not in regions)
+        assert contradicts(code, frozenset({mismatch})), code
+        for region in regions:
+            assert not contradicts(code, frozenset({region})), (code, region)
+
+    for code in sorted(NON_OPERATIVE_CPT_CODES | NONLOCALIZABLE_UNLISTED_CPT_CODES):
+        assert not contradicts(code, frozenset({"wrist"})), code
+        assert not contradicts(code, frozenset({"shoulder"})), code
 
 
 def test_current_care_records_are_not_historical(tmp_path: Path) -> None:

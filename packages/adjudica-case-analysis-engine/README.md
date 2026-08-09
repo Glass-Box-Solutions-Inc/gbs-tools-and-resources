@@ -70,12 +70,16 @@ by namespace rather than by word — `priorAuthorization` and `historyAndPhysica
 token by token but hold current care, and a flat token scan dropped exactly the operations the pack
 exists to check.
 
+Namespaces are read from the fact outward and the nearest one decides, so a history block nested
+inside a current episode stays historical.
+
 It is equally careful about the other direction, where the failure is quieter. Injured anatomy is
 read only from an enumerated set of path shapes (`injury.body_parts[].part`, `injury.body_part`,
-`injuredPart`, `injurySite`, …). A recognized leaf name in the wrong namespace does not qualify:
-`scenario.diagnostics[].body_part`, `exam.body_parts[].part` and `medicalHistory.priorInjury.bodyPart`
-all name anatomy without claiming this case injured it, and admitting one would silently clear a
-contradictory operation.
+`injuredPart`, `injurySite`, …), matched exactly once the `case.`/`caseFacts.` archive wrappers are
+stripped. A recognized leaf name in the wrong namespace does not qualify:
+`scenario.diagnostics[].body_part`, `exam.body_parts[].part` and
+`medicalHistory.priorInjury.injuredPart` all name anatomy without claiming this case injured it, and
+admitting one would silently clear a contradictory operation.
 
 Both selectors are closed worlds rather than vocabulary rules. The archive grammar is knowable, so it
 is enumerated; an unrecognized shape costs a finding rather than inventing one — the same trade the
