@@ -1340,6 +1340,27 @@ class TestTheAutomaticLateIndemnityIncrease:
             sum(item.principal for item in ledger.assessments)
         )
 
+    def test_late_pd_advances_keep_their_own_one_based_ordinals(self) -> None:
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {
+                    "td_weeks": 0,
+                    "pd_advances": 2,
+                    "late_payments": 2,
+                    "max_days_late": 45,
+                },
+                "penalties": {},
+            }
+        )
+        ledger = facts.penalties
+        assert ledger is not None
+        assert [(item.source, item.ordinal) for item in ledger.assessments] == [
+            ("pd_advance", 1),
+            ("pd_advance", 2),
+        ]
+        assert all(item.date_paid is not None for item in ledger.assessments)
+
     @pytest.mark.parametrize(
         ("override", "source"),
         [
