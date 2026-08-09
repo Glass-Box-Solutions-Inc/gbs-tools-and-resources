@@ -1383,8 +1383,14 @@ find = '''    "wrist": "wrist",'''
 replace = '''    "wrist": "shoulder",'''
 note = "AJC-55. The substrate's alias table is the single seam through which every operative record and, via _pick_cpt's substrate-first preference (ISC-93), the wcce ledger's SurgeryFact acquire their procedure. The retired 'upper extremity fallback' mapped wrist/hand/elbow to surgery_shoulder here, which is exactly this edit; the guard's per-part oracle is hand-maintained so the pool cannot vouch for itself. First cross-package mutant: the file lives in merus-test-data-generator, the guard in this package, because the defect and its blast radius straddle the bridge."
 
+# Round 16 — AJC-48's ground-truth export and money coherence harness.
+# Numbered 16 rather than 14 because AJC-59's golden-corpus gate took the
+# whole of round 14 while this branch was open; the ids moved, the claims did
+# not. Renumbering rather than interleaving keeps a round readable as the unit
+# of work it records.
+
 [[mutant]]
-id = 'm14-1'
+id = 'm16-1'
 title = 'an incompatible money-channel major version is silently accepted'
 file = 'src/wc_caseload_engine/truth_manifest.py'
 test = 'tests/test_truth_manifest.py::test_unknown_channel_is_ignored_and_money_major_is_guarded'
@@ -1393,7 +1399,7 @@ replace = '''    if False:'''
 note = 'AJC-48 Round B, re-pointed in the review round. Additive channels and compatible minor versions are open, but a new money major may change the meaning or shape of scorer labels. The reader must refuse it rather than reconstructing an apparently valid but semantically unknown MoneyFacts. The major check moved into the shared _require_compatible_version helper when review finding 4 made one parser serve both the envelope and every channel, so this mutation now disables both — the guard still names the money-channel claim, which is the narrower of the two and therefore the honest one to assert.'
 
 [[mutant]]
-id = 'm14-2'
+id = 'm16-2'
 title = 'a case with no money facts emits an empty money channel instead of omitting it'
 file = 'src/wc_caseload_engine/truth_manifest.py'
 test = 'tests/test_truth_manifest.py::test_money_gate_omits_channel_and_reimports_as_none'
@@ -1408,7 +1414,7 @@ replace = '''    channels: dict[str, Any] = {}
 note = 'AJC-48 Round B. Channel presence means a label family exists for the case. An empty or null money channel invents a third state between absent and populated and makes scorer routing ambiguous.'
 
 [[mutant]]
-id = 'm14-3'
+id = 'm16-3'
 title = 'the scorer-facing published block drifts away from the public money ledger'
 file = 'src/wc_caseload_engine/truth_manifest.py'
 test = 'tests/test_truth_manifest.py::test_published_block_is_the_existing_public_contract'
@@ -1417,7 +1423,7 @@ replace = '''        "published": {},'''
 note = 'AJC-48 Round B. The scorer label and case manifest must be the same established public contract, not independently serialized approximations that can drift while each remains internally valid.'
 
 [[mutant]]
-id = 'm14-4'
+id = 'm16-4'
 title = 'the coherence comparator declares a one-cent paper-to-ledger difference equal'
 file = 'tests/money_coherence.py'
 test = 'tests/test_money_coherence.py::test_one_cent_perturbation_is_reported_for_every_swept_fact[aww]'
@@ -1580,3 +1586,135 @@ test = 'tests/test_truth_manifest.py::test_output_validator_reports_truth_publis
 find = '''        if analyzer_projection != manifest_money:'''
 replace = '''        if False:'''
 note = 'AJC-48 Round G. Removing scorer-only penalties from channels.money.published must produce exactly caseFacts.money; otherwise the analyzer input and scorer label describe different worlds.'
+
+# Round 14 — the golden-corpus gate (AJC-59), after independent review found the
+# gate hashing the corpus's report about its own bytes instead of the bytes
+# themselves. Every one of these puts back a defect that shipped in the first cut.
+
+[[mutant]]
+id = 'm14-1'
+title = 'the gate stops reading rendered bytes and trusts the manifest again'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_a_document_mutated_without_touching_its_manifest_is_caught'
+find = '''            digests[relative] = _sha256(path.read_bytes())'''
+replace = '''            digests[relative] = _sha256(relative.encode())'''
+note = "The defect the first version of this tool shipped with: it hashed the manifest's DECLARED md5 strings and never opened a rendered document. A renderer writing different bytes while its bookkeeping stayed stale therefore passed, which is the one failure a byte-identity gate exists to catch. Digesting the path instead of the contents reproduces it exactly — the tree digest stops moving when a file changes."
+
+[[mutant]]
+id = 'm14-2'
+title = 'an undeclared file rides along in the corpus unnoticed'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_an_undeclared_file_in_the_tree_is_rejected'
+find = '''    if extra:
+        raise GoldenError('''
+replace = '''    if False:
+        raise GoldenError('''
+note = "The direction a manifest can never catch, because the manifest is what the corpus is measured against. A stray temp file, a new sidecar, or the __pycache__ that determinism rule 5 exists to prevent would all have ridden along invisibly. Reconciliation has to reject both ways or it is not reconciliation."
+
+[[mutant]]
+id = 'm14-3'
+title = 'a declared document can vanish from disk and still pass'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_a_declared_document_missing_from_disk_is_rejected'
+find = '''    if missing:
+        raise GoldenError('''
+replace = '''    if False:
+        raise GoldenError('''
+note = "The other half of the reconciliation. A manifest describing documents that are not there is a manifest describing a corpus that does not exist, and a consumer reading the index would fetch nothing."
+
+[[mutant]]
+id = 'm14-4'
+title = 'a version bump stops reddening the gate'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_the_tree_digest_ignores_substrate_sha_and_nothing_else'
+find = '''CASE_REDACTIONS: tuple[tuple[str, ...], ...] = (("provenance", "substrateSha"),)'''
+replace = '''CASE_REDACTIONS: tuple[tuple[str, ...], ...] = (("provenance", "substrateSha"), ("provenance", "generator"))'''
+note = "The first cut redacted provenance.generator so a version bump would stay green, reasoning that a bump says nothing about output. It says the opposite: the generator string is part of every manifest's bytes, so a bump genuinely changes shipped output, and hiding it lets a release through unexamined. Review ruled it back into the digest; substrateSha stays out because it describes the checkout rather than the corpus."
+
+[[mutant]]
+id = 'm14-5'
+title = 'a golden can be recorded from a single unverified run'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_record_refuses_a_corpus_whose_two_runs_disagree'
+find = '''    differences = compare(corpus, first, second)'''
+replace = '''    differences = compare(corpus, first, first)'''
+note = "Recording from one run asserts reproducibility without testing it. Worse: if the corpus really had gone nondeterministic, that single run is how the nondeterminism gets pinned as the baseline, and every later --check fails for a reason the recording itself caused — a gate manufacturing its own red. The mutation compares the first run against itself rather than dropping the second, because cutting the loop to one iteration crashes the tuple unpack below: the gate scored that ERROR-ValueError and was right to, since a crash proves the parser works and nothing about the defect. Reaching the surviving logic — the comparison — is what makes this evidence."
+
+[[mutant]]
+id = 'm14-6'
+title = 'a failed record leaves half the goldens rewritten'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_record_leaves_earlier_goldens_untouched_when_a_later_corpus_fails'
+find = '''            print("\nNo golden was written — --record is all-or-nothing.")
+            return 1'''
+replace = '''            continue'''
+note = "A half-recorded set is the worst artifact this command could leave: some goldens refreshed against new code, some still describing the old, and a git status that looks like a deliberate subset. A reviewer has no way to see the set is incoherent."
+
+[[mutant]]
+id = 'm14-7'
+title = 'bare --record silently rewrites every golden again'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_a_bare_record_is_a_usage_error'
+find = '''        if not (args.only or args.all or args.tier):'''
+replace = '''        if False:'''
+note = "Re-recording accepts new output as correct, and a bare --record is the fastest way to turn a red gate green: one word, four rewritten goldens, no statement of intent. Naming the scope is what makes the blessing a decision rather than a reflex."
+
+[[mutant]]
+id = 'm14-8'
+title = 'a failed record leaves the goldens it already replaced rewritten'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_a_failure_midway_through_writing_rolls_every_golden_back'
+find = '''    for path in committed:
+        backup = backups.get(path)'''
+replace = '''    for path in []:
+        backup = backups.get(path)'''
+note = "Proving every corpus reproducible before writing any of them closes the big window and leaves a small one: the writes themselves. A full disk, a permissions change or a Ctrl-C between the first replace and the second leaves exactly the incoherent set the design argues against, and no amount of care in the phase before helps. Skipping the restore loop reproduces it precisely — the staging still works, so a reader never sees a half-written file, but the first golden stays replaced. Re-pointed once already: the round-3 rewrite lifted this loop out of the except block into _rollback(), and the gate scored PATCH-MISS rather than quietly passing, which is the whole reason the registry treats a miss as a finding."
+
+[[mutant]]
+id = 'm14-9'
+title = 'a format-1 golden is half-read instead of refused'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_a_format_one_golden_is_refused_rather_than_half_read'
+find = '''    if payload.get("format") != GOLDEN_FORMAT:'''
+replace = '''    if False:'''
+note = "Format 1 recorded only the manifest-derived digests, so comparing the keys a format-1 golden happens to share with this tool would report clean while checking strictly less than the gate claims — a passing verdict that has quietly stopped covering the rendered bytes. That is the one failure mode a gate may never have, so an unreadable golden is refused rather than partially believed."
+
+[[mutant]]
+id = 'm14-10'
+title = 'Ctrl-C slips past the rollback again'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_an_interrupt_midway_through_writing_rolls_back_and_still_stops_the_program'
+find = '''    except BaseException as exc:'''
+replace = '''    except OSError as exc:'''
+note = "The exact defect review found in the commit phase written to fix the previous one. KeyboardInterrupt inherits from BaseException, not Exception, so an OSError handler matches nothing on Ctrl-C: the interrupt skipped both the staged-file cleanup and the rollback while the docstring above it promised Ctrl-C recovery. A handler documenting a guarantee it does not implement is worse than no guarantee, because it is the reason nobody checks. Narrowing the catch reproduces it exactly — the interrupt still propagates, so the pytest.raises passes, and the byte-identity assertion after it is what goes red."
+
+[[mutant]]
+id = 'm14-11'
+title = 'a failed rollback is reported as a clean one'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_a_failed_rollback_is_reported_rather_than_described_as_clean'
+find = '''    if unrestored:
+        return ('''
+replace = '''    if False:
+        return ('''
+note = "When restoration itself fails the tree really is inconsistent, and 'the committed set is unchanged and still coherent' is then the single sentence that stops somebody going to look. An error message may be incomplete; it may not be confidently wrong about the state it leaves behind. Re-pointed in round 4, when the message was lifted into _rollback_state() so the interrupt path could share it — the gate scored PATCH-MISS rather than passing quietly."
+
+[[mutant]]
+id = 'm14-12'
+title = 'a replace that lands an instant before an interrupt is forgotten'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_a_replacement_that_succeeded_before_the_interrupt_is_still_rolled_back'
+find = '''            committed.append(destination)
+            os.replace(incoming, destination)'''
+replace = '''            os.replace(incoming, destination)
+            committed.append(destination)'''
+note = "os.replace returning is not the same instant as the bookkeeping that records it, and an interrupt can be delivered in between. Tracking after the call therefore misses a file that really did change, and the rollback leaves exactly one golden updated — the failure the whole function exists to prevent, reached through a gap of one bytecode instruction. Pre-tracking removes the window instead of narrowing it: restoring a destination whose replace never happened is a no-op, so the conservative order costs nothing. Swapping the two lines back is the defect verbatim."
+
+[[mutant]]
+id = 'm14-13'
+title = 'an interrupt hides the rollback it could not finish'
+file = 'tools/golden_gate.py'
+test = 'tests/test_golden_corpus.py::test_an_interrupt_names_the_files_a_failed_rollback_could_not_restore'
+find = '''                exc.add_note(state)'''
+replace = '''                pass'''
+note = "The I/O path reported an incomplete rollback; the interrupt path computed the same answer and discarded it, so a Ctrl-C that left a golden rewritten propagated a bare KeyboardInterrupt indistinguishable from the clean case. An interrupt is the exception the operator actually sees, which makes it the one that has to carry the news."

@@ -1,0 +1,11 @@
+{
+  "case": {
+    "applicant": {"value": "Jordan Doe", "field": "applicant_name", "confidence": 0.98, "source_document": "application.pdf", "page": 1},
+    "employer": "Acme Delivery LLC",
+    "date_of_injury": "2025-01-15",
+    "injury": {"body_part": "right wrist", "mechanism": "repetitive motion"},
+    "treatment_events": [
+      {"treatment_date": "2025-02-03", "provider": "Dr. Rivera", "treatment": "bracing"}
+    ]
+  }
+}
