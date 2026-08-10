@@ -411,7 +411,10 @@ Consequences worth knowing before touching it:
   half-weight endpoints, and a small tail on age 24 from a 365-day year meeting leap days — not
   uniform over 25-62. Assuming uniform cost a fifth decimal place (0.771068 against 0.771010),
   and the reason to care is the claim rather than the digit: an identity asserted at 1e-12
-  against an approximate population is an identity about the approximation. Dividing each
+  against an approximate population is an identity about the approximation. The nominal
+  `REFERENCE_AGES` band that carried the uniform claim is **deleted**, not corrected — every
+  axis of the reference population gets exactly one definition, which is the same rule that
+  closed the BMI-classifier finding one bullet up. Dividing each
   applicant's *own* `P(any)` into the target and capping at 1 cannot reach the target: the cap
   is one-sided, so everybody below it contributes less and nobody contributes more, and the
   aggregate lands at 0.484 against 0.50. That 0.016 bias hid inside a ±0.02 sampled tolerance

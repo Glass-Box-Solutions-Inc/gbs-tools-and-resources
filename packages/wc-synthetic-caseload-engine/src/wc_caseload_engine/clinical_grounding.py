@@ -608,22 +608,25 @@ OVERWEIGHT_SHARE_OF_NON_OBESE: Knob = Knob(
     ),
 )
 
-#: The applicant population the corpus-level knobs are calibrated against.
+#: The claim shapes of the applicant population the corpus-level knobs calibrate against.
 #:
 #: A documentation rate quoted "across a caseload" is an expectation, and an expectation
-#: needs a population. This is that population, written down rather than assumed — every
+#: needs a population. That population is written down rather than assumed — every
 #: earlier attempt to hold a corpus-wide rate without one ended up holding it per
 #: applicant instead, which is a different and unattainable claim.
 #:
-#: Ages mirror ``case_context._DERIVED_AGE_RANGE`` (25-62 inclusive, uniform), which is
-#: the band the cast actually draws from, so this is a *derived* figure rather than an
-#: independent guess. Sex follows :data:`FEMALE_SHARE`; body mass and smoking follow
-#: their own tables at each age. Claim shapes are **invented** and tagged: no source
-#: gives a distribution of body-part combinations across a caseload, and the seven
-#: below are the one-and-two-region claims a real file tends to name, weighted toward
-#: the single-region ones because that is what a caseload is mostly made of.
-REFERENCE_AGES: tuple[int, ...] = tuple(range(25, 63))
-
+#: Each axis of it has exactly one definition, and this is the axis that lives here.
+#: Age is ``medical_history.reference_age_weights``, derived in closed form from the law
+#: ``case_context._date_of_birth`` executes; a nominal age band was stated here for a
+#: round and is superseded, because the cast draws a day offset rather than an age and
+#: the realised law is a trapezoid with half-weight endpoints and a small tail below the
+#: band. Sex follows :data:`FEMALE_SHARE`; body mass and smoking follow their own tables
+#: at each age.
+#:
+#: Claim shapes are **invented** and tagged: no source gives a distribution of body-part
+#: combinations across a caseload, and the seven below are the one-and-two-region claims
+#: a real file tends to name, weighted toward the single-region ones because that is
+#: what a caseload is mostly made of.
 REFERENCE_CLAIM_SHAPES: dict[tuple[str, ...], Knob] = {
     ("lumbar_spine",): Knob(
         value=0.26,

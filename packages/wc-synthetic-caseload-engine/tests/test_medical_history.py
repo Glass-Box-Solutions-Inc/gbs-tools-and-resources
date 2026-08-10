@@ -49,7 +49,6 @@ from wc_caseload_engine.clinical_grounding import (
     P_ANY_CONDITION_MEASURED,
     P_BILLING_CODED,
     P_SURFACES_IN_FILE,
-    REFERENCE_AGES,
     REFERENCE_CLAIM_SHAPES,
     RISK_MULTIPLIERS,
     SEVERE_SHARE_OF_OBESE,
@@ -1374,6 +1373,11 @@ SUPERSEDED_DOC_CLAIMS: tuple[tuple[str, str], ...] = (
         "the award default is None now, so silence cannot disagree with the claim",
     ),
     ("0.50/0.76", "the reference population's E[P(any)] is 0.771, not 0.76"),
+    (
+        "(25-62 inclusive, uniform)",
+        "the cast draws a day offset, not an age; reference_age_weights derives the "
+        "trapezoid with half-weight endpoints and an age-24 tail",
+    ),
     ("= **66%**", "implied file visibility is 65% at 0.50 / 0.771"),
     (
         "divides by the realised aggregate",
@@ -1471,6 +1475,7 @@ class TestTheDocsDoNotStateSupersededContracts:
     #: against the prose it was built to catch.
     PLANTED_STALE_PASSAGES: tuple[str, ...] = (
         "the calibration solves for the one scale s where sum(w_a * clamp(s * r_a))",
+        "Ages mirror case_context._DERIVED_AGE_RANGE (25-62 inclusive, uniform), which",
         "Counsel's revision to 0.50 puts it at 0.50/0.76 = **66%**, which no longer",
         "held exactly regardless, because the documentation gate divides by the "
         "realised aggregate.",
@@ -1521,7 +1526,8 @@ def _reference_cohort(total: int, base: int) -> list[Any]:
     Claim shapes in their documented proportions rather than equally, because the
     surfacing union is an expectation over a caseload and a caseload is not an equal
     mix of shapes. Ages arrive from the cast's own DOB draw, which is uniform over
-    exactly ``REFERENCE_AGES``; sex, body mass and smoking follow their tables. So this
+    the law ``reference_age_weights`` derives; sex, body mass and smoking follow their
+    tables. So this
     cohort *is* the population :func:`expected_any_condition` integrates over, which is
     what makes the sampled check below a check of the same claim as the analytic one.
     """
@@ -1570,8 +1576,8 @@ class TestTheDocumentationGate:
     def test_the_age_weights_are_the_law_the_cast_actually_draws(self) -> None:
         """Round 5, finding 2. The reference population has to be the real one.
 
-        ``REFERENCE_AGES`` declared a uniform band and the cast draws nothing of the
-        sort: ``randint(low*365, high*365) + randint(0, 364)`` convolves two uniforms
+        A ``REFERENCE_AGES`` constant declared a uniform band and the cast draws nothing
+        of the sort: ``randint(low*365, high*365) + randint(0, 364)`` convolves uniforms
         into a trapezoid, a 365-day year against a calendar with leap days drags a
         little mass onto age 24, and the endpoints carry about half an interior year's
         weight. The error was in the fifth decimal — and the *claim* was an identity at
@@ -1647,7 +1653,7 @@ class TestTheDocumentationGate:
         target = P_SURFACES_IN_FILE.value
 
         capped = 0.0
-        for age in REFERENCE_AGES:
+        for age, age_weight in reference_age_weights().items():
             bmi_weights = bmi_distribution(age)
             for sex, sex_share in (("female", female), ("male", 1.0 - female)):
                 for band, bmi_share in bmi_weights.items():
@@ -1657,8 +1663,9 @@ class TestTheDocumentationGate:
                                 age, sex, band, status, frozenset(shape)
                             )
                             weight = (
-                                sex_share * bmi_share * smoking_share * knob.value
-                            ) / len(REFERENCE_AGES)
+                                age_weight * sex_share * bmi_share * smoking_share
+                                * knob.value
+                            )
                             capped += weight * min(p_any, target)
 
         assert capped < target - 0.005, (

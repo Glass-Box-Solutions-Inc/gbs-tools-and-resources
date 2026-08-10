@@ -2188,3 +2188,28 @@ replace = '''    distribution = bmi_distribution(age)
             return band
     return "normal_or_under"'''
 note = 'AJC-60 R5 finding 1. The cumulative walk is the obvious way to write an inverse CDF and it is NOT the same function: severe + (obese - severe) reassociates the arithmetic, so the 40-59 band compares against 0.46399999999999997 where the original used the source literal 0.464. A draw of exactly that representable value lands in obese under one and overweight under the other. One draw in 2 to the 53, on a layer that renders nothing — registered because the claim made was that every 20-plus draw maps identically, and a claim that is nearly true is the kind people rely on.'
+
+[[mutant]]
+id = 'm17-32'
+title = 'the reference population goes back to a uniform band of ages'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheDocumentationGate::test_the_age_weights_are_the_law_the_cast_actually_draws'
+find = '''    low, high = DERIVED_AGE_RANGE
+    coarse_low, coarse_high = low * 365, high * 365
+    counts: dict[int, int] = {}
+    total_pairs = 0
+    for offset in range(coarse_low, coarse_high + 365):
+        overlap_low = max(coarse_low, offset - 364)
+        overlap_high = min(coarse_high, offset)
+        if overlap_high < overlap_low:
+            continue  # pragma: no cover - the range above cannot produce this
+        pairs = overlap_high - overlap_low + 1
+        born = ANCHOR_DATE - dt.timedelta(days=offset)
+        age = _years_between(born, ANCHOR_DATE)
+        counts[age] = counts.get(age, 0) + pairs
+        total_pairs += pairs
+    return {age: pairs / total_pairs for age, pairs in sorted(counts.items())}'''
+replace = '''    low, high = DERIVED_AGE_RANGE
+    nominal = tuple(range(low, high + 1))
+    return dict.fromkeys(nominal, 1.0 / len(nominal))'''
+note = 'AJC-60 R5 finding 2, restored as the flat table it was. A REFERENCE_AGES constant said the reference population was uniform on 25-62 and the cast draws nothing of the sort: two uniforms convolve into a trapezoid, the endpoints carry about half an interior year, and a 365-day year against a calendar with leap days drags a tail onto 24 that the nominal band does not even contain. The error lands in the fifth decimal of E[P(any)], which is why it survived a round — but the claim attached to it was an identity at 1e-12 over the generation population, and approximately right is not that. The guard enumerates the law the slow way rather than checking one analytic table against another, because two tables written by the same hand agree about their shared mistake. The constant itself is gone in this round: one definition of each axis, the same rule that closed finding 1.'
