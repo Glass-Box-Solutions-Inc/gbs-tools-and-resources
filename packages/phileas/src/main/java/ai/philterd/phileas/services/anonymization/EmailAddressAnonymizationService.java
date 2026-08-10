@@ -15,35 +15,29 @@
  */
 package ai.philterd.phileas.services.anonymization;
 
-import ai.philterd.phileas.services.context.ContextService;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.text.RandomStringGenerator;
 
+import java.security.SecureRandom;
 import java.util.List;
-import java.util.Random;
 import java.util.UUID;
 
 public class EmailAddressAnonymizationService extends AbstractAnonymizationService {
 
-    public EmailAddressAnonymizationService(final ContextService contextService, final Random random, final AnonymizationMethod anonymizationMethod) {
-        super(contextService, random, anonymizationMethod);
+    public EmailAddressAnonymizationService(final SecureRandom random, final AnonymizationMethod anonymizationMethod) {
+        super(random, anonymizationMethod);
     }
 
-    public EmailAddressAnonymizationService(final ContextService contextService, final Random random, final List<String> candidates) {
-        super(contextService, random, candidates);
+    public EmailAddressAnonymizationService(final SecureRandom random, final List<String> candidates) {
+        super(random, candidates);
     }
 
-    public EmailAddressAnonymizationService(final ContextService contextService, final Random random) {
-        super(contextService, random);
+    public EmailAddressAnonymizationService(final SecureRandom random) {
+        super(random);
     }
 
-    public EmailAddressAnonymizationService(final ContextService contextService) {
-        super(contextService);
-    }
-
-    @Override
-    public ContextService getContextService() {
-        return contextService;
+    public EmailAddressAnonymizationService() {
+        super();
     }
 
     @Override

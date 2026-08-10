@@ -18,14 +18,15 @@ package ai.philterd.phileas.filters;
 import ai.philterd.phileas.policy.Crypto;
 import ai.philterd.phileas.policy.FPE;
 import ai.philterd.phileas.policy.IgnoredPattern;
-import ai.philterd.phileas.services.context.ContextService;
 import ai.philterd.phileas.services.strategies.AbstractFilterStrategy;
+import org.apache.commons.codec.DecoderException;
+import org.apache.commons.codec.binary.Hex;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
+import java.security.SecureRandom;
 import java.util.List;
-import java.util.Random;
 import java.util.Set;
 
 import static ai.philterd.phileas.services.strategies.AbstractFilterStrategy.CRYPTO_REPLACE;
@@ -34,8 +35,7 @@ import static ai.philterd.phileas.services.strategies.AbstractFilterStrategy.FPE
 public class FilterConfiguration {
 
     private final List<? extends AbstractFilterStrategy> strategies;
-    private final ContextService contextService;
-    private final Random random;
+    private final SecureRandom random;
     private final Set<String> ignored;
     private final Set<String> ignoredFiles;
     private final List<IgnoredPattern> ignoredPatterns;
@@ -43,22 +43,22 @@ public class FilterConfiguration {
     private final FPE fpe;
     private final int windowSize;
     private final int priority;
+    private final long regexTimeoutMs;
 
     private FilterConfiguration(
             final List<? extends AbstractFilterStrategy> strategies,
-            final ContextService contextService,
-            final Random random,
+            final SecureRandom random,
             final Set<String> ignored,
             final Set<String> ignoredFiles,
             final List<IgnoredPattern> ignoredPatterns,
             final Crypto crypto,
             final FPE fpe,
             final int windowSize,
-            final int priority
+            final int priority,
+            final long regexTimeoutMs
     ) {
 
         this.strategies = strategies;
-        this.contextService = contextService;
         this.random = random;
         this.ignored = ignored;
         this.ignoredFiles = ignoredFiles;
@@ -67,14 +67,16 @@ public class FilterConfiguration {
         this.fpe = fpe;
         this.windowSize = windowSize;
         this.priority = priority;
+        this.regexTimeoutMs = regexTimeoutMs;
 
     }
 
     public static class FilterConfigurationBuilder {
 
         private List<? extends AbstractFilterStrategy> strategies;
-        private ContextService contextService;
-        private Random random;
+        // Defaults to a per-instance SecureRandom so a configuration built without withRandom(...) still
+        // has a usable RNG; FilterPolicyLoader overrides this with the filter service's instance.
+        private SecureRandom random = new SecureRandom();
         private Set<String> ignored;
         private Set<String> ignoredFiles;
         private List<IgnoredPattern> ignoredPatterns;
@@ -82,6 +84,8 @@ public class FilterConfiguration {
         private FPE fpe;
         private int windowSize;
         private int priority;
+        // Defaults so existing builders are protected without changes; a value <= 0 disables the guard.
+        private long regexTimeoutMs = 1000;
 
         public FilterConfiguration build() {
 
@@ -90,7 +94,6 @@ public class FilterConfiguration {
 
             return new FilterConfiguration(
                     strategies,
-                    contextService,
                     random,
                     ignored,
                     ignoredFiles,
@@ -98,7 +101,8 @@ public class FilterConfiguration {
                     crypto,
                     fpe,
                     windowSize,
-                    priority
+                    priority,
+                    regexTimeoutMs
             );
 
         }
@@ -133,13 +137,28 @@ public class FilterConfiguration {
 
                         if (this.crypto != null) {
 
-                            if (StringUtils.isEmpty(this.crypto.getKey())) {
+                            final String cryptoKey = this.crypto.getKey();
+
+                            if (StringUtils.isEmpty(cryptoKey)) {
                                 throw new RuntimeException("Invalid configuration for filter: Missing crypto encryption key.");
                             }
 
-                            if (StringUtils.isEmpty(this.crypto.getIv())) {
-                                throw new RuntimeException("Invalid configuration for filter: Missing crypto encryption IV value.");
+                            // Validate the key is decodable hex of a legal AES length so a bad key fails
+                            // fast at configuration time rather than per-document at encryption time. The
+                            // key value itself is never included in the message.
+                            final byte[] cryptoKeyBytes;
+                            try {
+                                cryptoKeyBytes = Hex.decodeHex(cryptoKey);
+                            } catch (final DecoderException ex) {
+                                throw new RuntimeException("Invalid configuration for filter: The crypto encryption key is not valid hexadecimal.");
                             }
+                            if (cryptoKeyBytes.length != 16 && cryptoKeyBytes.length != 24 && cryptoKeyBytes.length != 32) {
+                                throw new RuntimeException("Invalid configuration for filter: The crypto encryption key must be a 128-, 192-, "
+                                        + "or 256-bit AES key (16, 24, or 32 bytes); got " + cryptoKeyBytes.length + " bytes.");
+                            }
+
+                            // No IV is required: AES-GCM generates a fresh random nonce per value,
+                            // so the policy's iv (if any) is not used.
 
                         } else {
                             throw new RuntimeException("Invalid configuration for filter: Missing crypto encryption property.");
@@ -158,12 +177,7 @@ public class FilterConfiguration {
             return this;
         }
 
-        public FilterConfigurationBuilder withContextService(ContextService contextService) {
-            this.contextService = contextService;
-            return this;
-        }
-
-        public FilterConfigurationBuilder withRandom(Random random) {
+        public FilterConfigurationBuilder withRandom(SecureRandom random) {
             this.random = random;
             return this;
         }
@@ -203,17 +217,18 @@ public class FilterConfiguration {
             return this;
         }
 
+        public FilterConfigurationBuilder withRegexTimeoutMs(long regexTimeoutMs) {
+            this.regexTimeoutMs = regexTimeoutMs;
+            return this;
+        }
+
     }
 
     public List<? extends AbstractFilterStrategy> getStrategies() {
         return strategies;
     }
 
-    public ContextService getContextService() {
-        return contextService;
-    }
-
-    public Random getRandom() {
+    public SecureRandom getRandom() {
         return random;
     }
 
@@ -243,6 +258,10 @@ public class FilterConfiguration {
 
     public int getPriority() {
         return priority;
+    }
+
+    public long getRegexTimeoutMs() {
+        return regexTimeoutMs;
     }
 
 }

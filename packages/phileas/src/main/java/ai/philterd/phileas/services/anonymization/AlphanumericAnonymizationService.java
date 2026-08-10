@@ -15,35 +15,29 @@
  */
 package ai.philterd.phileas.services.anonymization;
 
-import ai.philterd.phileas.services.context.ContextService;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 
+import java.security.SecureRandom;
 import java.util.List;
-import java.util.Random;
 import java.util.UUID;
 
 public class AlphanumericAnonymizationService extends AbstractAnonymizationService {
 
-    public AlphanumericAnonymizationService(final ContextService contextService, final Random random, final AnonymizationMethod anonymizationMethod) {
-        super(contextService, random, anonymizationMethod);
+    public AlphanumericAnonymizationService(final SecureRandom random, final AnonymizationMethod anonymizationMethod) {
+        super(random, anonymizationMethod);
     }
 
-    public AlphanumericAnonymizationService(final ContextService contextService, final Random random, final List<String> candidates) {
-        super(contextService, random, candidates);
+    public AlphanumericAnonymizationService(final SecureRandom random, final List<String> candidates) {
+        super(random, candidates);
     }
 
-    public AlphanumericAnonymizationService(final ContextService contextService, final Random random) {
-        super(contextService, random);
+    public AlphanumericAnonymizationService(final SecureRandom random) {
+        super(random);
     }
 
-    public AlphanumericAnonymizationService(final ContextService contextService) {
-        super(contextService);
-    }
-
-    @Override
-    public ContextService getContextService() {
-        return contextService;
+    public AlphanumericAnonymizationService() {
+        super();
     }
 
     @Override

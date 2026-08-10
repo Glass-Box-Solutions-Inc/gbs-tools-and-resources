@@ -25,21 +25,23 @@ A sample policy containing a filter strategy is shown below. In this example, em
 }
 ```
 
-> Most of the filter strategies apply to all types of data, however, some filter strategies only apply to a few types. For example, the `TRUNCATE` filter strategy only applies to a zip code filter.
+> Most of the filter strategies apply to all types of data, however, some filter strategies only apply to a few types. For example, the `ZERO_LEADING` filter strategy only applies to the zip code filter, and the `ABBREVIATE` filter strategy only applies to the person's names (NER) filter.
 
 
 ## Filter Strategies
 
 The filter strategies are described below. Each filter type can specify zero or more filter strategies. When no filter strategies are given, Phileas will default to `REDACT` for that filter type. When multiple filter strategies are given for a single filter type, the filter strategies will be applied in order as they are listed in the policy, top to bottom.
 
-* [`REDACT`](filter-strategies.md#the-redact-filter-strategy)
-* [`CRYPTO_REPLACE`](filter-strategies.md#crypto)(AES encryption)
-* [`HASH_SHA256_REPLACE`](filter-strategies.md#hash)(SHA512 encryption)
-* [`FPE_ENCRYPT_REPLACE`](filter-strategies.md#fpe)(Format-preserving encryption)
-* [`RANDOM_REPLACE`](filter-strategies.md#random)
-* [`STATIC_REPLACE`](filter-strategies.md#static)
-* [`TRUNCATE`](filter-strategies.md#truncate)
-* [`ZERO_LEADING`](filter-strategies.md#zero_leading)
+* [`REDACT`](filter_strategies.md#the-redact-filter-strategy)
+* [`MASK`](filter_strategies.md#mask)
+* [`CRYPTO_REPLACE`](filter_strategies.md#crypto)(AES-GCM authenticated encryption)
+* [`HASH_SHA256_REPLACE`](filter_strategies.md#hash)(SHA512 encryption)
+* [`FPE_ENCRYPT_REPLACE`](filter_strategies.md#fpe)(Format-preserving encryption)
+* [`RANDOM_REPLACE`](filter_strategies.md#random)
+* [`STATIC_REPLACE`](filter_strategies.md#static)
+* [`TRUNCATE`](filter_strategies.md#truncate)
+* [`ZERO_LEADING`](filter_strategies.md#zero_leading)
+* [`ABBREVIATE`](filter_strategies.md#abbreviate)
 
 ### The `REDACT` Filter Strategy
 
@@ -75,25 +77,43 @@ An example filter using the `REDACT` filter strategy:
 
 ### The `CRYPTO_REPLACE` Filter Strategy {id="crypto"}
 
-The `CRYPTO_REPLACE` filter strategy replaces each identified piece of sensitive information by encrypting it using the AES encryption algorithm. To use this filter strategy, the policy must include the details of the encryption key as shown below:
+The `CRYPTO_REPLACE` filter strategy replaces each identified piece of sensitive information with its encrypted value, so an authorized party holding the key can recover the original later. Phileas uses **AES in GCM mode** (authenticated encryption). To use this filter strategy, the policy must include the encryption `key`:
 
 ```
 {
    "name":"sample-profile",
    "crypto": {
-     "key": "....",
-     "iv": "...."
+     "key": "...."
    },
    ...
 ```
 
-In the snippet of a policy shown above, a crypto element is is defined with a `key` and an initialization vector (`iv`). These two items are required to encrypt the sensitive information. To generate a key, run the following command:
+The `key` is a hex-encoded AES key (for example, 64 hex characters for a 256-bit key). You can generate one with:
 
 ```
-openssl enc -e -aes-256-cbc -a -salt -P
+openssl rand -hex 32
 ```
 
-You will be prompted to enter an encryption password. Once entered, the values of the `key` and `iv` will be shown. Copy and paste those values into the policy.
+> **Keep the key out of the policy file.** Because policies are configuration files that are often kept in version control, prefix the value with `env:` to read the key from an environment variable at runtime instead of storing it inline. For example, `"key": "env:CRYPTO_KEY"` reads the key from the `CRYPTO_KEY` environment variable. This is the recommended way to supply the key.
+
+> A fresh random nonce is generated for every value, so encrypting the same value twice produces different output — identical values do not produce identical redactions across the corpus — and each value carries an authentication tag that detects tampering. Because the nonce is random, no initialization vector (`iv`) is required; an `iv` in an existing policy is ignored.
+
+The encrypted replacement has the form `{{<base64>}}`, where the Base64 content is `nonce || ciphertext || tag` (a 12-byte nonce, the ciphertext, and a 16-byte authentication tag).
+
+#### Decrypting a value
+
+Because GCM is an authenticated mode, a value cannot be decrypted with the `openssl enc` command line, which does not support GCM. Decrypt it with a GCM-capable library instead — for example, with Python:
+
+```
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import base64
+
+key  = bytes.fromhex("<the hex key from the policy>")
+blob = base64.b64decode("<the base64 inside the {{ }}>")
+nonce, ciphertext_and_tag = blob[:12], blob[12:]
+plaintext = AESGCM(key).decrypt(nonce, ciphertext_and_tag, None)
+print(plaintext.decode())
+```
 
 An example policy using the `CRYPTO_REPLACE` filter strategy:
 
@@ -101,8 +121,7 @@ An example policy using the `CRYPTO_REPLACE` filter strategy:
 {
    "name": "email-address",
    "crypto": {
-     "key": "....",
-     "iv": "...."
+     "key": "...."
    },
    "identifiers": {
       "emailAddress": {
@@ -118,7 +137,7 @@ An example policy using the `CRYPTO_REPLACE` filter strategy:
 
 ### The `HASH_SHA256_REPLACE` Filter Strategy {id="hash"}
 
-The `HASH_SHA256_REPLACE` filter strategy replaces sensitive information with the SHA256 hash value of the sensitive information. To append a random salt value to each value prior to hashing, set the `salt` property to `true`. The salt value used will be returned in the `explain` response from Phileas' API.
+The `HASH_SHA256_REPLACE` filter strategy replaces sensitive information with the SHA256 hash value of the sensitive information. To append a random salt value to each value prior to hashing, set the `salt` property to `true`. The salt value used is returned in the redaction explanation that Phileas produces.
 
 An example policy using the `HASH_SHA256_REPLACE` filter strategy:
 
@@ -143,6 +162,12 @@ The `FPE_ENCRYPT_REPLACE` filter strategy uses format-preserving encryption (FPE
 
 * [https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-38Gr1-draft.pdf](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-38Gr1-draft.pdf)
 * [https://nvlpubs.nist.gov/nistpubs/specialpublications/nist.sp.800-38g.pdf](https://nvlpubs.nist.gov/nistpubs/specialpublications/nist.sp.800-38g.pdf)
+
+> **Keep these secrets out of the policy file.** As with the [crypto key](#crypto), prefix either value with `env:` to read it from an environment variable at runtime — for example, `"key": "env:FPE_KEY"` and `"tweak": "env:FPE_TWEAK"`. This is the recommended way to supply the `key` and `tweak`.
+
+> FF3 can only encrypt values whose format-preservable (alphanumeric) content is between 6 and 56 characters long. When a detected value falls outside this range — for example a 5-digit ZIP code — it cannot be format-preserving encrypted. In that case Phileas falls back to redacting that value (using the `REDACT` placeholder) instead, so the value is still redacted and a single out-of-range value does not affect the rest of the document. Consider applying `FPE_ENCRYPT_REPLACE` to types whose values fall within the supported length range.
+
+> **Which filters support FPE.** Every filter supports the `FPE_ENCRYPT_REPLACE` strategy except the **date** and **zip code** filters, which do not offer it. (A ZIP code is shorter than the 6-character minimum noted above; date values use the date-specific strategies such as `SHIFT` instead.) Each filter's own documentation page lists the strategies it supports.
 
 An example policy using the FPE\_ENCRYPT\_REPLACE filter strategy:
 
@@ -254,6 +279,32 @@ An example policy using the `STATIC_REPLACE` filter strategy:
 }
 ```
 
+### The `MASK` Filter Strategy {id="mask"}
+
+This strategy replaces each character of the identified text with a mask character. By default the mask character
+is `*` and the masked value is the same length as the original text. Set `maskCharacter` to change the character
+used. Set `maskLength` to a number to force a fixed length, or leave it as the default `SAME` to preserve the
+original length. Available to all filter types.
+
+An example policy using the `MASK` filter strategy:
+
+```
+{
+   "name": "credit-cards",
+   "identifiers": {
+      "creditCardNumbers": {
+         "creditCardNumbersFilterStrategies": [
+            {
+               "strategy": "MASK",
+               "maskCharacter": "#",
+               "maskLength": "SAME"
+            }
+         ]
+      }
+   }
+}
+```
+
 ### The `TRUNCATE` Filter Strategy {id="truncate"}
 
 This strategy allows for truncating tokens to only a select number of digits. Specify `truncateLeaveCharacters`
@@ -303,9 +354,30 @@ The `ZERO_LEADING` filter strategy is only available to zip code filters. An exa
 }
 ```
 
+### The `ABBREVIATE` Filter Strategy {id="abbreviate"}
+
+Available only to the person's names (NER) filter, this strategy replaces a person's name with its initials. For example, `George Washington` will be changed to `GW`.
+
+An example person's names filter using the `ABBREVIATE` filter strategy:
+
+```
+{
+   "name": "ner-example",
+   "identifiers": {
+      "pheye": {
+         "pheyeFilterStrategies": [
+            {
+               "strategy": "ABBREVIATE"
+            }
+         ]
+      }
+   }
+}
+```
+
 ## Filter Strategy Conditions
 
-A replacement strategy can be applied based on the sensitive information meeting one or more conditions. For example, you can create a condition such that only dates of `11/05/2010` are replaced by using the condition `token == "11/05/2010"`. The conditions that can be applied vary based on the type of sensitive information. For instance, zip codes can have conditions based on their population. Refer to each specific [filter type](filters_README.md) for the conditions available.
+A replacement strategy can be applied based on the sensitive information meeting one or more conditions. For example, you can create a condition such that only dates of `11/05/2010` are replaced by using the condition `token == "11/05/2010"`. The conditions that can be applied vary based on the type of sensitive information. For instance, zip codes can have conditions based on their population. Refer to each specific [filter type](filters.md) for the conditions available.
 
 The following is an example policy for credit cards that contains a condition to only redact credit card numbers that start with the digits `3000`:
 

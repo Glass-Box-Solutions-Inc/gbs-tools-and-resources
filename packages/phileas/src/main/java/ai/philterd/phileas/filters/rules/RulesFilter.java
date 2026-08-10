@@ -25,6 +25,7 @@ import ai.philterd.phileas.model.filtering.Replacement;
 import ai.philterd.phileas.model.filtering.Span;
 import ai.philterd.phileas.policy.Policy;
 import ai.philterd.phileas.services.Analyzer;
+import ai.philterd.phileas.services.context.ContextService;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.Strings;
 
@@ -65,6 +66,26 @@ public abstract class RulesFilter extends Filter {
     }
 
     /**
+     * Advances the matcher to the next match under a per-attempt time budget. Returns
+     * <code>false</code> if there is no further match or if the match attempt exceeded the budget
+     * (a suspected ReDoS pattern), in which case any matches already found are kept and a warning
+     * is logged.
+     */
+    private boolean findNext(final Matcher matcher, final DeadlineCharSequence guardedInput) {
+
+        guardedInput.startClock();
+
+        try {
+            return matcher.find();
+        } catch (final RegexTimeoutException e) {
+            LOGGER.warn("Regex matching for filter type {} exceeded the {} ms budget on this input; "
+                    + "skipping remaining matches for this pattern.", filterType.getType(), regexTimeoutMs);
+            return false;
+        }
+
+    }
+
+    /**
      * Find {@link Span spans} matching the {@link Pattern}.
      * @param policy The {@link Policy} to use.
      * @param analyzer A filter {@link Analyzer}.
@@ -72,7 +93,7 @@ public abstract class RulesFilter extends Filter {
      * @param context The context.
      * @return A list of matching {@link Span spans}.
      */
-    protected List<Span> findSpans(final Policy policy, final Analyzer analyzer, final String input, final String context) throws Exception {
+    protected List<Span> findSpans(final ContextService contextService, final Policy policy, final Analyzer analyzer, final String input, final String context) throws Exception {
 
         final List<Span> spans = new LinkedList<>();
 
@@ -81,9 +102,13 @@ public abstract class RulesFilter extends Filter {
 
             for(final FilterPattern filterPattern : analyzer.getFilterPatterns()) {
 
-                final Matcher matcher = filterPattern.getPattern().matcher(input);
+                // Match against a deadline-guarded view of the input so a catastrophic-backtracking
+                // pattern (e.g. from a user-supplied identifier/section regex) is aborted rather
+                // than hanging the thread. The clock is reset before each find() call.
+                final DeadlineCharSequence guardedInput = new DeadlineCharSequence(input, regexTimeoutMs);
+                final Matcher matcher = filterPattern.getPattern().matcher(guardedInput);
 
-                while (matcher.find()) {
+                while (findNext(matcher, guardedInput)) {
 
                     final String token = matcher.group(filterPattern.getGroupNumber());
 
@@ -175,7 +200,7 @@ public abstract class RulesFilter extends Filter {
                         final String[] window = getWindow(input, characterStart, characterEnd);
 
                         // Get the span's replacement.
-                        final Replacement replacement = getReplacement(policy, context, token,
+                        final Replacement replacement = getReplacement(contextService, policy, context, token,
                                 window, initialConfidence, classification, filterPattern);
 
                         // Create the span.

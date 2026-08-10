@@ -30,7 +30,7 @@ public class VinAnonymizationServiceTest {
     @Test
     public void constructor() {
 
-        AnonymizationService anonymizationService = new VinAnonymizationService(new DefaultContextService(), new SecureRandom(), AnonymizationMethod.REALISTIC);
+        AnonymizationService anonymizationService = new VinAnonymizationService(new SecureRandom(), AnonymizationMethod.REALISTIC);
 
         final String token = "11111111111111111";
         final String replacement = anonymizationService.anonymize(token);
@@ -46,7 +46,7 @@ public class VinAnonymizationServiceTest {
     @Test
     public void anonymize() {
 
-        AnonymizationService anonymizationService = new VinAnonymizationService(new DefaultContextService());
+        AnonymizationService anonymizationService = new VinAnonymizationService();
 
         final String token = "11111111111111111";
         final String replacement = anonymizationService.anonymize(token);
@@ -60,9 +60,24 @@ public class VinAnonymizationServiceTest {
     }
 
     @Test
+    public void realisticReplacementUsesOnlyVinCharacters() {
+
+        final AnonymizationService anonymizationService = new VinAnonymizationService(new SecureRandom(), AnonymizationMethod.REALISTIC);
+
+        // A VIN uses digits and the letters A-Z excluding I, O, and Q. Generate many replacements to
+        // be confident those letters are never produced.
+        for (int i = 0; i < 1000; i++) {
+            final String replacement = anonymizationService.anonymize("11111111111111111");
+            Assertions.assertTrue(replacement.matches("[0-9A-HJ-NPR-Z]{17}"),
+                    "VIN replacement contained an invalid character (I, O, or Q): " + replacement);
+        }
+
+    }
+
+    @Test
     public void anonymizeUUID() {
 
-        AnonymizationService anonymizationService = new VinAnonymizationService(new DefaultContextService(), new SecureRandom(), AnonymizationMethod.UUID);
+        AnonymizationService anonymizationService = new VinAnonymizationService(new SecureRandom(), AnonymizationMethod.UUID);
 
         final String token = "11111111111111111";
         final String replacement = anonymizationService.anonymize(token);

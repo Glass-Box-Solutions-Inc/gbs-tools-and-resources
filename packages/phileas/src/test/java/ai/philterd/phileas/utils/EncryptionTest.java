@@ -17,6 +17,7 @@ package ai.philterd.phileas.utils;
 
 import ai.philterd.phileas.policy.Crypto;
 import ai.philterd.phileas.policy.FPE;
+import org.apache.commons.codec.binary.Base64;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.Assertions;
@@ -72,26 +73,149 @@ public class EncryptionTest {
     }
 
     @Test
-    public void encrypt1() throws Exception {
+    public void formatPreservingEncryptionRejectsShortInput() {
 
-        final String token = "asdf";
-        final String encrypted = Encryption.encrypt(token, new Crypto(KEY, IV));
+        // FF3 cannot encrypt content shorter than its minimum supported length.
+        final FPE fpe = new FPE("EF4359D8D580AA4F7F036D6F04FC6A94", "D8E7920AFA330A73");
 
-        LOGGER.info("Encrypted '{}' is '{}'", token, encrypted);
-
-        Assertions.assertEquals("r6cPN50ikH9qBZD0FNPG2g==", encrypted);
+        Assertions.assertThrows(FormatPreservingEncryptionException.class,
+                () -> Encryption.formatPreservingEncrypt(fpe, "12345"));
 
     }
 
     @Test
-    public void encrypt2() throws Exception {
+    public void formatPreservingEncryptionRejectsLongInput() {
 
+        // FF3 cannot encrypt content longer than its maximum supported length.
+        final FPE fpe = new FPE("EF4359D8D580AA4F7F036D6F04FC6A94", "D8E7920AFA330A73");
+        final String tooLong = "1".repeat(57);
+
+        Assertions.assertThrows(FormatPreservingEncryptionException.class,
+                () -> Encryption.formatPreservingEncrypt(fpe, tooLong));
+
+    }
+
+    @Test
+    public void encryptDecryptRoundTrips() throws Exception {
+
+        final Crypto crypto = new Crypto(KEY, IV);
         final String token = "346596542547526";
-        final String encrypted = Encryption.encrypt(token, new Crypto(KEY, IV));
 
+        final String encrypted = Encryption.encrypt(token, crypto);
         LOGGER.info("Encrypted '{}' is '{}'", token, encrypted);
 
-        Assertions.assertEquals("5G4lCAQADM68uvVumZ9Lxw==", encrypted);
+        Assertions.assertEquals(token, Encryption.decrypt(encrypted, crypto));
+
+    }
+
+    @Test
+    public void encryptionIsNonDeterministic() throws Exception {
+
+        // A fresh random nonce per call means the same plaintext encrypts to different ciphertext,
+        // so identical values do not produce identical redactions across the corpus.
+        final Crypto crypto = new Crypto(KEY, IV);
+        final String token = "346596542547526";
+
+        Assertions.assertNotEquals(Encryption.encrypt(token, crypto), Encryption.encrypt(token, crypto));
+
+    }
+
+    @Test
+    public void decryptRejectsTamperedCiphertext() throws Exception {
+
+        final Crypto crypto = new Crypto(KEY, IV);
+        final String encrypted = Encryption.encrypt("sensitive-value", crypto);
+
+        // Flip the last byte (part of the GCM authentication tag); decryption must fail.
+        final byte[] raw = Base64.decodeBase64(encrypted);
+        raw[raw.length - 1] ^= 0x01;
+        final String tampered = Base64.encodeBase64String(raw);
+
+        Assertions.assertThrows(Exception.class, () -> Encryption.decrypt(tampered, crypto));
+
+    }
+
+    // ----- formatPreservingDecrypt -----
+
+    @Test
+    public void formatPreservingDecryption1() {
+
+        // Inverse of formatPreservingEncryption1 using the same NIST test vector.
+        final FPE fpe = new FPE("EF4359D8D580AA4F7F036D6F04FC6A94", "D8E7920AFA330A73");
+        final String decrypted = Encryption.formatPreservingDecrypt(fpe, "750918814058654607");
+
+        Assertions.assertEquals("890121234567890000", decrypted);
+
+    }
+
+    @Test
+    public void formatPreservingDecryption2() {
+
+        // Inverse of formatPreservingEncryption2 using the same NIST test vector.
+        final FPE fpe = new FPE("EF4359D8D580AA4F7F036D6F04FC6A94", "9A768A92F60E12D8");
+        final String decrypted = Encryption.formatPreservingDecrypt(fpe, "018989839189395384");
+
+        Assertions.assertEquals("890121234567890000", decrypted);
+
+    }
+
+    @Test
+    public void formatPreservingDecryption3() {
+
+        // Inverse of formatPreservingEncryption3 using the same NIST test vector.
+        final FPE fpe = new FPE("EF4359D8D580AA4F7F036D6F04FC6A94", "D8E7920AFA330A73");
+        final String decrypted = Encryption.formatPreservingDecrypt(fpe, "48598367162252569629397416226");
+
+        Assertions.assertEquals("89012123456789000000789000000", decrypted);
+
+    }
+
+    @Test
+    public void formatPreservingDecryptRoundTrips() {
+
+        final FPE fpe = new FPE("EF4359D8D580AA4F7F036D6F04FC6A94", "D8E7920AFA330A73");
+        final String plainText = "890121234567890000";
+
+        Assertions.assertEquals(plainText,
+                Encryption.formatPreservingDecrypt(fpe, Encryption.formatPreservingEncrypt(fpe, plainText)));
+
+    }
+
+    @Test
+    public void formatPreservingDecryptPreservesStructuralCharacters() {
+
+        // Non-alphanumeric characters (the dashes in an SSN) are structural and must pass through
+        // unchanged; only the digit positions are encrypted and then decrypted.
+        final FPE fpe = new FPE("EF4359D8D580AA4F7F036D6F04FC6A94", "D8E7920AFA330A73");
+        final String plainText = "123-45-6789";
+
+        final String encrypted = Encryption.formatPreservingEncrypt(fpe, plainText);
+        Assertions.assertEquals("123-45-6789".length(), encrypted.length());
+        Assertions.assertEquals('-', encrypted.charAt(3));
+        Assertions.assertEquals('-', encrypted.charAt(6));
+
+        Assertions.assertEquals(plainText, Encryption.formatPreservingDecrypt(fpe, encrypted));
+
+    }
+
+    @Test
+    public void formatPreservingDecryptRejectsShortInput() {
+
+        final FPE fpe = new FPE("EF4359D8D580AA4F7F036D6F04FC6A94", "D8E7920AFA330A73");
+
+        Assertions.assertThrows(FormatPreservingEncryptionException.class,
+                () -> Encryption.formatPreservingDecrypt(fpe, "12345"));
+
+    }
+
+    @Test
+    public void formatPreservingDecryptRejectsLongInput() {
+
+        final FPE fpe = new FPE("EF4359D8D580AA4F7F036D6F04FC6A94", "D8E7920AFA330A73");
+        final String tooLong = "1".repeat(57);
+
+        Assertions.assertThrows(FormatPreservingEncryptionException.class,
+                () -> Encryption.formatPreservingDecrypt(fpe, tooLong));
 
     }
 

@@ -24,6 +24,7 @@ import ai.philterd.phileas.policy.FPE;
 import ai.philterd.phileas.policy.Policy;
 import ai.philterd.phileas.services.anonymization.AnonymizationMethod;
 import ai.philterd.phileas.services.anonymization.AnonymizationService;
+import ai.philterd.phileas.services.context.ContextService;
 import com.google.gson.annotations.Expose;
 import com.google.gson.annotations.SerializedName;
 import org.apache.commons.lang3.StringUtils;
@@ -31,10 +32,16 @@ import org.apache.commons.lang3.StringUtils;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
+/** Base for filter strategies: produces the replacement for a detected token. */
 public abstract class AbstractFilterStrategy {
 
     public static final String DEFAULT_REDACTION = "{{{REDACTED-%t}}}";
+
+    // Strips everything except letters and spaces from a joined window before keyword matching.
+    // Compiled once rather than on every birthdate/deathdate check.
+    private static final Pattern WINDOW_LETTERS_ONLY = Pattern.compile("[^a-zA-Z ]");
 
     public static final String REDACT = "REDACT";
     public static final String RANDOM_REPLACE = "RANDOM_REPLACE";
@@ -150,7 +157,7 @@ public abstract class AbstractFilterStrategy {
      * @param filterPattern The filter pattern that identified the filter, or <code>null</code> if no pattern was used.
      * @return A replacement value for a token.
      */
-    public abstract Replacement getReplacement(String classification, String context, String token,
+    public abstract Replacement getReplacement(ContextService contextService, String classification, String context, String token,
                                                String[] window, Crypto crypto, FPE fpe,
                                                AnonymizationService anonymizationService, FilterPattern filterPattern) throws Exception;
 
@@ -171,14 +178,18 @@ public abstract class AbstractFilterStrategy {
 
     protected String getRedactedToken(String token, String label, FilterType filterType) {
 
+        // These are literal placeholder substitutions, so use String.replace rather than
+        // replaceAll: it avoids compiling a Pattern on every call, and (for %v) avoids treating the
+        // detected token as a regex replacement string - a token containing '$' or '\' would
+        // otherwise throw and abort redaction of the document.
         String replacement = getValueOrDefault(redactionFormat, DEFAULT_REDACTION)
-                .replaceAll("%t", filterType.getType());
+                .replace("%t", filterType.getType());
 
         if(StringUtils.isNotEmpty(label)) {
-            replacement = replacement.replaceAll("%l", label);
+            replacement = replacement.replace("%l", label);
         }
 
-        replacement = replacement.replaceAll("%v", token);
+        replacement = replacement.replace("%v", token);
 
         return replacement;
 
@@ -234,10 +245,18 @@ public abstract class AbstractFilterStrategy {
      * @param window The window surrounding the token.
      * @return <code>true</code> if the date is found to be a birthdate, otherwise <code>false</code>.
      */
+    /**
+     * Joins the window tokens and strips them down to lower-cased letters and spaces, ready for
+     * keyword matching. Uses a precompiled pattern.
+     */
+    private static String cleanWindow(final String[] window) {
+        return WINDOW_LETTERS_ONLY.matcher(StringUtils.join(window, " ")).replaceAll("").toLowerCase();
+    }
+
     protected boolean isBirthdate(String[] window) {
 
         // PHL-165: Is this a birthday?
-        final String joinedWindow = StringUtils.join(window, " ").replaceAll("[^a-zA-Z ]", "").toLowerCase();
+        final String joinedWindow = cleanWindow(window);
 
         return
                 joinedWindow.contains("dob") ||
@@ -258,8 +277,8 @@ public abstract class AbstractFilterStrategy {
      */
     protected boolean isDeathdate(String[] window) {
 
-        // PHL-165: Is this a birthday?
-        final String joinedWindow = StringUtils.join(window, " ").replaceAll("[^a-zA-Z ]", "").toLowerCase();
+        // PHL-165: Is this a death date?
+        final String joinedWindow = cleanWindow(window);
 
         return
                 joinedWindow.contains("deathdate") ||
@@ -289,43 +308,38 @@ public abstract class AbstractFilterStrategy {
      * @param token The token to anonymize.
      * @param anonymizationService The {@link AnonymizationService} for the token.
      * @param filterType The {@link FilterType}.
-     * @return An anonymized version of the token, or <code>null</code> if the token has already been anonymized.
+     * @return An anonymized version of the token. Never <code>null</code>: a replacement is always
+     *         produced so a detected token is never left unredacted.
      */
-    protected String getAnonymizedToken(final String replacementScope, final String token, AnonymizationService anonymizationService, final String filterType) {
+    protected String getAnonymizedToken(final ContextService contextService, final String replacementScope, final String token, AnonymizationService anonymizationService, final String filterType) {
 
         if (this.anonymizationService != null) {
             anonymizationService = this.anonymizationService;
         }
 
-        String replacement = null;
+        // Effectively-final reference so it can be captured by the supplier lambda below.
+        final AnonymizationService service = anonymizationService;
 
-        if(replacementScope.equalsIgnoreCase(REPLACEMENT_SCOPE_DOCUMENT)) {
+        final String replacement;
 
-            // Don't look at the context for this replacement.
-            replacement = anonymizationService.anonymize(token);
+        if(replacementScope.equalsIgnoreCase(REPLACEMENT_SCOPE_CONTEXT)) {
 
-        } else if(replacementScope.equalsIgnoreCase(REPLACEMENT_SCOPE_CONTEXT)) {
+            // CONTEXT scope: reuse a previously generated replacement for this token so the same
+            // value is anonymized consistently across documents in the context. This is done
+            // atomically: a separate contains/get/else-generate-put sequence let two threads that
+            // saw the same token concurrently both miss, generate different replacements, and
+            // store conflicting values - breaking the consistency guarantee and losing one of the
+            // replacements. computeReplacementIfAbsent invokes the supplier at most once per token.
+            // A replacement is always generated (rather than skipping when the token happens to
+            // equal an existing replacement value, which previously produced a null replacement
+            // and left the token unredacted), so the detected token is always redacted.
+            replacement = contextService.computeReplacementIfAbsent(
+                    token, filterType, () -> service.anonymize(token));
 
-            // Do look at the context.
+        } else {
 
-            // Have we seen this token in this context before?
-            if (anonymizationService.getContextService().containsToken(token)) {
-
-                // Yes, we have previously seen this token in this context.
-                replacement = anonymizationService.getContextService().getReplacement(token);
-
-            } else {
-
-                // Make sure we aren't trying to anonymize a token we have already anonymized.
-                if (!anonymizationService.getContextService().containsReplacement(token)) {
-
-                    // This is not a token we have already anonymized.
-                    replacement = anonymizationService.anonymize(token);
-                    anonymizationService.getContextService().putReplacement(token, replacement, filterType);
-
-                }
-
-            }
+            // DOCUMENT scope (the default): do not consult the context; anonymize directly.
+            replacement = service.anonymize(token);
 
         }
 
