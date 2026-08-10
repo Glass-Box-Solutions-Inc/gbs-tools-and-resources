@@ -18,7 +18,11 @@ from data.deposition_exchanges import (
     generate_objection,
     generate_time_marker,
 )
-from data.variant_content import generate_evaluator_exchanges, transcript_register
+from data.variant_content import (
+    generate_evaluator_exchanges,
+    generate_evaluator_exhibit_reference,
+    transcript_register,
+)
 from pdf_templates.base_template import BaseTemplate
 
 
@@ -112,7 +116,16 @@ class DepositionTranscript(BaseTemplate):
 
             # Insert exhibit reference before this exchange
             if idx in exhibit_indices:
-                exhibit_text = generate_exhibit_reference(exhibit_num, self.case)
+                # Exhibits are the other pool the renderer reaches, and the
+                # shared one asks the witness about their own job description at
+                # the applicant's employer — a question with no meaning for a
+                # physician, and one that re-attaches the applicant's employment
+                # to the wrong deponent.
+                exhibit_text = (
+                    generate_evaluator_exhibit_reference(exhibit_num)
+                    if register is not None
+                    else generate_exhibit_reference(exhibit_num, self.case)
+                )
                 story.append(Spacer(1, 0.1 * inch))
                 story.append(Paragraph(
                     f"{line_num:>3}  Q. {exhibit_text}", self.styles["Transcript"],

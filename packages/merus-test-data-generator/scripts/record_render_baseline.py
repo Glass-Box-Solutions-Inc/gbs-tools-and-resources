@@ -43,8 +43,26 @@ from tests.render_baseline import (  # noqa: E402
     load_baseline_cases,
 )
 
-#: The ref a baseline may be recorded from. The seam does not exist there.
-DEFAULT_BASE_REF = "origin/main"
+#: The immutable commit AJC-66 branched from. Pinned as a SHA, not a ref name.
+#:
+#: ``--base-ref`` used to default to ``origin/main`` and accept anything, so
+#: ``--record --base-ref HEAD`` on a clean feature branch satisfied every check
+#: and blessed the tree under test. A guard whose subject is chosen by the
+#: caller is not a guard.
+BASE_COMMIT = "e2f52edb11c994d2b4bf8d9209e73ed29f015e30"
+
+#: Files the recording procedure legitimately copies into the base checkout.
+#: Nothing else may be untracked under the directories that determine what gets
+#: rendered — an unexpected module there could be imported and change the
+#: hashes, which is precisely what the baseline is supposed to rule out.
+_ALLOWED_UNTRACKED = frozenset({
+    "tests/render_baseline.py",
+    "scripts/record_render_baseline.py",
+    "tests/golden/render_baseline.json",
+})
+
+#: Directories whose contents can change a render.
+_SOURCE_DIRS = ("data/", "pdf_templates/", "tests/", "scripts/", "orchestration/")
 
 
 def _git(*args: str) -> str:
@@ -53,44 +71,117 @@ def _git(*args: str) -> str:
     ).stdout.strip()
 
 
-def _refuse_unless_clean_base_checkout(base_ref: str) -> str:
+def _package_relative(path: str) -> str:
+    """Strip git's repo-relative prefix so paths match the allowlists.
+
+    ``git status`` reports from the repository root while every allowlist here
+    is written package-relative. Without this, a path never matches an entry and
+    the allowance silently never applies — the failure mode where a guard looks
+    stricter than it is.
+    """
+    prefix = _git("rev-parse", "--show-prefix").strip()
+    path = path.strip()
+    if prefix and path.startswith(prefix):
+        return path[len(prefix):]
+    return path
+
+
+def _resolve_base(base_ref: str | None) -> str:
+    """The commit to record from, validating any caller-supplied override.
+
+    An override must resolve to a commit that is an ancestor of ``origin/main``
+    — a real point in the trunk's history — and must not be a symbolic alias for
+    wherever the caller happens to be standing.
+    """
+    if base_ref is None:
+        return BASE_COMMIT
+
+    if base_ref.upper() in {"HEAD", "@"} or base_ref.startswith("HEAD"):
+        sys.exit(
+            f"refusing to record: --base-ref {base_ref!r} names the current checkout. "
+            f"The baseline exists to describe a commit the change under test is not in."
+        )
+    try:
+        resolved = _git("rev-parse", f"{base_ref}^{{commit}}")
+    except subprocess.CalledProcessError:
+        sys.exit(f"refusing to record: --base-ref {base_ref!r} does not resolve to a commit")
+
+    try:
+        _git("merge-base", "--is-ancestor", resolved, "origin/main")
+    except subprocess.CalledProcessError:
+        sys.exit(
+            f"refusing to record: {base_ref} ({resolved[:12]}) is not an ancestor of "
+            f"origin/main, so it is not a point in the trunk's history"
+        )
+    return resolved
+
+
+#: Tracked files the base checkout may legitimately carry a patch for.
+#:
+#: Exactly one, and it earns its place. ``deposition_exchanges._today`` imported
+#: ``date`` inside the function, which put it out of reach of every module-level
+#: clock pin — so a baseline recorded without this patch is itself wall-clock
+#: dependent, which is the defect the pin exists to remove. The patch returns
+#: the same value it always did; all it changes is that the lookup can be
+#: intercepted. Any other tracked modification still blocks recording, and the
+#: patch is named in the baseline's provenance so a reader can check it.
+_ALLOWED_BASE_PATCHES = frozenset({"data/deposition_exchanges.py"})
+
+
+def _refuse_unless_clean_base_checkout(base_commit: str) -> str:
     """Return the source commit, or exit non-zero explaining why not.
 
-    Two conditions, both necessary. A dirty tree means the recorded bytes do not
-    correspond to any commit anyone can check out again. A HEAD that is not the
-    base ref means the recording came from a tree that may already contain the
-    change the baseline is supposed to predate.
+    Three conditions. HEAD must be the base commit, so the recording cannot come
+    from a tree containing the change the baseline is supposed to predate. No
+    tracked modifications, so the bytes correspond to a commit anyone can check
+    out again. And no *unexpected* untracked source under the directories that
+    determine a render — the previous revision ignored untracked files
+    wholesale, which meant the very recorder implementation doing the hashing
+    was exempt from the check it performs.
     """
     try:
         head = _git("rev-parse", "HEAD")
-        base = _git("rev-parse", base_ref)
-        # Tracked modifications only. Recording requires copying this script and
-        # tests/render_baseline.py into the base checkout, where neither exists
-        # yet, so untracked files are the normal state of a correct recording.
-        # A tracked edit is the thing that would change what the substrate
-        # renders, and that is what must block.
-        dirty = _git("status", "--porcelain", "--untracked-files=no")
+        tracked_dirty = _git("status", "--porcelain", "--untracked-files=no")
+        untracked = _git("ls-files", "--others", "--exclude-standard")
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         sys.exit(f"refusing to record: cannot interrogate git ({exc})")
 
     problems = []
-    if dirty:
-        changed = len(dirty.splitlines())
-        problems.append(f"working tree is not clean ({changed} changed path(s))")
-    if head != base:
-        problems.append(f"HEAD is {head[:12]}, not {base_ref} ({base[:12]})")
+    if head != base_commit:
+        problems.append(f"HEAD is {head[:12]}, not the base commit {base_commit[:12]}")
+
+    modified = sorted(
+        _package_relative(line[2:].strip())
+        for line in tracked_dirty.splitlines()
+        if line.strip()
+    )
+    disallowed = [path for path in modified if path not in _ALLOWED_BASE_PATCHES]
+    if disallowed:
+        problems.append(
+            f"{len(disallowed)} disallowed tracked modification(s): " + ", ".join(disallowed[:5])
+        )
+
+    untracked_paths = [_package_relative(p) for p in untracked.splitlines() if p.strip()]
+    unexpected = sorted(
+        path for path in untracked_paths
+        if path.startswith(_SOURCE_DIRS) and path not in _ALLOWED_UNTRACKED
+    )
+    if unexpected:
+        problems.append(
+            "unexpected untracked source that could change a render: " + ", ".join(unexpected[:5])
+        )
 
     if problems:
         sys.exit(
             "refusing to record the baseline:\n  - "
             + "\n  - ".join(problems)
-            + f"\n\nA baseline recorded here would describe this tree, not {base_ref}, "
+            + f"\n\nA baseline recorded here would describe this tree, not {base_commit[:12]}, "
             f"and a tree containing the change under test can bless itself.\n"
             f"Record from a clean detached checkout instead:\n"
-            f"  git worktree add --detach /tmp/base {base_ref}\n"
+            f"  git worktree add --detach /tmp/base {base_commit}\n"
             f"  # copy tests/render_baseline.py and this script into it, then run --record there"
         )
-    return head
+    return head, sorted(set(modified) & _ALLOWED_BASE_PATCHES)
 
 
 def main() -> int:
@@ -98,7 +189,12 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true", help="Verify against the recorded baseline.")
     group.add_argument("--record", action="store_true", help="Rewrite the baseline (gated).")
-    parser.add_argument("--base-ref", default=DEFAULT_BASE_REF, help=f"default {DEFAULT_BASE_REF}")
+    parser.add_argument(
+        "--base-ref",
+        default=None,
+        help="Override the pinned base commit. Must be an ancestor of origin/main "
+             "and may not name HEAD.",
+    )
     args = parser.parse_args()
 
     if args.check:
@@ -119,19 +215,23 @@ def main() -> int:
         print(f"OK — {len(computed)} render cases byte-identical to the baseline.")
         return 0
 
-    source_commit = _refuse_unless_clean_base_checkout(args.base_ref)
+    base_commit = _resolve_base(args.base_ref)
+    source_commit, base_patches = _refuse_unless_clean_base_checkout(base_commit)
     payload = {
         "_meta": {
             "source_commit": source_commit,
-            "base_ref": args.base_ref,
+            "base_commit": base_commit,
+            "base_patches": base_patches,
             "anchor_date": ANCHOR_DATE.isoformat(),
             "render_seed": RENDER_SEED,
             "case_seed": CASE_SEED,
             "recorded_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "note": (
-                "Recorded from a clean detached checkout at base_ref, before the "
-                "AJC-66 variant-content seam existed. Re-recording requires the "
-                "same conditions; see this script's docstring."
+                "Recorded from a detached checkout at base_commit, before the AJC-66 "
+                "variant-content seam existed. base_patches lists the only tracked "
+                "files the base checkout may differ on — each is behaviour-preserving "
+                "and required for the clock pin to reach the code. Re-recording "
+                "requires the same conditions; see this script's docstring."
             ),
         },
         "cases": compute_baseline(),

@@ -1,10 +1,13 @@
 {
   "_meta": {
     "anchor_date": "2026-01-15",
-    "base_ref": "origin/main",
+    "base_commit": "e2f52edb11c994d2b4bf8d9209e73ed29f015e30",
+    "base_patches": [
+      "data/deposition_exchanges.py"
+    ],
     "case_seed": 4242,
-    "note": "Recorded from a clean detached checkout at base_ref, before the AJC-66 variant-content seam existed. Re-recording requires the same conditions; see this script's docstring.",
-    "recorded_utc": "2026-08-10T08:01:27+00:00",
+    "note": "Recorded from a detached checkout at base_commit, before the AJC-66 variant-content seam existed. base_patches lists the only tracked files the base checkout may differ on \u2014 each is behaviour-preserving and required for the clock pin to reach the code. Re-recording requires the same conditions; see this script's docstring.",
+    "recorded_utc": "2026-08-10T08:33:54+00:00",
     "render_seed": 20260808,
     "source_commit": "e2f52edb11c994d2b4bf8d9209e73ed29f015e30"
   },
@@ -46,16 +49,16 @@
       "text": "1f6b88f04178a51f2a215de83177f11cc57759fd53583843c64f47b3cce591b2"
     },
     "depo_transcript:none": {
-      "pdf": "f27750c5a6978d7b57ba273ecfeb1bd3d170b8fd0b61c36ddc3d43686f3675ae",
+      "pdf": "f678d905e8d9e61085518ff84fe0634fc1b1e951313feac76baf469fe107e0dd",
       "rng": "0e03d38fb441d97ef8709671f10a401a46888574a24436d12cb8b096cc1e3fc3",
       "story": "384bafab4196a3bbfd569be6e77740ab5a9f809eb166de04df90f58731af11fc",
-      "text": "11fafeafe7308512d1869404b078ce1402e81335d8a0d16d1927b909403a0c36"
+      "text": "e5b6fa35790fb97e08cc12c8bc816a3f3da768a3e1ff4502ecf920a554e9cd23"
     },
     "depo_transcript:qme_ame": {
-      "pdf": "f27750c5a6978d7b57ba273ecfeb1bd3d170b8fd0b61c36ddc3d43686f3675ae",
+      "pdf": "f678d905e8d9e61085518ff84fe0634fc1b1e951313feac76baf469fe107e0dd",
       "rng": "0e03d38fb441d97ef8709671f10a401a46888574a24436d12cb8b096cc1e3fc3",
       "story": "384bafab4196a3bbfd569be6e77740ab5a9f809eb166de04df90f58731af11fc",
-      "text": "11fafeafe7308512d1869404b078ce1402e81335d8a0d16d1927b909403a0c36"
+      "text": "e5b6fa35790fb97e08cc12c8bc816a3f3da768a3e1ff4502ecf920a554e9cd23"
     },
     "diagnostic:emg_ncv": {
       "pdf": "745a95b32a4de6d33dec93c3b2f6143d2ef08cb6f3420e0863de62b89f777df4",

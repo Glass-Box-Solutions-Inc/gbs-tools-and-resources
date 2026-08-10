@@ -106,30 +106,48 @@ def _ensure_invariant_pdfs() -> None:
 #: way (``determinism.pin_substrate_clock``, ``seeds.ANCHOR_DATE``).
 ANCHOR_DATE = date(2026, 1, 15)
 
-#: Substrate modules that bind ``date`` or ``datetime`` at module scope, plus
-#: Faker's own clock. Patching the name inside the module is the same technique
-#: wcce uses, and it works because these modules do ``from datetime import
-#: date`` — so the module attribute *is* the class the code calls ``today()`` on.
-_CLOCK_MODULES = (
-    "data.fake_data_generator",
-    "data.lifecycle_engine",
-    "data.deposition_exchanges",
-    "data.case_profile_generator",
-    "data.case_context",
-)
+#: Package prefixes whose modules are swept for clock bindings, plus Faker's own
+#: date provider.
+#:
+#: A hand-written list of modules was the first attempt and it was wrong twice
+#: over: it named only ``data.*`` and so missed ``qme_ame_report`` and
+#: ``settlement_memo`` entirely, and it looked for attributes literally called
+#: ``date``, which misses ``from datetime import date as _date``. Enumerating
+#: is the wrong shape for this problem — the sweep now finds bindings by
+#: identity, so a module added tomorrow is covered without anyone remembering.
+_CLOCK_PACKAGES = ("data.", "pdf_templates.", "orchestration.")
+_FAKER_CLOCK_MODULE = "faker.providers.date_time"
+
+
+def _substrate_modules() -> list[Any]:
+    """Every imported substrate module — code this package owns."""
+    return [
+        module
+        for name, module in list(sys.modules.items())
+        if module is not None and name.startswith(_CLOCK_PACKAGES)
+    ]
 
 
 @contextlib.contextmanager
 def frozen_clock(anchor: date = ANCHOR_DATE):
     """Freeze every reading of "today" for the duration of the block.
 
-    Covers both clocks that matter: the substrate's ``date.today()`` call sites
-    and Faker's ``datetime.now()``, which drives ``date_of_birth`` and every
-    other relative draw. Restores exactly what it replaced, including modules
-    that never had the attribute.
+    Finds clock bindings **by identity** rather than by name: any module
+    attribute that *is* ``datetime.date`` or ``datetime.datetime`` gets swapped
+    for an anchored subclass, whatever the attribute happens to be called. That
+    covers ``from datetime import date as _date`` and any module nobody thought
+    to enumerate.
+
+    Two clocks matter here and both are covered: the substrate's own
+    ``date.today()`` call sites, and Faker's ``datetime.now()``, which drives
+    ``date_of_birth`` and every other now-relative draw.
+
+    A function-local ``from datetime import date`` defeats this entirely — the
+    lookup happens at call time, inside a scope this cannot reach. There was one
+    (``deposition_exchanges._today``) and it is now bound at module scope; the
+    test suite asserts no new one appears.
     """
     import datetime as _dt
-    import importlib
 
     class _AnchoredDate(_dt.date):
         @classmethod
@@ -145,33 +163,40 @@ def frozen_clock(anchor: date = ANCHOR_DATE):
         def utcnow(cls):
             return _dt.datetime.combine(anchor, _dt.time(12, 0))
 
-    saved: list[tuple[Any, str, Any, bool]] = []
+    saved: list[tuple[Any, str, Any]] = []
+    replacement = {_dt.date: _AnchoredDate, _dt.datetime: _AnchoredDateTime}
 
-    def patch(module: Any, attribute: str, replacement: Any) -> None:
-        had = hasattr(module, attribute)
-        saved.append((module, attribute, getattr(module, attribute, None), had))
-        setattr(module, attribute, replacement)
+    def swap(module: Any, attribute: str, original: Any) -> None:
+        saved.append((module, attribute, original))
+        setattr(module, attribute, replacement[original])
 
     try:
-        for name in _CLOCK_MODULES:
-            try:
-                module = importlib.import_module(name)
-            except ImportError:
-                continue
-            if isinstance(getattr(module, "date", None), type):
-                patch(module, "date", _AnchoredDate)
-            if isinstance(getattr(module, "datetime", None), type):
-                patch(module, "datetime", _AnchoredDateTime)
-        faker_dt = importlib.import_module("faker.providers.date_time")
-        if isinstance(getattr(faker_dt, "datetime", None), type):
-            patch(faker_dt, "datetime", _AnchoredDateTime)
+        for module in _substrate_modules():
+            for attribute, value in list(vars(module).items()):
+                if value is _dt.date or value is _dt.datetime:
+                    swap(module, attribute, value)
+
+        # Faker is third-party and gets a narrower treatment on purpose. Only
+        # its ``datetime`` is anchored, because that is what ``date_of_birth``
+        # and every other relative draw reads. Its ``date`` alias must be left
+        # alone: ``_parse_date_time`` does ``isinstance(value, (datetime,
+        # dtdate))``, so replacing the alias with a subclass makes a real
+        # ``date`` stop being an instance of it and the provider raises. Sweeping
+        # by identity is right for code this package owns and wrong for a
+        # library that type-checks against the class it exposes.
+        import importlib
+
+        try:
+            faker_dt = importlib.import_module(_FAKER_CLOCK_MODULE)
+        except ImportError:
+            faker_dt = None
+        if faker_dt is not None and getattr(faker_dt, "datetime", None) is _dt.datetime:
+            swap(faker_dt, "datetime", _dt.datetime)
+
         yield anchor
     finally:
-        for module, attribute, original, had in reversed(saved):
-            if had:
-                setattr(module, attribute, original)
-            else:
-                delattr(module, attribute)
+        for module, attribute, original in reversed(saved):
+            setattr(module, attribute, original)
 
 
 def build_fixture_case() -> Any:

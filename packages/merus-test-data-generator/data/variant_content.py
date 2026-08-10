@@ -1313,6 +1313,33 @@ EVALUATOR_TRANSCRIPT = TranscriptRegister(
     ),
 )
 
+#: Exhibits an evaluator is actually shown, and the reason this pool is forked.
+#:
+#: The transcript renderer marks exhibits from a shared applicant pool, which
+#: asks "Is this a copy of your job description at {employer}?" — a question
+#: that makes no sense to a physician and quietly re-attaches the applicant's
+#: employment to the wrong witness. Replacing the main question generator was
+#: not enough on its own: every pool the renderer can reach has to be either
+#: witness-neutral or forked, and this one was neither.
+EVALUATOR_EXHIBITS: tuple[str, ...] = (
+    "Doctor, let me hand you what has been marked as Exhibit {n}. Do you recognize this as your report in this matter?",
+    "I am showing you Exhibit {n}. Is that your signature on the last page of the report?",
+    "Directing your attention to Exhibit {n}, previously marked. Is this the cover letter under which records were transmitted to you?",
+    "Exhibit {n} has been marked for identification. Is this the curriculum vitae you served with your report?",
+    "Let me show you Exhibit {n}. Are these the examination worksheets you prepared at the time of the evaluation?",
+    "I hand you Exhibit {n}. Is this the records-review list from your report?",
+    "Exhibit {n}, previously marked. Is this correspondence you received in connection with this evaluation?",
+    "Doctor, Exhibit {n} has been marked. Is this the billing you submitted for this evaluation?",
+)
+
+
+def generate_evaluator_exhibit_reference(number: int) -> str:
+    """An exhibit question addressed to the evaluator, not to the applicant."""
+    import random as _random
+
+    return _random.choice(EVALUATOR_EXHIBITS).format(n=number)
+
+
 _TRANSCRIPT_REGISTERS = (EVALUATOR_TRANSCRIPT,)
 
 #: Exact normalized variants the transcript registers claim. ``witness`` and the
@@ -1335,7 +1362,6 @@ def transcript_register(variant: str | None) -> TranscriptRegister | None:
 def generate_evaluator_exchanges(
     register: TranscriptRegister,
     case_data: dict[str, str],
-    max_exchanges: int = 95,
 ) -> list[tuple[str, str]]:
     """A complete evaluator examination, in the substrate's own exchange format.
 
@@ -1348,11 +1374,17 @@ def generate_evaluator_exchanges(
     deposition that asks about apportionment before establishing qualifications
     does not read like a transcript.
 
+    Length is the sum of the per-topic ranges and nothing else. There is no
+    global trim, deliberately: a budget applied after a per-item guarantee
+    silently revokes it. The previous revision pinned an anchor question per
+    topic and then truncated the list to a global target, so on some seeds the
+    apportionment and independence topics — the two an evaluator deposition
+    exists for — were cut off entirely while the guarantee still read as
+    honoured.
+
     Shorter than the applicant generator's 100-180 on purpose. An evaluator
-    deposition covers the report rather than a life, and padding it back up to
-    an applicant transcript's length would mean repeating questions to hit a
-    page count — which is the kind of detail that makes synthetic data look
-    synthetic.
+    deposition covers a report, not a life, and padding it to an applicant
+    transcript's length would mean repeating questions to hit a page count.
     """
     import random as _random
 
@@ -1367,20 +1399,11 @@ def generate_evaluator_exchanges(
         # The first question of every topic is an anchor and always asked. A
         # deposition that never establishes the witness's name, never asks what
         # records were reviewed, or never reaches apportionment at all is not a
-        # variable transcript, it is an incomplete one — and the topic would
-        # silently vanish on some seeds.
+        # variable transcript, it is an incomplete one.
         remainder = _random.sample(range(1, len(pool)), max(count - 1, 0))
-        chosen = [0] + sorted(remainder)
-        for index in chosen:
+        for index in [0] + sorted(remainder):
             question, answer = pool[index]
             exchanges.append((fill(f"Q. {question}"), fill(f"A. {answer}")))
-
-    target = _random.randint(max_exchanges - 25, max_exchanges)
-    if len(exchanges) > target:
-        # Trim from the middle so the opening and the closing both survive.
-        keep_tail = 4
-        head = exchanges[: target - keep_tail]
-        exchanges = head + exchanges[-keep_tail:]
     return exchanges
 
 
