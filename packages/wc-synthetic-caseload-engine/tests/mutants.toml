@@ -1778,6 +1778,22 @@ replace = '''        computed_principal = quantized_money(sum(assessed_principal
 note = 'AJC-48 round-2 review, finding 5. Every published figure is produced inside exact(). Recomputing them under whatever precision the host process carries lets a hostile ambient context invent drift and condemn a correct corpus: at prec=6 a two-assessment principal sum reads 15948.50 against a correct 15948.48.'
 
 [[mutant]]
+id = 'm15-25'
+title = 'checkout-dependent provenance returns to the truth artifacts'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_truth_provenance_carries_no_checkout_dependent_field'
+find = '''        "provenance": {
+            "generator": GENERATOR,
+            "seedHash": plan.seed.seed_hash(),'''
+replace = '''        "provenance": {
+            "generator": GENERATOR,
+            "substrateSha": __import__(
+                "wc_caseload_engine.substrate", fromlist=["substrate_git_sha"]
+            ).substrate_git_sha(),
+            "seedHash": plan.seed.seed_hash(),'''
+note = 'AJC-48 CI round. Truth files are root files, so the golden gate hashes them raw and the provenance.substrateSha redaction that covers the manifests cannot reach them. substrateSha comes from git log over the substrate directory, so it describes the checkout: this branch generated identical corpora locally and under the PR merge ref and the gate reported drift on demo-caseload and doctrine-showcase for corpora nothing had changed. The pin still lives in manifest.json, where the redaction contract governs it.'
+
+[[mutant]]
 id = 'm15-24'
 title = 'an emitted truth key escapes the scorer vocabulary without being classified'
 file = 'src/wc_caseload_engine/truth_manifest.py'

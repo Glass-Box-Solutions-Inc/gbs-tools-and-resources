@@ -69,6 +69,19 @@ every commit for a reason that has nothing to do with the bytes the gate exists
 to protect. It is recorded in ``recordedWith`` and printed beside a failure as
 context instead.
 
+**The redaction reaches manifests only, and that is a constraint on the
+generator, not a gap in the gate.** ``CASE_REDACTIONS`` and
+``CASELOAD_REDACTIONS`` are applied while normalizing ``manifest.json`` and
+``caseload_manifest.json``; every other file in the tree — including the
+``truth/*.truth.json`` root files — is hashed from its own raw bytes, which is
+the whole point of enumerating the tree independently. So a *generated artifact*
+may not embed a checkout-dependent value unless it is one of those two
+manifests. The truth envelopes once duplicated ``provenance.substrateSha``, and
+the corpora then drifted between a PR branch and that PR's merge ref while
+nothing about them had changed. The fix belongs in the artifact
+(``truth_manifest.TRUTH_PROVENANCE_KEYS``), never in a wider exemption list:
+redaction that grows to cover nondeterminism is how a gate stops being one.
+
 The engine version is **not** exempt. ``provenance.generator`` carries it, it is
 part of every manifest's bytes, and a version bump is a release event that
 changes shipped output — so it reddens the gate until the goldens are
@@ -936,6 +949,26 @@ def compare(corpus: Corpus, golden: dict[str, Any], fresh: dict[str, Any]) -> li
                     f"{case_id}: {label} drifted "
                     f"({_short(was.get(axis))} -> {_short(now.get(axis))})"
                 )
+
+    # Whole-tree drift with every case's bytes intact means the movement is in
+    # the files no case owns, and the report should say so rather than leaving
+    # "corpus file bytes drifted" as the only clue. Diagnosing exactly this cost
+    # a review round: the corpus digest had moved because every truth file
+    # carried the substrate checkout sha, and nothing in the output named a file
+    # to go and look at. ``rootFiles`` records names, not per-file digests, so
+    # this narrows the search to a named set rather than pointing at one file —
+    # widening the golden format to carry root-file digests would be a bigger
+    # change than the diagnosis is worth.
+    if golden.get("corpusTree") != fresh.get("corpusTree") and not any(
+        golden_cases[case_id].get("tree") != fresh_cases[case_id].get("tree")
+        for case_id in set(golden_cases) & set(fresh_cases)
+    ):
+        root_files = sorted(set(fresh.get("rootFiles") or []) | set(golden.get("rootFiles") or []))
+        if root_files:
+            problems.append(
+                "every case tree is unchanged, so the drift is in the "
+                f"{len(root_files)} file(s) no case owns: {', '.join(root_files)}"
+            )
     return problems
 
 

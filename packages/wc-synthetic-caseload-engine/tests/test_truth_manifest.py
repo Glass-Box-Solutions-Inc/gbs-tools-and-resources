@@ -29,9 +29,11 @@ from wc_caseload_engine.planner import build_case_plan
 from wc_caseload_engine.seeds import parse_case_seed
 from wc_caseload_engine.truth_manifest import (
     CASELOAD_TRUTH_NAME,
+    CASELOAD_TRUTH_PROVENANCE_KEYS,
     PENALTY_ASSESSMENT_KEY_NAMES,
     SCORER_ONLY_ENVELOPE_KEY_NAMES,
     TRUTH_DIR,
+    TRUTH_PROVENANCE_KEYS,
     TruthManifestError,
     build_case_truth_manifest,
     build_caseload_truth_manifest,
@@ -282,12 +284,10 @@ def test_envelope_is_complete_timeless_and_byte_deterministic(
     assert document["kind"] == "case"
     assert document["audience"] == "analyzer-scorer"
     assert "never" in document["leakageRule"].lower()
-    assert set(document["provenance"]) == {
-        "generator",
-        "substrateSha",
-        "seedHash",
-        "rngSeed",
-    }
+    # No substrateSha: a truth file is a root file, hashed raw by the golden
+    # gate, so it may carry nothing that describes the checkout. See
+    # test_truth_provenance_carries_no_checkout_dependent_field.
+    assert set(document["provenance"]) == {"generator", "seedHash", "rngSeed"}
     serialized = json.dumps(document)
     assert '"generatedAt"' not in serialized
     assert '"timestamp"' not in serialized
@@ -699,6 +699,43 @@ def test_scorer_vocabulary_covers_every_emitted_truth_key(tmp_path: Path) -> Non
         "PENALTY_ASSESSMENT_KEY_NAMES must equal the keys the assessment builders "
         f"emit; emitted {sorted(emitted_assessment_keys)}"
     )
+
+
+def test_truth_provenance_carries_no_checkout_dependent_field(tmp_path: Path) -> None:
+    """A truth file's bytes must depend on the corpus and nothing else.
+
+    Truth files are **root files** in the output tree, so the golden gate hashes
+    them raw; the ``provenance.substrateSha`` redaction that covers the case and
+    caseload *manifests* cannot reach them. `substrateSha` comes from `git log`
+    over the substrate directory, so it describes the checkout — and the same
+    corpus generated from a PR branch and from that PR's merge ref produced
+    different truth bytes, reddening the gate for a corpus nothing had changed.
+
+    This pins both provenance blocks to an exact key set rather than asserting
+    the absence of one field, so any future checkout-dependent value has to be
+    argued for here before it can reach an artifact hashed raw.
+    """
+    plan = _plan(
+        "provenance-probe",
+        scenario={"wages": {"pattern": "regular", "base_weekly_wage": 1500}},
+        rng_seed=4311,
+    )
+    envelope = build_case_truth_manifest(plan)
+    index = build_caseload_truth_manifest(
+        "provenance-probe-load",
+        (
+            SimpleNamespace(
+                case_id="provenance-probe", plan=plan, truth_path=tmp_path / "x.truth.json"
+            ),
+        ),
+    )
+
+    assert set(envelope["provenance"]) == set(TRUTH_PROVENANCE_KEYS)
+    assert set(index["provenance"]) == set(CASELOAD_TRUTH_PROVENANCE_KEYS)
+    assert set(TRUTH_PROVENANCE_KEYS) == {"generator", "seedHash", "rngSeed"}
+    assert set(CASELOAD_TRUTH_PROVENANCE_KEYS) == {"generator"}
+    assert "substrateSha" not in json.dumps(envelope)
+    assert "substrateSha" not in json.dumps(index)
 
 
 def test_output_validator_reports_truth_seed_hash_drift(

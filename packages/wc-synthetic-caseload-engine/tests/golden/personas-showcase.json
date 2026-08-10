@@ -34,7 +34,7 @@
     "truth/personas-negligent-adjuster.truth.json",
     "truth/personas-scenario-depth.truth.json"
   ],
-  "corpusTree": "1eae936f5b04850123888f7cb685fbe63aaac578bd020025399fee9851651ba4",
+  "corpusTree": "28737d3c65b2ab5230fc45257367d44ad6d313481d057b9a739d6ba93cf20fe8",
   "caseload": "cd6fde68a4cd789532b684c1996e3d97ff3b291df6bb9344286d331e9c5f8395",
   "cases": {
     "personas-attentive-adjuster": {

@@ -51,7 +51,6 @@ from wc_caseload_engine.money import (
     money_manifest_block,
 )
 from wc_caseload_engine.planner import CasePlan
-from wc_caseload_engine.substrate import substrate_git_sha
 
 if TYPE_CHECKING:
     from wc_caseload_engine.manifests import CaseResult
@@ -294,6 +293,27 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
     return channel
 
 
+#: Every provenance field a truth artifact may carry, and the complete list.
+#:
+#: **A truth file's bytes must depend on the corpus and nothing else.** These are
+#: root files in the output tree, so the golden gate hashes them **raw** — the
+#: ``provenance.substrateSha`` redaction that `_case_digest` and `_caseload_digest`
+#: apply to the *manifests* cannot reach them. `substrateSha` comes from `git log`
+#: over the substrate directory, so it describes the checkout: the same corpus
+#: generated from a PR branch and from that PR's merge ref produces different
+#: truth bytes, and the gate correctly reports drift for a corpus that never
+#: changed. That is exactly what happened on this branch in CI, and it is the
+#: gate working — it caught an artifact that varied by checkout, which no local
+#: run could see, because locally the two checkouts are the same one.
+#:
+#: The pin is not lost: `manifest.json` still carries `provenance.substrateSha`,
+#: where the redaction contract already governs it. A scorer that needs the
+#: substrate revision reads it there. Duplicating a checkout-dependent value into
+#: an artifact hashed raw was the defect.
+TRUTH_PROVENANCE_KEYS: frozenset[str] = frozenset({"generator", "seedHash", "rngSeed"})
+CASELOAD_TRUTH_PROVENANCE_KEYS: frozenset[str] = frozenset({"generator"})
+
+
 def build_case_truth_manifest(plan: CasePlan) -> dict[str, Any]:
     """Build one versioned scorer envelope without reading any wall clock."""
     channels: dict[str, Any] = {}
@@ -305,9 +325,9 @@ def build_case_truth_manifest(plan: CasePlan) -> dict[str, Any]:
         "audience": AUDIENCE,
         "leakageRule": LEAKAGE_RULE,
         "caseId": plan.seed.case_id,
+        # Deterministic fields only — see TRUTH_PROVENANCE_KEYS.
         "provenance": {
             "generator": GENERATOR,
-            "substrateSha": substrate_git_sha(),
             "seedHash": plan.seed.seed_hash(),
             "rngSeed": plan.seed.rng_seed,
         },
@@ -361,7 +381,8 @@ def build_caseload_truth_manifest(
         "audience": AUDIENCE,
         "leakageRule": LEAKAGE_RULE,
         "caseloadId": caseload_id,
-        "provenance": {"generator": GENERATOR, "substrateSha": substrate_git_sha()},
+        # Deterministic fields only — see CASELOAD_TRUTH_PROVENANCE_KEYS.
+        "provenance": {"generator": GENERATOR},
         "cases": cases,
         "channels": channels,
     }
@@ -829,9 +850,11 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
 
 __all__ = [
     "CASELOAD_TRUTH_NAME",
+    "CASELOAD_TRUTH_PROVENANCE_KEYS",
     "PENALTY_ASSESSMENT_KEY_NAMES",
     "SCORER_ONLY_ENVELOPE_KEY_NAMES",
     "TRUTH_DIR",
+    "TRUTH_PROVENANCE_KEYS",
     "TruthManifestError",
     "build_case_truth_manifest",
     "build_caseload_truth_manifest",
