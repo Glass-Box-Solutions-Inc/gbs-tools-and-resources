@@ -1062,7 +1062,7 @@ EVALUATOR_TRANSCRIPT = TranscriptRegister(
         ("Are you a Qualified Medical Evaluator appointed through the panel process, or an Agreed Medical Evaluator?",
          "My appointment in this matter is as stated in the cover letter accompanying the evaluation."),
         ("Before we go further — what records were you provided before you examined the applicant?",
-         "I received a set of records under cover letter, and the records I reviewed are listed in the records-review section of my report."),
+         "I received a set of records under cover letter. The records reviewed are listed in the records-review section of my report."),
         ("Were there records listed in that cover letter that you did not review?",
          "If a record was provided and not reviewed, it would not appear in my records-review section."),
         ("Did you receive any records from either party outside the formal exchange?",

@@ -315,107 +315,178 @@ MODALITY_SITES: tuple[ModalitySite, ...] = (
     # conduction", which is what brought it here — this table firing on that is
     # the tripwire working, not a nuisance.
     #
-    # Every row below is `documented` for the same reason, and it is a stronger
-    # reason than usual: this content renders **only** when a caller sets
-    # `variant_content` on the document context, and no corpus sets it. The
-    # sites are unreachable from this engine today. AJC-62 (M3) is the ticket
-    # that opts in, and it should move these rows to `governed` as it does —
-    # at which point the modality claim becomes the ledger's to make.
+    # Every row is `documented`, and it is a stronger reason than usual: this
+    # content renders only when a caller sets `variant_content` on the document
+    # context, and no corpus sets it. AJC-62 (M3) is the ticket that opts in,
+    # and it should move these rows to `governed` as it does — at which point
+    # the modality claim becomes the ledger's to make.
+    #
+    # One row per distinct assertion, deliberately. An earlier revision used the
+    # marker "lectrodiagnostic", which matched every electrodiagnostic line in
+    # the file including ones not yet written. That defeats the entire purpose:
+    # a NEW modality claim added tomorrow would have inherited `documented`
+    # without anyone reviewing it, and this table would have gone on reading as
+    # complete. A wildcard marker is worse than a missing row, because a missing
+    # row fails loudly. `tests/test_scenario_p2.py` holds a positive control
+    # asserting a novel assertion is still uncovered.
     ModalitySite(
         "data/variant_content.py",
-        "EMG/NCV",
+        'EMG/NCV and sleep-study subtypes',
         "documented",
-        "module docstring naming the subtypes served — never rendered",
+        'module docstring naming subtypes served — never rendered',
     ),
     ModalitySite(
         "data/variant_content.py",
-        "X-ray report",
+        'a lab-results subtype rendered an X-ray report',
         "documented",
-        "module docstring describing the defect being fixed — never rendered",
+        'module docstring describing the defect fixed — never rendered',
     ),
     ModalitySite(
         "data/variant_content.py",
-        "# Diagnostics: lab, electrodiagnostic, sleep",
+        '# Diagnostics: lab, electrodiagnostic, sleep',
         "documented",
-        "section comment — never rendered",
+        'section comment — never rendered',
     ),
     ModalitySite(
         "data/variant_content.py",
-        "#: Nerve conduction rows",
+        'needle-EMG findings could contradict',
         "documented",
-        "comment describing the row tuple's shape — never rendered",
+        'DiagnosticScenario docstring on coherence — never rendered',
     ),
     ModalitySite(
         "data/variant_content.py",
-        "#: Needle EMG rows",
+        '# Diagnostics: electrodiagnostic medicine',
         "documented",
-        "comment describing the row tuple's shape — never rendered",
-    ),
-    ModalitySite(
-        "data/variant_content.py",
-        '_claims(token, "emg"',
-        "documented",
-        "the variant-matching vocabulary, not a claim that a study happened",
-    ),
-    ModalitySite(
-        "data/variant_content.py",
-        "Electrodiagnostic Associates",
-        "documented",
-        "a facility name, not a claim that a study happened",
-    ),
-    ModalitySite(
-        "data/variant_content.py",
-        "NERVE CONDUCTION",
-        "documented",
-        "electrodiagnostic register exam label and result heading — opt-in only "
-        "(variant_content); no corpus sets it, so nothing renders these (AJC-66)",
-    ),
-    ModalitySite(
-        "data/variant_content.py",
-        "erve conduction studies were performed",
-        "documented",
-        "electrodiagnostic register technique prose — opt-in only, unreachable "
-        "from this engine until a corpus sets variant_content (AJC-66)",
-    ),
-    ModalitySite(
-        "data/variant_content.py",
-        "lectrodiagnostic",
-        "documented",
-        "electrodiagnostic register impressions — opt-in only, unreachable from "
-        "this engine until a corpus sets variant_content (AJC-66)",
-    ),
-    ModalitySite(
-        "data/variant_content.py",
-        "Plain radiographs",
-        "documented",
-        "ER register prose reporting a study the encounter itself ordered — "
-        "opt-in only, unreachable until a corpus sets variant_content (AJC-66)",
+        'section comment — never rendered',
     ),
     ModalitySite(
         "pdf_templates/medical/diagnostic_report.py",
-        "EMG/NCV and sleep",
+        'EMG/NCV and sleep',
         "documented",
-        "class docstring naming the subtypes served — never rendered (AJC-66)",
+        'class docstring naming subtypes served — never rendered (AJC-66)',
     ),
     ModalitySite(
         "pdf_templates/medical/diagnostic_report.py",
-        "MRI/CT/X-ray report",
+        'MRI/CT/X-ray report. With',
         "documented",
-        "class docstring describing the default document — never rendered (AJC-66)",
+        'class docstring describing the default document — never rendered (AJC-66)',
     ),
     ModalitySite(
-        "pdf_templates/medical/diagnostic_report.py",
-        "Nerve conduction rows, then the needle",
+        "data/variant_content.py",
+        'Waypoint Electrodiagnostic Associates',
         "documented",
-        "method docstring — never rendered (AJC-66)",
+        'a facility name, not a claim that a study happened',
     ),
     ModalitySite(
-        "pdf_templates/medical/diagnostic_report.py",
-        "NEEDLE EMG",
+        "data/variant_content.py",
+        '"emg": ELECTRODIAGNOSTIC_REGISTER',
         "documented",
-        "electrodiagnostic section heading — opt-in only, unreachable from this "
-        "engine until a corpus sets variant_content (AJC-66)",
+        'variant-matching vocabulary, not a case assertion',
     ),
+    ModalitySite(
+        "data/variant_content.py",
+        '"ncv": ELECTRODIAGNOSTIC_REGISTER',
+        "documented",
+        'variant-matching vocabulary, not a case assertion',
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        '"electrodiagnostic": ELECTRODIAGNOSTIC_REGISTER',
+        "documented",
+        'variant-matching vocabulary, not a case assertion',
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'nerve conduction studies of the upper limb were performed',
+        "documented",
+        "upper-limb technique prose — opt-in only (variant_content); no corpus sets it, so this "
+        "does not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'nerve conduction studies of the lower limb were performed',
+        "documented",
+        "lower-limb technique prose — opt-in only (variant_content); no corpus sets it, so this "
+        "does not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'ELECTRODIAGNOSTIC STUDY OF THE UPPER LIMB',
+        "documented",
+        "upper-limb exam label — opt-in only (variant_content); no corpus sets it, so this does "
+        "not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'ELECTRODIAGNOSTIC STUDY OF THE LOWER LIMB',
+        "documented",
+        "lower-limb exam label — opt-in only (variant_content); no corpus sets it, so this does "
+        "not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'exam_label="ELECTRODIAGNOSTIC STUDY",',
+        "documented",
+        "region-neutral exam label, normal study — opt-in only (variant_content); no corpus sets "
+        "it, so this does not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'result_heading="NERVE CONDUCTION STUDIES",',
+        "documented",
+        "result heading, identical across scenarios — opt-in only (variant_content); no corpus "
+        "sets it, so this does not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'secondary_heading="NEEDLE EMG",',
+        "documented",
+        "needle-exam heading, identical across scenarios — opt-in only (variant_content); no "
+        "corpus sets it, so this does not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'mild focal median neuropathy at the wrist',
+        "documented",
+        "impression, mild median neuropathy — opt-in only (variant_content); no corpus sets it, "
+        "so this does not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'no electrodiagnostic evidence of a cervical radiculopathy',
+        "documented",
+        "impression, negative cervical finding — opt-in only (variant_content); no corpus sets "
+        "it, so this does not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'moderate focal median neuropathy at the',
+        "documented",
+        "impression, moderate median neuropathy — opt-in only (variant_content); no corpus sets "
+        "it, so this does not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'findings consistent with a chronic lumbosacral',
+        "documented",
+        "impression, lumbosacral radiculopathy — opt-in only (variant_content); no corpus sets "
+        "it, so this does not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'Study within normal limits. There is no electrodiagnostic evidence of focal',
+        "documented",
+        "impression, normal study — opt-in only (variant_content); no corpus sets it, so this "
+        "does not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        'Plain radiographs',
+        "documented",
+        "ER register prose reporting a study the encounter ordered — opt-in only "
+        "(variant_content); no corpus sets it, so this does not render for this engine (AJC-66)",
+    ),
+
 )
 
 

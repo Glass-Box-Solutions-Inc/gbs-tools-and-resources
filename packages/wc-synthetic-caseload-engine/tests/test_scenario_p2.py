@@ -1080,3 +1080,94 @@ class TestHandWrittenListsNameLiveKeys:
             f"{missing} are no longer in the substrate's exam-type list; the imaging "
             "override is silently reverting to a random draw"
         )
+
+
+# ---------------------------------------------------------------------------
+# AJC-66 — the variant-content seam's own safety properties
+# ---------------------------------------------------------------------------
+
+
+class TestTheVariantContentSeamIsSwept:
+    """Two properties the substrate cannot check for itself.
+
+    The substrate has no access to this package — the dependency runs one way —
+    so the canonical real-entity denylist lives here. A test inside the substrate
+    can only compare its new prose against the substrate's own organization
+    pools, which is the weaker half of the check.
+    """
+
+    @staticmethod
+    def _variant_content_strings() -> list[str]:
+        return import_substrate("data.variant_content").all_content_strings()
+
+    def test_variant_content_names_nothing_on_the_canonical_denylist(self) -> None:
+        """The seam's new prose against the real denylist, not a local subset."""
+        from wc_caseload_engine.name_denylist import denylist_hits
+
+        blob = "\n".join(self._variant_content_strings())
+        assert not denylist_hits(blob), (
+            "AJC-66 variant content names a real organization from data/name_denylist.txt"
+        )
+
+    def test_variant_content_names_no_live_substrate_organization(self) -> None:
+        """And against the substrate's pools read live, which the file can lag."""
+        from wc_caseload_engine.name_denylist import substrate_organization_names
+
+        lowered = "\n".join(self._variant_content_strings()).lower()
+        hits = sorted(
+            name
+            for name in substrate_organization_names()
+            if len(name) > 4 and name.lower() in lowered
+        )
+        assert not hits, f"AJC-66 variant content names live substrate organizations: {hits}"
+
+    def test_the_denylist_sweep_would_actually_catch_a_real_name(self) -> None:
+        """Positive control. A sweep that cannot fail is not a sweep.
+
+        Uses a name taken from the denylist file itself, so this proves the
+        wiring — content reaching ``denylist_hits`` and coming back non-empty —
+        rather than proving a string this test invented is in a list this test
+        invented.
+        """
+        from wc_caseload_engine.name_denylist import denied_names, denylist_hits
+
+        planted = denied_names()[0]
+        assert denylist_hits(f"Report prepared for {planted} in this matter."), (
+            f"the denylist sweep did not fire on {planted!r}, so a clean result "
+            f"from it means nothing"
+        )
+
+
+class TestTheModalityTableRejectsNovelAssertions:
+    """Positive control for the AJC-66 rows.
+
+    An earlier revision covered every electrodiagnostic line with the single
+    marker ``"lectrodiagnostic"``. Every audit test passed, and a *new* modality
+    assertion added tomorrow would have inherited ``documented`` without review —
+    the table would have read as complete while silently no longer being. These
+    assert the rows stayed narrow enough to still fail on something new.
+    """
+
+    NOVEL_LINES = (
+        '"Electrodiagnostic evidence of a severe ulnar neuropathy at the elbow, "',
+        '"Nerve conduction studies show a complete conduction block across the "',
+        'exam_label="ELECTRODIAGNOSTIC STUDY OF THE CRANIAL NERVES",',
+        '"EMG demonstrates active denervation in the C6 myotome, "',
+    )
+
+    def test_a_novel_electrodiagnostic_assertion_is_not_already_covered(self) -> None:
+        markers = [site.marker for site in sites_for("data/variant_content.py")]
+        wrongly_covered = [
+            line for line in self.NOVEL_LINES if any(marker in line for marker in markers)
+        ]
+        assert not wrongly_covered, (
+            "these lines do not exist in the substrate yet, but a MODALITY_SITES "
+            "marker already claims them — the marker is a wildcard, and a new "
+            "modality assertion would inherit its disposition unreviewed:\n"
+            + "\n".join(wrongly_covered)
+        )
+
+    def test_the_novel_lines_would_be_caught_by_the_audit_pattern(self) -> None:
+        """And they are modality lines at all, or the control above is vacuous."""
+        unmatched = [line for line in self.NOVEL_LINES if not MODALITY_PATTERN.search(line)]
+        assert not unmatched, f"control lines the audit would never grep: {unmatched}"
