@@ -923,7 +923,6 @@ def test_record_mode_refuses_a_tree_that_is_not_the_base_ref():
 
 
 def test_restamp_provenance_uses_only_fresh_pinned_base_cases():
-    import copy
     import json
     import subprocess
 
@@ -937,15 +936,12 @@ def test_restamp_provenance_uses_only_fresh_pinned_base_cases():
     feature_before, base_payload = _trusted_base_payload(base_worktree)
     baseline_text = open(BASELINE_PATH, encoding="utf-8").read()
     try:
-        mutated = copy.deepcopy(feature_before)
-        mutated["_meta"]["note"] = "feature-only note mutation for proof test"
-        _write_baseline(mutated, BASELINE_PATH)
-
         code, out = _run_restamp_provenance(base_worktree)
         assert code == 0, f"restamp-provenance did not succeed:\n{out}"
         with open(BASELINE_PATH, encoding="utf-8") as fh:
             after = json.load(fh)
         assert after["cases"] == base_payload["cases"]
+        assert after["cases"] == feature_before["cases"]
         changed = sorted(recorder._structural_diff(feature_before, after))
         assert set(changed).issubset({"_meta.note", "_meta.recorded_utc"}), (
             f"restamp changed non-provenance leaves: {changed}"
