@@ -1,0 +1,127 @@
+{
+  "_meta": {
+    "anchor_date": "2026-01-15",
+    "base_commit": "e2f52edb11c994d2b4bf8d9209e73ed29f015e30",
+    "base_patches": [
+      "data/deposition_exchanges.py"
+    ],
+    "case_seed": 4242,
+    "harness_sha256": {
+      "tests/render_baseline.py": "d9ff9bfc9ef212376070b4181dc453a538ec1624b61042e8bdd338fd67b002c7"
+    },
+    "note": "Recorded from a detached checkout at base_commit, before the AJC-66 variant-content seam existed. base_patches lists the only tracked files the base checkout may differ on \u2014 each is behaviour-preserving and required for the clock pin to reach the code. Re-recording requires the same conditions; see this script's docstring.",
+    "recorded_utc": "2026-08-10T08:56:48+00:00",
+    "render_seed": 20260808,
+    "source_commit": "e2f52edb11c994d2b4bf8d9209e73ed29f015e30"
+  },
+  "cases": {
+    "defense_letter:advocacy_qme": {
+      "pdf": "503426fb56eff0f71a812a2ce43d192ade9f0e77110818f33a04425858870fb1",
+      "rng": "ea8612088a35c698fb2d03ae5a7d8e1725236f0e8fe4808f5d36069d341fdd67",
+      "story": "21c02eb6d5cdc13bbd2f5bdaff037f0a0d2db894b1f0fa6a483a5383caf5f268",
+      "text": "298922a692cd3fa4a08c781ad7f0775fb8670a4e0f511c2ddda207edc7360601"
+    },
+    "defense_letter:none": {
+      "pdf": "503426fb56eff0f71a812a2ce43d192ade9f0e77110818f33a04425858870fb1",
+      "rng": "ea8612088a35c698fb2d03ae5a7d8e1725236f0e8fe4808f5d36069d341fdd67",
+      "story": "21c02eb6d5cdc13bbd2f5bdaff037f0a0d2db894b1f0fa6a483a5383caf5f268",
+      "text": "298922a692cd3fa4a08c781ad7f0775fb8670a4e0f511c2ddda207edc7360601"
+    },
+    "defense_letter:objection": {
+      "pdf": "503426fb56eff0f71a812a2ce43d192ade9f0e77110818f33a04425858870fb1",
+      "rng": "ea8612088a35c698fb2d03ae5a7d8e1725236f0e8fe4808f5d36069d341fdd67",
+      "story": "21c02eb6d5cdc13bbd2f5bdaff037f0a0d2db894b1f0fa6a483a5383caf5f268",
+      "text": "298922a692cd3fa4a08c781ad7f0775fb8670a4e0f511c2ddda207edc7360601"
+    },
+    "defense_letter:supp_request": {
+      "pdf": "503426fb56eff0f71a812a2ce43d192ade9f0e77110818f33a04425858870fb1",
+      "rng": "ea8612088a35c698fb2d03ae5a7d8e1725236f0e8fe4808f5d36069d341fdd67",
+      "story": "21c02eb6d5cdc13bbd2f5bdaff037f0a0d2db894b1f0fa6a483a5383caf5f268",
+      "text": "298922a692cd3fa4a08c781ad7f0775fb8670a4e0f511c2ddda207edc7360601"
+    },
+    "depo_notice:medical_witness": {
+      "pdf": "9e33a93e98e36b0a71538864ba9e24c19d49df6e30a0766dfd821c1f0954e3fe",
+      "rng": "b95ffe8dd06174ed549a0c6fae24e5381fe97514d528c0ccffabde9cfa57c1d0",
+      "story": "5f842b2985cd13444ec78ec70cf0282d1f86f62c75de68bf499d1913fd431c07",
+      "text": "1f6b88f04178a51f2a215de83177f11cc57759fd53583843c64f47b3cce591b2"
+    },
+    "depo_notice:none": {
+      "pdf": "9e33a93e98e36b0a71538864ba9e24c19d49df6e30a0766dfd821c1f0954e3fe",
+      "rng": "b95ffe8dd06174ed549a0c6fae24e5381fe97514d528c0ccffabde9cfa57c1d0",
+      "story": "5f842b2985cd13444ec78ec70cf0282d1f86f62c75de68bf499d1913fd431c07",
+      "text": "1f6b88f04178a51f2a215de83177f11cc57759fd53583843c64f47b3cce591b2"
+    },
+    "depo_transcript:none": {
+      "pdf": "f678d905e8d9e61085518ff84fe0634fc1b1e951313feac76baf469fe107e0dd",
+      "rng": "0e03d38fb441d97ef8709671f10a401a46888574a24436d12cb8b096cc1e3fc3",
+      "story": "384bafab4196a3bbfd569be6e77740ab5a9f809eb166de04df90f58731af11fc",
+      "text": "e5b6fa35790fb97e08cc12c8bc816a3f3da768a3e1ff4502ecf920a554e9cd23"
+    },
+    "depo_transcript:qme_ame": {
+      "pdf": "f678d905e8d9e61085518ff84fe0634fc1b1e951313feac76baf469fe107e0dd",
+      "rng": "0e03d38fb441d97ef8709671f10a401a46888574a24436d12cb8b096cc1e3fc3",
+      "story": "384bafab4196a3bbfd569be6e77740ab5a9f809eb166de04df90f58731af11fc",
+      "text": "e5b6fa35790fb97e08cc12c8bc816a3f3da768a3e1ff4502ecf920a554e9cd23"
+    },
+    "diagnostic:emg_ncv": {
+      "pdf": "745a95b32a4de6d33dec93c3b2f6143d2ef08cb6f3420e0863de62b89f777df4",
+      "rng": "b4aee910c01cf80935fc6dc644cbdc400d7d54e7b2a65a974345c7d67c452eca",
+      "story": "7c23038694e59d1d546486268a32c4f2c06687b7f290565c8870d46854cc1272",
+      "text": "4069e18de0d8f476d82d69c47a98575d899494f88581667f4b5e93b2d58d35fb"
+    },
+    "diagnostic:imaging": {
+      "pdf": "745a95b32a4de6d33dec93c3b2f6143d2ef08cb6f3420e0863de62b89f777df4",
+      "rng": "b4aee910c01cf80935fc6dc644cbdc400d7d54e7b2a65a974345c7d67c452eca",
+      "story": "7c23038694e59d1d546486268a32c4f2c06687b7f290565c8870d46854cc1272",
+      "text": "4069e18de0d8f476d82d69c47a98575d899494f88581667f4b5e93b2d58d35fb"
+    },
+    "diagnostic:lab": {
+      "pdf": "745a95b32a4de6d33dec93c3b2f6143d2ef08cb6f3420e0863de62b89f777df4",
+      "rng": "b4aee910c01cf80935fc6dc644cbdc400d7d54e7b2a65a974345c7d67c452eca",
+      "story": "7c23038694e59d1d546486268a32c4f2c06687b7f290565c8870d46854cc1272",
+      "text": "4069e18de0d8f476d82d69c47a98575d899494f88581667f4b5e93b2d58d35fb"
+    },
+    "diagnostic:none": {
+      "pdf": "745a95b32a4de6d33dec93c3b2f6143d2ef08cb6f3420e0863de62b89f777df4",
+      "rng": "b4aee910c01cf80935fc6dc644cbdc400d7d54e7b2a65a974345c7d67c452eca",
+      "story": "7c23038694e59d1d546486268a32c4f2c06687b7f290565c8870d46854cc1272",
+      "text": "4069e18de0d8f476d82d69c47a98575d899494f88581667f4b5e93b2d58d35fb"
+    },
+    "diagnostic:sleep_study": {
+      "pdf": "745a95b32a4de6d33dec93c3b2f6143d2ef08cb6f3420e0863de62b89f777df4",
+      "rng": "b4aee910c01cf80935fc6dc644cbdc400d7d54e7b2a65a974345c7d67c452eca",
+      "story": "7c23038694e59d1d546486268a32c4f2c06687b7f290565c8870d46854cc1272",
+      "text": "4069e18de0d8f476d82d69c47a98575d899494f88581667f4b5e93b2d58d35fb"
+    },
+    "operative:acute": {
+      "pdf": "11815be99625da277fbce07f8298a66cf1bd310f1770dda28b30a05111d5aba4",
+      "rng": "cdaec246a6ae2b54cf8c00d429c8471707474b81c1253cffd12c79a800f2f932",
+      "story": "65382fcb49c7ec6034c98021222d9432b51b1c99f5d99bcb6c2a16694c6bc835",
+      "text": "4ed5128e80636ed6a1394a0fee696592f97a64511fce39bf31749c7a82a7b42f"
+    },
+    "operative:discharge": {
+      "pdf": "11815be99625da277fbce07f8298a66cf1bd310f1770dda28b30a05111d5aba4",
+      "rng": "cdaec246a6ae2b54cf8c00d429c8471707474b81c1253cffd12c79a800f2f932",
+      "story": "65382fcb49c7ec6034c98021222d9432b51b1c99f5d99bcb6c2a16694c6bc835",
+      "text": "4ed5128e80636ed6a1394a0fee696592f97a64511fce39bf31749c7a82a7b42f"
+    },
+    "operative:er": {
+      "pdf": "11815be99625da277fbce07f8298a66cf1bd310f1770dda28b30a05111d5aba4",
+      "rng": "cdaec246a6ae2b54cf8c00d429c8471707474b81c1253cffd12c79a800f2f932",
+      "story": "65382fcb49c7ec6034c98021222d9432b51b1c99f5d99bcb6c2a16694c6bc835",
+      "text": "4ed5128e80636ed6a1394a0fee696592f97a64511fce39bf31749c7a82a7b42f"
+    },
+    "operative:face_sheet": {
+      "pdf": "11815be99625da277fbce07f8298a66cf1bd310f1770dda28b30a05111d5aba4",
+      "rng": "cdaec246a6ae2b54cf8c00d429c8471707474b81c1253cffd12c79a800f2f932",
+      "story": "65382fcb49c7ec6034c98021222d9432b51b1c99f5d99bcb6c2a16694c6bc835",
+      "text": "4ed5128e80636ed6a1394a0fee696592f97a64511fce39bf31749c7a82a7b42f"
+    },
+    "operative:none": {
+      "pdf": "11815be99625da277fbce07f8298a66cf1bd310f1770dda28b30a05111d5aba4",
+      "rng": "cdaec246a6ae2b54cf8c00d429c8471707474b81c1253cffd12c79a800f2f932",
+      "story": "65382fcb49c7ec6034c98021222d9432b51b1c99f5d99bcb6c2a16694c6bc835",
+      "text": "4ed5128e80636ed6a1394a0fee696592f97a64511fce39bf31749c7a82a7b42f"
+    }
+  }
+}
