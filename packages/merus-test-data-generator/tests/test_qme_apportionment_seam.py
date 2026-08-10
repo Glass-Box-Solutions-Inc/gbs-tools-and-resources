@@ -411,9 +411,16 @@ def test_impairment_section_default_argument_is_the_untouched_draw(sample_case):
     default = _joined(tpl.impairment_rating_section())
     tail_default = random.random()
 
+    # Peek at the value the substrate would draw, then rewind. Reading it by
+    # drawing it would advance the stream by one and the comparison would be
+    # against a different starting position — which is the very confusion the
+    # draw-and-discard exists to prevent.
     random.seed(555)
-    drawn = random.choice([0, 0, 0, 10, 15, 20, 25])
-    explicit = _joined(tpl.impairment_rating_section(apportionment_pct=drawn))
+    state = random.getstate()
+    would_draw = random.choice([0, 0, 0, 10, 15, 20, 25])
+    random.setstate(state)
+
+    explicit = _joined(tpl.impairment_rating_section(apportionment_pct=would_draw))
     tail_explicit = random.random()
 
     assert explicit == default, "governing to the drawn value must be a pure pass-through"

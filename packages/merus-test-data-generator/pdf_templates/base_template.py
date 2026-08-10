@@ -708,14 +708,32 @@ class BaseTemplate:
         ]))
         return t
 
-    def impairment_rating_section(self) -> list:
-        """Generate full AMA Guides impairment narrative as reportlab elements."""
+    def impairment_rating_section(self, apportionment_pct: int | None = None) -> list:
+        """Generate full AMA Guides impairment narrative as reportlab elements.
+
+        ``apportionment_pct`` is the nonindustrial share, and it is the seam a
+        caller uses to govern this section (AJC-65). Left at ``None`` — which is
+        every existing call site, including ``TreatingPhysicianReport``'s PR-4
+        block — the substrate draws its own value exactly as it always did.
+
+        Governing it matters because the number printed here and the
+        apportionment opinion in ``QmeAmeReport._build_conclusions`` were drawn
+        independently, so one report could rate 20% apportioned and then declare
+        no apportionment applicable four sections later.
+        """
         from data.ama_guides_content import generate_impairment_narrative
         body_parts = self.case.injuries[0].body_parts if self.case.injuries else []
         specialty = (
             getattr(self.case, 'qme_physician', None) and self.case.qme_physician.specialty
         ) or self.case.treating_physician.specialty
-        apportionment_pct = random.choice([0, 0, 0, 10, 15, 20, 25])
+        # Drawn unconditionally, then discarded when the caller governs the
+        # value. Everything rendered after this point reads the random stream
+        # from wherever this draw left it, so answering from the ledger without
+        # drawing would shift every later draw in the document — pinning one
+        # number would silently rewrite the rest of the report.
+        drawn_pct = random.choice([0, 0, 0, 10, 15, 20, 25])
+        if apportionment_pct is None:
+            apportionment_pct = drawn_pct
         narrative, total_wpi, ratings = generate_impairment_narrative(
             body_parts, specialty, apportionment_pct
         )
