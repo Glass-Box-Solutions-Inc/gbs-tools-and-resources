@@ -1,0 +1,10 @@
+export { PhiAuditError, isAuditError } from "./errors";
+export type { AuditFailureCode } from "./errors";
+export { IDENTIFIER_CLASSES, toTotalIdentifierCounts } from "./counts";
+export { ExactAllowListAuditSerializer } from "./serializer";
+export { Aes256GcmAuditSpool } from "./spool";
+export type { SpoolKeyProvider, SpoolVolume } from "./spool-ports";
+export { DurablePhiAuditEmitter } from "./emitter";
+export { PhiAuditedAttemptCoordinator } from "./coordinator";
+export type { AttemptPlan, AttemptPrecondition, AttemptResult, ProviderInvoker } from "./coordinator";
+export { preparedToTerminalEvent } from "./event-factory";
