@@ -240,6 +240,17 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # Before either branch, and before any import of the harness. --check is not
+    # the safe mode: it *is* the standalone gate, and it decides pass/fail by
+    # asking the harness what the digests are. A harness whose compute_baseline
+    # returned load_baseline_cases() would report every case identical forever,
+    # so verifying only on the record path leaves the gate itself unguarded.
+    #
+    # It reads two local files and needs no git, no network and no arguments, so
+    # running it first also means an environment problem can never mask a
+    # tampered harness behind a message about something else.
+    harness = _verify_harness()
+
     if args.check:
         from tests.render_baseline import compute_baseline, load_baseline_cases
 
@@ -260,15 +271,10 @@ def main() -> int:
         print(f"OK — {len(computed)} render cases byte-identical to the baseline.")
         return 0
 
-    # First, before anything that can fail for an unrelated reason. This check
-    # reads two local files and needs no git, no network and no arguments, so
-    # ordering it first means an environment problem can never mask a tampered
-    # harness behind a message about something else.
-    harness = _verify_harness()
     base_commit = _resolve_base(args.base_ref)
     source_commit, base_patches = _refuse_unless_clean_base_checkout(base_commit)
 
-    # Imported only after the hash check: this module is what computes the
+    # Imported only after the hash check above: this module is what computes the
     # digests the baseline is made of.
     from tests.render_baseline import ANCHOR_DATE, BASELINE_PATH, CASE_SEED, RENDER_SEED, compute_baseline
     payload = {

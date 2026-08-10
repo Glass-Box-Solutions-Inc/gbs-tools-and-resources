@@ -1047,6 +1047,14 @@ def _local_clock_imports(source: str, label: str) -> list[str]:
     return findings
 
 
+#: Every substrate directory whose code can run during a render or a recording.
+#: One list, so the audit below and the test asserting its coverage cannot drift
+#: apart — the previous revision named three directories inline while the prose
+#: claimed four, and ``scripts/`` (which holds the recorder itself) went
+#: unaudited as a result.
+AUDITED_SOURCE_DIRS = ("data", "pdf_templates", "orchestration", "scripts")
+
+
 def test_no_clock_is_read_through_a_function_local_import():
     """The hole that let one clock keep running inside the pin.
 
@@ -1059,7 +1067,7 @@ def test_no_clock_is_read_through_a_function_local_import():
     from tests.render_baseline import _PACKAGE_ROOT
 
     offenders: list[str] = []
-    for directory in ("data", "pdf_templates", "orchestration"):
+    for directory in AUDITED_SOURCE_DIRS:
         for path in sorted(_Path(_PACKAGE_ROOT, directory).rglob("*.py")):
             offenders += _local_clock_imports(path.read_text(encoding="utf-8"), path.name)
 
@@ -1067,6 +1075,25 @@ def test_no_clock_is_read_through_a_function_local_import():
         "a clock is read through a function-local import, out of reach of the pin:\n"
         + "\n".join(offenders)
     )
+
+
+def test_the_clock_audit_covers_every_directory_that_can_run():
+    """Coverage is the property; the audit passing on three of four is not.
+
+    An audit that silently omits a directory reports clean about code it never
+    read. Naming the expected set here means adding a source directory to the
+    package without auditing it reddens, rather than quietly narrowing what
+    "no local clocks" means.
+    """
+    from pathlib import Path as _Path
+
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    assert set(AUDITED_SOURCE_DIRS) == {"data", "pdf_templates", "orchestration", "scripts"}
+    for directory in AUDITED_SOURCE_DIRS:
+        path = _Path(_PACKAGE_ROOT, directory)
+        assert path.is_dir(), f"audited directory {directory} does not exist"
+        assert list(path.rglob("*.py")), f"audited directory {directory} holds no python"
 
 
 def test_the_local_clock_audit_sees_past_a_four_hundred_character_gap():
@@ -1234,45 +1261,114 @@ def test_the_recorded_harness_hash_matches_the_harness_on_disk():
         )
 
 
-def test_record_mode_refuses_a_harness_it_has_not_reviewed(tmp_path):
-    """End-to-end: a tampered harness is refused, not merely detectable.
+def _recorder_sandbox(tmp_path, harness_mutation: str = ""):
+    """A package root holding the real recorder and a possibly-mutated harness.
 
-    Builds a package root out of the real recorder and a *mutated* copy of the
-    harness — one that records three of the eighteen cases — then runs the
-    recorder against it. Everything else about that tree is fine, which is the
-    point: with a clean checkout, a valid HEAD and valid ancestry, the harness
-    hash is the only thing standing between a doctored harness and a baseline
-    the whole gate then trusts.
+    Deliberately not a git checkout. Everything the recorder needs to reach its
+    hash check is present; everything it would need *after* that check is not.
+    That is what makes the pair of tests below informative — the tampered run
+    must stop at the hash, and the untampered run must get past it and fail on
+    the absent git environment instead.
     """
     import shutil
-    import subprocess
-    import sys as _sys
 
     from tests.render_baseline import _PACKAGE_ROOT
 
-    fake_root = tmp_path / "package"
-    (fake_root / "scripts").mkdir(parents=True)
-    (fake_root / "tests").mkdir(parents=True)
+    root = tmp_path / "package"
+    (root / "scripts").mkdir(parents=True)
+    (root / "tests").mkdir(parents=True)
     shutil.copy2(
         os.path.join(_PACKAGE_ROOT, "scripts", "record_render_baseline.py"),
-        fake_root / "scripts" / "record_render_baseline.py",
+        root / "scripts" / "record_render_baseline.py",
     )
-
-    harness_source = os.path.join(_PACKAGE_ROOT, "tests", "render_baseline.py")
-    with open(harness_source, encoding="utf-8") as fh:
+    with open(os.path.join(_PACKAGE_ROOT, "tests", "render_baseline.py"), encoding="utf-8") as fh:
         harness_text = fh.read()
-    tampered = harness_text + "\n\nRENDER_CASES = RENDER_CASES[:3]  # tampered\n"
-    assert tampered != harness_text
-    (fake_root / "tests" / "render_baseline.py").write_text(tampered, encoding="utf-8")
+    (root / "tests" / "render_baseline.py").write_text(harness_text + harness_mutation, encoding="utf-8")
+    return root
+
+
+def _run_recorder(root, *args):
+    import subprocess
+    import sys as _sys
 
     result = subprocess.run(
-        [_sys.executable, "scripts/record_render_baseline.py", "--record"],
-        cwd=str(fake_root), capture_output=True, text=True,
+        [_sys.executable, "scripts/record_render_baseline.py", *args],
+        cwd=str(root), capture_output=True, text=True,
     )
-    combined = result.stdout + result.stderr
-    assert result.returncode != 0, f"a tampered harness was accepted:\n{combined}"
-    assert "does not match its reviewed hash" in combined, (
-        f"refused for some other reason than the harness hash:\n{combined}"
+    return result.returncode, result.stdout + result.stderr
+
+
+def test_record_mode_refuses_a_harness_it_has_not_reviewed(tmp_path):
+    """End-to-end: a tampered harness is refused, not merely detectable.
+
+    The mutation records three of the eighteen cases. Everything else about the
+    tree is fine, which is the point: the harness hash is the only thing between
+    a doctored harness and a baseline the whole gate then trusts.
+    """
+    root = _recorder_sandbox(tmp_path, "\n\nRENDER_CASES = RENDER_CASES[:3]  # tampered\n")
+    code, out = _run_recorder(root, "--record")
+    assert code != 0, f"a tampered harness was accepted:\n{out}"
+    assert "does not match its reviewed hash" in out, (
+        f"refused for some other reason than the harness hash:\n{out}"
+    )
+
+
+def test_check_mode_refuses_a_harness_that_would_report_itself_clean(tmp_path):
+    """--check is the gate, so a harness cannot be trusted to grade itself.
+
+    The mutation is the one that matters: ``compute_baseline`` returns
+    ``load_baseline_cases()``, so every case compares equal to the recorded
+    value and the gate prints OK forever, whatever the templates now emit. This
+    is a false *green*, not a false red — nothing downstream would ever notice.
+
+    Until AJC-65 lands, this standalone gate is the only thing checking the
+    substrate in CI, which is exactly why the verification cannot be limited to
+    the record path.
+    """
+    mutation = (
+        "\n\n_baseline_cases = load_baseline_cases\n"
+        "def compute_baseline():  # tampered: grade against the answer key\n"
+        "    return _baseline_cases()\n"
+    )
+    root = _recorder_sandbox(tmp_path, mutation)
+    code, out = _run_recorder(root, "--check")
+    assert code != 0, f"--check accepted a harness that grades against the baseline:\n{out}"
+    assert "does not match its reviewed hash" in out, (
+        f"--check refused for some other reason than the harness hash:\n{out}"
+    )
+    assert "byte-identical" not in out, (
+        f"--check reported success from a tampered harness:\n{out}"
+    )
+
+
+@pytest.mark.parametrize(
+    "mode,environmental_failure",
+    [
+        # --record reaches git first; --check goes straight on to import the
+        # harness, which needs the substrate packages the sandbox omits. Both
+        # are failures of the sandbox, and neither is the hash.
+        ("--record", "cannot interrogate git"),
+        ("--check", "No module named 'data'"),
+    ],
+)
+def test_an_untampered_harness_passes_verification_in_the_same_sandbox(
+    tmp_path, mode, environmental_failure
+):
+    """The control: refusal above is caused by tampering, not by the sandbox.
+
+    Same construction, same deliberately incomplete environment, harness
+    byte-identical to the reviewed one. Both modes must get *past* the hash
+    check and fail later for a reason belonging to the sandbox — if this failed
+    at the hash too, the two tests above would prove nothing about tampering.
+    """
+    root = _recorder_sandbox(tmp_path)
+    code, out = _run_recorder(root, mode)
+    assert "does not match its reviewed hash" not in out, (
+        f"an untampered harness was refused by the hash check:\n{out}"
+    )
+    assert code != 0, f"the incomplete sandbox somehow succeeded:\n{out}"
+    assert environmental_failure in out, (
+        f"expected {mode} to fail on {environmental_failure!r}, got:\n{out}"
     )
 
 
@@ -1329,23 +1425,16 @@ def test_the_harness_is_verified_before_it_is_imported():
         "no harness import follows the verification, so nothing is being protected"
     )
 
-    # --check imports the harness too, and legitimately: it compares against a
-    # baseline it never writes, so a bad harness there reddens the gate rather
-    # than blessing a lie. Recording is the trusted act, so the exemption is
-    # allowed only for imports that live inside the ``--check`` branch.
-    check_branches = [
-        node for node in main.body
-        if isinstance(node, ast.If)
-        and isinstance(node.test, ast.Attribute)
-        and node.test.attr == "check"
-    ]
-    exempt = {lineno for branch in check_branches for lineno in harness_imports(branch)}
-    unguarded = [
-        lineno for lineno in harness_imports(main)
-        if lineno < verify_line and lineno not in exempt
-    ]
+    # No exemption for --check. An earlier revision of this test excused the
+    # check branch on the reasoning that a bad harness there reddens the gate
+    # rather than blessing a lie. That reasoning is wrong: --check decides
+    # pass/fail by asking the harness for the digests, so a harness whose
+    # compute_baseline() returned load_baseline_cases() would report every case
+    # identical forever. --check IS the standalone gate. Every harness import in
+    # main(), on either path, must follow the verification.
+    unguarded = [lineno for lineno in harness_imports(main) if lineno < verify_line]
     assert not unguarded, (
-        f"the harness is imported at line {unguarded} on the record path before "
-        f"_verify_harness() at line {verify_line}"
+        f"the harness is imported at line {unguarded} before _verify_harness() at "
+        f"line {verify_line}; --check is not exempt, it is the gate"
     )
 
