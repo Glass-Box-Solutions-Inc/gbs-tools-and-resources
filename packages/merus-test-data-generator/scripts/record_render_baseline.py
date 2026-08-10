@@ -111,6 +111,7 @@ def _status_paths(cwd: str, include_untracked: bool = False) -> list[str]:
         path = line[3:].strip()
         if " -> " in path:
             path = path.split(" -> ", 1)[-1]
+        path = _package_relative(cwd, path)
         paths.append(path)
     return sorted(set(paths))
 
