@@ -315,6 +315,53 @@ def test_same_seed_produces_identical_bytes_across_processes(tmp_path: Path) -> 
     assert not drifted, f"{len(drifted)} file(s) drifted between runs: {drifted[:5]}"
 
 
+def test_the_medical_layer_is_identical_across_processes(tmp_path: Path) -> None:
+    """AJC-60. Fresh interpreters, and therefore fresh hash salts, with the layer on.
+
+    The ledger is derived from a ``medical:`` rng namespace and from a memoised
+    calibration solve. The memoisation is the reason this test exists as well as the
+    in-process one: a cache is only ever an optimisation if two processes that filled
+    it in different orders still agree, and ``lru_cache`` keyed on anything unstable —
+    a set, a dict's iteration order — would not.
+    """
+    case = seed_dict("det-medical")
+    case["profile"] = {"applicant": {"age": 47}}
+    case["scenario"] = {
+        "medical_history": {
+            "conditions": [{"label": "essential hypertension", "key": "hypertension"}]
+        }
+    }
+    spec = tmp_path / "spec.yaml"
+    spec.write_text(
+        yaml.safe_dump({"caseload_id": "det-medical-load", "cases": [case]}),
+        encoding="utf-8",
+    )
+
+    digests: list[dict[str, str]] = []
+    for run in ("a", "b"):
+        out = tmp_path / run
+        completed = subprocess.run(
+            [sys.executable, "-m", "wc_caseload_engine.cli", "generate",
+             "--spec", str(spec), "--out", str(out)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr[-2000:]
+        digests.append(
+            {
+                str(path.relative_to(out)): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in sorted(out.rglob("*"))
+                if path.is_file()
+            }
+        )
+
+    first, second = digests
+    assert set(first) == set(second), "the two runs wrote different files"
+    drifted = sorted(name for name in first if first[name] != second[name])
+    assert not drifted, f"{len(drifted)} file(s) drifted with the medical layer on: {drifted}"
+
+
 def test_normalize_docx_is_stable_and_uses_the_document_date(tmp_path: Path) -> None:
     """python-docx stamps wall-clock ZIP times; we repack them from the date."""
     docx = pytest.importorskip("docx")

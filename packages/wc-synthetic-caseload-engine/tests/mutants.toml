@@ -1804,3 +1804,89 @@ replace = '''        "schemaVersion": SCHEMA_VERSION,
         "scorerNote": "unclassified",
         "kind": "case",'''
 note = 'AJC-48 round-2 review, finding 6. The two frozensets are the sweep terms the case-tree leakage anti-probe runs on, and they were hand-maintained with nothing tying them to the builders. A key the envelope emits but the sets never learned about is a term nothing watches; the completeness guard fails until the new key is classified as a sentinel or recorded as one that cannot be.'
+
+# ---------------------------------------------------------------------------
+# AJC-60 — the medical-history world-truth layer (M1)
+#
+# Seven guards, one per load-bearing claim the milestone makes. The first is the
+# one that matters most: the whole layer's back-compat rests on an absent block
+# moving zero bytes, and that is a claim about a negative, which is exactly the
+# kind nobody notices going false.
+# ---------------------------------------------------------------------------
+
+[[mutant]]
+id = 'm17-1'
+title = 'the seed gate derives a ledger when the author asked for none'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheSeedGate::test_an_absent_block_derives_no_ledger_at_all'
+find = '''    scenario = seed.scenario.medical_history
+    if scenario is None:
+        return None'''
+replace = '''    from wc_caseload_engine.seeds import MedicalHistoryScenario
+
+    scenario = seed.scenario.medical_history
+    if scenario is None:
+        scenario = MedicalHistoryScenario()'''
+note = 'AJC-60. The back-compat instrument. An absent block must produce no ledger at all — not an empty one, and certainly not a derived one. Auto-deriving comorbidities the moment the axis shipped would silently populate history into every case in the demo caseload and every golden fixture, which is the uncontrolled blast radius the wages gate exists to prevent. This is also the mutation that would redden the golden gate; it is registered against the cheap unit guard so a developer sees it in seconds rather than in a sixty-second corpus run.'
+
+[[mutant]]
+id = 'm17-2'
+title = 'the archetype mixture stops being calibrated and the marginals drift off their sources'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheCalibrationSolves::test_the_mixture_hits_its_target_for_every_reachable_cell'
+find = '''    scale = calibrate(condition, weights, citation.value)'''
+replace = '''    scale = 1.0'''
+note = 'AJC-60. `c-calibrated-by-b` is the binding design decision and the solve is what makes it true rather than aspirational. With a fixed scale the archetype affinities become raw probabilities and every published rate is missed by an arbitrary amount. Registered against the analytic guard rather than the cohort one because the analytic guard is exact: it names the cell that broke instead of reporting that a proportion moved.'
+
+[[mutant]]
+id = 'm17-3'
+title = 'a NOT-FOUND cell is read as a rate instead of an abstention'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheCorpusReproducesItsSources::test_per_condition_marginals_match_the_cited_tables[female-45]'
+find = '''    citation = age_band_rate(condition, age, sex)
+    if citation is None:
+        return ()'''
+replace = '''    from wc_caseload_engine.clinical_grounding import Citation
+
+    citation = age_band_rate(condition, age, sex)
+    if citation is None:
+        citation = Citation(0.25, "invented", "approximate")'''
+note = 'AJC-60. The central discipline of note C, mechanised. A missing cell means no source reports it — never that the rate is zero, and never that a plausible number may be substituted. This mutation invents a figure for exactly the cells the research says nobody measured: diabetes risk between 35 and 44, facet arthropathy under 40.'
+
+[[mutant]]
+id = 'm17-4'
+title = 'an archetype gets a zero probability, so observing a condition rules it out'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheCalibrationSolves::test_every_archetype_can_produce_every_condition'
+find = '''    return min(_P_CEILING, max(_P_FLOOR, scale * affinity))'''
+replace = '''    return min(_P_CEILING, scale * affinity)'''
+note = 'AJC-60. The anti-fingerprint guarantee at its source. Without the floor a low-affinity archetype reaches a probability indistinguishable from zero, and a chain of observed conditions can then exclude it — which is precisely how profile membership becomes recoverable from the corpus. The design record makes within-profile variation mandatory; this is the mutation that removes it.'
+
+[[mutant]]
+id = 'm17-5'
+title = 'the rng stream collides with an existing namespace and re-rolls a shipped draw'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestDeterminism::test_the_new_streams_do_not_disturb_an_existing_draw'
+find = '''    return random.Random(derive_seed(seed.rng_seed, f"medical:{salt}"))'''
+replace = '''    return random.Random(derive_seed(seed.rng_seed, salt))'''
+note = 'AJC-60. R2, the standing rng-drift risk on this programme. The ledger draws under a `medical:` namespace nothing else uses; dropping the prefix collides with the bare salts the cast already consumes, so opting into the medical block would move the applicant name, the firm names and the dates — silently, because nothing renders the medical block to give the collision away. The one defect in this set that would move goldens without touching a template.'
+
+[[mutant]]
+id = 'm17-6'
+title = 'the documentation gate ignores true prevalence and the one-in-three union breaks'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheDocumentationGate::test_the_surfacing_and_billing_unions_are_the_counsel_confirmed_ones'
+find = '''    q_surface = min(1.0, P_SURFACES_IN_FILE.value / p_any)'''
+replace = '''    q_surface = P_SURFACES_IN_FILE.value'''
+note = 'AJC-60. The counsel-confirmed "one in three" is an applicant-level rate, so P(surfaces | has a condition) has to be 0.33 divided by P(has a condition). Dropping the divisor applies the applicant-level figure as a conditional one, and the realised union falls to roughly 0.23 — a plausible-looking number that quietly contradicts the only documentation figure counsel actually confirmed.'
+
+[[mutant]]
+id = 'm17-7'
+title = 'the auto-derivation pool drifts from the doctrine content table again'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_doctrine_content.py::TestContentTableIsComplete::test_the_derivation_pool_is_the_whole_content_table'
+find = '''_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)'''
+replace = '''_DOCTRINE_POOL: tuple[str, ...] = tuple(
+    _h for _h in DOCTRINE_CONTENT if _h != "death_dependency"
+)'''
+note = 'AJC-60. Restores the drift exactly as it stood: thirteen entries against the fourteen in the content table, with death_dependency reachable only by explicit seeding. Harmless today, because the hook cannot survive the filter the derivation applies before shuffling — and that is the point. It was harmless for as long as it existed, which is why nobody noticed, and the next hook added to the table would have inherited it without the accident of being unreachable.'
