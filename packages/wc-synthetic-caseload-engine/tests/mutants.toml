@@ -1858,9 +1858,9 @@ id = 'm17-4'
 title = 'an archetype gets a zero probability, so observing a condition rules it out'
 file = 'src/wc_caseload_engine/medical_history.py'
 test = 'tests/test_medical_history.py::TestRiskGradientsSurviveCalibration::test_every_archetype_can_produce_every_condition'
-find = '''    return min(_P_CEILING, max(_P_FLOOR, scale * affinity * multiplier))'''
-replace = '''    return min(_P_CEILING, scale * affinity * multiplier)'''
-note = 'AJC-60. The anti-fingerprint guarantee at its source. Without the floor a low-affinity archetype reaches a probability indistinguishable from zero, and a chain of observed conditions can then exclude it — which is precisely how profile membership becomes recoverable from the corpus. The design record makes within-profile variation mandatory; this is the mutation that removes it.'
+find = '''    return min(_P_CEILING, max(_P_FLOOR, probability))'''
+replace = '''    return min(_P_CEILING, probability)'''
+note = 'AJC-60. R3 re-pointed: the clamp moved into its own function when the gradient became an odds-scale transform, so the old anchor went PATCH-MISS. The anti-fingerprint guarantee at its source. Without the floor a low-affinity archetype reaches a probability indistinguishable from zero, and a chain of observed conditions can then exclude it — which is precisely how profile membership becomes recoverable from the corpus. The design record makes within-profile variation mandatory; this is the mutation that removes it.'
 
 [[mutant]]
 id = 'm17-5'
@@ -1901,9 +1901,9 @@ id = 'm17-8'
 title = 'the demographic fields are drawn, stored, and consulted by nothing'
 file = 'src/wc_caseload_engine/clinical_grounding.py'
 test = 'tests/test_medical_history.py::TestRiskGradientsSurviveCalibration::test_body_mass_moves_the_risk_within_a_single_profile[diabetes-45-female]'
-find = '''        return self.bmi.get(bmi_band, 1.0) * self.smoking.get(smoking_status, 1.0)'''
-replace = '''        return 1.0'''
-note = 'AJC-60 R2 finding 1, the visible half. A severely obese current smoker and a normal-weight never-smoker of the same age came back with identical diabetes risk, so bmi_band and smoking_status were generated fields nothing read. The round-1 suite passed with this defect present because every marginal still landed — which is exactly what made it hard to see. Note C section 4 hangs surgical-clearance thresholds off these fields downstream, so a flat gradient is not a cosmetic loss.'
+find = '''        ratio = self.odds_ratio(bmi_band, smoking_status)'''
+replace = '''        ratio = 1.0'''
+note = 'AJC-60 R2 finding 1, the visible half. R3 re-pointed onto the odds-scale transform, where flattening the ratio now cancels both channels at once. A severely obese current smoker and a normal-weight never-smoker of the same age came back with identical diabetes risk, so bmi_band and smoking_status were generated fields nothing read. The round-1 suite passed with this defect present because every marginal still landed — which is exactly what made it hard to see. Note C section 4 hangs surgical-clearance thresholds off these fields downstream, so a flat gradient is not a cosmetic loss.'
 
 [[mutant]]
 id = 'm17-9'
@@ -1967,10 +1967,11 @@ file = 'src/wc_caseload_engine/medical_history.py'
 test = 'tests/test_medical_history.py::TestTheSibtfPredicateMeansWhatItSays::test_an_asymptomatic_incidental_finding_does_not_qualify'
 find = '''        condition.symptomatic_before_doi is True
         and condition.severity in SIBTF_DISABLING_SEVERITIES
+        and condition.trajectory in SIBTF_LIVE_TRAJECTORIES
         for condition in history.conditions'''
 replace = '''        condition is not None
         for condition in history.conditions'''
-note = 'AJC-60 R2 finding 4, the direction that under-silences. Every degenerative finding in the catalog is drawn from a study of ASYMPTOMATIC people — that is what those prevalence tables measured — so a predicate accepting any predating finding would ground SIBTF on roughly half the corpus and mean nothing at all. Both clauses are covered by one mutant because either alone leaves the predicate useless.'
+note = 'AJC-60 R2 finding 4, the direction that under-silences. R3 re-pointed when the trajectory clause joined the predicate; it now cancels all three clauses at once, which is still the right blast radius because any one of them alone leaves the predicate useless. Every degenerative finding in the catalog is drawn from a study of ASYMPTOMATIC people — that is what those prevalence tables measured — so a predicate accepting any predating finding would ground SIBTF on roughly half the corpus and mean nothing at all. Both clauses are covered by one mutant because either alone leaves the predicate useless.'
 
 [[mutant]]
 id = 'm17-15'
