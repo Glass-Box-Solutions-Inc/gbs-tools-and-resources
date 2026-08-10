@@ -44,6 +44,7 @@ from wc_caseload_engine.determinism import (
     zip_date_time,
 )
 from wc_caseload_engine.manifests import generate_case
+from wc_caseload_engine.planner import build_case_plan
 from wc_caseload_engine.seeds import ANCHOR_DATE, parse_case_seed
 from wc_caseload_engine.substrate import import_substrate
 
@@ -90,6 +91,43 @@ def small_case(case_id: str) -> dict[str, Any]:
     }
 
 
+def medical_case(case_id: str) -> dict[str, Any]:
+    """The same probe, opted into the AJC-60 world-truth layer.
+
+    The medical block belongs on a *separate* probe rather than being added to
+    ``small_case``, because ``small_case`` is what the whole module's byte claims are
+    measured on — folding a new axis into it would silently re-scope every assertion
+    above rather than adding one.
+
+    The layer has two clock-shaped surfaces even though it renders nothing. The
+    applicant's age is computed from a date of birth against ``ANCHOR_DATE``, and a
+    managed condition's onset is dated backwards from the injury. Both are date
+    arithmetic, and date arithmetic is precisely what a zone change perturbs — the
+    original defect this module exists for was Faker's ``date_of_birth`` landing on
+    1999-08-14 in Los Angeles and 1999-08-15 in Sydney.
+    """
+    case = small_case(case_id)
+    case["profile"] = {"applicant": {"age": 52}}
+    case["scenario"] = {
+        "medical_history": {
+            "conditions": [{"label": "type 2 diabetes mellitus", "key": "diabetes"}],
+            "prior_claims": [
+                {
+                    "body_parts": ["lumbar_spine"],
+                    "date_of_injury": "2015-01-05",
+                    "resolution_type": "stipulated_award",
+                    "award": {
+                        "body_parts": ["lumbar_spine"],
+                        "pd_percent": 12,
+                        "award_date": "2016-02-01",
+                    },
+                }
+            ],
+        }
+    }
+    return case
+
+
 def digest_tree(root: Path) -> dict[str, str]:
     """Path-keyed SHA-256 of every file under *root*."""
     return {
@@ -122,6 +160,40 @@ def test_output_is_byte_identical_across_timezones(tmp_path: Path) -> None:
     assert not drifted, (
         f"{len(drifted)} file(s) drifted between {ZONE_WEST} and {ZONE_EAST}: {drifted}"
     )
+
+
+@requires_substrate
+def test_the_medical_history_layer_is_byte_identical_across_timezones(
+    tmp_path: Path,
+) -> None:
+    """AJC-60. The same guarantee, with the world-truth layer opted in.
+
+    The layer publishes nothing, so a drift in it could not show up in the rendered
+    tree — which is exactly why the ledger itself is compared as well as the files.
+    A derived age or an onset date that moved with the zone would otherwise wait
+    until M3 rendered it to become visible, and by then the cause would be a
+    milestone away from the symptom.
+    """
+    seed = parse_case_seed(medical_case("tz-medical"))
+
+    with timezone_set(ZONE_WEST):
+        west = generate_case(seed, tmp_path / "west", case_number=1).directory
+        west_ledger = build_case_plan(seed).medical_history
+    with timezone_set(ZONE_EAST):
+        east = generate_case(seed, tmp_path / "east", case_number=1).directory
+        east_ledger = build_case_plan(seed).medical_history
+
+    assert west_ledger is not None and east_ledger is not None
+    assert west_ledger == east_ledger, (
+        "the world-truth ledger differs between "
+        f"{ZONE_WEST} and {ZONE_EAST}: {west_ledger.demographics} vs "
+        f"{east_ledger.demographics}"
+    )
+    assert west_ledger.demographics.age == 52 or west_ledger.demographics.age == 51
+
+    west_digests, east_digests = digest_tree(west), digest_tree(east)
+    drifted = sorted(name for name in west_digests if west_digests[name] != east_digests[name])
+    assert not drifted, f"{len(drifted)} file(s) drifted with the medical layer on: {drifted}"
 
 
 ALL_FORMATS: frozenset[str] = frozenset({"pdf", "scanned_pdf", "eml", "docx"})

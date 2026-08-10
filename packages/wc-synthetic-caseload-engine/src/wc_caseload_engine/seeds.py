@@ -47,7 +47,15 @@ from pydantic import (
 # doctrine.py deliberately imports nothing from this module (its prerequisites
 # read a flat ``DoctrineFacts`` record rather than a CaseSeed), so this import
 # direction is the acyclic one.
+from wc_caseload_engine.clinical_grounding import (
+    CONDITION_CATALOG,
+    BmiBand,
+    BodySystem,
+    Sex,
+    SmokingStatus,
+)
 from wc_caseload_engine.doctrine import (
+    DOCTRINE_CONTENT,
     DoctrineFacts,
     distinct_body_part_count,
     hook_is_supported,
@@ -255,6 +263,31 @@ class ApplicantProfile(_Model):
     age: int | None = Field(default=None, ge=16, le=99)
     occupation: str | None = None
     tenure_years: float | None = Field(default=None, ge=0, le=60)
+
+    sex: Sex | None = None
+    """``None`` means *derive it* on the ``medical:`` namespace.
+
+    Added because note C's grounding tables are sex-conditioned and the engine had
+    nowhere to record the answer: SEER incidence, facet arthropathy and hypertension
+    all report a split, and every one of them was stranded. Not yet honoured — no
+    document renders it (M3), and the archetype mixture that reads it only runs when
+    ``scenario.medical_history`` is present.
+    """
+
+    bmi_band: BmiBand | None = None
+    """``None`` means *derive it*, calibrated to CDC obesity prevalence for the age.
+
+    A risk factor, not a disease state — the design record draws that line and this
+    field is which side of it body mass sits on. Not yet honoured (M3).
+    """
+
+    smoking_status: SmokingStatus | None = None
+    """``None`` means *derive it*. Not yet honoured (M3).
+
+    ``former`` is worth distinguishing from ``never`` because cessation of a year or
+    more returns spinal-fusion outcomes to the never-smoker baseline: a former smoker
+    is not a continuing apportionment target the way an active one is.
+    """
 
 
 class EmployerProfile(_Model):
@@ -1633,6 +1666,255 @@ class PenaltyScenario(_Model):
         return self
 
 
+class MedicalConditionEntry(_Model):
+    """One pre-existing or concurrent condition the author states outright.
+
+    Everything here is world truth — what the applicant actually had — never what a
+    document says about it. A physician's characterisation of this condition is an
+    assertion and belongs to M2's layer, which is why nothing on this model grades
+    the condition or takes a side about it.
+    """
+
+    label: str = Field(min_length=1)
+    """Free text, e.g. 'invasive ductal carcinoma, right breast'."""
+
+    key: str | None = None
+    """A :data:`~wc_caseload_engine.clinical_grounding.CONDITION_CATALOG` key, when
+    the condition is one the catalog knows. ``None`` for anything else — the flagship
+    wholly-unrelated stories are deliberately off-catalog, because a condition with a
+    published prevalence curve is by definition not a rare event."""
+
+    body_system: BodySystem = "musculoskeletal"
+    body_part: str | None = None
+    """``None`` for a systemic condition with no region. Distinct from 'unknown'."""
+
+    icd10: str | None = None
+    origin: Literal["industrial", "nonindustrial", "mixed"] = "nonindustrial"
+    """The condition's actual causal category, not any party's position on it."""
+
+    wholly_unrelated: bool | None = None
+    """``None`` means *derive it* — from the catalog's apportionment targets against
+    this claim's own regions, or from ``body_part`` for an off-catalog entry. State it
+    to pin the case the derivation cannot see."""
+
+    onset: date | None = None
+    """``None`` is a legitimate state, not a gap: an incidental imaging finding has
+    no onset date, which is exactly how a real chart carries it."""
+
+    severity: Literal["subclinical", "mild", "moderate", "severe"] = "mild"
+    trajectory: Literal["resolved", "stable", "progressive", "fluctuating"] = "stable"
+    symptomatic_before_doi: bool | None = None
+    """Was it already producing disability before the injury? Escobedo turns on this
+    exactly: a nonindustrial factor must be shown to be causing disability *now*, not
+    merely to be visible or to predate the injury."""
+
+    surfaces_in_file: bool = True
+    """Whether the file shows this condition anywhere.
+
+    Defaults ``True`` for a stated condition and ``False`` for a drawn one, and the
+    asymmetry is deliberate rather than an inconsistency: an author who names a
+    condition is telling a story with it, while the drawn population is calibrated to
+    the counsel-confirmed documentation rate. Set it ``False`` to author
+    the case the two-surface gate exists for — a real condition the file never
+    mentions.
+    """
+
+    billing_coded: bool = False
+    """Coded in this claim's own billing. Implies ``surfaces_in_file``."""
+
+    @model_validator(mode="after")
+    def _key_is_a_catalog_key(self) -> MedicalConditionEntry:
+        if self.key is not None and self.key not in CONDITION_CATALOG:
+            known = ", ".join(sorted(CONDITION_CATALOG))
+            raise ValueError(
+                f"scenario.medical_history.conditions[].key is {self.key!r}, which is "
+                f"not a grounding-catalog condition. Use one of: {known} — or drop the "
+                "key entirely, which is the right answer for a condition the catalog "
+                "has no prevalence curve for."
+            )
+        return self
+
+
+class PriorAwardEntry(_Model):
+    """A prior permanent-disability award — the section 4664(b) fact itself.
+
+    Data model only in M1. No overlap arithmetic and no dollars: that is M5's, and it
+    is gated on a counsel check that has not landed.
+    """
+
+    body_parts: list[str] = Field(min_length=1)
+    pd_percent: int = Field(ge=1, le=100)
+    award_date: date
+    resolution_type: Literal["stipulated_award", "findings_and_award", "c_and_r"] | None = (
+        None
+    )
+    """``None`` means the claim's own resolution, which is nearly always the answer.
+
+    It used to default to ``stipulated_award``, and that default was a small trap: an
+    award is not an independent event, it is *how the claim resolved*, so a default
+    value here could contradict the claim it sits inside without anybody typing the
+    contradiction. Writing it is still allowed — an author who states it explicitly
+    means it — and :meth:`PriorClaimEntry._an_award_needs_a_resolution_that_can_produce_one`
+    then checks the two agree.
+    """
+
+    conclusively_presumed: bool = False
+    """Whether section 4664(b)'s presumption is taken to apply.
+
+    Defaults ``False`` on the design record's conservative ruling: a compromise and
+    release does not straightforwardly carry the same weight as a rated award, so the
+    presumption is opted into rather than assumed. Not yet honoured — M5 owns the
+    arithmetic this flag will govern.
+    """
+
+
+class PriorClaimEntry(_Model):
+    """A workers' compensation claim the applicant filed before this one.
+
+    Stated, never drawn. A prior claim is a discrete litigated event with its own
+    dates, employer and resolution; sampling one would invent a case history no author
+    asked for, which is a different thing from sampling a population-level condition.
+    """
+
+    body_parts: list[str] = Field(min_length=1)
+    date_of_injury: date
+    employer: str | None = None
+    """``None`` means the same employer as this claim — the common pattern. A distinct
+    value is what Benson framing turns on. Not yet honoured (M3)."""
+
+    resolution_type: Literal[
+        "c_and_r", "stipulated_award", "findings_and_award", "dismissed", "denied", "pending"
+    ]
+    resolution_date: date | None = None
+    award: PriorAwardEntry | None = None
+    """Set only where the claim produced a PD award. Independent of
+    ``resolution_type`` rather than derived from it, so "claim happened, no award"
+    stays representable."""
+
+    @model_validator(mode="after")
+    def _award_overlaps_its_own_claim(self) -> PriorClaimEntry:
+        if self.award is not None and not set(self.award.body_parts) & set(self.body_parts):
+            raise ValueError(
+                "scenario.medical_history.prior_claims[].award.body_parts does not "
+                "overlap the claim's own body_parts — an award for a region the claim "
+                "never named cannot have come from that claim. Add the region to the "
+                "claim's body_parts, or move the award to the claim it belongs to."
+            )
+        return self
+
+    #: Resolutions that can produce a permanent-disability award, and their names.
+    #:
+    #: The other three cannot. ``denied`` and ``dismissed`` are the claim ending with
+    #: nothing awarded; ``pending`` has not ended at all. A claim in one of those
+    #: states carrying an award block is not an unusual case, it is two contradictory
+    #: facts in one entry — and while :class:`PriorAwardEntry` defaulted its own
+    #: ``resolution_type`` to ``stipulated_award``, the contradiction could be created
+    #: by writing nothing at all. That default is now ``None``, meaning "the claim's
+    #: own", so the two halves can no longer disagree by omission; this check is what
+    #: catches them disagreeing on purpose.
+    AWARDING_RESOLUTIONS: ClassVar[frozenset[str]] = frozenset(
+        {"c_and_r", "stipulated_award", "findings_and_award"}
+    )
+
+    @model_validator(mode="after")
+    def _an_award_needs_a_resolution_that_can_produce_one(self) -> PriorClaimEntry:
+        """A denied claim cannot hold an award, and a matching one cannot disagree.
+
+        Two failures, one cause: nothing was comparing the claim's resolution with the
+        award's. A ``denied`` claim with a default award block loaded cleanly, derived
+        into the ledger, and grounded a SIBTF hook on evidence that says the opposite
+        of what the hook needs — the Fund's argument *against* liability, read as
+        evidence for it.
+
+        The second clause is the one that would otherwise be found later: a
+        ``c_and_r`` claim whose award says ``stipulated_award`` is a smaller
+        contradiction than the first but the same kind. It used to be the easy one to
+        write by accident, because the award defaulted to ``stipulated_award``;
+        superseded — the default is ``None``, meaning the claim's own, so silence can
+        no longer disagree with anything and this clause now catches only a
+        disagreement somebody typed.
+        """
+        if self.award is None:
+            return self
+        if self.resolution_type not in self.AWARDING_RESOLUTIONS:
+            raise ValueError(
+                "scenario.medical_history.prior_claims[] carries an award block but "
+                f"its resolution_type is {self.resolution_type!r} — a claim that was "
+                "denied, dismissed or is still pending produced no permanent "
+                "disability to award. The resolutions that can produce one are "
+                f"{', '.join(sorted(self.AWARDING_RESOLUTIONS))}. Remove the award "
+                "block, or change the claim's resolution_type to one of them."
+            )
+        if (
+            self.award.resolution_type is not None
+            and self.award.resolution_type != self.resolution_type
+        ):
+            raise ValueError(
+                "scenario.medical_history.prior_claims[].award.resolution_type is "
+                f"{self.award.resolution_type!r} but the claim resolved by "
+                f"{self.resolution_type!r} — one award cannot have issued out of two "
+                "different resolutions. Set the award's resolution_type to match the "
+                "claim, or drop it and let it inherit."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _resolution_precedes_nothing_impossible(self) -> PriorClaimEntry:
+        if self.resolution_date is not None and self.resolution_date < self.date_of_injury:
+            raise ValueError(
+                "scenario.medical_history.prior_claims[].resolution_date precedes its "
+                "own date_of_injury — a claim cannot resolve before it arises. Correct "
+                "the resolution_date, or correct the date_of_injury."
+            )
+        if self.award is not None and self.award.award_date < self.date_of_injury:
+            raise ValueError(
+                "scenario.medical_history.prior_claims[].award.award_date precedes the "
+                "claim's date_of_injury — an award cannot issue before the injury it "
+                "compensates. Correct the award_date, or correct the date_of_injury."
+            )
+        return self
+
+
+class MedicalHistoryScenario(_Model):
+    """The world-truth layer: what the applicant actually had, before any assertion.
+
+    Its presence on :class:`ScenarioSpec` is the whole gate. Absent — the default —
+    means this case has no medical-history layer at all, and produces output
+    byte-identical to every case generated before this axis existed.
+    """
+
+    conditions: list[MedicalConditionEntry] = Field(default_factory=list, max_length=8)
+    """Conditions stated outright. Always kept, and the sampler never contradicts one."""
+
+    prior_claims: list[PriorClaimEntry] = Field(default_factory=list, max_length=5)
+
+    archetype: Literal[
+        "resilient", "metabolic", "degenerative", "psych_burdened", "multimorbid"
+    ] | None = None
+    """``None`` means *draw it* from the demographic mixture. Pin it to author a
+    specific health profile. Not yet honoured (M3)."""
+
+    sample_conditions: bool = True
+    """Whether to draw conditions from the archetype on top of any stated above.
+
+    ``True`` by default: opening this block asks for the world-truth layer, and a
+    layer that only ever holds what an author typed cannot reproduce a population.
+    Set ``False`` for a pinned showcase case whose story would be muddied by drawn
+    comorbidities.
+    """
+
+    @model_validator(mode="after")
+    def _a_pinned_archetype_needs_a_draw_to_pin(self) -> MedicalHistoryScenario:
+        if self.archetype is not None and not self.sample_conditions:
+            raise ValueError(
+                "scenario.medical_history names an archetype but sets "
+                "sample_conditions to false, so nothing draws from it and the "
+                "archetype decides nothing. Set sample_conditions to true, or remove "
+                "the archetype."
+            )
+        return self
+
+
 class ScenarioSpec(_Model):
     """Seed-surfaced case facts.
 
@@ -1662,6 +1944,26 @@ class ScenarioSpec(_Model):
     """How the money ended. Requires ``wages`` — see the same validator."""
     penalties: PenaltyScenario | None = None
     """Automatic late-indemnity increases. Requires ``wages`` — see the same validator."""
+    medical_history: MedicalHistoryScenario | None = None
+    """The world-truth gate. Not yet honoured — no document renders it (M3).
+
+    ``None`` — the default — means this case has no medical-history layer: no
+    comorbidities, no prior claims, nothing an apportionment opinion could concretely
+    reference. Deliberately ``None`` rather than a default-constructed block, and
+    deliberately *not* auto-derived when absent, which is the opposite of what
+    ``diagnostics`` does.
+
+    The difference is that diagnostics had a prior existence. Templates were already
+    drawing imaging independently, and the ledger's job was to make behaviour that
+    already shipped coherent. Nothing today derives comorbidities or prior claims for
+    any case, so auto-deriving them the moment this field existed would silently start
+    populating history into every case in the demo caseload and every golden fixture —
+    the uncontrolled blast radius the ``wages`` gate exists to prevent.
+
+    So this follows ``wages``: an absent block moves zero bytes, and that is the
+    instrument the whole milestone's back-compat claim is measured with.
+    """
+
     surgery: Literal["none", "performed", "recommended", "denied_by_ur"] | None = None
     """``None`` means *derive it* — preserving the substrate's 35% coin exactly.
 
@@ -1817,6 +2119,52 @@ class CaseSeed(_Model):
                 "benefits of a living worker, and a fatal claim pays dependency benefits "
                 "instead. Remove the money blocks from this seed, or change injury.type "
                 "to 'specific' or 'cumulative_trauma'."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _a_prior_claim_precedes_the_current_injury(self) -> CaseSeed:
+        """"Prior" is a claim about order, and nothing was enforcing it.
+
+        :class:`PriorClaimEntry` can police its own internal dates — a claim cannot
+        resolve before it arises, an award cannot issue before the injury it
+        compensates — but it cannot see the injury it is prior *to*. So a claim dated
+        after the current injury loaded cleanly, derived into the ledger as a prior
+        claim, and every §4664 and Benson hook downstream would have read it as
+        predating the injury it postdates.
+
+        **Strictly before.** Two claims arising the same day are not a prior and a
+        current; they are one event pleaded twice, or a data error. Either reading
+        makes the seed wrong, and ``<=`` would have admitted it.
+
+        **Only the injury date carries the ordering claim.** A prior claim still
+        resolving when the new injury happens is ordinary — a 2019 injury resolving
+        in 2023 is a slow but unremarkable file, and an open prior claim is precisely
+        the fact pattern a §4664 apportionment argument turns on. So the resolution
+        date, the award date and the claim's status are all deliberately unchecked
+        here.
+
+        **CT compares against ``onset_date``, which is the later bound.** A specific
+        injury arising inside an ongoing cumulative-trauma exposure period is
+        therefore admitted, and that is the right call: a worker whose back is
+        accumulating damage over three years can also drop a crate on their foot in
+        year two. Rejecting that would refuse a real fact pattern in order to tidy an
+        edge. What stays refused is only what is impossible.
+        """
+        history = self.scenario.medical_history
+        if history is None or not history.prior_claims:
+            return self
+        onset = self.injury.onset_date
+        for index, claim in enumerate(history.prior_claims):
+            if claim.date_of_injury < onset:
+                continue
+            raise ValueError(
+                f"scenario.medical_history.prior_claims[{index}].date_of_injury "
+                f"({claim.date_of_injury.isoformat()}) does not precede the current "
+                f"injury ({onset.isoformat()}) — a prior claim has to arise before the "
+                "claim it is prior to, and one arising the same day is the same event "
+                "pleaded twice. Move the prior claim's date_of_injury earlier, or move "
+                "injury.date_of_injury later."
             )
         return self
 
@@ -2359,21 +2707,21 @@ _LIEN_RESOLUTIONS: tuple[str, ...] = (
     "mixed",
 )
 
-_DOCTRINE_POOL: tuple[str, ...] = (
-    "ogilvie",
-    "almaraz_guzman",
-    "benson",
-    "escobedo",
-    "kite",
-    "going_and_coming",
-    "sibtf",
-    "lc3208_3_psych",
-    "gfpa",
-    "firefighter_presumption",
-    "imr_constitutionality",
-    "ab5_dynamex",
-    "lc4664_prior_award",
-)
+_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)
+"""Hooks ``auto:`` derivation may draw, in content-table order (AJC-60).
+
+Read from :data:`~wc_caseload_engine.doctrine.DOCTRINE_CONTENT` rather than
+transcribed, because the transcription had already drifted: thirteen entries
+against the table's fourteen, with ``death_dependency`` present in the table,
+accepted by the schema, and reachable only by naming it in a seed. A hand-kept
+third copy of a list two other places already agree on is a drift waiting to
+happen, and the next hook added is the one that would have inherited it.
+
+Derived in **insertion order, not sorted**. ``_derive_doctrine_hooks`` shuffles
+this sequence, so its order is an input to every ``auto:`` draw — sorting it
+would silently re-roll every auto-derived caseload. Insertion order preserves
+the thirteen entries' existing relative positions exactly.
+"""
 
 _MECHANISMS: Mapping[str, tuple[str, ...]] = {
     "specific": (

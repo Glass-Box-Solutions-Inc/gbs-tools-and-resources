@@ -61,6 +61,11 @@ from wc_caseload_engine.lifecycle_bridge import (
     fit_dates,
     to_document_candidates,
 )
+from wc_caseload_engine.medical_history import (
+    MedicalHistory,
+    derive_medical_history,
+    grounding_warnings,
+)
 from wc_caseload_engine.money import MoneyFacts, derive_money_facts
 from wc_caseload_engine.perspective import apply_perspective, document_roles
 from wc_caseload_engine.recon_machine import ReconTrack, build_recon_track
@@ -139,6 +144,22 @@ class CasePlan:
     Derived once, here, so the planner, the renderer and the manifest
     cannot reach three different answers about what happened in the case.
     """
+    medical_history: MedicalHistory | None = None
+    """The world-truth ledger, when the seed asked for one. ``None`` when it did not.
+
+    A third sibling beside ``case_facts`` and ``money_facts``, on the ``money``
+    pattern and for the same reason: derived only for a seed carrying
+    ``scenario.medical_history``, so the absence is a value every consumer can
+    short-circuit on rather than a dozen empty collections nobody can tell from data.
+
+    **Carried, never published.** Nothing writes it to ``case_facts.yaml``, to the
+    manifest's ``caseFacts`` block or to the truth manifest, and that is deliberate:
+    world truth is what an assertion is graded *against*, so a document able to cite
+    it would collapse the two-level design this ledger opens. Same discipline
+    ``case_facts`` already applies to ``wpi`` and ``pd``. M3 gives the conditions a
+    document surface and M4 gives the ledger a scorer-only channel.
+    """
+
     money_facts: MoneyFacts | None = None
     """The money spine, when the seed asked for one. ``None`` when it did not.
 
@@ -1966,6 +1987,11 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # independent resolutions of the same persona is the defect that let
     # ``scenario.surgery`` and ``has_surgery`` contradict each other in Phase 1.
     money_facts = derive_money_facts(seed, timeline, case_facts.adjuster_diligence)
+    # The cast's date of birth rather than a second derivation of it — the ledger and
+    # the documents must not reach two different ages for one applicant.
+    medical_history = derive_medical_history(
+        seed, timeline, date_of_birth=cast.case.applicant.date_of_birth
+    )
     # …and the substrate's own wage field follows the published one, before any
     # template reads it. Three document families derive money from
     # ``employer.hourly_rate``; none of them were fact-aware.
@@ -2149,6 +2175,10 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         *penalty_warnings,
         *_money_control_warnings(seed, money_facts),
         *hook_warnings,
+        # Silent unless the seed opened the medical-history layer — see
+        # medical_history.HOOK_GROUNDING for why a warning cannot be allowed to fire
+        # on a seed that never asked for the layer at all.
+        *grounding_warnings(seed, medical_history),
     )
 
     log.debug(
@@ -2175,6 +2205,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         perspective_notes=pov.notes,
         case_facts=case_facts,
         money_facts=money_facts,
+        medical_history=medical_history,
     )
 
 

@@ -47,6 +47,8 @@ package is built on. Flagged and accepted as an explicit stack decision.
 | `determinism.py` | The three reproducibility fixes (hash seed, docx ZIP times, PDF `/ID`). |
 | `manifests.py` | Output tree, manifests, `validate --out`. |
 | `truth_manifest.py` | Versioned scorer-only truth envelopes, lossless money-channel serialization/re-import (including opt-in §4650(d) penalties), and the caseload truth index. |
+| `clinical_grounding.py` | Cited epidemiology as data (AJC-60): nine conditions with age/sex-banded prevalences, each value carrying its source and confidence grade, each knob its provenance tag. NOT-FOUND cells are omitted, never zeroed. |
+| `medical_history.py` | The world-truth ledger and its archetype sampler (AJC-60). Derived only for a seed carrying `scenario.medical_history`; **published nowhere**. |
 | `schema_audit.py` | The "not yet honoured" docstring marker sweep (ISC-137). Parses `seeds.py` from the syntax tree, never from `model_fields`. |
 | `message_audit.py` | The actionable-message sweep (ISC-129). Every message `seeds.py` can raise, one level of helper indirection resolved, classified into *instructs* vs *reports*. |
 | `cli.py` | Click commands. |
@@ -215,6 +217,7 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_money_coherence.py` | The reusable paper/manifest/truth money harness, including capped, delayed and §4650(d)-penalised shapes, byte gates and one-cent live controls (AJC-48) |
 | `test_truth_manifest.py` | Lossless money round trips, envelope/open-channel versioning, rollup completeness, scorer-only subtree isolation, and the case-tree leakage anti-probe (AJC-48) |
 | `test_golden_corpus.py` | The golden-corpus gate: digest faithfulness and sensitivity, redaction-path staleness, drift-report wording, and the `suite`-tier byte-identity check (AJC-59) |
+| `test_medical_history.py` | The world-truth ledger: grounding-table honesty, the population-weighted calibration solve, the BMI/smoking risk gradients (single-profile and mixture readings), marginal matching against the cited tables, the per-claim-shape anti-fingerprint probes and their pooling control, the two-surface documentation unions, prior-claim ordering, the SIBTF grounding predicate, the seed gate, and byte inertness (AJC-60) |
 
 ### The mutation gate
 
@@ -345,6 +348,186 @@ substrate (same monorepo) but not `Adjudica-classifier`.
 
 Fast iteration: assert on the **plan** (`build_case_plan`) rather than rendered files.
 Rendering is the slow part; the plan carries every subtype, date, track and format.
+
+---
+
+## The world-truth ledger (AJC-60, M1)
+
+`scenario.medical_history` opens a second ledger beside `CaseFacts` and `MoneyFacts`, on the
+`money` pattern: derived only when the seed asks, `None` when it does not.
+
+**It is published nowhere, and that is the design.** Not `case_facts.yaml`, not the manifest's
+`caseFacts` block, not the truth manifest. World truth is what an *assertion* is graded
+against, so a document able to cite it would collapse the two-level design the medical-story
+programme is built on — a party's assertion about a history could no longer diverge from the
+history. This is the same discipline `case_facts.py` already applies to `wpi`/`pd`
+("fields the ledger derives but nothing renders stay on the model and out of the output"),
+applied one layer earlier. M3 gives the conditions a document surface; M4 gives the ledger a
+scorer-only channel and the truth-envelope version bump that goes with it.
+
+Consequences worth knowing before touching it:
+
+- **Everything it adds is byte-inert**, so every seed field it adds carries the "not yet
+  honoured" marker and an inertness probe. Wiring any one of them up turns
+  `test_schema_honesty.py` red until the marker goes.
+- **`c-calibrated-by-b`, solved over the population and not the cell.** Archetypes carry the
+  *correlation* between conditions; a bisection solve calibrates per-archetype probabilities so
+  the corpus reproduces `clinical_grounding`'s cited marginals **by construction**. Edit an
+  affinity freely — the intercept re-solves and the marginals still land. That is why the
+  archetype table is safe to tune and the calibration is not.
+
+  It solves once per `(condition, age)` **integrated over the BMI × smoking distribution**,
+  never per demographic cell. Per-cell solving looks like success — every cell reproduces its
+  marginal exactly — and is the opposite: each cell absorbs its own risk multiplier, so a
+  severely obese current smoker and a normal-weight never-smoker of the same age come out
+  identical and `bmi_band` / `smoking_status` become fields nothing reads.
+- **The calibrated quantity is a logistic intercept, not a multiplicative scale**, and every
+  contribution is an odds ratio on the log-odds scale:
+  `logit(p) = intercept + log(affinity) + log(OR_bmi) + log(OR_smoking)`. A scale times an
+  affinity is a product of two unbounded positives, and it was being handed to the odds
+  transform as if it were a probability — an exhaustive sweep found **907** cells where it was
+  not, and at age 55 the multimorbid lumbar baseline hit 1.231, saturating all four BMI bands
+  and erasing the published 1.79 gradient in the profile where the condition is most likely.
+  The link makes the property hold by construction rather than by a sweep that finds no
+  counterexample today.
+- **One BMI definition, not two — and the classifier owns it.** `bmi_band_for_draw` holds the
+  comparison chain; `bmi_distribution` derives its shares from that same function's cutoffs.
+  They were two expressions of the same arithmetic and drifted exactly where neither was
+  exercised: CDC's obesity series starts at 20 and the schema admits applicants from 16, so the
+  closed form reused the youngest reported band while the draw turned the missing citation into
+  `obese_share = 0.0`. An 18-year-old male's hypertension came out at 0.239 against a cited
+  0.300.
+
+  The **first** fix for that drifted too, one layer down. A cumulative walk over the shares is
+  the obvious way to write an inverse CDF and is not the same function: `severe + (obese -
+  severe)` reassociates the arithmetic, giving `0.46399999999999997` where the original compared
+  against the source literal `0.464`, so a draw of exactly that representable value changes
+  band. One draw in 2^53 on a layer that renders nothing — fixed anyway, because the claim made
+  was "every 20+ draw maps identically" and that claim was relied on.
+- **The surfacing conditional is global, and it has to be.** `surfacing_conditional()` divides
+  the counsel union by `expected_any_condition()` over an explicit reference population
+  (`reference_age_weights()` × sex × BMI × smoking × `REFERENCE_CLAIM_SHAPES`). The age weights
+  are the **exact** law the cast's DOB draw produces — a trapezoid from two convolved uniforms,
+  half-weight endpoints, and a small tail on age 24 from a 365-day year meeting leap days — not
+  uniform over 25-62. Assuming uniform cost a fifth decimal place (0.771068 against 0.771010),
+  and the reason to care is the claim rather than the digit: an identity asserted at 1e-12
+  against an approximate population is an identity about the approximation. The nominal
+  `REFERENCE_AGES` band that carried the uniform claim is **deleted**, not corrected — every
+  axis of the reference population gets exactly one definition, which is the same rule that
+  closed the BMI-classifier finding one bullet up. Dividing each
+  applicant's *own* `P(any)` into the target and capping at 1 cannot reach the target: the cap
+  is one-sided, so everybody below it contributes less and nobody contributes more, and the
+  aggregate lands at 0.484 against 0.50. That 0.016 bias hid inside a ±0.02 sampled tolerance
+  for a full round — tolerances are derived from binomial standard error now, and the
+  identity is asserted analytically at 1e-12 besides.
+- **Gradients are odds ratios and are applied on the odds scale**, `p' = OR*p / (1 - p + OR*p)`,
+  before the population calibration. Multiplying a probability by an OR does not preserve the
+  OR, and the error grows with the baseline: hypertension at 0.525 times a 2.20 body-mass
+  figure gave 1.155, which the clamp then turned into 0.995 — a gradient far steeper than the
+  table claimed, arriving silently because the clamp made it look like a number. Two ratios
+  combine by multiplying on the odds scale. The invented ratios are declared as odds ratios
+  too: two scales in one table is how the original error survived a review round.
+- **Provenance is per band, not per gradient.** `OddsRatio` carries its own tag, and `Tag` has
+  `interpolated` (inside the published range) and `extrapolated` (outside it) because
+  "measured" was covering values nobody measured — the knee curve's severe-obesity band is a
+  reading off a dose-response line sitting between two pooled figures from twenty-two studies.
+- **Two things move risk across a demographic axis, and a mixture reading cannot tell them
+  apart.** The *steer* shifts the archetype mixture toward the metabolic and degenerative
+  profiles; the *gradient* raises that profile's own risk. m17-8 flattened every BMI ratio and
+  the mixture gradient survived on the steer alone; m17-21 did the same to smoking one round
+  later, because the fix had been applied per module rather than per gradient. Every gradient
+  is guarded by a single-profile reading with the mixture held out (`_profile_rate`); the
+  mixture readings are kept beside them because they are the reader-visible claim.
+- **The probability floor is the anti-fingerprint guarantee.** No per-archetype probability
+  ever reaches 0 or 1, so no chain of observed conditions can exclude an archetype. m17-4 has
+  survived twice, for two different reasons: first a guard asking only for `0 < p < 1`, which
+  holds with the floor deleted; then a corpus loop that went vacuous when compressing the
+  affinities lifted every probed cell above the floor on its own. The clamp is now asserted
+  directly as well as over the corpus — a corpus-shaped assertion is always one refactor
+  elsewhere away from proving nothing.
+
+  **The link and the clamp are not redundant, and it took a mutation to show which is
+  load-bearing where.** In exact arithmetic the logistic link alone keeps a baseline inside
+  `(0, 1)`; in float64 `sigmoid(38)` is exactly 1.0 and the intercept search brackets ±40. So
+  the link holds the mid-range and the **clamp** holds the extremes, which is why m17-22
+  survived a guard that only probed mid-range cells.
+- **The anti-fingerprint contract, stated exactly** — two rounds of review pushed it into this
+  shape, and the earlier wording promised more than any sampler delivers:
+  **(a) singleton-freedom, within every demographic cell and claim shape** — no condition set
+  is producible by only one archetype, proved rather than sampled (conditions are drawn
+  independently given the archetype, so every subset has positive probability precisely when
+  every per-condition probability is strictly inside `(0, 1)` — which the clamp guarantees);
+  **(b) a 0.97 posterior bound on shape-conditioned common sets**, measured per claim shape
+  and pooled across demographics. Body parts are visible on the face of the file, so pooling
+  *shapes* is the mistake — it read 0.934 while the real worst was 0.989.
+
+  **(b) is not conditioned on demographics, and there is a known counterexample**: a
+  62-year-old severely obese female never-smoker on a lumbar-plus-shoulder claim, where the
+  empty set alone gives `resilient` 0.9801. Deliberately not chased. The archetype prior really
+  does concentrate with age and body mass — that is the epidemiology the steer carries — and
+  **the archetype label is published nowhere**, so flattening it would trade realism for a
+  guarantee nobody consumes. The claim that matters, `P(archetype | every analyzer-visible
+  feature)`, needs artifacts that do not exist in M1: that is **AJC-63**, M4's leakage
+  anti-probe.
+- **SIBTF grounding is one predicate, and the warning text is generated from it.** §4751 turns
+  on a pre-existing permanent *disability* that **combines** with the new injury, so a denied
+  or pending prior claim grounds nothing, and neither does a condition whose trajectory is
+  `resolved` — a factor that has stopped operating cannot combine with anything. A qualifying
+  award, or a **severe** condition symptomatic before the injury and still running, does. The
+  severity bar was `moderate` until counsel ruled that line too loose [counsel-confirmed
+  2026-08-10]; the *direction* is confirmed and the exact §4751 threshold is an open counsel
+  item for M2, so `severe` is the conservative reading of a confirmed direction. The
+  remediation sentence is built from `SIBTF_QUALIFYING` because the hand-maintained version
+  drifted from the check before anyone ran it — it told authors to add a predating condition,
+  which the check ignored.
+- **An award is how a claim resolved, not an independent event.** `PriorAwardEntry`'s
+  `resolution_type` defaults to `None`, meaning the claim's own, and a claim that was denied,
+  dismissed or is still pending cannot carry an award at all. The old default was
+  `stipulated_award`, so a denied claim with an award block — a contradiction nobody had to
+  type — loaded cleanly and grounded SIBTF on the Fund's own argument against liability.
+- **New rng streams live under `medical:`**, a namespace nothing else uses. Salting here buys
+  *stream separation*, not interference immunity: every stream is a fresh `random.Random`, so
+  two streams cannot disturb each other whatever their salts. What a collision would cost is
+  correlation — every demographic decided by one number.
+- **The aggregate moved and was reported, not tuned.** Reproducing note C's per-condition
+  marginals forces P(any condition) to about 0.76, against the design record's expected 0.55.
+  Both are pinned: `P_ANY_CONDITION_MEASURED` and `P_ANY_CONDITION_EXPECTED`, the second
+  carrying its own falsification note. **`P_ANY_CONDITION_MEASURED` is a cross-check, not a
+  working number** — nothing in the engine reads it, and in particular it is not the gate's
+  divisor. It is 0.76 sampled over 10,500 cases weighted equally across the seven claim
+  shapes; the gate's divisor is `expected_any_condition()` at 0.771, which weights shapes as
+  a caseload does. Two populations, two figures, both stated. Its provenance said "21,000
+  sampled cases" and "an honest divisor" for four rounds, because nothing computed either
+  claim — the sampling plan is now named (`AGGREGATE_PROBE_PER_SHAPE`, `AGGREGATE_PROBE_N`,
+  `AGGREGATE_PROBE_WEIGHTING`) and the knob's own sentence is asserted against the cohort the
+  probe actually builds. The counsel-confirmed surfacing union is held exactly
+  regardless, because the gate divides by the reference population's expected aggregate — which
+  is what let counsel's 2026-08-10 revision of that union (0.33 → 0.50, superseding the
+  2026-08-08 figure) land as a one-constant change. The NCCI billing floor of 0.066 did not
+  move with it: one is a measurement of billing records, the other an expert's estimate of what
+  a file mentions. At 0.50 over the reference population's `E[P(any)]` of 0.771, the
+  conditional is 0.648 and implied file visibility is **65%**, which no longer contradicts the
+  design record's 60% — the tension that note recorded has largely dissolved, and what stays
+  falsified is the 0.55 aggregate itself.
+- **A doc-honesty sweep now polices the prose.** `SUPERSEDED_DOC_CLAIMS` lists claims this
+  package has made and outlived — the old `clamp(s * r)` equation, an over-broad
+  non-recoverability claim, counsel's superseded figure, a "three of nine" count that was
+  never right about ten conditions and four flat gradients — and fails any module that states
+  one. A retired number may still be *quoted* where its own passage marks it superseded, which
+  is how provenance survives without becoming a live claim. Every one of those sentences was
+  true when written; that is exactly why a proofread does not work and a sweep does.
+
+  **It reads every module the package ships, discovered rather than listed.** The first
+  version named three files by hand and the documentation it was written to police had
+  already moved out of them — the corrected non-uniform age law lives in `case_context`,
+  which was not on the list, so restating the superseded uniform claim *there* stayed green.
+  A hand-written list of files has the same failure mode as a hand-written list of conditions
+  (`m17-29`): correct the day it is written, silently narrower every time the package grows.
+  `production_modules()` globs; a coverage assertion checks that glob against what `pkgutil`
+  says is importable, because a glob checked against another glob agrees about whatever they
+  both miss. The planted controls run through `superseded_hits` — the function the sweep
+  itself calls — rather than asking whether a phrase is a substring of the passage: membership
+  tests the *list*, and a checker that had stopped flagging anything would have passed it.
 
 ---
 

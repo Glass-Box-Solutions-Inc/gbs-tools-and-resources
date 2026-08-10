@@ -292,6 +292,22 @@ _DERIVED_AGE_RANGE = (25, 62)
 
 Matches the band ``FakeDataGenerator`` asked Faker for, so derived casts keep the
 same shape — only the clock behind them changes.
+
+**It is a band of day offsets, not of ages**, which is a distinction the medical
+layer had to learn. The draw is ``randint(low * 365, high * 365) + randint(0, 364)``
+against a 365-day year, so the realised age distribution is not uniform on
+``[low, high]``: the endpoints carry roughly half weight, leap days push a little mass
+onto ``low - 1``, and the two uniforms convolve into a trapezoid rather than a
+rectangle. See ``medical_history.reference_age_weights``, which derives the exact law
+rather than assuming this one.
+"""
+
+DERIVED_AGE_RANGE = _DERIVED_AGE_RANGE
+"""Public name for :data:`_DERIVED_AGE_RANGE`.
+
+The medical layer calibrates a corpus-level expectation over the population this
+range generates, so it needs the same numbers rather than a second copy of them —
+the same reason :func:`applicant_date_of_birth` is exported below.
 """
 
 
@@ -316,6 +332,16 @@ def _date_of_birth(seed: CaseSeed) -> date:
     low, high = _DERIVED_AGE_RANGE
     rng = seed.rng("dob")
     return ANCHOR_DATE - timedelta(days=rng.randint(low * 365, high * 365) + rng.randint(0, 364))
+
+
+#: Public name for :func:`_date_of_birth`.
+#:
+#: The medical-history ledger derives the applicant's age from this date against
+#: ``ANCHOR_DATE``, and it has to be *this* date rather than a second derivation of
+#: its own. Two independent answers to "how old is the applicant" is the class of
+#: defect the ledger pattern exists to remove, so the second consumer gets the same
+#: function rather than a copy of its logic.
+applicant_date_of_birth = _date_of_birth
 
 
 def synthetic_carrier_name(seed: CaseSeed) -> str:
@@ -800,6 +826,7 @@ __all__ = [
     "SYNTHETIC_PROVENANCE",
     "CaseCast",
     "align_employer_wage",
+    "applicant_date_of_birth",
     "build_case_cast",
     "synthetic_carrier_name",
     "synthetic_firm_name",

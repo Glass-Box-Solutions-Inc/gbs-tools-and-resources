@@ -193,7 +193,196 @@ def _follow_the_runway_date(message: str) -> dict[str, Any]:
 #: Hand-maintained on purpose — a machine can find the messages but only a
 #: person can say what following one means. The completeness pair keeps the hand
 #: and the machine in agreement.
+#: A prior claim with an award, reused by the AJC-60 entries below.
+_PRIOR_CLAIM_WITH_AWARD = {
+    "body_parts": ["lumbar_spine"],
+    "date_of_injury": "2015-01-05",
+    "resolution_type": "stipulated_award",
+    "award": {
+        "body_parts": ["lumbar_spine"],
+        "pd_percent": 12,
+        "award_date": "2016-02-01",
+    },
+}
+
+
 REGISTRY: dict[str, RegisteredMessage] = {
+    "unknown_condition_key": RegisteredMessage(
+        where="MedicalConditionEntry._key_is_a_catalog_key",
+        directives=("Use one of: {}",),
+        trigger={
+            "scenario": {
+                "medical_history": {"conditions": [{"label": "gout", "key": "gout"}]}
+            }
+        },
+        resolution={
+            "scenario": {
+                "medical_history": {
+                    "conditions": [{"label": "gout", "key": "hypertension"}]
+                }
+            }
+        },
+        note=(
+            "AJC-60. The message offers two edits and this follows the first. The "
+            "second — drop the key entirely — is the right answer for a condition the "
+            "grounding catalog has no prevalence curve for, which is most of the "
+            "interesting ones."
+        ),
+    ),
+    "archetype_with_nothing_to_draw": RegisteredMessage(
+        where="MedicalHistoryScenario._a_pinned_archetype_needs_a_draw_to_pin",
+        directives=("Set sample_conditions to true, or remove the archetype",),
+        trigger={
+            "scenario": {
+                "medical_history": {
+                    "archetype": "metabolic",
+                    "sample_conditions": False,
+                }
+            }
+        },
+        resolution={"scenario": {"medical_history": {"sample_conditions": True}}},
+        note="AJC-60. The first of the two offered edits; the second removes the archetype.",
+    ),
+    "award_outside_its_claim": RegisteredMessage(
+        where="PriorClaimEntry._award_overlaps_its_own_claim",
+        directives=(
+            "Add the region to the claim's body_parts, or move the award to the claim "
+            "it belongs to",
+        ),
+        trigger={
+            "scenario": {
+                "medical_history": {
+                    "prior_claims": [
+                        {
+                            **_PRIOR_CLAIM_WITH_AWARD,
+                            "award": {
+                                **_PRIOR_CLAIM_WITH_AWARD["award"],
+                                "body_parts": ["knee"],
+                            },
+                        }
+                    ]
+                }
+            }
+        },
+        resolution={
+            "scenario": {
+                "medical_history": {
+                    "prior_claims": [
+                        {
+                            **_PRIOR_CLAIM_WITH_AWARD,
+                            "body_parts": ["lumbar_spine", "knee"],
+                            "award": {
+                                **_PRIOR_CLAIM_WITH_AWARD["award"],
+                                "body_parts": ["knee"],
+                            },
+                        }
+                    ]
+                }
+            }
+        },
+        note=(
+            "AJC-60. Follows the first edit literally: the award names the knee, so the "
+            "claim gains the knee. Section 4664 operates per region of the body, which "
+            "is why the overlap has to be real rather than assumed."
+        ),
+    ),
+    "award_on_a_claim_that_produced_none": RegisteredMessage(
+        where="PriorClaimEntry._an_award_needs_a_resolution_that_can_produce_one",
+        directives=(
+            "Remove the award block, or change the claim's resolution_type to one of "
+            "them",
+        ),
+        trigger={
+            "scenario": {
+                "medical_history": {
+                    "prior_claims": [
+                        {**_PRIOR_CLAIM_WITH_AWARD, "resolution_type": "denied"}
+                    ]
+                }
+            }
+        },
+        resolution={
+            "scenario": {"medical_history": {"prior_claims": [_PRIOR_CLAIM_WITH_AWARD]}}
+        },
+        note=(
+            "AJC-60 R3 finding 3a. Follows the second edit — the claim goes back to a "
+            "resolution that can produce an award. The first, removing the award, is "
+            "the right one when the denial is the fact being modelled."
+        ),
+    ),
+    "award_resolution_disagrees_with_its_claim": RegisteredMessage(
+        where="PriorClaimEntry._an_award_needs_a_resolution_that_can_produce_one",
+        directives=(
+            "Set the award's resolution_type to match the claim, or drop it and let it "
+            "inherit",
+        ),
+        trigger={
+            "scenario": {
+                "medical_history": {
+                    "prior_claims": [
+                        {
+                            **_PRIOR_CLAIM_WITH_AWARD,
+                            "resolution_type": "c_and_r",
+                            "award": {
+                                **_PRIOR_CLAIM_WITH_AWARD["award"],
+                                "resolution_type": "stipulated_award",
+                            },
+                        }
+                    ]
+                }
+            }
+        },
+        resolution={
+            "scenario": {
+                "medical_history": {
+                    "prior_claims": [
+                        {**_PRIOR_CLAIM_WITH_AWARD, "resolution_type": "c_and_r"}
+                    ]
+                }
+            }
+        },
+        note=(
+            "AJC-60 R3 finding 3a, second clause. Follows the second edit literally: "
+            "the award drops its own resolution_type and inherits the claim's. That "
+            "the inheriting form is now the *default* is the actual fix — the old "
+            "default could contradict the claim without anybody typing it."
+        ),
+    ),
+    "prior_claim_does_not_precede": RegisteredMessage(
+        where="CaseSeed._a_prior_claim_precedes_the_current_injury",
+        directives=(
+            "Move the prior claim's date_of_injury earlier, or move "
+            "injury.date_of_injury later",
+        ),
+        trigger={
+            "scenario": {
+                "medical_history": {
+                    "prior_claims": [
+                        {
+                            **_PRIOR_CLAIM_WITH_AWARD,
+                            "date_of_injury": "2023-06-01",
+                            "award": {
+                                **_PRIOR_CLAIM_WITH_AWARD["award"],
+                                "award_date": "2023-09-01",
+                            },
+                        }
+                    ]
+                }
+            }
+        },
+        resolution={
+            "scenario": {"medical_history": {"prior_claims": [_PRIOR_CLAIM_WITH_AWARD]}}
+        },
+        note=(
+            "AJC-60 R2 finding 3. Follows the first edit. The second — moving the "
+            "current injury later — is the right one when the seed's real error is the "
+            "claim it is building, but it also moves every date in the lifecycle, so "
+            "the message offers it second on purpose. The trigger's award is dated "
+            "after its own injury deliberately: an internally *incoherent* prior claim "
+            "trips PriorClaimEntry's own validator first, and would have tested that "
+            "message instead of this one."
+        ),
+    ),
     "repeated_body_part": RegisteredMessage(
         where="_repeated_part_message",
         directives=(
