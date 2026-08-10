@@ -1040,7 +1040,7 @@ def get_mtus_citations(body_parts: list[str], count: int = 3) -> list[str]:
         else:
             categories.append("physical_therapy")
 
-    categories = list(set(categories))
+    categories = sorted(set(categories))
     if not categories:
         categories = ["spine_conservative"]
 
@@ -1133,7 +1133,7 @@ def get_future_medical_items(body_parts: list[str], count: int = 8) -> list[str]
     if not items:
         items = FUTURE_MEDICAL_ITEMS.get("spine", [])
 
-    items = list(set(items))
+    items = sorted(set(items))
     random.shuffle(items)
     return items[:count]
 
