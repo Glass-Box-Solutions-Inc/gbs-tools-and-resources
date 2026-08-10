@@ -18,15 +18,33 @@ from data.deposition_exchanges import (
     generate_objection,
     generate_time_marker,
 )
+from data.variant_content import (
+    generate_evaluator_exchanges,
+    generate_evaluator_exhibit_reference,
+    transcript_register,
+)
 from pdf_templates.base_template import BaseTemplate
 
 
 class DepositionTranscript(BaseTemplate):
     """Generates a deposition transcript in Q&A format with realistic length."""
 
+    #: Block form of the opt-in must name this family to activate it.
+    VARIANT_CONTENT_FAMILY = "deposition_transcript"
+
     def build_story(self, doc_spec):
         """Build deposition transcript — 10-30 pages."""
         story = []
+
+        # Who this is a deposition *of*. Without the opt-in the answer is always
+        # the applicant, which is why the registry's QME/AME transcript subtype
+        # rendered an applicant deposition with the evaluator nowhere in it.
+        register = (
+            transcript_register(self.variant_of(doc_spec))
+            if self.variant_content_enabled(doc_spec)
+            else None
+        )
+        deponent_name, deponent_role = self._transcript_deponent(register)
 
         # Reporter info (used across cover, cert, and final cert)
         reporter_names = [
@@ -38,13 +56,13 @@ class DepositionTranscript(BaseTemplate):
         reporter_number = random.randint(5000, 15000)
 
         # --- Cover page ---
-        story.extend(self._build_cover_page(doc_spec, reporter_name, reporter_number))
+        story.extend(self._build_cover_page(doc_spec, reporter_name, reporter_number, deponent_name, deponent_role))
 
         # --- Certification page ---
         story.extend(self._build_certification(doc_spec, reporter_name, reporter_number))
 
         # --- Appearances ---
-        story.extend(self._build_appearances())
+        story.extend(self._build_appearances(register))
 
         # --- Examination header ---
         story.append(self.make_hr())
@@ -58,7 +76,15 @@ class DepositionTranscript(BaseTemplate):
         # --- Generate Q&A exchanges ---
         # More exchanges = more pages. Target 10-30 pages requires 100-200+ exchanges
         # at ~8-10 exchanges per page in Courier 10pt
-        exchanges = generate_deposition_exchanges(self.case, min_exchanges=100, max_exchanges=180)
+        if register is not None:
+            # A whole examination of THIS deponent, not the applicant's
+            # examination with a preamble bolted on. Prepending was worse than
+            # doing nothing: the physician went on to answer, in the first
+            # person, what their own date of birth and address were and how
+            # their industrial injury happened.
+            exchanges = generate_evaluator_exchanges(register, self._deponent_case_data())
+        else:
+            exchanges = generate_deposition_exchanges(self.case, min_exchanges=100, max_exchanges=180)
 
         # Determine objection and exhibit insertion points
         total = len(exchanges)
@@ -90,7 +116,16 @@ class DepositionTranscript(BaseTemplate):
 
             # Insert exhibit reference before this exchange
             if idx in exhibit_indices:
-                exhibit_text = generate_exhibit_reference(exhibit_num, self.case)
+                # Exhibits are the other pool the renderer reaches, and the
+                # shared one asks the witness about their own job description at
+                # the applicant's employer — a question with no meaning for a
+                # physician, and one that re-attaches the applicant's employment
+                # to the wrong deponent.
+                exhibit_text = (
+                    generate_evaluator_exhibit_reference(exhibit_num)
+                    if register is not None
+                    else generate_exhibit_reference(exhibit_num, self.case)
+                )
                 story.append(Spacer(1, 0.1 * inch))
                 story.append(Paragraph(
                     f"{line_num:>3}  Q. {exhibit_text}", self.styles["Transcript"],
@@ -150,15 +185,46 @@ class DepositionTranscript(BaseTemplate):
 
         return story
 
-    def _build_cover_page(self, doc_spec, reporter_name, reporter_number):
+    def _deponent_case_data(self):
+        """Placeholder values for the evaluator question pools."""
+        injury = self.case.injuries[0] if self.case.injuries else None
+        evaluator = getattr(self.case, "qme_physician", None) or self.case.treating_physician
+        return {
+            "applicant_name": self.case.applicant.full_name,
+            "evaluator_name": evaluator.full_name,
+            "specialty": evaluator.specialty,
+            "body_parts": ", ".join(injury.body_parts) if injury else "the injured area",
+        }
+
+    def _transcript_deponent(self, register):
+        """Deponent name and role for the cover page.
+
+        ``None`` for both when no register claims the variant, which is what
+        keeps the default document byte-identical.
+        """
+        if register is None:
+            return None, None
+        if register.subject == "evaluator":
+            evaluator = getattr(self.case, "qme_physician", None) or self.case.treating_physician
+            return evaluator.full_name, f"{register.role_label} ({evaluator.specialty})"
+        if register.subject == "physician":
+            return (
+                self.case.treating_physician.full_name,
+                f"{register.role_label} ({self.case.treating_physician.specialty})",
+            )
+        return self.case.applicant.full_name, register.role_label
+
+    def _build_cover_page(self, doc_spec, reporter_name, reporter_number, deponent_name=None, deponent_role=None):
         """Build the deposition cover page."""
         elements = []
         elements.append(Spacer(1, 1.5 * inch))
         elements.append(Paragraph("DEPOSITION OF", self.styles["CenterBold"]))
         elements.append(Spacer(1, 0.2 * inch))
         elements.append(Paragraph(
-            self.case.applicant.full_name.upper(), self.styles["CenterBold"],
+            (deponent_name or self.case.applicant.full_name).upper(), self.styles["CenterBold"],
         ))
+        if deponent_role:
+            elements.append(Paragraph(deponent_role, self.styles["CenterBold"]))
         elements.append(Spacer(1, 0.5 * inch))
 
         case_info = (
@@ -209,13 +275,13 @@ class DepositionTranscript(BaseTemplate):
         elements.append(PageBreak())
         return elements
 
-    def _build_appearances(self):
+    def _build_appearances(self, register=None):
         """Build the appearances section."""
         elements = []
         elements.append(Paragraph("<b>APPEARANCES</b>", self.styles["SectionHeader"]))
         elements.append(Spacer(1, 0.2 * inch))
 
-        appearances = (
+        base_appearances = (
             f"For Defendant:<br/>"
             f"{self.case.insurance.defense_attorney}<br/>"
             f"{self.case.insurance.defense_firm}<br/>"
@@ -223,6 +289,12 @@ class DepositionTranscript(BaseTemplate):
             f"For Applicant:<br/>"
             f"{self.case.applicant.full_name}<br/>"
             f"Appearing in Pro Per"
+        )
+        # The deponent is not a party, so a register adds a line rather than
+        # replacing the parties' own appearances.
+        appearances = (
+            base_appearances if register is None
+            else f"{base_appearances}<br/><br/>{register.appearance_note}"
         )
         elements.append(Paragraph(appearances, self.styles["BodyText14"]))
         elements.append(Spacer(1, 0.3 * inch))

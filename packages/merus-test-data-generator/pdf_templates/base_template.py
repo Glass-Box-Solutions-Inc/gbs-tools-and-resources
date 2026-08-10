@@ -247,6 +247,95 @@ class BaseTemplate:
     def build_story(self, doc_spec: Any) -> list:
         raise NotImplementedError
 
+    # --- Variant-content seam (AJC-66) ---
+
+    #: Context key that opts a document into variant-appropriate body content.
+    #:
+    #: Off by default, and deliberately a key of its own rather than a change in
+    #: how ``variant`` is read. Several templates serve many subtypes whose
+    #: variant strings were registered and then discarded, so the same document
+    #: rendered for all of them. Making ``variant`` suddenly significant would
+    #: rewrite output for every existing caller — wc-synthetic-caseload-engine
+    #: pins four golden corpora against these templates and passes variant
+    #: strings today. A separate opt-in keeps those bytes frozen and lets a
+    #: caller ask for the richer content when it is ready for it.
+    VARIANT_CONTENT_KEY = "variant_content"
+
+    #: Which register family this template reads, or ``None`` for templates with
+    #: no seam. This is the name a block form of the opt-in must carry to
+    #: activate this template — see :meth:`variant_content_enabled`.
+    VARIANT_CONTENT_FAMILY: str | None = None
+
+    def variant_content_enabled(self, doc_spec: Any) -> bool:
+        """True when the caller opted this document into variant-aware content.
+
+        Absent, ``None``, ``False`` and an empty block are all the same answer,
+        so a caller can carry the key permanently and flip it per document. That
+        matters more than it looks: the consuming engine sets a dozen keys on
+        every context, and a template that has not opted in must read a key
+        arriving empty exactly like a key that is not there at all.
+
+        Relationship to AJC-65's seam, which governs the QME report's
+        apportionment on this same context channel: that one carries a **block**
+        of caller-supplied values, because the caller is pinning a number the
+        substrate would otherwise draw. This one is a **switch**, because the
+        caller supplies nothing — the variant is already in the context and the
+        substrate authors the body from it. Truthiness is the shared contract,
+        so passing a non-empty block here also reads as on, and a later phase
+        can thread per-variant parameters through this key without a second one.
+
+        **Accepted shapes, and this is the contract M3 codes against:**
+
+        ``True`` / ``False``
+            Global switch. ``True`` opts *every* seamed template into the
+            variant already registered for its own document.
+
+        ``{family: value, ...}``
+            Namespaced. A template activates only when the block **names its own
+            family** with a truthy value. Families are the register families:
+            ``diagnostic``, ``hospital``, ``letter``, ``deposition_notice``,
+            ``deposition_transcript``.
+
+        Anything else raises.
+
+        The namespacing is the point, and it is not decoration. Contexts get
+        copied and broadcast: AJC-65 puts an ``apportionment`` block on the same
+        ``doc_spec.context``, and a context assembled once and reused across a
+        packet is the normal shape here. Under a plain truthiness test, any
+        non-empty dict anywhere on that key would have switched on lab panels,
+        ER records, advocacy letters and QME depositions at once, in documents
+        whose author never asked for any of it. Requiring the block to name the
+        template it means keeps an unrelated block inert:
+        ``{"apportionment": {...}}`` activates nothing.
+
+        Absent, ``None``, ``False``, ``{}``, and a block naming only other
+        families all read as off — the engine sets a dozen keys on every
+        context, and a key that does not mean this template must read like a key
+        that is not there.
+        """
+        if not getattr(doc_spec, "context", None):
+            return False
+        value = doc_spec.context.get(self.VARIANT_CONTENT_KEY)
+        if value is None or isinstance(value, bool):
+            return bool(value)
+        if isinstance(value, dict):
+            if self.VARIANT_CONTENT_FAMILY is None:
+                return False
+            return bool(value.get(self.VARIANT_CONTENT_FAMILY))
+        raise ValueError(
+            f"{self.VARIANT_CONTENT_KEY} must be a bool, or a dict naming the "
+            f"template families it applies to (one of: diagnostic, hospital, "
+            f"letter, deposition_notice, deposition_transcript); got "
+            f"{type(value).__name__!r} ({value!r}). A truthy value of another "
+            f"type is refused rather than guessed at."
+        )
+
+    def variant_of(self, doc_spec: Any, default: str = "") -> str:
+        """The raw registry ``variant`` string for this document."""
+        if not getattr(doc_spec, "context", None):
+            return default
+        return doc_spec.context.get("variant", default)
+
     # --- Interdocument coherence helpers (Phase 6) ---
 
     def _get_accumulator(self, doc_spec: Any) -> Any | None:
