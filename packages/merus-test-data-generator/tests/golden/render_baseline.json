@@ -1,0 +1,74 @@
+{
+  "defense_letter:advocacy_qme": {
+    "rng": "620e97ca40196a1d89ed7d5d45d8bf3cf8234965cbe0e75e900aace27aaf8e7e",
+    "text": "aa0231ba90aa9f88c35d65cc18833c55af3ae791d602880458f77776a7ea2d17"
+  },
+  "defense_letter:none": {
+    "rng": "620e97ca40196a1d89ed7d5d45d8bf3cf8234965cbe0e75e900aace27aaf8e7e",
+    "text": "aa0231ba90aa9f88c35d65cc18833c55af3ae791d602880458f77776a7ea2d17"
+  },
+  "defense_letter:objection": {
+    "rng": "620e97ca40196a1d89ed7d5d45d8bf3cf8234965cbe0e75e900aace27aaf8e7e",
+    "text": "aa0231ba90aa9f88c35d65cc18833c55af3ae791d602880458f77776a7ea2d17"
+  },
+  "defense_letter:supp_request": {
+    "rng": "620e97ca40196a1d89ed7d5d45d8bf3cf8234965cbe0e75e900aace27aaf8e7e",
+    "text": "aa0231ba90aa9f88c35d65cc18833c55af3ae791d602880458f77776a7ea2d17"
+  },
+  "depo_notice:medical_witness": {
+    "rng": "4b6cda40e38038c164b924b637ce7ff0ccc4bf63dc4a10ba88e764e9327d0124",
+    "text": "1f6b88f04178a51f2a215de83177f11cc57759fd53583843c64f47b3cce591b2"
+  },
+  "depo_notice:none": {
+    "rng": "4b6cda40e38038c164b924b637ce7ff0ccc4bf63dc4a10ba88e764e9327d0124",
+    "text": "1f6b88f04178a51f2a215de83177f11cc57759fd53583843c64f47b3cce591b2"
+  },
+  "depo_transcript:none": {
+    "rng": "8a2bbeb2b961864f678406d68b8adc8b53d7cda23d7ed97f64040ec13e96ed38",
+    "text": "5846bf8544ac98457f49f5bc72ca8f590428bdcf7551ac505d5a989fbef782da"
+  },
+  "depo_transcript:qme_ame": {
+    "rng": "8a2bbeb2b961864f678406d68b8adc8b53d7cda23d7ed97f64040ec13e96ed38",
+    "text": "5846bf8544ac98457f49f5bc72ca8f590428bdcf7551ac505d5a989fbef782da"
+  },
+  "diagnostic:emg_ncv": {
+    "rng": "4c72562fffcd29ea78fa33dbfee2904bb8c1bae6758f12033733411be673325d",
+    "text": "fcb5d44a2b2355276e2f160bfa1c0ce07b997f76c4ac9b1eb8fa9f88022094f8"
+  },
+  "diagnostic:imaging": {
+    "rng": "4c72562fffcd29ea78fa33dbfee2904bb8c1bae6758f12033733411be673325d",
+    "text": "fcb5d44a2b2355276e2f160bfa1c0ce07b997f76c4ac9b1eb8fa9f88022094f8"
+  },
+  "diagnostic:lab": {
+    "rng": "4c72562fffcd29ea78fa33dbfee2904bb8c1bae6758f12033733411be673325d",
+    "text": "fcb5d44a2b2355276e2f160bfa1c0ce07b997f76c4ac9b1eb8fa9f88022094f8"
+  },
+  "diagnostic:none": {
+    "rng": "4c72562fffcd29ea78fa33dbfee2904bb8c1bae6758f12033733411be673325d",
+    "text": "fcb5d44a2b2355276e2f160bfa1c0ce07b997f76c4ac9b1eb8fa9f88022094f8"
+  },
+  "diagnostic:sleep_study": {
+    "rng": "4c72562fffcd29ea78fa33dbfee2904bb8c1bae6758f12033733411be673325d",
+    "text": "fcb5d44a2b2355276e2f160bfa1c0ce07b997f76c4ac9b1eb8fa9f88022094f8"
+  },
+  "operative:acute": {
+    "rng": "5f8c95c57e0e16dfb7e82cb2f0e5d2676889d147afcb85bdd161c7c87ba257ca",
+    "text": "4260913c74854c7acf3bd0f8bc75d07e04747e796d0e5e1e2f3658b3d9886cda"
+  },
+  "operative:discharge": {
+    "rng": "5f8c95c57e0e16dfb7e82cb2f0e5d2676889d147afcb85bdd161c7c87ba257ca",
+    "text": "4260913c74854c7acf3bd0f8bc75d07e04747e796d0e5e1e2f3658b3d9886cda"
+  },
+  "operative:er": {
+    "rng": "5f8c95c57e0e16dfb7e82cb2f0e5d2676889d147afcb85bdd161c7c87ba257ca",
+    "text": "4260913c74854c7acf3bd0f8bc75d07e04747e796d0e5e1e2f3658b3d9886cda"
+  },
+  "operative:face_sheet": {
+    "rng": "5f8c95c57e0e16dfb7e82cb2f0e5d2676889d147afcb85bdd161c7c87ba257ca",
+    "text": "4260913c74854c7acf3bd0f8bc75d07e04747e796d0e5e1e2f3658b3d9886cda"
+  },
+  "operative:none": {
+    "rng": "5f8c95c57e0e16dfb7e82cb2f0e5d2676889d147afcb85bdd161c7c87ba257ca",
+    "text": "4260913c74854c7acf3bd0f8bc75d07e04747e796d0e5e1e2f3658b3d9886cda"
+  }
+}
