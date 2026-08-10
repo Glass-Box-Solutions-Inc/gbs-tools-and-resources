@@ -59,6 +59,21 @@ SCENARIO_CLASSES = (
     "RateBasisOverride",
     "BenefitsScenario",
     "SettlementScenario",
+    # The medical-history world-truth layer (AJC-60). Every field it adds is
+    # byte-inert until M3 gives the ledger a document surface, so this is the
+    # largest block of marked fields the guard has ever held — and the whole
+    # point is that wiring any one of them up turns this suite red.
+    "MedicalHistoryScenario",
+    "MedicalConditionEntry",
+    "PriorClaimEntry",
+    "PriorAwardEntry",
+    # Not a scenario class, and included anyway. The three demographic fields
+    # AJC-60 adds to the cast profile are read only by the medical-history
+    # sampler, which renders nothing yet — exactly the shape this guard exists
+    # for. Leaving them outside the tuple would put a marker on three fields
+    # with nothing policing it, which is the failure mode the tuple's own
+    # comment warns about, one level up.
+    "ApplicantProfile",
 )
 
 @dataclass(frozen=True)
@@ -83,6 +98,14 @@ class InertProbe:
     varied: dict[str, Any]
     lifecycle: dict[str, Any]
     witness: frozenset[str]
+    profile: dict[str, Any] | None = None
+    """Profile block for the *varied* run, when the field under probe lives there.
+
+    Added for AJC-60's three demographic fields. A probe whose field is not on
+    ``scenario`` had no way to state itself before, so the alternative was to leave
+    those fields outside the sweep — a marker with nothing policing it, which is
+    exactly what this suite exists to prevent.
+    """
 
 
 #: The lifecycle block the discovery probes need. ``medical_legal`` — the
@@ -95,17 +118,102 @@ _DISCOVERY_LIFECYCLE = {"target_stage": "discovery", "eval_type": "qme"}
 #: Hand-written, so it carries its own liveness guard below — a marked field
 #: with no probe would otherwise pass by never being tested, which is the
 #: vacuous-assertion class this suite has hit three times.
+#: Where the medical-history layer's consumer will be.
+#:
+#: M3 renders past-medical-history, records-review and apportionment sections into the
+#: medical-legal reports, so these are the documents each probe below has to stand on.
+#: ``APPORTIONMENT_REPORT`` is the one that matters most: it is where a prior award
+#: and a nonindustrial contributor would actually be argued.
+#:
+#: Written from a measurement, not from a guess. The first draft named
+#: ``QME_COMPREHENSIVE_REPORT``, which this stage does not plan at all — so all seven
+#: probes would have proven inertness on a case that could never consume the field,
+#: which is F1's unearned zero exactly. The guard below caught it, which is the guard
+#: working rather than an anecdote about it.
+_MEDICAL_WITNESS = frozenset(
+    {"QME_REPORT_INITIAL", "APPORTIONMENT_REPORT", "TREATING_PHYSICIAN_REPORT_PR4"}
+)
+
+_PRIOR_CLAIM = {
+    "body_parts": ["lumbar_spine"],
+    "date_of_injury": "2015-01-05",
+    "resolution_type": "stipulated_award",
+    "award": {
+        "body_parts": ["lumbar_spine"],
+        "pd_percent": 12,
+        "award_date": "2016-02-01",
+    },
+}
+
+
+def _medical(**block: Any) -> dict[str, Any]:
+    return {"medical_history": block}
+
+
 INERT_PROBES: dict[str, InertProbe] = {
-    # Empty as of ISC-126, and that is the intended end state rather than a
-    # gap. Every field this table ever guarded is now honoured:
+    # ISC-126 emptied this table, and that was the intended end state at the time:
     #   AttorneyScenario.cadence          honoured by ISC-123/124
     #   DiscoveryScenario.subpoena_sets   honoured by ISC-126
     #   DiscoveryScenario.pages_per_set   honoured by ISC-126
-    # Each was removed only after the byte-inertness run went red on it, which
-    # is the meta-guard doing its job in every case. The machinery stays: the
-    # moment a new field is documented as unhonoured, the completeness pair
-    # below demands a probe for it, and InertProbe demands that probe stand
-    # where its consumer exists.
+    # Each was removed only after the byte-inertness run went red on it, which is
+    # the meta-guard doing its job in every case.
+    #
+    # AJC-60 refills it. The medical-history layer derives a full world-truth
+    # ledger and renders none of it: M3 owns every document surface, M4 owns the
+    # scorer channel, M5 owns the section 4664 arithmetic. Each entry below is a
+    # tripwire on one of those milestones.
+    "ScenarioSpec.medical_history": InertProbe(
+        plain={},
+        varied=_medical(),
+        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
+        witness=_MEDICAL_WITNESS,
+    ),
+    "MedicalHistoryScenario.archetype": InertProbe(
+        plain=_medical(),
+        varied=_medical(archetype="multimorbid"),
+        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
+        witness=_MEDICAL_WITNESS,
+    ),
+    "PriorClaimEntry.employer": InertProbe(
+        plain=_medical(prior_claims=[_PRIOR_CLAIM]),
+        varied=_medical(prior_claims=[{**_PRIOR_CLAIM, "employer": "Ridgeline Foods"}]),
+        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
+        witness=_MEDICAL_WITNESS,
+    ),
+    "PriorAwardEntry.conclusively_presumed": InertProbe(
+        plain=_medical(prior_claims=[_PRIOR_CLAIM]),
+        varied=_medical(
+            prior_claims=[
+                {
+                    **_PRIOR_CLAIM,
+                    "award": {**_PRIOR_CLAIM["award"], "conclusively_presumed": True},
+                }
+            ]
+        ),
+        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
+        witness=_MEDICAL_WITNESS,
+    ),
+    "ApplicantProfile.sex": InertProbe(
+        plain=_medical(),
+        varied=_medical(),
+        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
+        witness=_MEDICAL_WITNESS,
+        profile={"sex": "female"},
+    ),
+    "ApplicantProfile.bmi_band": InertProbe(
+        plain=_medical(),
+        varied=_medical(),
+        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
+        witness=_MEDICAL_WITNESS,
+        profile={"bmi_band": "severely_obese"},
+    ),
+    "ApplicantProfile.smoking_status": InertProbe(
+        plain=_medical(),
+        varied=_medical(),
+        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
+        witness=_MEDICAL_WITNESS,
+        profile={"smoking_status": "current"},
+    ),
 }
 
 
@@ -113,10 +221,12 @@ def _body(
     case_id: str,
     scenario: dict[str, Any],
     lifecycle: dict[str, Any] | None = None,
+    profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "case_id": case_id,
         "rng_seed": 9900,
+        "profile": {"applicant": profile or {}},
         "injury": {
             "type": "specific",
             "date_of_injury": "2022-04-11",
@@ -133,13 +243,14 @@ def _fingerprint(
     scenario: dict[str, Any],
     out_dir: Path,
     lifecycle: dict[str, Any] | None = None,
+    profile: dict[str, Any] | None = None,
 ) -> tuple[str, ...]:
     """Every rendered document's checksum, keyed by filename.
 
     Compared as a whole rather than by tree digest so a failure names which
     documents moved, not merely that something did.
     """
-    seed = parse_case_seed(_body("inert-probe", scenario, lifecycle))
+    seed = parse_case_seed(_body("inert-probe", scenario, lifecycle, profile))
     generate_case(seed, out_dir, case_number=1)
     manifest = json.loads((out_dir / seed.case_id / MANIFEST_NAME).read_text())
     return tuple(
@@ -265,6 +376,28 @@ class TestEveryProbeStandsOnGround:
         )
         assert packets("discovery") > 0
 
+    def test_the_medical_probe_stage_yields_its_witness(self) -> None:
+        """AJC-60's own version of the measurement above, kept executable.
+
+        Seven probes stand on ``QME_COMPREHENSIVE_REPORT`` because that is where M3
+        will render the past-medical-history section. If the stage stops emitting it,
+        every one of those probes silently becomes an unearned zero — inertness proven
+        on a case with nothing that could ever consume the field.
+        """
+        plan = build_case_plan(
+            parse_case_seed(
+                _body(
+                    "medical-witness",
+                    {"medical_history": {}},
+                    {"target_stage": "medical_legal", "eval_type": "qme"},
+                )
+            )
+        )
+        assert any(doc.subtype in _MEDICAL_WITNESS for doc in plan.documents), (
+            f"no document from {sorted(_MEDICAL_WITNESS)} is planned at this stage; "
+            "the medical-history probes are standing on nothing"
+        )
+
 
 class TestMarkedFieldsAreByteInert:
     @pytest.mark.parametrize("field", sorted(INERT_PROBES))
@@ -274,7 +407,7 @@ class TestMarkedFieldsAreByteInert:
         probe = INERT_PROBES[field]
         plain, varied, lifecycle = probe.plain, probe.varied, probe.lifecycle
         before = _fingerprint(plain, tmp_path / "before", lifecycle)
-        after = _fingerprint(varied, tmp_path / "after", lifecycle)
+        after = _fingerprint(varied, tmp_path / "after", lifecycle, probe.profile)
         assert before == after, (
             f"{field} is documented as 'not yet honoured' but changing it moved "
             f"{sum(1 for a, b in zip(before, after, strict=False) if a != b)} document(s). "

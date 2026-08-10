@@ -1,0 +1,840 @@
+"""Cited epidemiology for the medical-history layer — the answer key, not the answer.
+
+This module is note C (``Plans/research/wcce-medical-story/clinical-grounding-tables.md``)
+turned into data. It holds no logic about *this* engine: it is a table of what the
+literature says about real people, so that a synthetic applicant's pre-existing
+conditions can be drawn at rates a defence QME would recognise instead of invented
+on the spot.
+
+The point of separating it from the sampler is calibration. `medical_history.py`
+tunes archetype bundles until the corpus reproduces the numbers *here*, and the
+property test asserts that it did. If the two lived in one module the target and
+the thing being measured would be the same edit, and "the marginals match" would
+stop being a claim about anything.
+
+Three disciplines are inherited from the research notes and are load-bearing.
+
+**A NOT-FOUND cell is omitted, never stored as ``None`` or ``0.0``.** Note C's own
+rule, and it survives translation for the reason it was written: silently reading
+"we did not find a figure" as "the rate is zero" would misrepresent the research as
+more complete than it is, and a zero is indistinguishable from a measurement once it
+is in a table. :func:`age_band_rate` returns ``None`` on a miss, and every gap this
+module knows it has is named in :data:`KNOWN_COVERAGE_GAPS` so the holes can be
+counted rather than discovered.
+
+**Age bands are stored as each source reported them.** Five incompatible shapes
+appear below — decades (Brinjikji), cutoffs (Culvenor), compound ranges (Sher),
+ten-year-ish bands (Jarraya) and open tails (CDC). Normalising them into one scheme
+during transcription would manufacture precision no study measured.
+
+**Every value carries its own provenance, inline.** :class:`Citation` pairs a number
+with its source and a confidence tag; :class:`Knob` pairs a design choice with the
+tag note F assigns it — ``measured``, ``counsel_confirmed``, ``counsel_unconfirmed``
+or ``invented`` — and, for anything short of measured, the interview question that
+would upgrade it. This is the ``money.UNCONFIRMED_RATE_TABLE`` pattern: the caveat
+travels with the value so a reader who copies the number cannot lose it on the way.
+
+**What is deliberately absent.** Note C §2.3 and §2.8 carry two rows —
+ankle osteoarthritis and prior injury/surgery at the same site — whose
+``apportionment_basis`` is ``case_specific_history`` rather than
+``population_epidemiology``. They are not in :data:`CONDITION_CATALOG`, and that is
+the finding rather than an omission: 75-80% of ankle OA is post-traumatic, so
+neither row can be drawn from an age-keyed probability table at all. They need a
+qualifying prior event on the seed, which is what
+:class:`~wc_caseload_engine.medical_history.PriorClaim` exists to carry.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Literal
+
+type Sex = Literal["female", "male"]
+"""The two values every sex-conditioned table below reports.
+
+Not a statement about people. It is the split SEER, NHANES and the Framingham
+cohorts published, and a table cannot be keyed on a distinction its source did not
+measure.
+"""
+
+SEXES: tuple[str, ...] = ("female", "male")
+
+type BmiBand = Literal["normal_or_under", "overweight", "obese", "severely_obese"]
+"""Four bands, because four is what the cited sources can tell apart.
+
+``obese`` is BMI 30-39.9 and ``severely_obese`` is 40+, which is the line the
+arthroplasty literature actually turns on (note C §4.1: the periprosthetic-infection
+odds ratio is flat at 35-39.9 and triples at 40). Splitting ``normal_or_under`` from
+``overweight`` finer than this would outrun the data.
+"""
+
+BMI_BANDS: tuple[str, ...] = ("normal_or_under", "overweight", "obese", "severely_obese")
+
+OBESE_BANDS: frozenset[str] = frozenset({"obese", "severely_obese"})
+"""The bands CDC's obesity prevalence figure counts (BMI >= 30)."""
+
+type SmokingStatus = Literal["never", "former", "current"]
+
+SMOKING_STATUSES: tuple[str, ...] = ("never", "former", "current")
+
+type Confidence = Literal["strong", "single_study", "approximate"]
+"""Note C's evidence grade for one published number.
+
+``strong`` is a systematic review, meta-analysis or large registry;
+``single_study`` is one well-cited primary study not independently replicated;
+``approximate`` is standard clinical teaching, a triangulated figure, or a range
+reported without a point estimate.
+"""
+
+type Tag = Literal["measured", "counsel_confirmed", "counsel_unconfirmed", "invented"]
+"""Note F's provenance grade for one *design choice*.
+
+Distinct from :data:`Confidence`, which grades a published number. A knob built by
+combining two measured inputs is a derivation and is never tagged ``measured``, no
+matter how good its inputs are — note F states that rule and this module keeps it.
+"""
+
+type ApportionmentBasis = Literal["population_epidemiology", "case_specific_history"]
+"""Whether a contributor can be drawn from an age table, or needs a seeded event.
+
+A real fork in generation logic rather than a label. Every entry in
+:data:`CONDITION_CATALOG` is ``population_epidemiology``; see the module docstring
+for the two note C rows that are not, and why they are absent.
+"""
+
+type BodySystem = Literal[
+    "musculoskeletal",
+    "endocrine",
+    "cardiovascular",
+    "psychiatric",
+    "neurologic",
+    "oncologic",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class Citation:
+    """One published number, with the source and grade it was published under."""
+
+    value: float
+    source: str
+    confidence: Confidence
+
+
+@dataclass(frozen=True, slots=True)
+class Knob:
+    """One design choice this engine had to make, stating what it rests on.
+
+    ``source`` is a citation when ``tag`` is ``measured``; for everything else it is
+    the interview question that would upgrade the tag. Both are the same field on
+    purpose — a knob is never allowed to carry neither.
+    """
+
+    value: float
+    tag: Tag
+    rationale: str
+    source: str
+
+    def __post_init__(self) -> None:
+        if not self.rationale.strip() or not self.source.strip():
+            raise ValueError(
+                f"knob {self.value!r} has an empty rationale or source — a value with "
+                "no provenance is the thing this type exists to make impossible"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Age-band resolution
+# ---------------------------------------------------------------------------
+
+_DECADE = re.compile(r"^(\d+)s$")
+_RANGE = re.compile(r"^(\d+)-(\d+)$")
+_TAIL = re.compile(r"^(\d+)\+$")
+_UNDER = re.compile(r"^<(\d+)$")
+_ALL_AGES = "all_ages"
+
+
+def band_contains(band: str, age: int) -> bool:
+    """Whether *band*, written the way its source wrote it, covers *age*.
+
+    Five shapes, because five is what the literature uses: ``"20s"`` (decade),
+    ``"50-59"`` (closed range, inclusive both ends), ``"60+"`` (open tail),
+    ``"<40"`` (open head) and ``"all_ages"``.
+
+    Raises:
+        ValueError: on a band this function does not recognise. A silent ``False``
+            would read as "no source covers this age" and send the caller down the
+            NOT-FOUND path, turning a typo into a fabricated coverage gap.
+    """
+    if band == _ALL_AGES:
+        return True
+    if match := _DECADE.match(band):
+        decade = int(match.group(1))
+        return decade <= age < decade + 10
+    if match := _RANGE.match(band):
+        return int(match.group(1)) <= age <= int(match.group(2))
+    if match := _TAIL.match(band):
+        return age >= int(match.group(1))
+    if match := _UNDER.match(band):
+        return age < int(match.group(1))
+    raise ValueError(
+        f"unrecognised age band {band!r}; write it as '20s', '50-59', '60+', "
+        "'<40' or 'all_ages'"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Prevalence:
+    """One condition's published rates, keyed the way its sources keyed them.
+
+    ``by_sex`` is consulted before ``by_age`` and is populated only where a source
+    actually reported a split. Hypertension has one at 18-39 and 40-59 and none at
+    60+ ("not significantly different by sex"), and that asymmetry is reproduced
+    rather than smoothed: inventing a split the source declined to report would be
+    the same error as inventing a rate.
+    """
+
+    by_age: dict[str, Citation]
+    by_sex: dict[str, dict[str, Citation]] | None = None
+
+    def rate(self, age: int, sex: str) -> Citation | None:
+        """The published rate for this applicant, or ``None`` if none was found.
+
+        ``None`` is a real answer and the caller must handle it — see the module
+        docstring. It means no source in note C reports this cell, not that the
+        rate is zero.
+        """
+        if self.by_sex is not None and (bands := self.by_sex.get(sex)) is not None:
+            for band, citation in bands.items():
+                if band_contains(band, age):
+                    return citation
+        for band, citation in self.by_age.items():
+            if band_contains(band, age):
+                return citation
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class ConditionSpec:
+    """One drawable pre-existing condition and everything the sampler needs.
+
+    ``body_parts`` empty means systemic — the condition is eligible for every case.
+    A non-empty tuple means the condition is only eligible when the claim actually
+    injures one of those regions, which is what keeps a lumbar-disc finding out of
+    a wrist case: a degenerative finding nobody imaged is not a fact the file could
+    ever contain.
+    """
+
+    key: str
+    label: str
+    body_system: BodySystem
+    body_parts: tuple[str, ...]
+    apportionment_targets: tuple[str, ...]
+    """Regions this condition could actually be apportioned against.
+
+    Not the same as ``body_parts``, which gates *eligibility*. Diabetes is systemic —
+    eligible everywhere — but note C §2.5 documents it reaching only two regions, the
+    wrist through the carpal-tunnel confound and the foot through polyneuropathy. So a
+    diabetic applicant with a shoulder claim has a real condition that is nonetheless
+    *wholly unrelated* to the claimed impairment, and that distinction is precisely
+    what separates a thin apportionment argument from a baseless one.
+
+    Empty means the condition reaches no claimed region at all — hypertension is the
+    clean case, and it is always wholly unrelated.
+    """
+    icd10: str | None
+    apportionment_basis: ApportionmentBasis
+    asymptomatic_source: bool
+    """Whether the prevalence table measured *asymptomatic* people.
+
+    Load-bearing rather than bookkeeping. Escobedo turns on whether a nonindustrial
+    factor was causing disability before the injury, and for every degenerative row
+    below the source answers that directly: Brinjikji, Sher, Culvenor and Register all
+    measured people with no symptoms. So the answer is read off the study rather than
+    drawn from an invented coin.
+    """
+    mechanism: str
+    """The one-line causal account a QME would give. Not rendered in M1 (M3 owns
+    every document surface); carried here so the sampler and the eventual prose
+    read from one table rather than two."""
+    prevalence: Prevalence
+
+    @property
+    def systemic(self) -> bool:
+        return not self.body_parts
+
+
+# ---------------------------------------------------------------------------
+# The catalog — note C sections 1, 2 and 3D
+# ---------------------------------------------------------------------------
+
+_BRINJIKJI = "Brinjikji et al. 2015, AJNR 36(4):811-816"
+_JARRAYA = "Jarraya et al. 2018, Spine J (Framingham CT cohort), PMC6195485"
+_NAKASHIMA = "Nakashima et al. 2015, Spine 40(6):392-398"
+_SHER = "Sher et al. 1995, JBJS 77(1):10-15"
+_CULVENOR = "Culvenor et al. 2019, Br J Sports Med 53(20):1268-1278"
+_REGISTER = "Register et al. 2012, Am J Sports Med 40(12):2720-2724"
+_NCHS_405 = "CDC/NCHS Data Brief No. 405, 2021 (NHANES 2017-2018)"
+_NCHS_HTN = "CDC/NCHS, Hypertension Prevalence Aug 2021-Aug 2023"
+_NHIS_2022 = "CDC/NCHS QuickStats, NHIS 2022 (diagnosed diabetes by age)"
+_NHSR_213 = "CDC NHSR No. 213, Nov 2024"
+
+CONDITION_CATALOG: dict[str, ConditionSpec] = {
+    # -- systemic ----------------------------------------------------------
+    "hypertension": ConditionSpec(
+        key="hypertension",
+        label="essential hypertension",
+        body_system="cardiovascular",
+        body_parts=(),
+        apportionment_targets=(),
+        icd10="I10",
+        apportionment_basis="population_epidemiology",
+        asymptomatic_source=False,
+        mechanism=(
+            "Chronically elevated arterial pressure, largely idiopathic and strongly "
+            "age-graded, managed pharmacologically and unrelated to any occupational "
+            "exposure in the ordinary case."
+        ),
+        prevalence=Prevalence(
+            by_age={
+                "18-39": Citation(0.234, _NCHS_HTN, "strong"),
+                "40-59": Citation(0.525, _NCHS_HTN, "strong"),
+                "60+": Citation(0.716, _NCHS_HTN, "strong"),
+            },
+            by_sex={
+                # 60+ is deliberately absent from both sexes: the source reports
+                # the rate as not significantly different there, so the pooled
+                # by_age row is the honest answer for that band.
+                "male": {
+                    "18-39": Citation(0.300, _NCHS_HTN, "strong"),
+                    "40-59": Citation(0.559, _NCHS_HTN, "strong"),
+                },
+                "female": {
+                    "18-39": Citation(0.164, _NCHS_HTN, "strong"),
+                    "40-59": Citation(0.490, _NCHS_HTN, "strong"),
+                },
+            },
+        ),
+    ),
+    "diabetes": ConditionSpec(
+        key="diabetes",
+        label="type 2 diabetes mellitus",
+        body_system="endocrine",
+        body_parts=(),
+        apportionment_targets=("wrist", "foot"),
+        icd10="E11.9",
+        apportionment_basis="population_epidemiology",
+        asymptomatic_source=False,
+        mechanism=(
+            "Chronic hyperglycaemia causes microvascular ischaemia and direct glycation "
+            "injury to peripheral nerve axons and connective tissue — the recognised "
+            "nonindustrial confound behind an electrodiagnostic carpal-tunnel finding "
+            "and a length-dependent sensorimotor polyneuropathy alike."
+        ),
+        prevalence=Prevalence(
+            by_age={
+                "18-34": Citation(0.013, _NHIS_2022, "strong"),
+                # The source reports 13.3%-16.3% across urbanisation levels rather
+                # than a point estimate; the midpoint is used and graded down to
+                # `approximate` for exactly that reason.
+                "45-64": Citation(
+                    0.148, f"{_NHIS_2022} (13.3-16.3% range midpoint)", "approximate"
+                ),
+                "65+": Citation(0.201, _NHIS_2022, "strong"),
+            }
+        ),
+    ),
+    "depression_anxiety": ConditionSpec(
+        key="depression_anxiety",
+        label="depressive or anxiety disorder",
+        body_system="psychiatric",
+        body_parts=(),
+        apportionment_targets=("psyche",),
+        icd10="F41.9",
+        apportionment_basis="population_epidemiology",
+        asymptomatic_source=False,
+        mechanism=(
+            "A pre-existing mood or anxiety disorder predating the claim, which bears on "
+            "a psychiatric add-on the way any nonindustrial contributor bears on a "
+            "physical one — and is the reason the record must be read before a "
+            "psychiatric component is treated as wholly industrial."
+        ),
+        prevalence=Prevalence(
+            by_age={"all_ages": Citation(0.200, _NHSR_213, "strong")}
+        ),
+    ),
+    "osteoporosis": ConditionSpec(
+        key="osteoporosis",
+        label="osteoporosis (low bone mineral density)",
+        body_system="musculoskeletal",
+        body_parts=("lumbar_spine", "thoracic_spine", "hip"),
+        apportionment_targets=("lumbar_spine", "thoracic_spine", "hip"),
+        icd10="M81.0",
+        apportionment_basis="population_epidemiology",
+        asymptomatic_source=False,
+        mechanism=(
+            "Postmenopausal oestrogen loss or gradual age-related osteopenia reduces bone "
+            "mineral density below the fracture threshold, so vertebral bodies and femoral "
+            "necks can fail under ordinary physiologic loads — a fragility fracture, as "
+            "distinct from one produced by a discrete industrial mechanism."
+        ),
+        prevalence=Prevalence(
+            by_age={},
+            by_sex={
+                "female": {
+                    "50-64": Citation(0.131, _NCHS_405, "strong"),
+                    "65+": Citation(0.271, _NCHS_405, "strong"),
+                },
+                "male": {
+                    "50-64": Citation(0.033, _NCHS_405, "strong"),
+                    "65+": Citation(0.057, _NCHS_405, "strong"),
+                },
+            },
+        ),
+    ),
+    # -- degenerative, body-part gated -------------------------------------
+    "lumbar_disc_degeneration": ConditionSpec(
+        key="lumbar_disc_degeneration",
+        label="lumbar degenerative disc disease",
+        body_system="musculoskeletal",
+        body_parts=("lumbar_spine",),
+        apportionment_targets=("lumbar_spine",),
+        icd10="M51.36",
+        apportionment_basis="population_epidemiology",
+        asymptomatic_source=True,
+        mechanism=(
+            "Disc desiccation and proteoglycan loss reduce disc hydration and height as a "
+            "normal aging cascade, detectable from the third decade and near-universal by "
+            "the seventh, independent of any single traumatic event."
+        ),
+        prevalence=Prevalence(
+            by_age={
+                "20s": Citation(0.37, _BRINJIKJI, "strong"),
+                "30s": Citation(0.52, _BRINJIKJI, "strong"),
+                "40s": Citation(0.68, _BRINJIKJI, "strong"),
+                "50s": Citation(0.80, _BRINJIKJI, "strong"),
+                "60s": Citation(0.88, _BRINJIKJI, "strong"),
+                "70s": Citation(0.93, _BRINJIKJI, "strong"),
+                "80s": Citation(0.96, _BRINJIKJI, "strong"),
+            }
+        ),
+    ),
+    "lumbar_facet_arthropathy": ConditionSpec(
+        key="lumbar_facet_arthropathy",
+        label="lumbar facet joint osteoarthritis",
+        body_system="musculoskeletal",
+        body_parts=("lumbar_spine",),
+        apportionment_targets=("lumbar_spine",),
+        icd10="M47.816",
+        apportionment_basis="population_epidemiology",
+        asymptomatic_source=True,
+        mechanism=(
+            "Facet joints are true synovial joints and undergo the same osteoarthritic "
+            "cartilage cascade as any other joint, typically following and accelerated by "
+            "disc-space narrowing at the same level."
+        ),
+        prevalence=Prevalence(
+            by_age={},
+            by_sex={
+                "male": {
+                    "40-59": Citation(0.44, _JARRAYA, "strong"),
+                    "60-69": Citation(0.66, _JARRAYA, "strong"),
+                    "70-89": Citation(0.86, _JARRAYA, "strong"),
+                },
+                "female": {
+                    "40-59": Citation(0.56, _JARRAYA, "strong"),
+                    "60-69": Citation(0.78, _JARRAYA, "strong"),
+                    "70-89": Citation(0.83, _JARRAYA, "strong"),
+                },
+            },
+        ),
+    ),
+    "cervical_disc_bulge": ConditionSpec(
+        key="cervical_disc_bulge",
+        label="cervical disc bulging",
+        body_system="musculoskeletal",
+        body_parts=("cervical_spine",),
+        apportionment_targets=("cervical_spine",),
+        icd10="M50.30",
+        apportionment_basis="population_epidemiology",
+        asymptomatic_source=True,
+        mechanism=(
+            "Cervical disc bulging is present in the large majority of wholly asymptomatic "
+            "adults on MRI, so its presence on a post-injury study establishes nothing "
+            "about causation on its own."
+        ),
+        prevalence=Prevalence(
+            # Nakashima's full decade x finding table is paywalled; only the
+            # aggregate was retrievable, so one all-ages row is what the source
+            # supports. Grading it `single_study` rather than `strong` carries
+            # that limitation with the number.
+            by_age={"all_ages": Citation(0.876, _NAKASHIMA, "single_study")}
+        ),
+    ),
+    "rotator_cuff_tear": ConditionSpec(
+        key="rotator_cuff_tear",
+        label="degenerative rotator cuff tear",
+        body_system="musculoskeletal",
+        body_parts=("shoulder",),
+        apportionment_targets=("shoulder",),
+        icd10="M75.100",
+        apportionment_basis="population_epidemiology",
+        asymptomatic_source=True,
+        mechanism=(
+            "The supraspinatus tendon has a hypovascular critical zone near its humeral "
+            "insertion; with age that zone degenerates, thins and tears independent of "
+            "trauma, and asymptomatic tears outnumber symptomatic ones."
+        ),
+        prevalence=Prevalence(
+            by_age={
+                "19-39": Citation(0.04, _SHER, "strong"),
+                "40-60": Citation(0.28, _SHER, "strong"),
+                "60+": Citation(0.54, _SHER, "strong"),
+            }
+        ),
+    ),
+    "knee_cartilage_defect": ConditionSpec(
+        key="knee_cartilage_defect",
+        label="knee cartilage defect",
+        body_system="musculoskeletal",
+        body_parts=("knee",),
+        apportionment_targets=("knee",),
+        icd10="M23.92",
+        apportionment_basis="population_epidemiology",
+        asymptomatic_source=True,
+        mechanism=(
+            "Cartilage breakdown from cumulative mechanical loading, worsened by body mass "
+            "and biomechanical malalignment, occurring without any single traumatic event."
+        ),
+        prevalence=Prevalence(
+            by_age={
+                "<40": Citation(0.11, _CULVENOR, "strong"),
+                "40+": Citation(0.43, _CULVENOR, "strong"),
+            }
+        ),
+    ),
+    "hip_labral_tear": ConditionSpec(
+        key="hip_labral_tear",
+        label="acetabular labral tear",
+        body_system="musculoskeletal",
+        body_parts=("hip",),
+        apportionment_targets=("hip",),
+        icd10="S73.191",
+        apportionment_basis="population_epidemiology",
+        asymptomatic_source=True,
+        mechanism=(
+            "Labral tearing is present in roughly two thirds of asymptomatic hips on MRI, "
+            "with chondral and cystic change sharply more likely past the mid-thirties."
+        ),
+        prevalence=Prevalence(
+            # N=45, ages 15-66, no decade stratification available. The small-N
+            # caveat is the reason for the `single_study` grade rather than a
+            # footnote somewhere else.
+            by_age={
+                "all_ages": Citation(
+                    0.69, f"{_REGISTER} (N=45, no decade split)", "single_study"
+                )
+            }
+        ),
+    ),
+}
+"""Every condition the archetype sampler may draw, and the tables it is calibrated to.
+
+Nine entries, each with a body system, an eligibility rule and a published rate
+curve. The catalog is deliberately not the whole of note C: a condition earns a row
+here only when a source in that note reports a prevalence the sampler can be held
+to, because a condition with no target is a condition the marginal-matching test
+cannot check.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Demographic draw targets
+# ---------------------------------------------------------------------------
+
+OBESITY_PREVALENCE: Prevalence = Prevalence(
+    by_age={
+        "20-39": Citation(0.355, "CDC/NCHS Data Brief No. 508, Sept 2024", "strong"),
+        "40-59": Citation(0.464, "CDC/NCHS Data Brief No. 508, Sept 2024", "strong"),
+        "60+": Citation(0.389, "CDC/NCHS Data Brief No. 508, Sept 2024", "strong"),
+    }
+)
+"""BMI >= 30 by age band. Calibrates the ``obese`` + ``severely_obese`` union.
+
+Obesity is a *risk factor* here rather than a drawn condition, which is the design
+record's own line (§5: disease states are not profile fields). It is
+``ApplicantProfile.bmi_band``, the archetype mixture conditions on it, and this
+table is what that draw has to reproduce.
+"""
+
+SEVERE_SHARE_OF_OBESE: Knob = Knob(
+    value=0.233,
+    tag="measured",
+    rationale=(
+        "Severe obesity (BMI >= 40) is 9.4% of all adults against 40.3% for obesity "
+        "overall in the same brief; 0.094/0.403 is the share of the obese population "
+        "that is severely obese."
+    ),
+    source="CDC/NCHS Data Brief No. 508, Sept 2024 (both figures, same table)",
+)
+
+OVERWEIGHT_SHARE_OF_NON_OBESE: Knob = Knob(
+    value=0.50,
+    tag="invented",
+    rationale=(
+        "No overweight-versus-normal split appears anywhere in note C or note F. Half "
+        "the non-obese remainder is a stated design choice, not a measurement, and is "
+        "tagged accordingly rather than dressed up as a derivation from figures this "
+        "package does not hold."
+    ),
+    source=(
+        "Interview: of the applicants you see who are not obese, roughly how many "
+        "would read as overweight rather than normal weight on a BMI chart?"
+    ),
+)
+
+SMOKING_DISTRIBUTION: dict[str, Knob] = {
+    "never": Knob(
+        0.60,
+        "invented",
+        "No smoking-prevalence figure appears in note C or note F — smoking enters "
+        "note C only as a surgical-clearance threshold (§4.3), never as a base rate.",
+        "Interview: across your caseload, roughly what share of applicants are current "
+        "smokers, former smokers, and never-smokers?",
+    ),
+    "former": Knob(
+        0.25,
+        "invented",
+        "Same absence of a source. The former/never split matters because note C §4.3 "
+        "records that cessation of a year or more returns pseudarthrosis risk to the "
+        "never-smoker baseline, so a former smoker is not a continuing apportionment "
+        "target the way an active one is.",
+        "Interview: same question as `never`.",
+    ),
+    "current": Knob(
+        0.15,
+        "invented",
+        "Set above general-population current-smoking rates because WC claimant "
+        "populations skew toward manual-labour occupations, per note C §3D's own "
+        "caveat that general-population baselines likely undercount this cohort. The "
+        "direction is reasoned; the magnitude is invented.",
+        "Interview: same question as `never`.",
+    ),
+}
+"""Smoking status, the purest ``invented`` knob in this module.
+
+Kept as a knob table rather than three floats so the tag cannot be separated from
+the number, and stated loudly because the alternative — a plausible-looking rate
+with no source — is exactly what note C's NOT-FOUND discipline exists to refuse.
+"""
+
+FEMALE_SHARE: Knob = Knob(
+    value=0.50,
+    tag="invented",
+    rationale=(
+        "Neither research note carries a sex distribution for California WC claimants. "
+        "An even split is the neutral choice; the real distribution is occupation-"
+        "dependent and would need a WCIS pull this package does not have."
+    ),
+    source=(
+        "Interview: across your caseload, is the applicant population close to an even "
+        "split by sex, or does it skew with the industries you represent?"
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Documentation-visibility knobs (SME ruling 5)
+# ---------------------------------------------------------------------------
+
+P_SURFACES_IN_FILE: Knob = Knob(
+    value=0.33,
+    tag="counsel_confirmed",
+    rationale=(
+        "Counsel's answer to 'what share of applicants have at least one chronic "
+        "condition that surfaces anywhere in the file' was, verbatim, 'one in three'. "
+        "This is the DOCUMENTATION union — billing-coded plus narrative-mentioned — "
+        "not true prevalence, and conflating the two is the error the two-surface gate "
+        "exists to prevent."
+    ),
+    source="Alex (counsel), 2026-08-08; sme-answers.md ruling 5",
+)
+
+P_BILLING_CODED: Knob = Knob(
+    value=0.066,
+    tag="measured",
+    rationale=(
+        "Comorbidity coded in the claim's own billing, trended from 0.024 in AY2000. "
+        "The floor *inside* the 0.33 union rather than a competing figure: NCCI's own "
+        "brief says most claimants with a comorbidity are never diagnosed for it "
+        "through the workers' compensation system."
+    ),
+    source="NCCI, 'Comorbidities in Workers Compensation', Laws & Colon, Oct 2012",
+)
+
+P_ANY_CONDITION_MEASURED: Knob = Knob(
+    value=0.71,
+    tag="counsel_unconfirmed",
+    rationale=(
+        "True prevalence of at least one catalog condition, MEASURED OUT OF THIS "
+        "ENGINE rather than asserted into it — see the finding below. Recorded so the "
+        "documentation gate has an honest divisor and so the number can be argued "
+        "with; it is an output of the calibration, not an input to it."
+    ),
+    source=(
+        "Measured over 20,000 sampled cases at derived ages and realistic body-part "
+        "counts; pinned by test_medical_history.py's aggregate check."
+    ),
+)
+
+P_ANY_CONDITION_EXPECTED: Knob = Knob(
+    value=0.55,
+    tag="counsel_unconfirmed",
+    rationale=(
+        "The design record's expected aggregate, KEPT AND FALSIFIED. Reproducing note "
+        "C's per-condition marginals forces the aggregate to about 0.71, and the two "
+        "cannot both hold: hypertension alone is a measured 0.525 at ages 40-59 and "
+        "lumbar disc degeneration a measured 0.80 in the fifties, so any corpus that "
+        "matches those rates has more than 55% of applicants carrying something. The "
+        "0.55 was blended downward from all-adult baselines toward a working-age "
+        "population; the blend was the weak step, not the per-condition figures. "
+        "SME ruling 5 called this an aggregate *derived check* rather than an asserted "
+        "knob, which is exactly the licence to report it moved rather than tune the "
+        "sampler until it agreed. The consequence is confined and stated: the "
+        "consistency squeeze implies file visibility near 47% rather than 60%, and "
+        "the counsel-confirmed 0.33 surfacing union is held exactly regardless, "
+        "because the documentation gate divides by the realised aggregate."
+    ),
+    source=(
+        "Interview: what share of applicants have a preexisting condition at all? The "
+        "answer that would settle this is the true-prevalence question, not the "
+        "already-answered one-in-three documentation question."
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# What this module knows it does not know
+# ---------------------------------------------------------------------------
+
+MIN_APPLICANT_AGE = 16
+MAX_APPLICANT_AGE = 99
+"""The range ``ApplicantProfile.age`` admits, and therefore the range the gap
+inventory below has to account for. Mirrored here rather than imported because
+:mod:`~wc_caseload_engine.seeds` imports this module, not the other way round; a
+test pins the two together so the mirror cannot go stale.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageGap:
+    """One age range a condition's sources do not cover, named rather than filled.
+
+    ``ages`` is machine-readable inclusive ranges rather than prose, so the
+    completeness test can compare this inventory against the misses the lookup
+    actually produces. A gap list written as English is a gap list nothing checks.
+    """
+
+    condition: str
+    ages: tuple[tuple[int, int], ...]
+    why: str
+
+    def covers(self, age: int) -> bool:
+        return any(low <= age <= high for low, high in self.ages)
+
+
+KNOWN_COVERAGE_GAPS: tuple[CoverageGap, ...] = (
+    CoverageGap(
+        "hypertension",
+        ((16, 17),),
+        "The CDC series starts at 18. Applicants below it are rare, but the schema "
+        "admits them, and a rate for a band the source excluded would be fabricated.",
+    ),
+    CoverageGap(
+        "diabetes",
+        ((16, 17), (35, 44)),
+        "Two holes, one boundary and one interior. NHIS 2022's QuickStats bands are "
+        "18-34, 45-64 and 65+; interpolating across 35-44 would invent a figure "
+        "between 1.3% and 14.8% that nobody measured.",
+    ),
+    CoverageGap(
+        "osteoporosis",
+        ((16, 49),),
+        "The NCHS brief reports adults 50 and over only. Osteoporosis below 50 is "
+        "real but secondary, and a secondary cause is a case fact rather than an "
+        "age-table lookup.",
+    ),
+    CoverageGap(
+        "lumbar_disc_degeneration",
+        ((16, 19), (90, 99)),
+        "Brinjikji's decades run from the twenties to the eighties.",
+    ),
+    CoverageGap(
+        "lumbar_facet_arthropathy",
+        ((16, 39), (90, 99)),
+        "Jarraya's Framingham CT cohort runs 40-89.",
+    ),
+    CoverageGap(
+        "rotator_cuff_tear",
+        ((16, 18),),
+        "Sher's youngest band starts at 19.",
+    ),
+)
+"""Every cell this module knows is missing, so the holes can be counted.
+
+Written down because an unrecorded gap is indistinguishable from a bug: a sampler
+that never gives a 38-year-old diabetes looks identical whether that is honest
+abstention or a broken lookup. A test asserts this tuple is exactly the set of
+misses :func:`age_band_rate` actually produces across the admissible age range, so
+the list cannot quietly grow or go stale.
+"""
+
+
+def age_band_rate(condition: str, age: int, sex: str) -> Citation | None:
+    """The published prevalence for one condition and applicant, or ``None``.
+
+    ``None`` means no source in note C reports this cell — see
+    :data:`KNOWN_COVERAGE_GAPS`. It is never a rate of zero, and a caller that
+    treats it as one is asserting a measurement nobody made.
+    """
+    spec = CONDITION_CATALOG.get(condition)
+    if spec is None:
+        raise KeyError(
+            f"unknown condition {condition!r}; the catalog holds "
+            f"{sorted(CONDITION_CATALOG)}"
+        )
+    return spec.prevalence.rate(age, sex)
+
+
+__all__ = [
+    "BMI_BANDS",
+    "CONDITION_CATALOG",
+    "FEMALE_SHARE",
+    "KNOWN_COVERAGE_GAPS",
+    "OBESE_BANDS",
+    "OBESITY_PREVALENCE",
+    "OVERWEIGHT_SHARE_OF_NON_OBESE",
+    "P_ANY_CONDITION_EXPECTED",
+    "P_ANY_CONDITION_MEASURED",
+    "P_BILLING_CODED",
+    "P_SURFACES_IN_FILE",
+    "SEVERE_SHARE_OF_OBESE",
+    "SEXES",
+    "SMOKING_DISTRIBUTION",
+    "SMOKING_STATUSES",
+    "ApportionmentBasis",
+    "BmiBand",
+    "BodySystem",
+    "Citation",
+    "ConditionSpec",
+    "Confidence",
+    "CoverageGap",
+    "Knob",
+    "Prevalence",
+    "Sex",
+    "SmokingStatus",
+    "Tag",
+    "age_band_rate",
+    "band_contains",
+]

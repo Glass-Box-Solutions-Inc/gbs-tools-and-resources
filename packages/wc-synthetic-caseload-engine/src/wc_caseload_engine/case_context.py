@@ -318,6 +318,16 @@ def _date_of_birth(seed: CaseSeed) -> date:
     return ANCHOR_DATE - timedelta(days=rng.randint(low * 365, high * 365) + rng.randint(0, 364))
 
 
+#: Public name for :func:`_date_of_birth`.
+#:
+#: The medical-history ledger derives the applicant's age from this date against
+#: ``ANCHOR_DATE``, and it has to be *this* date rather than a second derivation of
+#: its own. Two independent answers to "how old is the applicant" is the class of
+#: defect the ledger pattern exists to remove, so the second consumer gets the same
+#: function rather than a copy of its logic.
+applicant_date_of_birth = _date_of_birth
+
+
 def synthetic_carrier_name(seed: CaseSeed) -> str:
     """A coined insurance carrier name, stable for a given seed."""
     rng = seed.rng("carrier")
@@ -800,6 +810,7 @@ __all__ = [
     "SYNTHETIC_PROVENANCE",
     "CaseCast",
     "align_employer_wage",
+    "applicant_date_of_birth",
     "build_case_cast",
     "synthetic_carrier_name",
     "synthetic_firm_name",
