@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 from collections import Counter, defaultdict
 from functools import cache
 from pathlib import Path
@@ -36,6 +37,7 @@ from wc_caseload_engine.case_context import applicant_date_of_birth
 from wc_caseload_engine.clinical_grounding import (
     BMI_BANDS,
     CONDITION_CATALOG,
+    FEMALE_SHARE,
     KNOWN_COVERAGE_GAPS,
     MAX_APPLICANT_AGE,
     MIN_APPLICANT_AGE,
@@ -44,6 +46,8 @@ from wc_caseload_engine.clinical_grounding import (
     P_ANY_CONDITION_MEASURED,
     P_BILLING_CODED,
     P_SURFACES_IN_FILE,
+    REFERENCE_AGES,
+    REFERENCE_CLAIM_SHAPES,
     RISK_MULTIPLIERS,
     SEXES,
     SMOKING_DISTRIBUTION,
@@ -54,21 +58,30 @@ from wc_caseload_engine.clinical_grounding import (
 )
 from wc_caseload_engine.manifests import CASE_FACTS_NAME, MANIFEST_NAME, generate_case
 from wc_caseload_engine.medical_history import (
+    _INTERCEPT_BOUND,
     _P_CEILING,
     _P_FLOOR,
     HEALTH_ARCHETYPES,
     HOOK_GROUNDING,
     SIBTF_DISABLING_SEVERITIES,
     SIBTF_QUALIFYING,
+    MedicalCondition,
+    _apply_documentation_gate,
+    _baseline,
     _clamped,
+    _graded,
+    _logistic,
     _rng,
     archetype_weights,
+    billing_conditional,
     calibrate,
     condition_probabilities,
     derive_medical_history,
     eligible_conditions,
+    expected_any_condition,
     probability_of_any_condition,
     sibtf_requirement,
+    surfacing_conditional,
 )
 from wc_caseload_engine.planner import build_case_plan
 from wc_caseload_engine.seeds import ANCHOR_DATE, ApplicantProfile, parse_case_seed
@@ -472,6 +485,74 @@ class TestRiskGradientsSurviveCalibration:
                 "being applied on the odds scale"
             )
 
+    def test_every_baseline_in_the_whole_domain_is_a_probability(self) -> None:
+        """Round 3, finding 1 — exhaustive rather than representative.
+
+        The odds transform's derivation assumes it receives a probability. It used to
+        receive ``scale * affinity``, a product of two unbounded positives, and review's
+        sweep found **907** cells where that product exceeded 1. Past 1 the transform
+        has nothing left to preserve: every band saturates at the ceiling and the
+        published gradient disappears — worst in the profiles where the condition is
+        most likely, which is exactly where a reader would go looking for it.
+
+        Sampling a few cells would not have found it and did not. This walks the whole
+        supported domain, so the claim is "no cell" rather than "no cell we tried".
+        """
+        offenders: list[str] = []
+        for condition in CONDITION_CATALOG:
+            for age in range(MIN_APPLICANT_AGE, MAX_APPLICANT_AGE + 1):
+                for sex in SEXES:
+                    citation = age_band_rate(condition, age, sex)
+                    if citation is None:
+                        continue
+                    intercept = calibrate(condition, age, citation.value)
+                    for archetype in HEALTH_ARCHETYPES.values():
+                        baseline = _baseline(
+                            intercept, archetype.affinity_for(condition)
+                        )
+                        if not 0.0 < baseline < 1.0:
+                            offenders.append(
+                                f"{condition}/{age}/{sex}/{archetype.name}={baseline}"
+                            )
+        assert not offenders, (
+            f"{len(offenders)} pre-gradient baselines are not probabilities, e.g. "
+            f"{offenders[:5]} — the odds transform is being handed something it "
+            "cannot act on"
+        )
+
+    def test_the_steepest_profile_still_realizes_its_published_gradient(self) -> None:
+        """The witness review named, with no cell allowed to be skipped.
+
+        The earlier gradient check read the ``resilient`` archetype and skipped clamped
+        cells, which is precisely how a defect that only bites the *high-prevalence*
+        profiles went unseen: at age 55 the multimorbid lumbar baseline was 1.231, all
+        four BMI bands pinned to the ceiling, and the 1.79 odds ratio was gone. Skipping
+        clamped cells meant skipping the evidence.
+
+        So this asserts twice: no cell here is clamped at all, and the odds ratio
+        between the reference band and each other band is the published one.
+        """
+        condition, age, sex, archetype = "lumbar_disc_degeneration", 55, "male", "multimorbid"
+        gradient = RISK_MULTIPLIERS[condition]
+        rates = {
+            band: _profile_rate(condition, age, sex, band, "never", archetype)
+            for band in BMI_BANDS
+        }
+        for band, probability in rates.items():
+            assert _P_FLOOR < probability < _P_CEILING, (
+                f"{condition}/{band} is clamped at {probability} in the {archetype} "
+                "profile — a saturated cell cannot express a gradient, and this is the "
+                "profile where the condition is most likely"
+            )
+
+        reference = rates["normal_or_under"]
+        for band, probability in rates.items():
+            realised = (probability / (1 - probability)) / (reference / (1 - reference))
+            assert realised == pytest.approx(gradient.bmi[band].value, rel=1e-9), (
+                f"{condition}/{band} in the {archetype} profile realises an odds ratio "
+                f"of {realised:.4f} against the cited {gradient.bmi[band].value}"
+            )
+
     def test_a_probability_multiplier_would_have_failed_that(self) -> None:
         """The control: the two scales genuinely differ where it matters.
 
@@ -514,19 +595,51 @@ class TestRiskGradientsSurviveCalibration:
             "extrapolated"
         ), "the lumbar severe-obesity band is held flat past the last measured point"
 
-    def test_a_flat_gradient_is_flat_because_its_source_is_silent(self) -> None:
-        """Three conditions carry no gradient, and that is the honest answer.
+    #: Every condition whose gradient is flat in both axes, and nothing else.
+    #:
+    #: Written out because the *set* is the claim. An earlier version iterated a
+    #: hard-coded list and asserted each member was flat, which is satisfied by a list
+    #: that has fallen behind the table — and it had: the docs said "three of nine"
+    #: while the catalog held ten conditions and four flat gradients, ``rotator_cuff_tear``
+    #: having been flat all along without being listed. Comparing the computed set
+    #: against this one fails in both directions.
+    FLAT_GRADIENTS = frozenset(
+        {
+            "cervical_disc_bulge",
+            "lumbar_facet_arthropathy",
+            "hip_labral_tear",
+            "rotator_cuff_tear",
+        }
+    )
 
-        Asserted rather than left implicit so that adding a multiplier to one of them
-        has to be a deliberate edit with a source behind it, not a drive-by.
+    def test_a_flat_gradient_is_flat_because_its_source_is_silent(self) -> None:
+        """The flat set, compared whole, because a subset check cannot go stale safely.
+
+        Flatness is the honest answer where a source reports no gradient, so it is
+        asserted rather than left implicit: adding a ratio to one of these has to be a
+        deliberate edit with a source behind it, and *removing* one from the set has to
+        be noticed too.
         """
-        for condition in ("cervical_disc_bulge", "lumbar_facet_arthropathy", "hip_labral_tear"):
-            gradient = RISK_MULTIPLIERS[condition]
-            assert {r.value for r in gradient.bmi.values()} == {1.0}, (
-                f"{condition} grew a BMI gradient"
+        computed = {
+            condition
+            for condition, gradient in RISK_MULTIPLIERS.items()
+            if {r.value for r in gradient.bmi.values()} == {1.0}
+            and {r.value for r in gradient.smoking.values()} == {1.0}
+        }
+        assert computed == self.FLAT_GRADIENTS, (
+            f"the flat-gradient set is {sorted(computed)}, not "
+            f"{sorted(self.FLAT_GRADIENTS)} — a gradient appeared or disappeared and "
+            "the documented set did not move with it"
+        )
+        assert len(RISK_MULTIPLIERS) == len(CONDITION_CATALOG) == 10, (
+            "the catalog changed size; the counts quoted in the module and package "
+            "docs are now wrong and this test is the reason they cannot stay wrong"
+        )
+        for condition in self.FLAT_GRADIENTS:
+            assert "Deliberately flat" in RISK_MULTIPLIERS[condition].rationale, (
+                f"{condition} is flat but does not say why — flatness with no stated "
+                "reason is indistinguishable from an unfilled table row"
             )
-            assert {r.value for r in gradient.smoking.values()} == {1.0}
-            assert "Deliberately flat" in gradient.rationale
 
     def test_the_gradient_does_not_move_the_population_aggregate(self) -> None:
         """The tension, stated as one assertion.
@@ -556,8 +669,16 @@ class TestRiskGradientsSurviveCalibration:
         ``bmi_distribution`` is what the calibration integrates over and
         ``_draw_bmi_band`` is what the sampler actually draws. If they disagreed, the
         aggregate would be pinned against a population that does not exist.
+
+        **16 and 18 are here because that is where they did disagree.** CDC's obesity
+        series starts at 20 and the schema admits applicants from 16; the closed form
+        names that gap and reuses the youngest reported band, while the draw turned the
+        same missing citation into an obese share of zero and drew nobody obese at all.
+        The ages the old test checked — 25, 45, 70 — are all inside the series, so the
+        two expressions agreed everywhere the test looked. They are now one expression,
+        and these two ages are what would catch a second one appearing.
         """
-        for age in (25, 45, 70):
+        for age in (16, 18, 25, 45, 70):
             cohort = _sample(3000, base=11_000_000 + age, applicant={"age": age})
             realised = Counter(h.demographics.bmi_band for h in cohort)
             expected = bmi_distribution(cohort[0].demographics.age)
@@ -646,7 +767,7 @@ class TestRiskGradientsSurviveCalibration:
 class TestTheCorpusReproducesItsSources:
     """Gate 2. The claim the whole `c-calibrated-by-b` decision rests on."""
 
-    @pytest.mark.parametrize("age", [25, 45, 68])
+    @pytest.mark.parametrize("age", [16, 18, 25, 45, 68])
     @pytest.mark.parametrize("sex", list(SEXES))
     def test_per_condition_marginals_match_the_cited_tables(self, age: int, sex: str) -> None:
         cohort = _sample(
@@ -673,7 +794,68 @@ class TestTheCorpusReproducesItsSources:
                 f"({abs(realised - citation.value) / max(sigma, 1e-9):.1f} sigma)"
             )
             checked += 1
-        assert checked >= 5, f"only {checked} conditions were checkable; the cohort shrank"
+        # Four at 16-18, where most catalog rows have no source at that age at all;
+        # five once the applicant is old enough for the degenerative tables to report.
+        # Stated as a floor per age rather than one number, because "the cohort shrank"
+        # and "nobody measured this in teenagers" are different facts and only the
+        # first is a defect.
+        floor = 4 if realised_age < 20 else 5
+        assert checked >= floor, (
+            f"only {checked} conditions were checkable at age {realised_age}; the "
+            "cohort shrank"
+        )
+
+    def test_the_under_twenty_population_is_the_one_the_calibration_integrates(self) -> None:
+        """Round 3, finding 3 — the witness, written from review's own numbers.
+
+        Two definitions of one distribution drifted at the only place neither was
+        exercised. The closed form reuses CDC's youngest reported band for ages 16-19
+        and names that as an extrapolation; the draw turned the same missing citation
+        into an obese share of **zero**. So the calibration solved an intercept against
+        a 35.5%-obese population that the sampler never produced, and an 18-year-old
+        male's hypertension came out at 0.239 against a cited 0.300 — a fifth of the
+        rate missing, in a cohort nobody was sampling.
+
+        **This has to be sampled, and the first version of it was not.** The analytic
+        path always agreed with itself: ``_population_rate`` integrates over
+        ``bmi_distribution``, and asserting that it hits its own target is a tautology
+        the old code passed too. The defect lived strictly between the *draw* and the
+        closed form, so only a drawn cohort can witness it. The mutation gate caught
+        that — m17-24 restored the old draw and the analytic assertion sailed through.
+
+        18 and 19 rather than 16 and 17: the hypertension series itself starts at 18,
+        and a cell with no citation has nothing to be wrong about. The BMI gap runs
+        16-19 and the *distribution* half of it is covered by
+        ``test_the_drawn_bmi_cohort_reproduces_the_closed_form_distribution``, which
+        does check 16.
+        """
+        for age in (19, 20):
+            count = 4000
+            cohort = _sample(
+                count,
+                base=11_500_000 + age * 1000,
+                applicant={"age": age, "sex": "male"},
+            )
+            # The stated age is a birthday, and a birthday a whole number of years
+            # back from the anchor can land the applicant a day short of it. Read the
+            # age the ledger actually derived rather than the one asked for, exactly
+            # as the parametrized marginal check does.
+            realised_age = cohort[0].demographics.age
+            citation = age_band_rate("hypertension", realised_age, "male")
+            assert citation is not None, f"no hypertension citation at {realised_age}"
+            integrated = _population_rate("hypertension", realised_age, "male")
+            assert integrated == pytest.approx(citation.value, abs=1e-9)
+            drawn = sum(
+                1
+                for history in cohort
+                if any(c.key == "hypertension" for c in history.conditions)
+            ) / count
+            tolerance = _binomial_tolerance(citation.value, count)
+            assert drawn == pytest.approx(citation.value, abs=tolerance), (
+                f"age {realised_age} male hypertension is drawn at {drawn:.4f} vs cited "
+                f"{citation.value:.4f} (integrated {integrated:.4f}) — the population "
+                "the sampler draws from is not the one the calibration solves over"
+            )
 
     def test_the_marginal_check_can_fail(self) -> None:
         """Anti-vacuity. A tolerance wide enough to accept anything proves nothing.
@@ -758,11 +940,15 @@ SHAPE_COHORT_N = 6000
 
 #: Share of a shape's applicants the supported sets must account for.
 #:
-#: Measured floor is 0.880, on ``lumbar_spine+shoulder`` — the richest shape, whose
-#: longer tail of distinct sets is exactly why it is the binding one. Set below the
+#: Measured floor is 0.844, on ``lumbar_spine+shoulder`` — the richest shape, whose
+#: longer tail of distinct sets is exactly why it is the binding one. It was 0.880
+#: before the calibration moved to a logistic link: bounding every baseline inside
+#: (0, 1) redistributed a little mass into rarer condition counts, which lengthens
+#: exactly this tail. A distribution-shaped number moving when the distribution
+#: changes is not a regression. Set below the
 #: measurement because this is an anti-vacuity check, not a property: it exists so a
 #: probe that has quietly retreated into the tail fails instead of passing.
-MIN_SHAPE_COVERAGE = 0.85
+MIN_SHAPE_COVERAGE = 0.80
 
 
 @cache
@@ -952,6 +1138,40 @@ class TestProfileMembershipIsNotAFingerprint:
                         "condition set unique to the others"
                     )
 
+    def test_the_link_saturates_and_the_clamp_is_what_catches_it(self) -> None:
+        """Which mechanism actually holds the guarantee, measured rather than assumed.
+
+        The logistic link keeps a baseline inside ``(0, 1)`` for finite log-odds *in
+        exact arithmetic*. In float64 it does not: ``sigmoid(38)`` is already exactly
+        1.0, and the intercept search brackets ±40. So the open interval at the
+        extremes is held by the **clamp**, not by the link, and the two are not
+        redundant the way they look.
+
+        This is asserted because the mutation gate said so. m17-22 widened the clamp to
+        the closed interval and survived every mid-range cell — the link covers those —
+        and only the search bounds distinguish the two mechanisms. A guard that cannot
+        tell which of two safeguards is load-bearing will happily watch one be removed.
+        """
+        assert _logistic(38.0) == 1.0, (
+            "the link no longer saturates at 38, so this test has stopped "
+            "demonstrating that the clamp is what holds the bound at the extremes"
+        )
+        assert _INTERCEPT_BOUND >= 38.0, (
+            "the intercept search no longer reaches the saturating region, so the "
+            "clamp is no longer reachable from a solve and this test is measuring "
+            "something the engine cannot produce"
+        )
+        for intercept in (_INTERCEPT_BOUND, -_INTERCEPT_BOUND):
+            for affinity in (0.85, 2.0):
+                probability = _graded(
+                    intercept, affinity, "hypertension", "obese", "current"
+                )
+                assert 0.0 < probability < 1.0, (
+                    f"intercept {intercept} affinity {affinity} produced "
+                    f"{probability} — an archetype that reaches certainty can be "
+                    "ruled in or out by one observation"
+                )
+
     def test_the_singleton_proof_rests_on_something_that_can_fail(self) -> None:
         """The control for the argument above, not for the code.
 
@@ -1041,24 +1261,312 @@ class TestProfileMembershipIsNotAFingerprint:
 # ---------------------------------------------------------------------------
 
 
-class TestTheDocumentationGate:
-    """Gate: the two published unions, held at the applicant level."""
+#: Claims the docs have made and then outlived, each with what replaced it.
+#:
+#: Round 3 found five superseded statements still being asserted in prose: the old
+#: ``clamp(s * r)`` calibration equation, an "archetype is not recoverable" claim
+#: broader than anything M1 delivers, counsel's superseded "one in three", a
+#: "three of nine" count that was never right about the catalog's ten conditions and
+#: four flat gradients, and a comment describing an award default that had already
+#: changed to ``None``.
+#:
+#: Every one of them was true when written. That is what makes them worth a sweep
+#: rather than a proofread: prose that was true once fails silently, and the only
+#: reliable way to keep it honest is to make the superseded form unrepresentable.
+SUPERSEDED_DOC_CLAIMS: tuple[tuple[str, str], ...] = (
+    ("clamp(s * r_a)", "the calibration solves a logistic intercept, not a scale"),
+    ("sum(w_a * clamp(s * r_a))", "same equation, spelled out"),
+    ("one in three", "counsel revised the surfacing union to one in two on 2026-08-10"),
+    (
+        "membership therefore is not recoverable",
+        "M1 guarantees singleton-freedom and a shape-conditioned posterior bound, "
+        "not non-recoverability — see TestProfileMembershipIsNotAFingerprint",
+    ),
+    ("Three of the nine", "the catalog holds ten conditions and four flat gradients"),
+    ("three of nine", "same count"),
+    (
+        'defaults its own\n#: ``resolution_type`` to ``stipulated_award``',
+        "PriorAwardEntry.resolution_type now defaults to None, meaning the claim's own",
+    ),
+)
 
-    def test_the_surfacing_and_billing_unions_are_the_counsel_confirmed_ones(self) -> None:
-        cohort: list[Any] = []
-        for index, parts in enumerate(REALISTIC_PART_SETS):
-            cohort.extend(_sample(2000, base=9_000_000 + index * 10_000, parts=parts))
+DOC_SWEPT_SOURCES: tuple[str, ...] = (
+    "src/wc_caseload_engine/medical_history.py",
+    "src/wc_caseload_engine/clinical_grounding.py",
+    "src/wc_caseload_engine/seeds.py",
+)
+
+
+class TestTheDocsDoNotStateSupersededContracts:
+    """Round 3, finding 4. Documentation rot, mechanised instead of proofread.
+
+    The package already has two meta-guards that make stale docs *impossible* rather
+    than merely discouraged — the "not yet honoured" marker sweep and the message
+    registry. This is the third, and it exists because review found five superseded
+    claims in one pass, every one of them true on the day it was written.
+    """
+
+    #: How far either side of a hit counts as "the passage it sits in".
+    #:
+    #: Roughly a long paragraph. Wide enough that a note recording a revision covers
+    #: the number it is recording, narrow enough that a ``supersed`` twenty lines away
+    #: cannot launder an unrelated claim.
+    CONTEXT_WINDOW = 400
+
+    def test_no_module_still_states_a_superseded_contract(self) -> None:
+        """A retired claim may be *quoted*, but only where it is marked as retired.
+
+        The distinction is real and worth encoding rather than hand-waving.
+        ``P_SURFACES_IN_FILE``'s rationale says counsel first answered "one in three"
+        and later "one in two" — that is provenance, and deleting it would hide that a
+        counsel-confirmed number moved by half its own value on re-asking. What the
+        sweep forbids is the same phrase used as a live statement of the contract.
+
+        So a hit passes only if its own passage says it has been superseded. That is a
+        rule an author can satisfy honestly and cannot satisfy by accident.
+        """
+        root = Path(__file__).resolve().parent.parent
+        offenders: list[str] = []
+        for relative in DOC_SWEPT_SOURCES:
+            # Case-folded, because a superseded claim restated at the start of a
+            # sentence is the same claim. The mutation gate found that: m17-30
+            # reinstated the non-recoverability line capitalised and a case-sensitive
+            # sweep matched nothing at all.
+            text = (root / relative).read_text(encoding="utf-8").lower()
+            for raw_phrase, replacement in SUPERSEDED_DOC_CLAIMS:
+                phrase = raw_phrase.lower()
+                start = text.find(phrase)
+                while start != -1:
+                    window = text[
+                        max(0, start - self.CONTEXT_WINDOW) : start
+                        + len(phrase)
+                        + self.CONTEXT_WINDOW
+                    ]
+                    if "supersed" not in window:
+                        line = text.count("\n", 0, start) + 1
+                        offenders.append(
+                            f"{relative}:{line}: {raw_phrase!r} — {replacement}"
+                        )
+                    start = text.find(phrase, start + 1)
+        assert not offenders, "superseded claims still stated:\n  " + "\n  ".join(offenders)
+
+    def test_quoting_a_retired_number_needs_the_word_that_retires_it(self) -> None:
+        """The control for the exemption, so the exemption cannot swallow the rule."""
+        root = Path(__file__).resolve().parent.parent
+        grounding = (root / "src/wc_caseload_engine/clinical_grounding.py").read_text(
+            encoding="utf-8"
+        )
+        start = grounding.find("one in three")
+        assert start != -1, (
+            "the historical record of counsel's first answer has been deleted; the "
+            "revision it documents is now invisible"
+        )
+        window = grounding[start - self.CONTEXT_WINDOW : start + self.CONTEXT_WINDOW]
+        assert "supersed" in window.lower(), (
+            "the surviving 'one in three' is no longer marked as superseded, so the "
+            "sweep above is exempting it on a technicality"
+        )
+
+    def test_the_sweep_would_notice_a_superseded_claim(self) -> None:
+        """The planted control. A sweep over phrases nobody writes proves nothing."""
+        planted = "the calibration solves for the one scale s where sum(w_a * clamp(s * r_a))"
+        hits = [
+            phrase for phrase, _ in SUPERSEDED_DOC_CLAIMS if phrase in planted
+        ]
+        assert hits, (
+            "the superseded-claim list no longer matches the text it was written to "
+            "catch, so the sweep above is passing vacuously"
+        )
+
+
+def _condition_from_catalog_stub(key: str) -> Any:
+    """A minimal undocumented condition, for exercising the gate on its own.
+
+    Built by hand rather than sampled because the gate is what is under test and a
+    sampled condition would drag the whole derivation in with it.
+    """
+    spec = CONDITION_CATALOG[key]
+    return MedicalCondition(
+        id=f"cond-{key}",
+        key=key,
+        label=spec.label,
+        body_system=spec.body_system,
+    )
+
+
+def _reference_cohort(total: int, base: int) -> list[Any]:
+    """A cohort drawn from the *reference population* the unions are defined over.
+
+    Claim shapes in their documented proportions rather than equally, because the
+    surfacing union is an expectation over a caseload and a caseload is not an equal
+    mix of shapes. Ages arrive from the cast's own DOB draw, which is uniform over
+    exactly ``REFERENCE_AGES``; sex, body mass and smoking follow their tables. So this
+    cohort *is* the population :func:`expected_any_condition` integrates over, which is
+    what makes the sampled check below a check of the same claim as the analytic one.
+    """
+    cohort: list[Any] = []
+    for index, (shape, knob) in enumerate(sorted(REFERENCE_CLAIM_SHAPES.items())):
+        count = round(total * knob.value)
+        cohort.extend(_sample(count, base=base + index * 100_000, parts=shape))
+    return cohort
+
+
+#: Applicants drawn for the union check.
+#:
+#: Sized so four standard errors on the surfacing union (about 0.0119) sits clearly
+#: below the 0.016 bias the per-applicant gate produced. A smaller cohort cannot
+#: resolve the defect this test exists to catch, which is asserted rather than assumed
+#: by ``test_the_sampled_tolerance_is_tighter_than_the_bias_it_missed``.
+_UNION_COHORT_N = 28_000
+
+
+def _binomial_tolerance(probability: float, count: int, sigmas: float = 4.0) -> float:
+    """A tolerance derived from sampling error rather than chosen to fit.
+
+    Four standard errors — a two-sided 1-in-16000 event under the null. Wide enough
+    that a correct sampler does not flake, narrow enough that a structural miss cannot
+    hide inside it. The old ±0.02 was neither: it was the same order as the 0.016 bias
+    it was supposed to be watching for, and duly missed it for a round.
+    """
+    return sigmas * math.sqrt(probability * (1.0 - probability) / count)
+
+
+class TestTheDocumentationGate:
+    """Gate: the two published unions, held in expectation over the reference population.
+
+    "In expectation over a population" is the correction, and it is the whole finding.
+    Counsel's rate is a statement about a *caseload*; the first implementation tried to
+    hold it inside each applicant by dividing that applicant's own ``P(any)`` into it
+    and capping at 1. The cap is one-sided, so every applicant below the target
+    contributed less than the target and none contributed more — the aggregate landed
+    at 0.484 against 0.50, and the ±0.02 sampled tolerance was too wide to see a 0.016
+    bias.
+
+    Both halves are checked now: the analytic identity, exactly, and the sampled
+    realisation against a tolerance derived from binomial standard error.
+    """
+
+    def test_the_expected_union_is_exactly_the_counsel_confirmed_rate(self) -> None:
+        """Analytic, deterministic, and tight — no cohort involved.
+
+        ``E[surfaces] = E[P(any)] * q`` because ``q`` is a constant, so setting
+        ``q = target / E[P(any)]`` makes the identity hold to floating point. There is
+        no sampling in this assertion at all, which is why it can be asserted at 1e-12
+        where the cohort below has to allow four standard errors.
+        """
+        realised = expected_any_condition() * surfacing_conditional()
+        assert realised == pytest.approx(P_SURFACES_IN_FILE.value, abs=1e-12), (
+            f"the expected surfacing union is {realised:.6f} against counsel's "
+            f"{P_SURFACES_IN_FILE.value} — the gate cannot attain its own target"
+        )
+
+        billing = realised * billing_conditional()
+        assert billing == pytest.approx(P_BILLING_CODED.value, abs=1e-12), (
+            f"the expected billing union is {billing:.6f} against NCCI's "
+            f"{P_BILLING_CODED.value}"
+        )
+
+    def test_the_per_applicant_form_could_not_have_attained_it(self) -> None:
+        """The witness for the finding, kept as arithmetic rather than as a memory.
+
+        ``E[min(P_any, target)] < target`` whenever any applicant sits below the
+        target, and the shortfall is exactly what the old gate lost. Asserting the
+        inequality *and* the measured magnitude means a future change that quietly
+        reintroduces per-applicant capping fails here with a number attached.
+        """
+        expected = expected_any_condition()
+        female = FEMALE_SHARE.value
+        smoking = {status: knob.value for status, knob in SMOKING_DISTRIBUTION.items()}
+        target = P_SURFACES_IN_FILE.value
+
+        capped = 0.0
+        for age in REFERENCE_AGES:
+            bmi_weights = bmi_distribution(age)
+            for sex, sex_share in (("female", female), ("male", 1.0 - female)):
+                for band, bmi_share in bmi_weights.items():
+                    for status, smoking_share in smoking.items():
+                        for shape, knob in REFERENCE_CLAIM_SHAPES.items():
+                            p_any = probability_of_any_condition(
+                                age, sex, band, status, frozenset(shape)
+                            )
+                            weight = (
+                                sex_share * bmi_share * smoking_share * knob.value
+                            ) / len(REFERENCE_AGES)
+                            capped += weight * min(p_any, target)
+
+        assert capped < target - 0.005, (
+            f"the per-applicant form now reaches {capped:.4f} against a target of "
+            f"{target} — either every applicant is above the target (in which case "
+            "this witness is obsolete) or the capping has been removed twice"
+        )
+        assert expected > target, (
+            "the reference population's P(any) has fallen below the surfacing target, "
+            "which would make the global conditional exceed 1 and cap all over again"
+        )
+
+    def test_the_gate_conditional_ignores_the_applicants_own_risk(self) -> None:
+        """The mutation guard for the fix, and it has to be deterministic.
+
+        The analytic identity above never calls the gate, and the sampled check below
+        cannot resolve a 0.016 bias at four standard errors — which is the same fact
+        that let the defect through in the first place. So the property is asserted
+        directly instead: with the rng held identical, the gate's decision must not
+        depend on ``p_any``. Under the per-applicant form it depends on nothing else.
+        """
+        conditions = [
+            _condition_from_catalog_stub("hypertension"),
+            _condition_from_catalog_stub("diabetes"),
+        ]
+        low = _apply_documentation_gate(list(conditions), 0.30, random.Random(11))
+        high = _apply_documentation_gate(list(conditions), 0.95, random.Random(11))
+
+        assert [c.surfaces_in_file for c in low] == [c.surfaces_in_file for c in high], (
+            "the surfacing decision moved when only the applicant's own P(any) "
+            "changed — the conditional is per-applicant again, and a per-applicant "
+            "conditional cannot attain a caseload-level union"
+        )
+        assert [c.billing_coded for c in low] == [c.billing_coded for c in high]
+
+    def test_the_sampled_tolerance_is_tighter_than_the_bias_it_missed(self) -> None:
+        """The instrument, checked against the defect it failed to catch.
+
+        A tolerance can only be wrong in one direction here, and a passing test cannot
+        notice: widening it never reddens anything, which is why the mutation gate
+        scored a hard-coded ±0.02 as SURVIVED. So the width itself is asserted, against
+        the number it has to be able to resolve — the per-applicant gate's 0.016
+        shortfall. ±0.02 fails this and four standard errors at this cohort size does
+        not, which is the whole distinction.
+        """
+        missed_bias = P_SURFACES_IN_FILE.value - 0.484
+        tolerance = _binomial_tolerance(P_SURFACES_IN_FILE.value, _UNION_COHORT_N)
+        assert tolerance < missed_bias, (
+            f"the sampled tolerance is {tolerance:.4f} against a structural bias of "
+            f"{missed_bias:.4f} that this test exists to catch — it cannot resolve the "
+            "defect it is guarding, which is exactly the state it was found in"
+        )
+
+    def test_the_realised_unions_match_in_a_drawn_cohort(self) -> None:
+        """The sampled half, at a tolerance derived rather than chosen."""
+        cohort = _reference_cohort(_UNION_COHORT_N, base=9_000_000)
         total = len(cohort)
         surfaced = sum(1 for h in cohort if any(c.surfaces_in_file for c in h.conditions))
         billed = sum(1 for h in cohort if any(c.billing_coded for c in h.conditions))
 
-        assert surfaced / total == pytest.approx(P_SURFACES_IN_FILE.value, abs=0.02), (
-            f"{surfaced / total:.4f} of applicants surface a comorbidity; counsel "
-            f"confirmed {P_SURFACES_IN_FILE.value}"
+        surfacing_tolerance = _binomial_tolerance(P_SURFACES_IN_FILE.value, total)
+        assert surfaced / total == pytest.approx(
+            P_SURFACES_IN_FILE.value, abs=surfacing_tolerance
+        ), (
+            f"{surfaced / total:.4f} of applicants surface a comorbidity against "
+            f"counsel's {P_SURFACES_IN_FILE.value}, outside {surfacing_tolerance:.4f} "
+            f"({total} applicants)"
         )
-        assert billed / total == pytest.approx(P_BILLING_CODED.value, abs=0.01), (
-            f"{billed / total:.4f} carry one in billing; NCCI measured "
-            f"{P_BILLING_CODED.value}"
+
+        billing_tolerance = _binomial_tolerance(P_BILLING_CODED.value, total)
+        assert billed / total == pytest.approx(
+            P_BILLING_CODED.value, abs=billing_tolerance
+        ), (
+            f"{billed / total:.4f} carry one in billing against NCCI's "
+            f"{P_BILLING_CODED.value}, outside {billing_tolerance:.4f}"
         )
 
     def test_billing_coded_never_escapes_the_surfacing_union(self) -> None:

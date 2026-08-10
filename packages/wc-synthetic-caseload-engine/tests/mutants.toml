@@ -1834,9 +1834,9 @@ id = 'm17-2'
 title = 'the archetype mixture stops being calibrated and the marginals drift off their sources'
 file = 'src/wc_caseload_engine/medical_history.py'
 test = 'tests/test_medical_history.py::TestTheCalibrationSolves::test_the_population_hits_its_target_for_every_reachable_age'
-find = '''    scale = calibrate(condition, age, citation.value)'''
-replace = '''    scale = 1.0'''
-note = 'AJC-60. `c-calibrated-by-b` is the binding design decision and the solve is what makes it true rather than aspirational. With a fixed scale the archetype affinities become raw probabilities and every published rate is missed by an arbitrary amount. Registered against the analytic guard rather than the cohort one because the analytic guard is exact: it names the cell that broke instead of reporting that a proportion moved. R2 re-pointed: the solve moved from per-cell to per-(condition, age) over the BMI/smoking population, so the call signature changed and the old anchor stopped matching. PATCH-MISS caught it, which is the whole reason the preflight exists.'
+find = '''    intercept = calibrate(condition, age, citation.value)'''
+replace = '''    intercept = 0.0'''
+note = 'AJC-60. `c-calibrated-by-b` is the binding design decision and the solve is what makes it true rather than aspirational. With a fixed scale the archetype affinities become raw probabilities and every published rate is missed by an arbitrary amount. Registered against the analytic guard rather than the cohort one because the analytic guard is exact: it names the cell that broke instead of reporting that a proportion moved. Re-pointed twice, and both times by a PATCH-MISS rather than by anyone remembering: R2 moved the solve from per-cell to per-(condition, age) over the BMI/smoking population, and R4 changed the calibrated quantity from a multiplicative scale to a logistic intercept. The fixed value moved with it — 1.0 was a no-op scale, 0.0 is the no-op intercept — because a mutant that no longer reproduces the defect is worse than no mutant at all.'
 
 [[mutant]]
 id = 'm17-3'
@@ -1875,10 +1875,10 @@ note = 'AJC-60. R2, restated as the risk that actually exists. The first version
 id = 'm17-6'
 title = 'the documentation gate ignores true prevalence and the surfacing union breaks'
 file = 'src/wc_caseload_engine/medical_history.py'
-test = 'tests/test_medical_history.py::TestTheDocumentationGate::test_the_surfacing_and_billing_unions_are_the_counsel_confirmed_ones'
-find = '''    q_surface = min(1.0, P_SURFACES_IN_FILE.value / p_any)'''
-replace = '''    q_surface = P_SURFACES_IN_FILE.value'''
-note = 'AJC-60. The counsel-confirmed surfacing rate is an APPLICANT-level figure, so P(surfaces | has a condition) has to be that rate divided by P(has a condition). Dropping the divisor applies the applicant-level figure as a conditional one and the realised union collapses to the product of the two instead — a plausible-looking number that quietly contradicts the only documentation figure counsel gave. Written against the knob rather than its value on purpose: counsel revised the rate from 0.33 to 0.50 on 2026-08-10, and a note quoting the old arithmetic would have gone stale without anything going red.'
+test = 'tests/test_medical_history.py::TestTheDocumentationGate::test_the_expected_union_is_exactly_the_counsel_confirmed_rate'
+find = '''    conditional = P_SURFACES_IN_FILE.value / expected'''
+replace = '''    conditional = P_SURFACES_IN_FILE.value'''
+note = 'AJC-60. R4 re-pointed twice over: the divisor moved from the applicant own P(any) to the reference population, and the sampled union test split into an analytic identity and a cohort check. The analytic one is the sharper guard because it needs no tolerance at all. The counsel-confirmed surfacing rate is an APPLICANT-level figure, so P(surfaces | has a condition) has to be that rate divided by P(has a condition). Dropping the divisor applies the applicant-level figure as a conditional one and the realised union collapses to the product of the two instead — a plausible-looking number that quietly contradicts the only documentation figure counsel gave. Written against the knob rather than its value on purpose: counsel revised the rate from 0.33 to 0.50 on 2026-08-10, and a note quoting the old arithmetic would have gone stale without anything going red.'
 
 [[mutant]]
 id = 'm17-7'
@@ -1912,12 +1912,12 @@ file = 'src/wc_caseload_engine/medical_history.py'
 test = 'tests/test_medical_history.py::TestRiskGradientsSurviveCalibration::test_the_gradient_does_not_move_the_population_aggregate'
 find = '''    smoking_weights = {status: knob.value for status, knob in SMOKING_DISTRIBUTION.items()}
     return sum(
-        bmi_share * smoking_share * _cell_rate(scale, condition, age, bmi, smoking)
+        bmi_share * smoking_share * _cell_rate(intercept, condition, age, bmi, smoking)
         for bmi, bmi_share in bmi_distribution(age).items()
         for smoking, smoking_share in smoking_weights.items()
     )'''
-replace = '''    return _cell_rate(scale, condition, age, "normal_or_under", "never")'''
-note = 'AJC-60 R2 finding 1, the mechanism half, and the subtler of the pair. Solving the scale against one cell rather than the population is what silently cancelled the gradients in round 1: every cell got its own scale, every scale absorbed its own multiplier, and the multipliers therefore did nothing. The tell is that the aggregate stops matching its citation while each cell still looks calibrated. Registered against the aggregate assertion rather than the gradient one because a wrong implementation can satisfy either alone — that is why the two are asserted in tension.'
+replace = '''    return _cell_rate(intercept, condition, age, "normal_or_under", "never")'''
+note = 'AJC-60 R2 finding 1, the mechanism half, and the subtler of the pair. Solving the scale against one cell rather than the population is what silently cancelled the gradients in round 1: every cell got its own scale, every scale absorbed its own multiplier, and the multipliers therefore did nothing. The tell is that the aggregate stops matching its citation while each cell still looks calibrated. Registered against the aggregate assertion rather than the gradient one because a wrong implementation can satisfy either alone — that is why the two are asserted in tension. R4 re-pointed: the calibrated quantity became an intercept, so the parameter name in the anchor moved with it.'
 
 [[mutant]]
 id = 'm17-10'
@@ -1925,8 +1925,8 @@ title = 'the archetype spread widens until a sparse condition set names its prof
 file = 'src/wc_caseload_engine/medical_history.py'
 test = "tests/test_medical_history.py::TestProfileMembershipIsNotAFingerprint::test_no_condition_set_makes_an_archetype_a_near_certainty[4-('cervical_spine', 'wrist')]"
 find = '''        default_affinity=0.85,'''
-replace = '''        default_affinity=0.22,'''
-note = 'AJC-60 R2 finding 2. Restores the resilient default the table first shipped with, against multimorbid at the other end — a spread wide enough that "cervical disc bulge and nothing else" on a cervical-plus-wrist claim came back resilient in 634 of 641 cases. Pinned to that shape on purpose: the pooled cohort scored the same corpus at 0.934 and looked fine, because averaging across claim shapes answers a question no observer is in a position to ask. Body parts are on the face of the file.'
+replace = '''        default_affinity=0.02,'''
+note = 'AJC-60 R2 finding 2. R4 re-widened from 0.22 to 0.02, and the reason is worth recording: under the logistic link an affinity is an odds ratio entering as log(affinity), not a probability multiplier, so the same number buys a much narrower probability spread at high baselines. The mutant SURVIVED at its old value — a mutation that no longer reproduces its defect is a guard that has quietly stopped guarding. Restores the shape the table first shipped with, resilient far below multimorbid at the other end — a spread wide enough that "cervical disc bulge and nothing else" on a cervical-plus-wrist claim came back resilient in 634 of 641 cases. Pinned to that shape on purpose: the pooled cohort scored the same corpus at 0.934 and looked fine, because averaging across claim shapes answers a question no observer is in a position to ask. Body parts are on the face of the file.'
 
 [[mutant]]
 id = 'm17-11'
@@ -2068,10 +2068,10 @@ note = 'AJC-60 R3 finding 4. The BMI half of this was fixed in round 2 with a fi
 id = 'm17-22'
 title = 'an archetype probability is allowed to reach certainty in some cell'
 file = 'src/wc_caseload_engine/medical_history.py'
-test = "tests/test_medical_history.py::TestProfileMembershipIsNotAFingerprint::test_no_condition_set_is_producible_by_only_one_archetype[62-female-severely_obese-never]"
+test = 'tests/test_medical_history.py::TestProfileMembershipIsNotAFingerprint::test_the_link_saturates_and_the_clamp_is_what_catches_it'
 find = '''    return min(_P_CEILING, max(_P_FLOOR, probability))'''
 replace = '''    return min(1.0, max(0.0, probability))'''
-note = 'AJC-60 R3 finding 2, guarantee (a). Singleton-freedom is exact rather than empirical: conditions are drawn independently given the archetype, so every subset has positive probability under every archetype precisely when every per-condition probability sits strictly inside (0, 1). Widening the clamp to the closed interval is what would break that, and it would break it invisibly — no cohort of any size reliably draws the set that becomes unreachable. Pinned to the cell review found, so the check cannot stop covering the finding that prompted it.'
+note = 'AJC-60 R3 finding 2, guarantee (a). R4 re-pointed after it SURVIVED: the logistic link now keeps mid-range baselines inside (0, 1) on its own, so widening the clamp changes nothing there and the old guard could not see it. In float64 the link DOES saturate — sigmoid(38) is exactly 1.0 and the intercept search brackets plus or minus 40 — so the clamp is what holds the bound at the extremes, and that is where the guard belongs. Singleton-freedom is exact rather than empirical: conditions are drawn independently given the archetype, so every subset has positive probability under every archetype precisely when every per-condition probability sits strictly inside (0, 1). Widening the clamp to the closed interval is what would break that, and it would break it invisibly — no cohort of any size reliably draws the set that becomes unreachable. Pinned to the cell review found, so the check cannot stop covering the finding that prompted it.'
 
 [[mutant]]
 id = 'm17-23'
@@ -2081,3 +2081,91 @@ test = 'tests/test_medical_history.py::TestTheSibtfPredicateMeansWhatItSays::tes
 find = '''SIBTF_DISABLING_SEVERITIES: frozenset[str] = frozenset({"severe"})'''
 replace = '''SIBTF_DISABLING_SEVERITIES: frozenset[str] = frozenset({"moderate", "severe"})'''
 note = 'AJC-60 R3 counsel addendum. The moderate-or-worse line was the engineering guess; counsel read it and called it too loose [counsel-confirmed 2026-08-10]. Registered as a mutant rather than left to the constant because widening a legal threshold is the kind of edit that looks like tuning: one word, no obvious blast radius, and a doctrine hook quietly standing on evidence that does not support it. The direction is confirmed and the exact 4751 threshold is still an open counsel item for M2 — which is precisely why the current value needs a guard that names the ruling.'
+
+# ---------------------------------------------------------------------------
+# AJC-60 round 4 — the calibration subsystem. Four findings, and three of them
+# share a shape: a quantity that was correct at the cells anybody looked at.
+# ---------------------------------------------------------------------------
+
+[[mutant]]
+id = 'm17-24'
+title = 'the BMI draw grows a second definition and the under-20 population diverges'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheCorpusReproducesItsSources::test_the_under_twenty_population_is_the_one_the_calibration_integrates'
+find = '''    distribution = bmi_distribution(age)
+    draw = rng.random()'''
+replace = '''    from wc_caseload_engine.clinical_grounding import (
+        OBESITY_PREVALENCE,
+        OVERWEIGHT_SHARE_OF_NON_OBESE,
+        SEVERE_SHARE_OF_OBESE,
+    )
+
+    citation = OBESITY_PREVALENCE.rate(age, "female")
+    obese_share = citation.value if citation is not None else 0.0
+    severe = obese_share * SEVERE_SHARE_OF_OBESE.value
+    distribution = {
+        "severely_obese": severe,
+        "obese": obese_share - severe,
+        "overweight": (1.0 - obese_share) * OVERWEIGHT_SHARE_OF_NON_OBESE.value,
+        "normal_or_under": 1.0
+        - obese_share
+        - (1.0 - obese_share) * OVERWEIGHT_SHARE_OF_NON_OBESE.value,
+    }
+    draw = rng.random()'''
+note = 'AJC-60 R4 finding 3, restored as the second definition it was. CDC obesity starts at 20 and the schema admits applicants from 16: the closed form names that gap and reuses the youngest reported band, this version turns the same missing citation into an obese share of zero. The calibration then integrates over a 35.5%-obese population the sampler never draws, and an age-18 male hypertension rate comes out at 0.239 against a cited 0.300. The mutation reproduces what the code used to say, importing its own names because the module no longer needs them — the fix removed the last caller of the raw obesity knobs, which is itself evidence there is now one definition rather than two. It was correct at 25, 45 and 70, the three ages the old test checked.'
+
+[[mutant]]
+id = 'm17-25'
+title = 'the odds transform is handed an unbounded baseline again'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestRiskGradientsSurviveCalibration::test_every_baseline_in_the_whole_domain_is_a_probability'
+find = '''    return _logistic(intercept + math.log(affinity))'''
+replace = '''    return math.exp(intercept) * affinity'''
+note = 'AJC-60 R4 finding 1. A multiplicative scale times an affinity is a product of two unbounded positives, and the odds transform downstream assumes it receives a probability. An exhaustive sweep found 907 cells where it did not. Past 1 the transform preserves nothing: all four BMI bands saturate at the ceiling and the published gradient vanishes — worst in the high-prevalence profiles, which is where a reader would look. The exp() keeps the mutation monotone so the calibration still solves, which is exactly how the defect stayed invisible.'
+
+[[mutant]]
+id = 'm17-26'
+title = 'a saturated cell is allowed to stand in for a gradient'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestRiskGradientsSurviveCalibration::test_the_steepest_profile_still_realizes_its_published_gradient'
+find = '''_P_CEILING = 0.995'''
+replace = '''_P_CEILING = 0.85'''
+note = 'AJC-60 R4 finding 1, the half the old guard could not see. The first attempt at this mutant inflated the baseline and SURVIVED — because the calibration re-solves, an inflation is absorbed and the cells come back where they were, which is the calibrated system working correctly rather than a gap in the guard. What actually reproduces the defect is a ceiling the steep profiles run into: at age 55 the multimorbid lumbar cells sit in the high eighties, so a 0.85 ceiling saturates the top two bands and the odds ratio between them collapses to exactly 1. Measured before choosing: multimorbid lumbar at 55 runs 0.830 / 0.864 / 0.897 / 0.897 across the bands, so 0.85 bites three of the four and 0.90 bites none — the first attempt used 0.90 and survived for that reason. Inflating the baseline pushes the steep profiles into the ceiling, where the odds ratio between bands collapses toward 1. The previous gradient witness read the resilient archetype and SKIPPED clamped cells, so it would have passed with the multimorbid profile fully saturated — skipping the clamped cells meant skipping the evidence. The replacement asserts no cell is clamped before it asserts the ratio.'
+
+[[mutant]]
+id = 'm17-27'
+title = 'the surfacing gate goes back to a per-applicant conditional it cannot attain'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheDocumentationGate::test_the_gate_conditional_ignores_the_applicants_own_risk'
+find = '''    q_surface = surfacing_conditional()'''
+replace = '''    q_surface = min(1.0, P_SURFACES_IN_FILE.value / p_any)'''
+note = 'AJC-60 R4 finding 2. Dividing each applicant own P(any) into the union and capping at 1 makes that applicant unconditional surfacing rate min(P_any, target). The cap is ONE-SIDED: everybody below the target contributes less and nobody contributes more, so the aggregate lands at about 0.484 against 0.50. The sampled tolerance was plus or minus 0.02 — the same order as the 0.016 bias it was watching for — which is why an analytic assertion replaced it rather than joining it.'
+
+[[mutant]]
+id = 'm17-28'
+title = 'the sampled union tolerance goes back to a chosen number'
+file = 'tests/test_medical_history.py'
+test = 'tests/test_medical_history.py::TestTheDocumentationGate::test_the_sampled_tolerance_is_tighter_than_the_bias_it_missed'
+find = '''    return sigmas * math.sqrt(probability * (1.0 - probability) / count)'''
+replace = '''    return 0.02'''
+note = 'AJC-60 R4 finding 2, the instrument rather than the code. A tolerance chosen to fit is not a tolerance: plus or minus 0.02 admitted a 0.016 structural bias, and at the cohort size used here four standard errors is about 0.017 for the surfacing union and 0.008 for billing. Registered because the value looks harmless in a diff and is the reason the finding survived a round. Guarded by an assertion on the WIDTH rather than by the sampled test, and the mutation gate is why: widening a tolerance never reddens a passing check, so the first version of this mutant SURVIVED. A tolerance can only be wrong in one direction, so the tolerance itself has to be the thing under test.'
+
+[[mutant]]
+id = 'm17-29'
+title = 'the flat-gradient guard goes back to checking a hand-written subset'
+file = 'tests/test_medical_history.py'
+test = 'tests/test_medical_history.py::TestRiskGradientsSurviveCalibration::test_a_flat_gradient_is_flat_because_its_source_is_silent'
+find = '''            "hip_labral_tear",
+            "rotator_cuff_tear",'''
+replace = '''            "hip_labral_tear",'''
+note = 'AJC-60 R4 finding 4. The old guard iterated three named conditions and asserted each was flat, which a stale list satisfies perfectly — and the list was stale: the catalog holds ten conditions and four flat gradients, with rotator_cuff_tear flat since it was added and never listed. The docs inherited the error and said three of nine. Comparing the COMPUTED set against the documented one fails in both directions, which is the only version of this check that can go stale loudly.'
+
+[[mutant]]
+id = 'm17-30'
+title = 'a superseded contract can be restated in the docs without anything going red'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheDocsDoNotStateSupersededContracts::test_no_module_still_states_a_superseded_contract'
+find = '''``clamp`` then bounds every per-archetype probability strictly inside ``(0, 1)``.'''
+replace = '''Membership therefore is not recoverable from the conditions alone.
+``clamp`` then bounds every per-archetype probability strictly inside ``(0, 1)``.'''
+note = 'AJC-60 R4 finding 4, mechanised. Five superseded statements were found in one review pass, every one of them true on the day it was written — the old calibration equation, an over-broad non-recoverability claim, counsel superseded one-in-three, a three-of-nine count, and an award default that had already changed. Prose that was true once fails silently, so the sweep makes the superseded FORM unrepresentable. A retired number may still be quoted where the passage marks it as superseded, which is how provenance survives without becoming a live claim.'

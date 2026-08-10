@@ -33,37 +33,68 @@ is simply healthy. Per-condition *marginals* are then calibrated, per applicant,
 the corpus still reproduces the cited prevalences in
 :mod:`~wc_caseload_engine.clinical_grounding`.
 
-Concretely, for one condition and one applicant:
+Concretely, for one condition and one applicant, everything happens on the log-odds
+scale, because everything being combined is an odds ratio:
 
 1. the demographic mixture gives archetype weights ``w_a``;
-2. each archetype has a fixed relative affinity ``r_a`` for the condition;
-3. :func:`calibrate` solves for the one scale ``s`` where
-   ``sum(w_a * clamp(s * r_a)) == target``, the published rate for that age and sex.
+2. each archetype has a fixed relative affinity ``r_a`` for the condition, and the
+   BMI and smoking gradients contribute published odds ratios of their own;
+3. :func:`calibrate` solves for the one **intercept** ``b`` where
+   ``sum_a w_a * clamp(logistic(b + log r_a + log OR_bmi + log OR_smoking)) == target``,
+   integrated over the BMI x smoking population at that age — ``target`` being the
+   published rate for that age and sex.
 
 The solve is what makes "the marginals match" true by construction rather than by
 hand-tuning, and it is what keeps the archetype table *editable*: add an archetype,
-change an affinity, and the marginals still land, because the scale re-solves.
+change an affinity, and the marginals still land, because the intercept re-solves.
 
-``clamp`` bounds every per-archetype probability strictly inside ``(0, 1)``. That is
-the anti-fingerprint guarantee doing real work rather than being asserted: no
+**It is an intercept and not a multiplicative scale, and the difference is not
+stylistic.** The first version calibrated a scale ``s`` and formed the baseline as
+``s * r_a`` — a product of two unbounded positives handed to a transform whose
+derivation assumes a probability. An exhaustive sweep found 907 cells where that
+product exceeded 1; at age 55 the multimorbid lumbar baseline reached 1.231, every BMI
+band clamped to the ceiling, and the published 1.79 gradient disappeared in precisely
+the profile where the condition is most likely. A logistic link cannot leave ``(0, 1)``,
+so the property holds by construction instead of by a sweep that finds no
+counterexample this week.
+
+``clamp`` then bounds every per-archetype probability strictly inside ``(0, 1)``. That
+is the anti-fingerprint guarantee doing real work rather than being asserted: no
 archetype can be the only one able to produce a given condition set, because every
-archetype can produce every subset. Membership therefore is not recoverable from the
-conditions alone, which is the property M4's leakage anti-probe will test the corpus
-for directly.
+archetype can produce every subset.
+
+**What that does and does not buy.** It buys *singleton-freedom*: no observed set of
+conditions rules an archetype out, within any demographic cell and claim shape. It does
+**not** buy "membership is not recoverable" — the archetype prior concentrates with age
+and body mass, correctly so, and on some cells a common set is strongly indicative. The
+posterior bound this module guarantees is stated exactly on
+``TestProfileMembershipIsNotAFingerprint``, counterexample included. The recoverability
+question that matters — ``P(archetype | every analyzer-visible feature)`` — needs
+artifacts that do not exist in M1 and is M4's leakage anti-probe (AJC-63).
 
 ## The two-surface documentation gate
 
 World truth and what the file *shows* are different things, and the research is
 emphatic that conflating them is the standing error. Each condition therefore carries
-two booleans — ``surfaces_in_file`` and ``billing_coded`` — calibrated so that,
-across a corpus, one applicant in three has a comorbidity that surfaces anywhere
-(counsel-confirmed) while only 6.6% have one coded in the claim's own billing (NCCI,
-measured). Both are flags on world truth here; the surfaces themselves are M3's.
+two booleans — ``surfaces_in_file`` and ``billing_coded`` — calibrated so that, across
+a corpus, :data:`~wc_caseload_engine.clinical_grounding.P_SURFACES_IN_FILE` of
+applicants have a comorbidity that surfaces anywhere (counsel-confirmed, and revised
+by counsel once already) while :data:`P_BILLING_CODED` have one coded in the claim's
+own billing (NCCI, measured). The rates are named rather than spelled out here: the
+surfacing figure moved from 0.33 to 0.50 on 2026-08-10, and prose that repeats a
+number is prose that will be revised in one place and not the other.
+
+The conditional rate is solved **globally**, not per applicant — see
+:func:`surfacing_conditional`. Dividing each applicant's own ``P(any)`` into the
+target looks equivalent and is not: it caps at 1 for anyone below the target, so those
+applicants surface less than the target while nobody surfaces more, and the aggregate
+lands under it. Both are flags on world truth here; the surfaces themselves are M3's.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import math
 import random
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -77,12 +108,11 @@ from wc_caseload_engine.clinical_grounding import (
     CONDITION_CATALOG,
     FEMALE_SHARE,
     OBESE_BANDS,
-    OBESITY_PREVALENCE,
-    OVERWEIGHT_SHARE_OF_NON_OBESE,
     P_BILLING_CODED,
     P_SURFACES_IN_FILE,
+    REFERENCE_AGES,
+    REFERENCE_CLAIM_SHAPES,
     RISK_MULTIPLIERS,
-    SEVERE_SHARE_OF_OBESE,
     SMOKING_DISTRIBUTION,
     Knob,
     age_band_rate,
@@ -511,34 +541,72 @@ def _clamped(probability: float) -> float:
     return min(_P_CEILING, max(_P_FLOOR, probability))
 
 
-def _graded(scale: float, affinity: float, condition: str, bmi: str, smoking: str) -> float:
+def _logistic(log_odds: float) -> float:
+    """The inverse logit, written to survive large magnitudes without overflowing."""
+    if log_odds >= 0.0:
+        return 1.0 / (1.0 + math.exp(-log_odds))
+    exponential = math.exp(log_odds)
+    return exponential / (1.0 + exponential)
+
+
+def _baseline(intercept: float, affinity: float) -> float:
+    """One archetype's pre-gradient probability. **Strictly inside (0, 1).**
+
+    This is the correction the second review round forced, and the bug it fixes was
+    hiding in plain sight. The calibrated quantity used to be a *multiplicative scale*
+    and the baseline was ``scale * affinity`` — a product of two unbounded positives,
+    handed to a transform whose whole derivation assumes it receives a probability.
+    An exhaustive sweep found 907 cells where it did not: at age 55 the multimorbid
+    archetype's lumbar baseline came out at 1.231, and once a "probability" exceeds 1
+    the odds transform has no meaning left to preserve. All four BMI bands clamped to
+    0.995 and the published 1.79 gradient vanished — in the one profile where the
+    condition is most likely, which is where a reader would look for it.
+
+    So the calibrated quantity is now a logistic **intercept**, and the archetype
+    affinity enters as an odds ratio on the log-odds scale. ``_logistic`` cannot leave
+    ``(0, 1)``, so the transform downstream always receives what it was derived for,
+    and it is guaranteed by construction rather than by a sweep that happens to find
+    no counterexample today.
+    """
+    return _logistic(intercept + math.log(affinity))
+
+
+def _graded(intercept: float, affinity: float, condition: str, bmi: str, smoking: str) -> float:
     """One archetype's probability in one cell: baseline, graded on odds, clamped.
 
-    The order is the correction review forced. ``scale * affinity`` is the archetype's
-    baseline probability for this condition; the gradient then moves it **on the odds
-    scale**, because that is what an odds ratio is a ratio of. Multiplying the
-    probability instead overstates the effect wherever the baseline is large — and
-    these conditions are common — so hypertension at 0.525 times 2.20 produced 1.155,
-    an impossible number the clamp silently turned into 0.995.
+    Three steps, in an order that is load-bearing. :func:`_baseline` produces a real
+    probability; the gradient then moves it **on the odds scale**, because that is
+    what an odds ratio is a ratio of — multiplying the probability instead overstates
+    the effect wherever the baseline is large, and these conditions are common. The
+    clamp comes last and bounds the number actually used.
+
+    Because log-odds add, this is one linear predictor:
+    ``logit(p) = intercept + log(affinity) + log(OR_bmi) + log(OR_smoking)``. Written
+    as a composition rather than a sum so that :meth:`RiskGradient.apply` stays the
+    single place the odds transform lives.
     """
     return _clamped(
-        RISK_MULTIPLIERS[condition].apply(scale * affinity, bmi, smoking)
+        RISK_MULTIPLIERS[condition].apply(_baseline(intercept, affinity), bmi, smoking)
     )
 
 
-def _cell_rate(scale: float, condition: str, age: int, bmi: str, smoking: str) -> float:
-    """The mixture rate for one demographic cell at a given scale."""
+def _cell_rate(intercept: float, condition: str, age: int, bmi: str, smoking: str) -> float:
+    """The mixture rate for one demographic cell at a given intercept."""
     return sum(
         weight
         * _graded(
-            scale, HEALTH_ARCHETYPES[name].affinity_for(condition), condition, bmi, smoking
+            intercept,
+            HEALTH_ARCHETYPES[name].affinity_for(condition),
+            condition,
+            bmi,
+            smoking,
         )
         for name, weight in archetype_weights(age, bmi, smoking).items()
     )
 
 
-def _population_rate(scale: float, condition: str, age: int) -> float:
-    """The rate across the whole (BMI x smoking) population at a given scale.
+def _population_rate(intercept: float, condition: str, age: int) -> float:
+    """The rate across the whole (BMI x smoking) population at a given intercept.
 
     The integral the calibration has to hit. Every cell contributes at its own
     multiplier, weighted by how common that cell is at this age, so a gradient can be
@@ -546,15 +614,24 @@ def _population_rate(scale: float, condition: str, age: int) -> float:
     """
     smoking_weights = {status: knob.value for status, knob in SMOKING_DISTRIBUTION.items()}
     return sum(
-        bmi_share * smoking_share * _cell_rate(scale, condition, age, bmi, smoking)
+        bmi_share * smoking_share * _cell_rate(intercept, condition, age, bmi, smoking)
         for bmi, bmi_share in bmi_distribution(age).items()
         for smoking, smoking_share in smoking_weights.items()
     )
 
 
+#: How far the intercept search may run before the target is declared unreachable.
+#:
+#: A logit of ±40 is a probability of about 4e-18 and its complement, so the bracket
+#: is wider than any published rate could need by many orders of magnitude. Finite
+#: rather than "grow until it works" because an unbounded search on a monotone
+#: function that has plateaued is an infinite loop with extra steps.
+_INTERCEPT_BOUND = 40.0
+
+
 @cache
 def calibrate(condition: str, age: int, target: float) -> float:
-    """The one scale at which the *population* reproduces *target*.
+    """The one logistic **intercept** at which the *population* reproduces *target*.
 
     Solved once per (condition, age) — **not** once per demographic cell, and that is
     the whole point of this function's shape. Per-cell was the first version, and it
@@ -564,9 +641,16 @@ def calibrate(condition: str, age: int, target: float) -> float:
     never consulted. Review caught it. The fix is to pin the *aggregate* and let the
     cells differ underneath it.
 
+    **An intercept rather than a multiplicative scale**, which is the second review
+    round's correction. A scale times an affinity is an unbounded positive number, and
+    it was being handed to the odds transform as though it were a probability: 907
+    cells came out above 1, and there the gradient could not be expressed at all. A
+    logistic link makes every baseline a probability by construction, so the argument
+    for correctness stops depending on a sweep finding no counterexample.
+
     Bisection rather than an analytic inverse: the clamp puts a kink in every
     archetype's contribution and the closed form is a case analysis nobody would want
-    to maintain. The population rate is monotone non-decreasing in ``scale``, so
+    to maintain. The population rate is monotone non-decreasing in the intercept, so
     bisection is exact to tolerance with no local minima to fall into.
 
     Raises:
@@ -577,15 +661,16 @@ def calibrate(condition: str, age: int, target: float) -> float:
     if not _P_FLOOR <= target <= _P_CEILING:
         raise ValueError(
             f"{condition}: published rate {target} lies outside the archetype "
-            f"probability bounds [{_P_FLOOR}, {_P_CEILING}], so no scale reproduces "
-            "it; widen the bounds deliberately rather than accepting a marginal that "
-            "misses its own source"
+            f"probability bounds [{_P_FLOOR}, {_P_CEILING}], so no intercept "
+            "reproduces it; widen the bounds deliberately rather than accepting a "
+            "marginal that misses its own source"
         )
-    low, high = 0.0, 1.0
-    while _population_rate(high, condition, age) < target:
-        high *= 2.0
-        if high > 1e9:  # pragma: no cover - unreachable given the bounds check
-            raise ValueError(f"{condition}: target {target} is unreachable")
+    low, high = -_INTERCEPT_BOUND, _INTERCEPT_BOUND
+    if _population_rate(high, condition, age) < target:  # pragma: no cover - bounds check
+        raise ValueError(
+            f"{condition}: target {target} is unreachable at age {age} even at the "
+            f"widest intercept the search admits ({_INTERCEPT_BOUND})"
+        )
     for _ in range(200):
         middle = (low + high) / 2.0
         if _population_rate(middle, condition, age) < target:
@@ -620,12 +705,12 @@ def condition_probabilities(
     citation = age_band_rate(condition, age, sex)
     if citation is None:
         return ()
-    scale = calibrate(condition, age, citation.value)
+    intercept = calibrate(condition, age, citation.value)
     return tuple(
         (
             name,
             _graded(
-                scale,
+                intercept,
                 HEALTH_ARCHETYPES[name].affinity_for(condition),
                 condition,
                 bmi_band,
@@ -733,24 +818,44 @@ def _weighted(rng: random.Random, weights: dict[str, float]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _draw_bmi_band(rng: random.Random, age: int) -> str:
-    """A BMI band reproducing CDC's obesity prevalence for this age.
+#: The order the inverse-CDF walk visits bands in.
+#:
+#: Heaviest first, which is the order the hand-written version happened to use. Kept
+#: rather than sorted, because changing it would remap every drawn applicant onto a
+#: different band for the same rng value — a corpus-wide reshuffle in exchange for
+#: nothing. The *distribution* is what matters and it is identical either way.
+_BMI_DRAW_ORDER: tuple[str, ...] = (
+    "severely_obese",
+    "obese",
+    "overweight",
+    "normal_or_under",
+)
 
-    The obese/severely-obese split is measured; the overweight/normal split below it
-    is not, and :data:`OVERWEIGHT_SHARE_OF_NON_OBESE` says so in the table rather than
-    in a comment nobody reads.
+
+def _draw_bmi_band(rng: random.Random, age: int) -> str:
+    """A BMI band drawn from :func:`bmi_distribution` — the *same* table the
+    calibration integrates over.
+
+    It used to be a second, hand-written expression of that arithmetic, and the two
+    drifted exactly where a second expression always drifts: at the edge nobody
+    exercised. CDC's obesity series starts at 20 and the schema admits applicants from
+    16. ``bmi_distribution`` handles that by reusing the youngest reported band, an
+    extrapolation it names; this function turned the same missing citation into
+    ``obese_share = 0.0`` and drew *nobody* obese. So for four birth years the
+    calibration integrated over a 35.5%-obese population that the sampler never drew,
+    and an age-18 male's hypertension came out at 0.239 against a cited 0.300.
+
+    The fix is not a better fallback here — it is having no second definition to keep
+    in step. One distribution, one place, walked by inverse CDF.
     """
-    citation = OBESITY_PREVALENCE.rate(age, "female")
-    obese_share = citation.value if citation is not None else 0.0
+    distribution = bmi_distribution(age)
     draw = rng.random()
-    if draw < obese_share * SEVERE_SHARE_OF_OBESE.value:
-        return "severely_obese"
-    if draw < obese_share:
-        return "obese"
-    remainder = draw - obese_share
-    if remainder < (1.0 - obese_share) * OVERWEIGHT_SHARE_OF_NON_OBESE.value:
-        return "overweight"
-    return "normal_or_under"
+    cumulative = 0.0
+    for band in _BMI_DRAW_ORDER:
+        cumulative += distribution[band]
+        if draw < cumulative:
+            return band
+    return _BMI_DRAW_ORDER[-1]  # pragma: no cover - the shares sum to 1
 
 
 def derive_demographics(seed: CaseSeed, date_of_birth: dt.date) -> ApplicantDemographics:
@@ -824,6 +929,88 @@ def _condition_from_catalog(
     )
 
 
+@cache
+def expected_any_condition() -> float:
+    """``E[P(at least one condition)]`` over the reference population.
+
+    Analytic, not sampled: :func:`probability_of_any_condition` is exact for a cell, so
+    the expectation is a weighted sum over
+    :data:`~wc_caseload_engine.clinical_grounding.REFERENCE_AGES`, sex, the age's own
+    BMI distribution, the smoking table and
+    :data:`~wc_caseload_engine.clinical_grounding.REFERENCE_CLAIM_SHAPES`. Cached
+    because it is a constant of the tables, and pure in the way the rest of this module
+    is pure — no rng, no clock, no corpus.
+    """
+    female = FEMALE_SHARE.value
+    sex_weights = {"female": female, "male": 1.0 - female}
+    smoking_weights = {status: knob.value for status, knob in SMOKING_DISTRIBUTION.items()}
+    shape_weights = {shape: knob.value for shape, knob in REFERENCE_CLAIM_SHAPES.items()}
+    age_weight = 1.0 / len(REFERENCE_AGES)
+
+    total = 0.0
+    for age in REFERENCE_AGES:
+        bmi_weights = bmi_distribution(age)
+        for sex, sex_share in sex_weights.items():
+            for bmi, bmi_share in bmi_weights.items():
+                for smoking, smoking_share in smoking_weights.items():
+                    for shape, shape_share in shape_weights.items():
+                        weight = (
+                            age_weight * sex_share * bmi_share * smoking_share * shape_share
+                        )
+                        total += weight * probability_of_any_condition(
+                            age, sex, bmi, smoking, frozenset(shape)
+                        )
+    return total
+
+
+@cache
+def surfacing_conditional() -> float:
+    """``P(surfaces | has a condition)`` — **one constant for the whole corpus**.
+
+    The corrected form of a gate that could not reach its own target. It used to divide
+    each applicant's own ``P(any)`` into the union and cap at 1, which makes that
+    applicant's *unconditional* surfacing rate ``min(P_any, target)``. Every applicant
+    below the target therefore contributed less than the target and **nothing
+    contributed more**, because the cap is one-sided. The aggregate landed at about
+    0.484 against a target of 0.50 — an error of the same order as the ±0.02 sampled
+    tolerance that was supposed to be watching it, which is why it survived a round.
+
+    A single conditional rate fixes it exactly rather than approximately. Each cell
+    surfaces at ``P_any(cell) * q``, so the expectation is ``E[P_any] * q``, and setting
+    ``q = target / E[P_any]`` makes that identically the target. No cap is needed
+    because ``q`` is a constant below 1, so no cell is truncated and no cell has to
+    compensate for another.
+
+    It also says something truer about a file: an applicant carrying more conditions is
+    *more* likely to have one documented, in proportion to how much there is to
+    document. The per-applicant form flattened exactly that away at the top end.
+
+    Raises:
+        ValueError: if the target exceeds the reference population's own ``E[P(any)]``,
+            which would demand more documented applicants than there are applicants
+            with anything to document. Unreachable with the current tables — asserted
+            rather than assumed, because it is the one way this can silently cap again.
+    """
+    expected = expected_any_condition()
+    conditional = P_SURFACES_IN_FILE.value / expected
+    if conditional > 1.0:
+        raise ValueError(
+            f"the surfacing union {P_SURFACES_IN_FILE.value} exceeds the reference "
+            f"population's own P(any condition) of {expected:.4f}; no conditional rate "
+            "can document more applicants than have something to document"
+        )
+    return conditional
+
+
+@cache
+def billing_conditional() -> float:
+    """``P(billing-coded | surfaces)`` — the floor, calibrated the same way."""
+    surfaces = P_SURFACES_IN_FILE.value
+    if surfaces <= 0.0:  # pragma: no cover - the knob is a positive rate
+        return 0.0
+    return min(1.0, P_BILLING_CODED.value / surfaces)
+
+
 def _apply_documentation_gate(
     conditions: list[MedicalCondition],
     p_any: float,
@@ -831,15 +1018,15 @@ def _apply_documentation_gate(
 ) -> list[MedicalCondition]:
     """Set ``surfaces_in_file`` and ``billing_coded`` to hold the two published unions.
 
-    The arithmetic is counsel's own, generalised from a caseload to a case. Counsel's
-    "one in two" is an *applicant-level* rate: half of all applicants have a
-    comorbidity that surfaces. So P(surfaces | has a condition) has to be
-    ``P_SURFACES_IN_FILE / P(has a condition)``, and since this engine knows the second
-    number exactly for each applicant it can hold the first exactly too.
+    The arithmetic is counsel's own, generalised from a caseload to a case — and the
+    generalisation is the part that had to be redone. Counsel's rate is an
+    *applicant-level* expectation **across a caseload**, so it is held in expectation
+    over the reference population rather than inside each applicant. See
+    :func:`surfacing_conditional` for why the per-applicant form could not attain it.
 
-    The union is read from the knob rather than written into this docstring on purpose:
-    counsel revised it from 0.33 to 0.50 on 2026-08-10, and a number spelled out in
-    three places is a number that will be revised in two of them.
+    The rates are read from the knobs rather than written into this docstring on
+    purpose: counsel revised the surfacing union from 0.33 to 0.50 on 2026-08-10, and a
+    number spelled out in three places is a number that will be revised in two of them.
 
     Within a case that does surface something, each condition draws at
     ``1 - (1 - q)**(1/n)``, which makes P(at least one) equal ``q`` for *every* n. A
@@ -855,7 +1042,7 @@ def _apply_documentation_gate(
     """
     if not conditions or p_any <= 0.0:
         return conditions
-    q_surface = min(1.0, P_SURFACES_IN_FILE.value / p_any)
+    q_surface = surfacing_conditional()
     if rng.random() >= q_surface:
         return conditions
 
@@ -865,8 +1052,7 @@ def _apply_documentation_gate(
     if not surfaced:
         surfaced = [rng.randrange(count)]
 
-    q_billing = min(q_surface, P_BILLING_CODED.value / p_any)
-    share = q_billing / q_surface if q_surface else 0.0
+    share = billing_conditional()
     per_surfaced = 1.0 - (1.0 - share) ** (1.0 / len(surfaced))
 
     out = list(conditions)
@@ -1236,15 +1422,18 @@ __all__ = [
     "PriorAward",
     "PriorClaim",
     "archetype_weights",
+    "billing_conditional",
     "calibrate",
     "condition_probabilities",
     "derive_demographics",
     "derive_medical_history",
     "draw_archetype",
     "eligible_conditions",
+    "expected_any_condition",
     "grounding_warnings",
     "probability_of_any_condition",
     "sample_conditions",
     "sibtf_grounding",
     "sibtf_requirement",
+    "surfacing_conditional",
 ]

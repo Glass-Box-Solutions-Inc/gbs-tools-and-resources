@@ -608,6 +608,63 @@ OVERWEIGHT_SHARE_OF_NON_OBESE: Knob = Knob(
     ),
 )
 
+#: The applicant population the corpus-level knobs are calibrated against.
+#:
+#: A documentation rate quoted "across a caseload" is an expectation, and an expectation
+#: needs a population. This is that population, written down rather than assumed — every
+#: earlier attempt to hold a corpus-wide rate without one ended up holding it per
+#: applicant instead, which is a different and unattainable claim.
+#:
+#: Ages mirror ``case_context._DERIVED_AGE_RANGE`` (25-62 inclusive, uniform), which is
+#: the band the cast actually draws from, so this is a *derived* figure rather than an
+#: independent guess. Sex follows :data:`FEMALE_SHARE`; body mass and smoking follow
+#: their own tables at each age. Claim shapes are **invented** and tagged: no source
+#: gives a distribution of body-part combinations across a caseload, and the seven
+#: below are the one-and-two-region claims a real file tends to name, weighted toward
+#: the single-region ones because that is what a caseload is mostly made of.
+REFERENCE_AGES: tuple[int, ...] = tuple(range(25, 63))
+
+REFERENCE_CLAIM_SHAPES: dict[tuple[str, ...], Knob] = {
+    ("lumbar_spine",): Knob(
+        value=0.26,
+        tag="invented",
+        rationale="The single most common industrial claim region.",
+        source="Interview: what does the body-part mix across your caseload look like?",
+    ),
+    ("shoulder",): Knob(
+        value=0.16, tag="invented", rationale="Single-region shoulder.", source="Interview."
+    ),
+    ("knee",): Knob(
+        value=0.14, tag="invented", rationale="Single-region knee.", source="Interview."
+    ),
+    ("wrist",): Knob(
+        value=0.10,
+        tag="invented",
+        rationale="Single-region wrist, the lightest of the common shapes.",
+        source="Interview.",
+    ),
+    ("lumbar_spine", "shoulder"): Knob(
+        value=0.16,
+        tag="invented",
+        rationale="The commonest two-region pairing.",
+        source="Interview.",
+    ),
+    ("cervical_spine", "wrist"): Knob(
+        value=0.10,
+        tag="invented",
+        rationale="Upper-limb-plus-neck, the repetitive-strain shape.",
+        source="Interview.",
+    ),
+    ("hip", "knee"): Knob(
+        value=0.08,
+        tag="invented",
+        rationale="Lower-limb pairing.",
+        source="Interview.",
+    ),
+}
+"""Claim shapes and their share of the reference caseload. Weights sum to 1.0."""
+
+
 #: Ages below the youngest band CDC reports, and what is done about them.
 #:
 #: The obesity series starts at 20; the schema admits applicants from 16. Rather than
@@ -684,8 +741,10 @@ class RiskGradient:
     either way.
 
     A ratio of 1.0 everywhere means **no source reports a gradient**, and flatness is
-    then the honest answer rather than a missing feature. Three of the nine conditions
-    are flat for exactly that reason.
+    then the honest answer rather than a missing feature. Four of the ten conditions
+    are flat for exactly that reason — a count asserted by the flat-set guard rather
+    than maintained by hand. The count this superseded said three of nine, and had
+    been wrong about both numbers for as long as it existed.
     """
 
     bmi: dict[str, OddsRatio]
@@ -891,9 +950,13 @@ stored and never consulted. Note C's surgical-clearance thresholds (§4.1 BMI 40
 HbA1c 7.7, §4.3 smoking cessation) are the downstream reason counsel wanted them: an
 applicant refused a fusion for smoking is a different case from one who is not.
 
-Six of nine conditions carry a gradient; three are flat because their sources report
-none. Two of the six are ``measured`` odds ratios; four are ``invented`` magnitudes
-whose *direction* is textbook, and the tag says which is which.
+Six of the ten conditions carry a gradient; four are flat because their sources
+report none. Two of the six are ``measured`` odds ratios; four are ``invented``
+magnitudes whose *direction* is textbook, and the tag says which is which. The counts
+are asserted by the flat-set guard in ``test_medical_history.py`` rather than
+maintained here by hand — the sentence this replaced said "six of nine ... three are
+flat" and had been wrong about the catalog's size since ``rotator_cuff_tear`` joined
+it.
 """
 
 

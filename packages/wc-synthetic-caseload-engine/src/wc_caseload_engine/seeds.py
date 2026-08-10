@@ -1807,9 +1807,11 @@ class PriorClaimEntry(_Model):
     #: The other three cannot. ``denied`` and ``dismissed`` are the claim ending with
     #: nothing awarded; ``pending`` has not ended at all. A claim in one of those
     #: states carrying an award block is not an unusual case, it is two contradictory
-    #: facts in one entry — and because :class:`PriorAwardEntry` defaults its own
+    #: facts in one entry — and while :class:`PriorAwardEntry` defaulted its own
     #: ``resolution_type`` to ``stipulated_award``, the contradiction could be created
-    #: by writing nothing at all.
+    #: by writing nothing at all. That default is now ``None``, meaning "the claim's
+    #: own", so the two halves can no longer disagree by omission; this check is what
+    #: catches them disagreeing on purpose.
     AWARDING_RESOLUTIONS: ClassVar[frozenset[str]] = frozenset(
         {"c_and_r", "stipulated_award", "findings_and_award"}
     )

@@ -373,14 +373,37 @@ Consequences worth knowing before touching it:
 - **`c-calibrated-by-b`, solved over the population and not the cell.** Archetypes carry the
   *correlation* between conditions; a bisection solve calibrates per-archetype probabilities so
   the corpus reproduces `clinical_grounding`'s cited marginals **by construction**. Edit an
-  affinity freely — the scale re-solves and the marginals still land. That is why the archetype
-  table is safe to tune and the calibration is not.
+  affinity freely — the intercept re-solves and the marginals still land. That is why the
+  archetype table is safe to tune and the calibration is not.
 
-  The scale solves once per `(condition, age)` **integrated over the BMI × smoking
-  distribution**, never per demographic cell. Per-cell solving looks like success — every cell
-  reproduces its marginal exactly — and is the opposite: each cell absorbs its own risk
-  multiplier, so a severely obese current smoker and a normal-weight never-smoker of the same
-  age come out identical and `bmi_band` / `smoking_status` become fields nothing reads.
+  It solves once per `(condition, age)` **integrated over the BMI × smoking distribution**,
+  never per demographic cell. Per-cell solving looks like success — every cell reproduces its
+  marginal exactly — and is the opposite: each cell absorbs its own risk multiplier, so a
+  severely obese current smoker and a normal-weight never-smoker of the same age come out
+  identical and `bmi_band` / `smoking_status` become fields nothing reads.
+- **The calibrated quantity is a logistic intercept, not a multiplicative scale**, and every
+  contribution is an odds ratio on the log-odds scale:
+  `logit(p) = intercept + log(affinity) + log(OR_bmi) + log(OR_smoking)`. A scale times an
+  affinity is a product of two unbounded positives, and it was being handed to the odds
+  transform as if it were a probability — an exhaustive sweep found **907** cells where it was
+  not, and at age 55 the multimorbid lumbar baseline hit 1.231, saturating all four BMI bands
+  and erasing the published 1.79 gradient in the profile where the condition is most likely.
+  The link makes the property hold by construction rather than by a sweep that finds no
+  counterexample today.
+- **One BMI distribution, not two.** `bmi_distribution(age)` is what the calibration integrates
+  over *and* what `_draw_bmi_band` walks by inverse CDF. They were two expressions of the same
+  arithmetic and drifted exactly where neither was exercised: CDC's obesity series starts at 20
+  and the schema admits applicants from 16, so the closed form reused the youngest reported
+  band while the draw turned the missing citation into `obese_share = 0.0`. An 18-year-old
+  male's hypertension came out at 0.239 against a cited 0.300.
+- **The surfacing conditional is global, and it has to be.** `surfacing_conditional()` divides
+  the counsel union by `expected_any_condition()` over an explicit reference population
+  (`REFERENCE_AGES` × sex × BMI × smoking × `REFERENCE_CLAIM_SHAPES`). Dividing each
+  applicant's *own* `P(any)` into the target and capping at 1 cannot reach the target: the cap
+  is one-sided, so everybody below it contributes less and nobody contributes more, and the
+  aggregate lands at 0.484 against 0.50. That 0.016 bias hid inside a ±0.02 sampled tolerance
+  for a full round — tolerances are derived from binomial standard error now, and the
+  identity is asserted analytically at 1e-12 besides.
 - **Gradients are odds ratios and are applied on the odds scale**, `p' = OR*p / (1 - p + OR*p)`,
   before the population calibration. Multiplying a probability by an OR does not preserve the
   OR, and the error grows with the baseline: hypertension at 0.525 times a 2.20 body-mass
@@ -406,6 +429,12 @@ Consequences worth knowing before touching it:
   affinities lifted every probed cell above the floor on its own. The clamp is now asserted
   directly as well as over the corpus — a corpus-shaped assertion is always one refactor
   elsewhere away from proving nothing.
+
+  **The link and the clamp are not redundant, and it took a mutation to show which is
+  load-bearing where.** In exact arithmetic the logistic link alone keeps a baseline inside
+  `(0, 1)`; in float64 `sigmoid(38)` is exactly 1.0 and the intercept search brackets ±40. So
+  the link holds the mid-range and the **clamp** holds the extremes, which is why m17-22
+  survived a guard that only probed mid-range cells.
 - **The anti-fingerprint contract, stated exactly** — two rounds of review pushed it into this
   shape, and the earlier wording promised more than any sampler delivers:
   **(a) singleton-freedom, within every demographic cell and claim shape** — no condition set
@@ -448,13 +477,21 @@ Consequences worth knowing before touching it:
   marginals forces P(any condition) to about 0.76, against the design record's expected 0.55.
   Both are pinned: `P_ANY_CONDITION_MEASURED` and `P_ANY_CONDITION_EXPECTED`, the second
   carrying its own falsification note. The counsel-confirmed surfacing union is held exactly
-  regardless, because the gate divides by the realised aggregate — which is what let counsel's
-  2026-08-10 revision of that union (0.33 → 0.50, "one in two", superseding the 2026-08-08
-  "one in three") land as a one-constant change. The NCCI billing floor of 0.066 did not move
-  with it: one is a measurement of billing records, the other an expert's estimate of what a
-  file mentions. At 0.50 over the realised 0.76, implied file visibility is **66%**, which no
-  longer contradicts the design record's 60% — the tension that note recorded has largely
-  dissolved, and what stays falsified is the 0.55 aggregate itself.
+  regardless, because the gate divides by the reference population's expected aggregate — which
+  is what let counsel's 2026-08-10 revision of that union (0.33 → 0.50, superseding the
+  2026-08-08 figure) land as a one-constant change. The NCCI billing floor of 0.066 did not
+  move with it: one is a measurement of billing records, the other an expert's estimate of what
+  a file mentions. At 0.50 over the reference population's `E[P(any)]` of 0.771, the
+  conditional is 0.648 and implied file visibility is **65%**, which no longer contradicts the
+  design record's 60% — the tension that note recorded has largely dissolved, and what stays
+  falsified is the 0.55 aggregate itself.
+- **A doc-honesty sweep now polices the prose.** `SUPERSEDED_DOC_CLAIMS` lists claims this
+  package has made and outlived — the old `clamp(s * r)` equation, an over-broad
+  non-recoverability claim, counsel's superseded figure, a "three of nine" count that was
+  never right about ten conditions and four flat gradients — and fails any module that states
+  one. A retired number may still be *quoted* where its own passage marks it superseded, which
+  is how provenance survives without becoming a live claim. Every one of those sentences was
+  true when written; that is exactly why a proofread does not work and a sweep does.
 
 ---
 
