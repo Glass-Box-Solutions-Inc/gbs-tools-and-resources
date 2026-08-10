@@ -65,6 +65,7 @@ from __future__ import annotations
 
 import datetime as dt
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
 from typing import Any, Literal
@@ -1032,6 +1033,89 @@ def derive_medical_history(
 #: claim, and a warning is a manifest byte. So this speaks only to an author who
 #: opened the layer and then left the entity the hook argues about out of it — which
 #: is an authoring mistake worth naming, and the only one this milestone can see.
+@dataclass(frozen=True)
+class SibtfClause:
+    """One way the ledger can evidence a pre-existing permanent disability.
+
+    A predicate and the sentence that describes it, kept in one object because the
+    two came apart last time they were kept in two.
+    """
+
+    name: str
+    remediation: str
+    holds: Callable[[MedicalHistory], bool]
+
+
+#: The disability grades that count as "labor disabling" for §4751 purposes.
+#:
+#: ``subclinical`` and ``mild`` are excluded deliberately. Every degenerative finding
+#: in the catalog is drawn from a study of *asymptomatic* people — that is what those
+#: prevalence tables measured — so a predicate that accepted any predating finding
+#: would ground SIBTF on roughly half the corpus and mean nothing. Invented, and
+#: tagged as such: no source grades a synthetic condition against §4751, and counsel
+#: has not been asked. M2 revisits it when the assertion layer needs the contested case.
+SIBTF_DISABLING_SEVERITIES: frozenset[str] = frozenset({"moderate", "severe"})
+
+
+def _has_qualifying_condition(history: MedicalHistory) -> bool:
+    return any(
+        condition.symptomatic_before_doi is True
+        and condition.severity in SIBTF_DISABLING_SEVERITIES
+        for condition in history.conditions
+    )
+
+
+def _has_qualifying_award(history: MedicalHistory) -> bool:
+    return bool(history.awards)
+
+
+#: What the ledger has to carry before a ``sibtf`` hook is standing on something.
+#:
+#: Labor Code §4751 makes the Fund liable where a *pre-existing permanent disability*
+#: combines with the new injury, so the question is whether the ledger models a prior
+#: disability — not whether it models a prior *claim*. A denied claim is the Fund's
+#: argument against liability; a pending one has decided nothing yet.
+SIBTF_QUALIFYING: tuple[SibtfClause, ...] = (
+    SibtfClause(
+        name="prior_award",
+        remediation="add a prior_claims entry carrying an award block",
+        holds=_has_qualifying_award,
+    ),
+    SibtfClause(
+        name="predating_condition",
+        remediation=(
+            "add a conditions entry with symptomatic_before_doi true and severity "
+            "moderate or severe"
+        ),
+        holds=_has_qualifying_condition,
+    ),
+)
+
+
+def sibtf_grounding(history: MedicalHistory) -> tuple[str, ...]:
+    """Which §4751 clauses this ledger satisfies, in registration order.
+
+    Empty means the hook has nothing behind it. One predicate, consumed by both the
+    evaluation and the message — see :func:`sibtf_requirement`.
+    """
+    return tuple(clause.name for clause in SIBTF_QUALIFYING if clause.holds(history))
+
+
+def sibtf_requirement() -> str:
+    """The remediation sentence, generated from the clauses it evaluates.
+
+    Two independently maintained descriptions of one rule will drift, and this pair
+    drifted before anyone ran it: the text offered "a condition predating the injury"
+    and the check looked only at ``prior_claims``, so following the message changed
+    nothing. Building the sentence from :data:`SIBTF_QUALIFYING` makes that particular
+    lie unrepresentable.
+    """
+    return (
+        "a prior permanent disability the Fund could be liable for — "
+        + ", or ".join(clause.remediation for clause in SIBTF_QUALIFYING)
+    )
+
+
 HOOK_GROUNDING: dict[str, str] = {
     "lc4664_prior_award": (
         "a prior award of permanent disability — add a prior_claims entry carrying an "
@@ -1040,10 +1124,7 @@ HOOK_GROUNDING: dict[str, str] = {
     "benson": (
         "a second, distinct injury to apportion between — add a prior_claims entry"
     ),
-    "sibtf": (
-        "a prior permanent disability the Fund could be liable for — add a "
-        "prior_claims entry, or a condition predating the injury"
-    ),
+    "sibtf": sibtf_requirement(),
 }
 
 
@@ -1065,7 +1146,9 @@ def grounding_warnings(seed: CaseSeed, history: MedicalHistory | None) -> list[s
             continue
         if hook == "lc4664_prior_award" and history.awards:
             continue
-        if hook in {"benson", "sibtf"} and history.prior_claims:
+        if hook == "benson" and history.prior_claims:
+            continue
+        if hook == "sibtf" and sibtf_grounding(history):
             continue
         out.append(
             f"lifecycle.doctrine_hooks names {hook} on a case whose "
@@ -1082,6 +1165,8 @@ __all__ = [
     "HOOK_GROUNDING",
     "ONSET_YEARS_BEFORE_INJURY",
     "SEVERITY_WEIGHTS",
+    "SIBTF_DISABLING_SEVERITIES",
+    "SIBTF_QUALIFYING",
     "TRAJECTORY_WEIGHTS",
     "ApplicantDemographics",
     "HealthArchetype",
@@ -1099,4 +1184,6 @@ __all__ = [
     "grounding_warnings",
     "probability_of_any_condition",
     "sample_conditions",
+    "sibtf_grounding",
+    "sibtf_requirement",
 ]

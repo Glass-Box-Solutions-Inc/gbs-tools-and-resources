@@ -2057,6 +2057,52 @@ class CaseSeed(_Model):
         return self
 
     @model_validator(mode="after")
+    def _a_prior_claim_precedes_the_current_injury(self) -> CaseSeed:
+        """"Prior" is a claim about order, and nothing was enforcing it.
+
+        :class:`PriorClaimEntry` can police its own internal dates — a claim cannot
+        resolve before it arises, an award cannot issue before the injury it
+        compensates — but it cannot see the injury it is prior *to*. So a claim dated
+        after the current injury loaded cleanly, derived into the ledger as a prior
+        claim, and every §4664 and Benson hook downstream would have read it as
+        predating the injury it postdates.
+
+        **Strictly before.** Two claims arising the same day are not a prior and a
+        current; they are one event pleaded twice, or a data error. Either reading
+        makes the seed wrong, and ``<=`` would have admitted it.
+
+        **Only the injury date carries the ordering claim.** A prior claim still
+        resolving when the new injury happens is ordinary — a 2019 injury resolving
+        in 2023 is a slow but unremarkable file, and an open prior claim is precisely
+        the fact pattern a §4664 apportionment argument turns on. So the resolution
+        date, the award date and the claim's status are all deliberately unchecked
+        here.
+
+        **CT compares against ``onset_date``, which is the later bound.** A specific
+        injury arising inside an ongoing cumulative-trauma exposure period is
+        therefore admitted, and that is the right call: a worker whose back is
+        accumulating damage over three years can also drop a crate on their foot in
+        year two. Rejecting that would refuse a real fact pattern in order to tidy an
+        edge. What stays refused is only what is impossible.
+        """
+        history = self.scenario.medical_history
+        if history is None or not history.prior_claims:
+            return self
+        onset = self.injury.onset_date
+        for index, claim in enumerate(history.prior_claims):
+            if claim.date_of_injury < onset:
+                continue
+            raise ValueError(
+                f"scenario.medical_history.prior_claims[{index}].date_of_injury "
+                f"({claim.date_of_injury.isoformat()}) does not precede the current "
+                f"injury ({onset.isoformat()}) — a prior claim has to arise before the "
+                "claim it is prior to, and one arising the same day is the same event "
+                "pleaded twice. Move the prior claim's date_of_injury earlier, or move "
+                "injury.date_of_injury later."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _check_scenario_against_the_lifecycle(self) -> CaseSeed:
         """Cross-validate the scenario against fields it cannot see from inside.
 

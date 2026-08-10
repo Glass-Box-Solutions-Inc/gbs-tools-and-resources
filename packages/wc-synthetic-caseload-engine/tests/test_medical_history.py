@@ -57,6 +57,8 @@ from wc_caseload_engine.medical_history import (
     _P_CEILING,
     _P_FLOOR,
     HEALTH_ARCHETYPES,
+    HOOK_GROUNDING,
+    SIBTF_QUALIFYING,
     _rng,
     archetype_weights,
     calibrate,
@@ -64,6 +66,7 @@ from wc_caseload_engine.medical_history import (
     derive_medical_history,
     eligible_conditions,
     probability_of_any_condition,
+    sibtf_requirement,
 )
 from wc_caseload_engine.planner import build_case_plan
 from wc_caseload_engine.seeds import ANCHOR_DATE, ApplicantProfile, parse_case_seed
@@ -1098,6 +1101,118 @@ class TestTheSchemaRejectsIncoherentInput:
                 )
             )
 
+    def test_a_prior_claim_cannot_postdate_the_current_injury(self) -> None:
+        """Finding 3. "Prior" is a claim about order, so the order is enforced.
+
+        Nothing checked it. A claim dated after the current injury loaded cleanly,
+        derived into the ledger as a prior claim, and every §4664 and Benson hook
+        downstream would have read it as predating the injury it postdates.
+        """
+        with pytest.raises(Exception, match="does not precede the current injury"):
+            parse_case_seed(
+                _seed_body(
+                    886,
+                    scenario={
+                        "prior_claims": [
+                            {
+                                "body_parts": ["lumbar_spine"],
+                                "date_of_injury": "2023-06-01",
+                                "resolution_type": "c_and_r",
+                            }
+                        ]
+                    },
+                )
+            )
+
+    def test_a_prior_claim_on_the_day_of_the_current_injury_is_refused(self) -> None:
+        """Strictly before, and the boundary is where a loose check would pass.
+
+        Two claims arising the same day are not a prior and a current; they are one
+        event pleaded twice, or a data error. Either way the seed is wrong, and
+        ``<=`` would have admitted it.
+        """
+        with pytest.raises(Exception, match="does not precede the current injury"):
+            parse_case_seed(
+                _seed_body(
+                    887,
+                    scenario={
+                        "prior_claims": [
+                            {
+                                "body_parts": ["lumbar_spine"],
+                                "date_of_injury": "2022-04-11",
+                                "resolution_type": "stipulated_award",
+                            }
+                        ]
+                    },
+                )
+            )
+
+    def test_a_prior_claim_may_still_be_resolving_when_the_current_one_arises(self) -> None:
+        """The half that must stay legal, and the reason the check is on one field.
+
+        Prior claims that are still open when the new injury happens are ordinary —
+        a 2019 injury resolving in 2023 is a slow but unremarkable file, and an open
+        prior claim is precisely the fact pattern §4664 apportionment arguments turn
+        on. Only the *injury* date carries the ordering claim; the resolution date,
+        the award date and the claim's status carry none of it.
+        """
+        seed = parse_case_seed(
+            _seed_body(
+                888,
+                scenario={
+                    "prior_claims": [
+                        {
+                            "body_parts": ["lumbar_spine"],
+                            "date_of_injury": "2019-03-02",
+                            "resolution_date": "2023-11-14",
+                            "resolution_type": "stipulated_award",
+                            "award": {
+                                "body_parts": ["lumbar_spine"],
+                                "pd_percent": 15,
+                                "award_date": "2023-12-01",
+                            },
+                        }
+                    ]
+                },
+            )
+        )
+        claims = seed.scenario.medical_history.prior_claims
+        assert claims[0].resolution_date > seed.injury.onset_date
+        assert claims[0].award.award_date > seed.injury.onset_date
+
+    def test_a_prior_claim_inside_a_cumulative_trauma_window_is_allowed(self) -> None:
+        """The deliberate permissiveness, asserted so it reads as a decision.
+
+        A cumulative trauma is an exposure *period*, and the check compares against
+        ``onset_date`` — which for CT is ``ct_end``, the later bound. So a specific
+        injury arising in the middle of an ongoing exposure period is admitted. That
+        is right: a worker whose back is accumulating damage over three years can
+        also drop a crate on their foot in year two, and refusing that would reject a
+        real fact pattern in order to tidy an edge. What the check rejects is only
+        what is impossible — a prior claim arising after the current injury has run
+        its course.
+        """
+        body = _seed_body(889, parts=("lumbar_spine",))
+        body["injury"] = {
+            "type": "cumulative_trauma",
+            "ct_start": "2020-01-06",
+            "ct_end": "2023-01-06",
+            "body_parts": [{"part": "lumbar_spine"}],
+        }
+        body["scenario"]["medical_history"] = {
+            "prior_claims": [
+                {
+                    "body_parts": ["knee"],
+                    "date_of_injury": "2021-08-30",
+                    "resolution_type": "c_and_r",
+                }
+            ]
+        }
+        seed = parse_case_seed(body)
+        claim = seed.scenario.medical_history.prior_claims[0]
+        assert claim.date_of_injury > seed.injury.ct_start
+        assert claim.date_of_injury < seed.injury.onset_date
+
     def test_a_pinned_archetype_with_nothing_to_draw_is_refused(self) -> None:
         with pytest.raises(Exception, match="nothing draws from it"):
             parse_case_seed(
@@ -1186,6 +1301,151 @@ class TestUngroundedDoctrineHooksWarnAndDoNotBlock:
         plan = self._plan(["lc4664_prior_award"], None)
         assert plan.medical_history is None
         assert not any("world-truth ledger" in w for w in plan.warnings)
+
+
+class TestTheSibtfPredicateMeansWhatItSays:
+    """Finding 4. The remediation text and the check were two different rules.
+
+    ``sibtf``'s message offered two edits — "add a prior_claims entry, or a condition
+    predating the injury" — and the predicate honoured only the first. Following the
+    second changed nothing, which is the failure mode the whole message registry
+    (ISC-129) exists to make impossible; it slipped through because the registry
+    checks *seed* messages and this one is a plan warning.
+
+    Worse in the other direction: any prior claim silenced it, including a denied one
+    that produced no disability at all. Labor Code §4751 is about a pre-existing
+    permanent **disability** the Fund could be liable for, so a claim the applicant
+    lost grounds nothing.
+
+    One predicate now answers both — :func:`sibtf_grounding` — and the warning text is
+    generated from the same source it evaluates.
+    """
+
+    def _plan(self, scenario: dict[str, Any]) -> Any:
+        body = _seed_body(891, scenario=scenario)
+        body["lifecycle"] = {
+            "target_stage": "pre_trial",
+            "eval_type": "qme",
+            "doctrine_hooks": ["sibtf"],
+        }
+        body["injury"]["date_of_injury"] = "2020-04-11"
+        return build_case_plan(parse_case_seed(body))
+
+    @staticmethod
+    def _warned(plan: Any) -> bool:
+        return any("sibtf" in w and "world-truth ledger" in w for w in plan.warnings)
+
+    def test_a_qualifying_predating_condition_grounds_it(self) -> None:
+        """Witness 1: the edit the message offered and the predicate ignored."""
+        plan = self._plan(
+            {
+                "sample_conditions": False,
+                "conditions": [
+                    {
+                        "label": "lumbar degenerative disc disease",
+                        "key": "lumbar_disc_degeneration",
+                        "severity": "severe",
+                        "symptomatic_before_doi": True,
+                    }
+                ],
+            }
+        )
+        assert not self._warned(plan)
+
+    def test_a_qualifying_prior_award_grounds_it(self) -> None:
+        """Witness 2: an adjudicated prior PD is the paradigm §4751 fact."""
+        plan = self._plan(
+            {
+                "sample_conditions": False,
+                "prior_claims": [
+                    {
+                        "body_parts": ["lumbar_spine"],
+                        "date_of_injury": "2015-01-05",
+                        "resolution_type": "stipulated_award",
+                        "award": {
+                            "body_parts": ["lumbar_spine"],
+                            "pd_percent": 12,
+                            "award_date": "2016-02-01",
+                        },
+                    }
+                ],
+            }
+        )
+        assert not self._warned(plan)
+
+    def test_a_denied_claim_with_no_disability_does_not_silence_it(self) -> None:
+        """Witness 3: the direction the old predicate got wrong.
+
+        A denied claim is the Fund's argument *against* liability, not evidence for
+        it. Under the old rule its mere presence silenced the warning.
+        """
+        plan = self._plan(
+            {
+                "sample_conditions": False,
+                "prior_claims": [
+                    {
+                        "body_parts": ["lumbar_spine"],
+                        "date_of_injury": "2015-01-05",
+                        "resolution_type": "denied",
+                    }
+                ],
+            }
+        )
+        assert self._warned(plan)
+
+    def test_a_pending_claim_with_no_disability_does_not_silence_it(self) -> None:
+        plan = self._plan(
+            {
+                "sample_conditions": False,
+                "prior_claims": [
+                    {
+                        "body_parts": ["knee"],
+                        "date_of_injury": "2016-02-02",
+                        "resolution_type": "pending",
+                    }
+                ],
+            }
+        )
+        assert self._warned(plan)
+
+    def test_an_asymptomatic_incidental_finding_does_not_qualify(self) -> None:
+        """The boundary the severity clause draws, asserted so it is not an accident.
+
+        Every degenerative finding in the catalog comes from a study of *asymptomatic*
+        people — that is what those prevalence tables measured. A radiographic finding
+        nobody felt is not a pre-existing permanent disability, and a predicate that
+        accepted one would ground SIBTF on roughly half the corpus.
+        """
+        plan = self._plan(
+            {
+                "sample_conditions": False,
+                "conditions": [
+                    {
+                        "label": "cervical disc bulge",
+                        "key": "cervical_disc_bulge",
+                        "severity": "subclinical",
+                        "symptomatic_before_doi": False,
+                    }
+                ],
+            }
+        )
+        assert self._warned(plan)
+
+    def test_the_warning_text_is_generated_from_the_predicate_it_evaluates(self) -> None:
+        """The structural half of the fix, and the reason finding 4 existed.
+
+        Two independently maintained descriptions of one rule will drift, and this
+        pair drifted before anybody ran it. So the remediation text is now built from
+        :data:`SIBTF_QUALIFYING`, the same tuple the predicate reads.
+        """
+        plan = self._plan({"sample_conditions": False})
+        warning = next(w for w in plan.warnings if "sibtf" in w)
+        for clause in SIBTF_QUALIFYING:
+            assert clause.remediation in warning, (
+                f"the sibtf warning does not offer {clause.remediation!r}, so the text "
+                "and the predicate have come apart again"
+            )
+        assert HOOK_GROUNDING["sibtf"] == sibtf_requirement()
 
 
 # ---------------------------------------------------------------------------

@@ -286,6 +286,41 @@ REGISTRY: dict[str, RegisteredMessage] = {
             "is why the overlap has to be real rather than assumed."
         ),
     ),
+    "prior_claim_does_not_precede": RegisteredMessage(
+        where="CaseSeed._a_prior_claim_precedes_the_current_injury",
+        directives=(
+            "Move the prior claim's date_of_injury earlier, or move "
+            "injury.date_of_injury later",
+        ),
+        trigger={
+            "scenario": {
+                "medical_history": {
+                    "prior_claims": [
+                        {
+                            **_PRIOR_CLAIM_WITH_AWARD,
+                            "date_of_injury": "2023-06-01",
+                            "award": {
+                                **_PRIOR_CLAIM_WITH_AWARD["award"],
+                                "award_date": "2023-09-01",
+                            },
+                        }
+                    ]
+                }
+            }
+        },
+        resolution={
+            "scenario": {"medical_history": {"prior_claims": [_PRIOR_CLAIM_WITH_AWARD]}}
+        },
+        note=(
+            "AJC-60 R2 finding 3. Follows the first edit. The second — moving the "
+            "current injury later — is the right one when the seed's real error is the "
+            "claim it is building, but it also moves every date in the lifecycle, so "
+            "the message offers it second on purpose. The trigger's award is dated "
+            "after its own injury deliberately: an internally *incoherent* prior claim "
+            "trips PriorClaimEntry's own validator first, and would have tested that "
+            "message instead of this one."
+        ),
+    ),
     "repeated_body_part": RegisteredMessage(
         where="_repeated_part_message",
         directives=(

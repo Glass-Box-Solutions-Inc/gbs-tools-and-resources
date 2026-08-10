@@ -1927,3 +1927,78 @@ test = "tests/test_medical_history.py::TestProfileMembershipIsNotAFingerprint::t
 find = '''        default_affinity=0.85,'''
 replace = '''        default_affinity=0.22,'''
 note = 'AJC-60 R2 finding 2. Restores the resilient default the table first shipped with, against multimorbid at the other end — a spread wide enough that "cervical disc bulge and nothing else" on a cervical-plus-wrist claim came back resilient in 634 of 641 cases. Pinned to that shape on purpose: the pooled cohort scored the same corpus at 0.934 and looked fine, because averaging across claim shapes answers a question no observer is in a position to ask. Body parts are on the face of the file.'
+
+[[mutant]]
+id = 'm17-11'
+title = 'a prior claim is allowed to postdate the injury it is prior to'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_medical_history.py::TestTheSchemaRejectsIncoherentInput::test_a_prior_claim_cannot_postdate_the_current_injury'
+find = '''        history = self.scenario.medical_history
+        if history is None or not history.prior_claims:
+            return self
+        onset = self.injury.onset_date'''
+replace = '''        return self
+        history = self.scenario.medical_history
+        onset = self.injury.onset_date'''
+note = 'AJC-60 R2 finding 3, restored whole. PriorClaimEntry polices its own internal dates but cannot see the injury it is prior TO, so nothing checked the ordering: a 2023 claim on a 2022 injury loaded cleanly and derived into the ledger as a prior claim. Every section 4664 and Benson hook downstream would have read it as predating the injury it postdates.'
+
+[[mutant]]
+id = 'm17-12'
+title = 'two claims arising the same day count as a prior and a current'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_medical_history.py::TestTheSchemaRejectsIncoherentInput::test_a_prior_claim_on_the_day_of_the_current_injury_is_refused'
+find = '''            if claim.date_of_injury < onset:'''
+replace = '''            if claim.date_of_injury <= onset:'''
+note = 'AJC-60 R2 finding 3, at the boundary. The looser comparison is the one a reviewer skims past: same-day claims are not a prior and a current, they are one event pleaded twice or a data error, and either way the seed is wrong. Registered separately from m17-11 because a validator can exist and still be wrong by one character.'
+
+[[mutant]]
+id = 'm17-13'
+title = 'any prior claim silences the SIBTF warning, including a denied one'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheSibtfPredicateMeansWhatItSays::test_a_denied_claim_with_no_disability_does_not_silence_it'
+find = '''        if hook == "sibtf" and sibtf_grounding(history):'''
+replace = '''        if hook == "sibtf" and history.prior_claims:'''
+note = 'AJC-60 R2 finding 4, the direction that over-silences. Labor Code 4751 is about a pre-existing permanent DISABILITY the Fund could be liable for; a denied claim is the Fund argument against liability and a pending one has decided nothing. The old predicate accepted the mere existence of a prior claim, so the warning went quiet on exactly the seeds that needed it.'
+
+[[mutant]]
+id = 'm17-14'
+title = 'an asymptomatic incidental finding counts as a pre-existing disability'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheSibtfPredicateMeansWhatItSays::test_an_asymptomatic_incidental_finding_does_not_qualify'
+find = '''        condition.symptomatic_before_doi is True
+        and condition.severity in SIBTF_DISABLING_SEVERITIES
+        for condition in history.conditions'''
+replace = '''        condition is not None
+        for condition in history.conditions'''
+note = 'AJC-60 R2 finding 4, the direction that under-silences. Every degenerative finding in the catalog is drawn from a study of ASYMPTOMATIC people — that is what those prevalence tables measured — so a predicate accepting any predating finding would ground SIBTF on roughly half the corpus and mean nothing at all. Both clauses are covered by one mutant because either alone leaves the predicate useless.'
+
+[[mutant]]
+id = 'm17-15'
+title = 'the SIBTF remediation text goes back to being maintained by hand'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheSibtfPredicateMeansWhatItSays::test_the_warning_text_is_generated_from_the_predicate_it_evaluates'
+find = '''    "sibtf": sibtf_requirement(),'''
+replace = '''    "sibtf": (
+        "a prior permanent disability the Fund could be liable for — add a "
+        "prior_claims entry, or a condition predating the injury"
+    ),'''
+note = 'AJC-60 R2 finding 4, the structural half — and the exact string that shipped. Two independently maintained descriptions of one rule will drift, and this pair drifted before anyone ran it: the text offered "a condition predating the injury" while the check looked only at prior_claims, so an author who followed the message watched nothing happen. Generating the sentence from the clauses it evaluates makes that lie unrepresentable; this mutation makes it representable again.'
+
+[[mutant]]
+id = 'm17-16'
+title = 'the ledger picks up hash-salt ordering and drifts between processes'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_rendering.py::test_the_ledger_itself_is_identical_across_processes'
+find = '''    return tuple(
+        key
+        for key, spec in CONDITION_CATALOG.items()
+        if spec.systemic or set(spec.body_parts) & body_parts
+    )'''
+replace = '''    return tuple(
+        {
+            key
+            for key, spec in CONDITION_CATALOG.items()
+            if spec.systemic or set(spec.body_parts) & body_parts
+        }
+    )'''
+note = 'AJC-60 R2 finding 5. A set of strings orders by hash, so this makes the eligible list — and therefore the draw order and the ledger — depend on PYTHONHASHSEED. It is the defect the cross-process suite was supposed to cover and could not: nothing about the ledger reaches an output file in M1, so comparing generated bytes proved the renderer deterministic and said nothing about the object under test. Guarded now by a canonical digest of the ledger emitted from each child interpreter.'
