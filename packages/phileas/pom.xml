@@ -5,7 +5,7 @@
     <artifactId>phileas</artifactId>
     <groupId>ai.philterd</groupId>
     <packaging>jar</packaging>
-    <version>3.3.0-SNAPSHOT</version>
+    <version>4.2.0</version>
     <name>phileas</name>
     <url>https://www.philterd.ai</url>
     <description>Phileas is a library for identifying and redacting sensitive information from natural language text.
@@ -34,30 +34,39 @@
             <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
         </license>
     </licenses>
+    <distributionManagement>
+        <snapshotRepository>
+            <id>central</id>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+        </snapshotRepository>
+    </distributionManagement>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <!-- Project dependency versions -->
         <antlr.version>4.13.2</antlr.version>
+        <commons.collections.version>3.2.2</commons.collections.version>
         <commons.collections4.version>4.5.0</commons.collections4.version>
         <commons.lang3.version>3.20.0</commons.lang3.version>
-        <commons.codec.version>1.19.0</commons.codec.version>
-        <commons.io.version>2.21.0</commons.io.version>
+        <commons.codec.version>1.22.0</commons.codec.version>
+        <commons.io.version>2.22.0</commons.io.version>
         <commons.text.version>1.15.0</commons.text.version>
         <commons.validator.version>1.10.1</commons.validator.version>
-        <equals.verifier.version>3.19.1</equals.verifier.version>
+        <equals.verifier.version>4.5</equals.verifier.version>
         <ff3.version>1.2.0</ff3.version>
-        <gson.version>2.13.2</gson.version>
-        <httpclient.version>5.6</httpclient.version>
-        <json.version>20251224</json.version>
+        <gson.version>2.14.0</gson.version>
+        <httpclient.version>5.6.1</httpclient.version>
+        <httpcore.version>5.4</httpcore.version>
+        <junit.version>5.11.2</junit.version>
         <junit.pioneer.version>2.3.0</junit.pioneer.version>
-        <libphonenumber.version>9.0.21</libphonenumber.version>
-        <log4j.version>2.25.3</log4j.version>
+        <libphonenumber.version>9.0.31</libphonenumber.version>
+        <log4j.version>2.26.0</log4j.version>
         <maven.compiler.version>3.14.1</maven.compiler.version>
         <maven.failsafe.version>3.5.4</maven.failsafe.version>
         <maven.surefire.version>3.5.4</maven.surefire.version>
-        <mockito.version>5.20.0</mockito.version>
-        <pdfbox.version>3.0.6</pdfbox.version>
+        <mockito.version>5.23.0</mockito.version>
+        <pdfbox.version>3.0.7</pdfbox.version>
+        <phisql.version>1.2.0</phisql.version>
     </properties>
     <build>
         <plugins>
@@ -120,6 +129,9 @@
                     <excludes>
                         <exclude>**/*IT.java</exclude>
                     </excludes>
+                    <!-- Benchmarks run timed workloads, not assertions; they are excluded from the
+                         normal build and run only via the "benchmark" profile. -->
+                    <excludedGroups>benchmark</excludedGroups>
                     <systemPropertyVariables>
                         <jacoco-agent.destfile>**/jacoco.exec</jacoco-agent.destfile>
                     </systemPropertyVariables>
@@ -195,6 +207,24 @@
         </plugins>
     </build>
     <profiles>
+        <profile>
+            <!-- Runs only the benchmark-tagged workloads (excluded from the normal build).
+                 Example: mvn test -Pbenchmark -Dbenchmark.redactor=mask_all -Dbenchmark.millis=2000 -->
+            <id>benchmark</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <version>${maven.surefire.version}</version>
+                        <configuration>
+                            <groups>benchmark</groups>
+                            <excludedGroups combine.self="override"></excludedGroups>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
         <profile>
             <id>it</id>
             <activation>
@@ -297,6 +327,16 @@
     </dependencyManagement>
     <dependencies>
         <dependency>
+            <groupId>ai.philterd</groupId>
+            <artifactId>phisql</artifactId>
+            <version>${phisql.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>1.5.5</version>
+        </dependency>
+        <dependency>
             <groupId>com.googlecode.libphonenumber</groupId>
             <artifactId>libphonenumber</artifactId>
             <version>${libphonenumber.version}</version>
@@ -312,9 +352,24 @@
             <version>${httpclient.version}</version>
         </dependency>
         <dependency>
+            <!-- Used directly by code that calls org.apache.hc.core5; declared explicitly
+                 rather than relying on httpclient5 to supply it transitively. -->
+            <groupId>org.apache.httpcomponents.core5</groupId>
+            <artifactId>httpcore5</artifactId>
+            <version>${httpcore.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-collections4</artifactId>
             <version>${commons.collections4.version}</version>
+        </dependency>
+        <dependency>
+            <!-- VinFilter and a test use the legacy 3.x CollectionUtils. Declared explicitly
+                 (pinned to 3.2.2, which fixes the 3.2.x deserialization vulnerability) rather
+                 than inheriting it transitively. -->
+            <groupId>commons-collections</groupId>
+            <artifactId>commons-collections</artifactId>
+            <version>${commons.collections.version}</version>
         </dependency>
         <dependency>
             <groupId>org.antlr</groupId>
@@ -334,6 +389,13 @@
         <dependency>
             <groupId>org.apache.pdfbox</groupId>
             <artifactId>pdfbox</artifactId>
+            <version>${pdfbox.version}</version>
+        </dependency>
+        <dependency>
+            <!-- Used directly by code that calls org.apache.pdfbox.io; declared explicitly
+                 rather than relying on pdfbox to supply it transitively. -->
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox-io</artifactId>
             <version>${pdfbox.version}</version>
         </dependency>
         <dependency>
@@ -359,6 +421,14 @@
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The test sources compile against JUnit Jupiter directly; declared explicitly
+                 rather than relying on junit-pioneer to supply it transitively. -->
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.mockito</groupId>

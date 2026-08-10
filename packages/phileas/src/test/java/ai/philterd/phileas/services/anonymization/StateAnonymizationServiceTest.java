@@ -30,7 +30,7 @@ public class StateAnonymizationServiceTest {
     @Test
     public void constructor() {
 
-        AnonymizationService anonymizationService = new StateAnonymizationService(new DefaultContextService(), new SecureRandom(), AnonymizationMethod.REALISTIC);
+        AnonymizationService anonymizationService = new StateAnonymizationService(new SecureRandom(), AnonymizationMethod.REALISTIC);
 
         final String token = "West Virginia";
         final String replacement = anonymizationService.anonymize(token);
@@ -45,7 +45,7 @@ public class StateAnonymizationServiceTest {
     @Test
     public void anonymize1() {
 
-        AnonymizationService anonymizationService = new StateAnonymizationService(new DefaultContextService());
+        AnonymizationService anonymizationService = new StateAnonymizationService();
 
         final String token = "abcd1234";
         final String replacement = anonymizationService.anonymize(token);
@@ -60,7 +60,7 @@ public class StateAnonymizationServiceTest {
     @Test
     public void anonymizeUUID() {
 
-        AnonymizationService anonymizationService = new StateAnonymizationService(new DefaultContextService(), new SecureRandom(), AnonymizationMethod.UUID);
+        AnonymizationService anonymizationService = new StateAnonymizationService(new SecureRandom(), AnonymizationMethod.UUID);
 
         final String token = "West Virginia";
         final String replacement = anonymizationService.anonymize(token);
@@ -68,6 +68,20 @@ public class StateAnonymizationServiceTest {
         LOGGER.info("State: {}", replacement);
         Assertions.assertNotEquals(token, replacement);
         Assertions.assertTrue(replacement.length() >= 32);
+
+    }
+
+    @Test
+    public void producesNonEmptyReplacement() {
+
+        // SecureRandom is not deterministically seedable, so the replacement varies run to run;
+        // verify the anonymizer still produces a non-empty replacement distinct from the input.
+        final String token = "West Virginia";
+
+        final String first = new StateAnonymizationService().anonymize(token);
+
+        Assertions.assertNotEquals(token, first);
+        Assertions.assertFalse(first.isEmpty());
 
     }
 

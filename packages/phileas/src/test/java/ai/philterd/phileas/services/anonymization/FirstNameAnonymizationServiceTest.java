@@ -30,7 +30,7 @@ public class FirstNameAnonymizationServiceTest {
     @Test
     public void constructor() {
 
-        AnonymizationService anonymizationService = new FirstNameAnonymizationService(new DefaultContextService(), new SecureRandom(), AnonymizationMethod.REALISTIC);
+        AnonymizationService anonymizationService = new FirstNameAnonymizationService(new SecureRandom(), AnonymizationMethod.REALISTIC);
 
         final String token = "John";
         final String replacement = anonymizationService.anonymize(token);
@@ -45,7 +45,7 @@ public class FirstNameAnonymizationServiceTest {
     @Test
     public void anonymize() {
 
-        AnonymizationService anonymizationService = new FirstNameAnonymizationService(new DefaultContextService());
+        AnonymizationService anonymizationService = new FirstNameAnonymizationService();
 
         final String token = "John";
         final String replacement = anonymizationService.anonymize(token);
@@ -60,7 +60,7 @@ public class FirstNameAnonymizationServiceTest {
     @Test
     public void anonymizeUUID() {
 
-        AnonymizationService anonymizationService = new FirstNameAnonymizationService(new DefaultContextService(), new SecureRandom(), AnonymizationMethod.UUID);
+        AnonymizationService anonymizationService = new FirstNameAnonymizationService(new SecureRandom(), AnonymizationMethod.UUID);
 
         final String token = "John";
         final String replacement = anonymizationService.anonymize(token);
@@ -68,6 +68,20 @@ public class FirstNameAnonymizationServiceTest {
         LOGGER.info("First Name: {}", replacement);
         Assertions.assertNotEquals(token, replacement);
         Assertions.assertTrue(replacement.length() >= 32);
+
+    }
+
+    @Test
+    public void producesNonEmptyReplacement() {
+
+        // SecureRandom is not deterministically seedable, so the replacement varies run to run;
+        // verify the anonymizer still produces a non-empty replacement distinct from the input.
+        final String token = "John";
+
+        final String first = new FirstNameAnonymizationService().anonymize(token);
+
+        Assertions.assertNotEquals(token, first);
+        Assertions.assertFalse(first.isEmpty());
 
     }
 

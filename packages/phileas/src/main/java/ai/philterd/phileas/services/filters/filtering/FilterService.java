@@ -17,11 +17,9 @@ package ai.philterd.phileas.services.filters.filtering;
 
 import ai.philterd.phileas.PhileasConfiguration;
 import ai.philterd.phileas.filters.Filter;
-import ai.philterd.phileas.model.filtering.FilterType;
 import ai.philterd.phileas.policy.Ignored;
 import ai.philterd.phileas.policy.Policy;
 import ai.philterd.phileas.services.FilterPolicyLoader;
-import ai.philterd.phileas.services.context.ContextService;
 import ai.philterd.phileas.services.filters.postfilters.IgnoredPatternsFilter;
 import ai.philterd.phileas.services.filters.postfilters.IgnoredTermsFilter;
 import ai.philterd.phileas.services.filters.postfilters.PostFilter;
@@ -31,34 +29,70 @@ import ai.philterd.phileas.services.filters.postfilters.TrailingSpacePostFilter;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.hc.client5.http.classic.HttpClient;
 
+import java.security.SecureRandom;
+
 import java.io.IOException;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Abstract base class for filter services.
+ *
+ * <p>A warm instance is safe to share across threads: the filter and post-filter caches are
+ * {@link ConcurrentHashMap}s populated via {@code computeIfAbsent}, and {@code filter()} does not
+ * mutate instance state. The per-request context and vector services are supplied per call rather
+ * than held on the instance, so concurrent callers do not share that state. The {@link SecureRandom}
+ * used for anonymization is supplied at construction and shared across calls, so it must be
+ * thread-safe (the default {@link SecureRandom} is). Per-row callers (Spark, Kafka, logging UDFs)
+ * should share one instance rather than locking around {@code filter()}.
  */
 public abstract class FilterService {
 
     protected final FilterPolicyLoader filterPolicyLoader;
 
-    // A map that gives each filter profile its own cache of filters.
-    protected final Map<String, Map<FilterType, Filter>> filterCache;
+    // Caches the complete list of filters built for a policy, keyed by a hash of the policy.
+    protected final Map<String, List<Filter>> filterCache;
+
+    // Caches the post-filters built for a policy, keyed by the same policy hash as filterCache.
+    protected final Map<String, List<PostFilter>> postFilterCache;
 
     protected FilterService(final PhileasConfiguration phileasConfiguration,
-                            final ContextService contextService,
-                            final Random random,
+                            final SecureRandom random,
                             final HttpClient httpClient) {
 
         this.filterCache = new ConcurrentHashMap<>();
-        this.filterPolicyLoader = new FilterPolicyLoader(contextService, phileasConfiguration, random, httpClient);
+        this.postFilterCache = new ConcurrentHashMap<>();
+        this.filterPolicyLoader = new FilterPolicyLoader(phileasConfiguration, random, httpClient);
 
     }
 
     protected List<PostFilter> getPostFiltersForPolicy(final Policy policy) throws IOException {
+
+        // Build the post-filter list at most once per policy and reuse it, mirroring the filter cache.
+        // The build throws a checked IOException, which a mapping function cannot, so it is wrapped in
+        // a CompletionException and unwrapped here to preserve this method's throws contract.
+        try {
+            return postFilterCache.computeIfAbsent(policy.getCacheKey(), key -> {
+                try {
+                    return buildPostFilters(policy);
+                } catch (final IOException e) {
+                    throw new CompletionException(e);
+                }
+            });
+        } catch (final CompletionException e) {
+            final Throwable cause = e.getCause();
+            if (cause instanceof IOException) {
+                throw (IOException) cause;
+            }
+            throw e;
+        }
+
+    }
+
+    private List<PostFilter> buildPostFilters(final Policy policy) throws IOException {
 
         final List<PostFilter> postFilters = new LinkedList<>();
 

@@ -27,6 +27,7 @@ import ai.philterd.phileas.policy.Crypto;
 import ai.philterd.phileas.policy.FPE;
 import ai.philterd.phileas.policy.Policy;
 import ai.philterd.phileas.services.anonymization.AnonymizationService;
+import ai.philterd.phileas.services.context.ContextService;
 import ai.philterd.phileas.services.strategies.AbstractFilterStrategy;
 import ai.philterd.phileas.utils.Encryption;
 import org.apache.commons.codec.digest.DigestUtils;
@@ -129,7 +130,6 @@ public class ZipCodeFilterStrategy extends AbstractFilterStrategy {
                 };
 
             }
-            LOGGER.debug("Condition for [{}] satisfied: {}", condition, conditionsSatisfied);
 
             // Short-circuit if we have a failure.
             if(!conditionsSatisfied) break;
@@ -141,7 +141,7 @@ public class ZipCodeFilterStrategy extends AbstractFilterStrategy {
     }
 
     @Override
-    public Replacement getReplacement(String label, String context, String token, String[] window, Crypto crypto, FPE fpe, AnonymizationService anonymizationService, FilterPattern filterPattern) throws Exception {
+    public Replacement getReplacement(ContextService contextService, String label, String context, String token, String[] window, Crypto crypto, FPE fpe, AnonymizationService anonymizationService, FilterPattern filterPattern) throws Exception {
 
         String replacement;
         String salt = "";
@@ -171,7 +171,7 @@ public class ZipCodeFilterStrategy extends AbstractFilterStrategy {
                 as = this.anonymizationService;
             }
 
-            replacement = getAnonymizedToken(replacementScope, token, as, filterType.getType());
+            replacement = getAnonymizedToken(contextService, replacementScope, token, as, filterType.getType());
 
         } else if(Strings.CI.equals(strategy, STATIC_REPLACE)) {
 
@@ -190,7 +190,6 @@ public class ZipCodeFilterStrategy extends AbstractFilterStrategy {
             } else {
                 replacement = StringUtils.repeat(truncateCharacter, Math.min(token.length() - leaveCharacters, 5 - leaveCharacters)) + token.substring(Math.min(token.length() - leaveCharacters, 5 - leaveCharacters), 5);
             }
-
 
         } else if(Strings.CI.equals(strategy, ZERO_LEADING)) {
 
@@ -215,7 +214,6 @@ public class ZipCodeFilterStrategy extends AbstractFilterStrategy {
 
         }
 
-        System.out.println("Using replacement = " + replacement);
         return new Replacement(replacement, salt);
 
     }

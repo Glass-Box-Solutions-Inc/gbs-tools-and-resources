@@ -15,7 +15,7 @@
  */
 package ai.philterd.phileas.filters;
 
-import ai.philterd.phileas.filters.rules.dictionary.BloomFilterDictionaryFilter;
+import ai.philterd.phileas.filters.rules.dictionary.SetDictionaryFilter;
 import ai.philterd.phileas.model.filtering.FilterType;
 import ai.philterd.phileas.model.filtering.Filtered;
 import ai.philterd.phileas.services.strategies.custom.CustomDictionaryFilterStrategy;
@@ -40,15 +40,13 @@ public class CustomDictionaryFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new CustomDictionaryFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final Set<String> names = new HashSet<>(Arrays.asList("george", "ted", "bill", "john"));
-        final BloomFilterDictionaryFilter filter = new BloomFilterDictionaryFilter(FilterType.CUSTOM_DICTIONARY, filterConfiguration, names, "names");
+        final SetDictionaryFilter filter = new SetDictionaryFilter(FilterType.CUSTOM_DICTIONARY, filterConfiguration, names, "names");
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE,"He lived with Bill in California.");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE,"He lived with Bill in California.");
         showSpans(filtered.getSpans());
 
         Assertions.assertEquals(1, filtered.getSpans().size());
@@ -62,15 +60,13 @@ public class CustomDictionaryFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new CustomDictionaryFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final Set<String> names = new HashSet<>(Arrays.asList("george", "ted", "bill", "john"));
-        final BloomFilterDictionaryFilter filter = new BloomFilterDictionaryFilter(FilterType.CUSTOM_DICTIONARY, filterConfiguration, names, "names");
+        final SetDictionaryFilter filter = new SetDictionaryFilter(FilterType.CUSTOM_DICTIONARY, filterConfiguration, names, "names");
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE,"He lived with Sam in California.");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE,"He lived with Sam in California.");
         showSpans(filtered.getSpans());
 
         Assertions.assertEquals(0, filtered.getSpans().size());
@@ -88,15 +84,13 @@ public class CustomDictionaryFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(customDictionaryFilterStrategy))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final Set<String> names = new HashSet<>(Arrays.asList("george", "ted", "bill", "john"));
-        final BloomFilterDictionaryFilter filter = new BloomFilterDictionaryFilter(FilterType.CUSTOM_DICTIONARY, filterConfiguration, names, "names");
+        final SetDictionaryFilter filter = new SetDictionaryFilter(FilterType.CUSTOM_DICTIONARY, filterConfiguration, names, "names");
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE,"He lived with Bill in California.");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE,"He lived with Bill in California.");
         showSpans(filtered.getSpans());
         Assertions.assertEquals(1, filtered.getSpans().size());
         Assertions.assertTrue(candidates.contains(filtered.getSpans().get(0).getReplacement()));

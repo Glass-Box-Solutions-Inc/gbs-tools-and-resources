@@ -15,34 +15,29 @@
  */
 package ai.philterd.phileas.services.anonymization;
 
-import ai.philterd.phileas.services.context.ContextService;
+import ai.philterd.phileas.data.generators.VINGenerator;
 import org.apache.commons.collections4.CollectionUtils;
 
+import java.security.SecureRandom;
 import java.util.List;
-import java.util.Random;
 import java.util.UUID;
 
 public class VinAnonymizationService extends AbstractAnonymizationService {
 
-    public VinAnonymizationService(final ContextService contextService, final Random random, final AnonymizationMethod anonymizationMethod) {
-        super(contextService, random, anonymizationMethod);
+    public VinAnonymizationService(final SecureRandom random, final AnonymizationMethod anonymizationMethod) {
+        super(random, anonymizationMethod);
     }
 
-    public VinAnonymizationService(final ContextService contextService, final Random random, final List<String> candidates) {
-        super(contextService, random, candidates);
+    public VinAnonymizationService(final SecureRandom random, final List<String> candidates) {
+        super(random, candidates);
     }
 
-    public VinAnonymizationService(final ContextService contextService, final Random random) {
-        super(contextService, random);
+    public VinAnonymizationService(final SecureRandom random) {
+        super(random);
     }
 
-    public VinAnonymizationService(final ContextService contextService) {
-        super(contextService);
-    }
-
-    @Override
-    public ContextService getContextService() {
-        return contextService;
+    public VinAnonymizationService() {
+        super();
     }
 
     @Override
@@ -72,10 +67,15 @@ public class VinAnonymizationService extends AbstractAnonymizationService {
         } else {
 
             // REALISTIC_REPLACE
-            String anonymized = generateAlphanumeric(17);
+            // A VIN uses digits and the letters A-Z excluding I, O, and Q (which are disallowed to
+            // avoid confusion with 1 and 0). Generate from the VIN character set rather than from
+            // all alphanumeric characters.
+            final VINGenerator vinGenerator = new VINGenerator(random);
+
+            String anonymized = vinGenerator.random();
 
             while (anonymized.equalsIgnoreCase(token)) {
-                anonymized = generateAlphanumeric(17);
+                anonymized = vinGenerator.random();
             }
 
             return anonymized;

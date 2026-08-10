@@ -24,6 +24,9 @@ public class Crypto {
     @Expose
     private String key;
 
+    // No longer used: CRYPTO_REPLACE uses AES-GCM with a fresh random nonce per value, so no
+    // policy-supplied IV is needed. Retained so existing policies that still specify an iv continue
+    // to deserialize.
     @SerializedName("iv")
     @Expose
     private String iv;
@@ -42,7 +45,7 @@ public class Crypto {
 
     public String getKey() {
 
-        if(key.startsWith("env:")) {
+        if(key != null && key.startsWith("env:")) {
 
             final String envVarName = key.substring(4);
             return System.getenv(envVarName);
@@ -55,7 +58,7 @@ public class Crypto {
 
     public String getIv() {
 
-        if(iv.startsWith("env:")) {
+        if(iv != null && iv.startsWith("env:")) {
 
             final String envVarName = iv.substring(4);
             return System.getenv(envVarName);

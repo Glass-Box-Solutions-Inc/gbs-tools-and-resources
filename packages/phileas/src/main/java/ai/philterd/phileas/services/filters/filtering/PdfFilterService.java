@@ -26,7 +26,7 @@ import ai.philterd.phileas.model.filtering.TextFilterResult;
 import ai.philterd.phileas.policy.Policy;
 import ai.philterd.phileas.policy.config.Pdf;
 import ai.philterd.phileas.services.context.ContextService;
-import ai.philterd.phileas.services.disambiguation.vector.VectorBasedSpanDisambiguationService;
+import ai.philterd.phileas.services.disambiguation.SpanDisambiguationServiceFactory;
 import ai.philterd.phileas.services.disambiguation.vector.VectorService;
 import ai.philterd.phileas.services.documentprocessors.DocumentProcessor;
 import ai.philterd.phileas.services.documentprocessors.UnstructuredDocumentProcessor;
@@ -45,7 +45,6 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Random;
 import java.util.Set;
 
 /**
@@ -58,6 +57,10 @@ public class PdfFilterService extends BinaryFilterService {
     private final DocumentProcessor unstructuredDocumentProcessor;
     private final TokenCounter tokenCounter;
 
+    // Bound at construction for the no-service overload; null for a warm, per-call instance.
+    private final ContextService defaultContextService;
+    private final VectorService defaultVectorService;
+
     public PdfFilterService(final PhileasConfiguration phileasConfiguration,
                             final ContextService contextService,
                             final VectorService vectorService,
@@ -66,22 +69,53 @@ public class PdfFilterService extends BinaryFilterService {
         this(phileasConfiguration, contextService, vectorService, new SecureRandom(), httpClient);
 
     }
+
     public PdfFilterService(final PhileasConfiguration phileasConfiguration,
                             final ContextService contextService,
                             final VectorService vectorService,
-                            final Random random,
+                            final SecureRandom random,
                             final HttpClient httpClient) {
 
-        super(phileasConfiguration, contextService, random, httpClient);
+        super(phileasConfiguration, random, httpClient);
 
         LOGGER.info("Initializing PDF filter service.");
 
-        // Set the token counter.
+        this.defaultContextService = contextService;
+        this.defaultVectorService = vectorService;
+
         this.tokenCounter = new WhitespaceTokenCounter();
 
-        // Create a new unstructured document processor.
         this.unstructuredDocumentProcessor = new UnstructuredDocumentProcessor(
-                new VectorBasedSpanDisambiguationService(phileasConfiguration, vectorService),
+                SpanDisambiguationServiceFactory.getSpanDisambiguationService(phileasConfiguration),
+                phileasConfiguration.incrementalRedactionsEnabled()
+        );
+
+    }
+
+    /** Creates a warm, reusable service whose context and vector services are supplied per call. */
+    public PdfFilterService(final PhileasConfiguration phileasConfiguration,
+                            final HttpClient httpClient) {
+
+        this(phileasConfiguration, new SecureRandom(), httpClient);
+
+    }
+
+    /** Warm, reusable service using the given thread-safe {@link SecureRandom} for anonymization. */
+    public PdfFilterService(final PhileasConfiguration phileasConfiguration,
+                            final SecureRandom random,
+                            final HttpClient httpClient) {
+
+        super(phileasConfiguration, random, httpClient);
+
+        LOGGER.info("Initializing PDF filter service.");
+
+        this.defaultContextService = null;
+        this.defaultVectorService = null;
+
+        this.tokenCounter = new WhitespaceTokenCounter();
+
+        this.unstructuredDocumentProcessor = new UnstructuredDocumentProcessor(
+                SpanDisambiguationServiceFactory.getSpanDisambiguationService(phileasConfiguration),
                 phileasConfiguration.incrementalRedactionsEnabled()
         );
 
@@ -89,6 +123,24 @@ public class PdfFilterService extends BinaryFilterService {
 
     @Override
     public BinaryDocumentFilterResult filter(final Policy policy, final String context,
+                                             final byte[] input, final MimeType outputMimeType) throws Exception {
+        requireBoundServices();
+        return filter(policy, defaultContextService, defaultVectorService, context, input, outputMimeType);
+    }
+
+    // Fails fast when a warm instance is used through an overload that needs construction-bound services.
+    private void requireBoundServices() {
+        if (defaultContextService == null || defaultVectorService == null) {
+            throw new IllegalStateException(
+                    "This PdfFilterService was created for per-call context and vector services. "
+                            + "Call filter(policy, contextService, vectorService, context, input, outputMimeType) instead, "
+                            + "or construct it with a ContextService and VectorService.");
+        }
+    }
+
+    @Override
+    public BinaryDocumentFilterResult filter(final Policy policy, final ContextService contextService,
+                                             final VectorService vectorService, final String context,
                                              final byte[] input, final MimeType outputMimeType) throws Exception {
 
         final List<IncrementalRedaction> incrementalRedactions = new ArrayList<>();
@@ -122,7 +174,7 @@ public class PdfFilterService extends BinaryFilterService {
                 tokens += tokenCounter.countTokens(pdfLine.getText());
 
                 // Process the text.
-                final TextFilterResult textFilterResult = unstructuredDocumentProcessor.process(policy, filters, postFilters, context, piece, pdfLine.getText());
+                final TextFilterResult textFilterResult = unstructuredDocumentProcessor.process(contextService, vectorService, policy, filters, postFilters, context, piece, pdfLine.getText());
 
                 // Add the incremental redactions to the list.
                 incrementalRedactions.addAll(textFilterResult.getIncrementalRedactions());
