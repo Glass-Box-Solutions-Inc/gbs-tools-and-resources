@@ -59,6 +59,7 @@ from wc_caseload_engine.medical_history import (
     HEALTH_ARCHETYPES,
     HOOK_GROUNDING,
     SIBTF_QUALIFYING,
+    _clamped,
     _rng,
     archetype_weights,
     calibrate,
@@ -256,6 +257,24 @@ def _cell_rate(condition: str, age: int, sex: str, bmi: str, smoking: str) -> fl
     return sum(weights[name] * probabilities[name] for name in weights)
 
 
+def _profile_rate(
+    condition: str, age: int, sex: str, bmi: str, smoking: str, archetype: str
+) -> float:
+    """One archetype's own probability, with the mixture held out of it.
+
+    Two independent things move risk across BMI bands: the **steer**, which shifts
+    the archetype mixture toward the metabolic and degenerative profiles as body mass
+    rises, and the **multiplier**, which raises that profile's own risk. A mixture
+    reading cannot tell them apart, and m17-8 proved it — flattening every risk
+    multiplier to 1.0 left ``_cell_rate``'s gradient standing on the steer alone,
+    comfortably past the ratio the mixture test asserts.
+
+    So the multiplier gets a reading of its own. Weights do not appear here, which is
+    exactly what makes it a clean instrument.
+    """
+    return dict(condition_probabilities(condition, age, sex, bmi, smoking))[archetype]
+
+
 def _population_rate(condition: str, age: int, sex: str) -> float:
     """The cell rates integrated over the population the sampler actually draws."""
     smoking = {status: knob.value for status, knob in SMOKING_DISTRIBUTION.items()}
@@ -325,9 +344,44 @@ class TestRiskGradientsSurviveCalibration:
     )
 
     @pytest.mark.parametrize(("condition", "age", "sex"), GRADED)
+    def test_body_mass_moves_the_risk_within_a_single_profile(
+        self, condition: str, age: int, sex: str
+    ) -> None:
+        """The multiplier on its own, with the archetype mixture held out.
+
+        This is the assertion that actually guards ``RISK_MULTIPLIERS``. The mixture
+        reading below cannot: flattening every multiplier to 1.0 leaves the archetype
+        *steer* producing a gradient of its own, and it clears the ratio the mixture
+        test asks for. m17-8 survived on exactly that, which is the whole reason two
+        readings exist where one looked sufficient.
+        """
+        rates = {
+            band: _profile_rate(condition, age, sex, band, "never", "resilient")
+            for band in BMI_BANDS
+        }
+        ordered = [rates[band] for band in BMI_BANDS]
+        assert ordered == sorted(ordered), (
+            f"{condition}: within one profile, risk does not rise with body mass — "
+            f"{rates}. The archetype mixture is not involved here, so this is the "
+            "risk multiplier itself"
+        )
+        assert rates["severely_obese"] > rates["normal_or_under"] * 1.25, (
+            f"{condition}: holding the profile fixed, the severely obese cell is only "
+            f"{rates['severely_obese'] / rates['normal_or_under']:.2f}x the "
+            "normal-weight one — the documented multiplier is doing nothing"
+        )
+
+    @pytest.mark.parametrize(("condition", "age", "sex"), GRADED)
     def test_body_mass_moves_the_risk_it_is_documented_to_move(
         self, condition: str, age: int, sex: str
     ) -> None:
+        """The gradient a reader of the corpus would actually see.
+
+        Both channels together — the steer moving the mixture and the multiplier
+        moving each profile's own risk. Kept because it is the reader-visible claim,
+        and separated from the one above because a compound reading cannot attribute
+        what it measures.
+        """
         rates = {
             band: _cell_rate(condition, age, sex, band, "never") for band in BMI_BANDS
         }
@@ -449,6 +503,23 @@ class TestRiskGradientsSurviveCalibration:
                             "probability approaches zero can be ruled out by observing "
                             "the condition, which makes membership recoverable"
                         )
+
+        # And the floor has to be a *clamp*, not a coincidence.
+        #
+        # m17-4 survived a second time, on the round-2 table, and the reason is worth
+        # recording: compressing the archetype affinities to close the anti-fingerprint
+        # gap also lifted every cell above the floor on its own, so deleting the clamp
+        # changed nothing the loop above could see. The guard had gone vacuous by way
+        # of a fix somewhere else — which is the failure mode a corpus-shaped assertion
+        # is always one refactor away from. So the clamp is asked directly, at a
+        # product no plausible catalog rate reaches.
+        starved = _clamped(1e-9, 1e-9)
+        assert starved == _P_FLOOR, (
+            f"a vanishing scale-affinity product came back as {starved} rather than "
+            f"the floor {_P_FLOOR}; nothing is clamping, and the loop above is only "
+            "passing because the current affinities happen to sit above the floor"
+        )
+        assert _clamped(1e9, 1e9) == _P_CEILING, "nothing is clamping at the ceiling"
 
     def test_archetype_weights_are_a_distribution(self) -> None:
         for age in (20, 40, 60, 80):

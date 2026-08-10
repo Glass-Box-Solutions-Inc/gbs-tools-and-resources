@@ -217,7 +217,7 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_money_coherence.py` | The reusable paper/manifest/truth money harness, including capped, delayed and §4650(d)-penalised shapes, byte gates and one-cent live controls (AJC-48) |
 | `test_truth_manifest.py` | Lossless money round trips, envelope/open-channel versioning, rollup completeness, scorer-only subtree isolation, and the case-tree leakage anti-probe (AJC-48) |
 | `test_golden_corpus.py` | The golden-corpus gate: digest faithfulness and sensitivity, redaction-path staleness, drift-report wording, and the `suite`-tier byte-identity check (AJC-59) |
-| `test_medical_history.py` | The world-truth ledger: grounding-table honesty, the calibration solve, marginal matching against the cited tables, the anti-fingerprint probes, the two-surface documentation unions, the seed gate, and byte inertness (AJC-60) |
+| `test_medical_history.py` | The world-truth ledger: grounding-table honesty, the population-weighted calibration solve, the BMI/smoking risk gradients (single-profile and mixture readings), marginal matching against the cited tables, the per-claim-shape anti-fingerprint probes and their pooling control, the two-surface documentation unions, prior-claim ordering, the SIBTF grounding predicate, the seed gate, and byte inertness (AJC-60) |
 
 ### The mutation gate
 
@@ -370,15 +370,41 @@ Consequences worth knowing before touching it:
 - **Everything it adds is byte-inert**, so every seed field it adds carries the "not yet
   honoured" marker and an inertness probe. Wiring any one of them up turns
   `test_schema_honesty.py` red until the marker goes.
-- **`c-calibrated-by-b`.** Archetypes carry the *correlation* between conditions; a bisection
-  solve calibrates per-archetype probabilities so the corpus reproduces
-  `clinical_grounding`'s cited marginals **by construction**. Edit an affinity freely — the
-  scale re-solves and the marginals still land. That is why the archetype table is safe to
-  tune and the calibration is not.
+- **`c-calibrated-by-b`, solved over the population and not the cell.** Archetypes carry the
+  *correlation* between conditions; a bisection solve calibrates per-archetype probabilities so
+  the corpus reproduces `clinical_grounding`'s cited marginals **by construction**. Edit an
+  affinity freely — the scale re-solves and the marginals still land. That is why the archetype
+  table is safe to tune and the calibration is not.
+
+  The scale solves once per `(condition, age)` **integrated over the BMI × smoking
+  distribution**, never per demographic cell. Per-cell solving looks like success — every cell
+  reproduces its marginal exactly — and is the opposite: each cell absorbs its own risk
+  multiplier, so a severely obese current smoker and a normal-weight never-smoker of the same
+  age come out identical and `bmi_band` / `smoking_status` become fields nothing reads.
+- **Two things move risk across BMI bands, and a mixture reading cannot tell them apart.** The
+  *steer* shifts the archetype mixture toward the metabolic and degenerative profiles; the
+  *multiplier* raises that profile's own risk. m17-8 flattened every multiplier to 1.0 and the
+  mixture-level gradient survived on the steer alone. `RISK_MULTIPLIERS` is guarded by a
+  single-profile reading with the mixture held out; the mixture reading is kept beside it
+  because it is the reader-visible claim.
 - **The probability floor is the anti-fingerprint guarantee.** No per-archetype probability
-  ever reaches 0 or 1, so no chain of observed conditions can exclude an archetype. m17-4
-  first survived a guard that asked only for `0 < p < 1` — which holds with the floor deleted.
-  The bound itself is the assertion now.
+  ever reaches 0 or 1, so no chain of observed conditions can exclude an archetype. m17-4 has
+  survived twice, for two different reasons: first a guard asking only for `0 < p < 1`, which
+  holds with the floor deleted; then a corpus loop that went vacuous when compressing the
+  affinities lifted every probed cell above the floor on its own. The clamp is now asserted
+  directly as well as over the corpus — a corpus-shaped assertion is always one refactor
+  elsewhere away from proving nothing.
+- **The anti-fingerprint bound is measured per claim shape.** Body parts are visible on the
+  face of the file, so the posterior that matters is `P(archetype | conditions, body parts)`.
+  Pooling the seven shapes averages a decisive shape against six that cannot produce the same
+  set: it read 0.934 while the real worst was 0.989. A control test asserts the per-shape worst
+  still exceeds the pooled one, so the parametrization cannot quietly stop earning its runtime.
+- **SIBTF grounding is one predicate, and the warning text is generated from it.** §4751 turns
+  on a pre-existing permanent *disability*, so a denied or pending prior claim grounds nothing
+  while a qualifying award or a moderate-or-worse condition symptomatic before the injury
+  does. The remediation sentence is built from `SIBTF_QUALIFYING` because the hand-maintained
+  version drifted from the check before anyone ran it — it told authors to add a predating
+  condition, which the check ignored.
 - **New rng streams live under `medical:`**, a namespace nothing else uses. Salting here buys
   *stream separation*, not interference immunity: every stream is a fresh `random.Random`, so
   two streams cannot disturb each other whatever their salts. What a collision would cost is
