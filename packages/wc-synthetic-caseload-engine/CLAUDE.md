@@ -47,6 +47,8 @@ package is built on. Flagged and accepted as an explicit stack decision.
 | `determinism.py` | The three reproducibility fixes (hash seed, docx ZIP times, PDF `/ID`). |
 | `manifests.py` | Output tree, manifests, `validate --out`. |
 | `truth_manifest.py` | Versioned scorer-only truth envelopes, lossless money-channel serialization/re-import (including opt-in §4650(d) penalties), and the caseload truth index. |
+| `clinical_grounding.py` | Cited epidemiology as data (AJC-60): nine conditions with age/sex-banded prevalences, each value carrying its source and confidence grade, each knob its provenance tag. NOT-FOUND cells are omitted, never zeroed. |
+| `medical_history.py` | The world-truth ledger and its archetype sampler (AJC-60). Derived only for a seed carrying `scenario.medical_history`; **published nowhere**. |
 | `schema_audit.py` | The "not yet honoured" docstring marker sweep (ISC-137). Parses `seeds.py` from the syntax tree, never from `model_fields`. |
 | `message_audit.py` | The actionable-message sweep (ISC-129). Every message `seeds.py` can raise, one level of helper indirection resolved, classified into *instructs* vs *reports*. |
 | `cli.py` | Click commands. |
@@ -215,6 +217,7 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_money_coherence.py` | The reusable paper/manifest/truth money harness, including capped, delayed and §4650(d)-penalised shapes, byte gates and one-cent live controls (AJC-48) |
 | `test_truth_manifest.py` | Lossless money round trips, envelope/open-channel versioning, rollup completeness, scorer-only subtree isolation, and the case-tree leakage anti-probe (AJC-48) |
 | `test_golden_corpus.py` | The golden-corpus gate: digest faithfulness and sensitivity, redaction-path staleness, drift-report wording, and the `suite`-tier byte-identity check (AJC-59) |
+| `test_medical_history.py` | The world-truth ledger: grounding-table honesty, the calibration solve, marginal matching against the cited tables, the anti-fingerprint probes, the two-surface documentation unions, the seed gate, and byte inertness (AJC-60) |
 
 ### The mutation gate
 
@@ -345,6 +348,46 @@ substrate (same monorepo) but not `Adjudica-classifier`.
 
 Fast iteration: assert on the **plan** (`build_case_plan`) rather than rendered files.
 Rendering is the slow part; the plan carries every subtype, date, track and format.
+
+---
+
+## The world-truth ledger (AJC-60, M1)
+
+`scenario.medical_history` opens a second ledger beside `CaseFacts` and `MoneyFacts`, on the
+`money` pattern: derived only when the seed asks, `None` when it does not.
+
+**It is published nowhere, and that is the design.** Not `case_facts.yaml`, not the manifest's
+`caseFacts` block, not the truth manifest. World truth is what an *assertion* is graded
+against, so a document able to cite it would collapse the two-level design the medical-story
+programme is built on — a party's assertion about a history could no longer diverge from the
+history. This is the same discipline `case_facts.py` already applies to `wpi`/`pd`
+("fields the ledger derives but nothing renders stay on the model and out of the output"),
+applied one layer earlier. M3 gives the conditions a document surface; M4 gives the ledger a
+scorer-only channel and the truth-envelope version bump that goes with it.
+
+Consequences worth knowing before touching it:
+
+- **Everything it adds is byte-inert**, so every seed field it adds carries the "not yet
+  honoured" marker and an inertness probe. Wiring any one of them up turns
+  `test_schema_honesty.py` red until the marker goes.
+- **`c-calibrated-by-b`.** Archetypes carry the *correlation* between conditions; a bisection
+  solve calibrates per-archetype probabilities so the corpus reproduces
+  `clinical_grounding`'s cited marginals **by construction**. Edit an affinity freely — the
+  scale re-solves and the marginals still land. That is why the archetype table is safe to
+  tune and the calibration is not.
+- **The probability floor is the anti-fingerprint guarantee.** No per-archetype probability
+  ever reaches 0 or 1, so no chain of observed conditions can exclude an archetype. m17-4
+  first survived a guard that asked only for `0 < p < 1` — which holds with the floor deleted.
+  The bound itself is the assertion now.
+- **New rng streams live under `medical:`**, a namespace nothing else uses. Salting here buys
+  *stream separation*, not interference immunity: every stream is a fresh `random.Random`, so
+  two streams cannot disturb each other whatever their salts. What a collision would cost is
+  correlation — every demographic decided by one number.
+- **The aggregate moved and was reported, not tuned.** Reproducing note C's per-condition
+  marginals forces P(any condition) to about 0.71, against the design record's expected 0.55.
+  Both are pinned: `P_ANY_CONDITION_MEASURED` and `P_ANY_CONDITION_EXPECTED`, the second
+  carrying its own falsification note. The counsel-confirmed 0.33 documentation union is held
+  exactly regardless, because the gate divides by the realised aggregate.
 
 ---
 

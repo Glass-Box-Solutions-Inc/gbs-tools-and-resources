@@ -1866,10 +1866,10 @@ note = 'AJC-60. The anti-fingerprint guarantee at its source. Without the floor 
 id = 'm17-5'
 title = 'the rng stream collides with an existing namespace and re-rolls a shipped draw'
 file = 'src/wc_caseload_engine/medical_history.py'
-test = 'tests/test_medical_history.py::TestDeterminism::test_the_new_streams_do_not_disturb_an_existing_draw'
+test = 'tests/test_medical_history.py::TestDeterminism::test_every_medical_stream_is_its_own'
 find = '''    return random.Random(derive_seed(seed.rng_seed, f"medical:{salt}"))'''
-replace = '''    return random.Random(derive_seed(seed.rng_seed, salt))'''
-note = 'AJC-60. R2, the standing rng-drift risk on this programme. The ledger draws under a `medical:` namespace nothing else uses; dropping the prefix collides with the bare salts the cast already consumes, so opting into the medical block would move the applicant name, the firm names and the dates — silently, because nothing renders the medical block to give the collision away. The one defect in this set that would move goldens without touching a template.'
+replace = '''    return random.Random(derive_seed(seed.rng_seed, "dob"))'''
+note = 'AJC-60. R2, restated as the risk that actually exists. The first version of this mutant dropped the medical: prefix and SURVIVED, which was the gate correcting the premise rather than the code: every stream is a fresh random.Random, so two streams cannot disturb each other however their salts are chosen. What salting really prevents is CORRELATION. This mutation points every medical stream at the dob salt the cast already consumes, which makes the applicant sex a deterministic function of their date of birth — a generated attribute readable straight off another generated attribute, which is the synthetic-data tell note F warns about.'
 
 [[mutant]]
 id = 'm17-6'

@@ -53,6 +53,7 @@ from wc_caseload_engine.medical_history import (
     _P_CEILING,
     _P_FLOOR,
     HEALTH_ARCHETYPES,
+    _rng,
     archetype_weights,
     calibrate,
     condition_probabilities,
@@ -1098,6 +1099,70 @@ class TestDeterminism:
         assert [d.doc_date for d in without.documents] == [
             d.doc_date for d in with_block.documents
         ]
+
+    #: Every salt the medical layer draws on, and the cast salts it must avoid.
+    MEDICAL_SALTS = (
+        "sex",
+        "bmi",
+        "smoking",
+        "archetype",
+        "conditions",
+        "condition_detail",
+        "documentation",
+    )
+    CAST_SALTS = ("dob", "carrier", "applicant_firm", "defense_firm", "")
+
+    def test_every_medical_stream_is_its_own(self) -> None:
+        """R2, stated as the risk that actually exists here.
+
+        Two earlier attempts at this guard measured the wrong thing, and both are
+        worth recording because the correction is the finding.
+
+        The first asserted that opting into the medical layer disturbs no existing
+        draw. m17-5 survived it — and had to, because every stream is a fresh
+        ``random.Random``. Two generators seeded independently cannot interfere
+        however their salts are chosen, so that assertion was true by construction.
+
+        The second asserted that sex is not a function of the date of birth. Also
+        survivable: the map from ``rng_seed`` to a date of birth is not injective, so
+        two applicants can share a birthday from different seeds and differ in sex
+        even when both draws come off one salt.
+
+        What salting actually buys is **stream separation**, and that is what is
+        asserted here: no two medical draws share a stream, and no medical draw shares
+        a stream with the cast. Collapse them and every demographic moves together —
+        sex, body mass, smoking and the archetype all decided by one number, which is
+        the correlated-attribute tell note F warns about — and a medical salt landing
+        on a cast salt would make the ledger a readable shadow of the applicant's own
+        identity.
+        """
+        seed = parse_case_seed(_seed_body(40_000))
+        medical = {salt: _rng(seed, salt).random() for salt in self.MEDICAL_SALTS}
+        assert len(set(medical.values())) == len(self.MEDICAL_SALTS), (
+            f"two medical streams produced the same first draw: {medical} — the "
+            "layer's draws are collapsed onto one stream and every demographic moves "
+            "together"
+        )
+
+        cast = {salt: seed.rng(salt).random() for salt in self.CAST_SALTS}
+        collisions = {
+            (m_salt, c_salt)
+            for m_salt, value in medical.items()
+            for c_salt, other in cast.items()
+            if value == other
+        }
+        assert not collisions, (
+            f"medical streams collide with the cast's own: {sorted(collisions)} — the "
+            "ledger would be a readable shadow of the applicant's identity"
+        )
+
+    def test_the_stream_probe_can_detect_a_collision(self) -> None:
+        """Anti-vacuity: the comparison above must be able to see a shared stream."""
+        seed = parse_case_seed(_seed_body(40_001))
+        assert _rng(seed, "sex").random() == _rng(seed, "sex").random(), (
+            "the same salt gave two different draws, so the probe cannot recognise a "
+            "collision even when one is in front of it"
+        )
 
     def test_a_different_seed_reaches_a_different_ledger(self) -> None:
         """Anti-vacuity for the two assertions above."""
