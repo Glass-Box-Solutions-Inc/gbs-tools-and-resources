@@ -326,6 +326,41 @@ def _structural_diff(left: object, right: object, prefix: str = "") -> list[str]
     return []
 
 
+def _rebase_provenance_payload(
+    fresh_feature_payload: dict,
+    fresh_base_payload: dict,
+) -> dict:
+    if _canonical_json_bytes(fresh_base_payload.get("cases")) != _canonical_json_bytes(
+        fresh_feature_payload.get("cases"),
+    ):
+        _exit("base recorder cases do not match feature baseline pre-restamp cases")
+
+    candidate = copy.deepcopy(fresh_base_payload)
+    candidate.setdefault("_meta", {})["note"] = PROVENANCE_NOTE
+
+    _assert_restamp_payload_delta_is_meta_note_only(fresh_base_payload, candidate)
+
+    return candidate
+
+
+def _assert_restamp_payload_delta_is_meta_note_only(
+    fresh_base_payload: dict,
+    candidate_payload: dict,
+) -> None:
+    diffs = sorted(_structural_diff(fresh_base_payload, candidate_payload))
+    if diffs != ["_meta.note"]:
+        _exit("restamp would change more than _meta.note: " + ", ".join(diffs))
+
+
+def _rewrite_restamped_provenance_payload(
+    feature_baseline_path: str,
+    fresh_base_payload: dict,
+) -> None:
+    fresh_feature_payload = _read_json(feature_baseline_path)
+    candidate = _rebase_provenance_payload(fresh_feature_payload, fresh_base_payload)
+    _write_json_atomically(candidate, feature_baseline_path)
+
+
 def _run_check_mode() -> int:
     from tests.render_baseline import compute_baseline, load_baseline_cases
 
@@ -376,10 +411,9 @@ def _run_restamp_mode(base_worktree: str) -> int:
         _exit("refusing to restamp: feature worktree is not clean")
 
     base_repo, base_package_root = _validate_base_worktree(base_worktree)
+    feature_baseline_path = os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json")
 
-    fresh_feature_payload = _read_json(
-        os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json")
-    )
+    fresh_feature_payload = _read_json(feature_baseline_path)
     fresh_base_payload = _run_base_recorder(base_package_root)
 
     base_meta = fresh_base_payload.get("_meta", {})
@@ -392,22 +426,7 @@ def _run_restamp_mode(base_worktree: str) -> int:
     if base_meta.get("harness_sha256") != HARNESS_FILES:
         _exit("base payload did not carry the expected harness hash map")
 
-    if _canonical_json_bytes(fresh_base_payload.get("cases")) != _canonical_json_bytes(
-        fresh_feature_payload.get("cases"),
-    ):
-        _exit("base recorder cases do not match feature baseline pre-restamp cases")
-
-    candidate = copy.deepcopy(fresh_base_payload)
-    candidate.setdefault("_meta", {})["note"] = PROVENANCE_NOTE
-
-    diffs = sorted(_structural_diff(fresh_base_payload, candidate))
-    if diffs != ["_meta.note"]:
-        _exit("restamp would change more than _meta.note: " + ", ".join(diffs))
-
-    _write_json_atomically(
-        candidate,
-        os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json"),
-    )
+    _rewrite_restamped_provenance_payload(feature_baseline_path, fresh_base_payload)
     print("Restamped provenance note from the pinned base worktree.")
     return 0
 

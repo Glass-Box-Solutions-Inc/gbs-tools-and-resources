@@ -895,23 +895,6 @@ def _restore_baseline(payload_text: str) -> None:
         fh.write(payload_text)
 
 
-def _run_with_patched_base_commit(base_worktree: str, patched_commit: str) -> tuple[int, str]:
-    import pathlib
-    from tests.render_baseline import _PACKAGE_ROOT
-
-    recorder_path = pathlib.Path(_PACKAGE_ROOT) / "scripts" / "record_render_baseline.py"
-    original = recorder_path.read_text(encoding="utf-8")
-    try:
-        marker = 'BASE_COMMIT = "b0e77dd1b6fa949d2d5dc6a7f2d1a0c94ed6def3"'
-        recorder_path.write_text(original.replace(
-            marker,
-            f'BASE_COMMIT = "{patched_commit}"',
-        ), encoding="utf-8")
-        return _run_restamp_provenance(base_worktree)
-    finally:
-        recorder_path.write_text(original, encoding="utf-8")
-
-
 def _write_baseline(payload: str | dict, destination: os.PathLike[str] | str) -> None:
     if isinstance(payload, str):
         text = payload
@@ -940,18 +923,21 @@ def test_record_mode_refuses_a_tree_that_is_not_the_base_ref():
 
 
 def test_restamp_provenance_uses_only_fresh_pinned_base_cases():
+    import copy
     import json
+    import subprocess
 
-    from tests.render_baseline import BASELINE_PATH
+    from tests.render_baseline import BASELINE_PATH, _PACKAGE_ROOT
 
     base_worktree = _trusted_base_worktree()
     if base_worktree is None:
         pytest.skip("ajc72-recorder worktree is not available")
 
+    recorder = _recorder_module()
     feature_before, base_payload = _trusted_base_payload(base_worktree)
     baseline_text = open(BASELINE_PATH, encoding="utf-8").read()
     try:
-        mutated = json.loads(json.dumps(feature_before))
+        mutated = copy.deepcopy(feature_before)
         mutated["_meta"]["note"] = "feature-only note mutation for proof test"
         _write_baseline(mutated, BASELINE_PATH)
 
@@ -960,117 +946,164 @@ def test_restamp_provenance_uses_only_fresh_pinned_base_cases():
         with open(BASELINE_PATH, encoding="utf-8") as fh:
             after = json.load(fh)
         assert after["cases"] == base_payload["cases"]
+        changed = sorted(recorder._structural_diff(feature_before, after))
+        assert set(changed).issubset({"_meta.note", "_meta.recorded_utc"}), (
+            f"restamp changed non-provenance leaves: {changed}"
+        )
+        assert after["_meta"]["note"] == recorder.PROVENANCE_NOTE
     finally:
         _restore_baseline(baseline_text)
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=_PACKAGE_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        assert not status.stdout, f"post-restamp dirty tree: {status.stdout.rstrip()}"
 
 
 def test_restamp_provenance_changes_only_meta_note():
+    import copy
+
+    recorder = _recorder_module()
+    feature_payload = {
+        "_meta": {
+            "note": "pre-run note",
+            "recorded_utc": "2026-01-01T00:00:00",
+            "source_commit": "1111111111111111111111111111111111111111",
+            "base_commit": "2222222222222222222222222222222222222222",
+        },
+        "cases": {
+            "case.alpha": {
+                "text": "base text",
+                "story": "base story",
+                "rng": "base rng",
+                "pdf": "base pdf",
+            },
+            "case.beta": {
+                "text": "other text",
+                "story": "other story",
+                "rng": "other rng",
+                "pdf": "other pdf",
+            },
+        },
+    }
+
+    candidate = recorder._rebase_provenance_payload(feature_payload, feature_payload)
+    assert sorted(recorder._structural_diff(feature_payload, candidate)) == ["_meta.note"]
+    assert candidate["_meta"]["note"] == recorder.PROVENANCE_NOTE
+
+    bad_candidate = copy.deepcopy(candidate)
+    bad_candidate["cases"]["case.alpha"]["text"] = "changed case text"
+    with pytest.raises(SystemExit) as exc:
+        recorder._assert_restamp_payload_delta_is_meta_note_only(feature_payload, bad_candidate)
+    assert "restamp would change more than _meta.note" in str(exc.value)
+
+
+def test_restamp_provenance_refuses_case_drift_without_writing(tmp_path):
     import json
 
-    from tests.render_baseline import BASELINE_PATH
+    recorder = _recorder_module()
 
-    base_worktree = _trusted_base_worktree()
-    if base_worktree is None:
-        pytest.skip("ajc72-recorder worktree is not available")
+    feature_payload = {
+        "_meta": {
+            "note": "pre-run note",
+            "recorded_utc": "2026-01-01T00:00:00",
+        },
+        "cases": {
+            "case.alpha": {
+                "text": "base text",
+                "story": "base story",
+                "rng": "base rng",
+                "pdf": "base pdf",
+            },
+            "case.beta": {
+                "text": "other text",
+                "story": "other story",
+                "rng": "other rng",
+                "pdf": "other pdf",
+            },
+        },
+    }
+    drifted_base = json.loads(json.dumps(feature_payload))
+    drifted_base["cases"]["case.alpha"]["text"] = "base recorder text does not match"
 
-    feature_before = open(BASELINE_PATH, encoding="utf-8").read()
-    try:
-        # Ensure there is at least one non-note diff to confirm the command is targeting
-        # provenance only.
-        mutated = json.loads(json.dumps(json.loads(feature_before)))
-        mutated["_meta"]["note"] = "feature-only note mutation for proof test"
-        _write_baseline(mutated, BASELINE_PATH)
-
-        code, out = _run_restamp_provenance(base_worktree)
-        assert code == 0, f"restamp-provenance did not succeed:\n{out}"
-
-        with open(BASELINE_PATH, encoding="utf-8") as fh:
-            after = json.load(fh)
-        before = json.loads(feature_before)
-        assert after["cases"] == before["cases"]
-        assert after["_meta"]["note"] != before["_meta"]["note"]
-        assert after["_meta"]["note"] == _recorder_module().PROVENANCE_NOTE
-        for key in before["_meta"]:
-            if key == "note":
-                continue
-            assert after["_meta"][key] == before["_meta"][key]
-    finally:
-        _restore_baseline(feature_before)
-
-
-def test_restamp_provenance_refuses_case_drift_without_writing():
-    import json
-
-    from tests.render_baseline import BASELINE_PATH
-
-    base_worktree = _trusted_base_worktree()
-    if base_worktree is None:
-        pytest.skip("ajc72-recorder worktree is not available")
-
-    feature_before_text = open(BASELINE_PATH, encoding="utf-8").read()
-    try:
-        mutated = _mutate_baseline(feature_before_text)
-        _write_baseline(mutated, BASELINE_PATH)
-        code, out = _run_restamp_provenance(base_worktree)
-        assert code != 0, "case drift passed restamp-provenance"
-        assert "base recorder cases do not match feature baseline pre-restamp cases" in out
-        with open(BASELINE_PATH, encoding="utf-8") as fh:
-            after = json.load(fh)
-        assert json.loads(mutated)["cases"] == after["cases"]
-    finally:
-        _restore_baseline(feature_before_text)
+    destination = tmp_path / "restamp-case-drift-proof.json"
+    destination_text = json.dumps(feature_payload, sort_keys=True, indent=2) + "\n"
+    destination.write_text(destination_text, encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        recorder._rewrite_restamped_provenance_payload(str(destination), drifted_base)
+    assert "base recorder cases do not match feature baseline pre-restamp cases" in str(exc.value)
+    assert destination.read_text(encoding="utf-8") == destination_text
 
 
 def test_restamp_provenance_refuses_untrusted_base_worktree(tmp_path):
-    from tests.render_baseline import BASELINE_PATH, _PACKAGE_ROOT
     recorder = _recorder_module()
-
-    baseline_text = open(BASELINE_PATH, encoding="utf-8").read()
     base_worktree = _trusted_base_worktree()
     if base_worktree is None:
         pytest.skip("ajc72-recorder worktree is not available")
 
-    try:
-        recorder._validate_base_worktree(base_worktree)
+    recorder._validate_base_worktree(base_worktree)
 
-        # wrong SHA: patch BASE_COMMIT in the running script, leaving the same external
-        # worktree. The worktree stays detached at b0e77..., so any other commit is
-        # rejected as the wrong SHA case.
-        original_script = _run_with_patched_base_commit(base_worktree, "0000000000000000000000000000000000000000")
-        code, out = original_script
-        assert code != 0
-        assert "base HEAD is" in out
-
-        # attached HEAD: this worktree is not detached in normal branch checkouts.
-        code, out = _run_restamp_provenance(_PACKAGE_ROOT)
-        assert code != 0
-        assert "not detached" in out
-
-        # dirty base tree: uncommitted untracked path is enough to reject.
-        marker = os.path.join(base_worktree, "packages", "merus-test-data-generator", "__restamp_probe_dirt.txt")
-        with open(marker, "w", encoding="utf-8") as fh:
-            fh.write("restamp-provenance dirty marker")
-        try:
-            code, out = _run_restamp_provenance(base_worktree)
-            assert code != 0
-            assert "base worktree is not clean" in out
-        finally:
-            try:
-                os.remove(marker)
-            except FileNotFoundError:
-                pass
-
-        # different repository fails the repo-root identity check.
-        foreign = tmp_path / "foreign"
-        foreign.mkdir()
-        import subprocess
-
-        subprocess.run(["git", "init", "--quiet"], cwd=foreign, check=True)
+    # wrong SHA: alter BASE_COMMIT inside the same process and assert that
+    # the head check compares against that expected value.
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(recorder, "BASE_COMMIT", "0000000000000000000000000000000000000000")
         with pytest.raises(SystemExit) as exc:
-            recorder._validate_base_worktree(str(foreign))
-        assert "base worktree is not in this repository" in str(exc.value)
-    finally:
-        _restore_baseline(baseline_text)
+            recorder._validate_base_worktree(base_worktree)
+    assert "base HEAD is" in str(exc.value)
+
+    shared_top_level = recorder._git("rev-parse", "--show-toplevel", cwd=recorder._PACKAGE_ROOT).strip()
+
+    def fake_git_not_detached(*args: str, cwd: str, text: bool = True) -> str:
+        if tuple(args) == ("rev-parse", "--show-toplevel"):
+            return shared_top_level + "\n"
+        if tuple(args) == ("rev-parse", "--abbrev-ref", "HEAD"):
+            return "main\n"
+        if tuple(args) == ("rev-parse", "HEAD"):
+            return recorder.BASE_COMMIT + "\n"
+        raise AssertionError(f"unexpected git command {args} from {cwd}")
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(recorder, "_git_common_dir", lambda _cwd: "/tmp/restamp-shared-common")
+        mp.setattr(recorder, "_git", fake_git_not_detached)
+        mp.setattr(recorder, "_status_paths", lambda _cwd, include_untracked=False: [])
+        mp.setattr(recorder, "_verify_file_vs_blob", lambda *_args, **_kwargs: None)
+        with pytest.raises(SystemExit) as exc:
+            recorder._validate_base_worktree(base_worktree)
+    assert "base worktree is not detached" in str(exc.value)
+
+    def fake_git_dirty(*args: str, cwd: str, text: bool = True) -> str:
+        if tuple(args) == ("rev-parse", "--show-toplevel"):
+            return shared_top_level + "\n"
+        if tuple(args) == ("rev-parse", "--abbrev-ref", "HEAD"):
+            return "HEAD\n"
+        if tuple(args) == ("rev-parse", "HEAD"):
+            return recorder.BASE_COMMIT + "\n"
+        raise AssertionError(f"unexpected git command {args} from {cwd}")
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(recorder, "_git_common_dir", lambda _cwd: "/tmp/restamp-shared-common")
+        mp.setattr(recorder, "_git", fake_git_dirty)
+        mp.setattr(
+            recorder,
+            "_status_paths",
+            lambda _cwd, include_untracked=False: ["tests/render_baseline.py"],
+        )
+        mp.setattr(recorder, "_verify_file_vs_blob", lambda *_args, **_kwargs: None)
+        with pytest.raises(SystemExit) as exc:
+            recorder._validate_base_worktree(base_worktree)
+    assert "base worktree is not clean" in str(exc.value)
+
+    # different repository fails the repo-root identity check.
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    import subprocess
+
+    subprocess.run(["git", "init", "--quiet"], cwd=foreign, check=True)
+    with pytest.raises(SystemExit) as exc:
+        recorder._validate_base_worktree(str(foreign))
+    assert "base worktree is not in this repository" in str(exc.value)
 
 
 def test_restamp_provenance_never_computes_cases_from_feature_tree():
@@ -1096,6 +1129,17 @@ def test_restamp_provenance_never_computes_cases_from_feature_tree():
                 called_names.add(func.attr)
     assert "compute_baseline" not in called_names, (
         "restamp mode reaches compute_baseline from the feature harness"
+    )
+    compute_imports = [
+        alias.name
+        for node in ast.walk(restamp_fn)
+        if isinstance(node, ast.ImportFrom)
+        and node.module in {"tests.render_baseline", "render_baseline"}
+        for alias in node.names
+        if alias.name == "compute_baseline"
+    ]
+    assert not compute_imports, (
+        "restamp mode imports compute_baseline from tests.render_baseline"
     )
 
 
@@ -1653,28 +1697,46 @@ def test_the_harness_is_verified_before_it_is_imported():
     with open(path, encoding="utf-8") as fh:
         tree = ast.parse(fh.read(), filename=path)
 
-    def harness_imports(node):
+    def harness_import_line_numbers(node):
         return [
             child.lineno
             for child in ast.walk(node)
-            if isinstance(child, ast.ImportFrom)
-            and child.module in {"tests.render_baseline", "render_baseline"}
+            if (
+                (isinstance(child, ast.Import) and any(
+                    alias.name in {"tests.render_baseline", "render_baseline"} for alias in child.names
+                ))
+                or (
+                    isinstance(child, ast.ImportFrom)
+                    and child.module in {"tests.render_baseline", "render_baseline"}
+                )
+            )
         ]
+
+    main = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
 
     module_level = [
         lineno
         for stmt in tree.body
         if isinstance(stmt, (ast.Import, ast.ImportFrom))
-        for lineno in harness_imports(stmt)
+        for lineno in harness_import_line_numbers(stmt)
     ]
     assert not module_level, (
         f"the harness is imported at module scope (line {module_level}), so it runs "
         f"before any verification can happen"
     )
 
-    main = next(
-        node for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    helper_functions = {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name != "main"
+        and harness_import_line_numbers(node)
+    }
+    assert helper_functions, (
+        "no top-level helper imports the harness; this check would be vacuous"
     )
     verify_calls = [
         node.lineno
@@ -1686,8 +1748,19 @@ def test_the_harness_is_verified_before_it_is_imported():
     assert verify_calls, "main() never verifies the harness"
 
     verify_line = min(verify_calls)
-    assert [lineno for lineno in harness_imports(main) if lineno > verify_line], (
-        "no harness import follows the verification, so nothing is being protected"
+    helper_calls = [
+        node.lineno
+        for node in ast.walk(main)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in helper_functions
+    ]
+    assert helper_calls, (
+        "main() never dispatches to a harness-importing helper after verification"
+    )
+    assert all(lineno > verify_line for lineno in helper_calls), (
+        "a harness-importing helper can be called before _verify_harness(), so the "
+        "untrusted module body can run first"
     )
 
     # No exemption for --check. An earlier revision of this test excused the
@@ -1697,8 +1770,12 @@ def test_the_harness_is_verified_before_it_is_imported():
     # compute_baseline() returned load_baseline_cases() would report every case
     # identical forever. --check IS the standalone gate. Every harness import in
     # main(), on either path, must follow the verification.
-    unguarded = [lineno for lineno in harness_imports(main) if lineno < verify_line]
-    assert not unguarded, (
-        f"the harness is imported at line {unguarded} before _verify_harness() at "
-        f"line {verify_line}; --check is not exempt, it is the gate"
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_run_check_mode"
+        and node.lineno < verify_line
+        for node in ast.walk(main)
+    ), (
+        "a --check helper can run before _verify_harness(); --check is not exempt, it is the gate"
     )
