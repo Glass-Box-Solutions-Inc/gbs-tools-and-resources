@@ -1023,6 +1023,7 @@ def test_restamp_provenance_refuses_case_drift_without_writing():
 
 def test_restamp_provenance_refuses_untrusted_base_worktree(tmp_path):
     from tests.render_baseline import BASELINE_PATH, _PACKAGE_ROOT
+    recorder = _recorder_module()
 
     baseline_text = open(BASELINE_PATH, encoding="utf-8").read()
     base_worktree = _trusted_base_worktree()
@@ -1030,6 +1031,8 @@ def test_restamp_provenance_refuses_untrusted_base_worktree(tmp_path):
         pytest.skip("ajc72-recorder worktree is not available")
 
     try:
+        recorder._validate_base_worktree(base_worktree)
+
         # wrong SHA: patch BASE_COMMIT in the running script, leaving the same external
         # worktree. The worktree stays detached at b0e77..., so any other commit is
         # rejected as the wrong SHA case.
@@ -1060,9 +1063,12 @@ def test_restamp_provenance_refuses_untrusted_base_worktree(tmp_path):
         # different repository fails the repo-root identity check.
         foreign = tmp_path / "foreign"
         foreign.mkdir()
-        code, out = _run_restamp_provenance(str(foreign))
-        assert code != 0
-        assert "not a git" in (out.lower()) or "not a git repository" in out.lower()
+        import subprocess
+
+        subprocess.run(["git", "init", "--quiet"], cwd=foreign, check=True)
+        with pytest.raises(SystemExit) as exc:
+            recorder._validate_base_worktree(str(foreign))
+        assert "base worktree is not in this repository" in str(exc.value)
     finally:
         _restore_baseline(baseline_text)
 

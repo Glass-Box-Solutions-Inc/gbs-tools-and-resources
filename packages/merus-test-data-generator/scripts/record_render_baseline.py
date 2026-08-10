@@ -115,6 +115,13 @@ def _status_paths(cwd: str, include_untracked: bool = False) -> list[str]:
     return sorted(set(paths))
 
 
+def _git_common_dir(cwd: str) -> str:
+    raw = _git("rev-parse", "--git-common-dir", cwd=cwd).strip()
+    if not os.path.isabs(raw):
+        raw = os.path.join(cwd, raw)
+    return os.path.realpath(raw)
+
+
 def _exit(msg: str) -> None:
     sys.exit(msg)
 
@@ -211,7 +218,7 @@ def _refuse_unless_clean_base_checkout(base_commit: str) -> tuple[str, list[str]
 
 
 def _verify_file_vs_blob(repo_root: str, base_root: str, relative: str) -> None:
-    package_rel = os.path.relpath(_PACKAGE_ROOT, repo_root)
+    package_rel = os.path.relpath(base_root, repo_root)
     blob_path = os.path.join(package_rel, relative)
     blob = _git("show", f"{BASE_COMMIT}:{blob_path}", cwd=repo_root, text=False)
     with open(os.path.join(base_root, relative), "rb") as fh:
@@ -226,11 +233,13 @@ def _verify_file_vs_blob(repo_root: str, base_root: str, relative: str) -> None:
 def _validate_base_worktree(base_worktree: str) -> tuple[str, str]:
     try:
         base_repo = _git("rev-parse", "--show-toplevel", cwd=base_worktree).strip()
+        feature_repo = _git("rev-parse", "--show-toplevel", cwd=_PACKAGE_ROOT).strip()
+        base_common = _git_common_dir(base_worktree)
+        feature_common = _git_common_dir(_PACKAGE_ROOT)
     except subprocess.CalledProcessError as exc:
         _exit(f"refusing to restamp: invalid base worktree {base_worktree!r}: {exc}")
 
-    feature_repo = _git("rev-parse", "--show-toplevel", cwd=_PACKAGE_ROOT).strip()
-    if os.path.realpath(base_repo) != os.path.realpath(feature_repo):
+    if base_common != feature_common:
         _exit("refusing to restamp: base worktree is not in this repository")
 
     head_ref = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=base_worktree).strip()
