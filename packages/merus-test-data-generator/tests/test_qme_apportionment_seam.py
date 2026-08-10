@@ -28,7 +28,6 @@ question, and the rest of the document silently rewrites itself. So the seam
 
 from __future__ import annotations
 
-import os
 import random
 import re
 from datetime import date
@@ -758,48 +757,46 @@ def test_ajc66_variant_content_on_the_same_context_stays_inert_here(qme, injury)
 #:     python -m pytest tests/test_qme_apportionment_seam.py -k record_helper -s
 QME_UNGOVERNED_DIGESTS = {
     "qme:ame": {
-        "pdf": "24b1c3ac41ae2868a67b4f9ca35175b35b99f0100a84007b2d851bbca2f5f557",
         "rng": "b70af22432f21fbc0789cddc9eff7f26b468c013ca13e4ef15775c4fcfdefc4e",
-        "story": "32047b625165fdaee143dbdbb89eb7ccc873736a39be2eb4f4006cf741a2c831",
-        "text": "bd3f1da7316a3cbacf2e81486b2ed2f40be87f5dc705b2c5817995177443a445"
+        "story": "32047b625165fdaee143dbdbb89eb7ccc873736a39be2eb4f4006cf741a2c831"
     },
     "qme:none": {
-        "pdf": "77ab452c526fd3b86ebe808c1de81bcb525d459bd855741eca09f592de0dc4e0",
         "rng": "b70af22432f21fbc0789cddc9eff7f26b468c013ca13e4ef15775c4fcfdefc4e",
-        "story": "32047b625165fdaee143dbdbb89eb7ccc873736a39be2eb4f4006cf741a2c831",
-        "text": "3102b77fb6c98033b6f7b60abe7aa3dbe642c5740b6e69bf5f34bc866201c3af"
+        "story": "32047b625165fdaee143dbdbb89eb7ccc873736a39be2eb4f4006cf741a2c831"
     },
     "qme:supplemental": {
-        "pdf": "5576ae1fb661a2f14f4dbf8fc5cb5a058cebf40da8df5aff431c5cc1aea536f6",
         "rng": "b70af22432f21fbc0789cddc9eff7f26b468c013ca13e4ef15775c4fcfdefc4e",
-        "story": "32047b625165fdaee143dbdbb89eb7ccc873736a39be2eb4f4006cf741a2c831",
-        "text": "c118f5e1f172644100f13ff431a6ddb444ad86109d75441e5375f888387aa844"
+        "story": "32047b625165fdaee143dbdbb89eb7ccc873736a39be2eb4f4006cf741a2c831"
     }
 }
 
 _QME_VARIANTS = {"qme:none": None, "qme:ame": "ame", "qme:supplemental": "supplemental_qme"}
 
-#: ``rng`` and ``story`` are comparable in any interpreter. ``text`` and ``pdf``
-#: are not, and the reason is a substrate defect, not a flaw in the guard:
-#: ``data/content_pools.py`` builds two pools with ``list(set(...))``, whose
-#: order follows the interpreter's string hash seed. The QME report draws from
-#: those pools; the templates AJC-66 baselined do not, which is why that
-#: baseline pins all four unconditionally and this one cannot.
+#: Only ``rng`` and ``story`` are recorded as absolute constants, and the reason
+#: is a substrate defect worth stating plainly: ``data/content_pools.py`` builds
+#: two pools with ``list(set(...))``, whose order follows the interpreter's
+#: string hashing. The QME report draws from those pools, so its rendered
+#: *words* — and therefore its PDF bytes — differ between Python versions even
+#: with ``PYTHONHASHSEED=0`` pinned. Measured, not assumed: the same tree
+#: renders text digest ``bd3f1da7…`` under 3.10 and ``86208705…`` under 3.12,
+#: while ``rng`` is ``b70af224…`` under both.
 #:
-#: So the words are pinned exactly where they are meaningful — under the
-#: ``PYTHONHASHSEED=0`` the consuming engine and the CI step both set — and the
-#: stream and structure are pinned everywhere. Comparing hash-dependent digests
-#: in an interpreter that randomises them would fail for a reason that has
-#: nothing to do with this seam, and teaching people to ignore a red test is
-#: worse than pinning less.
-_HASH_STABLE = os.environ.get("PYTHONHASHSEED") == "0"
-_ALWAYS_COMPARABLE = ("rng", "story")
+#: So the words are asserted *relatively* instead — ungoverned against governed
+#: inside one process, which is precisely the seam's claim and is immune to a
+#: dependency or interpreter bump. An absolute text/pdf pin here would duplicate
+#: the wc-synthetic-caseload-engine golden corpora, which pin the dependency
+#: versions properly and print them beside a failure, while going red for
+#: reasons that have nothing to do with this seam. A test that cries wolf on a
+#: Python upgrade teaches people to re-record it, which is how a real regression
+#: gets waved through.
+#:
+#: The templates AJC-66 baselined do not touch those pools, which is why that
+#: baseline pins all four digests and this one cannot.
+_ABSOLUTE_KEYS = ("rng", "story")
 
 
-def _comparable(digest: dict) -> dict:
-    if _HASH_STABLE:
-        return digest
-    return {k: digest[k] for k in _ALWAYS_COMPARABLE}
+def _absolute(digest: dict) -> dict:
+    return {k: digest[k] for k in _ABSOLUTE_KEYS}
 
 
 def _qme_digest(variant, extra_context=None):
@@ -812,31 +809,36 @@ def _qme_digest(variant, extra_context=None):
 def test_ungoverned_qme_render_matches_its_recorded_digests(label):
     """The committed baseline for the default path.
 
-    Four independent digests, because each sees a class of change the others
-    miss: plain text misses a restyled heading, the flowable fingerprint misses
-    reordered draws of equal consumption, the rng trace says everything about
-    order and nothing about layout, and the PDF is the artifact that ships.
+    The rng trace is the one that matters here: it is an *ordered* record of
+    every ``random`` call the render makes, so it catches a seam that consumed a
+    different number of draws, and also one that consumed the same number in a
+    different order — which a final-state comparison cannot see. The story
+    fingerprint catches a restyled heading or a resized spacer that plain text
+    would miss.
 
     Recorded against ``origin/main`` and verified equal there before this seam
-    landed — which is the property that makes the numbers mean anything.
+    landed, which is the property that makes the numbers mean anything.
     """
     expected = QME_UNGOVERNED_DIGESTS[label]
     assert expected, f"{label} has no recorded digests; run the recorder"
-    assert _comparable(_qme_digest(_QME_VARIANTS[label])) == _comparable(expected)
+    assert _absolute(_qme_digest(_QME_VARIANTS[label])) == expected
 
 
 @pytest.mark.parametrize("label", sorted(_QME_VARIANTS))
-def test_governance_absent_by_any_spelling_matches_the_same_digests(label):
-    """Every "not governed" spelling is the recorded default.
+def test_governance_absent_by_any_spelling_is_byte_identical(label):
+    """Every "not governed" spelling renders the same document, to the byte.
 
     Absent, ``None`` and ``{}`` are three different inputs that must produce one
-    output. This is the assertion a scratch sweep could not make, because a
-    scratch run comparing two ungoverned renders can only ever agree with itself.
+    output. Compared against a baseline computed in this same process, so all
+    four digests participate — including the PDF bytes a consumer ships, which
+    could not be asserted against a recorded constant.
     """
-    expected = _comparable(QME_UNGOVERNED_DIGESTS[label])
+    variant = _QME_VARIANTS[label]
+    baseline = _qme_digest(variant)
+    assert _absolute(baseline) == QME_UNGOVERNED_DIGESTS[label]
+
     for extra in ({}, {"apportionment": None}, {"apportionment": {}, "causation": {}}):
-        actual = _comparable(_qme_digest(_QME_VARIANTS[label], extra))
-        assert actual == expected, f"{label} moved on {extra!r}"
+        assert _qme_digest(variant, extra) == baseline, f"{label} moved on {extra!r}"
 
 
 def test_governed_renders_change_the_pdf_but_not_the_rng_trace():
