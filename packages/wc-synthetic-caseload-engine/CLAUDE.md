@@ -384,7 +384,7 @@ Consequences worth knowing before touching it:
   two streams cannot disturb each other whatever their salts. What a collision would cost is
   correlation — every demographic decided by one number.
 - **The aggregate moved and was reported, not tuned.** Reproducing note C's per-condition
-  marginals forces P(any condition) to about 0.71, against the design record's expected 0.55.
+  marginals forces P(any condition) to about 0.76, against the design record's expected 0.55.
   Both are pinned: `P_ANY_CONDITION_MEASURED` and `P_ANY_CONDITION_EXPECTED`, the second
   carrying its own falsification note. The counsel-confirmed 0.33 documentation union is held
   exactly regardless, because the gate divides by the realised aggregate.

@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import math
 from collections import Counter, defaultdict
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -43,10 +44,13 @@ from wc_caseload_engine.clinical_grounding import (
     P_ANY_CONDITION_MEASURED,
     P_BILLING_CODED,
     P_SURFACES_IN_FILE,
+    RISK_MULTIPLIERS,
     SEXES,
+    SMOKING_DISTRIBUTION,
     SMOKING_STATUSES,
     age_band_rate,
     band_contains,
+    bmi_distribution,
 )
 from wc_caseload_engine.manifests import CASE_FACTS_NAME, MANIFEST_NAME, generate_case
 from wc_caseload_engine.medical_history import (
@@ -242,14 +246,36 @@ class TestTheGroundingTablesAreHonest:
 # ---------------------------------------------------------------------------
 
 
+def _cell_rate(condition: str, age: int, sex: str, bmi: str, smoking: str) -> float:
+    """The realised probability for one applicant cell, mixture-weighted."""
+    weights = archetype_weights(age, bmi, smoking)
+    probabilities = dict(condition_probabilities(condition, age, sex, bmi, smoking))
+    return sum(weights[name] * probabilities[name] for name in weights)
+
+
+def _population_rate(condition: str, age: int, sex: str) -> float:
+    """The cell rates integrated over the population the sampler actually draws."""
+    smoking = {status: knob.value for status, knob in SMOKING_DISTRIBUTION.items()}
+    return sum(
+        bmi_share * smoke_share * _cell_rate(condition, age, sex, band, status)
+        for band, bmi_share in bmi_distribution(age).items()
+        for status, smoke_share in smoking.items()
+    )
+
+
 class TestTheCalibrationSolves:
-    def test_the_mixture_hits_its_target_for_every_reachable_cell(self) -> None:
+    def test_the_population_hits_its_target_for_every_reachable_age(self) -> None:
         """The solve, checked analytically before any sampling happens.
 
-        Sampling can only ever measure this to within a standard error; the solve
-        itself is exact, so the exact version is asserted first. A failure here says
-        the calibration is broken; a failure in the cohort test with this one green
-        says the *draw* is.
+        What is pinned is the **population aggregate**, not each cell. The first
+        version of this guard asserted per-cell equality and passed — which was the
+        defect, not the proof: solving per cell made every cell hit the marginal
+        exactly and cancelled every risk gradient underneath it. Review caught that the
+        assertion and the bug were the same statement.
+
+        Sampling can only measure this to within a standard error; the solve is exact,
+        so the exact version is asserted first. A failure here says the calibration is
+        broken; a failure in the cohort test with this one green says the *draw* is.
         """
         checked = 0
         for key in CONDITION_CATALOG:
@@ -258,28 +284,138 @@ class TestTheCalibrationSolves:
                     citation = age_band_rate(key, age, sex)
                     if citation is None:
                         continue
-                    for bmi in BMI_BANDS:
-                        for smoking in SMOKING_STATUSES:
-                            weights = archetype_weights(age, bmi, smoking)
-                            probabilities = dict(
-                                condition_probabilities(key, age, sex, bmi, smoking)
-                            )
-                            realised = sum(
-                                weights[name] * probabilities[name] for name in weights
-                            )
-                            assert realised == pytest.approx(citation.value, abs=1e-9), (
-                                f"{key} at age {age}, {sex}, {bmi}, {smoking}: the "
-                                f"mixture yields {realised}, its source says "
-                                f"{citation.value}"
-                            )
-                            checked += 1
-        assert checked > 500, f"only {checked} cells exercised; the sweep has shrunk"
+                    realised = _population_rate(key, age, sex)
+                    assert realised == pytest.approx(citation.value, abs=1e-9), (
+                        f"{key} at age {age}, {sex}: the population yields {realised}, "
+                        f"its source says {citation.value}"
+                    )
+                    checked += 1
+        assert checked > 60, f"only {checked} cells exercised; the sweep has shrunk"
 
     def test_a_target_outside_the_probability_bounds_is_refused(self) -> None:
         """Clamping silently would leave a marginal wrong by an amount nothing reports."""
-        weights = tuple(sorted(archetype_weights(45, "obese", "never").items()))
         with pytest.raises(ValueError, match="outside the archetype probability bounds"):
-            calibrate("hypertension", weights, 0.999)
+            calibrate("hypertension", 45, 0.999)
+
+
+class TestRiskGradientsSurviveCalibration:
+    """Finding 1. The demographic fields have to *do* something.
+
+    Solving the scale per demographic cell made every cell reproduce the age/sex
+    marginal exactly — which sounds like success and is the opposite. A severely obese
+    current smoker and a normal-weight never-smoker of the same age came out with
+    identical diabetes risk, so ``bmi_band`` and ``smoking_status`` were drawn, stored,
+    and never consulted by anything. The fields exist because those differences are
+    real and because note C's surgical-clearance thresholds (§4.1 BMI 40, §4.2 HbA1c,
+    §4.3 smoking cessation) turn on them downstream.
+
+    So both halves are asserted together, and they are in tension by design: the
+    gradient must be visible *and* the population aggregate must still land on its
+    citation. Either alone is satisfiable by a wrong implementation.
+    """
+
+    GRADED = (
+        ("diabetes", 45, "female"),
+        ("hypertension", 45, "male"),
+        ("lumbar_disc_degeneration", 45, "female"),
+        ("knee_cartilage_defect", 45, "male"),
+    )
+
+    @pytest.mark.parametrize(("condition", "age", "sex"), GRADED)
+    def test_body_mass_moves_the_risk_it_is_documented_to_move(
+        self, condition: str, age: int, sex: str
+    ) -> None:
+        rates = {
+            band: _cell_rate(condition, age, sex, band, "never") for band in BMI_BANDS
+        }
+        ordered = [rates[band] for band in BMI_BANDS]
+        assert ordered == sorted(ordered), (
+            f"{condition}: risk does not rise monotonically with body mass — {rates}"
+        )
+        assert rates["severely_obese"] > rates["normal_or_under"] * 1.25, (
+            f"{condition}: the severely obese cell is only "
+            f"{rates['severely_obese'] / rates['normal_or_under']:.2f}x the "
+            "normal-weight cell, which is not a gradient a reader would notice"
+        )
+
+    def test_the_one_condition_whose_gradient_runs_downhill(self) -> None:
+        """Osteoporosis. A table where every multiplier ran the same way would encode
+        "heavier is worse" as a law, so the inverted case is asserted explicitly."""
+        light = _cell_rate("osteoporosis", 68, "female", "normal_or_under", "never")
+        heavy = _cell_rate("osteoporosis", 68, "female", "severely_obese", "never")
+        assert light > heavy, (
+            f"osteoporosis risk is {heavy:.4f} in the severely obese cell against "
+            f"{light:.4f} in the normal-weight one; mechanical loading protects bone "
+            "density and this gradient has been flattened or inverted"
+        )
+
+    def test_smoking_moves_the_risks_it_is_documented_to_move(self) -> None:
+        for condition, age, sex in (
+            ("depression_anxiety", 45, "female"),
+            ("osteoporosis", 68, "female"),
+            ("diabetes", 45, "male"),
+        ):
+            never = _cell_rate(condition, age, sex, "overweight", "never")
+            current = _cell_rate(condition, age, sex, "overweight", "current")
+            assert current > never, (
+                f"{condition}: current smokers are at {current:.4f} against "
+                f"{never:.4f} for never-smokers — the smoking gradient is flat"
+            )
+
+    def test_a_flat_gradient_is_flat_because_its_source_is_silent(self) -> None:
+        """Three conditions carry no gradient, and that is the honest answer.
+
+        Asserted rather than left implicit so that adding a multiplier to one of them
+        has to be a deliberate edit with a source behind it, not a drive-by.
+        """
+        for condition in ("cervical_disc_bulge", "lumbar_facet_arthropathy", "hip_labral_tear"):
+            gradient = RISK_MULTIPLIERS[condition]
+            assert set(gradient.bmi.values()) == {1.0}, f"{condition} grew a BMI gradient"
+            assert set(gradient.smoking.values()) == {1.0}
+            assert "Deliberately flat" in gradient.rationale
+
+    def test_the_gradient_does_not_move_the_population_aggregate(self) -> None:
+        """The tension, stated as one assertion.
+
+        A gradient that shifted the aggregate would be trading a calibrated marginal
+        for a realistic-looking spread, which is the wrong trade: the marginals are the
+        thing this sampler exists to reproduce.
+        """
+        for condition, age, sex in self.GRADED:
+            citation = age_band_rate(condition, age, sex)
+            assert citation is not None
+            assert _population_rate(condition, age, sex) == pytest.approx(
+                citation.value, abs=1e-9
+            )
+
+    def test_every_catalog_condition_has_a_documented_gradient_entry(self) -> None:
+        """A condition with no entry would raise at draw time, not read as flat."""
+        assert set(RISK_MULTIPLIERS) == set(CONDITION_CATALOG)
+        for condition, gradient in RISK_MULTIPLIERS.items():
+            assert set(gradient.bmi) == set(BMI_BANDS), condition
+            assert set(gradient.smoking) == set(SMOKING_STATUSES), condition
+            assert gradient.rationale.strip() and gradient.source.strip(), condition
+
+    def test_the_drawn_bmi_cohort_reproduces_the_closed_form_distribution(self) -> None:
+        """Two expressions of one distribution, checked against each other.
+
+        ``bmi_distribution`` is what the calibration integrates over and
+        ``_draw_bmi_band`` is what the sampler actually draws. If they disagreed, the
+        aggregate would be pinned against a population that does not exist.
+        """
+        for age in (25, 45, 70):
+            cohort = _sample(3000, base=11_000_000 + age, applicant={"age": age})
+            realised = Counter(h.demographics.bmi_band for h in cohort)
+            expected = bmi_distribution(cohort[0].demographics.age)
+            for band, share in expected.items():
+                assert realised[band] / 3000 == pytest.approx(share, abs=0.03), (
+                    f"age {age}, {band}: drew {realised[band] / 3000:.3f} against a "
+                    f"closed form of {share:.3f}"
+                )
+
+    def test_ages_below_the_cdc_series_reuse_its_youngest_band(self) -> None:
+        """An extrapolation, named rather than buried — every applicant has a body."""
+        assert bmi_distribution(17) == bmi_distribution(25)
 
     def test_every_archetype_can_produce_every_condition(self) -> None:
         """The anti-fingerprint guarantee, at its source rather than in the corpus.
@@ -394,21 +530,67 @@ class TestTheCorpusReproducesItsSources:
 
 #: How far the archetype posterior may go before a condition set is a giveaway.
 #:
-#: Measured at 0.934, on ``{diabetes, hypertension, lumbar_disc_degeneration}`` —
-#: which is the *metabolic* profile almost by definition, and a corpus where that
-#: combination did **not** point at metabolic burden would be the unrealistic one. The
-#: bound is set above the measurement rather than at it because the quantity under
+#: The bound is set above the measurement rather than at it because the quantity under
 #: control is "no set is a certainty", not "no set is informative": a fingerprint is a
-#: deterministic identifier, and evidence is not.
+#: deterministic identifier, and evidence is not. A corpus where
+#: ``{diabetes, hypertension}`` did **not** point at metabolic burden would be the
+#: unrealistic one.
+#:
+#: **It is measured per claim shape, and the first version was not.** Pooling the seven
+#: shapes into one cohort put the worst at 0.934 and looked comfortable; conditioning on
+#: the claim's own body parts — which any observer reads straight off the caption — put
+#: it at 0.989, on ``{cervical_disc_bulge}`` alone from a cervical-plus-wrist claim.
+#: Pooling had been averaging a decisive shape against six that could not produce the
+#: same set. The archetype affinities were compressed in response (see
+#: ``HEALTH_ARCHETYPES``); the current per-shape worst is 0.828.
 MAX_ARCHETYPE_POSTERIOR = 0.97
 
 #: Occurrences a condition set needs before its archetype spread means anything.
 #:
-#: One observation of a set cannot testify to uniqueness. This is why the cohort below
-#: is large: the structural guarantee is that every archetype *can* produce every set,
-#: and a rare set drawn twenty times will look degenerate long before it looks like
-#: what it is.
-MIN_SET_SUPPORT = 20
+#: One observation of a set cannot testify to uniqueness, and a *small* number is worse
+#: than useless here because it manufactures the very thing being measured. At the old
+#: threshold of twenty, a set whose true worst posterior is 0.83 lands unanimous by pure
+#: binomial luck once every ~40 sets (0.83^20 = 0.024), and roughly a hundred and fifty
+#: sets clear support across the seven shapes. The probe would have been reporting
+#: sampling noise as a fingerprint — or, worse, reporting one and being tuned away.
+#:
+#: Sixty makes that vanishingly unlikely (0.83^60 = 1.6e-5) while still covering ~88% of
+#: every shape. The measured worst falls from 0.913 to 0.825 purely by removing the
+#: noise, which is the tell that twenty was measuring the wrong thing.
+MIN_SET_SUPPORT = 60
+
+#: Applicants drawn per claim shape for the anti-fingerprint probes.
+#:
+#: Seven shapes at this size is 42k derivations, which is the runtime price of measuring
+#: the property on the object an observer actually sees, at a support threshold high
+#: enough to mean something. The cohorts are cached across the three probes below, so
+#: that is 42k in total and not 126k. Smaller cohorts push the common sets under
+#: ``MIN_SET_SUPPORT`` and the probes go vacuous rather than red, which is why the
+#: support and coverage floors are asserted before the property is.
+SHAPE_COHORT_N = 6000
+
+#: Share of a shape's applicants the supported sets must account for.
+#:
+#: Measured floor is 0.880, on ``lumbar_spine+shoulder`` — the richest shape, whose
+#: longer tail of distinct sets is exactly why it is the binding one. Set below the
+#: measurement because this is an anti-vacuity check, not a property: it exists so a
+#: probe that has quietly retreated into the tail fails instead of passing.
+MIN_SHAPE_COVERAGE = 0.85
+
+
+@cache
+def _shape_posteriors(
+    parts: tuple[str, ...], base: int
+) -> dict[frozenset[str], Counter[str]]:
+    """Archetype spread per condition set, for one claim shape.
+
+    Cached because three probes read the same cohorts and the derivation is pure. The
+    returned mapping is treated as read-only by every caller.
+    """
+    by_set: dict[frozenset[str], Counter[str]] = defaultdict(Counter)
+    for history in _sample(SHAPE_COHORT_N, base=base, parts=parts):
+        by_set[history.condition_keys()][history.archetype] += 1
+    return by_set
 
 
 class TestProfileMembershipIsNotAFingerprint:
@@ -426,12 +608,20 @@ class TestProfileMembershipIsNotAFingerprint:
     likely to be metabolically burdened, and a corpus that hid that would be less
     realistic, not more. What must not exist is a set that *settles* the question.
 
-    **Cohort shape is load-bearing.** These run over the one-and-two-region claims a
-    caseload actually contains. An artificial case naming all five gated regions makes
-    almost every applicant comorbid, so the sparse tail — nobody with anything — comes
-    back attributable to ``resilient`` alone. That is an artifact of a case shape the
-    corpus does not contain, and measuring the property on it would fail the sampler
-    for a claim nobody makes.
+    **Cohort shape is load-bearing, twice over.** These run over the one-and-two-region
+    claims a caseload actually contains. An artificial case naming all five gated
+    regions makes almost every applicant comorbid, so the sparse tail — nobody with
+    anything — comes back attributable to ``resilient`` alone. That is an artifact of a
+    case shape the corpus does not contain, and measuring the property on it would fail
+    the sampler for a claim nobody makes.
+
+    And the shapes are measured **separately**, never pooled. The body parts on a claim
+    are visible on the face of the file: an observer trying to recover the health
+    profile already knows the caption, so the posterior that matters is
+    ``P(archetype | conditions, body parts)``. Averaging over shapes answers a question
+    nobody is in a position to ask, and it hid a 0.989 posterior behind a 0.934 one for
+    a full review round. ``test_pooling_claim_shapes_would_have_hidden_the_leak`` keeps
+    that difference asserted rather than remembered.
 
     **What M4 adds.** The leakage anti-probe there makes the claim this one cannot:
     that a classifier trained on the *analyzer-visible artifacts* — rendered documents,
@@ -442,27 +632,26 @@ class TestProfileMembershipIsNotAFingerprint:
     document count or section length, which is note F's standing warning.
     """
 
-    def test_no_well_supported_condition_set_belongs_to_one_archetype(self) -> None:
-        cohort: list[Any] = []
-        for index, parts in enumerate(REALISTIC_PART_SETS):
-            cohort.extend(_sample(3000, base=8_000_000 + index * 10_000, parts=parts))
-
-        by_set: dict[frozenset[str], Counter[str]] = defaultdict(Counter)
-        for history in cohort:
-            by_set[history.condition_keys()][history.archetype] += 1
+    @pytest.mark.parametrize(
+        ("index", "parts"), list(enumerate(REALISTIC_PART_SETS)), ids=lambda v: str(v)
+    )
+    def test_no_well_supported_condition_set_belongs_to_one_archetype(
+        self, index: int, parts: tuple[str, ...]
+    ) -> None:
+        by_set = _shape_posteriors(parts, 8_000_000 + index * 10_000)
         supported = {
             key: spread
             for key, spread in by_set.items()
             if sum(spread.values()) >= MIN_SET_SUPPORT
         }
-        assert len(supported) >= 20, (
-            f"only {len(supported)} sets reached support {MIN_SET_SUPPORT}; the cohort "
-            "is too small for this assertion to mean anything"
+        assert len(supported) >= 5, (
+            f"{parts}: only {len(supported)} sets reached support {MIN_SET_SUPPORT}; "
+            "the cohort is too small for this assertion to mean anything"
         )
-        covered = sum(sum(s.values()) for s in supported.values()) / len(cohort)
-        assert covered > 0.90, (
-            f"supported sets cover only {covered:.1%} of the corpus, so the probe is "
-            "reading the tail rather than the corpus"
+        covered = sum(sum(s.values()) for s in supported.values()) / SHAPE_COHORT_N
+        assert covered > MIN_SHAPE_COVERAGE, (
+            f"{parts}: supported sets cover only {covered:.1%} of the shape, so the "
+            "probe is reading the tail rather than the corpus"
         )
 
         singleton = {
@@ -471,20 +660,19 @@ class TestProfileMembershipIsNotAFingerprint:
             if len(spread) == 1
         }
         assert not singleton, (
-            f"condition sets produced by exactly one archetype despite appearing "
-            f"{MIN_SET_SUPPORT}+ times: {dict(list(singleton.items())[:5])} — profile "
-            "membership is recoverable outright from the conditions"
+            f"{parts}: condition sets produced by exactly one archetype despite "
+            f"appearing {MIN_SET_SUPPORT}+ times: {dict(list(singleton.items())[:5])} "
+            "— profile membership is recoverable outright from the conditions"
         )
 
-    def test_no_condition_set_makes_an_archetype_a_near_certainty(self) -> None:
+    @pytest.mark.parametrize(
+        ("index", "parts"), list(enumerate(REALISTIC_PART_SETS)), ids=lambda v: str(v)
+    )
+    def test_no_condition_set_makes_an_archetype_a_near_certainty(
+        self, index: int, parts: tuple[str, ...]
+    ) -> None:
         """The quantitative half: informative is fine, decisive is not."""
-        cohort: list[Any] = []
-        for index, parts in enumerate(REALISTIC_PART_SETS):
-            cohort.extend(_sample(3000, base=8_000_000 + index * 10_000, parts=parts))
-        by_set: dict[frozenset[str], Counter[str]] = defaultdict(Counter)
-        for history in cohort:
-            by_set[history.condition_keys()][history.archetype] += 1
-
+        by_set = _shape_posteriors(parts, 8_000_000 + index * 10_000)
         worst_key: tuple[str, ...] = ()
         worst = 0.0
         for key, spread in by_set.items():
@@ -495,8 +683,46 @@ class TestProfileMembershipIsNotAFingerprint:
             if posterior > worst:
                 worst, worst_key = posterior, tuple(sorted(key))
         assert worst <= MAX_ARCHETYPE_POSTERIOR, (
-            f"{worst_key} identifies its archetype with posterior {worst:.3f}; a "
-            "condition set that settles the profile is a fingerprint"
+            f"{parts}: {worst_key} identifies its archetype with posterior "
+            f"{worst:.3f}; a condition set that settles the profile is a fingerprint"
+        )
+
+    def test_pooling_claim_shapes_would_have_hidden_the_leak(self) -> None:
+        """The control for the measurement itself, and the reason it is parametrized.
+
+        The first version of these probes pooled all seven claim shapes into one
+        cohort, and the pooling *diluted* the posterior: a set that is decisive on a
+        cervical-plus-wrist claim is diluted by every lumbar claim that produced the
+        same set for a different reason. That is not a defensible average, because
+        **body parts are visible on the face of the file** — an observer reads the
+        claim shape off the caption and never has to average over shapes at all.
+
+        So the pooled number is computed here alongside the per-shape worst, and the
+        two are asserted to differ. If they ever stop differing, the parametrization
+        above has stopped buying anything and this comment is wrong.
+        """
+        pooled: dict[frozenset[str], Counter[str]] = defaultdict(Counter)
+        per_shape_worst = 0.0
+        for index, parts in enumerate(REALISTIC_PART_SETS):
+            by_set = _shape_posteriors(parts, 8_000_000 + index * 10_000)
+            for key, spread in by_set.items():
+                if sum(spread.values()) >= MIN_SET_SUPPORT:
+                    posterior = max(spread.values()) / sum(spread.values())
+                    per_shape_worst = max(per_shape_worst, posterior)
+                pooled[key].update(spread)
+
+        pooled_worst = max(
+            (
+                max(spread.values()) / sum(spread.values())
+                for spread in pooled.values()
+                if sum(spread.values()) >= MIN_SET_SUPPORT
+            ),
+            default=0.0,
+        )
+        assert per_shape_worst > pooled_worst, (
+            f"per-shape worst {per_shape_worst:.4f} is no higher than the pooled "
+            f"{pooled_worst:.4f}; pooling has stopped hiding anything and the "
+            "parametrization above is no longer earning its runtime"
         )
 
     def test_within_profile_variation_actually_fires(self) -> None:
@@ -564,11 +790,18 @@ class TestTheDocumentationGate:
     def test_the_true_prevalence_is_higher_than_the_documented_one(self) -> None:
         """The finding, pinned so it cannot drift back unnoticed.
 
-        Note C's per-condition marginals force an aggregate near 0.71, not the 0.55
+        Note C's per-condition marginals force an aggregate near 0.76, not the 0.55
         the design record expected. SME ruling 5 made the aggregate a *derived check*
         rather than an asserted knob, which is the licence to report it moved instead
         of tuning the sampler until it agreed. Both numbers are asserted: the one that
         holds, and the one that does not.
+
+        The measured figure is the *second* one this build has recorded — it was 0.71
+        until compressing the archetype affinities closed the anti-fingerprint gap.
+        That is the tolerance doing its job rather than a defect: ``abs=0.03`` is wide
+        enough to absorb sampling noise and narrow enough that a five-point structural
+        move reddens this test and forces the knob's rationale to be rewritten, which
+        is exactly what happened.
         """
         cohort: list[Any] = []
         for index, parts in enumerate(REALISTIC_PART_SETS):

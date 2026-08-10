@@ -80,9 +80,12 @@ from wc_caseload_engine.clinical_grounding import (
     OVERWEIGHT_SHARE_OF_NON_OBESE,
     P_BILLING_CODED,
     P_SURFACES_IN_FILE,
+    RISK_MULTIPLIERS,
     SEVERE_SHARE_OF_OBESE,
     SMOKING_DISTRIBUTION,
     Knob,
+    age_band_rate,
+    bmi_distribution,
 )
 from wc_caseload_engine.seeds import ANCHOR_DATE, CaseSeed, derive_seed
 
@@ -360,45 +363,45 @@ HEALTH_ARCHETYPES: dict[str, HealthArchetype] = {
         name="resilient",
         base_weight=0.36,
         affinity={},
-        default_affinity=0.22,
+        default_affinity=0.85,
     ),
     "metabolic": HealthArchetype(
         name="metabolic",
         base_weight=0.20,
         affinity={
-            "diabetes": 5.0,
-            "hypertension": 3.2,
-            "knee_cartilage_defect": 1.6,
-            "lumbar_disc_degeneration": 1.3,
-            "depression_anxiety": 1.1,
+            "diabetes": 2.40,
+            "hypertension": 1.77,
+            "knee_cartilage_defect": 1.21,
+            "lumbar_disc_degeneration": 1.11,
+            "depression_anxiety": 1.04,
         },
-        default_affinity=0.8,
+        default_affinity=0.93,
     ),
     "degenerative": HealthArchetype(
         name="degenerative",
         base_weight=0.22,
         affinity={
-            "lumbar_disc_degeneration": 2.6,
-            "lumbar_facet_arthropathy": 2.6,
-            "cervical_disc_bulge": 2.2,
-            "rotator_cuff_tear": 2.4,
-            "knee_cartilage_defect": 2.4,
-            "hip_labral_tear": 2.2,
-            "osteoporosis": 1.8,
+            "lumbar_disc_degeneration": 1.56,
+            "lumbar_facet_arthropathy": 1.56,
+            "cervical_disc_bulge": 1.42,
+            "rotator_cuff_tear": 1.49,
+            "knee_cartilage_defect": 1.49,
+            "hip_labral_tear": 1.42,
+            "osteoporosis": 1.28,
         },
-        default_affinity=0.6,
+        default_affinity=0.86,
     ),
     "psych_burdened": HealthArchetype(
         name="psych_burdened",
         base_weight=0.12,
-        affinity={"depression_anxiety": 4.4},
-        default_affinity=0.9,
+        affinity={"depression_anxiety": 2.19},
+        default_affinity=0.97,
     ),
     "multimorbid": HealthArchetype(
         name="multimorbid",
         base_weight=0.10,
         affinity={},
-        default_affinity=2.8,
+        default_affinity=2.00,
     ),
 }
 """Five profiles, tuned for correlation rather than for level.
@@ -406,19 +409,38 @@ HEALTH_ARCHETYPES: dict[str, HealthArchetype] = {
 Level is the calibration's job. What these numbers decide is which conditions travel
 *together* — a metabolic applicant's diabetes and hypertension arriving as a pair, a
 degenerative applicant's findings clustering in the musculoskeletal system — and
-therefore how far the aggregate "has at least one condition" rate sits below the
-naive independent product. ``resilient`` carries the largest single share on purpose:
-without a substantial genuinely-healthy mass, every synthetic applicant is comorbid
-and the corpus stops looking like a caseload.
+therefore how far the aggregate "has at least one condition" rate sits below the naive
+independent product.
+
+**The spread is deliberately narrower than it first shipped, and the reason is the
+anti-fingerprint bound.** The first table ran ``resilient`` at 0.22 against
+``multimorbid`` at 2.8 — nearly a thirteenfold spread — which made a *sparse* condition
+set almost conclusive: on a cervical-plus-wrist claim, "cervical disc bulge and nothing
+else" came back ``resilient`` in 634 of 641 cases, a posterior of 0.989. Review found
+it by conditioning the posterior on the claim's own body parts, which is the right way
+round: **body parts are visible on the face of the file**, so an observer never has to
+average over claim shapes the way the pooled measurement did.
+
+Compressing toward 1.0 costs correlation and buys separability, and that trade is the
+honest one to make here: an archetype that can be *read off* the conditions is not a
+latent profile at all. The aggregate rose from 0.71 to about 0.76 as a result, which is
+the visible price and is pinned in ``P_ANY_CONDITION_MEASURED``.
+
+``resilient`` still carries the largest single share, because without a substantial
+genuinely-healthy mass every synthetic applicant is comorbid and the corpus stops
+looking like a caseload.
 """
 
 #: How demographics steer archetype membership. Multiplicative on the base weight.
 #:
-#: These are the risk gradients note C documents, expressed where they belong. An
-#: obese applicant is not given diabetes directly — that would need a second, private
-#: calibration nothing checks. They are made *more likely to be metabolic*, and the
-#: metabolic profile's taste for diabetes does the rest, which keeps one mechanism
-#: doing one job.
+#: This is the *correlation* half of the risk story: an obese applicant is made more
+#: likely to be metabolic, and the metabolic profile's taste for diabetes and
+#: hypertension then makes those two arrive together. What it deliberately does **not**
+#: carry is per-condition dose-response — steering cannot express that knee cartilage
+#: responds to body mass more steeply than a lumbar disc does, because an archetype
+#: shifts every one of its conditions at once. That is
+#: :data:`~wc_caseload_engine.clinical_grounding.RISK_MULTIPLIERS`' job, and the two
+#: mechanisms are kept apart because they answer different questions.
 _BMI_STEER: dict[str, dict[str, float]] = {
     "normal_or_under": {"resilient": 1.35, "metabolic": 0.55, "multimorbid": 0.6},
     "overweight": {"resilient": 1.0, "metabolic": 1.0, "multimorbid": 1.0},
@@ -477,33 +499,56 @@ def archetype_weights(
     return {name: weight / total for name, weight in weights.items()}
 
 
-def _clamped(scale: float, affinity: float) -> float:
-    return min(_P_CEILING, max(_P_FLOOR, scale * affinity))
+def _clamped(scale: float, affinity: float, multiplier: float = 1.0) -> float:
+    return min(_P_CEILING, max(_P_FLOOR, scale * affinity * multiplier))
 
 
-def _mixture_rate(scale: float, weights: dict[str, float], condition: str) -> float:
+def _cell_rate(scale: float, condition: str, age: int, bmi: str, smoking: str) -> float:
+    """The mixture rate for one demographic cell at a given scale."""
+    multiplier = RISK_MULTIPLIERS[condition].multiplier(bmi, smoking)
     return sum(
-        weight * _clamped(scale, HEALTH_ARCHETYPES[name].affinity_for(condition))
-        for name, weight in weights.items()
+        weight
+        * _clamped(scale, HEALTH_ARCHETYPES[name].affinity_for(condition), multiplier)
+        for name, weight in archetype_weights(age, bmi, smoking).items()
     )
 
 
-def calibrate(condition: str, weights: tuple[tuple[str, float], ...], target: float) -> float:
-    """The scale where the archetype mixture reproduces *target*.
+def _population_rate(scale: float, condition: str, age: int) -> float:
+    """The rate across the whole (BMI x smoking) population at a given scale.
 
-    Bisection rather than an analytic inverse, because the clamp makes the mixture
-    piecewise linear with a kink per archetype and the closed form is a case analysis
-    nobody would want to maintain. Monotone non-decreasing in ``scale``, so bisection
-    is exact to the tolerance and has no local minima to fall into.
+    The integral the calibration has to hit. Every cell contributes at its own
+    multiplier, weighted by how common that cell is at this age, so a gradient can be
+    steep and the aggregate can still land on its citation.
+    """
+    smoking_weights = {status: knob.value for status, knob in SMOKING_DISTRIBUTION.items()}
+    return sum(
+        bmi_share * smoking_share * _cell_rate(scale, condition, age, bmi, smoking)
+        for bmi, bmi_share in bmi_distribution(age).items()
+        for smoking, smoking_share in smoking_weights.items()
+    )
 
-    Args:
-        weights: the mixture as a sorted tuple of pairs, not a dict — this function is
-            memoised, and a dict is not hashable.
+
+@cache
+def calibrate(condition: str, age: int, target: float) -> float:
+    """The one scale at which the *population* reproduces *target*.
+
+    Solved once per (condition, age) — **not** once per demographic cell, and that is
+    the whole point of this function's shape. Per-cell was the first version, and it
+    silently cancelled every risk gradient: each cell hit the age/sex marginal exactly,
+    so a severely obese current smoker and a normal-weight never-smoker came out with
+    identical diabetes risk, and ``bmi_band`` became a field that was drawn, stored and
+    never consulted. Review caught it. The fix is to pin the *aggregate* and let the
+    cells differ underneath it.
+
+    Bisection rather than an analytic inverse: the clamp puts a kink in every
+    archetype's contribution and the closed form is a case analysis nobody would want
+    to maintain. The population rate is monotone non-decreasing in ``scale``, so
+    bisection is exact to tolerance with no local minima to fall into.
 
     Raises:
-        ValueError: when *target* lies outside ``[_P_FLOOR, _P_CEILING]``, which means
-            a published rate the archetype floor cannot express. Silently clamping
-            would leave the marginal wrong by an amount nothing reports.
+        ValueError: when *target* lies outside what the bounds can express — a
+            published rate the floor or ceiling cannot reach. Clamping silently would
+            leave a marginal wrong by an amount nothing reports.
     """
     if not _P_FLOOR <= target <= _P_CEILING:
         raise ValueError(
@@ -512,15 +557,14 @@ def calibrate(condition: str, weights: tuple[tuple[str, float], ...], target: fl
             "it; widen the bounds deliberately rather than accepting a marginal that "
             "misses its own source"
         )
-    mixture = dict(weights)
     low, high = 0.0, 1.0
-    while _mixture_rate(high, mixture, condition) < target:
+    while _population_rate(high, condition, age) < target:
         high *= 2.0
         if high > 1e9:  # pragma: no cover - unreachable given the bounds check
             raise ValueError(f"{condition}: target {target} is unreachable")
     for _ in range(200):
         middle = (low + high) / 2.0
-        if _mixture_rate(middle, mixture, condition) < target:
+        if _population_rate(middle, condition, age) < target:
             low = middle
         else:
             high = middle
@@ -533,21 +577,32 @@ def condition_probabilities(
 ) -> tuple[tuple[str, float], ...]:
     """``(archetype, probability)`` for one condition and one applicant.
 
+    Two mechanisms shape this number, and they do different jobs — which is why both
+    exist rather than one standing in for the other:
+
+    * the **archetype mixture** carries correlation *between* conditions, so a
+      metabolic applicant's diabetes and hypertension arrive together;
+    * the **risk gradient** carries dose-response *within* one condition, at the
+      magnitude its own source reports. Nothing about archetype membership can express
+      that knee cartilage responds to body mass more steeply (OR 2.63) than a lumbar
+      disc does (OR 1.79); only a per-condition multiplier can.
+
     Memoised because the solve is pure in its arguments and a cohort of any size
     revisits the same few thousand cells. Purity is also what keeps this
-    cross-process deterministic: the cache is an optimisation, never a source of
-    state that could differ between two runs.
+    cross-process deterministic: the cache is an optimisation, never state that could
+    differ between two runs.
     """
-    from wc_caseload_engine.clinical_grounding import age_band_rate
-
     citation = age_band_rate(condition, age, sex)
     if citation is None:
         return ()
-    weights = tuple(sorted(archetype_weights(age, bmi_band, smoking_status).items()))
-    scale = calibrate(condition, weights, citation.value)
+    scale = calibrate(condition, age, citation.value)
+    multiplier = RISK_MULTIPLIERS[condition].multiplier(bmi_band, smoking_status)
     return tuple(
-        (name, _clamped(scale, HEALTH_ARCHETYPES[name].affinity_for(condition)))
-        for name, _ in weights
+        (
+            name,
+            _clamped(scale, HEALTH_ARCHETYPES[name].affinity_for(condition), multiplier),
+        )
+        for name in sorted(archetype_weights(age, bmi_band, smoking_status))
     )
 
 

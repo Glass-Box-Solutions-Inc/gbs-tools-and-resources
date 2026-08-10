@@ -594,6 +594,215 @@ OVERWEIGHT_SHARE_OF_NON_OBESE: Knob = Knob(
     ),
 )
 
+#: Ages below the youngest band CDC reports, and what is done about them.
+#:
+#: The obesity series starts at 20; the schema admits applicants from 16. Rather than
+#: return ``None`` — which every other lookup here means as "no source, abstain" — the
+#: BMI draw has to produce *something*, because every applicant has a body. So the
+#: youngest reported band is reused, and that is an extrapolation rather than a
+#: measurement. Named here so it is visible instead of buried in a branch.
+BMI_YOUNGEST_REPORTED_BAND = "20-39"
+
+
+def bmi_distribution(age: int) -> dict[str, float]:
+    """P(BMI band | age) — the population the sampler draws from, in closed form.
+
+    The same arithmetic ``medical_history._draw_bmi_band`` performs one applicant at a
+    time, written out so the calibration can integrate over it. Two expressions of one
+    distribution is a drift risk, so a test asserts the drawn cohort reproduces this
+    table rather than trusting that they agree.
+
+    Obesity is not sex-split in the source ("not significantly different"), so this is
+    keyed on age alone.
+    """
+    citation = OBESITY_PREVALENCE.rate(age, "female")
+    if citation is None:
+        citation = OBESITY_PREVALENCE.by_age[BMI_YOUNGEST_REPORTED_BAND]
+    obese_share = citation.value
+    severe = obese_share * SEVERE_SHARE_OF_OBESE.value
+    overweight = (1.0 - obese_share) * OVERWEIGHT_SHARE_OF_NON_OBESE.value
+    return {
+        "severely_obese": severe,
+        "obese": obese_share - severe,
+        "overweight": overweight,
+        "normal_or_under": 1.0 - obese_share - overweight,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class RiskGradient:
+    """How one condition responds to body mass and smoking, relative to baseline.
+
+    **Relative, never absolute.** These are multipliers on an archetype's calibrated
+    probability, and the calibration then re-solves so the population-weighted
+    aggregate still equals the cited age/sex marginal. That is what lets a gradient
+    exist *within* a marginal instead of replacing it: a severely obese current smoker
+    and a normal-weight never-smoker of the same age differ from each other and still
+    average to what CDC measured.
+
+    A multiplier of 1.0 everywhere means **no source reports a gradient**, and flatness
+    is then the honest answer rather than a missing feature. Three of the nine
+    conditions are flat for exactly that reason.
+    """
+
+    bmi: dict[str, float]
+    smoking: dict[str, float]
+    tag: Tag
+    rationale: str
+    source: str
+
+    def multiplier(self, bmi_band: str, smoking_status: str) -> float:
+        return self.bmi.get(bmi_band, 1.0) * self.smoking.get(smoking_status, 1.0)
+
+
+_FLAT_BMI = dict.fromkeys(BMI_BANDS, 1.0)
+_FLAT_SMOKING = dict.fromkeys(SMOKING_STATUSES, 1.0)
+
+
+def _flat(reason: str) -> RiskGradient:
+    return RiskGradient(
+        bmi=dict(_FLAT_BMI),
+        smoking=dict(_FLAT_SMOKING),
+        tag="measured",
+        rationale=f"Deliberately flat: {reason}",
+        source="note C reports no BMI or smoking gradient for this condition",
+    )
+
+
+RISK_MULTIPLIERS: dict[str, RiskGradient] = {
+    "lumbar_disc_degeneration": RiskGradient(
+        bmi={
+            "normal_or_under": 1.0,
+            "overweight": 1.30,
+            "obese": 1.79,
+            "severely_obese": 1.79,
+        },
+        smoking=dict(_FLAT_SMOKING),
+        tag="measured",
+        rationale=(
+            "Odds ratios for the presence of lumbar disc degeneration: 1.30 overweight "
+            "and 1.79 obese against normal BMI. Severe obesity reuses the obese figure "
+            "because the source does not split above 30 — extending the curve past its "
+            "last measured point would be extrapolation."
+        ),
+        source="Samartzis et al. 2012, Arthritis Rheum 64(5):1488-96 (PMC3571955)",
+    ),
+    "knee_cartilage_defect": RiskGradient(
+        bmi={
+            "normal_or_under": 1.0,
+            "overweight": 2.18,
+            "obese": 2.63,
+            "severely_obese": 3.20,
+        },
+        smoking=dict(_FLAT_SMOKING),
+        tag="measured",
+        rationale=(
+            "Pooled odds ratios 2.18 overweight and 2.63 obese against normal BMI, from "
+            "22 studies. The severely-obese figure is the one interpolation here: the "
+            "same meta-analysis reports relative risk climbing to 4.7-5.7 at BMI 32.5, "
+            "so 3.20 is a conservative reading of a curve that is still rising."
+        ),
+        source="BMI/knee-OA dose-response meta-analysis, PMID 24990315, 2014",
+    ),
+    "diabetes": RiskGradient(
+        bmi={
+            "normal_or_under": 1.0,
+            "overweight": 1.40,
+            "obese": 2.50,
+            "severely_obese": 3.50,
+        },
+        smoking={"never": 1.0, "former": 1.05, "current": 1.15},
+        tag="invented",
+        rationale=(
+            "Note C carries obesity and diabetes prevalence separately and never joins "
+            "them, so no odds ratio is available to cite. The *direction* is not in "
+            "doubt — body mass is the dominant modifiable risk factor for type 2 "
+            "diabetes — but these magnitudes are a design choice and are tagged as one "
+            "rather than dressed up as a derivation."
+        ),
+        source=(
+            "Interview: among the applicants you see with diabetes, how many would you "
+            "describe as significantly overweight?"
+        ),
+    ),
+    "hypertension": RiskGradient(
+        bmi={
+            "normal_or_under": 1.0,
+            "overweight": 1.30,
+            "obese": 1.80,
+            "severely_obese": 2.20,
+        },
+        smoking={"never": 1.0, "former": 1.05, "current": 1.10},
+        tag="invented",
+        rationale=(
+            "Same absence of a joined figure in note C as diabetes, same reasoning, "
+            "smaller magnitudes — the body-mass association with hypertension is real "
+            "and weaker than the diabetes one."
+        ),
+        source="Interview: same question as diabetes.",
+    ),
+    "osteoporosis": RiskGradient(
+        bmi={
+            # Inverted on purpose: low body mass is a *risk* for low bone density,
+            # which is the one condition here where the gradient runs downhill.
+            "normal_or_under": 1.0,
+            "overweight": 0.80,
+            "obese": 0.65,
+            "severely_obese": 0.60,
+        },
+        smoking={"never": 1.0, "former": 1.10, "current": 1.40},
+        tag="invented",
+        rationale=(
+            "Direction is textbook and note C supports neither magnitude: mechanical "
+            "loading protects bone density, and smoking impairs it. The inverted BMI "
+            "gradient is the reason this entry exists at all — a table where every "
+            "multiplier ran the same way would encode 'heavier is worse' as a law."
+        ),
+        source=(
+            "Interview: do you see osteoporosis argued more often in slighter "
+            "applicants, and does a smoking history come up when it is?"
+        ),
+    ),
+    "depression_anxiety": RiskGradient(
+        bmi=dict(_FLAT_BMI),
+        smoking={"never": 1.0, "former": 1.10, "current": 1.35},
+        tag="invented",
+        rationale=(
+            "The smoking association is well established in direction and absent from "
+            "note C in magnitude. BMI is left flat rather than guessed: the "
+            "relationship is real but bidirectional, and a one-way multiplier would "
+            "assert a causal direction nothing here supports."
+        ),
+        source="Interview: how often does a psych component travel with a smoking history?",
+    ),
+    "rotator_cuff_tear": _flat(
+        "Tempelhof and Sher both report age curves only. Note C §2.4 names diabetes as "
+        "an independent risk factor for asymptomatic cuff change, which is a "
+        "condition-on-condition effect this layer does not yet model — flagged for M2 "
+        "rather than approximated through BMI"
+    ),
+    "cervical_disc_bulge": _flat("Nakashima reports one aggregate rate and no covariates"),
+    "lumbar_facet_arthropathy": _flat(
+        "Jarraya isolates age and sex; the paper explicitly does not isolate BMI"
+    ),
+    "hip_labral_tear": _flat(
+        "Register reports age and sex effects at N=45 and no body-mass association"
+    ),
+}
+"""Within-marginal risk gradients — the reason the demographic fields exist.
+
+Without these, every applicant of one age and sex carries identical risk whatever
+their body mass or smoking status, and ``bmi_band`` becomes a field that is drawn,
+stored and never consulted. Note C's surgical-clearance thresholds (§4.1 BMI 40, §4.2
+HbA1c 7.7, §4.3 smoking cessation) are the downstream reason counsel wanted them: an
+applicant refused a fusion for smoking is a different case from one who is not.
+
+Six of nine conditions carry a gradient; three are flat because their sources report
+none. Two of the six are ``measured`` odds ratios; four are ``invented`` magnitudes
+whose *direction* is textbook, and the tag says which is which.
+"""
+
+
 SMOKING_DISTRIBUTION: dict[str, Knob] = {
     "never": Knob(
         0.60,
@@ -674,17 +883,25 @@ P_BILLING_CODED: Knob = Knob(
 )
 
 P_ANY_CONDITION_MEASURED: Knob = Knob(
-    value=0.71,
+    value=0.76,
     tag="counsel_unconfirmed",
     rationale=(
         "True prevalence of at least one catalog condition, MEASURED OUT OF THIS "
         "ENGINE rather than asserted into it — see the finding below. Recorded so the "
         "documentation gate has an honest divisor and so the number can be argued "
-        "with; it is an output of the calibration, not an input to it."
+        "with; it is an output of the calibration, not an input to it. It moved from "
+        "0.71 to 0.76 when the archetype affinities were compressed to close the "
+        "anti-fingerprint gap: every per-condition marginal still lands on its cited "
+        "value, because the calibration re-solves, but a narrower spread puts less of "
+        "the population's disease burden on a few heavily-loaded applicants and more "
+        "of it on everyone, and P(at least one) is exactly the statistic that notices. "
+        "That is the trade the compression buys, stated rather than hidden: an "
+        "identifiable archetype is a worse defect in a synthetic corpus than an "
+        "aggregate five points above where it sat."
     ),
     source=(
-        "Measured over 20,000 sampled cases at derived ages and realistic body-part "
-        "counts; pinned by test_medical_history.py's aggregate check."
+        "Measured over 21,000 sampled cases at derived ages across the seven realistic "
+        "body-part shapes; pinned by test_medical_history.py's aggregate check."
     ),
 )
 
@@ -693,7 +910,7 @@ P_ANY_CONDITION_EXPECTED: Knob = Knob(
     tag="counsel_unconfirmed",
     rationale=(
         "The design record's expected aggregate, KEPT AND FALSIFIED. Reproducing note "
-        "C's per-condition marginals forces the aggregate to about 0.71, and the two "
+        "C's per-condition marginals forces the aggregate to about 0.76, and the two "
         "cannot both hold: hypertension alone is a measured 0.525 at ages 40-59 and "
         "lumbar disc degeneration a measured 0.80 in the fifties, so any corpus that "
         "matches those rates has more than 55% of applicants carrying something. The "
@@ -702,7 +919,7 @@ P_ANY_CONDITION_EXPECTED: Knob = Knob(
         "SME ruling 5 called this an aggregate *derived check* rather than an asserted "
         "knob, which is exactly the licence to report it moved rather than tune the "
         "sampler until it agreed. The consequence is confined and stated: the "
-        "consistency squeeze implies file visibility near 47% rather than 60%, and "
+        "consistency squeeze implies file visibility near 43% rather than 60%, and "
         "the counsel-confirmed 0.33 surfacing union is held exactly regardless, "
         "because the documentation gate divides by the realised aggregate."
     ),
@@ -809,6 +1026,7 @@ def age_band_rate(condition: str, age: int, sex: str) -> Citation | None:
 
 __all__ = [
     "BMI_BANDS",
+    "BMI_YOUNGEST_REPORTED_BAND",
     "CONDITION_CATALOG",
     "FEMALE_SHARE",
     "KNOWN_COVERAGE_GAPS",
@@ -819,6 +1037,7 @@ __all__ = [
     "P_ANY_CONDITION_MEASURED",
     "P_BILLING_CODED",
     "P_SURFACES_IN_FILE",
+    "RISK_MULTIPLIERS",
     "SEVERE_SHARE_OF_OBESE",
     "SEXES",
     "SMOKING_DISTRIBUTION",
@@ -832,9 +1051,11 @@ __all__ = [
     "CoverageGap",
     "Knob",
     "Prevalence",
+    "RiskGradient",
     "Sex",
     "SmokingStatus",
     "Tag",
     "age_band_rate",
     "band_contains",
+    "bmi_distribution",
 ]
