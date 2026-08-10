@@ -26,6 +26,7 @@ import json
 import math
 import random
 from collections import Counter, defaultdict
+from datetime import timedelta
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,7 @@ from typing import Any
 import pytest
 
 from conftest import requires_substrate
-from wc_caseload_engine.case_context import applicant_date_of_birth
+from wc_caseload_engine.case_context import DERIVED_AGE_RANGE, applicant_date_of_birth
 from wc_caseload_engine.clinical_grounding import (
     BMI_BANDS,
     CONDITION_CATALOG,
@@ -42,6 +43,8 @@ from wc_caseload_engine.clinical_grounding import (
     MAX_APPLICANT_AGE,
     MIN_APPLICANT_AGE,
     OBESE_BANDS,
+    OBESITY_PREVALENCE,
+    OVERWEIGHT_SHARE_OF_NON_OBESE,
     P_ANY_CONDITION_EXPECTED,
     P_ANY_CONDITION_MEASURED,
     P_BILLING_CODED,
@@ -49,11 +52,14 @@ from wc_caseload_engine.clinical_grounding import (
     REFERENCE_AGES,
     REFERENCE_CLAIM_SHAPES,
     RISK_MULTIPLIERS,
+    SEVERE_SHARE_OF_OBESE,
     SEXES,
     SMOKING_DISTRIBUTION,
     SMOKING_STATUSES,
     age_band_rate,
     band_contains,
+    bmi_band_cutoffs,
+    bmi_band_for_draw,
     bmi_distribution,
 )
 from wc_caseload_engine.manifests import CASE_FACTS_NAME, MANIFEST_NAME, generate_case
@@ -80,6 +86,7 @@ from wc_caseload_engine.medical_history import (
     eligible_conditions,
     expected_any_condition,
     probability_of_any_condition,
+    reference_age_weights,
     sibtf_requirement,
     surfacing_conditional,
 )
@@ -688,6 +695,80 @@ class TestRiskGradientsSurviveCalibration:
                     f"closed form of {share:.3f}"
                 )
 
+    def test_the_classifier_is_bit_identical_to_the_one_it_replaced(self) -> None:
+        """Round 4, finding 1. "Identical" was claimed and was one ULP short of true.
+
+        Centralising the BMI draw the obvious way — walk a cumulative sum of the
+        shares — is not the same function as the chain of comparisons it replaced.
+        ``severe + (obese - severe)`` reassociates the arithmetic, and for the 40-59
+        band that gives ``0.46399999999999997`` where the original compared against the
+        source literal ``0.464``. A draw of exactly the representable ``0.464`` lands in
+        ``obese`` under one and ``overweight`` under the other.
+
+        One draw in 2^53, on a layer that renders nothing. Worth a test anyway, because
+        the *claim* was "every 20+ draw maps identically" and a claim that is nearly
+        true is the kind that gets relied on. So the legacy classifier is written out
+        here and compared at every cutoff, at the exact representable value, and at the
+        float either side of it — for every band the source reports.
+        """
+
+        def legacy(draw: float, age: int) -> str:
+            citation = OBESITY_PREVALENCE.rate(age, "female")
+            obese_share = citation.value if citation is not None else 0.0
+            if draw < obese_share * SEVERE_SHARE_OF_OBESE.value:
+                return "severely_obese"
+            if draw < obese_share:
+                return "obese"
+            remainder = draw - obese_share
+            if remainder < (1.0 - obese_share) * OVERWEIGHT_SHARE_OF_NON_OBESE.value:
+                return "overweight"
+            return "normal_or_under"
+
+        ages = sorted(
+            {
+                age
+                for age in range(20, MAX_APPLICANT_AGE + 1)
+                if OBESITY_PREVALENCE.rate(age, "female") is not None
+            }
+        )
+        assert len(ages) >= 20, "the obesity series has shrunk; this sweep is now thin"
+
+        for age in ages:
+            severe, obese, overweight = bmi_band_cutoffs(age)
+            probes: list[float] = []
+            for cutoff in (severe, obese, obese + overweight):
+                probes.extend(
+                    (
+                        cutoff,
+                        math.nextafter(cutoff, 0.0),
+                        math.nextafter(cutoff, 1.0),
+                    )
+                )
+            probes.extend((0.0, 0.5, math.nextafter(1.0, 0.0)))
+            for draw in probes:
+                assert bmi_band_for_draw(draw, age) == legacy(draw, age), (
+                    f"age {age}, draw {draw!r}: the classifier gives "
+                    f"{bmi_band_for_draw(draw, age)} where the one it replaced gives "
+                    f"{legacy(draw, age)}"
+                )
+
+    def test_the_distribution_is_derived_from_the_classifiers_own_cutoffs(self) -> None:
+        """The other half of "one definition": the shares are not recomputed.
+
+        If :func:`bmi_distribution` derived its shares independently, the two could
+        agree in exact arithmetic and disagree at a representable boundary — which is
+        the defect above, one layer up. Deriving them *from* the cutoffs makes that
+        unrepresentable rather than merely unlikely.
+        """
+        for age in (18, 25, 45, 70):
+            severe, obese, overweight = bmi_band_cutoffs(age)
+            shares = bmi_distribution(age)
+            assert shares["severely_obese"] == severe
+            assert shares["obese"] == obese - severe
+            assert shares["overweight"] == overweight
+            assert shares["normal_or_under"] == 1.0 - obese - overweight
+            assert sum(shares.values()) == pytest.approx(1.0, abs=1e-12)
+
     def test_ages_below_the_cdc_series_reuse_its_youngest_band(self) -> None:
         """An extrapolation, named rather than buried — every applicant has a body."""
         assert bmi_distribution(17) == bmi_distribution(25)
@@ -1288,6 +1369,22 @@ SUPERSEDED_DOC_CLAIMS: tuple[tuple[str, str], ...] = (
         'defaults its own\n#: ``resolution_type`` to ``stipulated_award``',
         "PriorAwardEntry.resolution_type now defaults to None, meaning the claim's own",
     ),
+    (
+        "the award's default value\n        makes it the easy one to write by accident",
+        "the award default is None now, so silence cannot disagree with the claim",
+    ),
+    ("0.50/0.76", "the reference population's E[P(any)] is 0.771, not 0.76"),
+    ("= **66%**", "implied file visibility is 65% at 0.50 / 0.771"),
+    (
+        "divides by the realised aggregate",
+        "the gate divides by the reference population's expected aggregate; dividing "
+        "by the realised per-applicant figure is the form that could not attain it",
+    ),
+    (
+        "cannot leave ``(0, 1)``",
+        "the link saturates in float64 (sigmoid(38) == 1.0); it is strict over "
+        "calibrated production intercepts and the final clamp owns the extremes",
+    ),
 )
 
 DOC_SWEPT_SOURCES: tuple[str, ...] = (
@@ -1367,15 +1464,39 @@ class TestTheDocsDoNotStateSupersededContracts:
             "sweep above is exempting it on a technicality"
         )
 
-    def test_the_sweep_would_notice_a_superseded_claim(self) -> None:
-        """The planted control. A sweep over phrases nobody writes proves nothing."""
-        planted = "the calibration solves for the one scale s where sum(w_a * clamp(s * r_a))"
+    #: Sentences this package really shipped, kept so the sweep can be tested on them.
+    #:
+    #: Each is verbatim from a passage that was live in a reviewed commit. A control
+    #: written from imagination tests the phrase list against itself; these test it
+    #: against the prose it was built to catch.
+    PLANTED_STALE_PASSAGES: tuple[str, ...] = (
+        "the calibration solves for the one scale s where sum(w_a * clamp(s * r_a))",
+        "Counsel's revision to 0.50 puts it at 0.50/0.76 = **66%**, which no longer",
+        "held exactly regardless, because the documentation gate divides by the "
+        "realised aggregate.",
+        "the award's default value\n        makes it the easy one to write by accident",
+        "A logistic link cannot leave ``(0, 1)``, so the property holds",
+        "Membership therefore is not recoverable from the conditions alone",
+    )
+
+    @pytest.mark.parametrize("passage", PLANTED_STALE_PASSAGES)
+    def test_the_sweep_would_notice_a_superseded_claim(self, passage: str) -> None:
+        """The planted controls. A sweep over phrases nobody writes proves nothing.
+
+        Parametrized rather than pooled so a phrase that stops matching names itself.
+        Round 4 found three stale passages the sweep walked straight past — the 66%
+        arithmetic, the award-default wording and the over-strong link claim — and a
+        single pooled control would have stayed green through all three, because one
+        surviving match is enough to satisfy ``any``.
+        """
         hits = [
-            phrase for phrase, _ in SUPERSEDED_DOC_CLAIMS if phrase in planted
+            phrase
+            for phrase, _ in SUPERSEDED_DOC_CLAIMS
+            if phrase.lower() in passage.lower()
         ]
         assert hits, (
-            "the superseded-claim list no longer matches the text it was written to "
-            "catch, so the sweep above is passing vacuously"
+            f"no entry in SUPERSEDED_DOC_CLAIMS matches {passage[:60]!r} — a passage "
+            "this package actually shipped could be restated without anything going red"
         )
 
 
@@ -1445,6 +1566,52 @@ class TestTheDocumentationGate:
     Both halves are checked now: the analytic identity, exactly, and the sampled
     realisation against a tolerance derived from binomial standard error.
     """
+
+    def test_the_age_weights_are_the_law_the_cast_actually_draws(self) -> None:
+        """Round 5, finding 2. The reference population has to be the real one.
+
+        ``REFERENCE_AGES`` declared a uniform band and the cast draws nothing of the
+        sort: ``randint(low*365, high*365) + randint(0, 364)`` convolves two uniforms
+        into a trapezoid, a 365-day year against a calendar with leap days drags a
+        little mass onto age 24, and the endpoints carry about half an interior year's
+        weight. The error was in the fifth decimal — and the *claim* was an identity at
+        1e-12 over "the generation population", which is a different thing from being
+        approximately right.
+
+        Enumerated the slow way here against the closed form the module uses, because
+        an analytic weight table checked against another analytic weight table would
+        only prove they were written by the same hand.
+        """
+        low, high = DERIVED_AGE_RANGE
+        counted: Counter[int] = Counter()
+        for coarse in range(low * 365, high * 365 + 1):
+            for fine in range(0, 365):
+                born = ANCHOR_DATE - timedelta(days=coarse + fine)
+                counted[
+                    ANCHOR_DATE.year
+                    - born.year
+                    - ((ANCHOR_DATE.month, ANCHOR_DATE.day) < (born.month, born.day))
+                ] += 1
+        total = sum(counted.values())
+        enumerated = {age: count / total for age, count in sorted(counted.items())}
+
+        assert reference_age_weights() == enumerated, (
+            "the closed-form age weights disagree with an exact enumeration of the "
+            "date-of-birth law the cast executes"
+        )
+
+        assert 24 in enumerated, (
+            "the age-24 tail has vanished; a 365-day year against a calendar with leap "
+            "days is what produces it, so its absence means the law changed"
+        )
+        assert enumerated[low] < enumerated[low + 5] / 1.5, (
+            "the low endpoint no longer carries reduced weight, so the distribution "
+            "has become the uniform one this test exists to refute"
+        )
+        assert enumerated[high] < enumerated[high - 5] / 1.5, (
+            "the high endpoint no longer carries reduced weight"
+        )
+        assert sum(enumerated.values()) == pytest.approx(1.0, abs=1e-12)
 
     def test_the_expected_union_is_exactly_the_counsel_confirmed_rate(self) -> None:
         """Analytic, deterministic, and tight — no cohort involved.

@@ -2092,8 +2092,7 @@ id = 'm17-24'
 title = 'the BMI draw grows a second definition and the under-20 population diverges'
 file = 'src/wc_caseload_engine/medical_history.py'
 test = 'tests/test_medical_history.py::TestTheCorpusReproducesItsSources::test_the_under_twenty_population_is_the_one_the_calibration_integrates'
-find = '''    distribution = bmi_distribution(age)
-    draw = rng.random()'''
+find = '''    return bmi_band_for_draw(rng.random(), age)'''
 replace = '''    from wc_caseload_engine.clinical_grounding import (
         OBESITY_PREVALENCE,
         OVERWEIGHT_SHARE_OF_NON_OBESE,
@@ -2102,17 +2101,15 @@ replace = '''    from wc_caseload_engine.clinical_grounding import (
 
     citation = OBESITY_PREVALENCE.rate(age, "female")
     obese_share = citation.value if citation is not None else 0.0
-    severe = obese_share * SEVERE_SHARE_OF_OBESE.value
-    distribution = {
-        "severely_obese": severe,
-        "obese": obese_share - severe,
-        "overweight": (1.0 - obese_share) * OVERWEIGHT_SHARE_OF_NON_OBESE.value,
-        "normal_or_under": 1.0
-        - obese_share
-        - (1.0 - obese_share) * OVERWEIGHT_SHARE_OF_NON_OBESE.value,
-    }
-    draw = rng.random()'''
-note = 'AJC-60 R4 finding 3, restored as the second definition it was. CDC obesity starts at 20 and the schema admits applicants from 16: the closed form names that gap and reuses the youngest reported band, this version turns the same missing citation into an obese share of zero. The calibration then integrates over a 35.5%-obese population the sampler never draws, and an age-18 male hypertension rate comes out at 0.239 against a cited 0.300. The mutation reproduces what the code used to say, importing its own names because the module no longer needs them — the fix removed the last caller of the raw obesity knobs, which is itself evidence there is now one definition rather than two. It was correct at 25, 45 and 70, the three ages the old test checked.'
+    draw = rng.random()
+    if draw < obese_share * SEVERE_SHARE_OF_OBESE.value:
+        return "severely_obese"
+    if draw < obese_share:
+        return "obese"
+    if draw - obese_share < (1.0 - obese_share) * OVERWEIGHT_SHARE_OF_NON_OBESE.value:
+        return "overweight"
+    return "normal_or_under"'''
+note = 'AJC-60 R4 finding 3, restored as the second definition it was. CDC obesity starts at 20 and the schema admits applicants from 16: the closed form names that gap and reuses the youngest reported band, this version turns the same missing citation into an obese share of zero. The calibration then integrates over a 35.5%-obese population the sampler never draws, and an age-18 male hypertension rate comes out at 0.239 against a cited 0.300. R5 re-pointed, and the re-pointing is the interesting part. Removing the fallback from the SHARED helper no longer reproduces the defect at all — draw and calibration both see the zero-obese population and agree, so the marginal still lands. That is the fix working: the divergence needed TWO definitions, and there is now one. So the mutant restores the second definition instead, giving _draw_bmi_band its own hand-written arithmetic with the original missing fallback. It was correct at 25, 45 and 70, the three ages the old test checked.'
 
 [[mutant]]
 id = 'm17-25'
@@ -2169,3 +2166,25 @@ find = '''``clamp`` then bounds every per-archetype probability strictly inside 
 replace = '''Membership therefore is not recoverable from the conditions alone.
 ``clamp`` then bounds every per-archetype probability strictly inside ``(0, 1)``.'''
 note = 'AJC-60 R4 finding 4, mechanised. Five superseded statements were found in one review pass, every one of them true on the day it was written — the old calibration equation, an over-broad non-recoverability claim, counsel superseded one-in-three, a three-of-nine count, and an award default that had already changed. Prose that was true once fails silently, so the sweep makes the superseded FORM unrepresentable. A retired number may still be quoted where the passage marks it as superseded, which is how provenance survives without becoming a live claim.'
+
+[[mutant]]
+id = 'm17-31'
+title = 'the BMI classifier walks a cumulative sum and drifts at a representable boundary'
+file = 'src/wc_caseload_engine/clinical_grounding.py'
+test = 'tests/test_medical_history.py::TestRiskGradientsSurviveCalibration::test_the_classifier_is_bit_identical_to_the_one_it_replaced'
+find = '''    severe_cutoff, obese_cutoff, overweight_cutoff = bmi_band_cutoffs(age)
+    if draw < severe_cutoff:
+        return "severely_obese"
+    if draw < obese_cutoff:
+        return "obese"
+    if draw - obese_cutoff < overweight_cutoff:
+        return "overweight"
+    return "normal_or_under"'''
+replace = '''    distribution = bmi_distribution(age)
+    cumulative = 0.0
+    for band in ("severely_obese", "obese", "overweight", "normal_or_under"):
+        cumulative += distribution[band]
+        if draw < cumulative:
+            return band
+    return "normal_or_under"'''
+note = 'AJC-60 R5 finding 1. The cumulative walk is the obvious way to write an inverse CDF and it is NOT the same function: severe + (obese - severe) reassociates the arithmetic, so the 40-59 band compares against 0.46399999999999997 where the original used the source literal 0.464. A draw of exactly that representable value lands in obese under one and overweight under the other. One draw in 2 to the 53, on a layer that renders nothing — registered because the claim made was that every 20-plus draw maps identically, and a claim that is nearly true is the kind people rely on.'

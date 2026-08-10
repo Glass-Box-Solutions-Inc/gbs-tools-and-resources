@@ -292,6 +292,22 @@ _DERIVED_AGE_RANGE = (25, 62)
 
 Matches the band ``FakeDataGenerator`` asked Faker for, so derived casts keep the
 same shape — only the clock behind them changes.
+
+**It is a band of day offsets, not of ages**, which is a distinction the medical
+layer had to learn. The draw is ``randint(low * 365, high * 365) + randint(0, 364)``
+against a 365-day year, so the realised age distribution is not uniform on
+``[low, high]``: the endpoints carry roughly half weight, leap days push a little mass
+onto ``low - 1``, and the two uniforms convolve into a trapezoid rather than a
+rectangle. See ``medical_history.reference_age_weights``, which derives the exact law
+rather than assuming this one.
+"""
+
+DERIVED_AGE_RANGE = _DERIVED_AGE_RANGE
+"""Public name for :data:`_DERIVED_AGE_RANGE`.
+
+The medical layer calibrates a corpus-level expectation over the population this
+range generates, so it needs the same numbers rather than a second copy of them —
+the same reason :func:`applicant_date_of_birth` is exported below.
 """
 
 

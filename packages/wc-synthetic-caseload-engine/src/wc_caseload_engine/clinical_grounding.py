@@ -686,18 +686,58 @@ def bmi_distribution(age: int) -> dict[str, float]:
     Obesity is not sex-split in the source ("not significantly different"), so this is
     keyed on age alone.
     """
+    severe, obese, overweight = bmi_band_cutoffs(age)
+    return {
+        "severely_obese": severe,
+        "obese": obese - severe,
+        "overweight": overweight,
+        "normal_or_under": 1.0 - obese - overweight,
+    }
+
+
+def bmi_band_cutoffs(age: int) -> tuple[float, float, float]:
+    """The three comparison values the BMI draw tests against, in its own order.
+
+    ``(severe cutoff, obese cutoff, overweight remainder cutoff)``. Cutoffs rather than
+    shares because a *cutoff* is what a draw is compared with, and in floating point
+    those are not the same object: adding decomposed shares back up gives
+    ``0.46399999999999997`` where the comparison this replaced used the source literal
+    ``0.464``, and a draw of exactly that representable value lands in a different band
+    depending on which one it meets. One in 2^53 draws, on a corpus that renders none
+    of it — and still worth removing, because "identical" was claimed and was not true.
+
+    So the arithmetic here is the original expression, character for character,
+    including the subtraction order of the overweight test. :func:`bmi_distribution`
+    derives its shares *from these cutoffs* rather than recomputing them, which is what
+    keeps one definition rather than two that agree in exact arithmetic and disagree at
+    the boundary.
+    """
     citation = OBESITY_PREVALENCE.rate(age, "female")
     if citation is None:
         citation = OBESITY_PREVALENCE.by_age[BMI_YOUNGEST_REPORTED_BAND]
     obese_share = citation.value
-    severe = obese_share * SEVERE_SHARE_OF_OBESE.value
-    overweight = (1.0 - obese_share) * OVERWEIGHT_SHARE_OF_NON_OBESE.value
-    return {
-        "severely_obese": severe,
-        "obese": obese_share - severe,
-        "overweight": overweight,
-        "normal_or_under": 1.0 - obese_share - overweight,
-    }
+    return (
+        obese_share * SEVERE_SHARE_OF_OBESE.value,
+        obese_share,
+        (1.0 - obese_share) * OVERWEIGHT_SHARE_OF_NON_OBESE.value,
+    )
+
+
+def bmi_band_for_draw(draw: float, age: int) -> str:
+    """Classify one uniform draw into a BMI band.
+
+    The inverse CDF, written as the original chain of comparisons rather than as a
+    cumulative walk. A cumulative walk is the obvious way to write this and is what
+    introduced the boundary drift: ``severe + (obese - severe)`` is not ``obese``.
+    """
+    severe_cutoff, obese_cutoff, overweight_cutoff = bmi_band_cutoffs(age)
+    if draw < severe_cutoff:
+        return "severely_obese"
+    if draw < obese_cutoff:
+        return "obese"
+    if draw - obese_cutoff < overweight_cutoff:
+        return "overweight"
+    return "normal_or_under"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1090,12 +1130,17 @@ P_ANY_CONDITION_EXPECTED: Knob = Knob(
         "sampler until it agreed. The consequence is confined and stated, and it has "
         "moved twice: at the old 0.33 surfacing union the squeeze implied file "
         "visibility near 43%, well under the design record's 60%. Counsel's 2026-08-10 "
-        "revision to 0.50 puts it at 0.50/0.76 = **66%**, which no longer contradicts "
+        "revision to 0.50 puts it at 0.50 / 0.771 = **65%**, which no longer contradicts "
         "the design record at all — it slightly exceeds it. Worth saying plainly: the "
         "tension this note was written to record has largely dissolved, and what "
         "remains falsified is the 0.55 aggregate itself, not the visibility figure "
         "that followed from it. The surfacing union is held exactly regardless of "
-        "either, because the documentation gate divides by the realised aggregate."
+        "either, because the documentation gate divides by the REFERENCE POPULATION's "
+        "expected aggregate rather than by any one applicant's — see "
+        ":func:`~wc_caseload_engine.medical_history.surfacing_conditional`. The "
+        "distinction is not pedantry: dividing by the realised per-applicant figure is "
+        "the form that could not reach its own target, and this note said so for a "
+        "round while describing the arithmetic that replaced it."
     ),
     source=(
         "Interview: what share of applicants have a preexisting condition at all? The "

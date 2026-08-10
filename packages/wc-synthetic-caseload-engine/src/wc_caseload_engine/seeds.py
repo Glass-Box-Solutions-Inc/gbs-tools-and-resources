@@ -1828,8 +1828,11 @@ class PriorClaimEntry(_Model):
 
         The second clause is the one that would otherwise be found later: a
         ``c_and_r`` claim whose award says ``stipulated_award`` is a smaller
-        contradiction than the first but the same kind, and the award's default value
-        makes it the easy one to write by accident.
+        contradiction than the first but the same kind. It used to be the easy one to
+        write by accident, because the award defaulted to ``stipulated_award``;
+        superseded — the default is ``None``, meaning the claim's own, so silence can
+        no longer disagree with anything and this clause now catches only a
+        disagreement somebody typed.
         """
         if self.award is None:
             return self

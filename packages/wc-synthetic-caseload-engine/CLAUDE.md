@@ -390,15 +390,28 @@ Consequences worth knowing before touching it:
   and erasing the published 1.79 gradient in the profile where the condition is most likely.
   The link makes the property hold by construction rather than by a sweep that finds no
   counterexample today.
-- **One BMI distribution, not two.** `bmi_distribution(age)` is what the calibration integrates
-  over *and* what `_draw_bmi_band` walks by inverse CDF. They were two expressions of the same
-  arithmetic and drifted exactly where neither was exercised: CDC's obesity series starts at 20
-  and the schema admits applicants from 16, so the closed form reused the youngest reported
-  band while the draw turned the missing citation into `obese_share = 0.0`. An 18-year-old
-  male's hypertension came out at 0.239 against a cited 0.300.
+- **One BMI definition, not two — and the classifier owns it.** `bmi_band_for_draw` holds the
+  comparison chain; `bmi_distribution` derives its shares from that same function's cutoffs.
+  They were two expressions of the same arithmetic and drifted exactly where neither was
+  exercised: CDC's obesity series starts at 20 and the schema admits applicants from 16, so the
+  closed form reused the youngest reported band while the draw turned the missing citation into
+  `obese_share = 0.0`. An 18-year-old male's hypertension came out at 0.239 against a cited
+  0.300.
+
+  The **first** fix for that drifted too, one layer down. A cumulative walk over the shares is
+  the obvious way to write an inverse CDF and is not the same function: `severe + (obese -
+  severe)` reassociates the arithmetic, giving `0.46399999999999997` where the original compared
+  against the source literal `0.464`, so a draw of exactly that representable value changes
+  band. One draw in 2^53 on a layer that renders nothing — fixed anyway, because the claim made
+  was "every 20+ draw maps identically" and that claim was relied on.
 - **The surfacing conditional is global, and it has to be.** `surfacing_conditional()` divides
   the counsel union by `expected_any_condition()` over an explicit reference population
-  (`REFERENCE_AGES` × sex × BMI × smoking × `REFERENCE_CLAIM_SHAPES`). Dividing each
+  (`reference_age_weights()` × sex × BMI × smoking × `REFERENCE_CLAIM_SHAPES`). The age weights
+  are the **exact** law the cast's DOB draw produces — a trapezoid from two convolved uniforms,
+  half-weight endpoints, and a small tail on age 24 from a 365-day year meeting leap days — not
+  uniform over 25-62. Assuming uniform cost a fifth decimal place (0.771068 against 0.771010),
+  and the reason to care is the claim rather than the digit: an identity asserted at 1e-12
+  against an approximate population is an identity about the approximation. Dividing each
   applicant's *own* `P(any)` into the target and capping at 1 cannot reach the target: the cap
   is one-sided, so everybody below it contributes less and nobody contributes more, and the
   aggregate lands at 0.484 against 0.50. That 0.016 bias hid inside a ±0.02 sampled tolerance

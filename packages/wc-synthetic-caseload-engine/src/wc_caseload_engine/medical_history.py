@@ -54,9 +54,11 @@ stylistic.** The first version calibrated a scale ``s`` and formed the baseline 
 derivation assumes a probability. An exhaustive sweep found 907 cells where that
 product exceeded 1; at age 55 the multimorbid lumbar baseline reached 1.231, every BMI
 band clamped to the ceiling, and the published 1.79 gradient disappeared in precisely
-the profile where the condition is most likely. A logistic link cannot leave ``(0, 1)``,
-so the property holds by construction instead of by a sweep that finds no
-counterexample this week.
+the profile where the condition is most likely. The logistic link keeps every baseline
+strictly inside ``(0, 1)`` across the intercepts a calibrated solve actually produces,
+so the property holds structurally instead of by a sweep that finds no counterexample
+this week — with ``clamp`` owning the float-saturation extremes the link cannot, since
+``sigmoid(38)`` is exactly 1.0 in float64.
 
 ``clamp`` then bounds every per-archetype probability strictly inside ``(0, 1)``. That
 is the anti-fingerprint guarantee doing real work rather than being asserted: no
@@ -104,18 +106,19 @@ from typing import Any, Literal
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from wc_caseload_engine.case_context import DERIVED_AGE_RANGE
 from wc_caseload_engine.clinical_grounding import (
     CONDITION_CATALOG,
     FEMALE_SHARE,
     OBESE_BANDS,
     P_BILLING_CODED,
     P_SURFACES_IN_FILE,
-    REFERENCE_AGES,
     REFERENCE_CLAIM_SHAPES,
     RISK_MULTIPLIERS,
     SMOKING_DISTRIBUTION,
     Knob,
     age_band_rate,
+    bmi_band_for_draw,
     bmi_distribution,
 )
 from wc_caseload_engine.seeds import ANCHOR_DATE, CaseSeed, derive_seed
@@ -563,10 +566,16 @@ def _baseline(intercept: float, affinity: float) -> float:
     condition is most likely, which is where a reader would look for it.
 
     So the calibrated quantity is now a logistic **intercept**, and the archetype
-    affinity enters as an odds ratio on the log-odds scale. ``_logistic`` cannot leave
-    ``(0, 1)``, so the transform downstream always receives what it was derived for,
-    and it is guaranteed by construction rather than by a sweep that happens to find
-    no counterexample today.
+    affinity enters as an odds ratio on the log-odds scale. Across every intercept a
+    calibrated solve produces, this is strictly inside ``(0, 1)`` — structurally,
+    rather than by a sweep that happens to find no counterexample today.
+
+    **Strictly, over production intercepts — not over every float.** ``_logistic``
+    saturates: ``sigmoid(38)`` is exactly 1.0 in float64 and the intercept search
+    brackets ±40, so at the search bounds the open interval is held by the final
+    ``_clamped`` rather than by the link. The two are not redundant, and saying the
+    link "cannot leave (0, 1)" was an overstatement this module's own boundary test
+    disproves.
     """
     return _logistic(intercept + math.log(affinity))
 
@@ -818,22 +827,8 @@ def _weighted(rng: random.Random, weights: dict[str, float]) -> str:
 # ---------------------------------------------------------------------------
 
 
-#: The order the inverse-CDF walk visits bands in.
-#:
-#: Heaviest first, which is the order the hand-written version happened to use. Kept
-#: rather than sorted, because changing it would remap every drawn applicant onto a
-#: different band for the same rng value — a corpus-wide reshuffle in exchange for
-#: nothing. The *distribution* is what matters and it is identical either way.
-_BMI_DRAW_ORDER: tuple[str, ...] = (
-    "severely_obese",
-    "obese",
-    "overweight",
-    "normal_or_under",
-)
-
-
 def _draw_bmi_band(rng: random.Random, age: int) -> str:
-    """A BMI band drawn from :func:`bmi_distribution` — the *same* table the
+    """A BMI band from :func:`bmi_band_for_draw` — the *same* definition the
     calibration integrates over.
 
     It used to be a second, hand-written expression of that arithmetic, and the two
@@ -846,16 +841,13 @@ def _draw_bmi_band(rng: random.Random, age: int) -> str:
     and an age-18 male's hypertension came out at 0.239 against a cited 0.300.
 
     The fix is not a better fallback here — it is having no second definition to keep
-    in step. One distribution, one place, walked by inverse CDF.
+    in step. The first attempt at that fix walked a cumulative sum of the shares, which
+    is the obvious way to write an inverse CDF and reintroduced the same class of
+    defect one layer down: ``severe + (obese - severe)`` is not ``obese`` in floating
+    point. The classifier now owns the comparison chain and the distribution derives
+    its shares from the classifier's own cutoffs.
     """
-    distribution = bmi_distribution(age)
-    draw = rng.random()
-    cumulative = 0.0
-    for band in _BMI_DRAW_ORDER:
-        cumulative += distribution[band]
-        if draw < cumulative:
-            return band
-    return _BMI_DRAW_ORDER[-1]  # pragma: no cover - the shares sum to 1
+    return bmi_band_for_draw(rng.random(), age)
 
 
 def derive_demographics(seed: CaseSeed, date_of_birth: dt.date) -> ApplicantDemographics:
@@ -930,25 +922,66 @@ def _condition_from_catalog(
 
 
 @cache
+def reference_age_weights() -> dict[int, float]:
+    """``P(age)`` under the cast's *actual* date-of-birth law, computed exactly.
+
+    Not uniform on ``DERIVED_AGE_RANGE``, and assuming it was cost a fifth decimal
+    place. The draw is ``randint(low*365, high*365) + randint(0, 364)`` days before
+    ``ANCHOR_DATE``, so three things happen that a flat table misses: the two uniforms
+    convolve into a **trapezoid** rather than a rectangle, a 365-day year against a
+    calendar containing leap days drags a small tail onto ``low - 1``, and the
+    endpoints carry roughly half the weight of an interior year.
+
+    Derived rather than sampled, and derived from the *same* law
+    ``case_context._date_of_birth`` executes — the cast draw itself is deliberately
+    untouched, because it is golden-sensitive and there is nothing wrong with it. What
+    was wrong was this module's description of it.
+
+    The convolution is closed-form: for a total offset ``d``, the number of
+    ``(coarse, fine)`` pairs producing it is the overlap of ``[low, high]`` with
+    ``[d - 364, d]``. That is one pass over ~14k offsets instead of 4.9M pairs.
+    """
+    low, high = DERIVED_AGE_RANGE
+    coarse_low, coarse_high = low * 365, high * 365
+    counts: dict[int, int] = {}
+    total_pairs = 0
+    for offset in range(coarse_low, coarse_high + 365):
+        overlap_low = max(coarse_low, offset - 364)
+        overlap_high = min(coarse_high, offset)
+        if overlap_high < overlap_low:
+            continue  # pragma: no cover - the range above cannot produce this
+        pairs = overlap_high - overlap_low + 1
+        born = ANCHOR_DATE - dt.timedelta(days=offset)
+        age = _years_between(born, ANCHOR_DATE)
+        counts[age] = counts.get(age, 0) + pairs
+        total_pairs += pairs
+    return {age: pairs / total_pairs for age, pairs in sorted(counts.items())}
+
+
+@cache
 def expected_any_condition() -> float:
     """``E[P(at least one condition)]`` over the reference population.
 
     Analytic, not sampled: :func:`probability_of_any_condition` is exact for a cell, so
-    the expectation is a weighted sum over
-    :data:`~wc_caseload_engine.clinical_grounding.REFERENCE_AGES`, sex, the age's own
-    BMI distribution, the smoking table and
+    the expectation is a weighted sum over :func:`reference_age_weights`, sex, the
+    age's own BMI distribution, the smoking table and
     :data:`~wc_caseload_engine.clinical_grounding.REFERENCE_CLAIM_SHAPES`. Cached
     because it is a constant of the tables, and pure in the way the rest of this module
     is pure — no rng, no clock, no corpus.
+
+    The age weights are the *exact* law rather than a uniform stand-in. The difference
+    is small — 0.771010 against 0.771068 — and the reason to care is not the fifth
+    decimal but the claim attached to it: an identity asserted at 1e-12 against an
+    approximate population is an identity about the approximation, and the surrounding
+    comments said "the generation population".
     """
     female = FEMALE_SHARE.value
     sex_weights = {"female": female, "male": 1.0 - female}
     smoking_weights = {status: knob.value for status, knob in SMOKING_DISTRIBUTION.items()}
     shape_weights = {shape: knob.value for shape, knob in REFERENCE_CLAIM_SHAPES.items()}
-    age_weight = 1.0 / len(REFERENCE_AGES)
 
     total = 0.0
-    for age in REFERENCE_AGES:
+    for age, age_weight in reference_age_weights().items():
         bmi_weights = bmi_distribution(age)
         for sex, sex_share in sex_weights.items():
             for bmi, bmi_share in bmi_weights.items():
@@ -1432,6 +1465,7 @@ __all__ = [
     "expected_any_condition",
     "grounding_warnings",
     "probability_of_any_condition",
+    "reference_age_weights",
     "sample_conditions",
     "sibtf_grounding",
     "sibtf_requirement",
