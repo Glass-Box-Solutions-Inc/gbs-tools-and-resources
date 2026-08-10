@@ -10,9 +10,40 @@ from reportlab.lib.units import inch
 from datetime import timedelta
 import random
 
+from data.variant_content import deponent_register
+
 
 class DepositionNotice(BaseTemplate):
     """Generates a Notice of Taking Deposition."""
+
+    #: Block form of the opt-in must name this family to activate it.
+    VARIANT_CONTENT_FAMILY = "deposition_notice"
+
+    def _deponent_identity(self, register):
+        """Resolve a register's subject token against this case's people.
+
+        The register names a role; only the template holds the case, so the
+        name is resolved here. The evaluator falls back to the treating
+        physician when a case carries no QME — a notice that names nobody is
+        worse than one that names the wrong specialty.
+        """
+        if register.subject == "applicant":
+            return self.case.applicant.full_name, register.role_label
+        if register.subject == "physician":
+            return (
+                self.case.treating_physician.full_name,
+                f"{register.role_label} ({self.case.treating_physician.specialty})",
+            )
+        if register.subject == "evaluator":
+            evaluator = getattr(self.case, "qme_physician", None) or self.case.treating_physician
+            return (
+                evaluator.full_name,
+                f"{register.role_label} ({evaluator.specialty})",
+            )
+        return (
+            f"Person Most Qualified, {self.case.employer.company_name}",
+            register.role_label,
+        )
 
     def build_story(self, doc_spec):
         """Build the deposition notice story."""
@@ -54,29 +85,41 @@ class DepositionNotice(BaseTemplate):
         story.append(Paragraph("Applicant in Pro Per", self.styles["BodyText14"]))
         story.append(Spacer(1, 0.2 * inch))
 
-        # Determine deponent
-        deponent_is_applicant = random.random() > 0.4
-
-        if deponent_is_applicant:
-            deponent_name = self.case.applicant.full_name
-            deponent_type = "Applicant"
-            documents_list = [
-                "All tax returns for the three years prior to the date of injury",
-                "All pay stubs from defendant employer",
-                "Any and all medical records in your possession",
-                "Any correspondence with the insurance carrier or adjuster",
-                "Any photographs of the injury or accident scene"
-            ]
+        # Determine deponent. Without the opt-in this is a coin flip, so a
+        # notice registered for a medical witness can name the applicant and
+        # vice versa, and no evaluator deponent exists at all. An opted-in
+        # variant that a register claims names the witness its subtype says.
+        register = (
+            deponent_register(self.variant_of(doc_spec))
+            if self.variant_content_enabled(doc_spec)
+            else None
+        )
+        if register is not None:
+            deponent_name, deponent_type = self._deponent_identity(register)
+            documents_list = list(register.documents)
         else:
-            deponent_name = self.case.treating_physician.full_name
-            deponent_type = f"Treating Physician ({self.case.treating_physician.specialty})"
-            documents_list = [
-                "Complete medical chart for the patient",
-                "All diagnostic test results and imaging reports",
-                "Treatment notes and progress reports",
-                "Billing records and CPT codes",
-                "Any correspondence regarding the patient's treatment"
-            ]
+            deponent_is_applicant = random.random() > 0.4
+
+            if deponent_is_applicant:
+                deponent_name = self.case.applicant.full_name
+                deponent_type = "Applicant"
+                documents_list = [
+                    "All tax returns for the three years prior to the date of injury",
+                    "All pay stubs from defendant employer",
+                    "Any and all medical records in your possession",
+                    "Any correspondence with the insurance carrier or adjuster",
+                    "Any photographs of the injury or accident scene"
+                ]
+            else:
+                deponent_name = self.case.treating_physician.full_name
+                deponent_type = f"Treating Physician ({self.case.treating_physician.specialty})"
+                documents_list = [
+                    "Complete medical chart for the patient",
+                    "All diagnostic test results and imaging reports",
+                    "Treatment notes and progress reports",
+                    "Billing records and CPT codes",
+                    "Any correspondence regarding the patient's treatment"
+                ]
 
         # Notice text
         depo_date = doc_spec.doc_date + timedelta(days=random.randint(21, 45))

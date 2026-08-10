@@ -9,11 +9,31 @@ from pdf_templates.base_template import BaseTemplate
 from reportlab.platypus import Paragraph, Spacer
 from reportlab.lib.units import inch
 
+from data.variant_content import diagnostic_register, region_for_body_part
+
 
 class DiagnosticReport(BaseTemplate):
-    """Radiology and diagnostic imaging report"""
+    """Radiology and diagnostic imaging report.
+
+    Four registry subtypes route here — imaging, lab results, EMG/NCV and sleep
+    study — and until the variant-content seam all four rendered the same
+    MRI/CT/X-ray report. With ``variant_content`` set, the three that are not
+    radiology render their own document; the imaging variant and every
+    unrecognised variant keep rendering the report below, byte for byte.
+    """
+
+    #: Block form of the opt-in must name this family to activate it.
+    VARIANT_CONTENT_FAMILY = "diagnostic"
 
     def build_story(self, doc_spec):
+        """Dispatch to a variant register when one is opted into and claims it."""
+        if self.variant_content_enabled(doc_spec):
+            register = diagnostic_register(self.variant_of(doc_spec))
+            if register is not None:
+                return self._build_register_story(doc_spec, register)
+        return self._build_imaging_story(doc_spec)
+
+    def _build_imaging_story(self, doc_spec):
         """Build 1-2 page diagnostic imaging report"""
         story = []
         injury = self.case.injuries[0] if self.case.injuries else None
@@ -101,6 +121,92 @@ class DiagnosticReport(BaseTemplate):
             radiologist_name,
             "Board Certified Radiologist",
             f"CA License #{random.randint(10000, 99999)}"
+        ))
+
+        return story
+
+    # ------------------------------------------------------------------
+    # Variant registers (opt-in only — see BaseTemplate.VARIANT_CONTENT_KEY)
+    # ------------------------------------------------------------------
+
+    def _result_row(self, row):
+        """One reported result line, formatted the way a result table reads."""
+        unit = f" {row.unit}" if row.unit else ""
+        reference = f" &nbsp;&nbsp;(Reference Range: {row.reference})" if row.reference else ""
+        return Paragraph(
+            f"{row.label}: <b>{row.value}</b>{unit}{reference}",
+            self.styles['BodyText14'],
+        )
+
+    def _build_register_story(self, doc_spec, register):
+        """Render a non-radiology diagnostic document.
+
+        The clinical content comes from a single scenario drawn as one unit, so
+        technique, measurements and impression cannot disagree with each other.
+        Only the administrative scaffolding — letterhead, patient header,
+        signature — is shared with the radiology path.
+        """
+        story = []
+        injury = self.case.injuries[0] if self.case.injuries else None
+        body_part = ", ".join(injury.body_parts) if injury else "Spine"
+
+        # Anatomy first: a study of the lower limb is the wrong document for a
+        # wrist injury, so the candidates are narrowed to the region before
+        # anything is drawn.
+        candidates = register.scenarios_for_region(region_for_body_part(body_part))
+        scenario = random.choice(candidates)
+
+        facility_name = random.choice(register.facilities)
+        story.extend(self.make_letterhead(
+            facility_name,
+            f"{random.randint(100, 9999)} Medical Center Drive\nSuite {random.randint(100, 500)}\n"
+            f"San Francisco, CA 9411{random.randint(0, 9)}",
+            f"({random.randint(400, 999)}) {random.randint(200, 999)}-{random.randint(1000, 9999)}"
+        ))
+        story.append(Spacer(1, 0.3*inch))
+
+        story.extend(self.make_patient_header())
+        story.append(Spacer(1, 0.3*inch))
+
+        story.append(Paragraph(f"<b>EXAMINATION:</b> {scenario.exam_label}", self.styles['BodyText14']))
+        story.append(Paragraph(
+            f"<b>Date of Service:</b> {doc_spec.doc_date.strftime('%B %d, %Y')}",
+            self.styles['BodyText14'],
+        ))
+        story.append(Paragraph(
+            f"<b>Ordering Physician:</b> {self.case.treating_physician.full_name}",
+            self.styles['BodyText14'],
+        ))
+        story.append(Spacer(1, 0.2*inch))
+
+        indication = (
+            f"Evaluation in connection with a work-related "
+            f"{injury.injury_type.value.replace('_', ' ') if injury else 'injury'} "
+            f"involving the {body_part.lower()}."
+        )
+        story.extend(self.make_section("CLINICAL INDICATION", indication))
+        story.extend(self.make_section("TECHNIQUE", scenario.technique))
+
+        story.append(Paragraph(f"<b>{scenario.result_heading}</b>", self.styles['BodyText14']))
+        for row in scenario.rows:
+            story.append(self._result_row(row))
+        story.append(Spacer(1, 0.2*inch))
+
+        if scenario.secondary_rows:
+            story.append(Paragraph(f"<b>{scenario.secondary_heading}</b>", self.styles['BodyText14']))
+            for row in scenario.secondary_rows:
+                story.append(self._result_row(row))
+            story.append(Spacer(1, 0.2*inch))
+
+        story.extend(self.make_section("IMPRESSION", scenario.impression))
+
+        signer = f"Dr. {random.choice(['Robert', 'Jennifer', 'Michael', 'Sarah', 'David'])} "
+        signer += random.choice(['Chen', 'Patel', 'Johnson', 'Martinez', 'Lee'])
+        story.append(Spacer(1, 0.4*inch))
+        story.extend(self.make_signature_block(
+            signer,
+            register.signer_title,
+            f"{register.signer_credential} #{random.randint(10000, 99999)}",
         ))
 
         return story

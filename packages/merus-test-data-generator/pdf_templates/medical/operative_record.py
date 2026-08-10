@@ -11,6 +11,7 @@ from pdf_templates.base_template import BaseTemplate
 from reportlab.platypus import Paragraph, Spacer
 from reportlab.lib.units import inch
 from data.wc_constants import SURGICAL_CPT_POOLS
+from data.variant_content import hospital_register
 
 
 # Body-part aliases → canonical SURGICAL_CPT_POOLS part (AJC-55). Matching is
@@ -81,9 +82,29 @@ def _select_surgical_cpts(body_parts: list[str]) -> list[tuple[str, str]]:
 
 
 class OperativeRecord(BaseTemplate):
-    """Surgical operative report"""
+    """Surgical operative report.
+
+    Five registry subtypes route here — operative records, acute-care records,
+    emergency-room records, discharge summaries and face sheets — and until the
+    variant-content seam every one of them rendered a full surgical narrative,
+    asserting an operation for encounters where none happened. With
+    ``variant_content`` set, the four non-operative variants render their own
+    document; the operative variant and every unrecognised variant keep
+    rendering the report below, byte for byte.
+    """
+
+    #: Block form of the opt-in must name this family to activate it.
+    VARIANT_CONTENT_FAMILY = "hospital"
 
     def build_story(self, doc_spec):
+        """Dispatch to a hospital register when one is opted into and claims it."""
+        if self.variant_content_enabled(doc_spec):
+            register = hospital_register(self.variant_of(doc_spec))
+            if register is not None:
+                return self._build_hospital_story(doc_spec, register)
+        return self._build_operative_story(doc_spec)
+
+    def _build_operative_story(self, doc_spec):
         """Build 2-3 page operative record"""
         story = []
         injury = self.case.injuries[0] if self.case.injuries else None
@@ -197,6 +218,72 @@ class OperativeRecord(BaseTemplate):
             surgeon_name,
             self.case.treating_physician.specialty,
             self.case.treating_physician.license_number
+        ))
+
+        return story
+
+    # ------------------------------------------------------------------
+    # Variant registers (opt-in only — see BaseTemplate.VARIANT_CONTENT_KEY)
+    # ------------------------------------------------------------------
+
+    def _build_hospital_story(self, doc_spec, register):
+        """Render a hospital encounter that is not an operation.
+
+        Note for the engine layer: wc-synthetic-caseload-engine's
+        ``FactAwareDischargeSummary`` retitles the *default* document by finding
+        the Paragraph containing "OPERATIVE REPORT". This path does not emit
+        that string, so a caller opting the discharge variant in here should
+        stop relying on that rewrite — it becomes a no-op rather than a
+        conflict, and the discharge register below already titles the document
+        correctly on its own.
+        """
+        story = []
+        injury = self.case.injuries[0] if self.case.injuries else None
+        body_part = ", ".join(injury.body_parts) if injury else "Spine"
+
+        facility_name = random.choice(register.facilities)
+        story.extend(self.make_letterhead(
+            facility_name,
+            f"{random.randint(1000, 9999)} Hospital Boulevard\n"
+            f"San Francisco, CA 9411{random.randint(0, 9)}",
+            f"({random.randint(400, 999)}) {random.randint(200, 999)}-{random.randint(1000, 9999)}"
+        ))
+        story.append(Spacer(1, 0.3*inch))
+
+        story.extend(self.make_patient_header())
+        story.append(Spacer(1, 0.2*inch))
+        story.extend(self.make_claim_reference_block())
+        story.append(Spacer(1, 0.3*inch))
+
+        story.append(Paragraph(f"<b>{register.title}</b>", self.styles['CenterBold']))
+        story.append(Spacer(1, 0.2*inch))
+
+        story.append(Paragraph(
+            f"<b>Date of Service:</b> {doc_spec.doc_date.strftime('%B %d, %Y')}",
+            self.styles['BodyText14'],
+        ))
+        for label, options in register.header_fields:
+            story.append(Paragraph(
+                f"<b>{label}:</b> {random.choice(options)}", self.styles['BodyText14']
+            ))
+        story.append(Paragraph(
+            f"<b>Presenting Complaint:</b> Work-related "
+            f"{injury.injury_type.value.replace('_', ' ') if injury else 'injury'} "
+            f"involving the {body_part.lower()}",
+            self.styles['BodyText14'],
+        ))
+        story.append(Spacer(1, 0.2*inch))
+
+        for heading, paragraphs in register.sections:
+            story.extend(self.make_section(heading, "\n\n".join(paragraphs)))
+
+        story.extend(self.make_section("DISPOSITION", random.choice(register.dispositions)))
+
+        story.append(Spacer(1, 0.4*inch))
+        story.extend(self.make_signature_block(
+            self.case.treating_physician.full_name,
+            register.signer_title,
+            self.case.treating_physician.license_number,
         ))
 
         return story

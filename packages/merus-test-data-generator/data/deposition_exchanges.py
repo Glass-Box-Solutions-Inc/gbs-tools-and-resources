@@ -11,6 +11,7 @@ Generates 80-150 Q&A exchanges per deposition for realistic 10-30 page transcrip
 from __future__ import annotations
 
 import random
+from datetime import date
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -777,6 +778,12 @@ def generate_time_marker() -> str:
 
 
 def _today():
-    """Get today's date (separated for testability)."""
-    from datetime import date
+    """Get today's date (separated for testability).
+
+    ``date`` is bound at module scope on purpose. Importing it inside the
+    function put the lookup out of reach of every module-attribute clock pin —
+    including the substrate-wide one the render baseline uses — so this one
+    call kept reading the real calendar while everything around it was frozen,
+    and the applicant's age moved whenever a birthday passed.
+    """
     return date.today()
