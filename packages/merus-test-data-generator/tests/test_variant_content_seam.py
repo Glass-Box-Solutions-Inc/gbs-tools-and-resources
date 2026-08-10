@@ -870,6 +870,65 @@ def _trusted_base_payload(base_worktree: str) -> tuple[dict, dict]:
     return feature_payload, base_payload
 
 
+def _trusted_base_baseline_path(base_worktree: str) -> str:
+    return os.path.join(
+        base_worktree,
+        "packages",
+        "merus-test-data-generator",
+        "tests",
+        "golden",
+        "render_baseline.json",
+    )
+
+
+def _trusted_base_payload_bytes(base_worktree: str) -> bytes:
+    with open(_trusted_base_baseline_path(base_worktree), "rb") as fh:
+        return fh.read()
+
+
+def _assert_base_worktree_clean(base_worktree: str, expected_payload_bytes: bytes) -> None:
+    import subprocess
+
+    base_payload_path = _trusted_base_baseline_path(base_worktree)
+    recorder = _recorder_module()
+
+    relative_blob = os.path.join(
+        "packages",
+        "merus-test-data-generator",
+        "tests",
+        "golden",
+        "render_baseline.json",
+    )
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=base_worktree,
+        capture_output=True, text=True, check=True,
+    )
+    assert not status.stdout, f"base worktree is not clean: {status.stdout.rstrip()}"
+    head_ref = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=base_worktree,
+        capture_output=True, text=True, check=True,
+    )
+    assert head_ref.stdout.strip() == "HEAD", (
+        f"base worktree is not detached: {head_ref.stdout.strip()}"
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=base_worktree,
+        capture_output=True, text=True, check=True,
+    )
+    assert head.stdout.strip() == recorder.BASE_COMMIT, (
+        f"base worktree HEAD is {head.stdout.strip()}, expected {recorder.BASE_COMMIT}"
+    )
+
+    expected = expected_payload_bytes
+    current = subprocess.run(
+        ["git", "show", f"{recorder.BASE_COMMIT}:{relative_blob}"], cwd=base_worktree,
+        capture_output=True, text=False, check=True,
+    ).stdout
+    assert current == expected, "base baseline does not match the committed blob"
+    with open(base_payload_path, "rb") as fh:
+        assert fh.read() == expected
+
+
 def _mutate_baseline(json_text: str | dict) -> str:
     from tests.render_baseline import BASELINE_PATH
     import copy
@@ -934,6 +993,7 @@ def test_restamp_provenance_uses_only_fresh_pinned_base_cases():
 
     recorder = _recorder_module()
     feature_before, base_payload = _trusted_base_payload(base_worktree)
+    base_payload_bytes = _trusted_base_payload_bytes(base_worktree)
     baseline_text = open(BASELINE_PATH, encoding="utf-8").read()
     try:
         code, out = _run_restamp_provenance(base_worktree)
@@ -948,6 +1008,7 @@ def test_restamp_provenance_uses_only_fresh_pinned_base_cases():
         )
         assert after["_meta"]["note"] == recorder.PROVENANCE_NOTE
     finally:
+        _assert_base_worktree_clean(base_worktree, base_payload_bytes)
         _restore_baseline(baseline_text)
         status = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -956,6 +1017,38 @@ def test_restamp_provenance_uses_only_fresh_pinned_base_cases():
             text=True,
         )
         assert not status.stdout, f"post-restamp dirty tree: {status.stdout.rstrip()}"
+
+
+def test_restamp_provenance_restores_base_worktree_on_success_and_failure():
+    base_worktree = _trusted_base_worktree()
+    if base_worktree is None:
+        pytest.skip("ajc72-recorder worktree is not available")
+
+    from tests.render_baseline import BASELINE_PATH
+
+    recorder = _recorder_module()
+    feature_payload_text = open(BASELINE_PATH, "rb").read().decode("utf-8")
+    feature_payload_bytes = feature_payload_text.encode("utf-8")
+    base_payload_bytes = _trusted_base_payload_bytes(base_worktree)
+
+    try:
+        assert recorder._run_restamp_mode(base_worktree) == 0
+        _assert_base_worktree_clean(base_worktree, base_payload_bytes)
+
+        _restore_baseline(feature_payload_text)
+        def _raise_after_base_run(_feature_payload, _base_payload):
+            raise SystemExit("forced restamp validation failure")
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(recorder, "_rebase_provenance_payload", _raise_after_base_run)
+            with pytest.raises(SystemExit, match="forced restamp validation failure"):
+                recorder._run_restamp_mode(base_worktree)
+
+        _assert_base_worktree_clean(base_worktree, base_payload_bytes)
+        assert open(BASELINE_PATH, "rb").read() == feature_payload_bytes
+    finally:
+        _restore_baseline(feature_payload_text)
+        _assert_base_worktree_clean(base_worktree, base_payload_bytes)
 
 
 def test_restamp_provenance_changes_only_meta_note():

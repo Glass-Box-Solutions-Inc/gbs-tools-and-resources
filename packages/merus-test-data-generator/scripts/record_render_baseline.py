@@ -35,6 +35,14 @@ HARNESS_FILES: dict[str, str] = {
 #: The immutable post-#38 trunk commit this recorder contract is anchored to.
 BASE_COMMIT = "b0e77dd1b6fa949d2d5dc6a7f2d1a0c94ed6def3"
 
+_BASE_GOLDEN_PAYLOAD = os.path.join(
+    "packages",
+    "merus-test-data-generator",
+    "tests",
+    "golden",
+    "render_baseline.json",
+)
+
 PROVENANCE_NOTE = (
     "Recorded from a detached checkout at base_commit, the trusted post-#38 "
     "trunk before AJC-72. base_patches lists the only tracked files the "
@@ -296,6 +304,40 @@ def _run_base_recorder(base_package_root: str) -> dict:
     return _read_json(baseline_path)
 
 
+def _cleanup_base_worktree(base_worktree: str, base_repo: str, base_package_root: str) -> None:
+    try:
+        _git(
+            "restore",
+            "--source=HEAD",
+            "--staged",
+            "--worktree",
+            "--",
+            _BASE_GOLDEN_PAYLOAD,
+            cwd=base_worktree,
+        )
+    except subprocess.CalledProcessError as exc:
+        _exit(f"refusing to restamp: restore failed during cleanup ({exc})")
+
+    try:
+        detached = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=base_worktree).strip()
+        if detached != "HEAD":
+            _exit("refusing to restamp: base worktree is not detached after cleanup")
+
+        head = _git("rev-parse", "HEAD", cwd=base_worktree).strip()
+        if head != BASE_COMMIT:
+            _exit(
+                f"refusing to restamp: base HEAD is {head[:12]}, expected {BASE_COMMIT[:12]} "
+                "after cleanup"
+            )
+
+        if _git("status", "--porcelain", cwd=base_worktree).strip():
+            _exit("refusing to restamp: base worktree is not clean after cleanup")
+
+        _verify_file_vs_blob(base_repo, base_package_root, "tests/golden/render_baseline.json")
+    except subprocess.CalledProcessError as exc:
+        _exit(f"refusing to restamp: post-cleanup validation failed ({exc})")
+
+
 def _structural_diff(left: object, right: object, prefix: str = "") -> list[str]:
     if type(left) != type(right):
         return [prefix[:-1] if prefix else "root"]
@@ -412,19 +454,19 @@ def _run_restamp_mode(base_worktree: str) -> int:
 
     base_repo, base_package_root = _validate_base_worktree(base_worktree)
     feature_baseline_path = os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json")
-
-    fresh_feature_payload = _read_json(feature_baseline_path)
-    fresh_base_payload = _run_base_recorder(base_package_root)
-
-    base_meta = fresh_base_payload.get("_meta", {})
-    if base_meta.get("base_commit") != BASE_COMMIT:
-        _exit("base payload base_commit is not pinned")
-    if base_meta.get("source_commit") != BASE_COMMIT:
-        _exit("base payload source_commit is not pinned")
-    if base_meta.get("base_patches") != []:
-        _exit("base payload reported base patches")
-    if base_meta.get("harness_sha256") != HARNESS_FILES:
-        _exit("base payload did not carry the expected harness hash map")
+    try:
+        fresh_base_payload = _run_base_recorder(base_package_root)
+        base_meta = fresh_base_payload.get("_meta", {})
+        if base_meta.get("base_commit") != BASE_COMMIT:
+            _exit("base payload base_commit is not pinned")
+        if base_meta.get("source_commit") != BASE_COMMIT:
+            _exit("base payload source_commit is not pinned")
+        if base_meta.get("base_patches") != []:
+            _exit("base payload reported base patches")
+        if base_meta.get("harness_sha256") != HARNESS_FILES:
+            _exit("base payload did not carry the expected harness hash map")
+    finally:
+        _cleanup_base_worktree(base_worktree, base_repo, base_package_root)
 
     _rewrite_restamped_provenance_payload(feature_baseline_path, fresh_base_payload)
     print("Restamped provenance note from the pinned base worktree.")
