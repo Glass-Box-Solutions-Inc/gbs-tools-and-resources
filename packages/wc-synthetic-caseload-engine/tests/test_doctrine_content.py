@@ -68,6 +68,7 @@ from wc_caseload_engine.renderer import (
     render_document,
 )
 from wc_caseload_engine.seeds import (
+    _DOCTRINE_POOL,
     ClaimResponse,
     DoctrineHook,
     EvalType,
@@ -203,6 +204,72 @@ class TestContentTableIsComplete:
             f"content missing for {sorted(set(ENUM_HOOKS) - set(DOCTRINE_CONTENT))}; "
             f"content for unknown hooks {sorted(set(DOCTRINE_CONTENT) - set(ENUM_HOOKS))}"
         )
+
+    def test_the_derivation_pool_is_the_whole_content_table(self) -> None:
+        """AJC-60. The third list of hooks must not drift from the other two.
+
+        ``DoctrineHook`` and ``DOCTRINE_CONTENT`` are already pinned to each
+        other above. ``_DOCTRINE_POOL`` was a third, hand-maintained copy and
+        it had already drifted: thirteen entries against the table's fourteen,
+        with ``death_dependency`` reachable only by explicit seeding.
+
+        Order is asserted as well as membership, and that is not pedantry.
+        ``_derive_doctrine_hooks`` shuffles this sequence, so two tuples with
+        the same members in a different order draw *different hooks* from the
+        same ``rng_seed`` — which would move every ``auto:`` caseload's bytes.
+        """
+        assert tuple(DOCTRINE_CONTENT) == _DOCTRINE_POOL, (
+            "the auto-derivation pool and the content table have drifted; a hook "
+            "in the table but not the pool can never be drawn, and a reordering "
+            "changes what every auto-derived seed draws"
+        )
+
+    def test_closing_the_drift_draws_exactly_what_it_drew_before(self) -> None:
+        """AJC-60. The repair is a consistency fix, and it has to prove it.
+
+        Restoring ``death_dependency`` to the pool would be a *behavioural*
+        change — and a golden-moving one — if the hook could ever survive the
+        filter ``_derive_doctrine_hooks`` applies before shuffling. It cannot,
+        for two independent reasons, and both are asserted rather than argued:
+
+        * on a non-death case ``hook_is_supported`` rejects it, so the filter
+          drops it;
+        * on a death case the derivation has *already* appended it, so the
+          ``hook not in hooks`` clause drops it.
+
+        There is therefore no reachable configuration where the fourteenth
+        entry reaches the shuffle, which is why the pool could be wrong for as
+        long as it was without anybody noticing — and why the goldens do not
+        move when it is put right.
+        """
+        thirteen = tuple(h for h in _DOCTRINE_POOL if h != "death_dependency")
+        assert len(thirteen) == len(_DOCTRINE_POOL) - 1, "the pool no longer holds the hook"
+
+        def survivors(pool: tuple[str, ...], facts: DoctrineFacts, already: list[str]) -> list[str]:
+            """The filter ``_derive_doctrine_hooks`` applies before it shuffles."""
+            return [h for h in pool if h not in already and hook_is_supported(h, facts)]
+
+        for injury_type in ("specific", "cumulative_trauma", "death"):
+            facts = DoctrineFacts(
+                injury_type=injury_type,
+                body_part_count=2,
+                has_psych_body_part=True,
+                eval_type="qme",
+                claim_response="accepted",
+                imr_filed=True,
+                occupation="firefighter",
+                industry="government",
+            )
+            # The derivation appends the hook itself on a death claim, so the
+            # pool's copy is excluded there by the `hook not in hooks` clause.
+            already = ["death_dependency"] if injury_type == "death" else []
+            assert survivors(_DOCTRINE_POOL, facts, already) == survivors(
+                thirteen, facts, already
+            ), (
+                f"injury.type={injury_type!r}: the fourteenth entry reached the "
+                "shuffle, so this is a behaviour change and every auto-derived "
+                "corpus needs re-recording"
+            )
 
     @pytest.mark.parametrize("hook", ENUM_HOOKS)
     def test_each_entry_is_usable(self, hook: str) -> None:

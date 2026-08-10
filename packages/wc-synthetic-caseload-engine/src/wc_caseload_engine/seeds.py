@@ -48,6 +48,7 @@ from pydantic import (
 # read a flat ``DoctrineFacts`` record rather than a CaseSeed), so this import
 # direction is the acyclic one.
 from wc_caseload_engine.doctrine import (
+    DOCTRINE_CONTENT,
     DoctrineFacts,
     distinct_body_part_count,
     hook_is_supported,
@@ -2359,21 +2360,21 @@ _LIEN_RESOLUTIONS: tuple[str, ...] = (
     "mixed",
 )
 
-_DOCTRINE_POOL: tuple[str, ...] = (
-    "ogilvie",
-    "almaraz_guzman",
-    "benson",
-    "escobedo",
-    "kite",
-    "going_and_coming",
-    "sibtf",
-    "lc3208_3_psych",
-    "gfpa",
-    "firefighter_presumption",
-    "imr_constitutionality",
-    "ab5_dynamex",
-    "lc4664_prior_award",
-)
+_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)
+"""Hooks ``auto:`` derivation may draw, in content-table order (AJC-60).
+
+Read from :data:`~wc_caseload_engine.doctrine.DOCTRINE_CONTENT` rather than
+transcribed, because the transcription had already drifted: thirteen entries
+against the table's fourteen, with ``death_dependency`` present in the table,
+accepted by the schema, and reachable only by naming it in a seed. A hand-kept
+third copy of a list two other places already agree on is a drift waiting to
+happen, and the next hook added is the one that would have inherited it.
+
+Derived in **insertion order, not sorted**. ``_derive_doctrine_hooks`` shuffles
+this sequence, so its order is an input to every ``auto:`` draw — sorting it
+would silently re-roll every auto-derived caseload. Insertion order preserves
+the thirteen entries' existing relative positions exactly.
+"""
 
 _MECHANISMS: Mapping[str, tuple[str, ...]] = {
     "specific": (
