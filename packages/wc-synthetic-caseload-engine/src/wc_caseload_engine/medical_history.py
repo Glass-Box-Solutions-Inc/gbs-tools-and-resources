@@ -657,7 +657,7 @@ def probability_of_any_condition(
     """P(at least one sampled condition), computed rather than measured.
 
     Analytic on purpose. The documentation gate below divides by this number to hold
-    the counsel-confirmed one-in-three union, and estimating it from the cohort would
+    the counsel-confirmed surfacing union, and estimating it from the cohort would
     make the gate depend on the corpus it is generating.
     """
     weights = archetype_weights(age, bmi_band, smoking_status)
@@ -832,10 +832,14 @@ def _apply_documentation_gate(
     """Set ``surfaces_in_file`` and ``billing_coded`` to hold the two published unions.
 
     The arithmetic is counsel's own, generalised from a caseload to a case. Counsel's
-    "one in three" is an *applicant-level* rate: a third of all applicants have a
+    "one in two" is an *applicant-level* rate: half of all applicants have a
     comorbidity that surfaces. So P(surfaces | has a condition) has to be
-    ``0.33 / P(has a condition)``, and since this engine knows the second number
-    exactly for each applicant it can hold the first exactly too.
+    ``P_SURFACES_IN_FILE / P(has a condition)``, and since this engine knows the second
+    number exactly for each applicant it can hold the first exactly too.
+
+    The union is read from the knob rather than written into this docstring on purpose:
+    counsel revised it from 0.33 to 0.50 on 2026-08-10, and a number spelled out in
+    three places is a number that will be revised in two of them.
 
     Within a case that does surface something, each condition draws at
     ``1 - (1 - q)**(1/n)``, which makes P(at least one) equal ``q`` for *every* n. A
@@ -844,7 +848,10 @@ def _apply_documentation_gate(
     not how a file works. Its appetite is roughly constant.
 
     ``billing_coded`` is drawn only among conditions that already surface, because the
-    measured 6.6% is a floor *inside* the 0.33 union rather than a competing figure.
+    measured 6.6% is a floor *inside* the surfacing union rather than a competing
+    figure. The NCCI figure did not move when counsel's estimate did, and it should
+    not: one is a measurement of billing records, the other an expert's estimate of
+    what a file mentions.
     """
     if not conditions or p_any <= 0.0:
         return conditions
@@ -1080,13 +1087,22 @@ class SibtfClause:
 
 #: The disability grades that count as "labor disabling" for §4751 purposes.
 #:
-#: ``subclinical`` and ``mild`` are excluded deliberately. Every degenerative finding
-#: in the catalog is drawn from a study of *asymptomatic* people — that is what those
-#: prevalence tables measured — so a predicate that accepted any predating finding
-#: would ground SIBTF on roughly half the corpus and mean nothing. Invented, and
-#: tagged as such: no source grades a synthetic condition against §4751, and counsel
-#: has not been asked. M2 revisits it when the assertion layer needs the contested case.
-SIBTF_DISABLING_SEVERITIES: frozenset[str] = frozenset({"moderate", "severe"})
+#: ``subclinical`` and ``mild`` were excluded from the start, because every degenerative
+#: finding in the catalog is drawn from a study of *asymptomatic* people — that is what
+#: those prevalence tables measured — so a predicate accepting any predating finding
+#: would ground SIBTF on roughly half the corpus and mean nothing.
+#:
+#: ``moderate`` was excluded later, on counsel's ruling that the moderate-or-worse line
+#: was **too loose** [counsel-confirmed 2026-08-10]. It is worth being precise about
+#: what that ruling settles and what it does not. **The direction is confirmed**: the
+#: bar sits higher than "moderate". **The threshold is not** — §4751 speaks of a
+#: pre-existing permanent partial disability the Fund could be liable for, and where
+#: exactly that lands against this module's four-grade vocabulary is an **open counsel
+#: item for M2** [counsel-unconfirmed]. Severe is the conservative reading of a
+#: confirmed direction, which is the right way to be wrong here: the cost of being too
+#: strict is a warning that fires when it need not, and the cost of being too loose is
+#: a doctrine hook standing on evidence that does not support it.
+SIBTF_DISABLING_SEVERITIES: frozenset[str] = frozenset({"severe"})
 
 
 #: Trajectories a §4751 disability can still be running on at the date of injury.
@@ -1094,7 +1110,7 @@ SIBTF_DISABLING_SEVERITIES: frozenset[str] = frozenset({"moderate", "severe"})
 #: ``resolved`` is excluded, and the exclusion is not a technicality. This module defines
 #: a resolved condition as one that is no longer a live factor; §4751 asks whether a
 #: pre-existing disability *combines* with the new injury to produce a greater one. A
-#: factor that has stopped operating cannot combine with anything, so a moderate
+#: factor that has stopped operating cannot combine with anything, so a severe
 #: condition that resolved before the injury grounds no more than no condition at all.
 SIBTF_LIVE_TRAJECTORIES: frozenset[str] = frozenset(
     {"stable", "progressive", "fluctuating"}
@@ -1130,7 +1146,7 @@ SIBTF_QUALIFYING: tuple[SibtfClause, ...] = (
         name="predating_condition",
         remediation=(
             "add a conditions entry with symptomatic_before_doi true, severity "
-            "moderate or severe, and a trajectory other than resolved"
+            "severe, and a trajectory other than resolved"
         ),
         holds=_has_qualifying_condition,
     ),

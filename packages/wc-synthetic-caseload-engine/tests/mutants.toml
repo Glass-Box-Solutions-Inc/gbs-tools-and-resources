@@ -1873,12 +1873,12 @@ note = 'AJC-60. R2, restated as the risk that actually exists. The first version
 
 [[mutant]]
 id = 'm17-6'
-title = 'the documentation gate ignores true prevalence and the one-in-three union breaks'
+title = 'the documentation gate ignores true prevalence and the surfacing union breaks'
 file = 'src/wc_caseload_engine/medical_history.py'
 test = 'tests/test_medical_history.py::TestTheDocumentationGate::test_the_surfacing_and_billing_unions_are_the_counsel_confirmed_ones'
 find = '''    q_surface = min(1.0, P_SURFACES_IN_FILE.value / p_any)'''
 replace = '''    q_surface = P_SURFACES_IN_FILE.value'''
-note = 'AJC-60. The counsel-confirmed "one in three" is an applicant-level rate, so P(surfaces | has a condition) has to be 0.33 divided by P(has a condition). Dropping the divisor applies the applicant-level figure as a conditional one, and the realised union falls to roughly 0.23 — a plausible-looking number that quietly contradicts the only documentation figure counsel actually confirmed.'
+note = 'AJC-60. The counsel-confirmed surfacing rate is an APPLICANT-level figure, so P(surfaces | has a condition) has to be that rate divided by P(has a condition). Dropping the divisor applies the applicant-level figure as a conditional one and the realised union collapses to the product of the two instead — a plausible-looking number that quietly contradicts the only documentation figure counsel gave. Written against the knob rather than its value on purpose: counsel revised the rate from 0.33 to 0.50 on 2026-08-10, and a note quoting the old arithmetic would have gone stale without anything going red.'
 
 [[mutant]]
 id = 'm17-7'
@@ -2072,3 +2072,12 @@ test = "tests/test_medical_history.py::TestProfileMembershipIsNotAFingerprint::t
 find = '''    return min(_P_CEILING, max(_P_FLOOR, probability))'''
 replace = '''    return min(1.0, max(0.0, probability))'''
 note = 'AJC-60 R3 finding 2, guarantee (a). Singleton-freedom is exact rather than empirical: conditions are drawn independently given the archetype, so every subset has positive probability under every archetype precisely when every per-condition probability sits strictly inside (0, 1). Widening the clamp to the closed interval is what would break that, and it would break it invisibly — no cohort of any size reliably draws the set that becomes unreachable. Pinned to the cell review found, so the check cannot stop covering the finding that prompted it.'
+
+[[mutant]]
+id = 'm17-23'
+title = 'the SIBTF severity bar slides back below the line counsel drew'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_history.py::TestTheSibtfPredicateMeansWhatItSays::test_a_moderate_condition_no_longer_qualifies'
+find = '''SIBTF_DISABLING_SEVERITIES: frozenset[str] = frozenset({"severe"})'''
+replace = '''SIBTF_DISABLING_SEVERITIES: frozenset[str] = frozenset({"moderate", "severe"})'''
+note = 'AJC-60 R3 counsel addendum. The moderate-or-worse line was the engineering guess; counsel read it and called it too loose [counsel-confirmed 2026-08-10]. Registered as a mutant rather than left to the constant because widening a legal threshold is the kind of edit that looks like tuning: one word, no obvious blast radius, and a doctrine hook quietly standing on evidence that does not support it. The direction is confirmed and the exact 4751 threshold is still an open counsel item for M2 — which is precisely why the current value needs a guard that names the ruling.'

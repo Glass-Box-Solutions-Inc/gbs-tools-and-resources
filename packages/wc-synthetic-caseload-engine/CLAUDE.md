@@ -428,10 +428,13 @@ Consequences worth knowing before touching it:
   on a pre-existing permanent *disability* that **combines** with the new injury, so a denied
   or pending prior claim grounds nothing, and neither does a condition whose trajectory is
   `resolved` — a factor that has stopped operating cannot combine with anything. A qualifying
-  award, or a moderate-or-worse condition symptomatic before the injury and still running,
-  does. The remediation sentence is built from `SIBTF_QUALIFYING` because the hand-maintained
-  version drifted from the check before anyone ran it — it told authors to add a predating
-  condition, which the check ignored.
+  award, or a **severe** condition symptomatic before the injury and still running, does. The
+  severity bar was `moderate` until counsel ruled that line too loose [counsel-confirmed
+  2026-08-10]; the *direction* is confirmed and the exact §4751 threshold is an open counsel
+  item for M2, so `severe` is the conservative reading of a confirmed direction. The
+  remediation sentence is built from `SIBTF_QUALIFYING` because the hand-maintained version
+  drifted from the check before anyone ran it — it told authors to add a predating condition,
+  which the check ignored.
 - **An award is how a claim resolved, not an independent event.** `PriorAwardEntry`'s
   `resolution_type` defaults to `None`, meaning the claim's own, and a claim that was denied,
   dismissed or is still pending cannot carry an award at all. The old default was
@@ -444,8 +447,14 @@ Consequences worth knowing before touching it:
 - **The aggregate moved and was reported, not tuned.** Reproducing note C's per-condition
   marginals forces P(any condition) to about 0.76, against the design record's expected 0.55.
   Both are pinned: `P_ANY_CONDITION_MEASURED` and `P_ANY_CONDITION_EXPECTED`, the second
-  carrying its own falsification note. The counsel-confirmed 0.33 documentation union is held
-  exactly regardless, because the gate divides by the realised aggregate.
+  carrying its own falsification note. The counsel-confirmed surfacing union is held exactly
+  regardless, because the gate divides by the realised aggregate — which is what let counsel's
+  2026-08-10 revision of that union (0.33 → 0.50, "one in two", superseding the 2026-08-08
+  "one in three") land as a one-constant change. The NCCI billing floor of 0.066 did not move
+  with it: one is a measurement of billing records, the other an expert's estimate of what a
+  file mentions. At 0.50 over the realised 0.76, implied file visibility is **66%**, which no
+  longer contradicts the design record's 60% — the tension that note recorded has largely
+  dissolved, and what stays falsified is the 0.55 aggregate itself.
 
 ---
 

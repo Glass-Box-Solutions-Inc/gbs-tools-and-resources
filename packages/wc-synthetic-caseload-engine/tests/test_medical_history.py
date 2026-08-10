@@ -58,6 +58,7 @@ from wc_caseload_engine.medical_history import (
     _P_FLOOR,
     HEALTH_ARCHETYPES,
     HOOK_GROUNDING,
+    SIBTF_DISABLING_SEVERITIES,
     SIBTF_QUALIFYING,
     _clamped,
     _rng,
@@ -1061,7 +1062,7 @@ class TestTheDocumentationGate:
         )
 
     def test_billing_coded_never_escapes_the_surfacing_union(self) -> None:
-        """The measured 6.6% is a floor *inside* the 0.33, not a competing figure."""
+        """The measured 6.6% is a floor *inside* the union, not a competing figure."""
         cohort = _sample(3000, base=9_500_000)
         for history in cohort:
             for condition in history.conditions:
@@ -1801,9 +1802,13 @@ class TestTheSibtfPredicateMeansWhatItSays:
 
         §4751 asks whether a pre-existing disability *combines* with the new injury to
         produce a greater one. This module defines ``resolved`` as no longer a live
-        factor, so a moderate condition that resolved before the injury grounds no
-        more than no condition at all — and the old predicate accepted it, because it
-        read severity and symptom history and never looked at trajectory.
+        factor, so a severe condition that resolved before the injury grounds no more
+        than no condition at all — and the old predicate accepted it, because it read
+        severity and symptom history and never looked at trajectory.
+
+        Severity is ``severe`` here so the trajectory clause is the only thing keeping
+        the warning up. At ``moderate`` this test would pass on the severity bar alone
+        and prove nothing about trajectory.
         """
         plan = self._plan(
             {
@@ -1812,7 +1817,7 @@ class TestTheSibtfPredicateMeansWhatItSays:
                     {
                         "label": "resolved lumbar strain with degenerative change",
                         "key": "lumbar_disc_degeneration",
-                        "severity": "moderate",
+                        "severity": "severe",
                         "symptomatic_before_doi": True,
                         "trajectory": "resolved",
                     }
@@ -1830,7 +1835,7 @@ class TestTheSibtfPredicateMeansWhatItSays:
                     {
                         "label": "lumbar degenerative disc disease",
                         "key": "lumbar_disc_degeneration",
-                        "severity": "moderate",
+                        "severity": "severe",
                         "symptomatic_before_doi": True,
                         "trajectory": "progressive",
                     }
@@ -1838,6 +1843,43 @@ class TestTheSibtfPredicateMeansWhatItSays:
             }
         )
         assert not self._warned(plan)
+
+    def test_a_moderate_condition_no_longer_qualifies(self) -> None:
+        """Counsel's ruling, and the witness it flipped [counsel-confirmed 2026-08-10].
+
+        This case grounded SIBTF until counsel read the line and called
+        moderate-or-worse too loose. Everything else about the condition is what the
+        predicate wants — symptomatic before the injury, still progressing, on a region
+        the claim names — so severity is the only thing refusing it, which is what
+        makes this the witness for the ruling rather than a restatement of the others.
+
+        The *direction* is confirmed and the exact §4751 threshold is not: it is an
+        open counsel item for M2. Severe is the conservative reading, because a warning
+        that fires when it need not costs an author a sentence, and a hook standing on
+        evidence that does not support it costs the corpus its coherence.
+        """
+        plan = self._plan(
+            {
+                "sample_conditions": False,
+                "conditions": [
+                    {
+                        "label": "lumbar degenerative disc disease",
+                        "key": "lumbar_disc_degeneration",
+                        "severity": "moderate",
+                        "symptomatic_before_doi": True,
+                        "trajectory": "progressive",
+                    }
+                ],
+            }
+        )
+        assert self._warned(plan)
+
+    def test_the_qualifying_grade_is_the_one_counsel_confirmed(self) -> None:
+        """The knob itself, so a widening has to be a deliberate edit with a reason."""
+        assert frozenset({"severe"}) == SIBTF_DISABLING_SEVERITIES, (
+            "the qualifying severity set has moved off counsel's ruling; widening it "
+            "is a legal decision, not a tuning knob"
+        )
 
     def test_an_asymptomatic_incidental_finding_does_not_qualify(self) -> None:
         """The boundary the severity clause draws, asserted so it is not an accident.

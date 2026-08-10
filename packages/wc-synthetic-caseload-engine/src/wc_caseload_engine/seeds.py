@@ -1714,7 +1714,7 @@ class MedicalConditionEntry(_Model):
     Defaults ``True`` for a stated condition and ``False`` for a drawn one, and the
     asymmetry is deliberate rather than an inconsistency: an author who names a
     condition is telling a story with it, while the drawn population is calibrated to
-    the counsel-confirmed one-in-three documentation rate. Set it ``False`` to author
+    the counsel-confirmed documentation rate. Set it ``False`` to author
     the case the two-surface gate exists for — a real condition the file never
     mentions.
     """

@@ -952,16 +952,26 @@ FEMALE_SHARE: Knob = Knob(
 # ---------------------------------------------------------------------------
 
 P_SURFACES_IN_FILE: Knob = Knob(
-    value=0.33,
+    value=0.50,
     tag="counsel_confirmed",
     rationale=(
         "Counsel's answer to 'what share of applicants have at least one chronic "
-        "condition that surfaces anywhere in the file' was, verbatim, 'one in three'. "
+        "condition that surfaces anywhere in the file' was, verbatim, 'one in two'. "
         "This is the DOCUMENTATION union — billing-coded plus narrative-mentioned — "
         "not true prevalence, and conflating the two is the error the two-surface gate "
-        "exists to prevent."
+        "exists to prevent. "
+        "**Superseded upward from 0.33 on 2026-08-10.** The same question asked on "
+        "2026-08-08 came back 'one in three'; asked again against the built model it "
+        "came back 'one in two'. The later answer governs, and the revision is left "
+        "visible rather than tidied away, because a knob that moved by half its own "
+        "value on re-asking is a knob whose confidence grade should be read as an "
+        "estimate — counsel's phrasing on the second pass was an estimate, not a "
+        "figure read off anything."
     ),
-    source="Alex (counsel), 2026-08-08; sme-answers.md ruling 5",
+    source=(
+        "Alex (counsel), 2026-08-10 estimate, superseding 2026-08-08; "
+        "sme-answers.md ruling 5"
+    ),
 )
 
 P_BILLING_CODED: Knob = Knob(
@@ -969,9 +979,11 @@ P_BILLING_CODED: Knob = Knob(
     tag="measured",
     rationale=(
         "Comorbidity coded in the claim's own billing, trended from 0.024 in AY2000. "
-        "The floor *inside* the 0.33 union rather than a competing figure: NCCI's own "
-        "brief says most claimants with a comorbidity are never diagnosed for it "
-        "through the workers' compensation system."
+        "The floor *inside* the surfacing union rather than a competing figure: NCCI's "
+        "own brief says most claimants with a comorbidity are never diagnosed for it "
+        "through the workers' compensation system. Unchanged when counsel revised the "
+        "surfacing union on 2026-08-10, and deliberately so: this is a measurement of "
+        "billing records and that is an expert's estimate of what a file mentions."
     ),
     source="NCCI, 'Comorbidities in Workers Compensation', Laws & Colon, Oct 2012",
 )
@@ -1012,15 +1024,20 @@ P_ANY_CONDITION_EXPECTED: Knob = Knob(
         "population; the blend was the weak step, not the per-condition figures. "
         "SME ruling 5 called this an aggregate *derived check* rather than an asserted "
         "knob, which is exactly the licence to report it moved rather than tune the "
-        "sampler until it agreed. The consequence is confined and stated: the "
-        "consistency squeeze implies file visibility near 43% rather than 60%, and "
-        "the counsel-confirmed 0.33 surfacing union is held exactly regardless, "
-        "because the documentation gate divides by the realised aggregate."
+        "sampler until it agreed. The consequence is confined and stated, and it has "
+        "moved twice: at the old 0.33 surfacing union the squeeze implied file "
+        "visibility near 43%, well under the design record's 60%. Counsel's 2026-08-10 "
+        "revision to 0.50 puts it at 0.50/0.76 = **66%**, which no longer contradicts "
+        "the design record at all — it slightly exceeds it. Worth saying plainly: the "
+        "tension this note was written to record has largely dissolved, and what "
+        "remains falsified is the 0.55 aggregate itself, not the visibility figure "
+        "that followed from it. The surfacing union is held exactly regardless of "
+        "either, because the documentation gate divides by the realised aggregate."
     ),
     source=(
         "Interview: what share of applicants have a preexisting condition at all? The "
         "answer that would settle this is the true-prevalence question, not the "
-        "already-answered one-in-three documentation question."
+        "already-answered documentation question."
     ),
 )
 
