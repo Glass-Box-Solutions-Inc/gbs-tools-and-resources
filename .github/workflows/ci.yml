@@ -296,6 +296,20 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt 2>/dev/null || true
       - run: python -c "from data.models import *; print('Import check passed')"
+      # The package ships 262 tests this job had never run — an import check was
+      # the entire gate. The path filter above already sends substrate changes to
+      # the wc-synthetic-caseload-engine job, whose golden corpora pin every
+      # rendered byte, so a template change that moves output is caught. What
+      # nothing caught is a template change that moves output only when a caller
+      # asks it to: AJC-65 added an opt-in apportionment/causation seam to the
+      # QME/AME report, and the goldens exercise only its ungoverned path. The
+      # governed path had no CI anywhere. ~6 s.
+      #
+      # pytest is deliberately installed here rather than added to
+      # requirements.txt, which is the runtime dependency set the Docker image
+      # and Cloud Run deployments install.
+      - name: Test
+        run: pip install pytest && python -m pytest tests/ -q --tb=short
 
   mcp-servers-gbs-voice:
     name: "mcp-servers-gbs-voice"
