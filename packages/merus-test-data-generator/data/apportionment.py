@@ -248,16 +248,34 @@ def parse_apportionment(context: object) -> ApportionmentDecision | None:
             # as 'apportioned' — see ApportionmentDecision.impairment_block.
             register = "opinion"
         else:
-            # Nothing to govern: only a basis, which alone says nothing about
-            # whether anything is apportioned at all.
-            return None
+            # A basis and nothing else. This is the shape that most looks like
+            # governance and least is: it names *what* the apportionment rests
+            # on without saying whether there is any. Returning ``None`` here
+            # would hand the document straight back to both coin flips while the
+            # caller's payload sat in the context, unread — the failure mode this
+            # module exists to remove, arriving through the front door.
+            raise ValueError(
+                f"context[{CONTEXT_KEY!r}] carries only {sorted(block)!r} and governs "
+                f"nothing: a basis states what an apportionment rests on, not whether "
+                f"there is one. Add 'register', 'nonindustrial_pct' or 'opinion', or "
+                f"omit the block entirely — a non-empty block that silently restores "
+                f"the random opinion is worse than no block at all."
+            )
 
-    if register in ("none", "deferred") and pct is not None and pct > 0:
+    if register == "deferred" and pct is not None:
         raise ValueError(
-            f"context[{CONTEXT_KEY!r}] is contradictory: register {register!r} with "
-            f"nonindustrial_pct={pct}. {register!r} states that no percentage is "
-            f"determined, so a positive one cannot also be rendered — the report would "
-            f"contradict itself in exactly the way this seam exists to prevent."
+            f"context[{CONTEXT_KEY!r}] is contradictory: register 'deferred' with "
+            f"nonindustrial_pct={pct}. Deferring means no percentage has been "
+            f"determined, so *any* percentage contradicts it — including {pct!r}, "
+            f"which would otherwise be accepted and then silently discarded. Use "
+            f"register 'none' to state that nothing is apportioned."
+        )
+    if register == "none" and pct:
+        raise ValueError(
+            f"context[{CONTEXT_KEY!r}] is contradictory: register 'none' with "
+            f"nonindustrial_pct={pct}. 'none' states that the entire disability is "
+            f"industrial, so a positive apportionment cannot also be rendered — the "
+            f"report would contradict itself in exactly the way this seam prevents."
         )
     if register == "apportioned" and not pct:
         raise ValueError(

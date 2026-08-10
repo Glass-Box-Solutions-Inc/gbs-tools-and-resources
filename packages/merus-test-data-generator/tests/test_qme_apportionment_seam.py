@@ -490,6 +490,7 @@ _APPORTIONMENT_POOL = [0, 0, 0, 10, 15, 20, 25]
 #: in the range, which is what a wiped seed looks like. Build the case, then
 #: seed, then render.
 _SEAM_CASE = _build_seam_case()
+_SEAM_INJURY = _SEAM_CASE.injuries[0] if _SEAM_CASE.injuries else None
 
 
 def _drawn_pct_in_story(seed, case=_SEAM_CASE):
@@ -523,6 +524,18 @@ def _drawn_pct_in_story(seed, case=_SEAM_CASE):
 
     assert captured, "the impairment section drew no apportionment percentage"
     return captured[0]
+
+
+def _ungoverned_story_text(seed, case=None):
+    """The full ungoverned document text at ``seed``.
+
+    Always a whole ``build_story``. Reading a coin from a section builder called
+    on its own is the recurring trap in this file: the section sits behind
+    dozens of earlier draws, so standalone and in-document renders flip
+    differently at the same seed.
+    """
+    random.seed(seed)
+    return _joined(QmeAmeReport(case if case is not None else _SEAM_CASE).build_story(_spec()))
 
 
 def _seeds_where_drawn_is(zero, limit=4):
@@ -862,38 +875,148 @@ def test_governed_renders_change_the_pdf_but_not_the_rng_trace():
         assert actual["text"] != plain["text"], f"{governed!r} rendered nothing"
 
 
-def test_governing_to_the_substrates_own_answer_is_a_pure_pass_through():
-    """Say what it was going to say anyway and the render must not move at all.
+def _digest_at_seed(seed, context=None, case=None):
+    """The four AJC-66 digests for one render at an arbitrary seed.
 
-    The strongest statement of "additive": a decision that agrees with the draw
-    is invisible in the output, not merely equivalent in the stream. Swept over
-    both sides of the zero boundary, since the substrate's pool is 4/7 zeros and
-    the two sides take different code paths through the narrative builder.
+    ``render_digest`` pins its own ``RENDER_SEED``; the pass-through property
+    below has to be asserted at seeds chosen for which branch they take, so the
+    same four measures are taken here against a caller-supplied seed. Built from
+    the harness's own pieces rather than reimplemented, so a change to what the
+    baseline measures reaches this too.
     """
-    for zero in (True, False):
-        for seed in _seeds_where_drawn_is(zero=zero, limit=3):
-            drawn = _drawn_pct_in_story(seed)
-            if drawn == 0:
-                governed = {"apportionment": {"register": "none"}}
-            else:
-                governed = {
-                    "apportionment": {"register": "apportioned", "nonindustrial_pct": drawn}
-                }
+    import hashlib
+    import tempfile
+    from pathlib import Path
 
-            def build(context):
-                random.seed(seed)
-                return _texts(QmeAmeReport(_SEAM_CASE).build_story(_spec(context=context)))
+    from tests.render_baseline import (
+        _ensure_invariant_pdfs,
+        _story_fingerprint,
+        _TracingRandom,
+        frozen_clock,
+    )
 
-            plain = build({})
-            same = build(governed)
+    _ensure_invariant_pdfs()
+    case = case if case is not None else _SEAM_CASE
+    spec = _spec(context=context)
 
-            plain_has = any("Apportionment \u2014" in t for t in plain)
-            same_has = any("Apportionment \u2014" in t for t in same)
-            assert plain_has == (drawn > 0), f"seed {seed}: control disagrees with the draw"
-            assert same_has == plain_has, (
-                f"seed {seed}: governing to the drawn value {drawn} changed whether the "
-                f"impairment section states an apportionment at all"
-            )
+    with frozen_clock(), _TracingRandom() as tracer:
+        random.seed(seed)
+        story = QmeAmeReport(case).build_story(spec)
+        state_after = random.getstate()
+
+    text = QmeAmeReport(case)._story_to_plaintext(story)
+    trace_blob = "\n".join(tracer.trace) + f"\nSTATE:{state_after!r}"
+
+    with tempfile.TemporaryDirectory() as tmp, frozen_clock():
+        out = Path(tmp) / "render.pdf"
+        random.seed(seed)
+        QmeAmeReport(case).generate(out, spec)
+        pdf_bytes = out.read_bytes()
+
+    def sha(value):
+        raw = value if isinstance(value, bytes) else value.encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    return {
+        "text": sha(text),
+        "story": sha(_story_fingerprint(story)),
+        "rng": sha(trace_blob),
+        "pdf": sha(pdf_bytes),
+    }
+
+
+def _seeds_reproducible_by_the_none_register(limit=3):
+    """Seeds where ``register: "none"`` reproduces the substrate's own answer.
+
+    Exact reproduction needs both draws to agree with the decision: the
+    impairment percentage must have come up zero (so the substrate printed no
+    apportionment block, which is what ``none`` renders) *and* the conclusion
+    coin must have chosen the no-apportionment sentence (which is the sentence
+    ``none`` renders, verbatim). Roughly 4/7 x 1/2 of seeds qualify.
+    """
+    found = []
+    for seed in range(300):
+        if _drawn_pct_in_story(seed) != 0:
+            continue
+        # Read the coin from a *full* render. Calling ``_build_conclusions``
+        # directly at this seed answers a different question: build_story
+        # consumes dozens of draws before the conclusions are reached, so the
+        # sentence it flips to standalone is not the one the document gets.
+        if _SUBSTRATE_NO_APPORTIONMENT in _ungoverned_story_text(seed):
+            found.append(seed)
+        if len(found) == limit:
+            break
+    assert found, "no seed reproduces the substrate answer via the 'none' register"
+    return found
+
+
+@pytest.mark.parametrize("seed", _seeds_reproducible_by_the_none_register())
+def test_governing_to_the_substrates_own_answer_is_byte_identical(seed):
+    """Say what it was going to say anyway and **nothing** moves.
+
+    The strongest available statement of "additive", and the one this test used
+    to only gesture at: an earlier version asserted merely that both renders
+    contained the impairment heading, which is true of renders that differ in
+    every other respect. All four digests are compared now — the plain text, the
+    flowable geometry, the ordered rng trace, and the PDF bytes.
+
+    Exact reproduction is only possible where the decision can express the
+    substrate's own answer completely, which is why the seeds are selected
+    rather than arbitrary: ``none`` renders no impairment block and the verbatim
+    no-apportionment sentence, so it matches exactly when both draws agreed.
+    Where reproduction is impossible — a governed percentage cannot reproduce
+    the substrate's randomly chosen Escobedo or constitutional narrative — the
+    property asserted instead is branch preservation, in the test below.
+    """
+    assert _digest_at_seed(seed, {"apportionment": {"register": "none"}}) == _digest_at_seed(seed)
+
+
+@pytest.mark.parametrize("seed", [0, 3, 11, 42])
+def test_governing_causation_to_its_drawn_adverb_is_byte_identical(seed):
+    """The causation half of the same property, and it is exactly reproducible.
+
+    ``attribution`` substitutes one word into the substrate's own sentence, so
+    governing it to the word the coin produced must be indistinguishable from
+    not governing it at all.
+    """
+    plain = _ungoverned_story_text(seed)
+    adverb = "entirely" if "is entirely attributable" in plain else "predominantly"
+
+    governed = {"causation": {"attribution": adverb}}
+    assert _digest_at_seed(seed, governed) == _digest_at_seed(seed)
+
+
+@pytest.mark.parametrize("zero", [True, False])
+def test_governing_the_percentage_preserves_the_impairment_branch(zero):
+    """Where exact reproduction is impossible, the branch must still be preserved.
+
+    A governed percentage renders the caller's own basis, so it cannot reproduce
+    the substrate's randomly chosen Escobedo or constitutional narrative and the
+    text digest legitimately moves. What must not move is *whether* the
+    impairment section states an apportionment at all, because that is the fact
+    the rest of the document's draws depend on.
+    """
+    for seed in _seeds_where_drawn_is(zero=zero, limit=3):
+        drawn = _drawn_pct_in_story(seed)
+        if drawn == 0:
+            governed = {"apportionment": {"register": "none"}}
+        else:
+            governed = {
+                "apportionment": {"register": "apportioned", "nonindustrial_pct": drawn}
+            }
+
+        def build(context):
+            random.seed(seed)
+            return _texts(QmeAmeReport(_SEAM_CASE).build_story(_spec(context=context)))
+
+        plain_has = any("Apportionment \u2014" in t for t in build({}))
+        same_has = any("Apportionment \u2014" in t for t in build(governed))
+
+        assert plain_has == (drawn > 0), f"seed {seed}: control disagrees with the draw"
+        assert same_has == plain_has, (
+            f"seed {seed}: governing to the drawn value {drawn} changed whether the "
+            f"impairment section states an apportionment at all"
+        )
 
 
 def _story_for(extra_context):
@@ -949,3 +1072,156 @@ def test_the_ungoverned_branch_mapping_is_pinned(sample_case):
 #: conclusions, over ``range(60)``. Recorded from origin/main before this seam
 #: existed.
 PINNED_NO_APPORTIONMENT_SEEDS: list[int] = [1, 5, 7, 10, 11, 12, 13, 14, 15, 17, 19, 20, 21, 23, 25, 27, 28, 29, 33, 34, 35, 36, 37, 38, 44, 46, 48, 50, 52, 54, 58, 59]
+
+
+# ---------------------------------------------------------------------------
+# Round 2 — the closing set
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"basis": "prior industrial injury"},
+        {"basis": "degenerative disc disease documented pre-injury"},
+        {"register": "deferred", "nonindustrial_pct": 0},
+        {"register": "deferred", "nonindustrial_pct": 25},
+        {"register": "none", "nonindustrial_pct": 25},
+        {"register": "apportioned"},
+        {"register": "apportioned", "nonindustrial_pct": 0},
+    ],
+)
+def test_a_non_empty_block_never_falls_back_to_the_coin_flip(qme, injury, block):
+    """The last way "refuse, don't guess" could be bypassed.
+
+    Two shapes used allowed keys to slip past validation and land back on the
+    substrate's randomness:
+
+    * ``{"basis": ...}`` alone parsed to ``None`` — a non-empty payload sitting
+      in the context, unread, while both coin flips ran. It is the shape that
+      most looks like governance and least is: it says what an apportionment
+      rests on without saying whether there is one.
+    * ``{"register": "deferred", "nonindustrial_pct": 0}`` was accepted with the
+      zero silently discarded. Deferring means no percentage has been
+      determined, so *any* percentage contradicts it — including zero, which
+      reads as a deliberate statement and was being thrown away.
+
+    Empty and absent stay valid ways to govern nothing; a non-empty block does
+    not.
+    """
+    with pytest.raises(ValueError):
+        qme._build_conclusions(injury, _spec(context={"apportionment": block}))
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"basis": "prior industrial injury"},
+        {"register": "deferred", "nonindustrial_pct": 0},
+        {"register": "none", "nonindustrial_pct": 40},
+        "not-a-mapping",
+        {"register": "unknown"},
+        {"nonindustrial_pct": 101},
+    ],
+)
+def test_rejected_governance_consumes_no_rendering_rng(block):
+    """A refused request must not advance the caller's random stream.
+
+    Otherwise the cost of a rejected block depends on how far the render got
+    before noticing — and a caller retrying after fixing its input would get a
+    different document than if it had been right the first time.
+    """
+    spec = _spec(context={"apportionment": block})
+
+    random.seed(9090)
+    before = random.getstate()
+    with pytest.raises(ValueError):
+        QmeAmeReport(_SEAM_CASE).build_story(spec)
+    assert random.getstate() == before, "a rejected block consumed randomness"
+
+    random.seed(9090)
+    before = random.getstate()
+    with pytest.raises(ValueError):
+        QmeAmeReport(_SEAM_CASE)._build_conclusions(_SEAM_INJURY, spec)
+    assert random.getstate() == before, "a rejected block consumed randomness"
+
+
+def test_a_full_build_parses_each_governance_block_exactly_once(monkeypatch):
+    """Parse-once was the stated design; this is what makes it true.
+
+    Both sections must render from the *same* object, not from two parses that
+    happen to agree today. Counting the calls is the only assertion that holds
+    a future refactor to it — an extra parse is invisible in the output right up
+    until the two readings diverge.
+    """
+    import data.apportionment as ap
+    import pdf_templates.medical.qme_ame_report as qme_mod
+
+    calls = {"apportionment": 0, "causation": 0}
+    real_ap, real_ca = ap.parse_apportionment, ap.parse_causation
+
+    def spy_ap(context):
+        calls["apportionment"] += 1
+        return real_ap(context)
+
+    def spy_ca(context):
+        calls["causation"] += 1
+        return real_ca(context)
+
+    monkeypatch.setattr(qme_mod, "parse_apportionment", spy_ap)
+    monkeypatch.setattr(qme_mod, "parse_causation", spy_ca)
+
+    context = {
+        "apportionment": {"register": "apportioned", "nonindustrial_pct": 30},
+        "causation": {"attribution": "predominantly"},
+    }
+    random.seed(4242)
+    QmeAmeReport(_SEAM_CASE).build_story(_spec(context=context))
+
+    assert calls == {"apportionment": 1, "causation": 1}
+
+
+def test_malformed_governance_raises_before_the_first_random_call(monkeypatch):
+    """Validation happens at the top of the render, not partway down.
+
+    Asserted by making *any* draw a failure: if the template reaches a coin flip
+    before noticing the block is malformed, this raises the wrong exception and
+    the test fails on the message.
+    """
+    import pdf_templates.medical.qme_ame_report as qme_mod
+
+    class _Tripwire:
+        def __getattr__(self, name):
+            raise AssertionError(f"random.{name} was called before validation")
+
+    monkeypatch.setattr(qme_mod, "random", _Tripwire())
+
+    with pytest.raises(ValueError, match="apportionment"):
+        QmeAmeReport(_SEAM_CASE).build_story(
+            _spec(context={"apportionment": "not-a-mapping"})
+        )
+
+
+def test_a_preparsed_decision_is_used_rather_than_reparsed(qme, injury):
+    """The standalone entry point still parses; the prepared one does not.
+
+    Both halves matter. A builder that ignored what it was handed would silently
+    re-derive, defeating parse-once; one that required it would stop working
+    when called directly.
+    """
+    from data.apportionment import ApportionmentDecision
+
+    prepared = ApportionmentDecision("apportioned", 45, "a prior award", None)
+
+    # The context says something different, and must be ignored in favour of the
+    # decision the caller prepared.
+    spec = _spec(context={"apportionment": {"register": "none"}})
+    random.seed(4)
+    text = _joined(qme._build_conclusions(injury, spec, apportionment=prepared))
+    assert "45%" in text and "55%" in text
+    assert _SUBSTRATE_NO_APPORTIONMENT not in text
+
+    # Called standalone, the same spec parses and yields 'none'.
+    random.seed(4)
+    standalone = _joined(qme._build_conclusions(injury, spec))
+    assert _SUBSTRATE_NO_APPORTIONMENT in standalone

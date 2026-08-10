@@ -50,12 +50,34 @@ from pdf_templates.base_template import BaseTemplate
 # accepted shapes; malformed input raises there, following the convention
 # AJC-66 established for ``variant_content`` on this same context channel.
 
+#: Distinguishes "the caller did not pre-parse" from "the caller pre-parsed and
+#: the answer was ungoverned". ``None`` is a meaningful parsed result, so it
+#: cannot double as the default.
+_UNPARSED = object()
+
 
 class QmeAmeReport(BaseTemplate):
     """Qualified Medical Evaluator / Agreed Medical Evaluator comprehensive report."""
 
     def build_story(self, doc_spec):
         """Build 5-15 page QME/AME report with specialty dispatch."""
+        # Parsed first, before a single flowable is built or a single draw is
+        # made. Two reasons, and both are load-bearing.
+        #
+        # One decision, not two readings: the impairment section and the
+        # conclusions must state the same apportionment, and the only way to
+        # guarantee that is for both to render from the same parsed object.
+        #
+        # And validation belongs at the top: a malformed block discovered
+        # halfway down would raise after the history, the examination and three
+        # coin flips had already been drawn and built. Callers would see a
+        # partially rendered document's worth of work thrown away, and — worse —
+        # the failure would depend on how far the render got. Governance is
+        # rejected before the document exists.
+        context = getattr(doc_spec, "context", None)
+        apportionment = parse_apportionment(context)
+        causation = parse_causation(context)
+
         story = []
         qme = self.case.qme_physician or self.case.treating_physician
         injury = self.case.injuries[0] if self.case.injuries else None
@@ -113,11 +135,8 @@ class QmeAmeReport(BaseTemplate):
         story.extend(self._build_diagnostic_review(injury))
 
         # --- 6. Impairment Rating (AMA Guides 5th Ed) ---
-        # The same decision the conclusions render from, parsed once here and
-        # handed to both, so the percentage rated in this section and the
-        # opinion stated in section 9 cannot disagree. Parsing is pure and
-        # consumes no randomness, so it is also safe to re-derive downstream.
-        apportionment = parse_apportionment(getattr(doc_spec, "context", None))
+        # The decision parsed at the top, so the percentage rated here and the
+        # opinion stated in section 9 come from one object and cannot disagree.
         story.extend(self.impairment_rating_section(apportionment))
 
         # Phase 6: Record WPI to accumulator so downstream memos can cite it
@@ -143,7 +162,9 @@ class QmeAmeReport(BaseTemplate):
         story.extend(self._build_work_restrictions())
 
         # --- 9. Conclusions ---
-        story.extend(self._build_conclusions(injury, doc_spec))
+        story.extend(self._build_conclusions(
+            injury, doc_spec, apportionment=apportionment, causation=causation,
+        ))
 
         # --- Signature ---
         story.append(Spacer(1, 0.4 * inch))
@@ -544,11 +565,33 @@ class QmeAmeReport(BaseTemplate):
         elements.append(Spacer(1, 0.15 * inch))
         return elements
 
-    def _build_conclusions(self, injury, doc_spec):
-        """Conclusions and Medical-Legal Opinions — numbered list with detailed rationale."""
+    def _build_conclusions(
+        self, injury, doc_spec, apportionment=_UNPARSED, causation=_UNPARSED,
+    ):
+        """Conclusions and Medical-Legal Opinions — numbered list with detailed rationale.
+
+        ``build_story`` parses the governance blocks once and passes them in, so
+        this section and the impairment section render from the same objects.
+        Called directly — by a subclass, or by a test — the blocks are parsed
+        here instead, which keeps this a standalone builder rather than one that
+        only works when its caller remembered to prepare it.
+
+        Parsing is pure and total: the same context yields the same decision, so
+        the two entry points cannot disagree about what the caller asked for.
+        """
         elements = []
         doi = self.case.timeline.date_of_injury.strftime("%m/%d/%Y")
         bp_str = ", ".join(injury.body_parts).lower() if injury else "the injured area"
+
+        # Validation before the first draw, whichever entry point was used. A
+        # malformed block must not reach the coin flips below: raising after
+        # them would leave the caller's rng stream advanced by a rejected
+        # request, which is a strange thing to have to reason about.
+        context = getattr(doc_spec, "context", None)
+        if apportionment is _UNPARSED:
+            apportionment = parse_apportionment(context)
+        if causation is _UNPARSED:
+            causation = parse_causation(context)
 
         # The three coin flips are drawn here, ahead of the list, in the order
         # the list used to evaluate them (5, then 6, then 7) — conclusions 1-4
@@ -560,10 +603,6 @@ class QmeAmeReport(BaseTemplate):
         restrictions_recommended = random.random() > 0.2
         drawn_attribution = "entirely" if random.random() > 0.4 else "predominantly"
         drew_no_apportionment = random.random() > 0.5
-
-        context = getattr(doc_spec, "context", None)
-        causation = parse_causation(context)
-        apportionment = parse_apportionment(context)
 
         if causation and causation.discussion:
             causation_text = causation.discussion
