@@ -164,17 +164,22 @@ def frozen_clock(anchor: date = ANCHOR_DATE):
             return _dt.datetime.combine(anchor, _dt.time(12, 0))
 
     saved: list[tuple[Any, str, Any]] = []
-    replacement = {_dt.date: _AnchoredDate, _dt.datetime: _AnchoredDateTime}
-
-    def swap(module: Any, attribute: str, original: Any) -> None:
-        saved.append((module, attribute, original))
-        setattr(module, attribute, replacement[original])
 
     try:
         for module in _substrate_modules():
             for attribute, value in list(vars(module).items()):
-                if value is _dt.date or value is _dt.datetime:
-                    swap(module, attribute, value)
+                if not isinstance(value, type):
+                    continue
+                # datetime is itself a subclass of date, so it is tested first.
+                # Subclasses count: a binding may already have been replaced by
+                # another harness, and a strict identity test would skip it and
+                # leave that clock running while reporting success.
+                if issubclass(value, _dt.datetime):
+                    saved.append((module, attribute, value))
+                    setattr(module, attribute, _AnchoredDateTime)
+                elif issubclass(value, _dt.date):
+                    saved.append((module, attribute, value))
+                    setattr(module, attribute, _AnchoredDate)
 
         # Faker is third-party and gets a narrower treatment on purpose. Only
         # its ``datetime`` is anchored, because that is what ``date_of_birth``
@@ -190,8 +195,10 @@ def frozen_clock(anchor: date = ANCHOR_DATE):
             faker_dt = importlib.import_module(_FAKER_CLOCK_MODULE)
         except ImportError:
             faker_dt = None
-        if faker_dt is not None and getattr(faker_dt, "datetime", None) is _dt.datetime:
-            swap(faker_dt, "datetime", _dt.datetime)
+        faker_datetime = getattr(faker_dt, "datetime", None) if faker_dt else None
+        if isinstance(faker_datetime, type) and issubclass(faker_datetime, _dt.datetime):
+            saved.append((faker_dt, "datetime", faker_datetime))
+            setattr(faker_dt, "datetime", _AnchoredDateTime)
 
         yield anchor
     finally:

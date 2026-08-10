@@ -812,7 +812,7 @@ def test_the_baseline_records_where_it_came_from():
     """A baseline's value is that it predates the seam, which hashes cannot show."""
     meta = baseline_provenance()
     assert meta.get("source_commit"), "baseline carries no source commit"
-    assert meta.get("base_ref"), "baseline does not say which ref it was recorded from"
+    assert meta.get("base_commit"), "baseline does not pin the commit it was recorded from"
     assert meta.get("anchor_date") == ANCHOR_DATE.isoformat(), (
         "the baseline was recorded under a different anchor date than the one in force"
     )
@@ -876,3 +876,229 @@ def test_a_geometry_change_moves_the_pdf_bytes_not_only_the_story(case):
     )
     assert _story_fingerprint(original) != _story_fingerprint(respaced)
     assert pdf_of(0.30) != pdf_of(0.35), "the PDF digest is blind to a geometry change"
+
+
+# --------------------------------------------------------------------------
+# Round 3 — the classes behind the round-2 fixes
+# --------------------------------------------------------------------------
+
+
+def _evaluator_register():
+    from data.variant_content import transcript_register
+
+    return transcript_register("qme_ame")
+
+
+def _fill(text: str, case_data: dict) -> str:
+    for key, value in case_data.items():
+        text = text.replace("{" + key + "}", str(value))
+    return text
+
+
+@pytest.mark.parametrize("seed", list(range(120)))
+def test_every_topic_anchor_survives_every_seed(seed):
+    """No budget may revoke the per-topic guarantee.
+
+    The previous revision pinned an anchor question per topic and then trimmed
+    the whole list to a global target, so on some seeds the apportionment and
+    independence topics — the two an evaluator deposition exists for — were cut
+    off entirely while the guarantee still read as honoured. There is no global
+    trim now; length is the sum of the per-topic ranges.
+    """
+    from data.variant_content import generate_evaluator_exchanges
+
+    register = _evaluator_register()
+    case_data = {"applicant_name": "A. Person", "specialty": "Orthopedics",
+                 "body_parts": "the lumbar spine"}
+    anchors = [_fill(pool[0][0], case_data) for _t, pool, _lo, _hi in register.topic_pools]
+
+    random.seed(seed)
+    asked = "\n".join(q for q, _a in generate_evaluator_exchanges(register, case_data))
+    missing = [a for a in anchors if a not in asked]
+    assert not missing, f"seed {seed} lost {len(missing)} topic anchor(s): {missing[:2]}"
+
+
+def test_the_evaluator_generator_has_no_global_budget():
+    """The shape of the fix, not just its effect.
+
+    A per-item guarantee followed by a global cap is the defect class. Asserting
+    only on outcomes would let the cap come back as long as today's numbers
+    happen not to collide.
+    """
+    import inspect
+
+    from data.variant_content import generate_evaluator_exchanges
+
+    source = inspect.getsource(generate_evaluator_exchanges)
+    assert "max_exchanges" not in source, (
+        "a global exchange budget is back; it silently revokes the per-topic anchors"
+    )
+    assert "[:" not in source.split("return exchanges")[0], (
+        "the generator truncates its own output again"
+    )
+
+
+EVALUATOR_EXHIBIT_FORBIDDEN = (
+    "job description", "pay stub", "tax return", "your employer",
+    "your date of birth", "your social security",
+)
+
+
+@pytest.mark.parametrize("seed", [3, 11, 44, 20260808])
+def test_evaluator_exhibits_are_never_applicant_documents(case, seed):
+    """Exhibits were the pool the forked question generator did not cover.
+
+    The renderer marks exhibits from a shared applicant set that asks the
+    witness about "your job description at {employer}" — handing a physician the
+    applicant's employment file to identify.
+    """
+    text = _transcript_text(case, seed).lower()
+    present = [phrase for phrase in EVALUATOR_EXHIBIT_FORBIDDEN if phrase in text]
+    assert not present, f"applicant-document exhibit phrasing reached the evaluator: {present}"
+
+
+def test_every_evaluator_exhibit_names_an_evaluator_document():
+    """Each alternative, not whichever ones a seed happened to draw."""
+    from data.variant_content import EVALUATOR_EXHIBITS
+
+    evaluator_subjects = ("your report", "your signature", "cover letter", "curriculum vitae",
+                          "worksheets", "records-review", "correspondence", "billing")
+    for template in EVALUATOR_EXHIBITS:
+        lowered = template.lower()
+        assert any(subject in lowered for subject in evaluator_subjects), (
+            f"exhibit does not name a document the evaluator owns: {template}"
+        )
+        assert not any(bad in lowered for bad in EVALUATOR_EXHIBIT_FORBIDDEN), (
+            f"exhibit names an applicant document: {template}"
+        )
+
+
+def test_the_transcript_renderer_reaches_no_unforked_case_specific_pool():
+    """The class sweep, kept honest.
+
+    Four pools are reachable: questions, exhibits, objections and time markers.
+    The first two are case-specific and forked per witness. The other two must
+    stay witness-neutral — the moment one takes the case, it can name the
+    applicant's employer at the evaluator's deposition.
+    """
+    import inspect
+
+    from data import deposition_exchanges
+
+    for name in ("generate_objection", "generate_time_marker"):
+        signature = inspect.signature(getattr(deposition_exchanges, name))
+        assert "case" not in signature.parameters, (
+            f"{name} now takes the case; it is reachable from the evaluator transcript "
+            f"and must be forked per witness or stay witness-neutral"
+        )
+
+
+def test_no_clock_is_read_through_a_function_local_import():
+    """The hole that let one clock keep running inside the pin.
+
+    ``_today`` imported ``date`` inside the function, so the lookup happened at
+    call time in a scope no module-attribute patch can reach. Every clock read
+    must resolve through a module-level binding.
+    """
+    import re as _re
+    from pathlib import Path as _Path
+
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    offenders = []
+    for directory in ("data", "pdf_templates", "orchestration"):
+        for path in sorted(_Path(_PACKAGE_ROOT, directory).rglob("*.py")):
+            source = path.read_text(encoding="utf-8")
+            for match in _re.finditer(r"^[ \t]+(?:from datetime import|import datetime)\b.*$",
+                                      source, _re.MULTILINE):
+                line = match.group(0)
+                # Only a clock *read* matters; constructing from a supplied date
+                # is fine and email_metadata legitimately does that.
+                tail = source[match.end(): match.end() + 400]
+                if ".today()" in tail or ".now()" in tail or ".utcnow()" in tail:
+                    offenders.append(f"{path.name}: {line.strip()}")
+    assert not offenders, (
+        "a clock is read through a function-local import, out of reach of the pin:\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_the_clock_pin_covers_every_module_that_binds_a_clock():
+    """Found by identity, not by a list — the list was wrong twice.
+
+    It named only ``data.*`` (missing ``qme_ame_report`` and ``settlement_memo``)
+    and matched attributes literally called ``date`` (missing
+    ``from datetime import date as _date``).
+    """
+    import importlib
+    from datetime import date as _real_date
+
+    from tests.render_baseline import ANCHOR_DATE, frozen_clock
+
+    modules = [
+        "data.fake_data_generator",
+        "data.deposition_exchanges",
+        "pdf_templates.medical.qme_ame_report",
+        "pdf_templates.summaries.settlement_memo",
+    ]
+    for name in modules:
+        importlib.import_module(name)
+
+    with frozen_clock():
+        import data.deposition_exchanges as de
+        import pdf_templates.medical.qme_ame_report as qme
+        import pdf_templates.summaries.settlement_memo as memo
+
+        assert de._today() == ANCHOR_DATE, "the aliased-through-a-function clock escaped"
+        assert qme._date.today() == ANCHOR_DATE, "the `as _date` alias escaped"
+        assert memo.date.today() == ANCHOR_DATE, "an unenumerated module escaped"
+
+    assert de._today() == _real_date.today(), "the pin did not restore the real clock"
+
+
+def test_faker_keeps_its_own_date_alias_under_the_pin():
+    """Sweeping by identity is right for our code and wrong for a library.
+
+    Faker's ``_parse_date_time`` does ``isinstance(value, (datetime, dtdate))``.
+    Replacing its ``date`` alias with a subclass makes a real ``date`` stop being
+    an instance of it, and the provider raises — which is how this was found.
+    """
+    import importlib
+    from datetime import date as _real_date
+
+    from tests.render_baseline import frozen_clock
+
+    faker_dt = importlib.import_module("faker.providers.date_time")
+    with frozen_clock():
+        aliases = [
+            name for name, value in vars(faker_dt).items()
+            if isinstance(value, type) and value is not _real_date
+            and issubclass(value, _real_date) and not issubclass(value, __import__("datetime").datetime)
+        ]
+        assert not aliases, f"Faker date aliases were replaced and will break isinstance: {aliases}"
+
+
+def test_record_mode_rejects_a_caller_supplied_head_base():
+    """``--base-ref HEAD`` on a clean feature branch satisfied every other check."""
+    import subprocess
+    import sys as _sys
+
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    result = subprocess.run(
+        [_sys.executable, "scripts/record_render_baseline.py", "--record", "--base-ref", "HEAD"],
+        cwd=_PACKAGE_ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode != 0, "record mode accepted --base-ref HEAD"
+    assert "names the current checkout" in (result.stdout + result.stderr)
+
+
+def test_the_baseline_records_the_patches_its_base_carried():
+    """Provenance must name any tracked file the base checkout differed on."""
+    meta = baseline_provenance()
+    assert "base_patches" in meta, "provenance does not disclose base patches"
+    assert meta["base_patches"] == ["data/deposition_exchanges.py"], (
+        f"unexpected base patches: {meta['base_patches']}"
+    )
+    assert meta.get("base_commit"), "provenance does not pin a base commit"
+
