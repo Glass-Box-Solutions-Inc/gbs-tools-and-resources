@@ -40,7 +40,9 @@ Regenerating without a reviewed reason defeats the guard.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import json
 import os
 import random
 import re
@@ -89,24 +91,108 @@ def _ensure_invariant_pdfs() -> None:
     rl_config.invariant = 1
 
 
+#: The date the fixture believes it is. Never ``today``.
+#:
+#: The baseline was wall-clock dependent and nobody noticed, because it only
+#: fails on a day the calendar moves rather than on a day the code does. Eleven
+#: of the eighteen cases changed across a seven-month clock move: the substrate
+#: derives hire dates and ages from ``date.today()``, and Faker's
+#: ``date_of_birth(minimum_age=...)`` is computed relative to the current time
+#: as well. Left alone, this guard would have gone red in CI on a morning when
+#: no one had touched the substrate — the worst kind of failure, because the
+#: obvious reading is "the guard is flaky" and the obvious fix is to delete it.
+#:
+#: wc-synthetic-caseload-engine reached the same conclusion and pins the same
+#: way (``determinism.pin_substrate_clock``, ``seeds.ANCHOR_DATE``).
+ANCHOR_DATE = date(2026, 1, 15)
+
+#: Substrate modules that bind ``date`` or ``datetime`` at module scope, plus
+#: Faker's own clock. Patching the name inside the module is the same technique
+#: wcce uses, and it works because these modules do ``from datetime import
+#: date`` — so the module attribute *is* the class the code calls ``today()`` on.
+_CLOCK_MODULES = (
+    "data.fake_data_generator",
+    "data.lifecycle_engine",
+    "data.deposition_exchanges",
+    "data.case_profile_generator",
+    "data.case_context",
+)
+
+
+@contextlib.contextmanager
+def frozen_clock(anchor: date = ANCHOR_DATE):
+    """Freeze every reading of "today" for the duration of the block.
+
+    Covers both clocks that matter: the substrate's ``date.today()`` call sites
+    and Faker's ``datetime.now()``, which drives ``date_of_birth`` and every
+    other relative draw. Restores exactly what it replaced, including modules
+    that never had the attribute.
+    """
+    import datetime as _dt
+    import importlib
+
+    class _AnchoredDate(_dt.date):
+        @classmethod
+        def today(cls):
+            return anchor
+
+    class _AnchoredDateTime(_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _dt.datetime.combine(anchor, _dt.time(12, 0), tzinfo=tz)
+
+        @classmethod
+        def utcnow(cls):
+            return _dt.datetime.combine(anchor, _dt.time(12, 0))
+
+    saved: list[tuple[Any, str, Any, bool]] = []
+
+    def patch(module: Any, attribute: str, replacement: Any) -> None:
+        had = hasattr(module, attribute)
+        saved.append((module, attribute, getattr(module, attribute, None), had))
+        setattr(module, attribute, replacement)
+
+    try:
+        for name in _CLOCK_MODULES:
+            try:
+                module = importlib.import_module(name)
+            except ImportError:
+                continue
+            if isinstance(getattr(module, "date", None), type):
+                patch(module, "date", _AnchoredDate)
+            if isinstance(getattr(module, "datetime", None), type):
+                patch(module, "datetime", _AnchoredDateTime)
+        faker_dt = importlib.import_module("faker.providers.date_time")
+        if isinstance(getattr(faker_dt, "datetime", None), type):
+            patch(faker_dt, "datetime", _AnchoredDateTime)
+        yield anchor
+    finally:
+        for module, attribute, original, had in reversed(saved):
+            if had:
+                setattr(module, attribute, original)
+            else:
+                delattr(module, attribute)
+
+
 def build_fixture_case() -> Any:
     """A single deterministic case shared by every digest in the baseline.
 
     ``has_surgery=True`` so the operative record renders a coherent surgical
     document rather than the degenerate no-procedure path.
     """
-    gen = FakeDataGenerator(seed=CASE_SEED)
-    params = CaseParameters(
-        target_stage="settlement",
-        injury_type="specific",
-        body_part_category="spine",
-        num_body_parts=2,
-        has_surgery=True,
-        has_attorney=True,
-        has_psych_component=False,
-        complexity="standard",
-    )
-    return gen.generate_case_from_params(case_number=1, params=params)
+    with frozen_clock():
+        gen = FakeDataGenerator(seed=CASE_SEED)
+        params = CaseParameters(
+            target_stage="settlement",
+            injury_type="specific",
+            body_part_category="spine",
+            num_body_parts=2,
+            has_surgery=True,
+            has_attorney=True,
+            has_psych_component=False,
+            complexity="standard",
+        )
+        return gen.generate_case_from_params(case_number=1, params=params)
 
 
 #: (label, module path, class name, subtype, variant-or-None).
@@ -288,7 +374,7 @@ def render_digest(case: Any, module_path: str, class_name: str, spec: DocumentSp
     template_cls = _load_template_class(module_path, class_name)
     template = template_cls(case)
 
-    with _TracingRandom() as tracer:
+    with frozen_clock(), _TracingRandom() as tracer:
         random.seed(RENDER_SEED)
         story = template.build_story(spec)
         rng_state_after = random.getstate()
@@ -296,7 +382,7 @@ def render_digest(case: Any, module_path: str, class_name: str, spec: DocumentSp
     text = template._story_to_plaintext(story)
     trace_blob = "\n".join(tracer.trace) + f"\nSTATE:{rng_state_after!r}"
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, frozen_clock():
         out = Path(tmp) / "render.pdf"
         random.seed(RENDER_SEED)
         template_cls(case).generate(out, spec)
@@ -311,6 +397,24 @@ def render_digest(case: Any, module_path: str, class_name: str, spec: DocumentSp
         "rng": sha(trace_blob),
         "pdf": sha(pdf_bytes),
     }
+
+
+def load_baseline_cases() -> dict[str, dict[str, str]]:
+    """The recorded digests, from either baseline layout.
+
+    The file gained a ``_meta`` block carrying the commit it was recorded from,
+    because the property that makes it meaningful — recorded before the seam
+    existed — is invisible in a bare mapping of hashes.
+    """
+    with open(BASELINE_PATH, encoding="utf-8") as fh:
+        payload = json.load(fh)
+    return payload["cases"] if "cases" in payload else payload
+
+
+def baseline_provenance() -> dict[str, Any]:
+    """The ``_meta`` block, or ``{}`` for a pre-provenance baseline."""
+    with open(BASELINE_PATH, encoding="utf-8") as fh:
+        return json.load(fh).get("_meta", {})
 
 
 def compute_baseline() -> dict[str, dict[str, str]]:

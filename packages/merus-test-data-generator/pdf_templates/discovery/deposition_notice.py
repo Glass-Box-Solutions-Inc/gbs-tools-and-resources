@@ -16,6 +16,9 @@ from data.variant_content import deponent_register
 class DepositionNotice(BaseTemplate):
     """Generates a Notice of Taking Deposition."""
 
+    #: Block form of the opt-in must name this family to activate it.
+    VARIANT_CONTENT_FAMILY = "deposition_notice"
+
     def _deponent_identity(self, register):
         """Resolve a register's subject token against this case's people.
 

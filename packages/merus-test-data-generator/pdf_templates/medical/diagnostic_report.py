@@ -22,6 +22,9 @@ class DiagnosticReport(BaseTemplate):
     unrecognised variant keep rendering the report below, byte for byte.
     """
 
+    #: Block form of the opt-in must name this family to activate it.
+    VARIANT_CONTENT_FAMILY = "diagnostic"
+
     def build_story(self, doc_spec):
         """Dispatch to a variant register when one is opted into and claims it."""
         if self.variant_content_enabled(doc_spec):

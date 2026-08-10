@@ -46,12 +46,6 @@ def normalize_variant(variant: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(variant).lower()).strip("_")
 
 
-def _claims(token: str, *needles: str) -> bool:
-    """True when the normalized token contains any needle as a whole word run."""
-    padded = f"_{token}_"
-    return any(f"_{n}_" in padded for n in needles)
-
-
 # ---------------------------------------------------------------------------
 # Diagnostics: lab, electrodiagnostic, sleep
 # ---------------------------------------------------------------------------
@@ -422,26 +416,50 @@ ELECTRODIAGNOSTIC_REGISTER = DiagnosticRegister(
             ),
         ),
         DiagnosticScenario(
-            key="normal_study",
-            region="any",
-            exam_label="ELECTRODIAGNOSTIC STUDY",
+            key="normal_upper",
+            region="upper",
+            exam_label="ELECTRODIAGNOSTIC STUDY OF THE UPPER LIMB",
             technique=_UPPER_LIMB_TECHNIQUE,
             result_heading="NERVE CONDUCTION STUDIES",
             rows=(
                 ResultRow("Median, motor (wrist-APB)", "3.6 ms, 7.2 mV, 52 m/s", "", "distal latency <4.2 ms"),
                 ResultRow("Median, sensory (digit II)", "3.2 ms, 28 uV, 48 m/s", "", "peak latency <3.5 ms"),
                 ResultRow("Ulnar, motor (wrist-ADM)", "2.8 ms, 9.4 mV, 56 m/s", "", "distal latency <3.3 ms"),
-                ResultRow("Sural, sensory", "3.4 ms, 16 uV, 48 m/s", "", "peak latency <4.4 ms"),
+                ResultRow("Ulnar, sensory (digit V)", "2.9 ms, 24 uV, 51 m/s", "", "peak latency <3.2 ms"),
             ),
             secondary_heading="NEEDLE EMG",
             secondary_rows=(
                 ResultRow("Abductor pollicis brevis", "normal insertional activity, no spontaneous activity, normal motor unit potentials, full recruitment", "", "normal"),
-                ResultRow("Tibialis anterior", "normal insertional activity, no spontaneous activity, normal motor unit potentials, full recruitment", "", "normal"),
+                ResultRow("First dorsal interosseous", "normal insertional activity, no spontaneous activity, normal motor unit potentials, full recruitment", "", "normal"),
+                ResultRow("Cervical paraspinals (C5-C7)", "normal insertional activity, no spontaneous activity, normal motor unit potentials, full recruitment", "", "normal"),
             ),
             impression=(
-                "Study within normal limits. There is no electrodiagnostic evidence of focal "
-                "entrapment neuropathy, generalized polyneuropathy, or active radiculopathy "
-                "in the nerves and muscles sampled."
+                "Study of the upper limb within normal limits. There is no electrodiagnostic "
+                "evidence of a focal entrapment neuropathy at the wrist or elbow, and no "
+                "evidence of a cervical radiculopathy in the muscles sampled."
+            ),
+        ),
+        DiagnosticScenario(
+            key="normal_lower",
+            region="lower",
+            exam_label="ELECTRODIAGNOSTIC STUDY OF THE LOWER LIMB",
+            technique=_LOWER_LIMB_TECHNIQUE,
+            result_heading="NERVE CONDUCTION STUDIES",
+            rows=(
+                ResultRow("Peroneal, motor (ankle-EDB)", "4.2 ms, 4.6 mV, 47 m/s", "", "distal latency <6.0 ms"),
+                ResultRow("Tibial, motor (ankle-AH)", "4.4 ms, 8.1 mV, 46 m/s", "", "distal latency <5.8 ms"),
+                ResultRow("Sural, sensory", "3.4 ms, 16 uV, 48 m/s", "", "peak latency <4.4 ms"),
+            ),
+            secondary_heading="NEEDLE EMG",
+            secondary_rows=(
+                ResultRow("Tibialis anterior", "normal insertional activity, no spontaneous activity, normal motor unit potentials, full recruitment", "", "normal"),
+                ResultRow("Medial gastrocnemius", "normal insertional activity, no spontaneous activity, normal motor unit potentials, full recruitment", "", "normal"),
+                ResultRow("Lumbar paraspinals (L4-S1)", "normal insertional activity, no spontaneous activity, normal motor unit potentials, full recruitment", "", "normal"),
+            ),
+            impression=(
+                "Study of the lower limb within normal limits. There is no electrodiagnostic "
+                "evidence of a generalized polyneuropathy and no evidence of an active "
+                "lumbosacral radiculopathy in the muscles sampled."
             ),
         ),
     ),
@@ -794,24 +812,20 @@ FACE_SHEET_REGISTER = HospitalRegister(
 _HOSPITAL_REGISTERS = (ER_REGISTER, ACUTE_REGISTER, DISCHARGE_REGISTER, FACE_SHEET_REGISTER)
 
 
-def hospital_register(variant: str | None) -> HospitalRegister | None:
-    """Register for a hospital-record variant, or ``None`` to keep the default.
+#: Exact normalized variants each hospital register claims — an allowlist, like
+#: every other register family here. The bare operative variant is deliberately
+#: absent: an operative record is what the default template already renders.
+_HOSPITAL_CLAIMS: dict[str, HospitalRegister] = {
+    "er": ER_REGISTER,
+    "acute": ACUTE_REGISTER,
+    "discharge": DISCHARGE_REGISTER,
+    "face_sheet": FACE_SHEET_REGISTER,
+}
 
-    The bare operative variant resolves to ``None`` — an operative record is
-    what the default template already renders correctly.
-    """
-    token = normalize_variant(variant)
-    if not token:
-        return None
-    if _claims(token, "er", "emergency", "ed"):
-        return ER_REGISTER
-    if _claims(token, "acute", "acute_care", "hospital"):
-        return ACUTE_REGISTER
-    if _claims(token, "discharge"):
-        return DISCHARGE_REGISTER
-    if _claims(token, "face", "face_sheet", "registration"):
-        return FACE_SHEET_REGISTER
-    return None
+
+def hospital_register(variant: str | None) -> HospitalRegister | None:
+    """Register for a hospital-record variant, or ``None`` to keep the default."""
+    return _HOSPITAL_CLAIMS.get(normalize_variant(variant))
 
 
 # ---------------------------------------------------------------------------
@@ -1033,54 +1047,269 @@ class TranscriptRegister:
     registry's ``DEPOSITION_TRANSCRIPT_QME_AME`` subtype produced an applicant
     deposition with the evaluator nowhere in it.
 
-    ``opening_exchanges`` front-loads the questions specific to this deponent
-    before the substrate's generic pool. It is deliberately a seam and not a
-    finished cross-examination: a real QME deposition turns on the report's own
-    apportionment percentage, which no ledger renders yet. M3 supplies those
-    numbers; this establishes the mount and the register they slot into.
+    ``topic_pools`` is a **complete** question set, not a preamble. An earlier
+    revision prepended a dozen evaluator questions to the applicant generator,
+    which read far worse than leaving it alone: the physician then answered, in
+    the first person, what their own date of birth and social security number
+    were, where they lived, and how their industrial injury happened. A
+    transcript is the deponent's testimony end to end, so the register supplies
+    the whole examination.
     """
 
     key: str
     subject: str
     role_label: str
     appearance_note: str
-    opening_exchanges: tuple[tuple[str, str], ...]
+    #: ``(topic, ((question, answer), ...), min_drawn, max_drawn)``. Same shape
+    #: as ``data/deposition_exchanges.py`` uses, so the two generators stay
+    #: recognisably the same machine.
+    topic_pools: tuple[tuple[str, tuple[tuple[str, str], ...], int, int], ...]
 
+
+_EVALUATOR_QUALIFICATIONS = (
+    ("Doctor, would you state your full name and business address for the record.",
+     "My name and office address are as they appear on the face of my report in this matter."),
+    ("What is your medical specialty?",
+     "I practice in {specialty}."),
+    ("Are you board certified in that specialty?",
+     "I am, and my certification is listed in the curriculum vitae attached to my report."),
+    ("When did you complete your residency training?",
+     "The dates of my training appear in my curriculum vitae, which was served with the report."),
+    ("Are you licensed to practice medicine in California?",
+     "I am, and my license number appears on my report."),
+    ("Have you been appointed as a Qualified Medical Evaluator by the Division of Workers' Compensation?",
+     "My appointment in this matter is as stated in the cover letter accompanying the evaluation."),
+    ("How long have you performed medical-legal evaluations?",
+     "I have performed medical-legal evaluations for a substantial portion of my practice."),
+    ("Approximately what percentage of your practice is medical-legal work as opposed to treatment?",
+     "A portion of my practice is medical-legal; the remainder is clinical."),
+    ("Do you perform evaluations at the request of applicants, defendants, or both?",
+     "As a panel evaluator I am selected through the statutory process rather than by either party."),
+    ("Have you testified as an expert in workers' compensation proceedings before?",
+     "I have been deposed in matters of this kind previously."),
+    ("Have your qualifications ever been challenged in a workers' compensation proceeding?",
+     "I am not aware of a challenge to my qualifications having been sustained."),
+    ("Is your curriculum vitae attached to the report current as of the date of the evaluation?",
+     "The curriculum vitae served with the report was current as of that date."),
+    ("Do you hold any subspecialty certifications relevant to the body parts at issue here?",
+     "Any additional certifications I hold are listed in my curriculum vitae."),
+    ("Doctor, are you being compensated for your time today?",
+     "My time is billed at the rate set out in my fee schedule, which was provided."),
+)
+
+_EVALUATOR_RECORDS = (
+    ("What records were you provided before you examined {applicant_name}?",
+     "I received a set of records under cover letter. The records reviewed are listed in the records-review section of my report."),
+    ("Who provided those records to you?",
+     "The records were transmitted under cover letter from counsel, as reflected in my file."),
+    ("Were the records served on you simultaneously on both parties?",
+     "The cover letters in my file reflect the service made on me."),
+    ("Did you review every record you were provided?",
+     "The records I reviewed are the records enumerated in the records-review section of my report."),
+    ("Were there records you were provided that you did not review?",
+     "If a record was provided and not reviewed, it would not appear in my records-review section."),
+    ("Did you receive any records or communications outside the formal exchange?",
+     "I am not aware of receiving anything outside the cover letters reflected in my file."),
+    ("Did you request any additional records?",
+     "Any request for additional records would appear in my report or in the correspondence in my file."),
+    ("Were you provided any prior medical-legal reports concerning {applicant_name}?",
+     "Any prior report provided to me would be listed in my records-review section."),
+    ("Were you provided imaging studies, or only the reports of those studies?",
+     "What I reviewed is described in the records-review section, including whether I reviewed films or reports."),
+    ("Did you review any deposition testimony in preparing your report?",
+     "Any transcript provided to me is identified in the records-review section."),
+    ("Did you review records concerning treatment predating the industrial injury?",
+     "Records predating the injury, if provided, are identified in the records-review section."),
+    ("Did you review any employment or personnel records?",
+     "Any non-medical records provided to me are identified in the same section."),
+    ("Do you know whether records exist that you were never provided?",
+     "I can only speak to what I was provided; I have no way to know what was not sent."),
+    ("If you were provided additional records now, would you review them?",
+     "If I were provided additional records, I would review them and address them in a supplemental report if warranted."),
+)
+
+_EVALUATOR_HISTORY = (
+    ("Doctor, did you take the history from {applicant_name} yourself?",
+     "The history reflected in my report was obtained during my evaluation."),
+    ("Was an interpreter used during the history?",
+     "If an interpreter was used, that is noted in my report."),
+    ("How long did you spend obtaining the history?",
+     "The time spent on history, examination, and records review is itemized in my report and billing."),
+    ("Did anyone other than you speak with {applicant_name} about the history?",
+     "The history in my report is the history I obtained."),
+    ("Did the history you obtained differ from the history in the treating records?",
+     "Where the history I obtained differs from the records, my report describes the difference."),
+    ("What did {applicant_name} tell you about how the injury occurred?",
+     "The mechanism of injury as reported to me is set out in the history section of my report."),
+    ("Did {applicant_name} report any prior injury to {body_parts}?",
+     "Any prior injury reported to me is recorded in the history section."),
+    ("Did {applicant_name} report symptoms before the date of injury?",
+     "Pre-injury symptoms, if reported, are recorded in the history."),
+    ("Did you ask about non-industrial activities that could affect {body_parts}?",
+     "The history I take covers activities relevant to the body parts at issue."),
+    ("Did you rely on the history in reaching your conclusions?",
+     "History is one of the inputs to my opinions, together with the examination and the records."),
+    ("If the history you were given were inaccurate, would your opinion change?",
+     "If I were shown that a material part of the history was inaccurate, I would reconsider and address it."),
+    ("Did you document the history contemporaneously?",
+     "My report reflects the evaluation as I conducted it."),
+)
+
+_EVALUATOR_EXAMINATION = (
+    ("Doctor, describe the physical examination you performed on {applicant_name}.",
+     "The examination findings are set out in the physical examination section of my report."),
+    ("How long did the examination itself take?",
+     "The time is itemized in my report and in my billing for this evaluation."),
+    ("What instruments did you use to measure range of motion?",
+     "Range of motion was measured using standard instrumentation as described in my report."),
+    ("Did you take measurements of {body_parts} yourself?",
+     "The measurements recorded in my report are the measurements taken at my examination."),
+    ("Were the range of motion measurements repeated?",
+     "My report reflects the measurements I recorded at the time of examination."),
+    ("Did you perform any provocative or special testing?",
+     "Any special testing performed is described in the examination section."),
+    ("Did you observe any signs of symptom magnification?",
+     "Any observation bearing on consistency of effort would be documented in my report."),
+    ("Were the examination findings consistent with the reported symptoms?",
+     "My report states whether the objective findings correlate with the subjective complaints."),
+    ("Did you examine body parts other than {body_parts}?",
+     "The scope of my examination is described in the report."),
+    ("Was anyone else present during the examination?",
+     "The presence of any observer would be noted in my report."),
+    ("Did you review the imaging yourself, or rely on the radiologist's reading?",
+     "My report states what I reviewed and what I relied upon."),
+    ("Do your objective findings support the diagnosis you reached?",
+     "The relationship between my findings and my diagnosis is set out in the report."),
+)
+
+_EVALUATOR_IMPAIRMENT = (
+    ("Doctor, what diagnosis did you reach for {body_parts}?",
+     "The diagnoses are listed in the diagnosis section of my report."),
+    ("Is {applicant_name} permanent and stationary?",
+     "My opinion on permanent and stationary status is stated in my report as of the date of evaluation."),
+    ("What did you rely on to arrive at the impairment rating?",
+     "The rating is derived from the measurements recorded at examination, applied under the applicable rating methodology, as set out in my report."),
+    ("Which edition and which tables did you apply?",
+     "The methodology and the specific tables applied are identified in my report."),
+    ("Did you consider whether the rating adequately reflects the impairment?",
+     "My report addresses whether the described impairment is adequately captured by the rating."),
+    ("Did you rate any body part other than {body_parts}?",
+     "Every body part rated is identified in the report."),
+    ("Would a different measurement have produced a different rating?",
+     "The rating follows from the measurements recorded; different measurements would follow the same method."),
+    ("Is your impairment opinion stated to a reasonable degree of medical probability?",
+     "My opinions are stated to a reasonable degree of medical probability."),
+    ("Did you consider work restrictions separately from the impairment rating?",
+     "Work restrictions are addressed separately in my report from the impairment rating."),
+    ("What future medical care did you recommend?",
+     "Future medical care is addressed in the corresponding section of my report."),
+    ("Is the need for future care related to the industrial injury?",
+     "My report states the basis on which future care is recommended."),
+    ("Would you defer any part of the rating to another specialty?",
+     "Any deferral to another specialty is stated in my report."),
+)
+
+_EVALUATOR_CAUSATION = (
+    ("Doctor, in your opinion, was the injury to {body_parts} caused by employment?",
+     "My opinion on industrial causation is set out in the causation section of my report."),
+    ("What did you rely on in reaching that causation opinion?",
+     "I relied on the history, the examination findings, and the records identified in my report."),
+    ("Is your causation opinion stated to a reasonable degree of medical probability?",
+     "It is."),
+    ("Did you consider any non-industrial cause for the condition?",
+     "My report describes the factors I considered, industrial and otherwise."),
+    ("Could the condition have arisen without the employment?",
+     "My report addresses the relationship between the employment and the condition as I found it."),
+    ("Did you consider whether the condition is a compensable consequence of another injury?",
+     "Any compensable-consequence analysis I performed is set out in the report."),
+    ("Would a different mechanism of injury change your causation opinion?",
+     "A materially different mechanism could bear on causation, and I would address it if shown one."),
+    ("Did the treating physician reach the same causation conclusion?",
+     "My report notes where my conclusions differ from those in the records I reviewed."),
+    ("Did you consider the possibility of a cumulative trauma in addition to the specific injury?",
+     "The report addresses the injury or injuries I was asked to evaluate."),
+    ("Do you hold your causation opinion today?",
+     "I hold the opinions in my report unless shown information that would change them."),
+)
+
+_EVALUATOR_APPORTIONMENT = (
+    ("Doctor, did you reach a conclusion on apportionment?",
+     "My conclusion on apportionment is stated in the apportionment section of my report."),
+    ("What is the basis for that apportionment conclusion?",
+     "The basis is stated in the apportionment section, which describes the factors I considered and the reasoning applied to them."),
+    ("Can you identify the specific records that support the non-industrial portion?",
+     "The records I relied upon are those identified in the records-review and apportionment sections of my report."),
+    ("Did you apportion to any pre-existing pathology?",
+     "Whether any portion is attributable to a pre-existing condition is addressed in the apportionment section."),
+    ("How did you determine the approximate percentage?",
+     "My report describes how and why I reached the allocation stated."),
+    ("Is your apportionment opinion stated to a reasonable degree of medical probability?",
+     "It is."),
+    ("Did you apportion to the natural progression of a non-industrial condition?",
+     "The factors I considered are identified in the apportionment section."),
+    ("Did you apportion any portion to medical treatment provided for the injury?",
+     "My report states what I did and did not apportion to."),
+    ("Were you provided evidence of a prior award of permanent disability?",
+     "Any prior award provided to me would be identified in my records-review section."),
+    ("Did you consider whether the current disability overlaps a prior disability?",
+     "Any overlap analysis I performed is set out in the report."),
+    ("Would additional records change your apportionment opinion?",
+     "If I were provided records that materially bear on apportionment, I would consider them and address them in a supplemental report."),
+    ("Are you able to apportion without speculating?",
+     "I state an apportionment opinion only where I can support it; where I cannot, my report says so."),
+    ("Did anyone suggest an apportionment figure to you?",
+     "The opinions in my report are my own."),
+    ("If your apportionment reasoning were found inadequate, would you supplement the report?",
+     "If asked to address a deficiency, I would do so in a supplemental report."),
+)
+
+_EVALUATOR_INDEPENDENCE = (
+    ("Doctor, did anyone other than you draft any portion of the report you signed?",
+     "The opinions in the report are my own, and I signed it as my report."),
+    ("Did you use a template or dictation service in preparing the report?",
+     "The report reflects my evaluation and my opinions however it was transcribed."),
+    ("Did you have any communication with defense counsel about your conclusions?",
+     "I am not aware of any communication outside the formal correspondence in my file."),
+    ("Did you have any communication with applicant's counsel about your conclusions?",
+     "The same answer applies; my file reflects the correspondence I received."),
+    ("Have you performed evaluations for this carrier before?",
+     "As a panel evaluator I am selected through the statutory process."),
+    ("Do you have any financial interest in the outcome of this claim?",
+     "I do not."),
+    ("Do you have any relationship with {applicant_name} outside this evaluation?",
+     "I do not."),
+    ("Did you review your report for accuracy before signing it?",
+     "I did."),
+    ("Have you made any corrections to the report since serving it?",
+     "Any correction would be reflected in a supplemental report or an erratum."),
+)
+
+_EVALUATOR_CLOSING = (
+    ("Doctor, is there anything in your report you would like to correct today?",
+     "Nothing that I am aware of at this time."),
+    ("Do all of the opinions in your report remain your opinions today?",
+     "They do, subject to any information I have not been provided."),
+    ("Have you told us everything that supports your apportionment conclusion?",
+     "The basis for my conclusion is set out in my report and I have described it here."),
+    ("Thank you, Doctor. I have nothing further at this time.",
+     "Thank you."),
+)
 
 EVALUATOR_TRANSCRIPT = TranscriptRegister(
     key="qme_ame",
     subject="evaluator",
     role_label="Medical-Legal Evaluator",
     appearance_note="The deponent appeared and was sworn as the medical-legal evaluator.",
-    opening_exchanges=(
-        ("Doctor, would you state your full name and business address for the record.",
-         "Yes. My name and office address are as they appear on the report served in this matter."),
-        ("And you performed a medical-legal evaluation of the applicant in this case?",
-         "I did, on the date shown on the face of my report."),
-        ("What is your specialty, and are you board certified in it?",
-         "I am board certified in my specialty, and my curriculum vitae was attached to the report."),
-        ("Are you a Qualified Medical Evaluator appointed through the panel process, or an Agreed Medical Evaluator?",
-         "My appointment in this matter is as stated in the cover letter accompanying the evaluation."),
-        ("Before we go further — what records were you provided before you examined the applicant?",
-         "I received a set of records under cover letter. The records reviewed are listed in the records-review section of my report."),
-        ("Were there records listed in that cover letter that you did not review?",
-         "If a record was provided and not reviewed, it would not appear in my records-review section."),
-        ("Did you receive any records from either party outside the formal exchange?",
-         "I am not aware of receiving anything outside the cover letters in the file."),
-        ("How long did you spend examining the applicant?",
-         "The time spent on examination and on records review is itemized in my report and my billing."),
-        ("Did you take the history yourself, or did someone else take it for you?",
-         "The history reflected in my report was obtained during my evaluation."),
-        ("Did anyone other than you draft any portion of the report you signed?",
-         "The opinions in the report are my own, and I signed it as my report."),
-        ("Let's turn to your impairment rating. What did you rely on to arrive at it?",
-         "The rating is derived from the measurements recorded at examination, applied under the applicable rating methodology, as set out in my report."),
-        ("You reached a conclusion on apportionment. What is the basis for it?",
-         "The basis is stated in the apportionment section of my report, which describes the factors I considered and the reasoning applied to them."),
-        ("Can you identify the specific records that support the non-industrial portion of your apportionment?",
-         "The records I relied upon are those identified in the records-review and apportionment sections of my report."),
-        ("If a record contradicted the history you were given, would that change your opinion?",
-         "If I were provided a record that materially changed the history, I would consider it and, if warranted, address it in a supplemental report."),
+    topic_pools=(
+        ("QUALIFICATIONS AND APPOINTMENT", _EVALUATOR_QUALIFICATIONS, 9, 13),
+        ("RECORDS PROVIDED AND REVIEWED", _EVALUATOR_RECORDS, 9, 13),
+        ("HISTORY OBTAINED FROM THE EXAMINEE", _EVALUATOR_HISTORY, 8, 11),
+        ("EXAMINATION METHODOLOGY", _EVALUATOR_EXAMINATION, 8, 11),
+        ("DIAGNOSIS AND IMPAIRMENT", _EVALUATOR_IMPAIRMENT, 8, 11),
+        ("CAUSATION", _EVALUATOR_CAUSATION, 7, 10),
+        ("BASIS FOR APPORTIONMENT", _EVALUATOR_APPORTIONMENT, 10, 14),
+        ("INDEPENDENCE AND EX PARTE CONTACT", _EVALUATOR_INDEPENDENCE, 6, 9),
+        ("CLOSING", _EVALUATOR_CLOSING, 3, 4),
     ),
 )
 
@@ -1091,7 +1320,7 @@ _TRANSCRIPT_REGISTERS = (EVALUATOR_TRANSCRIPT,)
 #: substrate default is an applicant deposition, which is the right shape for a
 #: witness statement and the wrong shape for interrogatory responses — but the
 #: latter needs a document this seam does not author, so it keeps the default
-#: rather than being given a QME register that does not fit it either.
+#: rather than being handed a QME register that does not fit it either.
 _TRANSCRIPT_CLAIMS: dict[str, TranscriptRegister] = {
     "deposition_transcript_qme_ame": EVALUATOR_TRANSCRIPT,
     "qme_ame": EVALUATOR_TRANSCRIPT,
@@ -1103,8 +1332,60 @@ def transcript_register(variant: str | None) -> TranscriptRegister | None:
     return _TRANSCRIPT_CLAIMS.get(normalize_variant(variant))
 
 
+def generate_evaluator_exchanges(
+    register: TranscriptRegister,
+    case_data: dict[str, str],
+    max_exchanges: int = 95,
+) -> list[tuple[str, str]]:
+    """A complete evaluator examination, in the substrate's own exchange format.
+
+    Mirrors ``data.deposition_exchanges.generate_deposition_exchanges``
+    deliberately, down to the ``Q. ``/``A. `` prefixes the transcript renderer
+    expects — an earlier revision returned bare tuples, and every one of those
+    lines rendered without its speaker label.
+
+    Topics are drawn in examination order rather than shuffled, because a
+    deposition that asks about apportionment before establishing qualifications
+    does not read like a transcript.
+
+    Shorter than the applicant generator's 100-180 on purpose. An evaluator
+    deposition covers the report rather than a life, and padding it back up to
+    an applicant transcript's length would mean repeating questions to hit a
+    page count — which is the kind of detail that makes synthetic data look
+    synthetic.
+    """
+    import random as _random
+
+    def fill(text: str) -> str:
+        for key, value in case_data.items():
+            text = text.replace("{" + key + "}", str(value))
+        return text
+
+    exchanges: list[tuple[str, str]] = []
+    for _topic, pool, low, high in register.topic_pools:
+        count = min(_random.randint(low, high), len(pool))
+        # The first question of every topic is an anchor and always asked. A
+        # deposition that never establishes the witness's name, never asks what
+        # records were reviewed, or never reaches apportionment at all is not a
+        # variable transcript, it is an incomplete one — and the topic would
+        # silently vanish on some seeds.
+        remainder = _random.sample(range(1, len(pool)), max(count - 1, 0))
+        chosen = [0] + sorted(remainder)
+        for index in chosen:
+            question, answer = pool[index]
+            exchanges.append((fill(f"Q. {question}"), fill(f"A. {answer}")))
+
+    target = _random.randint(max_exchanges - 25, max_exchanges)
+    if len(exchanges) > target:
+        # Trim from the middle so the opening and the closing both survive.
+        keep_tail = 4
+        head = exchanges[: target - keep_tail]
+        exchanges = head + exchanges[-keep_tail:]
+    return exchanges
+
+
 #: Exact normalized variants each deponent register claims — an allowlist, for
-#: the reason the letter registers use one. ``DEPOSITION_NOTICE`` with no variant
+#: the reason every family here uses one. ``DEPOSITION_NOTICE`` with no variant
 #: keeps the substrate's own coin flip, which is the honest answer when the
 #: subtype genuinely does not say who is being deposed.
 _DEPONENT_CLAIMS: dict[str, DeponentRegister] = {

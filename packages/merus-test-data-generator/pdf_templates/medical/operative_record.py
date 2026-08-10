@@ -93,6 +93,9 @@ class OperativeRecord(BaseTemplate):
     rendering the report below, byte for byte.
     """
 
+    #: Block form of the opt-in must name this family to activate it.
+    VARIANT_CONTENT_FAMILY = "hospital"
+
     def build_story(self, doc_spec):
         """Dispatch to a hospital register when one is opted into and claims it."""
         if self.variant_content_enabled(doc_spec):

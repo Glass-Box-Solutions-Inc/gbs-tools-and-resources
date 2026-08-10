@@ -261,6 +261,11 @@ class BaseTemplate:
     #: caller ask for the richer content when it is ready for it.
     VARIANT_CONTENT_KEY = "variant_content"
 
+    #: Which register family this template reads, or ``None`` for templates with
+    #: no seam. This is the name a block form of the opt-in must carry to
+    #: activate this template — see :meth:`variant_content_enabled`.
+    VARIANT_CONTENT_FAMILY: str | None = None
+
     def variant_content_enabled(self, doc_spec: Any) -> bool:
         """True when the caller opted this document into variant-aware content.
 
@@ -279,11 +284,34 @@ class BaseTemplate:
         so passing a non-empty block here also reads as on, and a later phase
         can thread per-variant parameters through this key without a second one.
 
-        **Accepted shapes: ``bool`` or ``dict``.** Anything else raises, rather
-        than being silently truthy. Pinning this now is deliberate — the key is
-        new, so no existing caller can break, and AJC-65's block seam and M3 are
-        both about to build on it. A string ``"false"`` or a stray object
-        reading as "on" would be discovered as a corpus diff months later.
+        **Accepted shapes, and this is the contract M3 codes against:**
+
+        ``True`` / ``False``
+            Global switch. ``True`` opts *every* seamed template into the
+            variant already registered for its own document.
+
+        ``{family: value, ...}``
+            Namespaced. A template activates only when the block **names its own
+            family** with a truthy value. Families are the register families:
+            ``diagnostic``, ``hospital``, ``letter``, ``deposition_notice``,
+            ``deposition_transcript``.
+
+        Anything else raises.
+
+        The namespacing is the point, and it is not decoration. Contexts get
+        copied and broadcast: AJC-65 puts an ``apportionment`` block on the same
+        ``doc_spec.context``, and a context assembled once and reused across a
+        packet is the normal shape here. Under a plain truthiness test, any
+        non-empty dict anywhere on that key would have switched on lab panels,
+        ER records, advocacy letters and QME depositions at once, in documents
+        whose author never asked for any of it. Requiring the block to name the
+        template it means keeps an unrelated block inert:
+        ``{"apportionment": {...}}`` activates nothing.
+
+        Absent, ``None``, ``False``, ``{}``, and a block naming only other
+        families all read as off — the engine sets a dozen keys on every
+        context, and a key that does not mean this template must read like a key
+        that is not there.
         """
         if not getattr(doc_spec, "context", None):
             return False
@@ -291,11 +319,15 @@ class BaseTemplate:
         if value is None or isinstance(value, bool):
             return bool(value)
         if isinstance(value, dict):
-            return bool(value)
+            if self.VARIANT_CONTENT_FAMILY is None:
+                return False
+            return bool(value.get(self.VARIANT_CONTENT_FAMILY))
         raise ValueError(
-            f"{self.VARIANT_CONTENT_KEY} must be a bool or a dict of per-variant "
-            f"parameters; got {type(value).__name__!r} ({value!r}). A truthy "
-            f"value of another type is refused rather than guessed at."
+            f"{self.VARIANT_CONTENT_KEY} must be a bool, or a dict naming the "
+            f"template families it applies to (one of: diagnostic, hospital, "
+            f"letter, deposition_notice, deposition_transcript); got "
+            f"{type(value).__name__!r} ({value!r}). A truthy value of another "
+            f"type is refused rather than guessed at."
         )
 
     def variant_of(self, doc_spec: Any, default: str = "") -> str:

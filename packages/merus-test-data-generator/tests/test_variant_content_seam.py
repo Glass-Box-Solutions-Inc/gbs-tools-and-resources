@@ -27,20 +27,21 @@ templates with allowlists is exercised, not just the ones the registers claim.
 
 from __future__ import annotations
 
-import json
 import random
 import re
 
 import pytest
 
 from tests.render_baseline import (
-    BASELINE_PATH,
+    ANCHOR_DATE,
     CLAIMED_LETTER_VARIANTS,
     DEFENSE_LETTER_VARIANTS,
     RENDER_CASES,
     RENDER_SEED,
     _load_template_class,
     build_fixture_case,
+    baseline_provenance,
+    load_baseline_cases,
     make_spec,
     render_digest,
 )
@@ -56,8 +57,7 @@ def case():
 
 @pytest.fixture(scope="module")
 def baseline() -> dict:
-    with open(BASELINE_PATH, encoding="utf-8") as fh:
-        return json.load(fh)
+    return load_baseline_cases()
 
 
 def render_text(case, module_path: str, class_name: str, spec) -> str:
@@ -163,31 +163,75 @@ def test_the_substrate_modality_tuple_wcce_intercepts_has_not_moved(case):
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("value,expected", [(True, True), (False, False), ({}, False), ({"a": 1}, True)])
-def test_the_opt_in_accepts_a_bool_or_a_block(case, value, expected):
-    """``bool`` for the switch, ``dict`` for a future block of parameters.
-
-    An empty block reads as off, matching AJC-65's seam on the same context
-    channel: the engine sets a dozen keys on every context, and a key arriving
-    empty must read exactly like a key that is not there.
-    """
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, False),
+        (True, True),
+        (False, False),
+        ({}, False),
+        ({"diagnostic": True}, True),
+        ({"diagnostic": False}, False),
+        ({"letter": True}, False),
+        ({"hospital": True, "letter": True}, False),
+        ({"diagnostic": True, "letter": True}, True),
+    ],
+)
+def test_the_opt_in_is_a_switch_or_a_namespaced_block(case, value, expected):
+    """``bool`` is global; a ``dict`` must name this template's own family."""
     template = _load_template_class(DIAG_MODULE, "DiagnosticReport")(case)
     spec = make_spec("DIAGNOSTICS_LAB_RESULTS", "lab", extra_context={"variant_content": value})
     assert template.variant_content_enabled(spec) is expected
+
+
+#: The shape AJC-65 puts on this same ``doc_spec.context``.
+FOREIGN_BLOCK = {"apportionment": {"nonindustrial_pct": 20, "register": "preexisting"}}
+
+
+@pytest.mark.parametrize("label,module_path,class_name,subtype,variant", RENDER_CASES)
+def test_a_foreign_block_on_this_key_activates_nothing(
+    case, baseline, label, module_path, class_name, subtype, variant
+):
+    """An AJC-65-shaped block must leave every template exactly as it was.
+
+    This is why the block form is namespaced rather than merely type-checked.
+    Contexts here are assembled once and reused across a packet, so a block
+    meant for the QME report's apportionment would otherwise have switched on
+    lab panels, ER records, advocacy letters and QME depositions at once — in
+    documents whose author never asked for any of it, and with the four golden
+    corpora pinned against them.
+    """
+    spec = make_spec(subtype, variant, extra_context={"variant_content": FOREIGN_BLOCK})
+    assert render_digest(case, module_path, class_name, spec) == baseline[label]
 
 
 @pytest.mark.parametrize("value", ["true", "false", 1, 0, [], ["lab"], object()])
 def test_a_non_bool_non_dict_opt_in_is_refused_rather_than_guessed(case, value):
     """Every other type raises, instead of being silently truthy.
 
-    Pinned now because the key is new and no caller can yet break, and because
-    ``"false"`` is truthy in Python. Left open, that would surface months later
-    as an unexplained corpus diff.
+    Pinned while the key is new and no caller can break. Note ``"false"`` is
+    truthy in Python; left open, that surfaces months later as a corpus diff.
     """
     template = _load_template_class(DIAG_MODULE, "DiagnosticReport")(case)
     spec = make_spec("DIAGNOSTICS_LAB_RESULTS", "lab", extra_context={"variant_content": value})
-    with pytest.raises(ValueError, match="must be a bool or a dict"):
+    with pytest.raises(ValueError, match="must be a bool"):
         template.variant_content_enabled(spec)
+
+
+def test_every_seamed_template_declares_a_family():
+    """A seam whose family is unset can never be reached by the block form."""
+    families = {}
+    for module_path, class_name in [
+        (DIAG_MODULE, "DiagnosticReport"),
+        ("pdf_templates.medical.operative_record", "OperativeRecord"),
+        (LETTER_MODULE, "DefenseCounselLetter"),
+        ("pdf_templates.discovery.deposition_notice", "DepositionNotice"),
+        ("pdf_templates.discovery.deposition_transcript", "DepositionTranscript"),
+    ]:
+        family = _load_template_class(module_path, class_name).VARIANT_CONTENT_FAMILY
+        assert family, f"{class_name} reads the seam but declares no family"
+        families[class_name] = family
+    assert len(set(families.values())) == len(families), f"families collide: {families}"
 
 
 # --------------------------------------------------------------------------
@@ -324,8 +368,7 @@ def test_the_qme_deposition_asks_about_the_report_not_the_injury(case):
     spec = make_spec("DEPOSITION_TRANSCRIPT_QME_AME", "Deposition Transcript (QME/AME)",
                      extra_context={"variant_content": True})
     text = render_text(case, "pdf_templates.discovery.deposition_transcript", "DepositionTranscript", spec)
-    for topic in ["board certified", "records reviewed", "apportionment", "impairment rating",
-                  "supplemental report"]:
+    for topic in ["records reviewed", "apportionment", "diagnosis", "physical examination"]:
         assert topic.lower() in text.lower(), f"a QME deposition should reach {topic!r}"
 
 
@@ -571,3 +614,265 @@ def test_the_organization_sweep_would_catch_a_planted_name():
     planted = wc_constants.INSURANCE_CARRIERS[0]
     blob = f"Correspondence with {planted} regarding this claim.".lower()
     assert planted.lower() in blob
+
+
+# --------------------------------------------------------------------------
+# Round 2 additions
+# --------------------------------------------------------------------------
+
+#: Every registered OperativeRecord variant, plus compound strings that a
+#: substring matcher would have hijacked.
+HOSPITAL_VARIANTS = (
+    ("OPERATIVE_HOSPITAL_RECORDS", None, False),
+    ("ACUTE_CARE_HOSPITAL_RECORDS", "acute", True),
+    ("EMERGENCY_ROOM_RECORDS", "er", True),
+    ("DISCHARGE_SUMMARY", "discharge", True),
+    ("FACE_SHEET", "face_sheet", True),
+    ("OPERATIVE_HOSPITAL_RECORDS", "hospital_billing", False),
+    ("OPERATIVE_HOSPITAL_RECORDS", "acute_stress_claim", False),
+    ("OPERATIVE_HOSPITAL_RECORDS", "employer_registration", False),
+    ("OPERATIVE_HOSPITAL_RECORDS", "discharge_planning_note", False),
+    ("OPERATIVE_HOSPITAL_RECORDS", "ed_visit_summary", False),
+)
+
+
+@pytest.mark.parametrize("subtype,variant,claimed", HOSPITAL_VARIANTS)
+def test_hospital_registers_claim_only_their_exact_variants(subtype, variant, claimed):
+    """The last substring matcher in the module, and the class it belonged to.
+
+    ``hospital_billing`` contains "hospital" and would have rendered an acute
+    care record; ``ed_visit_summary`` contains "ed". The ``_claims`` helper that
+    made this possible is deleted outright rather than left for the next family.
+    """
+    from data.variant_content import hospital_register
+
+    resolved = hospital_register(variant)
+    assert (resolved is not None) is claimed, (
+        f"{variant!r} resolved to {resolved.key if resolved else None!r}, expected "
+        f"{'a register' if claimed else 'no register'}"
+    )
+
+
+def test_the_substring_matching_helper_is_gone():
+    """It cannot come back by accident if it does not exist."""
+    import data.variant_content as module
+
+    assert not hasattr(module, "_claims"), (
+        "_claims is back; every register family must use an exact allowlist"
+    )
+
+
+@pytest.mark.parametrize("subtype,variant,claimed", HOSPITAL_VARIANTS)
+def test_unclaimed_hospital_variants_render_the_default_document(case, subtype, variant, claimed):
+    if claimed:
+        pytest.skip("claimed by a register; covered by the distinctness tests")
+    module_path, class_name = "pdf_templates.medical.operative_record", "OperativeRecord"
+    default = render_digest(case, module_path, class_name, make_spec(subtype, variant))
+    opted = render_digest(
+        case, module_path, class_name,
+        make_spec(subtype, variant, extra_context={"variant_content": True}),
+    )
+    assert opted == default, f"{variant!r} changed under the opt-in but claims no register"
+
+
+# --- F2: the evaluator transcript is evaluator content end to end ---------
+
+
+def _transcript_text(case, seed: int) -> str:
+    spec = make_spec("DEPOSITION_TRANSCRIPT_QME_AME", "Deposition Transcript (QME/AME)",
+                     extra_context={"variant_content": True})
+    template = _load_template_class(
+        "pdf_templates.discovery.deposition_transcript", "DepositionTranscript"
+    )(case)
+    random.seed(seed)
+    return template._story_to_plaintext(template.build_story(spec))
+
+
+@pytest.mark.parametrize("seed", [1, 7, 20260808, 99])
+def test_the_evaluator_transcript_contains_no_applicant_testimony(case, seed):
+    """The deponent is the physician, so the applicant's life is not the subject.
+
+    Prepending evaluator questions to the applicant generator was worse than
+    leaving the template alone: the physician then answered, in the first
+    person, what their own date of birth and social security number were, where
+    they lived, and how their industrial injury happened.
+    """
+    text = _transcript_text(case, seed)
+    applicant = case.applicant
+    forbidden = {
+        "date of birth": applicant.date_of_birth.strftime("%B %d, %Y"),
+        "SSN": applicant.ssn_last_four,
+        "street address": applicant.address_street,
+    }
+    present = {label: value for label, value in forbidden.items() if value and value in text}
+    assert not present, f"applicant {sorted(present)} appears in the evaluator's testimony"
+
+
+@pytest.mark.parametrize("seed", [1, 7, 20260808, 99])
+def test_every_transcript_line_carries_a_speaker_label(case, seed):
+    """The renderer prefixes nothing; the generator must supply ``Q. ``/``A. ``.
+
+    An earlier revision returned bare tuples and every one of those lines
+    rendered as naked text in the middle of a transcript.
+    """
+    text = _transcript_text(case, seed)
+    numbered = [line for line in text.splitlines() if re.match(r"^\s*\d+\s+\S", line)]
+    assert numbered, "no numbered transcript lines rendered at all"
+    unlabelled = [
+        line for line in numbered
+        if not re.match(r"^\s*\d+\s+(Q\.|A\.|BY |MR|MS|THE |\(|EXHIBIT)", line)
+    ]
+    assert not unlabelled, f"{len(unlabelled)} transcript lines carry no speaker label: {unlabelled[:3]}"
+
+
+@pytest.mark.parametrize("seed", [1, 7, 20260808, 99])
+def test_the_evaluator_transcript_covers_the_evaluator_subjects(case, seed):
+    text = _transcript_text(case, seed).lower()
+    for subject in ["records", "apportionment", "diagnosis", "examination",
+                    "caused by employment", "history"]:
+        assert subject in text, f"an evaluator deposition should reach {subject!r}"
+
+
+# --- F3: electrodiagnostic scenarios do not mix limbs ---------------------
+
+UPPER_ONLY = ("median", "ulnar", "pollicis", "interosseous", "cervical")
+LOWER_ONLY = ("peroneal", "tibial", "sural", "gastrocnemius", "lumbar")
+
+
+def test_electrodiagnostic_scenarios_never_mix_limbs():
+    """A study reports the limb it examined, not a selection from both.
+
+    The single "normal study" scenario carried an upper-limb technique with
+    median and ulnar conduction rows *and* a sural response, an APB needle
+    *and* a tibialis anterior — and was eligible for either region.
+    """
+    from data.variant_content import ELECTRODIAGNOSTIC_REGISTER
+
+    for scenario in ELECTRODIAGNOSTIC_REGISTER.scenarios:
+        blob = " ".join(
+            [scenario.exam_label, scenario.technique, scenario.impression]
+            + [f"{r.label} {r.value}" for r in scenario.rows + scenario.secondary_rows]
+        ).lower()
+        if scenario.region == "upper":
+            intruders = [w for w in LOWER_ONLY if w in blob]
+            assert not intruders, f"{scenario.key} is upper-limb but names {intruders}"
+        elif scenario.region == "lower":
+            intruders = [w for w in UPPER_ONLY if w in blob]
+            assert not intruders, f"{scenario.key} is lower-limb but names {intruders}"
+        else:
+            pytest.fail(f"{scenario.key} declares region {scenario.region!r}; every "
+                        f"electrodiagnostic scenario must commit to a limb")
+
+
+# --- F4: the baseline does not depend on the calendar ---------------------
+
+
+def test_the_fixture_case_is_pinned_to_the_anchor_not_to_today():
+    """Two different frozen "todays" must produce the identical case.
+
+    This was the nastiest defect in the suite: eleven of eighteen cases changed
+    across a seven-month clock move, so the guard was set to turn red in CI on a
+    morning nobody had touched the substrate. That failure reads as flakiness,
+    and the natural response to a flaky guard is to delete it.
+    """
+    import datetime as _dt
+
+    from tests.render_baseline import build_fixture_case, frozen_clock
+
+    def case_under(year: int):
+        real = _dt.date
+
+        class Moved(real):
+            @classmethod
+            def today(cls):
+                return real(year, 3, 15)
+
+        import data.fake_data_generator as fdg
+
+        saved = fdg.date
+        fdg.date = Moved
+        try:
+            built = build_fixture_case()
+            return (
+                built.applicant.date_of_birth,
+                built.employer.hire_date,
+                built.timeline.date_of_injury,
+            )
+        finally:
+            fdg.date = saved
+
+    assert case_under(2026) == case_under(2031), (
+        "the fixture case still moves with the wall clock"
+    )
+    with frozen_clock() as anchor:
+        assert anchor == ANCHOR_DATE
+
+
+def test_the_baseline_records_where_it_came_from():
+    """A baseline's value is that it predates the seam, which hashes cannot show."""
+    meta = baseline_provenance()
+    assert meta.get("source_commit"), "baseline carries no source commit"
+    assert meta.get("base_ref"), "baseline does not say which ref it was recorded from"
+    assert meta.get("anchor_date") == ANCHOR_DATE.isoformat(), (
+        "the baseline was recorded under a different anchor date than the one in force"
+    )
+
+
+def test_record_mode_refuses_a_tree_that_is_not_the_base_ref():
+    """Unguarded, ``--record`` lets a feature tree bless itself."""
+    import subprocess
+    import sys as _sys
+
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    result = subprocess.run(
+        [_sys.executable, "scripts/record_render_baseline.py", "--record"],
+        cwd=_PACKAGE_ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode != 0, "record mode accepted a non-base checkout"
+    assert "refusing to record" in (result.stdout + result.stderr)
+
+
+# --- F6: the PDF digest is asserted, not just described -------------------
+
+
+def test_a_geometry_change_moves_the_pdf_bytes_not_only_the_story(case):
+    """The PR claimed this; only the story half was ever asserted.
+
+    Renders the same document twice, changing nothing but one Spacer's height,
+    and compares the physical PDFs. Text is identical across both.
+    """
+    import hashlib
+
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, Spacer
+
+    from tests.render_baseline import _ensure_invariant_pdfs, _story_fingerprint
+
+    _ensure_invariant_pdfs()
+    template = _load_template_class(DIAG_MODULE, "DiagnosticReport")(case)
+    body = template.styles["BodyText14"]
+
+    def pdf_of(height: float) -> str:
+        import tempfile
+        from pathlib import Path as _Path
+
+        story = [Paragraph("FINDINGS", body), Spacer(1, height * inch),
+                 Paragraph("Unremarkable.", body)]
+        with tempfile.TemporaryDirectory() as tmp:
+            out = _Path(tmp) / "x.pdf"
+            tpl = _load_template_class(DIAG_MODULE, "DiagnosticReport")(case)
+            tpl.build_story = lambda _spec, _s=story: list(_s)
+            tpl.generate(out, make_spec("DIAGNOSTICS", None))
+            return hashlib.sha256(out.read_bytes()).hexdigest()
+
+    original = [Paragraph("FINDINGS", body), Spacer(1, 0.30 * inch),
+                Paragraph("Unremarkable.", body)]
+    respaced = [Paragraph("FINDINGS", body), Spacer(1, 0.35 * inch),
+                Paragraph("Unremarkable.", body)]
+
+    assert template._story_to_plaintext(original) == template._story_to_plaintext(respaced), (
+        "premise broken: the text digest already sees this change"
+    )
+    assert _story_fingerprint(original) != _story_fingerprint(respaced)
+    assert pdf_of(0.30) != pdf_of(0.35), "the PDF digest is blind to a geometry change"

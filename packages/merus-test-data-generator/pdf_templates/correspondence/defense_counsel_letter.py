@@ -19,6 +19,9 @@ from data.variant_content import letter_register
 class DefenseCounselLetter(BaseTemplate):
     """Defense attorney correspondence template"""
 
+    #: Block form of the opt-in must name this family to activate it.
+    VARIANT_CONTENT_FAMILY = "letter"
+
     def build_story(self, doc_spec):
         story = []
 

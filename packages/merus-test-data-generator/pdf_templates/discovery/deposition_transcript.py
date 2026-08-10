@@ -18,12 +18,15 @@ from data.deposition_exchanges import (
     generate_objection,
     generate_time_marker,
 )
-from data.variant_content import transcript_register
+from data.variant_content import generate_evaluator_exchanges, transcript_register
 from pdf_templates.base_template import BaseTemplate
 
 
 class DepositionTranscript(BaseTemplate):
     """Generates a deposition transcript in Q&A format with realistic length."""
+
+    #: Block form of the opt-in must name this family to activate it.
+    VARIANT_CONTENT_FAMILY = "deposition_transcript"
 
     def build_story(self, doc_spec):
         """Build deposition transcript — 10-30 pages."""
@@ -69,13 +72,15 @@ class DepositionTranscript(BaseTemplate):
         # --- Generate Q&A exchanges ---
         # More exchanges = more pages. Target 10-30 pages requires 100-200+ exchanges
         # at ~8-10 exchanges per page in Courier 10pt
-        exchanges = generate_deposition_exchanges(self.case, min_exchanges=100, max_exchanges=180)
         if register is not None:
-            # Front-load the questions specific to this deponent. The generic
-            # pool still follows, so page count and transcript shape are barely
-            # changed — what changes is that the transcript now opens on the
-            # subject its subtype says it is about.
-            exchanges = list(register.opening_exchanges) + list(exchanges)
+            # A whole examination of THIS deponent, not the applicant's
+            # examination with a preamble bolted on. Prepending was worse than
+            # doing nothing: the physician went on to answer, in the first
+            # person, what their own date of birth and address were and how
+            # their industrial injury happened.
+            exchanges = generate_evaluator_exchanges(register, self._deponent_case_data())
+        else:
+            exchanges = generate_deposition_exchanges(self.case, min_exchanges=100, max_exchanges=180)
 
         # Determine objection and exhibit insertion points
         total = len(exchanges)
@@ -166,6 +171,17 @@ class DepositionTranscript(BaseTemplate):
         story.extend(self._build_final_certification(doc_spec, reporter_name, reporter_number))
 
         return story
+
+    def _deponent_case_data(self):
+        """Placeholder values for the evaluator question pools."""
+        injury = self.case.injuries[0] if self.case.injuries else None
+        evaluator = getattr(self.case, "qme_physician", None) or self.case.treating_physician
+        return {
+            "applicant_name": self.case.applicant.full_name,
+            "evaluator_name": evaluator.full_name,
+            "specialty": evaluator.specialty,
+            "body_parts": ", ".join(injury.body_parts) if injury else "the injured area",
+        }
 
     def _transcript_deponent(self, register):
         """Deponent name and role for the cover page.
