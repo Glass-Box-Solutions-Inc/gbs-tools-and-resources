@@ -14,6 +14,12 @@ from reportlab.lib import colors
 from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
 
+from data.apportionment import (
+    SENTENCE_ADDRESSED,
+    SENTENCE_NONE,
+    parse_apportionment,
+    parse_causation,
+)
 from data.content_pools import (
     get_exam_findings,
     get_functional_capacity,
@@ -29,12 +35,49 @@ from data.wc_constants import (
 )
 from pdf_templates.base_template import BaseTemplate
 
+# AJC-65 — the apportionment and causation governance seam.
+#
+# Apportionment decides who pays for a permanent disability, and this template
+# decided it by coin flip: two canned sentences chosen by ``random.random() >
+# 0.5``, drawn independently of the percentage the impairment section had
+# already printed. A caller that knew what the evaluator concluded had no way
+# to say so.
+#
+# The contract, the validation and the rendered prose all live in
+# ``data.apportionment`` so that this template and ``impairment_rating_section``
+# render from one parsed decision rather than from two readings of the same
+# dict — which is the only way to guarantee they agree. See that module for the
+# accepted shapes; malformed input raises there, following the convention
+# AJC-66 established for ``variant_content`` on this same context channel.
+
+#: Distinguishes "the caller did not pre-parse" from "the caller pre-parsed and
+#: the answer was ungoverned". ``None`` is a meaningful parsed result, so it
+#: cannot double as the default.
+_UNPARSED = object()
+
 
 class QmeAmeReport(BaseTemplate):
     """Qualified Medical Evaluator / Agreed Medical Evaluator comprehensive report."""
 
     def build_story(self, doc_spec):
         """Build 5-15 page QME/AME report with specialty dispatch."""
+        # Parsed first, before a single flowable is built or a single draw is
+        # made. Two reasons, and both are load-bearing.
+        #
+        # One decision, not two readings: the impairment section and the
+        # conclusions must state the same apportionment, and the only way to
+        # guarantee that is for both to render from the same parsed object.
+        #
+        # And validation belongs at the top: a malformed block discovered
+        # halfway down would raise after the history, the examination and three
+        # coin flips had already been drawn and built. Callers would see a
+        # partially rendered document's worth of work thrown away, and — worse —
+        # the failure would depend on how far the render got. Governance is
+        # rejected before the document exists.
+        context = getattr(doc_spec, "context", None)
+        apportionment = parse_apportionment(context)
+        causation = parse_causation(context)
+
         story = []
         qme = self.case.qme_physician or self.case.treating_physician
         injury = self.case.injuries[0] if self.case.injuries else None
@@ -92,7 +135,9 @@ class QmeAmeReport(BaseTemplate):
         story.extend(self._build_diagnostic_review(injury))
 
         # --- 6. Impairment Rating (AMA Guides 5th Ed) ---
-        story.extend(self.impairment_rating_section())
+        # The decision parsed at the top, so the percentage rated here and the
+        # opinion stated in section 9 come from one object and cannot disagree.
+        story.extend(self.impairment_rating_section(apportionment))
 
         # Phase 6: Record WPI to accumulator so downstream memos can cite it
         acc = self._get_accumulator(doc_spec)
@@ -117,7 +162,9 @@ class QmeAmeReport(BaseTemplate):
         story.extend(self._build_work_restrictions())
 
         # --- 9. Conclusions ---
-        story.extend(self._build_conclusions(injury, doc_spec))
+        story.extend(self._build_conclusions(
+            injury, doc_spec, apportionment=apportionment, causation=causation,
+        ))
 
         # --- Signature ---
         story.append(Spacer(1, 0.4 * inch))
@@ -518,20 +565,71 @@ class QmeAmeReport(BaseTemplate):
         elements.append(Spacer(1, 0.15 * inch))
         return elements
 
-    def _build_conclusions(self, injury, doc_spec):
-        """Conclusions and Medical-Legal Opinions — numbered list with detailed rationale."""
+    def _build_conclusions(
+        self, injury, doc_spec, apportionment=_UNPARSED, causation=_UNPARSED,
+    ):
+        """Conclusions and Medical-Legal Opinions — numbered list with detailed rationale.
+
+        ``build_story`` parses the governance blocks once and passes them in, so
+        this section and the impairment section render from the same objects.
+        Called directly — by a subclass, or by a test — the blocks are parsed
+        here instead, which keeps this a standalone builder rather than one that
+        only works when its caller remembered to prepare it.
+
+        Parsing is pure and total: the same context yields the same decision, so
+        the two entry points cannot disagree about what the caller asked for.
+        """
         elements = []
         doi = self.case.timeline.date_of_injury.strftime("%m/%d/%Y")
         bp_str = ", ".join(injury.body_parts).lower() if injury else "the injured area"
+
+        # Validation before the first draw, whichever entry point was used. A
+        # malformed block must not reach the coin flips below: raising after
+        # them would leave the caller's rng stream advanced by a rejected
+        # request, which is a strange thing to have to reason about.
+        context = getattr(doc_spec, "context", None)
+        if apportionment is _UNPARSED:
+            apportionment = parse_apportionment(context)
+        if causation is _UNPARSED:
+            causation = parse_causation(context)
+
+        # The three coin flips are drawn here, ahead of the list, in the order
+        # the list used to evaluate them (5, then 6, then 7) — conclusions 1-4
+        # draw nothing, so the stream position is unchanged. They are drawn
+        # whether or not the caller governs the answer, and discarded when it
+        # does. Skipping a draw the substrate used to make would shift every
+        # later draw in the document, so governing one sentence would rewrite
+        # the signature block below it.
+        restrictions_recommended = random.random() > 0.2
+        drawn_attribution = "entirely" if random.random() > 0.4 else "predominantly"
+        drew_no_apportionment = random.random() > 0.5
+
+        if causation and causation.discussion:
+            causation_text = causation.discussion
+        else:
+            attribution = (causation.attribution if causation else None) or drawn_attribution
+            causation_text = (
+                f"The current condition of the {bp_str} is {attribution} attributable to the "
+                f"industrial injury. This opinion is based on the temporal relationship between "
+                f"the injury and symptom onset, the mechanism of injury, the clinical findings, "
+                f"and the absence of pre-existing conditions affecting these body parts."
+            )
+
+        if apportionment is None:
+            apportionment_text = (
+                SENTENCE_NONE if drew_no_apportionment else SENTENCE_ADDRESSED
+            )
+        else:
+            apportionment_text = apportionment.conclusion_sentence()
 
         conclusions = [
             f"1. <b>Industrial Causation:</b> The injury sustained on {doi} is industrial in nature and arose out of and in the course of employment with {self.case.employer.company_name}. The mechanism of injury is consistent with the documented medical findings. It is my opinion, to a reasonable degree of medical probability, that the industrial injury is the primary cause of the patient's current condition.",
             f"2. <b>Maximum Medical Improvement:</b> The patient has reached maximum medical improvement (permanent and stationary) as of the date of this evaluation. Further curative treatment is not expected to result in significant improvement in the patient's condition, although palliative and maintenance care remains necessary.",
             f"3. <b>Permanent Impairment:</b> Permanent impairment has been rated per the AMA Guides to the Evaluation of Permanent Impairment, Fifth Edition, as required by LC §4660.1. The impairment rating is based on the patient's condition at the time of maximum medical improvement and reflects the functional limitations documented during this evaluation.",
             f"4. <b>Future Medical Care:</b> Future medical care is reasonably required to cure or relieve the effects of the industrial injury per LC §4600. The recommended future medical treatment is outlined in detail above and includes ongoing medication management, periodic follow-up evaluations, and potential interventional procedures as clinically indicated.",
-            f"5. <b>Work Restrictions:</b> {'Permanent work restrictions are recommended as outlined above. The patient is unable to return to the pre-injury occupation and should be evaluated for vocational rehabilitation.' if random.random() > 0.2 else 'No permanent work restrictions are necessary. The patient may return to full duty without limitations.'}",
-            f"6. <b>Causation Analysis:</b> The current condition of the {bp_str} is {'entirely' if random.random() > 0.4 else 'predominantly'} attributable to the industrial injury. This opinion is based on the temporal relationship between the injury and symptom onset, the mechanism of injury, the clinical findings, and the absence of pre-existing conditions affecting these body parts.",
-            f"7. <b>Apportionment:</b> {'No apportionment is applicable in this case. The entire permanent disability is attributable to the industrial injury. There is no credible evidence of pre-existing pathology contributing to the current impairment.' if random.random() > 0.5 else 'Apportionment has been addressed as outlined in the impairment rating section of this report per LC §4663 and §4664.'}",
+            f"5. <b>Work Restrictions:</b> {'Permanent work restrictions are recommended as outlined above. The patient is unable to return to the pre-injury occupation and should be evaluated for vocational rehabilitation.' if restrictions_recommended else 'No permanent work restrictions are necessary. The patient may return to full duty without limitations.'}",
+            f"6. <b>Causation Analysis:</b> {causation_text}",
+            f"7. <b>Apportionment:</b> {apportionment_text}",
         ]
 
         elements.extend(self.make_section(

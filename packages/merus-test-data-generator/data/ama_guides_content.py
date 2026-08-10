@@ -285,6 +285,11 @@ PAIN_ADDON_WPI: dict[int, str] = {
 # Apportionment Templates (LC §4663 / §4664)
 # ---------------------------------------------------------------------------
 
+#: Distinguishes "no caller governed this" from "a caller governed it to
+#: nothing". ``None`` is a meaningful governed value — it suppresses the
+#: apportionment block — so it cannot double as the default.
+_UNGOVERNED = object()
+
 APPORTIONMENT_TEMPLATES: dict[str, dict[str, str]] = {
     "no_apportionment": {
         "narrative": (
@@ -432,8 +437,19 @@ def generate_impairment_narrative(
     body_parts: list[str],
     specialty: str,
     apportionment_pct: int = 0,
+    *,
+    governed_block: Any = _UNGOVERNED,
 ) -> tuple[str, int, list[dict[str, Any]]]:
     """Generate a full AMA Guides 5th Ed impairment narrative.
+
+    ``apportionment_pct`` drives both the rendered apportionment block and the
+    random draws that build it. ``governed_block`` (AJC-65) replaces the
+    *rendered* block without touching those draws: pass a string to render it,
+    or ``None`` to suppress the block entirely. Left unset, the substrate's own
+    path runs exactly as before.
+
+    The two are separate parameters on purpose. See the apportionment block
+    below for why collapsing them shifts the random stream.
 
     Returns:
         (narrative_text, total_wpi, individual_ratings)
@@ -528,7 +544,22 @@ def generate_impairment_narrative(
     else:
         narrative_parts.append(f"\n<b>Total WPI: {total_wpi}%</b>")
 
-    # Apportionment
+    # Apportionment.
+    #
+    # The draws in this block are keyed to ``apportionment_pct`` and stay keyed
+    # to it even when a caller governs the rendered words (AJC-65). The block
+    # consumes three draws when the percentage is positive and none when it is
+    # zero, so rendering governed content off the *governed* number would
+    # consume a different number of draws than the substrate's own path
+    # whenever the two straddle zero — and every draw after this point in the
+    # document would answer a different question. Governing an apportionment
+    # would rewrite the future-medical content, the work restrictions and the
+    # signature identifier below it.
+    #
+    # So consumption follows the drawn value and only the words follow the
+    # ledger: pass ``governed_block`` to replace the rendered block (or
+    # ``None`` to suppress it) without disturbing a single draw.
+    legacy_block = None
     if apportionment_pct > 0:
         template_key = random.choice(["pre_existing_degenerative", "constitutional"])
         template = APPORTIONMENT_TEMPLATES[template_key]
@@ -541,9 +572,13 @@ def generate_impairment_narrative(
             prior_pd_pct=random.randint(5, 20),
             constitutional_factors="age-related degenerative changes, body habitus, and genetic predisposition",
         )
-        narrative_parts.append(
+        legacy_block = (
             f"\n<b>Apportionment — {template['lc_citation']}</b>\n{apportionment_text}"
         )
+
+    block = legacy_block if governed_block is _UNGOVERNED else governed_block
+    if block:
+        narrative_parts.append(block)
 
     narrative = "\n".join(narrative_parts)
     return narrative, total_wpi, ratings
