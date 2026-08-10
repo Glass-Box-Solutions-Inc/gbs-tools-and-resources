@@ -86,13 +86,13 @@ def _verify_harness() -> dict[str, str]:
     return verified
 
 
-#: The immutable commit AJC-66 branched from. Pinned as a SHA, not a ref name.
+#: The immutable post-#38 trunk commit this recorder contract is anchored to.
 #:
 #: ``--base-ref`` used to default to ``origin/main`` and accept anything, so
 #: ``--record --base-ref HEAD`` on a clean feature branch satisfied every check
 #: and blessed the tree under test. A guard whose subject is chosen by the
 #: caller is not a guard.
-BASE_COMMIT = "e2f52edb11c994d2b4bf8d9209e73ed29f015e30"
+BASE_COMMIT = "b0e77dd1b6fa949d2d5dc6a7f2d1a0c94ed6def3"
 
 #: Files the recording procedure legitimately copies into the base checkout.
 #: Nothing else may be untracked under the directories that determine what gets
@@ -161,14 +161,9 @@ def _resolve_base(base_ref: str | None) -> str:
 
 #: Tracked files the base checkout may legitimately carry a patch for.
 #:
-#: Exactly one, and it earns its place. ``deposition_exchanges._today`` imported
-#: ``date`` inside the function, which put it out of reach of every module-level
-#: clock pin — so a baseline recorded without this patch is itself wall-clock
-#: dependent, which is the defect the pin exists to remove. The patch returns
-#: the same value it always did; all it changes is that the lookup can be
-#: intercepted. Any other tracked modification still blocks recording, and the
-#: patch is named in the baseline's provenance so a reader can check it.
-_ALLOWED_BASE_PATCHES = frozenset({"data/deposition_exchanges.py"})
+#: Post-#38-trunk clock handling is now in place; this list is intentionally
+#: empty unless a future exception is intentionally accepted.
+_ALLOWED_BASE_PATCHES = frozenset()
 
 
 def _refuse_unless_clean_base_checkout(base_commit: str) -> str:
@@ -288,11 +283,10 @@ def main() -> int:
             "case_seed": CASE_SEED,
             "recorded_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "note": (
-                "Recorded from a detached checkout at base_commit, before the AJC-66 "
-                "variant-content seam existed. base_patches lists the only tracked "
-                "files the base checkout may differ on — each is behaviour-preserving "
-                "and required for the clock pin to reach the code. Re-recording "
-                "requires the same conditions; see this script's docstring."
+                "Recorded from a detached checkout at base_commit, the trusted post-#38 "
+                "trunk before AJC-72. base_patches lists the only tracked files the "
+                "base checkout differs on. Re-recording requires the same conditions; "
+                "see this script's docstring."
             ),
         },
         "cases": compute_baseline(),

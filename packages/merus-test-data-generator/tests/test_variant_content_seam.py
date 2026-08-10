@@ -810,10 +810,15 @@ def test_the_fixture_case_is_pinned_to_the_anchor_not_to_today():
 
 
 def test_the_baseline_records_where_it_came_from():
-    """A baseline's value is that it predates the seam, which hashes cannot show."""
+    """A baseline's value is that it records the trusted trunk anchor, not a moving head."""
     meta = baseline_provenance()
-    assert meta.get("source_commit"), "baseline carries no source commit"
-    assert meta.get("base_commit"), "baseline does not pin the commit it was recorded from"
+    expected = "b0e77dd1b6fa949d2d5dc6a7f2d1a0c94ed6def3"
+    assert meta.get("source_commit") == expected, (
+        f"unexpected source_commit: {meta.get('source_commit')}"
+    )
+    assert meta.get("base_commit") == expected, (
+        f"unexpected base_commit: {meta.get('base_commit')}"
+    )
     assert meta.get("anchor_date") == ANCHOR_DATE.isoformat(), (
         "the baseline was recorded under a different anchor date than the one in force"
     )
@@ -1206,7 +1211,7 @@ def test_the_baseline_records_the_patches_its_base_carried():
     """Provenance must name any tracked file the base checkout differed on."""
     meta = baseline_provenance()
     assert "base_patches" in meta, "provenance does not disclose base patches"
-    assert meta["base_patches"] == ["data/deposition_exchanges.py"], (
+    assert meta["base_patches"] == [], (
         f"unexpected base patches: {meta['base_patches']}"
     )
     assert meta.get("base_commit"), "provenance does not pin a base commit"
@@ -1437,4 +1442,3 @@ def test_the_harness_is_verified_before_it_is_imported():
         f"the harness is imported at line {unguarded} before _verify_harness() at "
         f"line {verify_line}; --check is not exempt, it is the gate"
     )
-

@@ -311,15 +311,11 @@ jobs:
       #
       # PYTHONHASHSEED is pinned to the value wc-synthetic-caseload-engine
       # already sets, so this job renders under the same conditions the corpora
-      # it guards are generated under. Two content pools are built with
-      # `list(set(...))`, so without it the rendered words vary run to run.
-      #
-      # It is not sufficient on its own, and that is worth knowing: the same
-      # tree still renders different text under different Python versions
-      # (measured — 3.10 and 3.12 disagree with the seed pinned). Byte-level
-      # baselines therefore belong in the golden corpora, which pin dependency
-      # versions properly; the tests here assert rendered bytes relatively,
-      # within one process.
+      # it guards are generated under. It is not sufficient on its own, and that
+      # is worth knowing: this tree still renders different text under different
+      # Python versions. CI is 3.12-only by design; local evidence gates are run on
+      # both 3.10 and 3.12 when touching this package to document the residual
+      # interpreter-axis drift.
       - name: Test
         run: pip install pytest && PYTHONHASHSEED=0 python -m pytest tests/ -q --tb=short
 

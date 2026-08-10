@@ -2247,3 +2247,21 @@ replace = '''    folded = text.lower()
     return []
     offenders: list[str] = []'''
 note = 'AJC-60 R6 finding 2, the instrument rather than the list. The controls asked whether some SUPERSEDED_DOC_CLAIMS phrase was a substring of the passage, which tests the LIST and never runs the checker — case folding, the passage window and the supersed exemption all went unexercised, and a checker returning nothing at all would have passed every control. They go through superseded_hits now, so gutting the function reddens them. A dead checker is exactly the failure a control exists to catch and exactly the one membership cannot see.'
+
+[[mutant]]
+id = 'm18-1'
+title = 'MTUS categories return to interpreter hash ordering'
+file = '../merus-test-data-generator/data/content_pools.py'
+test = '../merus-test-data-generator/tests/test_content_pool_determinism.py::test_mtus_category_dedup_is_sorted_and_content_neutral'
+find = '''    categories = sorted(set(categories))'''
+replace = '''    categories = list(set(categories))'''
+note = 'AJC-72: restores the exact unstable constructor; the named guard pins canonical order and the pre-change membership/count inventory.'
+
+[[mutant]]
+id = 'm18-2'
+title = 'future-medical items return to interpreter hash ordering'
+file = '../merus-test-data-generator/data/content_pools.py'
+test = '../merus-test-data-generator/tests/test_content_pool_determinism.py::test_future_medical_dedup_is_sorted_and_content_neutral'
+find = '''    items = sorted(set(items))'''
+replace = '''    items = list(set(items))'''
+note = 'AJC-72: restores the QME/WCCE byte-instability defect while preserving the item set; the named guard must redden.'
