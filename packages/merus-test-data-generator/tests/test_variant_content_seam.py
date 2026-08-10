@@ -993,34 +993,115 @@ def test_the_transcript_renderer_reaches_no_unforked_case_specific_pool():
         )
 
 
+def _local_clock_imports(source: str, label: str) -> list[str]:
+    """Functions that import a datetime name locally AND read a clock anywhere in them.
+
+    Parsed, not grepped. The first version scanned a 400-character window after
+    each local import, which is a proximity heuristic dressed up as a rule — and
+    it missed a real one: ``orchestration/case_creator.py`` imported ``datetime``
+    inside a function and called ``.now()`` twenty-three lines later, comfortably
+    outside the window. The scope of an import is the whole function, so the
+    check is the whole function.
+    """
+    import ast
+
+    findings: list[str] = []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return findings
+
+    CLOCK_CALLS = {"now", "today", "utcnow"}
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+
+        local_names: set[str] = set()
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.ImportFrom) and inner.module == "datetime":
+                local_names.update(alias.asname or alias.name for alias in inner.names)
+            elif isinstance(inner, ast.Import):
+                for alias in inner.names:
+                    if alias.name == "datetime" or alias.name.startswith("datetime."):
+                        local_names.add(alias.asname or alias.name.split(".")[0])
+        if not local_names:
+            continue
+
+        for inner in ast.walk(node):
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Attribute)
+                and inner.func.attr in CLOCK_CALLS
+            ):
+                base = inner.func.value
+                # `datetime.now()` and `datetime.datetime.now()` both start at a Name.
+                while isinstance(base, ast.Attribute):
+                    base = base.value
+                if isinstance(base, ast.Name) and base.id in local_names:
+                    findings.append(
+                        f"{label}:{inner.lineno}: {node.name}() reads "
+                        f"{base.id}.{inner.func.attr}() through a function-local import"
+                    )
+    return findings
+
+
 def test_no_clock_is_read_through_a_function_local_import():
     """The hole that let one clock keep running inside the pin.
 
-    ``_today`` imported ``date`` inside the function, so the lookup happened at
-    call time in a scope no module-attribute patch can reach. Every clock read
-    must resolve through a module-level binding.
+    A function-local ``from datetime import date`` resolves at call time, in a
+    scope no module-attribute patch can reach. Every clock read must go through
+    a module-level binding or the pin silently does not apply to it.
     """
-    import re as _re
     from pathlib import Path as _Path
 
     from tests.render_baseline import _PACKAGE_ROOT
 
-    offenders = []
+    offenders: list[str] = []
     for directory in ("data", "pdf_templates", "orchestration"):
         for path in sorted(_Path(_PACKAGE_ROOT, directory).rglob("*.py")):
-            source = path.read_text(encoding="utf-8")
-            for match in _re.finditer(r"^[ \t]+(?:from datetime import|import datetime)\b.*$",
-                                      source, _re.MULTILINE):
-                line = match.group(0)
-                # Only a clock *read* matters; constructing from a supplied date
-                # is fine and email_metadata legitimately does that.
-                tail = source[match.end(): match.end() + 400]
-                if ".today()" in tail or ".now()" in tail or ".utcnow()" in tail:
-                    offenders.append(f"{path.name}: {line.strip()}")
+            offenders += _local_clock_imports(path.read_text(encoding="utf-8"), path.name)
+
     assert not offenders, (
         "a clock is read through a function-local import, out of reach of the pin:\n"
         + "\n".join(offenders)
     )
+
+
+def test_the_local_clock_audit_sees_past_a_four_hundred_character_gap():
+    """Positive control for the audit above, sized to the bug it replaced.
+
+    The previous implementation looked 400 characters past the import. This
+    fixture puts far more than that between the import and the clock read — the
+    exact shape of the site the old check walked straight past.
+    """
+    filler = "\n".join(f'    value_{i} = "padding padding padding padding"' for i in range(40))
+    source = (
+        "def build_note():\n"
+        "    from datetime import datetime\n"
+        f"{filler}\n"
+        "    return datetime.now().isoformat()\n"
+    )
+    assert len(filler) > 400, "the control is not actually wider than the old window"
+    assert _local_clock_audit_finds(source), "the audit cannot see past the old window"
+
+
+def _local_clock_audit_finds(source: str) -> bool:
+    return bool(_local_clock_imports(source, "<control>"))
+
+
+def test_the_local_clock_audit_ignores_an_import_that_reads_no_clock():
+    """Constructing from a supplied date is fine and must not be flagged.
+
+    ``email_metadata`` legitimately builds a datetime from ``doc_date``. An audit
+    that fires on that would be turned off within a week.
+    """
+    source = (
+        "def to_rfc(doc_date):\n"
+        "    from datetime import datetime\n"
+        "    return datetime(doc_date.year, doc_date.month, doc_date.day, 12, 0).timestamp()\n"
+    )
+    assert not _local_clock_audit_finds(source)
 
 
 def test_the_clock_pin_covers_every_module_that_binds_a_clock():

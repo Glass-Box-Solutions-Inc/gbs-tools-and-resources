@@ -6,8 +6,11 @@
       "data/deposition_exchanges.py"
     ],
     "case_seed": 4242,
+    "harness_sha256": {
+      "tests/render_baseline.py": "d9ff9bfc9ef212376070b4181dc453a538ec1624b61042e8bdd338fd67b002c7"
+    },
     "note": "Recorded from a detached checkout at base_commit, before the AJC-66 variant-content seam existed. base_patches lists the only tracked files the base checkout may differ on \u2014 each is behaviour-preserving and required for the clock pin to reach the code. Re-recording requires the same conditions; see this script's docstring.",
-    "recorded_utc": "2026-08-10T08:33:54+00:00",
+    "recorded_utc": "2026-08-10T08:56:48+00:00",
     "render_seed": 20260808,
     "source_commit": "e2f52edb11c994d2b4bf8d9209e73ed29f015e30"
   },

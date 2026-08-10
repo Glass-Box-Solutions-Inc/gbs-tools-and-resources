@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import hashlib
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -34,14 +35,56 @@ _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, _PACKAGE_ROOT)
 
-from tests.render_baseline import (  # noqa: E402
-    ANCHOR_DATE,
-    BASELINE_PATH,
-    CASE_SEED,
-    RENDER_SEED,
-    compute_baseline,
-    load_baseline_cases,
-)
+
+#: SHA-256 of the digest harness, as reviewed on this branch.
+#:
+#: Recording copies ``tests/render_baseline.py`` into the base checkout and then
+#: imports ``compute_baseline`` **from that copy** to produce the trusted
+#: baseline. Every other guard here — ancestry, tree cleanliness, provenance —
+#: describes the *template sources*, and none of them looks at the harness doing
+#: the hashing. A modified copy could drop cases or emit whatever digests it
+#: liked and satisfy all of them.
+#:
+#: So the copy is verified byte-for-byte before it is imported, and the verified
+#: hash is written into the baseline's provenance. Changing the harness is
+#: legitimate and frequent; changing it *without updating this constant in a
+#: reviewed diff* is what this refuses.
+#:
+#: Regenerate with:
+#:   python -c "import hashlib,pathlib; print(hashlib.sha256(pathlib.Path('tests/render_baseline.py').read_bytes()).hexdigest())"
+HARNESS_FILES: dict[str, str] = {
+    "tests/render_baseline.py": "d9ff9bfc9ef212376070b4181dc453a538ec1624b61042e8bdd338fd67b002c7",
+}
+
+
+def _verify_harness() -> dict[str, str]:
+    """Check the digest harness against its reviewed hash, before importing it."""
+    verified: dict[str, str] = {}
+    problems: list[str] = []
+    for relative, expected in HARNESS_FILES.items():
+        path = os.path.join(_PACKAGE_ROOT, relative)
+        if not os.path.exists(path):
+            problems.append(f"{relative} is missing from this checkout")
+            continue
+        with open(path, "rb") as fh:
+            actual = hashlib.sha256(fh.read()).hexdigest()
+        if actual != expected:
+            problems.append(
+                f"{relative} does not match its reviewed hash\n"
+                f"      expected {expected}\n"
+                f"      found    {actual}"
+            )
+        verified[relative] = actual
+    if problems:
+        sys.exit(
+            "refusing to record: the digest harness is not the reviewed one:\n  - "
+            + "\n  - ".join(problems)
+            + "\n\nThe baseline is produced by importing this file, so an unverified "
+            "copy could emit any digests it liked and still pass every other check. "
+            "If the change is intended, update HARNESS_FILES in a reviewed diff."
+        )
+    return verified
+
 
 #: The immutable commit AJC-66 branched from. Pinned as a SHA, not a ref name.
 #:
@@ -198,6 +241,8 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.check:
+        from tests.render_baseline import compute_baseline, load_baseline_cases
+
         recorded = load_baseline_cases()
         computed = compute_baseline()
         drift = sorted(
@@ -217,11 +262,17 @@ def main() -> int:
 
     base_commit = _resolve_base(args.base_ref)
     source_commit, base_patches = _refuse_unless_clean_base_checkout(base_commit)
+    harness = _verify_harness()
+
+    # Imported only after the hash check: this module is what computes the
+    # digests the baseline is made of.
+    from tests.render_baseline import ANCHOR_DATE, BASELINE_PATH, CASE_SEED, RENDER_SEED, compute_baseline
     payload = {
         "_meta": {
             "source_commit": source_commit,
             "base_commit": base_commit,
             "base_patches": base_patches,
+            "harness_sha256": harness,
             "anchor_date": ANCHOR_DATE.isoformat(),
             "render_seed": RENDER_SEED,
             "case_seed": CASE_SEED,

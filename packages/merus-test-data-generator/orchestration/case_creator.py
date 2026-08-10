@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -145,7 +146,6 @@ class CaseCreator:
                     logger.info("carrier_party_added", meruscase_id=meruscase_id)
 
                 # Add an activity note with full case details
-                from datetime import datetime
                 applicant_addr = f"{case.applicant.address_street}, {case.applicant.address_city}, {case.applicant.address_state} {case.applicant.address_zip}"
                 activity = {
                     "case_file_id": meruscase_id,
