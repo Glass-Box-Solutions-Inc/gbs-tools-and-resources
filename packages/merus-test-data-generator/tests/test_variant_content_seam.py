@@ -811,6 +811,9 @@ def test_the_fixture_case_is_pinned_to_the_anchor_not_to_today():
 
 def test_the_baseline_records_where_it_came_from():
     """A baseline's value is that it records the trusted trunk anchor, not a moving head."""
+    import json
+    import importlib.util
+
     meta = baseline_provenance()
     expected = "b0e77dd1b6fa949d2d5dc6a7f2d1a0c94ed6def3"
     assert meta.get("source_commit") == expected, (
@@ -822,6 +825,103 @@ def test_the_baseline_records_where_it_came_from():
     assert meta.get("anchor_date") == ANCHOR_DATE.isoformat(), (
         "the baseline was recorded under a different anchor date than the one in force"
     )
+    recorder = _recorder_module()
+    assert meta["note"] == recorder.PROVENANCE_NOTE
+    assert "before the AJC-66" not in meta["note"]
+
+
+def _trusted_base_worktree() -> str | None:
+    candidate = os.environ.get(
+        "AJC72_BASE_WORKTREE",
+        "/home/vncuser/projects/gbs-tools-and-resources/.claude/worktrees/ajc72-recorder",
+    )
+    return candidate if os.path.isdir(candidate) else None
+
+
+def _run_restamp_provenance(base_worktree: str) -> tuple[int, str]:
+    import subprocess
+    import sys as _sys
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    result = subprocess.run(
+        [_sys.executable, "scripts/record_render_baseline.py", "--restamp-provenance", "--base-worktree", base_worktree],
+        cwd=_PACKAGE_ROOT, capture_output=True, text=True,
+    )
+    return result.returncode, result.stdout + result.stderr
+
+
+def _trusted_base_payload(base_worktree: str) -> tuple[dict, dict]:
+    import json
+
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    path = os.path.join(
+        base_worktree,
+        "packages",
+        "merus-test-data-generator",
+        "tests",
+        "golden",
+        "render_baseline.json",
+    )
+    with open(os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json"), encoding="utf-8") as fh:
+        feature_payload = json.load(fh)
+    with open(path, encoding="utf-8") as fh:
+        base_payload = json.load(fh)
+    return feature_payload, base_payload
+
+
+def _mutate_baseline(json_text: str | dict) -> str:
+    from tests.render_baseline import BASELINE_PATH
+    import copy
+    import json
+
+    original = json.loads(json_text) if isinstance(json_text, str) else json_text
+    mutated = copy.deepcopy(original)
+    mutated["cases"] = dict(mutated["cases"])
+    mutated["cases"][next(iter(mutated["cases"]))] = {
+        "text": "restamp-provenance-test-has-changed-this-case",
+        "story": "restamp-provenance-test-has-changed-this-case",
+        "rng": "restamp-provenance-test-has-changed-this-case",
+        "pdf": "restamp-provenance-test-has-changed-this-case",
+    }
+    mutated["_meta"]["note"] = "tampered baseline note for restamp proof"
+    return json.dumps(mutated, sort_keys=True, indent=2) + "\n"
+
+
+def _restore_baseline(payload_text: str) -> None:
+    from tests.render_baseline import BASELINE_PATH
+
+    with open(BASELINE_PATH, "w", encoding="utf-8") as fh:
+        fh.write(payload_text)
+
+
+def _run_with_patched_base_commit(base_worktree: str, patched_commit: str) -> tuple[int, str]:
+    import pathlib
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    recorder_path = pathlib.Path(_PACKAGE_ROOT) / "scripts" / "record_render_baseline.py"
+    original = recorder_path.read_text(encoding="utf-8")
+    try:
+        marker = 'BASE_COMMIT = "b0e77dd1b6fa949d2d5dc6a7f2d1a0c94ed6def3"'
+        recorder_path.write_text(original.replace(
+            marker,
+            f'BASE_COMMIT = "{patched_commit}"',
+        ), encoding="utf-8")
+        return _run_restamp_provenance(base_worktree)
+    finally:
+        recorder_path.write_text(original, encoding="utf-8")
+
+
+def _write_baseline(payload: str | dict, destination: os.PathLike[str] | str) -> None:
+    if isinstance(payload, str):
+        text = payload
+    else:
+        import json
+
+        text = json.dumps(payload, sort_keys=True, indent=2) + "\n"
+
+    with open(destination, "w", encoding="utf-8") as fh:
+        fh.write(text)
 
 
 def test_record_mode_refuses_a_tree_that_is_not_the_base_ref():
@@ -837,6 +937,160 @@ def test_record_mode_refuses_a_tree_that_is_not_the_base_ref():
     )
     assert result.returncode != 0, "record mode accepted a non-base checkout"
     assert "refusing to record" in (result.stdout + result.stderr)
+
+
+def test_restamp_provenance_uses_only_fresh_pinned_base_cases():
+    import json
+
+    from tests.render_baseline import BASELINE_PATH
+
+    base_worktree = _trusted_base_worktree()
+    if base_worktree is None:
+        pytest.skip("ajc72-recorder worktree is not available")
+
+    feature_before, base_payload = _trusted_base_payload(base_worktree)
+    baseline_text = open(BASELINE_PATH, encoding="utf-8").read()
+    try:
+        mutated = json.loads(json.dumps(feature_before))
+        mutated["_meta"]["note"] = "feature-only note mutation for proof test"
+        _write_baseline(mutated, BASELINE_PATH)
+
+        code, out = _run_restamp_provenance(base_worktree)
+        assert code == 0, f"restamp-provenance did not succeed:\n{out}"
+        with open(BASELINE_PATH, encoding="utf-8") as fh:
+            after = json.load(fh)
+        assert after["cases"] == base_payload["cases"]
+    finally:
+        _restore_baseline(baseline_text)
+
+
+def test_restamp_provenance_changes_only_meta_note():
+    import json
+
+    from tests.render_baseline import BASELINE_PATH
+
+    base_worktree = _trusted_base_worktree()
+    if base_worktree is None:
+        pytest.skip("ajc72-recorder worktree is not available")
+
+    feature_before = open(BASELINE_PATH, encoding="utf-8").read()
+    try:
+        # Ensure there is at least one non-note diff to confirm the command is targeting
+        # provenance only.
+        mutated = json.loads(json.dumps(json.loads(feature_before)))
+        mutated["_meta"]["note"] = "feature-only note mutation for proof test"
+        _write_baseline(mutated, BASELINE_PATH)
+
+        code, out = _run_restamp_provenance(base_worktree)
+        assert code == 0, f"restamp-provenance did not succeed:\n{out}"
+
+        with open(BASELINE_PATH, encoding="utf-8") as fh:
+            after = json.load(fh)
+        before = json.loads(feature_before)
+        assert after["cases"] == before["cases"]
+        assert after["_meta"]["note"] != before["_meta"]["note"]
+        assert after["_meta"]["note"] == _recorder_module().PROVENANCE_NOTE
+        for key in before["_meta"]:
+            if key == "note":
+                continue
+            assert after["_meta"][key] == before["_meta"][key]
+    finally:
+        _restore_baseline(feature_before)
+
+
+def test_restamp_provenance_refuses_case_drift_without_writing():
+    import json
+
+    from tests.render_baseline import BASELINE_PATH
+
+    base_worktree = _trusted_base_worktree()
+    if base_worktree is None:
+        pytest.skip("ajc72-recorder worktree is not available")
+
+    feature_before_text = open(BASELINE_PATH, encoding="utf-8").read()
+    try:
+        mutated = _mutate_baseline(feature_before_text)
+        _write_baseline(mutated, BASELINE_PATH)
+        code, out = _run_restamp_provenance(base_worktree)
+        assert code != 0, "case drift passed restamp-provenance"
+        assert "base recorder cases do not match feature baseline pre-restamp cases" in out
+        with open(BASELINE_PATH, encoding="utf-8") as fh:
+            after = json.load(fh)
+        assert json.loads(mutated)["cases"] == after["cases"]
+    finally:
+        _restore_baseline(feature_before_text)
+
+
+def test_restamp_provenance_refuses_untrusted_base_worktree(tmp_path):
+    from tests.render_baseline import BASELINE_PATH, _PACKAGE_ROOT
+
+    baseline_text = open(BASELINE_PATH, encoding="utf-8").read()
+    base_worktree = _trusted_base_worktree()
+    if base_worktree is None:
+        pytest.skip("ajc72-recorder worktree is not available")
+
+    try:
+        # wrong SHA: patch BASE_COMMIT in the running script, leaving the same external
+        # worktree. The worktree stays detached at b0e77..., so any other commit is
+        # rejected as the wrong SHA case.
+        original_script = _run_with_patched_base_commit(base_worktree, "0000000000000000000000000000000000000000")
+        code, out = original_script
+        assert code != 0
+        assert "base HEAD is" in out
+
+        # attached HEAD: this worktree is not detached in normal branch checkouts.
+        code, out = _run_restamp_provenance(_PACKAGE_ROOT)
+        assert code != 0
+        assert "not detached" in out
+
+        # dirty base tree: uncommitted untracked path is enough to reject.
+        marker = os.path.join(base_worktree, "packages", "merus-test-data-generator", "__restamp_probe_dirt.txt")
+        with open(marker, "w", encoding="utf-8") as fh:
+            fh.write("restamp-provenance dirty marker")
+        try:
+            code, out = _run_restamp_provenance(base_worktree)
+            assert code != 0
+            assert "base worktree is not clean" in out
+        finally:
+            try:
+                os.remove(marker)
+            except FileNotFoundError:
+                pass
+
+        # different repository fails the repo-root identity check.
+        foreign = tmp_path / "foreign"
+        foreign.mkdir()
+        code, out = _run_restamp_provenance(str(foreign))
+        assert code != 0
+        assert "not a git" in (out.lower()) or "not a git repository" in out.lower()
+    finally:
+        _restore_baseline(baseline_text)
+
+
+def test_restamp_provenance_never_computes_cases_from_feature_tree():
+    import ast
+
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    path = os.path.join(_PACKAGE_ROOT, "scripts", "record_render_baseline.py")
+    with open(path, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read(), filename=path)
+
+    restamp_fn = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_restamp_mode"
+    )
+    called_names: set[str] = set()
+    for node in ast.walk(restamp_fn):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name):
+                called_names.add(func.id)
+            elif isinstance(func, ast.Attribute):
+                called_names.add(func.attr)
+    assert "compute_baseline" not in called_names, (
+        "restamp mode reaches compute_baseline from the feature harness"
+    )
 
 
 # --- F6: the PDF digest is asserted, not just described -------------------

@@ -312,10 +312,9 @@ jobs:
       # PYTHONHASHSEED is pinned to the value wc-synthetic-caseload-engine
       # already sets, so this job renders under the same conditions the corpora
       # it guards are generated under. It is not sufficient on its own, and that
-      # is worth knowing: this tree still renders different text under different
-      # Python versions. CI is 3.12-only by design; local evidence gates are run on
-      # both 3.10 and 3.12 when touching this package to document the residual
-      # interpreter-axis drift.
+      # is worth knowing: canonical ordering is now implemented. CI stays
+      # 3.12-only by design. Local evidence gates are run on both 3.10 and 3.12
+      # whenever this package is touched to prove byte-equality across interpreters.
       - name: Test
         run: pip install pytest && PYTHONHASHSEED=0 python -m pytest tests/ -q --tb=short
 

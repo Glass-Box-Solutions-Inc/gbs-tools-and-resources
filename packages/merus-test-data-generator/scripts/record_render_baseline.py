@@ -1,35 +1,25 @@
 #!/usr/bin/env python3
-"""Record or verify the default-path render baseline for AJC-66's seam.
+"""Record or verify the default-path render baseline for AJC-72.
 
-The baseline's whole value is that it was recorded from code that predates the
-seam. That is a property of *where it was recorded*, not of the file's contents,
-and nothing in the file could show it — so recording is gated and the provenance
-is written into the baseline itself.
-
-    # verify (safe anywhere, this is what the test suite runs)
-    python scripts/record_render_baseline.py --check
-
-    # record — only from a clean checkout at the base ref
-    git worktree add --detach /tmp/base origin/main
-    cp tests/render_baseline.py scripts/record_render_baseline.py /tmp/base/...
-    cd /tmp/base/packages/merus-test-data-generator
-    python scripts/record_render_baseline.py --record
-
-Recording from a feature branch is refused. Run unguarded, ``--record``
-recomputes from whatever is checked out and overwrites the golden with it, which
-means a tree containing the very change under test can bless itself — the
-failure mode where a guard keeps passing and has stopped meaning anything.
+Modes:
+- --check validates live renders against the recorded payload.
+- --record refreshes the entire payload from this worktree.
+- --restamp-provenance replays a detached trunk recorder at BASE_COMMIT and updates
+  only _meta.note in the feature payload.
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
 import json
 import os
-import hashlib
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
+
 
 _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PACKAGE_ROOT not in sys.path:
@@ -37,28 +27,99 @@ if _PACKAGE_ROOT not in sys.path:
 
 
 #: SHA-256 of the digest harness, as reviewed on this branch.
-#:
-#: Recording copies ``tests/render_baseline.py`` into the base checkout and then
-#: imports ``compute_baseline`` **from that copy** to produce the trusted
-#: baseline. Every other guard here — ancestry, tree cleanliness, provenance —
-#: describes the *template sources*, and none of them looks at the harness doing
-#: the hashing. A modified copy could drop cases or emit whatever digests it
-#: liked and satisfy all of them.
-#:
-#: So the copy is verified byte-for-byte before it is imported, and the verified
-#: hash is written into the baseline's provenance. Changing the harness is
-#: legitimate and frequent; changing it *without updating this constant in a
-#: reviewed diff* is what this refuses.
-#:
-#: Regenerate with:
-#:   python -c "import hashlib,pathlib; print(hashlib.sha256(pathlib.Path('tests/render_baseline.py').read_bytes()).hexdigest())"
 HARNESS_FILES: dict[str, str] = {
     "tests/render_baseline.py": "d9ff9bfc9ef212376070b4181dc453a538ec1624b61042e8bdd338fd67b002c7",
 }
 
 
+#: The immutable post-#38 trunk commit this recorder contract is anchored to.
+BASE_COMMIT = "b0e77dd1b6fa949d2d5dc6a7f2d1a0c94ed6def3"
+
+PROVENANCE_NOTE = (
+    "Recorded from a detached checkout at base_commit, the trusted post-#38 "
+    "trunk before AJC-72. base_patches lists the only tracked files the "
+    "base checkout differs on. Re-recording requires the same conditions; "
+    "see this script's docstring."
+)
+
+
+_ALLOWED_UNTRACKED = frozenset({
+    "tests/render_baseline.py",
+    "scripts/record_render_baseline.py",
+    "tests/golden/render_baseline.json",
+})
+
+
+_SOURCE_DIRS = ("data/", "pdf_templates/", "tests/", "scripts/", "orchestration/")
+
+#: Tracked files the base checkout may legitimately carry a patch for.
+_ALLOWED_BASE_PATCHES = frozenset()
+
+
+def _git(*args: str, cwd: str = _PACKAGE_ROOT, text: bool = True) -> str | bytes:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=text,
+        check=True,
+    )
+    return result.stdout if text else result.stdout
+
+
+def _package_relative(cwd: str, path: str) -> str:
+    prefix = _git("rev-parse", "--show-prefix", cwd=cwd).strip()
+    if prefix and path.startswith(prefix):
+        return path[len(prefix):]
+    return path.strip()
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _read_json(path: str) -> dict:
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _write_json_atomically(payload: object, destination: str) -> None:
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    handle, tmp_path = tempfile.mkstemp(dir=os.path.dirname(destination), suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        os.replace(tmp_path, destination)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
+
+
+def _status_paths(cwd: str, include_untracked: bool = False) -> list[str]:
+    args = ["status", "--porcelain"]
+    if not include_untracked:
+        args.append("--untracked-files=no")
+    raw = _git(*args, cwd=cwd).splitlines()
+    paths: list[str] = []
+    for line in raw:
+        path = line[3:].strip()
+        if " -> " in path:
+            path = path.split(" -> ", 1)[-1]
+        paths.append(path)
+    return sorted(set(paths))
+
+
+def _exit(msg: str) -> None:
+    sys.exit(msg)
+
+
 def _verify_harness() -> dict[str, str]:
-    """Check the digest harness against its reviewed hash, before importing it."""
     verified: dict[str, str] = {}
     problems: list[str] = []
     for relative, expected in HARNESS_FILES.items():
@@ -76,132 +137,61 @@ def _verify_harness() -> dict[str, str]:
             )
         verified[relative] = actual
     if problems:
-        sys.exit(
+        _exit(
             "refusing to record: the digest harness is not the reviewed one:\n  - "
             + "\n  - ".join(problems)
-            + "\n\nThe baseline is produced by importing this file, so an unverified "
-            "copy could emit any digests it liked and still pass every other check. "
-            "If the change is intended, update HARNESS_FILES in a reviewed diff."
         )
     return verified
 
 
-#: The immutable post-#38 trunk commit this recorder contract is anchored to.
-#:
-#: ``--base-ref`` used to default to ``origin/main`` and accept anything, so
-#: ``--record --base-ref HEAD`` on a clean feature branch satisfied every check
-#: and blessed the tree under test. A guard whose subject is chosen by the
-#: caller is not a guard.
-BASE_COMMIT = "b0e77dd1b6fa949d2d5dc6a7f2d1a0c94ed6def3"
-
-#: Files the recording procedure legitimately copies into the base checkout.
-#: Nothing else may be untracked under the directories that determine what gets
-#: rendered — an unexpected module there could be imported and change the
-#: hashes, which is precisely what the baseline is supposed to rule out.
-_ALLOWED_UNTRACKED = frozenset({
-    "tests/render_baseline.py",
-    "scripts/record_render_baseline.py",
-    "tests/golden/render_baseline.json",
-})
-
-#: Directories whose contents can change a render.
-_SOURCE_DIRS = ("data/", "pdf_templates/", "tests/", "scripts/", "orchestration/")
-
-
-def _git(*args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=_PACKAGE_ROOT, capture_output=True, text=True, check=True
-    ).stdout.strip()
-
-
-def _package_relative(path: str) -> str:
-    """Strip git's repo-relative prefix so paths match the allowlists.
-
-    ``git status`` reports from the repository root while every allowlist here
-    is written package-relative. Without this, a path never matches an entry and
-    the allowance silently never applies — the failure mode where a guard looks
-    stricter than it is.
-    """
-    prefix = _git("rev-parse", "--show-prefix").strip()
-    path = path.strip()
-    if prefix and path.startswith(prefix):
-        return path[len(prefix):]
-    return path
-
-
 def _resolve_base(base_ref: str | None) -> str:
-    """The commit to record from, validating any caller-supplied override.
-
-    An override must resolve to a commit that is an ancestor of ``origin/main``
-    — a real point in the trunk's history — and must not be a symbolic alias for
-    wherever the caller happens to be standing.
-    """
     if base_ref is None:
         return BASE_COMMIT
 
     if base_ref.upper() in {"HEAD", "@"} or base_ref.startswith("HEAD"):
-        sys.exit(
+        _exit(
             f"refusing to record: --base-ref {base_ref!r} names the current checkout. "
-            f"The baseline exists to describe a commit the change under test is not in."
+            "The baseline exists to describe a commit the change under test is not in."
         )
+
     try:
         resolved = _git("rev-parse", f"{base_ref}^{{commit}}")
     except subprocess.CalledProcessError:
-        sys.exit(f"refusing to record: --base-ref {base_ref!r} does not resolve to a commit")
+        _exit(f"refusing to record: --base-ref {base_ref!r} does not resolve to a commit")
 
     try:
         _git("merge-base", "--is-ancestor", resolved, "origin/main")
     except subprocess.CalledProcessError:
-        sys.exit(
+        _exit(
             f"refusing to record: {base_ref} ({resolved[:12]}) is not an ancestor of "
-            f"origin/main, so it is not a point in the trunk's history"
+            "origin/main, so it is not a point in the trunk's history"
         )
+
     return resolved
 
 
-#: Tracked files the base checkout may legitimately carry a patch for.
-#:
-#: Post-#38-trunk clock handling is now in place; this list is intentionally
-#: empty unless a future exception is intentionally accepted.
-_ALLOWED_BASE_PATCHES = frozenset()
-
-
-def _refuse_unless_clean_base_checkout(base_commit: str) -> str:
-    """Return the source commit, or exit non-zero explaining why not.
-
-    Three conditions. HEAD must be the base commit, so the recording cannot come
-    from a tree containing the change the baseline is supposed to predate. No
-    tracked modifications, so the bytes correspond to a commit anyone can check
-    out again. And no *unexpected* untracked source under the directories that
-    determine a render — the previous revision ignored untracked files
-    wholesale, which meant the very recorder implementation doing the hashing
-    was exempt from the check it performs.
-    """
+def _refuse_unless_clean_base_checkout(base_commit: str) -> tuple[str, list[str]]:
     try:
         head = _git("rev-parse", "HEAD")
-        tracked_dirty = _git("status", "--porcelain", "--untracked-files=no")
+        tracked = _git("status", "--porcelain", "--untracked-files=no")
         untracked = _git("ls-files", "--others", "--exclude-standard")
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-        sys.exit(f"refusing to record: cannot interrogate git ({exc})")
+        _exit(f"refusing to record: cannot interrogate git ({exc})")
 
-    problems = []
+    problems: list[str] = []
     if head != base_commit:
         problems.append(f"HEAD is {head[:12]}, not the base commit {base_commit[:12]}")
 
-    modified = sorted(
-        _package_relative(line[2:].strip())
-        for line in tracked_dirty.splitlines()
-        if line.strip()
-    )
+    modified = sorted(_package_relative(_PACKAGE_ROOT, line[2:].strip()) for line in tracked.splitlines() if line.strip())
     disallowed = [path for path in modified if path not in _ALLOWED_BASE_PATCHES]
     if disallowed:
         problems.append(
             f"{len(disallowed)} disallowed tracked modification(s): " + ", ".join(disallowed[:5])
         )
 
-    untracked_paths = [_package_relative(p) for p in untracked.splitlines() if p.strip()]
     unexpected = sorted(
-        path for path in untracked_paths
+        path
+        for path in (_package_relative(_PACKAGE_ROOT, p) for p in untracked.splitlines() if p.strip())
         if path.startswith(_SOURCE_DIRS) and path not in _ALLOWED_UNTRACKED
     )
     if unexpected:
@@ -210,67 +200,147 @@ def _refuse_unless_clean_base_checkout(base_commit: str) -> str:
         )
 
     if problems:
-        sys.exit(
+        _exit(
             "refusing to record the baseline:\n  - "
             + "\n  - ".join(problems)
             + f"\n\nA baseline recorded here would describe this tree, not {base_commit[:12]}, "
-            f"and a tree containing the change under test can bless itself.\n"
-            f"Record from a clean detached checkout instead:\n"
-            f"  git worktree add --detach /tmp/base {base_commit}\n"
-            f"  # copy tests/render_baseline.py and this script into it, then run --record there"
+            "and a tree containing the change under test can bless itself."
         )
+
     return head, sorted(set(modified) & _ALLOWED_BASE_PATCHES)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--check", action="store_true", help="Verify against the recorded baseline.")
-    group.add_argument("--record", action="store_true", help="Rewrite the baseline (gated).")
-    parser.add_argument(
-        "--base-ref",
-        default=None,
-        help="Override the pinned base commit. Must be an ancestor of origin/main "
-             "and may not name HEAD.",
-    )
-    args = parser.parse_args()
-
-    # Before either branch, and before any import of the harness. --check is not
-    # the safe mode: it *is* the standalone gate, and it decides pass/fail by
-    # asking the harness what the digests are. A harness whose compute_baseline
-    # returned load_baseline_cases() would report every case identical forever,
-    # so verifying only on the record path leaves the gate itself unguarded.
-    #
-    # It reads two local files and needs no git, no network and no arguments, so
-    # running it first also means an environment problem can never mask a
-    # tampered harness behind a message about something else.
-    harness = _verify_harness()
-
-    if args.check:
-        from tests.render_baseline import compute_baseline, load_baseline_cases
-
-        recorded = load_baseline_cases()
-        computed = compute_baseline()
-        drift = sorted(
-            label
-            for label in set(recorded) | set(computed)
-            if recorded.get(label) != computed.get(label)
+def _verify_file_vs_blob(repo_root: str, base_root: str, relative: str) -> None:
+    package_rel = os.path.relpath(_PACKAGE_ROOT, repo_root)
+    blob_path = os.path.join(package_rel, relative)
+    blob = _git("show", f"{BASE_COMMIT}:{blob_path}", cwd=repo_root, text=False)
+    with open(os.path.join(base_root, relative), "rb") as fh:
+        current = fh.read()
+    if current != blob:
+        _exit(
+            f"refusing to restamp: {relative} in base worktree is not the committed file "
+            f"at {BASE_COMMIT}"
         )
-        if drift:
-            print(f"DRIFT in {len(drift)} of {len(computed)} render cases:")
-            for label in drift:
-                rec, cur = recorded.get(label, {}), computed.get(label, {})
-                fields = sorted(k for k in set(rec) | set(cur) if rec.get(k) != cur.get(k))
-                print(f"  {label}: differs on {fields}")
-            return 1
-        print(f"OK — {len(computed)} render cases byte-identical to the baseline.")
-        return 0
 
-    base_commit = _resolve_base(args.base_ref)
+
+def _validate_base_worktree(base_worktree: str) -> tuple[str, str]:
+    try:
+        base_repo = _git("rev-parse", "--show-toplevel", cwd=base_worktree).strip()
+    except subprocess.CalledProcessError as exc:
+        _exit(f"refusing to restamp: invalid base worktree {base_worktree!r}: {exc}")
+
+    feature_repo = _git("rev-parse", "--show-toplevel", cwd=_PACKAGE_ROOT).strip()
+    if os.path.realpath(base_repo) != os.path.realpath(feature_repo):
+        _exit("refusing to restamp: base worktree is not in this repository")
+
+    head_ref = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=base_worktree).strip()
+    if head_ref != "HEAD":
+        _exit(
+            "refusing to restamp: base worktree is not detached; this mode requires "
+            f"HEAD == {BASE_COMMIT[:12]}"
+        )
+
+    head_sha = _git("rev-parse", "HEAD", cwd=base_worktree).strip()
+    if head_sha != BASE_COMMIT:
+        _exit(
+            f"refusing to restamp: base HEAD is {head_sha[:12]}, expected {BASE_COMMIT[:12]}"
+        )
+
+    if _status_paths(base_worktree, include_untracked=True):
+        _exit("refusing to restamp: base worktree is not clean")
+
+    base_package_root = os.path.join(base_repo, os.path.relpath(_PACKAGE_ROOT, feature_repo))
+    _verify_file_vs_blob(base_repo, base_package_root, "tests/render_baseline.py")
+    _verify_file_vs_blob(base_repo, base_package_root, "scripts/record_render_baseline.py")
+
+    return base_repo, base_package_root
+
+
+def _run_base_recorder(base_package_root: str) -> dict:
+    baseline_path = os.path.join(base_package_root, "tests", "golden", "render_baseline.json")
+    before = _status_paths(base_package_root, include_untracked=False)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            os.path.join(base_package_root, "scripts", "record_render_baseline.py"),
+            "--record",
+            "--base-ref",
+            BASE_COMMIT,
+        ],
+        cwd=base_package_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        _exit("base recorder failed:\n" + (result.stdout + result.stderr))
+
+    after = _status_paths(base_package_root, include_untracked=False)
+    changed = [path for path in after if path not in before]
+    if any(path != "tests/golden/render_baseline.json" for path in changed):
+        _exit(
+            "base recorder changed files beyond tests/golden/render_baseline.json: "
+            + ", ".join(changed or ["(none)"])
+        )
+
+    return _read_json(baseline_path)
+
+
+def _structural_diff(left: object, right: object, prefix: str = "") -> list[str]:
+    if type(left) != type(right):
+        return [prefix[:-1] if prefix else "root"]
+
+    if isinstance(left, dict) and isinstance(right, dict):
+        diffs: list[str] = []
+        keys = set(left) | set(right)
+        for key in sorted(keys):
+            if key not in left:
+                diffs.append(prefix + key)
+                continue
+            if key not in right:
+                diffs.append(prefix + key)
+                continue
+            diffs.extend(_structural_diff(left[key], right[key], f"{prefix}{key}."))
+        return diffs
+
+    if isinstance(left, list) and isinstance(right, list):
+        if len(left) != len(right):
+            return [prefix[:-1] if prefix else "root"]
+        diffs: list[str] = []
+        for index, (left_item, right_item) in enumerate(zip(left, right)):
+            diffs.extend(_structural_diff(left_item, right_item, f"{prefix}[{index}]."))
+        return diffs
+
+    if left != right:
+        return [prefix[:-1] if prefix else "root"]
+    return []
+
+
+def _run_check_mode() -> int:
+    from tests.render_baseline import compute_baseline, load_baseline_cases
+
+    recorded = load_baseline_cases()
+    computed = compute_baseline()
+    drift = sorted(
+        label
+        for label in set(recorded) | set(computed)
+        if recorded.get(label) != computed.get(label)
+    )
+    if drift:
+        print(f"DRIFT in {len(drift)} of {len(computed)} render cases:")
+        for label in drift:
+            rec, cur = recorded.get(label, {}), computed.get(label, {})
+            fields = sorted(k for k in set(rec) | set(cur) if rec.get(k) != cur.get(k))
+            print(f"  {label}: differs on {fields}")
+        return 1
+    print(f"OK — {len(computed)} render cases byte-identical to the baseline.")
+    return 0
+
+
+def _run_record_mode(base_ref: str | None, harness: dict[str, str]) -> int:
+    base_commit = _resolve_base(base_ref)
     source_commit, base_patches = _refuse_unless_clean_base_checkout(base_commit)
 
-    # Imported only after the hash check above: this module is what computes the
-    # digests the baseline is made of.
     from tests.render_baseline import ANCHOR_DATE, BASELINE_PATH, CASE_SEED, RENDER_SEED, compute_baseline
     payload = {
         "_meta": {
@@ -282,21 +352,85 @@ def main() -> int:
             "render_seed": RENDER_SEED,
             "case_seed": CASE_SEED,
             "recorded_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-            "note": (
-                "Recorded from a detached checkout at base_commit, the trusted post-#38 "
-                "trunk before AJC-72. base_patches lists the only tracked files the "
-                "base checkout differs on. Re-recording requires the same conditions; "
-                "see this script's docstring."
-            ),
+            "note": PROVENANCE_NOTE,
         },
         "cases": compute_baseline(),
     }
-    os.makedirs(os.path.dirname(BASELINE_PATH), exist_ok=True)
-    with open(BASELINE_PATH, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2, sort_keys=True)
-        fh.write("\n")
+    _write_json_atomically(payload, BASELINE_PATH)
     print(f"Recorded {len(payload['cases'])} cases from {source_commit[:12]} to {BASELINE_PATH}")
     return 0
+
+
+def _run_restamp_mode(base_worktree: str) -> int:
+    if _status_paths(_PACKAGE_ROOT, include_untracked=True):
+        _exit("refusing to restamp: feature worktree is not clean")
+
+    base_repo, base_package_root = _validate_base_worktree(base_worktree)
+
+    fresh_feature_payload = _read_json(
+        os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json")
+    )
+    fresh_base_payload = _run_base_recorder(base_package_root)
+
+    base_meta = fresh_base_payload.get("_meta", {})
+    if base_meta.get("base_commit") != BASE_COMMIT:
+        _exit("base payload base_commit is not pinned")
+    if base_meta.get("source_commit") != BASE_COMMIT:
+        _exit("base payload source_commit is not pinned")
+    if base_meta.get("base_patches") != []:
+        _exit("base payload reported base patches")
+    if base_meta.get("harness_sha256") != HARNESS_FILES:
+        _exit("base payload did not carry the expected harness hash map")
+
+    if _canonical_json_bytes(fresh_base_payload.get("cases")) != _canonical_json_bytes(
+        fresh_feature_payload.get("cases"),
+    ):
+        _exit("base recorder cases do not match feature baseline pre-restamp cases")
+
+    candidate = copy.deepcopy(fresh_base_payload)
+    candidate.setdefault("_meta", {})["note"] = PROVENANCE_NOTE
+
+    diffs = sorted(_structural_diff(fresh_base_payload, candidate))
+    if diffs != ["_meta.note"]:
+        _exit("restamp would change more than _meta.note: " + ", ".join(diffs))
+
+    _write_json_atomically(
+        candidate,
+        os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json"),
+    )
+    print("Restamped provenance note from the pinned base worktree.")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    modes = parser.add_mutually_exclusive_group(required=True)
+    modes.add_argument("--check", action="store_true", help="Verify against recorded baseline.")
+    modes.add_argument("--record", action="store_true", help="Rewrite baseline (gated).")
+    modes.add_argument(
+        "--restamp-provenance",
+        action="store_true",
+        help="Replay the pinned base tree and refresh only provenance note.",
+    )
+    parser.add_argument("--base-ref", default=None, help="Override base commit for --record only.")
+    parser.add_argument("--base-worktree", default=None, help="Detached base worktree.")
+
+    args = parser.parse_args()
+
+    harness = _verify_harness()
+
+    if args.restamp_provenance and args.base_ref is not None:
+        _exit("--base-ref is forbidden with --restamp-provenance")
+    if args.base_worktree is not None and not args.restamp_provenance:
+        _exit("--base-worktree is supported only with --restamp-provenance")
+
+    if args.check:
+        return _run_check_mode()
+    if args.restamp_provenance:
+        if not args.base_worktree:
+            _exit("must pass --base-worktree with --restamp-provenance")
+        return _run_restamp_mode(args.base_worktree)
+    return _run_record_mode(args.base_ref, harness)
 
 
 if __name__ == "__main__":

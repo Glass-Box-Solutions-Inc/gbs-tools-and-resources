@@ -93,9 +93,8 @@ If an import breaks, fix the bridge — not by copying files.
   at runtime would be shared mutable state across cases; a documented limitation is cheaper
   and honest.
 - **`list(set(...))` in `data/content_pools.py`** (lines ~1043 and ~1136) is now
-  an explicit AJC-72 canonical-order surface. The ordering is intentionally
-  preserved for byte-level probes, while a proper canonical-ordering fix remains
-  deferred upstream.
+  an explicit AJC-72 canonical-order surface. `sorted(set())` is implemented by
+  design and proven by the cross-interpreter ordering oracle.
 - **Substrate `date.today()` in rendered content.** Four sites (`fake_data_generator`,
   `qme_ame_report`, `settlement_memo`, `deposition_exchanges`) compute ages and hire dates from
   the *local* wall clock. Rebound at runtime by `determinism.pin_substrate_clock()` — a

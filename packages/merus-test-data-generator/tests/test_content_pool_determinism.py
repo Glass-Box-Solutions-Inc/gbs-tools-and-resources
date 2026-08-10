@@ -1,4 +1,5 @@
 import ast
+import hashlib
 import json
 import os
 import random
@@ -142,6 +143,16 @@ def _expected_mtus_trace(body_parts: list[str]) -> list[tuple[str, int, int]]:
     return trace
 
 
+def _canonical_json_sha(items: list[str]) -> str:
+    payload = json.dumps(
+        items,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _trace_mtus_workload(
     callable_obj,
     body_parts: list[str],
@@ -168,6 +179,41 @@ def _trace_mtus_workload(
 
     return calls, actual, populations
 
+
+def _trace_mtus_workload_and_categories(
+    body_parts: list[str], count: int
+) -> tuple[list[tuple[str, int, int]], list[str], list[str], list[list[str]]]:
+    calls: list[tuple[str, int, int]] = []
+    populations: list[list[str]] = []
+    captured_categories: list[str] = []
+
+    original_sample = random.sample
+    original_shuffle = random.shuffle
+    original_pool = content_pools.MTUS_GUIDELINE_CITATIONS
+
+    class TrackedCategories(dict):
+        def get(self, key, default=None):  # type: ignore[override]
+            captured_categories.append(key)
+            return dict.get(self, key, default)
+
+    wrapped_pool = TrackedCategories(original_pool)
+
+    def patched_sample(population: list[str], k: int) -> list[str]:
+        calls.append(("sample", len(population), k))
+        populations.append(list(population))
+        return original_sample(population, k)
+
+    def patched_shuffle(population: list[str]) -> None:
+        calls.append(("shuffle", len(population), -1))
+        return original_shuffle(population)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(random, "sample", patched_sample)
+        monkeypatch.setattr(random, "shuffle", patched_shuffle)
+        monkeypatch.setattr(content_pools, "MTUS_GUIDELINE_CITATIONS", wrapped_pool)
+        actual = content_pools.get_mtus_citations(body_parts=body_parts, count=count)
+
+    return calls, actual, captured_categories, populations
 
 def test_qme_text_and_pdf_digests_are_identical_on_python_310_and_312() -> None:
     py310 = _resolve_interpreter("3.10")
@@ -222,10 +268,10 @@ def test_mtus_category_dedup_is_sorted_and_content_neutral() -> None:
         ("fallback", []),
         ("single:spine", ["lumbar"]),
         ("single:upper_extremity", ["shoulder"]),
-        ("single:psyche", ["depression"]),
+        ("single:psyche", ["psyche"]),
         ("single:physical_therapy_default", ["ear"]),
         ("repeated:spine", ["lumbar", "lumbar"]),
-        ("mixed:all_branches", ["lumbar", "shoulder", "depression", "ear"]),
+        ("mixed:all_branches", ["lumbar", "shoulder", "psyche", "ear"]),
     )
 
     for input_label, body_parts in cases:
@@ -239,17 +285,18 @@ def test_mtus_category_dedup_is_sorted_and_content_neutral() -> None:
             body_parts=body_parts,
             count=expected_count,
         )
-        post_calls, post_actual, _ = _trace_mtus_workload(
-            content_pools.get_mtus_citations,
+        post_calls, _, captured_categories, _ = _trace_mtus_workload_and_categories(
             body_parts=body_parts,
             count=expected_count,
         )
 
         assert Counter(pre_calls) == Counter(post_calls)
         assert post_calls == _expected_mtus_trace(body_parts)
-        captured_members = sorted(set(post_actual))
-        assert len(captured_members) == expected_count
-        assert captured_members == sorted(captured_members)
+        assert captured_categories == expected_items
+        assert len(captured_categories) == expected_count
+        assert len(set(captured_categories)) == expected_count
+        assert captured_categories == sorted(captured_categories)
+        assert _canonical_json_sha(captured_categories) == entry["sha256_of_canonical_json"]
 
 
 def test_future_medical_dedup_is_sorted_and_content_neutral() -> None:
@@ -258,9 +305,9 @@ def test_future_medical_dedup_is_sorted_and_content_neutral() -> None:
         ("single:spine", ["lumbar"]),
         ("single:upper_extremity", ["shoulder"]),
         ("single:lower_extremity", ["knee"]),
-        ("single:psyche", ["depression"]),
+        ("single:psyche", ["psyche"]),
         ("repeated:spine", ["lumbar", "lumbar"]),
-        ("mixed:all_branches", ["lumbar", "shoulder", "knee", "depression"]),
+        ("mixed:all_branches", ["lumbar", "shoulder", "knee", "psyche"]),
     )
 
     for input_label, body_parts in cases:
@@ -309,8 +356,8 @@ def test_data_modules_contain_no_list_set_materialization() -> None:
 
 def test_sorting_changes_only_pool_index_mapping_not_rng_schedule() -> None:
     seeds = (0, 1, 2, 3, 4)
-    mtus_parts = ["lumbar", "shoulder", "depression"]
-    future_parts = ["lumbar", "shoulder", "knee", "depression"]
+    mtus_parts = ["lumbar", "shoulder", "psyche"]
+    future_parts = ["lumbar", "shoulder", "knee", "psyche"]
 
     def trace_schedule(callable_obj, body_parts: list[str], count: int, seed: int):
         calls: list[tuple[str, int, int]] = []
