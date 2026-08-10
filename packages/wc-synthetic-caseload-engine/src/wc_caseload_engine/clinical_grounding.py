@@ -1099,9 +1099,16 @@ P_ANY_CONDITION_MEASURED: Knob = Knob(
     tag="counsel_unconfirmed",
     rationale=(
         "True prevalence of at least one catalog condition, MEASURED OUT OF THIS "
-        "ENGINE rather than asserted into it — see the finding below. Recorded so the "
-        "documentation gate has an honest divisor and so the number can be argued "
-        "with; it is an output of the calibration, not an input to it. It moved from "
+        "ENGINE rather than asserted into it — see the finding below. It is an output "
+        "of the calibration, not an input to it, and it is a **cross-check** rather "
+        "than a working number: nothing in the engine reads it. In particular it is "
+        "not the documentation gate's divisor. That divisor is "
+        ":func:`~wc_caseload_engine.medical_history.expected_any_condition`, which "
+        "integrates the analytic per-cell probability over the reference population "
+        "and comes out at 0.771 — a different figure from this one because the "
+        "reference population weights claim shapes as a caseload does and this probe "
+        "samples them equally. Recording both is the honest arrangement; asking one "
+        "number to be both is how it drifted for four rounds. It moved from "
         "0.71 to 0.76 when the archetype affinities were compressed to close the "
         "anti-fingerprint gap: every per-condition marginal still lands on its cited "
         "value, because the calibration re-solves, but a narrower spread puts less of "
@@ -1112,8 +1119,11 @@ P_ANY_CONDITION_MEASURED: Knob = Knob(
         "aggregate five points above where it sat."
     ),
     source=(
-        "Measured over 21,000 sampled cases at derived ages across the seven realistic "
-        "body-part shapes; pinned by test_medical_history.py's aggregate check."
+        "Sampled cross-check over 10,500 cases at derived ages: 1,500 per claim shape "
+        "across the seven realistic body-part shapes, weighting equal per shape. "
+        "Pinned by test_medical_history.py, which asserts this sentence against the "
+        "cohort it actually builds — the previous wording claimed 21,000 cases, and "
+        "nothing computed the figure, so nothing could disagree with it."
     ),
 )
 

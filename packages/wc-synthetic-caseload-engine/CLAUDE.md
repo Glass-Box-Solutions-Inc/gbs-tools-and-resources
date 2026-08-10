@@ -492,7 +492,15 @@ Consequences worth knowing before touching it:
 - **The aggregate moved and was reported, not tuned.** Reproducing note C's per-condition
   marginals forces P(any condition) to about 0.76, against the design record's expected 0.55.
   Both are pinned: `P_ANY_CONDITION_MEASURED` and `P_ANY_CONDITION_EXPECTED`, the second
-  carrying its own falsification note. The counsel-confirmed surfacing union is held exactly
+  carrying its own falsification note. **`P_ANY_CONDITION_MEASURED` is a cross-check, not a
+  working number** — nothing in the engine reads it, and in particular it is not the gate's
+  divisor. It is 0.76 sampled over 10,500 cases weighted equally across the seven claim
+  shapes; the gate's divisor is `expected_any_condition()` at 0.771, which weights shapes as
+  a caseload does. Two populations, two figures, both stated. Its provenance said "21,000
+  sampled cases" and "an honest divisor" for four rounds, because nothing computed either
+  claim — the sampling plan is now named (`AGGREGATE_PROBE_PER_SHAPE`, `AGGREGATE_PROBE_N`,
+  `AGGREGATE_PROBE_WEIGHTING`) and the knob's own sentence is asserted against the cohort the
+  probe actually builds. The counsel-confirmed surfacing union is held exactly
   regardless, because the gate divides by the reference population's expected aggregate — which
   is what let counsel's 2026-08-10 revision of that union (0.33 → 0.50, superseding the
   2026-08-08 figure) land as a one-constant change. The NCCI billing floor of 0.066 did not
@@ -508,6 +516,18 @@ Consequences worth knowing before touching it:
   one. A retired number may still be *quoted* where its own passage marks it superseded, which
   is how provenance survives without becoming a live claim. Every one of those sentences was
   true when written; that is exactly why a proofread does not work and a sweep does.
+
+  **It reads every module the package ships, discovered rather than listed.** The first
+  version named three files by hand and the documentation it was written to police had
+  already moved out of them — the corrected non-uniform age law lives in `case_context`,
+  which was not on the list, so restating the superseded uniform claim *there* stayed green.
+  A hand-written list of files has the same failure mode as a hand-written list of conditions
+  (`m17-29`): correct the day it is written, silently narrower every time the package grows.
+  `production_modules()` globs; a coverage assertion checks that glob against what `pkgutil`
+  says is importable, because a glob checked against another glob agrees about whatever they
+  both miss. The planted controls run through `superseded_hits` — the function the sweep
+  itself calls — rather than asking whether a phrase is a substring of the passage: membership
+  tests the *list*, and a checker that had stopped flagging anything would have passed it.
 
 ---
 

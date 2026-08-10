@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import math
+import pkgutil
 import random
 from collections import Counter, defaultdict
 from datetime import timedelta
@@ -108,6 +109,25 @@ ALL_GATED_PARTS: tuple[str, ...] = (
     "hip",
 )
 
+#: Samples drawn per claim shape by the aggregate cross-check.
+#:
+#: Round 6, finding 1. Named rather than inline because
+#: :data:`~wc_caseload_engine.clinical_grounding.P_ANY_CONDITION_MEASURED` states the
+#: plan it was measured under, and a stated number nothing computes is a number that
+#: drifts: it claimed 21,000 cases while the probe drew 10,500. The knob's provenance
+#: is asserted against these constants below, so the prose cannot move without the
+#: arithmetic moving with it.
+AGGREGATE_PROBE_PER_SHAPE = 1500
+
+#: How the cross-check weights claim shapes: **equally**, one block per shape.
+#:
+#: Deliberately *not* the reference population's weighting. ``REFERENCE_CLAIM_SHAPES``
+#: leans toward single-region claims because that is what a caseload is mostly made of,
+#: and ``expected_any_condition()`` integrates over those weights — which is why the
+#: analytic figure is 0.771 and this sampled one is near 0.76. Two different populations
+#: honestly reported, rather than one number asked to be both.
+AGGREGATE_PROBE_WEIGHTING = "equal per shape"
+
 #: Body-part sets a real caseload actually carries, for the aggregate checks.
 REALISTIC_PART_SETS: tuple[tuple[str, ...], ...] = (
     ("lumbar_spine",),
@@ -118,6 +138,9 @@ REALISTIC_PART_SETS: tuple[tuple[str, ...], ...] = (
     ("hip", "knee"),
     ("wrist",),
 )
+
+#: Total cases the aggregate cross-check draws. Computed, never typed.
+AGGREGATE_PROBE_N = AGGREGATE_PROBE_PER_SHAPE * len(REALISTIC_PART_SETS)
 
 #: Samples per (age, sex) cell in the marginal test.
 #:
@@ -1389,13 +1412,68 @@ SUPERSEDED_DOC_CLAIMS: tuple[tuple[str, str], ...] = (
         "the link saturates in float64 (sigmoid(38) == 1.0); it is strict over "
         "calibrated production intercepts and the final clamp owns the extremes",
     ),
+    (
+        "the documentation gate has an honest divisor",
+        "the gate divides by expected_any_condition(); P_ANY_CONDITION_MEASURED is a "
+        "sampled cross-check of it, not the divisor",
+    ),
+    (
+        "Measured over 21,000 sampled cases",
+        "the cross-check draws 1,500 per shape across seven shapes — 10,500 cases, "
+        "equally weighted; see AGGREGATE_PROBE_N",
+    ),
 )
 
-DOC_SWEPT_SOURCES: tuple[str, ...] = (
-    "src/wc_caseload_engine/medical_history.py",
-    "src/wc_caseload_engine/clinical_grounding.py",
-    "src/wc_caseload_engine/seeds.py",
-)
+#: How far either side of a hit counts as "the passage it sits in".
+#:
+#: Roughly a long paragraph. Wide enough that a note recording a revision covers the
+#: number it is recording, narrow enough that a ``supersed`` twenty lines away cannot
+#: launder an unrelated claim.
+DOC_CONTEXT_WINDOW = 400
+
+PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+PRODUCTION_PACKAGE = PACKAGE_ROOT / "src" / "wc_caseload_engine"
+
+
+def production_modules() -> tuple[Path, ...]:
+    """Every Python module this package ships, found rather than listed.
+
+    Round 6, finding 2. The sweep used to name three modules by hand, and the
+    documentation it was written to police had already moved out of them: the corrected
+    non-uniform age law lives in ``case_context._DERIVED_AGE_RANGE``'s docstring, which
+    was not on the list, so restating the superseded uniform claim *there* stayed green.
+
+    A hand-written list of files to check has the same failure mode as a hand-written
+    list of conditions to check (see ``m17-29``): it is correct on the day it is written
+    and silently narrows every time the package grows. Discovery cannot go stale.
+    """
+    return tuple(sorted(PRODUCTION_PACKAGE.rglob("*.py")))
+
+
+def superseded_hits(text: str, label: str, window: int = DOC_CONTEXT_WINDOW) -> list[str]:
+    """The checker itself, factored out so a control can be run *through* it.
+
+    Case-folded, because a superseded claim restated at the start of a sentence is the
+    same claim — the mutation gate found that: ``m17-30`` reinstated the
+    non-recoverability line capitalised and a case-sensitive sweep matched nothing.
+
+    A hit is exonerated only by the word ``supersed`` inside its own passage. That
+    exemption is what lets provenance survive — ``P_SURFACES_IN_FILE``'s rationale
+    quotes counsel's retired "one in three" on purpose — and it is deliberately an
+    exemption an author can satisfy honestly and cannot satisfy by accident.
+    """
+    folded = text.lower()
+    offenders: list[str] = []
+    for raw_phrase, replacement in SUPERSEDED_DOC_CLAIMS:
+        phrase = raw_phrase.lower()
+        start = folded.find(phrase)
+        while start != -1:
+            passage = folded[max(0, start - window) : start + len(phrase) + window]
+            if "supersed" not in passage:
+                line = folded.count("\n", 0, start) + 1
+                offenders.append(f"{label}:{line}: {raw_phrase!r} — {replacement}")
+            start = folded.find(phrase, start + 1)
+    return offenders
 
 
 class TestTheDocsDoNotStateSupersededContracts:
@@ -1407,12 +1485,35 @@ class TestTheDocsDoNotStateSupersededContracts:
     claims in one pass, every one of them true on the day it was written.
     """
 
-    #: How far either side of a hit counts as "the passage it sits in".
-    #:
-    #: Roughly a long paragraph. Wide enough that a note recording a revision covers
-    #: the number it is recording, narrow enough that a ``supersed`` twenty lines away
-    #: cannot launder an unrelated claim.
-    CONTEXT_WINDOW = 400
+    def test_the_sweep_reads_every_module_this_package_ships(self) -> None:
+        """Round 6, finding 2. Coverage of the sweep, not just its verdict.
+
+        The old list named three modules, and the age-law documentation had already
+        moved to a fourth — ``case_context``, where the corrected non-uniform law is
+        now written down. Restating the superseded uniform claim there passed. A sweep
+        is only as honest as its file list, so the file list is now discovered and this
+        assertion is what proves the discovery reached everything.
+        """
+        scanned = {path.stem for path in production_modules()}
+
+        # Enumerated by the *import* machinery rather than by another glob. Checking a
+        # glob against a glob compares a method with itself and agrees about anything
+        # they both miss; pkgutil answers "what can be imported from this package",
+        # which is the question that matters and is arrived at a different way.
+        importable = {
+            info.name
+            for info in pkgutil.iter_modules([str(PRODUCTION_PACKAGE)])
+            if not info.ispkg
+        }
+        assert importable, "pkgutil found no modules at all; the path is wrong"
+        assert not importable - scanned, (
+            "the doc sweep does not reach every module this package ships; unswept: "
+            f"{sorted(importable - scanned)}"
+        )
+        assert "case_context" in scanned, (
+            "case_context owns the corrected age-law documentation and is unswept — "
+            "this is the exact gap round 6 found"
+        )
 
     def test_no_module_still_states_a_superseded_contract(self) -> None:
         """A retired claim may be *quoted*, but only where it is marked as retired.
@@ -1426,35 +1527,19 @@ class TestTheDocsDoNotStateSupersededContracts:
         So a hit passes only if its own passage says it has been superseded. That is a
         rule an author can satisfy honestly and cannot satisfy by accident.
         """
-        root = Path(__file__).resolve().parent.parent
         offenders: list[str] = []
-        for relative in DOC_SWEPT_SOURCES:
-            # Case-folded, because a superseded claim restated at the start of a
-            # sentence is the same claim. The mutation gate found that: m17-30
-            # reinstated the non-recoverability line capitalised and a case-sensitive
-            # sweep matched nothing at all.
-            text = (root / relative).read_text(encoding="utf-8").lower()
-            for raw_phrase, replacement in SUPERSEDED_DOC_CLAIMS:
-                phrase = raw_phrase.lower()
-                start = text.find(phrase)
-                while start != -1:
-                    window = text[
-                        max(0, start - self.CONTEXT_WINDOW) : start
-                        + len(phrase)
-                        + self.CONTEXT_WINDOW
-                    ]
-                    if "supersed" not in window:
-                        line = text.count("\n", 0, start) + 1
-                        offenders.append(
-                            f"{relative}:{line}: {raw_phrase!r} — {replacement}"
-                        )
-                    start = text.find(phrase, start + 1)
+        for path in production_modules():
+            offenders.extend(
+                superseded_hits(
+                    path.read_text(encoding="utf-8"),
+                    path.relative_to(PACKAGE_ROOT).as_posix(),
+                )
+            )
         assert not offenders, "superseded claims still stated:\n  " + "\n  ".join(offenders)
 
     def test_quoting_a_retired_number_needs_the_word_that_retires_it(self) -> None:
         """The control for the exemption, so the exemption cannot swallow the rule."""
-        root = Path(__file__).resolve().parent.parent
-        grounding = (root / "src/wc_caseload_engine/clinical_grounding.py").read_text(
+        grounding = (PRODUCTION_PACKAGE / "clinical_grounding.py").read_text(
             encoding="utf-8"
         )
         start = grounding.find("one in three")
@@ -1462,7 +1547,7 @@ class TestTheDocsDoNotStateSupersededContracts:
             "the historical record of counsel's first answer has been deleted; the "
             "revision it documents is now invisible"
         )
-        window = grounding[start - self.CONTEXT_WINDOW : start + self.CONTEXT_WINDOW]
+        window = grounding[start - DOC_CONTEXT_WINDOW : start + DOC_CONTEXT_WINDOW]
         assert "supersed" in window.lower(), (
             "the surviving 'one in three' is no longer marked as superseded, so the "
             "sweep above is exempting it on a technicality"
@@ -1482,6 +1567,8 @@ class TestTheDocsDoNotStateSupersededContracts:
         "the award's default value\n        makes it the easy one to write by accident",
         "A logistic link cannot leave ``(0, 1)``, so the property holds",
         "Membership therefore is not recoverable from the conditions alone",
+        "Recorded so the documentation gate has an honest divisor and so the number",
+        "Measured over 21,000 sampled cases at derived ages across the seven realistic",
     )
 
     @pytest.mark.parametrize("passage", PLANTED_STALE_PASSAGES)
@@ -1493,15 +1580,41 @@ class TestTheDocsDoNotStateSupersededContracts:
         arithmetic, the award-default wording and the over-strong link claim — and a
         single pooled control would have stayed green through all three, because one
         surviving match is enough to satisfy ``any``.
+
+        Round 6, finding 2: the control now goes through :func:`superseded_hits`, the
+        function the sweep itself calls, instead of asking whether some phrase is a
+        substring of the passage. Membership tests the *list*; this tests the
+        **checker** — case folding, the passage window, and the ``supersed`` exemption
+        included. A checker that had stopped flagging everything would have passed the
+        old control, because the old control never ran it.
         """
-        hits = [
-            phrase
-            for phrase, _ in SUPERSEDED_DOC_CLAIMS
-            if phrase.lower() in passage.lower()
-        ]
+        hits = superseded_hits(passage, "planted")
         assert hits, (
-            f"no entry in SUPERSEDED_DOC_CLAIMS matches {passage[:60]!r} — a passage "
-            "this package actually shipped could be restated without anything going red"
+            f"the checker does not flag {passage[:60]!r} — a passage this package "
+            "actually shipped could be restated without anything going red"
+        )
+
+    def test_the_checker_folds_case_and_honours_its_own_exemption(self) -> None:
+        """The checker's three moving parts, exercised on one shipped passage.
+
+        Parametrized controls prove the phrase list reaches the prose. This proves the
+        *mechanism* does what the sweep's docstring promises: it flags, it folds case,
+        and it stands down inside a passage that marks the claim retired. All three
+        have been wrong at some point — ``m17-30`` got through a case-sensitive sweep
+        by capitalising a sentence — and each is one line here.
+        """
+        passage = "Membership therefore is not recoverable from the conditions alone"
+
+        assert superseded_hits(passage, "planted"), (
+            "the checker no longer flags a passage this package shipped"
+        )
+        assert superseded_hits(passage.upper(), "planted"), (
+            "the checker has become case-sensitive; capitalising a superseded claim "
+            "is enough to restate it, which is how m17-30 got through once already"
+        )
+        assert not superseded_hits(f"{passage} — superseded on 2026-08-08.", "planted"), (
+            "the supersed exemption no longer works, so provenance cannot be quoted "
+            "and the sweep will be satisfied by deleting history instead of marking it"
         )
 
 
@@ -1770,10 +1883,7 @@ class TestTheDocumentationGate:
         move reddens this test and forces the knob's rationale to be rewritten, which
         is exactly what happened.
         """
-        cohort: list[Any] = []
-        for index, parts in enumerate(REALISTIC_PART_SETS):
-            cohort.extend(_sample(1500, base=9_600_000 + index * 10_000, parts=parts))
-        realised = sum(1 for h in cohort if h.conditions) / len(cohort)
+        realised = self._aggregate_cross_check()
 
         assert realised == pytest.approx(P_ANY_CONDITION_MEASURED.value, abs=0.03), (
             f"aggregate true prevalence is now {realised:.4f}; "
@@ -1783,6 +1893,73 @@ class TestTheDocumentationGate:
             "the aggregate has come back down to the design record's 0.55. If the "
             "per-condition marginals still match their sources, this is a genuine "
             "discovery and P_ANY_CONDITION_EXPECTED's falsification note is now wrong"
+        )
+
+    @staticmethod
+    def _shape_blocks() -> dict[tuple[str, ...], list[Any]]:
+        """The cross-check's cohort, kept as blocks so its shape can be inspected."""
+        return {
+            parts: _sample(
+                AGGREGATE_PROBE_PER_SHAPE,
+                base=9_600_000 + index * 10_000,
+                parts=parts,
+            )
+            for index, parts in enumerate(REALISTIC_PART_SETS)
+        }
+
+    @classmethod
+    def _aggregate_cross_check(cls) -> float:
+        cohort = [history for block in cls._shape_blocks().values() for history in block]
+        return sum(1 for history in cohort if history.conditions) / len(cohort)
+
+    def test_the_cross_check_cohort_is_the_plan_its_provenance_names(self) -> None:
+        """Round 6, finding 1. The sampling plan, measured rather than remembered.
+
+        ``P_ANY_CONDITION_MEASURED`` said 21,000 cases. The probe drew 1,500 across
+        each of seven shapes — 10,500 — and the constant had been carrying the wrong
+        figure for as long as it had existed. Nothing computed the number, so nothing
+        could disagree with it.
+
+        Both halves are pinned here: the cohort really is
+        ``AGGREGATE_PROBE_PER_SHAPE`` per shape across every shape, and the knob's own
+        prose has to say so. A future change to either alone fails.
+        """
+        blocks = self._shape_blocks()
+
+        assert set(blocks) == set(REALISTIC_PART_SETS), (
+            "the cross-check no longer covers every realistic claim shape"
+        )
+        for parts, block in blocks.items():
+            assert len(block) == AGGREGATE_PROBE_PER_SHAPE, (
+                f"shape {parts} contributed {len(block)} cases, not the declared "
+                f"{AGGREGATE_PROBE_PER_SHAPE} — the weighting is no longer "
+                f"{AGGREGATE_PROBE_WEIGHTING!r}"
+            )
+        total = sum(len(block) for block in blocks.values())
+        assert total == AGGREGATE_PROBE_N, (
+            f"the cross-check drew {total} cases against a declared {AGGREGATE_PROBE_N}"
+        )
+
+    def test_the_knob_states_the_plan_it_was_actually_measured_under(self) -> None:
+        """The provenance is checked against the arithmetic, not proofread.
+
+        A ``Knob``'s ``source`` is the only record of how its value was arrived at, and
+        it is prose — which is exactly the material this package has learned not to
+        trust. So the count in it is asserted against the computed one, and the
+        weighting word against the constant that governs the loop.
+        """
+        source = P_ANY_CONDITION_MEASURED.source
+        assert f"{AGGREGATE_PROBE_N:,}" in source, (
+            f"the knob's source does not state the {AGGREGATE_PROBE_N:,} cases the "
+            f"cross-check actually draws: {source!r}"
+        )
+        assert AGGREGATE_PROBE_WEIGHTING in source, (
+            f"the knob's source does not state the {AGGREGATE_PROBE_WEIGHTING!r} "
+            "weighting, so a reader cannot tell it apart from the reference population"
+        )
+        assert "cross-check" in source.lower(), (
+            "the knob still presents itself as something other than the sampled "
+            "cross-check it is"
         )
 
     def test_the_analytic_and_realised_prevalence_agree(self) -> None:

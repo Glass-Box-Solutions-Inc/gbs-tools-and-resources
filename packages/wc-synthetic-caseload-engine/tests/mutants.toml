@@ -2213,3 +2213,37 @@ replace = '''    low, high = DERIVED_AGE_RANGE
     nominal = tuple(range(low, high + 1))
     return dict.fromkeys(nominal, 1.0 / len(nominal))'''
 note = 'AJC-60 R5 finding 2, restored as the flat table it was. A REFERENCE_AGES constant said the reference population was uniform on 25-62 and the cast draws nothing of the sort: two uniforms convolve into a trapezoid, the endpoints carry about half an interior year, and a 365-day year against a calendar with leap days drags a tail onto 24 that the nominal band does not even contain. The error lands in the fifth decimal of E[P(any)], which is why it survived a round — but the claim attached to it was an identity at 1e-12 over the generation population, and approximately right is not that. The guard enumerates the law the slow way rather than checking one analytic table against another, because two tables written by the same hand agree about their shared mistake. The constant itself is gone in this round: one definition of each axis, the same rule that closed finding 1.'
+
+[[mutant]]
+id = 'm17-33'
+title = 'the aggregate cross-check states a sample count nothing computed'
+file = 'src/wc_caseload_engine/clinical_grounding.py'
+test = 'tests/test_medical_history.py::TestTheDocumentationGate::test_the_knob_states_the_plan_it_was_actually_measured_under'
+find = '''        "Sampled cross-check over 10,500 cases at derived ages: 1,500 per claim shape "'''
+replace = '''        "Sampled cross-check over 21,000 cases at derived ages: 1,500 per claim shape "'''
+note = 'AJC-60 R6 finding 1. The knob said 21,000 sampled cases and the probe drew 1,500 across each of seven shapes — 10,500 — and had done since the constant was written. Nothing computed the figure, so nothing could disagree with it; a Knob source is prose, and prose is the material this package has learned not to trust. The count is asserted against AGGREGATE_PROBE_N now, which is itself computed from the per-shape constant and the shape table, so the sentence cannot drift without the arithmetic drifting with it. Registered on the number rather than on the divisor sentence because the number is the half a reviewer cannot check by reading.'
+
+[[mutant]]
+id = 'm17-34'
+title = 'the doc sweep goes back to a hand-written list of files to read'
+file = 'tests/test_medical_history.py'
+test = 'tests/test_medical_history.py::TestTheDocsDoNotStateSupersededContracts::test_the_sweep_reads_every_module_this_package_ships'
+find = '''    return tuple(sorted(PRODUCTION_PACKAGE.rglob("*.py")))'''
+replace = '''    return (
+        PRODUCTION_PACKAGE / "medical_history.py",
+        PRODUCTION_PACKAGE / "clinical_grounding.py",
+        PRODUCTION_PACKAGE / "seeds.py",
+    )'''
+note = 'AJC-60 R6 finding 2, restored as the three-file list it was. The sweep named its files by hand and the documentation it polices had already moved out of them: the corrected non-uniform age law lives in case_context._DERIVED_AGE_RANGE, unswept, so restating the superseded uniform claim there stayed green. Same failure mode as m17-29 one layer up — a hand-written list of things to check is correct on the day it is written and silently narrower every time the package grows. The coverage assertion compares the glob against what pkgutil says is importable rather than against another glob, because two enumerations by the same method agree about whatever they both miss.'
+
+[[mutant]]
+id = 'm17-35'
+title = 'the planted controls go back to testing the phrase list instead of the checker'
+file = 'tests/test_medical_history.py'
+test = 'tests/test_medical_history.py::TestTheDocsDoNotStateSupersededContracts::test_the_checker_folds_case_and_honours_its_own_exemption'
+find = '''    folded = text.lower()
+    offenders: list[str] = []'''
+replace = '''    folded = text.lower()
+    return []
+    offenders: list[str] = []'''
+note = 'AJC-60 R6 finding 2, the instrument rather than the list. The controls asked whether some SUPERSEDED_DOC_CLAIMS phrase was a substring of the passage, which tests the LIST and never runs the checker — case folding, the passage window and the supersed exemption all went unexercised, and a checker returning nothing at all would have passed every control. They go through superseded_hits now, so gutting the function reddens them. A dead checker is exactly the failure a control exists to catch and exactly the one membership cannot see.'
