@@ -797,35 +797,46 @@ class BaseTemplate:
         ]))
         return t
 
-    def impairment_rating_section(self, apportionment_pct: int | None = None) -> list:
+    def impairment_rating_section(self, apportionment: Any = None) -> list:
         """Generate full AMA Guides impairment narrative as reportlab elements.
 
-        ``apportionment_pct`` is the nonindustrial share, and it is the seam a
-        caller uses to govern this section (AJC-65). Left at ``None`` — which is
-        every existing call site, including ``TreatingPhysicianReport``'s PR-4
-        block — the substrate draws its own value exactly as it always did.
+        ``apportionment`` is an
+        :class:`data.apportionment.ApportionmentDecision` — the caller's
+        governed posture (AJC-65) — or ``None``. Left at ``None``, which is
+        every existing call site including ``TreatingPhysicianReport``'s PR-4
+        block, the substrate draws its own value and renders its own narrative
+        exactly as it always did.
 
         Governing it matters because the number printed here and the
         apportionment opinion in ``QmeAmeReport._build_conclusions`` were drawn
         independently, so one report could rate 20% apportioned and then declare
-        no apportionment applicable four sections later.
+        no apportionment applicable four sections later. Both now render from
+        one parsed decision, so they cannot disagree.
+
+        **The draw below happens either way, and it is keyed to the drawn value
+        either way.** The narrative's apportionment block consumes three further
+        draws when the percentage is positive and none when it is zero, so
+        letting a governed percentage decide that branch would consume a
+        different number of draws than the substrate's own path whenever the two
+        straddle zero — rewriting the future-medical content, the work
+        restrictions and the signature identifier below it. Consumption follows
+        the drawn value; only the rendered words follow the decision.
         """
         from data.ama_guides_content import generate_impairment_narrative
         body_parts = self.case.injuries[0].body_parts if self.case.injuries else []
         specialty = (
             getattr(self.case, 'qme_physician', None) and self.case.qme_physician.specialty
         ) or self.case.treating_physician.specialty
-        # Drawn unconditionally, then discarded when the caller governs the
-        # value. Everything rendered after this point reads the random stream
-        # from wherever this draw left it, so answering from the ledger without
-        # drawing would shift every later draw in the document — pinning one
-        # number would silently rewrite the rest of the report.
         drawn_pct = random.choice([0, 0, 0, 10, 15, 20, 25])
-        if apportionment_pct is None:
-            apportionment_pct = drawn_pct
-        narrative, total_wpi, ratings = generate_impairment_narrative(
-            body_parts, specialty, apportionment_pct
-        )
+        if apportionment is None:
+            narrative, total_wpi, ratings = generate_impairment_narrative(
+                body_parts, specialty, drawn_pct
+            )
+        else:
+            narrative, total_wpi, ratings = generate_impairment_narrative(
+                body_parts, specialty, drawn_pct,
+                governed_block=apportionment.impairment_block(body_parts),
+            )
         elements = [
             Paragraph("<b>IMPAIRMENT RATING — AMA GUIDES 5TH EDITION</b>", self.styles["SectionHeader"]),
             Spacer(1, 0.1 * inch),

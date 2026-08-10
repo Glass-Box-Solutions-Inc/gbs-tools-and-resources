@@ -308,8 +308,16 @@ jobs:
       # pytest is deliberately installed here rather than added to
       # requirements.txt, which is the runtime dependency set the Docker image
       # and Cloud Run deployments install.
+      #
+      # PYTHONHASHSEED is pinned because two content pools are built with
+      # `list(set(...))`, whose order follows the interpreter's hash seed. The
+      # QME digest baselines compare rendered text and PDF bytes, which move
+      # with that order; under a randomised seed those two digests are pinned
+      # to nothing and the suite falls back to comparing only the rng trace and
+      # the flowable geometry. Zero is the value wc-synthetic-caseload-engine
+      # already sets for the same reason, so CI compares what it ships.
       - name: Test
-        run: pip install pytest && python -m pytest tests/ -q --tb=short
+        run: pip install pytest && PYTHONHASHSEED=0 python -m pytest tests/ -q --tb=short
 
   mcp-servers-gbs-voice:
     name: "mcp-servers-gbs-voice"
