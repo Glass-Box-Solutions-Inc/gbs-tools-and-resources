@@ -306,6 +306,116 @@ MODALITY_SITES: tuple[ModalitySite, ...] = (
         "documented",
         "the substrate's own unused accumulator, never wired on the engine path",
     ),
+    # -- AJC-66: the substrate's variant-content seam ------------------------
+    #
+    # The substrate gained an opt-in that lets a caller ask a template for
+    # content matching its registry variant, so a lab-results subtype stops
+    # rendering an X-ray report and an EMG/NCV subtype gets an actual
+    # electrodiagnostic study. An electrodiagnostic register has to say "nerve
+    # conduction", which is what brought it here — this table firing on that is
+    # the tripwire working, not a nuisance.
+    #
+    # Every row below is `documented` for the same reason, and it is a stronger
+    # reason than usual: this content renders **only** when a caller sets
+    # `variant_content` on the document context, and no corpus sets it. The
+    # sites are unreachable from this engine today. AJC-62 (M3) is the ticket
+    # that opts in, and it should move these rows to `governed` as it does —
+    # at which point the modality claim becomes the ledger's to make.
+    ModalitySite(
+        "data/variant_content.py",
+        "EMG/NCV",
+        "documented",
+        "module docstring naming the subtypes served — never rendered",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        "X-ray report",
+        "documented",
+        "module docstring describing the defect being fixed — never rendered",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        "# Diagnostics: lab, electrodiagnostic, sleep",
+        "documented",
+        "section comment — never rendered",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        "#: Nerve conduction rows",
+        "documented",
+        "comment describing the row tuple's shape — never rendered",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        "#: Needle EMG rows",
+        "documented",
+        "comment describing the row tuple's shape — never rendered",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        '_claims(token, "emg"',
+        "documented",
+        "the variant-matching vocabulary, not a claim that a study happened",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        "Electrodiagnostic Associates",
+        "documented",
+        "a facility name, not a claim that a study happened",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        "NERVE CONDUCTION",
+        "documented",
+        "electrodiagnostic register exam label and result heading — opt-in only "
+        "(variant_content); no corpus sets it, so nothing renders these (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        "erve conduction studies were performed",
+        "documented",
+        "electrodiagnostic register technique prose — opt-in only, unreachable "
+        "from this engine until a corpus sets variant_content (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        "lectrodiagnostic",
+        "documented",
+        "electrodiagnostic register impressions — opt-in only, unreachable from "
+        "this engine until a corpus sets variant_content (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        "Plain radiographs",
+        "documented",
+        "ER register prose reporting a study the encounter itself ordered — "
+        "opt-in only, unreachable until a corpus sets variant_content (AJC-66)",
+    ),
+    ModalitySite(
+        "pdf_templates/medical/diagnostic_report.py",
+        "EMG/NCV and sleep",
+        "documented",
+        "class docstring naming the subtypes served — never rendered (AJC-66)",
+    ),
+    ModalitySite(
+        "pdf_templates/medical/diagnostic_report.py",
+        "MRI/CT/X-ray report",
+        "documented",
+        "class docstring describing the default document — never rendered (AJC-66)",
+    ),
+    ModalitySite(
+        "pdf_templates/medical/diagnostic_report.py",
+        "Nerve conduction rows, then the needle",
+        "documented",
+        "method docstring — never rendered (AJC-66)",
+    ),
+    ModalitySite(
+        "pdf_templates/medical/diagnostic_report.py",
+        "NEEDLE EMG",
+        "documented",
+        "electrodiagnostic section heading — opt-in only, unreachable from this "
+        "engine until a corpus sets variant_content (AJC-66)",
+    ),
 )
 
 
