@@ -55,13 +55,18 @@ from wc_caseload_engine.money import (
     SHORT_HISTORY_WEEKS,
     TD_PAYMENT_DUE_DAYS,
     UNCONFIRMED_RATE_TABLE,
+    analyzer_money_manifest_block,
     compute_aww,
     compute_comp_rate,
     derive_money_facts,
+    dollars,
+    exact,
     money,
     money_manifest_block,
+    penalty_basis_for,
     rate_basis_for,
     select_method,
+    statutory_deadline_basis_for,
 )
 from wc_caseload_engine.planner import (
     MONEY_FLOOR_SUBTYPES,
@@ -204,9 +209,13 @@ class TestTheGateIsTheWageBlock:
     def test_a_seed_with_wages_derives_money(self) -> None:
         assert _facts({"wages": WAGES}) is not None
 
-    @pytest.mark.parametrize("block", ["benefits", "settlement"])
+    @pytest.mark.parametrize("block", ["benefits", "settlement", "penalties"])
     def test_money_without_a_wage_block_is_rejected(self, block: str) -> None:
-        payload = {"td_weeks": 10} if block == "benefits" else {"gross_amount": 40000}
+        payload = (
+            {"td_weeks": 10}
+            if block == "benefits"
+            else ({"gross_amount": 40000} if block == "settlement" else {})
+        )
         with pytest.raises(Exception) as raised:
             parse_case_seed(_seed_body({block: payload}))
         message = str(raised.value)
@@ -1295,6 +1304,582 @@ class TestTheBenefitLedger:
 # ---------------------------------------------------------------------------
 
 
+class TestTheAutomaticLateIndemnityIncrease:
+    """The §4650(d) ledger is pure arithmetic over the decided payment ledger."""
+
+    @staticmethod
+    def _penalised() -> Any:
+        return _facts(
+            {
+                "wages": WAGES,
+                "benefits": {
+                    "td_weeks": 8,
+                    "late_payments": 2,
+                    "max_days_late": 15,
+                },
+                "penalties": {},
+            }
+        )
+
+    def test_the_planted_positive_control_assesses_the_authored_delay(self) -> None:
+        """Planted control: at least one late payment must carry a §4650(d) increase.
+
+        The seed authors ``max_days_late: 15`` on two installments, so 15 is what
+        the statute must measure. It read 45 and 59 while the deadline was a
+        ladder from the date of injury — the first figure was 30 days of engine
+        cadence added to the authored delay, the second 44, and neither was a
+        fact about the file. The DOI-anchored count for the first installment is
+        still exported, under ``first_payment_rule``, where it cannot be summed
+        into an exposure.
+        """
+        facts = self._penalised()
+        ledger = facts.penalties
+        assert ledger is not None
+        assert ledger.assessed_count == 2
+        assert [item.days_late for item in ledger.assessments] == [15, 15]
+        assert ledger.assessments[0].days_late == 15
+        assert ledger.first_payment_rule is not None
+        assert ledger.first_payment_rule.days_late == 45
+        assert ledger.first_payment_rule.assessed is False
+        assert [(item.source, item.ordinal) for item in ledger.assessments] == [
+            ("td_period", 1),
+            ("td_period", 2),
+        ]
+        for assessment in ledger.assessments:
+            assert assessment.amount == money(
+                assessment.principal * assessment.increase_fraction
+            )
+        assert ledger.total_increase == money(sum(item.amount for item in ledger.assessments))
+        assert ledger.principal_assessed == money(
+            sum(item.principal for item in ledger.assessments)
+        )
+
+    @staticmethod
+    def _seed(case_id: str) -> Any:
+        return parse_case_seed(
+            _seed_body({"wages": WAGES, "penalties": {}}, case_id=case_id)
+        )
+
+    def test_operationally_late_but_statutorily_timely_is_not_assessed(self) -> None:
+        onset = date(2021, 6, 14)
+        advance = money_module.PdAdvance(
+            date_due=onset + timedelta(days=5),
+            date_paid=onset + timedelta(days=10),
+            amount=Decimal("400.00"),
+            weekly_rate=Decimal("100.00"),
+            weeks=Decimal("4"),
+            days_late=5,
+        )
+        ledger = money_module._derive_penalties(
+            self._seed("operational-only-delay"),
+            money_module.BenefitLedger(pd_advances=(advance,)),
+            onset,
+            onset,
+        )
+
+        entry = ledger.schedule[0]
+        assert entry.operational_due_date < entry.date_paid
+        assert entry.statutory_due_date is not None
+        assert entry.date_paid <= entry.statutory_due_date
+        assert entry.days_late == 0
+        assert ledger.assessments == ()
+
+    def test_paid_td_after_its_statutory_deadline_is_assessed_exactly(self) -> None:
+        """The assessed count is measured from the statutory date, not the cadence.
+
+        The two dates are deliberately different here. Once the statutory
+        deadline became the accrual end plus fourteen days it coincided with the
+        carrier's own due date on the old fixture, and a mutation swapping one
+        operand for the other could no longer be seen — the guard would have
+        stayed green while the distinction it exists to protect was gone.
+        """
+        onset = date(2021, 6, 14)
+        period = money_module.TdPeriod(
+            start=onset,
+            end=onset + timedelta(days=6),
+            weeks=Decimal("1"),
+            weekly_rate=Decimal("100.00"),
+            amount=Decimal("100.00"),
+            # Statutory: end + 14 = onset + 20. Operational: a slower cadence.
+            date_due=onset + timedelta(days=25),
+            date_paid=onset + timedelta(days=26),
+            days_late=1,
+        )
+        ledger = money_module._derive_penalties(
+            self._seed("statutory-td-delay"),
+            money_module.BenefitLedger(td_periods=(period,)),
+            onset,
+            onset,
+        )
+
+        assessment = ledger.assessments[0]
+        assert assessment.rule == "first_td_payment"
+        assert assessment.days_late == (
+            assessment.date_paid - assessment.statutory_due_date
+        ).days
+        assert assessment.amount == money(
+            assessment.principal * assessment.increase_fraction
+        )
+
+    def test_only_first_pd_advance_can_have_a_statutory_assessment(self) -> None:
+        onset = date(2021, 6, 14)
+        td_paid = onset + timedelta(days=20)
+        period = money_module.TdPeriod(
+            start=onset,
+            end=onset + timedelta(days=6),
+            weeks=Decimal("1"),
+            weekly_rate=Decimal("100.00"),
+            amount=Decimal("100.00"),
+            date_due=onset + timedelta(days=14),
+            date_paid=td_paid,
+            days_late=6,
+        )
+        advances = (
+            money_module.PdAdvance(
+                date_due=onset + timedelta(days=25),
+                date_paid=onset + timedelta(days=40),
+                amount=Decimal("400.00"),
+                weekly_rate=Decimal("100.00"),
+                weeks=Decimal("4"),
+                days_late=15,
+            ),
+            money_module.PdAdvance(
+                date_due=onset + timedelta(days=70),
+                date_paid=onset + timedelta(days=115),
+                amount=Decimal("400.00"),
+                weekly_rate=Decimal("100.00"),
+                weeks=Decimal("4"),
+                days_late=45,
+            ),
+        )
+        ledger = money_module._derive_penalties(
+            self._seed("statutory-pd-delay"),
+            money_module.BenefitLedger(td_periods=(period,), pd_advances=advances),
+            onset,
+            onset,
+        )
+
+        pd_assessments = [a for a in ledger.assessments if a.source == "pd_advance"]
+        assert len(pd_assessments) == 1
+        first = pd_assessments[0]
+        assert first.ordinal == 1
+        assert first.statutory_due_date == (
+            td_paid + timedelta(days=ledger.deadlines.first_pd_payment_days)
+        )
+        assert first.days_late == (first.date_paid - first.statutory_due_date).days
+        later = ledger.schedule[-1]
+        assert later.operational_due_date < later.date_paid
+        assert later.rule == "discretionary_advance"
+        assert later.statutory_due_date is None
+        assert later.days_late == 0
+
+    @pytest.mark.parametrize(
+        ("override", "source"),
+        [
+            ({}, "engine_default_table"),
+            ({"increase_fraction": "0.25"}, "mixed"),
+            ({"authority": "seed authority"}, "mixed"),
+            (
+                {"increase_fraction": "0.25", "authority": "seed authority"},
+                "seed",
+            ),
+        ],
+    )
+    def test_the_basis_records_how_much_the_seed_authored(
+        self, override: dict[str, Any], source: str
+    ) -> None:
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {"td_weeks": 8, "late_payments": 1, "max_days_late": 45},
+                "penalties": override,
+            }
+        )
+        assert facts.penalties is not None
+        assert facts.penalties.basis.source == source
+        if "increase_fraction" in override:
+            assert facts.penalties.basis.increase_fraction == Decimal("0.25")
+
+    def test_absence_and_an_empty_assessment_are_different_public_facts(self) -> None:
+        absent = self._penalised().model_copy(update={"penalties": None})
+        assert "penalties" not in money_manifest_block(absent)
+
+        timely = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {"td_weeks": 0, "pd_advances": 0, "late_payments": 0},
+                "penalties": {},
+            }
+        )
+        assert timely.penalties is not None
+        assert timely.penalties.assessments == ()
+        published = money_manifest_block(timely)
+        assert published["penalties"]["assessmentCount"] == 0
+        assert published["penalties"]["assessments"] == []
+        assert published["penalties"]["totalIncrease"] == "0.00"
+
+    def test_a_never_paid_period_is_not_assessed_as_a_delay(self) -> None:
+        never_paid = money_module.TdPeriod(
+            start=date(2021, 6, 17),
+            end=date(2021, 7, 14),
+            weeks=Decimal("4"),
+            weekly_rate=Decimal("100.00"),
+            amount=Decimal("400.00"),
+            date_due=date(2021, 7, 28),
+            date_paid=None,
+            days_late=0,
+        )
+        benefits = money_module.BenefitLedger(td_periods=(never_paid,))
+        seed = parse_case_seed(
+            _seed_body({"wages": WAGES, "penalties": {}}, case_id="never-paid-penalty")
+        )
+
+        onset = date(2021, 6, 14)
+        ledger = money_module._derive_penalties(seed, benefits, onset, onset)
+
+        assert ledger.schedule[0].unpaid is True
+        assert ledger.schedule[0].date_paid is None
+        assert ledger.schedule[0].days_late == 0
+        assert ledger.assessments == ()
+
+    def test_the_manifest_validator_recomputes_every_penalty_aggregate(self) -> None:
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = self._penalised()
+        documents = _docs(
+            MONEY_WAGE_SUBTYPE,
+            MONEY_TD_SUBTYPE,
+            settlement=money_manifest_block(facts).get("settlement"),
+        )
+        clean = {"money": money_manifest_block(facts)}
+        assert not _validate_money(clean, documents, "penalty-case")
+
+        probes = (
+            ("assessmentCount", lambda p: p.__setitem__("assessmentCount", 99)),
+            (
+                "amount",
+                lambda p: p["assessments"][0].__setitem__("amount", "0.01"),
+            ),
+            ("totalIncrease", lambda p: p.__setitem__("totalIncrease", "0.01")),
+            ("principalAssessed", lambda p: p.__setitem__("principalAssessed", "0.01")),
+            (
+                "daysLate",
+                lambda p: p["assessments"][0].__setitem__("daysLate", 1),
+            ),
+        )
+        for field, alter in probes:
+            block = {"money": money_manifest_block(facts)}
+            alter(block["money"]["penalties"])
+            if field == "amount":
+                block["money"]["penalties"]["totalIncrease"] = dollars(
+                    sum(
+                        Decimal(item["amount"])
+                        for item in block["money"]["penalties"]["assessments"]
+                    )
+                )
+            problems = _validate_money(block, documents, "penalty-case")
+            assert any(field in problem for problem in problems), (field, problems)
+
+        null_due = {"money": money_manifest_block(facts)}
+        null_due["money"]["penalties"]["assessments"][0]["statutoryDueDate"] = None
+        problems = _validate_money(null_due, documents, "penalty-case")
+        assert any("statutoryDueDate" in problem and "null" in problem for problem in problems)
+
+        missing_schedule_entry = {"money": money_manifest_block(facts)}
+        missing_schedule_entry["money"]["penalties"]["schedule"].pop()
+        problems = _validate_money(missing_schedule_entry, documents, "penalty-case")
+        assert any("schedule holds" in problem for problem in problems)
+
+        unpaid_assessment = {"money": money_manifest_block(facts)}
+        unpaid_assessment["money"]["penalties"]["schedule"][0]["unpaid"] = True
+        unpaid_assessment["money"]["penalties"]["unpaidCount"] = 1
+        problems = _validate_money(unpaid_assessment, documents, "penalty-case")
+        assert any("unpaid" in problem and "remove assessments" in problem for problem in problems)
+
+        discretionary_assessment = {"money": money_manifest_block(facts)}
+        discretionary_assessment["money"]["penalties"]["schedule"][0]["rule"] = (
+            "discretionary_advance"
+        )
+        problems = _validate_money(discretionary_assessment, documents, "penalty-case")
+        assert any(
+            "discretionary_advance" in problem and "remove assessments" in problem
+            for problem in problems
+        )
+
+        no_surface = _validate_money(
+            clean, _docs(MONEY_WAGE_SUBTYPE, carriers=False), "penalty-case"
+        )
+        assert any("0 benefit-payment documents" in problem for problem in no_surface)
+
+        missing_flag = {"money": money_manifest_block(facts)}
+        del missing_flag["money"]["penalties"]["counselConfirmed"]
+        problems = _validate_money(missing_flag, documents, "penalty-case")
+        assert any("penalties.counselConfirmed" in problem for problem in problems)
+
+        missing_deadline_flag = {"money": money_manifest_block(facts)}
+        del missing_deadline_flag["money"]["penalties"]["deadlineConfirmed"]
+        problems = _validate_money(missing_deadline_flag, documents, "penalty-case")
+        assert any("penalties.deadlineConfirmed" in problem for problem in problems)
+
+    def test_the_benefit_document_requirement_is_gated_on_something_to_read(self) -> None:
+        """Opting in is not itself a claim that needs a document to support it.
+
+        The rule twenty lines above this one, over benefit *events*, is gated on
+        the event count: no events, nothing to read, no requirement. The penalty
+        rule was written for the case that had a probe rather than for the class,
+        so it fired on the mere presence of the block — and the documented
+        "asked, and the answer was nothing" shape failed its own validator with a
+        message demanding a surface for zero assessments.
+        """
+        from wc_caseload_engine.manifests import _validate_money
+
+        timely = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {"td_weeks": 0, "pd_advances": 0, "late_payments": 0},
+                "penalties": {},
+            }
+        )
+        block = money_manifest_block(timely)
+        assert block["penalties"]["assessmentCount"] == 0
+        assert block["penalties"]["schedule"] == []
+        assert block["benefits"]["tdPeriodCount"] == 0
+        assert block["benefits"]["pdAdvanceCount"] == 0
+        assert block["benefits"]["gaps"] == []
+
+        problems = _validate_money(
+            {"money": block},
+            _docs(MONEY_WAGE_SUBTYPE, settlement=block.get("settlement")),
+            "timely-optin",
+        )
+
+        assert not any("benefit-payment documents" in problem for problem in problems), problems
+        assert problems == [], problems
+
+
+class TestTheStatutoryDeadlineIsAnchoredToTheAccrualItPays:
+    """§4650(d) is measured against each installment's own accrual, not a ladder.
+
+    The first cut anchored every temporary-disability deadline to a fixed ladder
+    from the date of injury — ``onset + 14 + (n-1)*14`` — while the benefit
+    ledger pays four-week blocks fourteen days after each block *ends*. The two
+    diverge permanently and by construction, so a file with no authored lateness
+    at all was assessed on every installment, the exposure came out the same
+    ``$1,594.86`` whatever ``late_payments`` and ``td_gap_days`` said, and the
+    second deadline fell three days *before* the period it was paying for.
+
+    An assessment nothing can move is not ground truth; it is a constant wearing
+    a legal label. These probes pin the three properties that were absent:
+    timeliness is reachable, a deadline never precedes its own accrual, and the
+    assessed exposure is a function of the authored delay.
+    """
+
+    @staticmethod
+    def _ledger(benefits: dict[str, Any], case_id: str = "accrual-anchor") -> Any:
+        facts = _facts(
+            {"wages": WAGES, "benefits": benefits, "penalties": {}}, case_id=case_id
+        )
+        assert facts is not None and facts.penalties is not None
+        return facts
+
+    def test_a_wholly_timely_temporary_disability_file_assesses_nothing(self) -> None:
+        """The negative the whole layer rests on, and the one that was missing.
+
+        ``late_payments: 0`` means every block was paid on the day it came due.
+        A statute assessed against a deadline the engine never intends to meet
+        turns "the carrier did nothing wrong" into a five-figure exposure.
+        """
+        facts = self._ledger({"td_weeks": 24, "late_payments": 0})
+        ledger = facts.penalties
+
+        assert facts.benefits.td_periods, "the probe needs installments to acquit"
+        assert all(period.days_late == 0 for period in facts.benefits.td_periods)
+        assert ledger.assessments == ()
+        assert ledger.assessed_count == 0
+        assert ledger.total_increase == Decimal("0.00")
+
+    def test_no_statutory_deadline_precedes_the_period_it_pays_for(self) -> None:
+        """A deadline for money that has not accrued yet is not a deadline.
+
+        The ladder produced exactly that: installment 2 was "due" 2021-07-12 for
+        a period running 2021-07-15 to 2021-08-11. Asserted across the whole
+        schedule rather than on the one entry that was noticed, because the
+        defect was a property of the model and not of that row.
+        """
+        facts = self._ledger({"td_weeks": 24, "td_gap_days": 45, "late_payments": 2,
+                              "max_days_late": 30})
+        periods = facts.benefits.td_periods
+        assert len(periods) > 1, "one installment cannot show a ladder drifting"
+
+        for item in facts.penalties.schedule:
+            if item.source != "td_period" or item.statutory_due_date is None:
+                continue
+            period = periods[item.ordinal - 1]
+            assert item.statutory_due_date >= period.start, (
+                f"TD installment {item.ordinal} was due {item.statutory_due_date}, "
+                f"before its own period opened on {period.start}"
+            )
+            assert item.statutory_due_date >= period.end, (
+                f"TD installment {item.ordinal} was due {item.statutory_due_date}, "
+                f"before the accrual it pays for closed on {period.end}"
+            )
+
+    def test_one_authored_late_payment_assesses_exactly_that_installment(self) -> None:
+        """``late_payments: 1, max_days_late: 15`` is one assessment of 15 days.
+
+        The operational and statutory clocks agree for a continuing installment,
+        so the authored delay *is* the statutory delay — which is what makes the
+        published exposure checkable against the seed that produced it.
+        """
+        facts = self._ledger(
+            {"td_weeks": 24, "late_payments": 1, "max_days_late": 15}, "one-late"
+        )
+        ledger = facts.penalties
+
+        assert ledger.assessed_count == 1
+        assessed = ledger.assessments[0]
+        assert (assessed.source, assessed.ordinal) == ("td_period", 1)
+        assert assessed.days_late == 15
+        assert assessed.amount == money(assessed.principal * assessed.increase_fraction)
+        assert ledger.total_increase == assessed.amount
+
+    def test_the_assessed_exposure_moves_with_the_authored_lateness(self) -> None:
+        """The invariance probe: the total must not be a constant.
+
+        Three seeds differing only in their delay controls produced one total.
+        Comparing them against each other, rather than each against a recorded
+        figure, is what makes this fail for a model that ignores the knob
+        regardless of which constant it happens to land on.
+        """
+        timely = self._ledger({"td_weeks": 24, "late_payments": 0}, "inv-timely")
+        one_late = self._ledger(
+            {"td_weeks": 24, "late_payments": 1, "max_days_late": 15}, "inv-one"
+        )
+        three_late = self._ledger(
+            {"td_weeks": 24, "late_payments": 3, "max_days_late": 15}, "inv-three"
+        )
+
+        totals = [
+            ledger.penalties.total_increase for ledger in (timely, one_late, three_late)
+        ]
+        assert totals[0] == Decimal("0.00")
+        assert totals[0] < totals[1] < totals[2], (
+            f"the assessed exposure {totals} does not follow late_payments"
+        )
+        assert [ledger.penalties.assessed_count for ledger in (timely, one_late, three_late)] == [
+            0,
+            1,
+            3,
+        ]
+
+    def test_a_gap_alone_never_creates_an_assessment(self) -> None:
+        """``td_gap_days`` interrupts the series; it does not delay a payment.
+
+        Under the ladder a 45-day hole silently pushed every later installment
+        past a deadline that had gone on running through the gap, so the gap
+        control read as carrier lateness. The blocks on either side are still
+        paid on their own due dates.
+        """
+        facts = self._ledger(
+            {"td_weeks": 24, "td_gap_days": 45, "late_payments": 0}, "gap-only"
+        )
+        assert facts.benefits.gaps, "the probe needs a gap to acquit"
+        assert facts.penalties.assessments == ()
+
+    def test_the_first_payment_rule_is_recorded_and_never_assessed(self) -> None:
+        """§4650(a) is exported as a flagged datum, not as an exposure.
+
+        The statute runs its fourteen days from knowledge of the injury *and* of
+        disability — a date this engine does not model. The date of injury
+        stands in, which is enough to publish the question and not enough to
+        answer it, so the record can never reach the assessment tuple.
+        """
+        facts = self._ledger({"td_weeks": 24, "late_payments": 0}, "first-payment-rule")
+        rule = facts.penalties.first_payment_rule
+
+        assert rule is not None, "an opted-in file with TD installments records §4650(a)"
+        assert rule.assessed is False
+        assert rule.counsel_confirmed is False
+        assert rule.anchor == "date_of_injury"
+        assert rule.due_date == rule.anchor_date + timedelta(
+            days=facts.penalties.deadlines.first_td_payment_days
+        )
+        assert facts.penalties.assessments == ()
+
+        no_periods = self._ledger(
+            {"td_weeks": 0, "pd_advances": 0, "late_payments": 0}, "no-td-first-rule"
+        )
+        assert no_periods.penalties.first_payment_rule is None
+
+    def test_the_first_pd_deadline_anchors_on_the_last_td_payment_made(self) -> None:
+        """§4650(b) runs from the last payment made, not the last one listed.
+
+        The ledger is ordered by accrual, so a front-loaded delay can leave the
+        *first* block paid after every other one. Anchoring on ``paid_td[-1]``
+        read the list order as a chronology and produced a permanent-disability
+        deadline that expired before the event supposed to start it.
+        """
+        onset = date(2021, 6, 14)
+        early_block_paid_last = money_module.TdPeriod(
+            start=onset,
+            end=onset + timedelta(days=27),
+            weeks=Decimal("4"),
+            weekly_rate=Decimal("100.00"),
+            amount=Decimal("400.00"),
+            date_due=onset + timedelta(days=41),
+            date_paid=onset + timedelta(days=200),
+            days_late=159,
+        )
+        later_block_paid_first = money_module.TdPeriod(
+            start=onset + timedelta(days=28),
+            end=onset + timedelta(days=55),
+            weeks=Decimal("4"),
+            weekly_rate=Decimal("100.00"),
+            amount=Decimal("400.00"),
+            date_due=onset + timedelta(days=69),
+            date_paid=onset + timedelta(days=69),
+            days_late=0,
+        )
+        # Paid inside the window the *latest* payment opens (200 + 14), and long
+        # outside the one the last-listed payment would have opened (69 + 14).
+        advance = money_module.PdAdvance(
+            date_due=onset + timedelta(days=210),
+            date_paid=onset + timedelta(days=210),
+            amount=Decimal("400.00"),
+            weekly_rate=Decimal("100.00"),
+            weeks=Decimal("4"),
+            days_late=0,
+        )
+        seed = parse_case_seed(
+            _seed_body({"wages": WAGES, "penalties": {}}, case_id="pd-anchor-order")
+        )
+
+        ledger = money_module._derive_penalties(
+            seed,
+            money_module.BenefitLedger(
+                td_periods=(early_block_paid_last, later_block_paid_first),
+                pd_advances=(advance,),
+            ),
+            onset,
+            onset,
+        )
+
+        latest_payment = max(
+            period.date_paid
+            for period in (early_block_paid_last, later_block_paid_first)
+        )
+        assert latest_payment != later_block_paid_first.date_paid, (
+            "the probe needs the last-listed payment to not be the last made"
+        )
+        pd_entry = next(item for item in ledger.schedule if item.source == "pd_advance")
+        assert pd_entry.statutory_due_date == latest_payment + timedelta(
+            days=ledger.deadlines.first_pd_payment_days
+        )
+        assert pd_entry.statutory_due_date >= latest_payment
+        assert pd_entry.days_late == 0
+        assert [a for a in ledger.assessments if a.source == "pd_advance"] == []
+
+
 class TestTheSettlementObject:
     """Approval and funding are two events, and the interval between them."""
 
@@ -1498,14 +2083,23 @@ class TestDeterminism:
         basis = facts.wages.rate.basis
         doi = seed.injury.date_of_injury
 
+        def inside_exact() -> Decimal:
+            with exact():
+                return Decimal(1) / Decimal(3)
+
         calls = {
             "money": lambda: money(1234.567),
+            "dollars": lambda: dollars(Decimal("1234.567")),
+            "exact": inside_exact,
             "rate_basis_for": lambda: rate_basis_for(doi),
+            "penalty_basis_for": lambda: penalty_basis_for(doi),
+            "statutory_deadline_basis_for": lambda: statutory_deadline_basis_for(doi),
             "select_method": lambda: select_method(wages, periods),
             "compute_aww": lambda: compute_aww(wages, periods),
             "compute_comp_rate": lambda: compute_comp_rate(money(1234.56), basis),
             "derive_money_facts": lambda: derive_money_facts(seed, timeline, "ordinary"),
             "money_manifest_block": lambda: money_manifest_block(facts),
+            "analyzer_money_manifest_block": lambda: analyzer_money_manifest_block(facts),
         }
         exported = {
             name
@@ -2789,6 +3383,7 @@ class TestTheGovernanceTableBindsBothWays:
                     "approval_date": "2025-01-06",
                     "funding_date": "2025-02-05",
                 },
+                "penalties": {},
             }
         )
         return {"money": money_manifest_block(facts)}
@@ -3891,6 +4486,43 @@ class TestTheValidatorRefusesAnUncheckableClaim:
                 block["money"]["settlement"] = mutation
             else:
                 block["money"]["settlement"].update(mutation)
+            problems = _refusals(block, documents, "c", given=label)
+            assert any(expected in p for p in problems), (label, problems)
+
+    def test_penalties_are_shape_checked_and_governed_like_everything_else(self) -> None:
+        """A present penalties group is checked instead of skipped as optional."""
+        from wc_caseload_engine.manifests import _validate_money
+
+        facts = _facts(
+            {
+                "wages": WAGES,
+                "benefits": {
+                    "td_weeks": 24,
+                    "td_gap_days": 45,
+                    "late_payments": 2,
+                    "max_days_late": 45,
+                },
+                "penalties": {},
+            }
+        )
+        clean = {"money": money_manifest_block(facts)}
+        documents = _docs(
+            MONEY_WAGE_SUBTYPE,
+            MONEY_TD_SUBTYPE,
+            settlement=clean["money"].get("settlement"),
+        )
+        assert not _validate_money(clean, documents, "c")
+
+        cases: list[tuple[str, Any, str]] = [
+            ("penalties is a list", [], "not a mapping"),
+            ("an ungoverned field", {"surprise": "x"}, "ungoverned"),
+        ]
+        for label, mutation, expected in cases:
+            block = {"money": money_manifest_block(facts)}
+            if isinstance(mutation, list):
+                block["money"]["penalties"] = mutation
+            else:
+                block["money"]["penalties"].update(mutation)
             problems = _refusals(block, documents, "c", given=label)
             assert any(expected in p for p in problems), (label, problems)
 

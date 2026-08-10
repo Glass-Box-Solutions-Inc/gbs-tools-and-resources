@@ -18,6 +18,14 @@ own bytes. The only field any digest ignores is `provenance.substrateSha`, and
 a test asserts that exemption list is exactly that one name — every entry there
 is a field the gate stops watching, and the cost of that is invisible.
 
+Format 3 adds `rootFiles`, the sorted paths of every file not owned by a case
+directory. It is an accounting record, not another digest: `corpusTree` already
+hashes every file's bytes. The well-formedness invariant now proves that the
+total file count equals the case-owned files plus these recorded names, so a
+root file appearing or disappearing is explicit drift rather than an assumed
+`+ 1`. Format-2 goldens are refused instead of being half-read with that old
+one-root-file assumption; re-record them with the command below.
+
 `--check` also runs `validate --out`, which re-hashes every manifest-declared
 checksum against disk, and the tree reconciliation requires the manifest's
 document list to equal the files under `documents/` in both directions.

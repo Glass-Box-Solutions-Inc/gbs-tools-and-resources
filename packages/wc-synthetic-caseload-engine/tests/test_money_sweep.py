@@ -40,6 +40,7 @@ from typing import Any
 import pytest
 
 from conftest import extract_text, requires_substrate
+from money_coherence import CORE_RULES, GOVERNED_ON_THE_PAGE, HOURLY_RATE, sweep
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
 from wc_caseload_engine.seeds import parse_case_seed
 from wc_caseload_engine.substrate import install_substrate_path, substrate_path
@@ -249,74 +250,6 @@ _SEED: dict[str, Any] = {
     },
 }
 
-#: fact -> (pattern, how to read the ledger). Every pattern is anchored to the
-#: words around the figure, because an unanchored money regex matches the next
-#: number along and asserts nothing.
-_GOVERNED_ON_THE_PAGE: dict[str, tuple[re.Pattern[str], str]] = {
-    "aww": (
-        re.compile(r"Average Weekly Wage \(AWW\): \$([\d,]+\.\d\d)"),
-        "money.wage.averageWeeklyWage",
-    ),
-    "td_rate_statement": (
-        re.compile(r"Temporary Disability Rate: \$([\d,]+\.\d\d)/week"),
-        "money.rate.tdWeeklyRate",
-    ),
-    "pd_rate_statement": (
-        re.compile(r"Permanent Disability Rate: \$([\d,]+\.\d\d)/week"),
-        "money.rate.pdWeeklyRate",
-    ),
-    "td_rate_memo": (
-        re.compile(r"weeks @ \$([\d,]+\.\d\d)/week"),
-        "money.rate.tdWeeklyRate",
-    ),
-    "td_total_memo": (
-        re.compile(r"Temporary Total Disability \(TTD\): \$([\d,]+\.\d\d)"),
-        "money.benefits.tdTotal",
-    ),
-    "td_total_ledger": (
-        re.compile(r"Temporary Disability Paid To Date \$([\d,]+\.\d\d)"),
-        "money.benefits.tdTotal",
-    ),
-    "pd_rate_memo": (
-        re.compile(r"Weekly Rate: \$([\d,]+\.\d\d)"),
-        "money.rate.pdWeeklyRate",
-    ),
-    "gross_terms": (
-        re.compile(r"Settlement Gross: \$([\d,]+\.\d\d)"),
-        "money.settlement.grossAmount",
-    ),
-    "gross_release": (
-        re.compile(r"Gross Settlement Amount \$([\d,]+\.\d\d)"),
-        "money.settlement.grossAmount",
-    ),
-    "gross_target": (
-        re.compile(r"Recommended Settlement Target: \$([\d,]+)"),
-        "money.settlement.grossAmount",
-    ),
-}
-
-#: The hourly rate is swept differently: a pay-rate *history* legitimately holds
-#: earlier, lower figures, so equality on every occurrence would be the wrong
-#: assertion. What it must not do is print a rate above the one the file says the
-#: applicant was earning when they were hurt.
-_HOURLY = re.compile(
-    # Two shapes, and the second is why `align_employer_wage` exists rather than
-    # a template override: the deposition has the applicant *say* the figure,
-    # from the same `employer.hourly_rate` the personnel file tabulates. A fix
-    # that only rewrote the table would have left the transcript contradicting
-    # it — this program's oldest defect class, one more time.
-    r"\$([\d,]+\.\d\d)(?:/hr| per hour)"
-)
-
-
-def _ledger_value(money: dict[str, Any], path: str) -> Decimal:
-    """The published figure a page is being compared against."""
-    node: Any = money
-    for part in path.split(".")[1:]:
-        node = node[part]
-    return Decimal(node)
-
-
 @requires_substrate
 @pytest.mark.slow
 class TestAGovernedFigureIsTheSameOnEverySurface:
@@ -353,22 +286,11 @@ class TestAGovernedFigureIsTheSameOnEverySurface:
         """
         manifest, texts = rendered
         money = manifest["caseFacts"]["money"]
-        surfaces: dict[str, list[str]] = defaultdict(list)
-        disagreements: list[str] = []
-        for subtype, text in sorted(texts.items()):
-            for name, (pattern, path) in _GOVERNED_ON_THE_PAGE.items():
-                expected = _ledger_value(money, path)
-                for found in pattern.finditer(text):
-                    surfaces[name].append(subtype)
-                    printed = Decimal(found.group(1).replace(",", ""))
-                    if printed != expected:
-                        disagreements.append(
-                            f"{subtype}: {name} prints {printed}, the ledger "
-                            f"publishes {expected} ({path})"
-                        )
-        assert not disagreements, "\n".join(disagreements)
-        # A rule that matches nothing is a rule that has stopped sweeping.
-        dead = sorted(name for name in _GOVERNED_ON_THE_PAGE if name not in surfaces)
+        result = sweep(texts, money, GOVERNED_ON_THE_PAGE)
+        assert not result.disagreements, result.describe()
+        # This seed is non-penalised, so only an absent core rule has stopped
+        # sweeping; the full table above still compares any penalty that appears.
+        dead = sorted(CORE_RULES.keys() - result.facts_found)
         assert not dead, (
             f"these labels appear on no document: {dead}. Either the label moved "
             "and the pattern needs re-pointing, or the document stopped carrying "
@@ -396,7 +318,7 @@ class TestAGovernedFigureIsTheSameOnEverySurface:
         for subtype, text in sorted(texts.items()):
             rates = [
                 Decimal(found.group(1).replace(",", ""))
-                for found in _HOURLY.finditer(text)
+                for found in HOURLY_RATE.finditer(text)
             ]
             if rates:
                 seen[subtype] = rates

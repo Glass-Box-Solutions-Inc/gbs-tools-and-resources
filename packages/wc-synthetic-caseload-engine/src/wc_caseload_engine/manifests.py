@@ -27,9 +27,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,10 @@ from wc_caseload_engine.case_facts import (
 from wc_caseload_engine.money import (
     GOVERNED_MONEY_FIELDS,
     MoneyFacts,
+    exact,
+)
+from wc_caseload_engine.money import (
+    money as quantized_money,
 )
 from wc_caseload_engine.planner import (
     CADENCE_ANCHOR_SUBTYPES,
@@ -61,6 +66,17 @@ from wc_caseload_engine.taxonomy import (
     SUBSTRATE_ONLY_SUBTYPES,
     effective_taxonomy,
 )
+from wc_caseload_engine.truth_manifest import (
+    CASELOAD_TRUTH_NAME,
+    TRUTH_DIR,
+    TruthManifestError,
+    _write_json,
+    check_truth_dir_is_isolated,
+    money_facts_from_truth,
+    read_truth_manifest,
+    write_case_truth_manifest,
+    write_caseload_truth_manifest,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -75,8 +91,12 @@ CASELOAD_MANIFEST_NAME = "caseload_manifest.json"
 SEED_NAME = "seed.yaml"
 
 SUBPOENAED_RECORDS_SUBTYPES: frozenset[str] = frozenset(
-    {"SUBPOENAED_RECORDS", "SUBPOENAED_RECORDS_MEDICAL", "SUBPOENAED_RECORDS_EMPLOYMENT",
-     "SUBPOENAED_RECORDS_OTHER"}
+    {
+        "SUBPOENAED_RECORDS",
+        "SUBPOENAED_RECORDS_MEDICAL",
+        "SUBPOENAED_RECORDS_EMPLOYMENT",
+        "SUBPOENAED_RECORDS_OTHER",
+    }
 )
 """The subtypes whose packets the provider round-robin advances over."""
 
@@ -146,6 +166,7 @@ class CaseResult:
     plan: CasePlan
     renders: tuple[RenderResult, ...]
     manifest: dict[str, object]
+    truth_path: Path | None = None
 
     @property
     def document_count(self) -> int:
@@ -230,22 +251,26 @@ def build_manifest(
     return ordered
 
 
-def _write_json(path: Path, payload: dict[str, object]) -> None:
-    """Write deterministic, human-diffable JSON."""
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-
-def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseResult:
+def generate_case(
+    seed: CaseSeed,
+    out_dir: Path,
+    case_number: int = 1,
+    truth_dir: Path | None = None,
+) -> CaseResult:
     """Generate one complete case: seed, documents and manifest.
 
     Args:
         seed: the case seed.
         out_dir: caseload output root; the case writes to ``out_dir/<case_id>``.
         case_number: 1-based position, used for corpus filenames.
+        truth_dir: scorer-only output directory, or ``None`` to preserve the
+            historical case tree exactly.
 
     Returns:
         A :class:`CaseResult`.
     """
+    if truth_dir is not None:
+        check_truth_dir_is_isolated(truth_dir, out_dir, (seed.case_id,))
     plan = build_case_plan(seed, case_number=case_number)
     case_dir = out_dir / seed.case_id
     documents_dir = case_dir / DOCUMENTS_DIR
@@ -311,6 +336,7 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
 
     manifest = build_manifest(plan, renders)
     _write_json(case_dir / MANIFEST_NAME, manifest)
+    truth_path = write_case_truth_manifest(plan, truth_dir) if truth_dir is not None else None
 
     log.info(
         "case.generated",
@@ -325,6 +351,7 @@ def generate_case(seed: CaseSeed, out_dir: Path, case_number: int = 1) -> CaseRe
         plan=plan,
         renders=tuple(result for _name, result in renders),
         manifest=manifest,
+        truth_path=truth_path,
     )
 
 
@@ -407,15 +434,37 @@ def build_caseload_manifest(caseload_id: str, results: Sequence[CaseResult]) -> 
 
 
 def generate_caseload(
-    caseload_id: str, seeds: Iterable[CaseSeed], out_dir: Path
+    caseload_id: str,
+    seeds: Iterable[CaseSeed],
+    out_dir: Path,
+    truth: bool = True,
 ) -> list[CaseResult]:
     """Generate every case in a caseload and write the aggregate manifest."""
+    seeds = tuple(seeds)
+    truth_path = out_dir / TRUTH_DIR
+    if not truth and truth_path.exists():
+        raise TruthManifestError(
+            f"truth output is disabled but {truth_path} already exists; remove that directory "
+            "or re-run with truth enabled so stale scorer artifacts cannot survive"
+        )
+    if truth:
+        check_truth_dir_is_isolated(truth_path, out_dir, (seed.case_id for seed in seeds))
     check_substrate_pin()
     out_dir.mkdir(parents=True, exist_ok=True)
+    truth_dir = truth_path if truth else None
     results: list[CaseResult] = []
     for case_number, seed in enumerate(seeds, start=1):
-        results.append(generate_case(seed, out_dir, case_number=case_number))
+        results.append(
+            generate_case(
+                seed,
+                out_dir,
+                case_number=case_number,
+                truth_dir=truth_dir,
+            )
+        )
     _write_json(out_dir / CASELOAD_MANIFEST_NAME, build_caseload_manifest(caseload_id, results))
+    if truth_dir is not None:
+        write_caseload_truth_manifest(caseload_id, results, truth_dir)
     return results
 
 
@@ -429,6 +478,7 @@ class ValidationReport:
     """Result of validating a generated output tree."""
 
     manifests: int = 0
+    truth_manifests: int = 0
     documents: int = 0
     fallbacks: int = 0
     problems: list[str] = field(default_factory=list)
@@ -442,6 +492,7 @@ class ValidationReport:
         """Human-readable validation report."""
         lines = [
             f"manifests : {self.manifests}",
+            f"truth     : {self.truth_manifests}",
             f"documents : {self.documents}",
             f"fallbacks : {self.fallbacks}",
         ]
@@ -547,9 +598,232 @@ def _document_date(doc: dict[str, Any]) -> date | None:
         return None
 
 
-def _validate_money(
-    block: dict[str, Any], documents: list[Any], case_label: str
+def _validate_penalties(
+    penalties: Mapping[str, Any], subtypes: set[str], label: str
 ) -> list[str]:
+    """Check one compact or lossless penalty ledger independently."""
+    problems: list[str] = []
+    lossless = isinstance(penalties.get("basis"), Mapping) and isinstance(
+        penalties.get("deadlines"), Mapping
+    )
+    if not lossless and "counselConfirmed" not in penalties:
+        problems.append(
+            f"{label}: caseFacts.money.penalties.counselConfirmed is missing, while "
+            "the statutory binding publishes no caveat — add counselConfirmed so a "
+            "consumer can distinguish verified authority from an unconfirmed placeholder"
+        )
+    if not lossless and "deadlineConfirmed" not in penalties:
+        problems.append(
+            f"{label}: caseFacts.money.penalties.deadlineConfirmed is missing, while "
+            "the statutory deadline binding publishes no caveat — add deadlineConfirmed "
+            "so a consumer can distinguish verified authority from a placeholder"
+        )
+
+    schedule = penalties.get("schedule")
+    if not isinstance(schedule, list):
+        problems.append(
+            f"{label}: caseFacts.money.penalties.schedule is "
+            f"{type(schedule).__name__}, expected a list of every installment — "
+            "publish the complete statutory-deadline schedule"
+        )
+        schedule = []
+    actual_unpaid = sum(
+        1 for item in schedule if isinstance(item, dict) and item.get("unpaid") is True
+    )
+    if "unpaidCount" in penalties and penalties.get("unpaidCount") != actual_unpaid:
+        problems.append(
+            f"{label}: caseFacts.money.penalties.unpaidCount is "
+            f"{penalties.get('unpaidCount')!r}, while schedule contains {actual_unpaid} "
+            "unpaid record(s) — set unpaidCount from schedule[].unpaid"
+        )
+    scheduled = {
+        (item.get("source"), item.get("ordinal")): item
+        for item in schedule
+        if isinstance(item, dict)
+    }
+    assessments = penalties.get("assessments")
+    assessment_count = penalties.get("assessmentCount")
+    if not isinstance(assessments, list):
+        problems.append(
+            f"{label}: caseFacts.money.penalties.assessments is "
+            f"{type(assessments).__name__}, expected a list of assessed late payments — "
+            "publish the assessment records under the plural field"
+        )
+        assessments = []
+    if assessment_count != len(assessments):
+        problems.append(
+            f"{label}: caseFacts.money.penalties.assessmentCount is "
+            f"{assessment_count!r} but assessments holds {len(assessments)} record(s) — "
+            "set the count to the number of published assessments"
+        )
+    # Gated on there being an assessment to read, exactly like the benefit-event
+    # rule this mirrors. Opting into the statutory test is not itself a claim: a
+    # ledger that asked and found nothing has no figure needing a document to
+    # support it, and firing on the block's mere presence made the documented
+    # "asked, and the answer was nothing" shape fail its own validator.
+    if assessments and not (subtypes & MONEY_BENEFIT_DOCUMENTS):
+        problems.append(
+            f"{label}: caseFacts.money.penalties publishes {assessment_count!r} "
+            "assessment(s) but the case holds 0 benefit-payment documents — add a "
+            "benefit-payment surface or remove the penalties block"
+        )
+
+    first_payment_rule = penalties.get("firstPaymentRule")
+    if isinstance(first_payment_rule, Mapping):
+        # The one deadline the engine declines to decide must stay undecided.
+        # It is published so a scorer can see the question; an `assessed: true`
+        # here would be the DOI ladder coming back through the export.
+        if first_payment_rule.get("assessed") is not False:
+            problems.append(
+                f"{label}: caseFacts.money.penalties.firstPaymentRule.assessed is "
+                f"{first_payment_rule.get('assessed')!r}, while the §4650(a) anchor is "
+                "recorded and never assessed — publish assessed: false or remove the record"
+            )
+        due_raw = first_payment_rule.get("dueDate")
+        paid_raw = first_payment_rule.get("datePaid")
+        published_late = first_payment_rule.get("daysLate")
+        try:
+            expected_late = (
+                max(0, (date.fromisoformat(str(paid_raw)) - date.fromisoformat(str(due_raw))).days)
+                if paid_raw is not None
+                else 0
+            )
+        except (TypeError, ValueError):
+            problems.append(
+                f"{label}: caseFacts.money.penalties.firstPaymentRule has dueDate "
+                f"{due_raw!r} and datePaid {paid_raw!r}, which are not ISO dates — "
+                "publish both so daysLate is checkable"
+            )
+        else:
+            if published_late != expected_late:
+                problems.append(
+                    f"{label}: caseFacts.money.penalties.firstPaymentRule.daysLate is "
+                    f"{published_late!r}, while datePaid {paid_raw!r} against dueDate "
+                    f"{due_raw!r} is {expected_late} — set daysLate from the published dates"
+                )
+
+    assessed_amounts: list[Decimal] = []
+    assessed_principals: list[Decimal] = []
+    for index, assessment in enumerate(assessments, 1):
+        if not isinstance(assessment, dict):
+            problems.append(
+                f"{label}: caseFacts.money.penalties.assessments[{index}] is a "
+                f"{type(assessment).__name__}, expected a record — publish the late "
+                "payment operands and computed amount together"
+            )
+            continue
+        days_late = assessment.get("daysLate")
+        if type(days_late) is not int or days_late < 1:
+            problems.append(
+                f"{label}: caseFacts.money.penalties.assessments[{index}].daysLate "
+                f"is {days_late!r}, but an assessed payment must be at least 1 day late — "
+                "remove the assessment or correct daysLate from its due and paid dates"
+            )
+        statutory_due_raw = assessment.get("statutoryDueDate")
+        paid_raw = assessment.get("datePaid")
+        if statutory_due_raw is None:
+            problems.append(
+                f"{label}: caseFacts.money.penalties.assessments[{index}]."
+                "statutoryDueDate is null, while an assessment requires a statutory "
+                "deadline — remove the assessment or publish its statutoryDueDate"
+            )
+        else:
+            try:
+                statutory_due = date.fromisoformat(str(statutory_due_raw))
+                paid = date.fromisoformat(str(paid_raw))
+                computed_days_late = (paid - statutory_due).days
+                if days_late != computed_days_late:
+                    problems.append(
+                        f"{label}: caseFacts.money.penalties.assessments[{index}]."
+                        f"daysLate is {days_late!r}, while datePaid {paid_raw!r} minus "
+                        f"statutoryDueDate {statutory_due_raw!r} is "
+                        f"{computed_days_late} — set daysLate from the statutory deadline"
+                    )
+            except (TypeError, ValueError):
+                problems.append(
+                    f"{label}: caseFacts.money.penalties.assessments[{index}] has "
+                    f"statutoryDueDate {statutory_due_raw!r} and datePaid {paid_raw!r}, "
+                    "which are not ISO dates — publish both dates so daysLate is checkable"
+                )
+        schedule_entry = scheduled.get((assessment.get("source"), assessment.get("ordinal")))
+        if schedule_entry is not None and (
+            schedule_entry.get("unpaid") is True
+            or schedule_entry.get("rule") == "discretionary_advance"
+        ):
+            problems.append(
+                f"{label}: caseFacts.money.penalties.assessments[{index}] targets "
+                f"schedule entry {assessment.get('source')!r}/"
+                f"{assessment.get('ordinal')!r}, whose unpaid figure is "
+                f"{schedule_entry.get('unpaid')!r} and rule is "
+                f"{schedule_entry.get('rule')!r} — remove assessments for unpaid or "
+                "discretionary installments"
+            )
+        try:
+            principal = Decimal(str(assessment.get("principal")))
+            fraction = Decimal(str(assessment.get("increaseFraction")))
+            published_amount = Decimal(str(assessment.get("amount")))
+            # Recomputed in the producer's context, never the caller's. These
+            # figures are made inside `exact()`; checking them under whatever
+            # precision the host process happens to carry lets a hostile ambient
+            # context invent drift and condemn a correct corpus.
+            with exact():
+                computed_amount = quantized_money(principal * fraction)
+        except (InvalidOperation, TypeError, ValueError):
+            problems.append(
+                f"{label}: caseFacts.money.penalties.assessments[{index}] has "
+                f"principal {assessment.get('principal')!r}, increaseFraction "
+                f"{assessment.get('increaseFraction')!r} and amount "
+                f"{assessment.get('amount')!r}, which cannot be read as decimals — "
+                "publish exact decimal strings for all three fields"
+            )
+            continue
+        assessed_principals.append(principal)
+        assessed_amounts.append(published_amount)
+        if published_amount != computed_amount:
+            problems.append(
+                f"{label}: caseFacts.money.penalties.assessments[{index}].amount is "
+                f"{published_amount} but principal {principal} x increaseFraction "
+                f"{fraction} is {computed_amount} to cents — replace amount with the "
+                "cents-quantized product"
+            )
+
+    try:
+        published_total = Decimal(str(penalties.get("totalIncrease")))
+        with exact():
+            computed_total = quantized_money(sum(assessed_amounts, Decimal("0.00")))
+        if published_total != computed_total:
+            problems.append(
+                f"{label}: caseFacts.money.penalties.totalIncrease is "
+                f"{published_total} but assessment amounts sum to {computed_total} — "
+                "replace totalIncrease with the cents-quantized assessment sum"
+            )
+    except (InvalidOperation, TypeError, ValueError):
+        problems.append(
+            f"{label}: caseFacts.money.penalties.totalIncrease is "
+            f"{penalties.get('totalIncrease')!r}, while the assessment sum is decimal — "
+            "publish totalIncrease as an exact decimal string"
+        )
+    try:
+        published_principal = Decimal(str(penalties.get("principalAssessed")))
+        with exact():
+            computed_principal = quantized_money(sum(assessed_principals, Decimal("0.00")))
+        if published_principal != computed_principal:
+            problems.append(
+                f"{label}: caseFacts.money.penalties.principalAssessed is "
+                f"{published_principal} but assessment principals sum to "
+                f"{computed_principal} — replace principalAssessed with the "
+                "cents-quantized principal sum"
+            )
+    except (InvalidOperation, TypeError, ValueError):
+        problems.append(
+            f"{label}: caseFacts.money.penalties.principalAssessed is "
+            f"{penalties.get('principalAssessed')!r}, while the principal sum is decimal — "
+            "publish principalAssessed as an exact decimal string"
+        )
+    return problems
+
+
+def _validate_money(block: dict[str, Any], documents: list[Any], case_label: str) -> list[str]:
     """Check the money spine against itself and against the folder.
 
     Skipped entirely when there is no ``money`` key, because absence is the
@@ -570,8 +844,13 @@ def _validate_money(
     if not isinstance(money, dict):
         return [f"{case_label}: caseFacts.money is {type(money).__name__}, expected a mapping"]
 
+    subtypes = {d.get("subtype") for d in documents if isinstance(d, dict)}
+    penalty_section = money.get("penalties")
+    if isinstance(penalty_section, Mapping):
+        problems.extend(_validate_penalties(penalty_section, subtypes, case_label))
+
     for key, fields in GOVERNED_MONEY_FIELDS.items():
-        if key == "settlement" and money.get(key) is None:
+        if key in ("settlement", "penalties") and money.get(key) is None:
             # Absent for a case that did not settle — see SettlementFact. Absent
             # is fine; *present* was being skipped along with it, so a settlement
             # was the one group whose shape and governance nothing checked. An
@@ -653,7 +932,6 @@ def _validate_money(
             "must not have to read the source to find that out"
         )
 
-    subtypes = {d.get("subtype") for d in documents if isinstance(d, dict)}
     if not (subtypes & MONEY_WAGE_DOCUMENTS):
         problems.append(
             f"{case_label}: caseFacts publishes an average weekly wage but the case holds "
@@ -803,6 +1081,19 @@ def _validate_money(
             problems.append(
                 f"{case_label}: a benefit gap runs {start} to {end} ({spanned} day(s)) "
                 f"but records days {days!r} — a gap runs forwards and lasts at least a day"
+            )
+
+    penalties = money.get("penalties")
+    if isinstance(penalties, dict):
+        schedule = penalties.get("schedule")
+        expected_schedule_count = money.get("benefits", {}).get("tdPeriodCount", 0) + money.get(
+            "benefits", {}
+        ).get("pdAdvanceCount", 0)
+        if isinstance(schedule, list) and len(schedule) != expected_schedule_count:
+            problems.append(
+                f"{case_label}: caseFacts.money.penalties.schedule holds {len(schedule)} "
+                f"record(s), while benefits publish {expected_schedule_count} installment(s) — "
+                "publish one schedule entry for every TD period and PD advance"
             )
 
     settlement = money.get("settlement")
@@ -974,9 +1265,7 @@ def _validate_case_facts(
                 f"{performed!r}, expected a boolean"
             )
         elif modality in seen and seen[modality] != performed:
-            problems.append(
-                f"{case_label}: caseFacts calls {modality!r} both performed and absent"
-            )
+            problems.append(f"{case_label}: caseFacts calls {modality!r} both performed and absent")
         else:
             seen[modality] = performed
 
@@ -987,8 +1276,7 @@ def _validate_case_facts(
         extra = set(adjuster) - set(GOVERNED_LEDGER_FIELDS["adjuster"])
         if extra:
             problems.append(
-                f"{case_label}: caseFacts.adjuster publishes ungoverned field(s) "
-                f"{sorted(extra)}"
+                f"{case_label}: caseFacts.adjuster publishes ungoverned field(s) {sorted(extra)}"
             )
         # No ``diligence`` check: it is resolved on the ledger but deliberately
         # unpublished, because no rendered document reflects it and a reader
@@ -998,8 +1286,7 @@ def _validate_case_facts(
         # alone: a pleading alleging unreasonable delay needs a delay behind it.
         late = adjuster.get("lateBenefitEvents") or 0
         has_petition = any(
-            isinstance(d, dict) and d.get("subtype") == "PETITION_FOR_PENALTIES"
-            for d in documents
+            isinstance(d, dict) and d.get("subtype") == "PETITION_FOR_PENALTIES" for d in documents
         )
         if has_petition and not late:
             problems.append(
@@ -1019,8 +1306,7 @@ def _validate_case_facts(
         extra = set(treatment) - set(GOVERNED_LEDGER_FIELDS["treatment"])
         if extra:
             problems.append(
-                f"{case_label}: caseFacts.treatment publishes ungoverned field(s) "
-                f"{sorted(extra)}"
+                f"{case_label}: caseFacts.treatment publishes ungoverned field(s) {sorted(extra)}"
             )
         if treatment.get("status") not in TREATMENT_STATUSES:
             problems.append(
@@ -1155,13 +1441,209 @@ def _validate_case_facts(
     return problems
 
 
+def _validate_truth_tree(
+    out_dir: Path,
+    case_manifests: Mapping[str, Mapping[str, Any]],
+    report: ValidationReport,
+) -> None:
+    """Validate the optional scorer subtree and its links to analyzer artifacts."""
+    truth_dir = out_dir / TRUTH_DIR
+    if not truth_dir.is_dir():
+        return
+
+    case_ids = set(case_manifests)
+    truth_paths = sorted(
+        path
+        for path in truth_dir.glob("*.truth.json")
+        if path.name != CASELOAD_TRUTH_NAME
+    )
+    truth_by_case = {
+        path.name.removesuffix(".truth.json"): path for path in truth_paths
+    }
+    truth_case_ids = set(truth_by_case)
+
+    for case_id in sorted(case_ids - truth_case_ids):
+        expected = truth_dir / f"{case_id}.truth.json"
+        report.problems.append(
+            f"{case_id}: truth manifest is missing at {expected}; case directory exists but "
+            "truth value is None — regenerate the caseload with truth output enabled"
+        )
+    for case_id in sorted(truth_case_ids - case_ids):
+        path = truth_by_case[case_id]
+        expected_case_dir = out_dir / case_id
+        report.problems.append(
+            f"{case_id}: truth file is {path}, while case directory is missing at "
+            f"{expected_case_dir} — remove the stray truth file or restore its case directory"
+        )
+
+    rollup_path = truth_dir / CASELOAD_TRUTH_NAME
+    rollup: Mapping[str, Any] | None = None
+    if truth_paths and not rollup_path.is_file():
+        report.problems.append(
+            f"truth: {CASELOAD_TRUTH_NAME} is missing at {rollup_path}, while "
+            f"{len(truth_paths)} per-case truth file(s) exist — regenerate the caseload truth index"
+        )
+    elif rollup_path.is_file():
+        try:
+            rollup = read_truth_manifest(rollup_path)
+        except TruthManifestError as exc:
+            report.problems.append(
+                f"truth: {CASELOAD_TRUTH_NAME} cannot be validated ({exc}) — regenerate the "
+                "caseload truth index"
+            )
+
+    if rollup is not None:
+        channels = rollup.get("channels")
+        money_channel = channels.get("money") if isinstance(channels, Mapping) else None
+        indexed = rollup.get("cases")
+        if indexed is None and isinstance(money_channel, Mapping):
+            indexed = money_channel.get("cases")
+        if not isinstance(indexed, list):
+            report.problems.append(
+                f"truth: {CASELOAD_TRUTH_NAME} cases is "
+                f"{indexed!r}, while case directories are {sorted(case_ids)!r} — publish one "
+                "index entry per case"
+            )
+        else:
+            indexed_ids = [
+                entry.get("caseId") for entry in indexed if isinstance(entry, Mapping)
+            ]
+            if len(indexed) != len(case_ids) or set(indexed_ids) != case_ids:
+                report.problems.append(
+                    f"truth: {CASELOAD_TRUTH_NAME} cases names "
+                    f"{indexed_ids!r}, while case directories are {sorted(case_ids)!r} — "
+                    "rebuild the index with exactly one entry per case"
+                )
+            for index, entry in enumerate(indexed, 1):
+                if not isinstance(entry, Mapping):
+                    report.problems.append(
+                        f"truth: {CASELOAD_TRUTH_NAME} cases[{index}] is {entry!r}, while an "
+                        "index record is required — publish caseId and truthFile"
+                    )
+                    continue
+                truth_file = entry.get("truthFile")
+                resolved = (
+                    (out_dir / truth_file).resolve()
+                    if isinstance(truth_file, str)
+                    else None
+                )
+                if resolved is None or not resolved.is_file():
+                    report.problems.append(
+                        f"{entry.get('caseId')!r}: {CASELOAD_TRUTH_NAME} truthFile is "
+                        f"{truth_file!r}, which resolves to {resolved!r} and is not a file — "
+                        "set truthFile to the existing per-case truth manifest"
+                    )
+
+    for case_id, truth_path in sorted(truth_by_case.items()):
+        report.truth_manifests += 1
+        try:
+            truth = read_truth_manifest(truth_path)
+            money_facts_from_truth(truth)
+        except TruthManifestError as exc:
+            report.problems.append(
+                f"{case_id}: truth manifest {truth_path} cannot be validated ({exc}) — "
+                "regenerate this scorer artifact"
+            )
+            continue
+
+        manifest = case_manifests.get(case_id)
+        if manifest is None:
+            continue
+        truth_case_id = truth.get("caseId")
+        if truth_case_id != case_id:
+            report.problems.append(
+                f"{case_id}: truth caseId is {truth_case_id!r}, while its filename names "
+                f"{case_id!r} — rename or regenerate the truth manifest"
+            )
+
+        truth_seed_hash = (truth.get("provenance") or {}).get("seedHash")
+        manifest_seed_hash = (manifest.get("provenance") or {}).get("seedHash")
+        if truth_seed_hash != manifest_seed_hash:
+            report.problems.append(
+                f"{case_id}: truth provenance.seedHash is {truth_seed_hash!r}, while manifest "
+                f"provenance.seedHash is {manifest_seed_hash!r} — regenerate both artifacts "
+                "from the same seed"
+            )
+
+        channels = truth.get("channels")
+        money_channel = channels.get("money") if isinstance(channels, Mapping) else None
+        case_facts = manifest.get("caseFacts")
+        manifest_money = case_facts.get("money") if isinstance(case_facts, Mapping) else None
+        if not isinstance(money_channel, Mapping):
+            if manifest_money is not None:
+                report.problems.append(
+                    f"{case_id}: truth channels.money.published is None, while manifest "
+                    f"caseFacts.money is {manifest_money!r} — regenerate the missing money channel"
+                )
+            continue
+
+        published = money_channel.get("published")
+        if isinstance(published, Mapping):
+            analyzer_projection = dict(published)
+            analyzer_projection.pop("penalties", None)
+        else:
+            analyzer_projection = published
+        if analyzer_projection != manifest_money:
+            report.problems.append(
+                f"{case_id}: truth channels.money.published minus penalties is "
+                f"{analyzer_projection!r}, while manifest caseFacts.money is "
+                f"{manifest_money!r} — regenerate both artifacts from one MoneyFacts value"
+            )
+
+        penalties = money_channel.get("penalties")
+        if isinstance(penalties, Mapping):
+            benefits = money_channel.get("benefits")
+            td_periods = benefits.get("tdPeriods") if isinstance(benefits, Mapping) else None
+            pd_advances = benefits.get("pdAdvances") if isinstance(benefits, Mapping) else None
+            schedule = penalties.get("schedule")
+            if (
+                isinstance(schedule, list)
+                and isinstance(td_periods, list)
+                and isinstance(pd_advances, list)
+            ):
+                expected_schedule_count = len(td_periods) + len(pd_advances)
+                if len(schedule) != expected_schedule_count:
+                    report.problems.append(
+                        f"{case_id}: caseFacts.money.penalties.schedule holds {len(schedule)} "
+                        f"record(s), while benefits publish {expected_schedule_count} "
+                        "installment(s) — publish one schedule entry for every TD period "
+                        "and PD advance"
+                    )
+            documents = manifest.get("documents")
+            document_entries = documents if isinstance(documents, list) else []
+            subtypes = {
+                entry.get("subtype")
+                for entry in document_entries
+                if isinstance(entry, Mapping) and isinstance(entry.get("subtype"), str)
+            }
+            report.problems.extend(_validate_penalties(penalties, subtypes, case_id))
+
+            # The compact block is the shape a scorer reads, and it was checked
+            # by nothing: the analyzer projection pops `penalties` before the
+            # manifest is written, and the projection comparison above pops it
+            # again — so every assertion landed on the lossless twin while the
+            # shipped bytes went out unexamined. Running the same rules over
+            # `published.penalties` also makes the compact branch of
+            # `_validate_penalties` reachable from a produced artifact for the
+            # first time, rather than only from a hand-built mapping in a test.
+            published_penalties = (
+                published.get("penalties") if isinstance(published, Mapping) else None
+            )
+            if isinstance(published_penalties, Mapping):
+                report.problems.extend(
+                    _validate_penalties(published_penalties, subtypes, f"{case_id} published")
+                )
+
+
 def validate_output_tree(out_dir: Path, allow_fallback: bool = False) -> ValidationReport:
     """Validate every manifest under *out_dir*.
 
     Checks, per document: the subtype is classifier vocabulary (and not a
     substrate-only realism subtype), the recorded parent type matches the
     taxonomy, the file exists, its MD5 and size match the manifest, and it was
-    rendered by its own template rather than a fallback.
+    rendered by its own template rather than a fallback. When ``truth/`` exists,
+    also checks scorer-file correspondence, the caseload index, provenance and
+    public-projection drift, plus penalty arithmetic and schedule consistency.
 
     Args:
         out_dir: a generated caseload root.
@@ -1173,9 +1655,11 @@ def validate_output_tree(out_dir: Path, allow_fallback: bool = False) -> Validat
     report = ValidationReport()
     taxonomy = effective_taxonomy()
     manifest_paths = sorted(out_dir.glob(f"*/{MANIFEST_NAME}"))
+    case_manifests: dict[str, Mapping[str, Any]] = {}
 
     if not manifest_paths:
         report.problems.append(f"{out_dir}: no case manifests found (expected */{MANIFEST_NAME})")
+        _validate_truth_tree(out_dir, case_manifests, report)
         return report
 
     for manifest_path in manifest_paths:
@@ -1186,6 +1670,7 @@ def validate_output_tree(out_dir: Path, allow_fallback: bool = False) -> Validat
         except json.JSONDecodeError as exc:
             report.problems.append(f"{case_label}: manifest is not valid JSON — {exc}")
             continue
+        case_manifests[case_label] = manifest
 
         provenance = manifest.get("provenance") or {}
         if provenance.get("zeroRealPii") is not True:
@@ -1254,6 +1739,7 @@ def validate_output_tree(out_dir: Path, allow_fallback: bool = False) -> Validat
                     f"(manifest {entry.get('fileSize')}, file {len(payload)})"
                 )
 
+    _validate_truth_tree(out_dir, case_manifests, report)
     return report
 
 
@@ -1278,9 +1764,7 @@ __all__ = [
 ]
 
 
-def _write_case_facts(
-    facts: CaseFacts, path: Path, money: MoneyFacts | None = None
-) -> None:
+def _write_case_facts(facts: CaseFacts, path: Path, money: MoneyFacts | None = None) -> None:
     """Write the resolved ledger beside the seed.
 
     YAML rather than JSON to match ``seed.yaml``: the two files are read

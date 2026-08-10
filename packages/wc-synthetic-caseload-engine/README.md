@@ -53,7 +53,7 @@ package. Override discovery with `WC_CASELOAD_SUBSTRATE=/abs/path` if it lives e
 | `wc-caseload generate ... --seed N` | Override `auto.rng_seed` for this run (explicit case seeds untouched) |
 | `wc-caseload seed --template [--kind case\|caseload]` | Print an annotated seed covering every controllable field |
 | `wc-caseload validate --spec S` | Schema, cross-field rules and document-control key validity |
-| `wc-caseload validate --out D` | Every manifest subtype canonical + parent-valid, every file present, every MD5 matching, every document rendered by its own template (`--allow-fallback` to permit fallbacks) |
+| `wc-caseload validate --out D` | Case manifests, document taxonomy/checksums/templates, and—when present—the scorer-only `truth/` index, case correspondence, seed provenance, public projection, and penalty arithmetic (`--allow-fallback` to permit fallbacks) |
 | `wc-caseload taxonomy-check` | Diff the engine taxonomy against the classifier source; nonzero exit on drift |
 
 Generation never touches the network and never writes outside `--out`.
@@ -847,7 +847,7 @@ Treating reports follow one trajectory (improving, plateau or worsening) across
 the case rather than re-rolling a mood per document, so a three-report file reads
 as one story instead of three.
 
-### The money spine — `scenario.wages`, `scenario.benefits`, `scenario.settlement`
+### The money spine — `scenario.wages`, benefits, settlement and penalties
 
 Money is the only part of a workers' compensation file where a claim is
 **arithmetically** checkable. A comp rate either follows from the wage data or it
@@ -897,14 +897,30 @@ scenario:
     gross_amount: 88000
     approval_date: 2024-01-18
     funding_days: 30             # or funding_date, never both
+  penalties:                     # opt in to LC §4650(d) late-payment increases
+    increase_fraction: 0.10      # optional; omit to use the dated table
+    authority: "verified authority prose" # optional table override
+    counsel_confirmed: false
 ```
 
-`benefits` and `settlement` both require `wages`. A benefit rate rests on an
+`benefits`, `settlement` and `penalties` all require `wages`. A benefit rate rests on an
 average weekly wage, and without an earnings history the engine would have to
 assert one — which is the failure the layer exists to remove. One gate, so "a
 seed with no wage block produces zero artifacts of this layer, and moves no output
 byte" is one checkable sentence
 rather than three.
+
+`scenario.penalties` is a second, explicit gate inside the money layer. When it
+is absent, no `penalties` key is published or rendered. When present, the engine
+builds a separate, lossless statutory schedule for every TD period and PD
+advance. Section 4650(d) is assessed only when a paid installment misses the
+represented statutory deadline; the amount is the payment principal times the
+dated increase fraction, quantized to cents. The DOI-keyed day counts and the
+events they run from are counsel-unconfirmed and published with their own basis
+and flag. Unpaid installments remain gap data in `schedule` and never become
+assessments. An opted-in case with no assessment publishes an empty assessment
+ledger and `$0.00`, while leaving the benefit record byte-identical to an
+unopted case.
 
 #### The named method is ground truth
 
@@ -945,13 +961,21 @@ back to it.
 
 #### Every statutory number here is unverified
 
-**Read this before you rely on a rate.** The fraction, the ceiling, the floor and
+**Read this before you rely on a rate or penalty.** The fraction, the ceiling, the floor and
 the date brackets they hang on are unverified professional knowledge. They live
 in one table, `money.UNCONFIRMED_RATE_TABLE`, every row of which carries
 `counsel_confirmed=False` and says `COUNSEL-UNCONFIRMED` in its own authority
 text — so a reader who copies the citation out of a manifest cannot lose the
 caveat on the way. The flag is published on every case at
 `caseFacts.money.rate.counselConfirmed`.
+
+The §4650(d) fraction, trigger and date brackets are equally unverified. They
+live behind `money.penalty_basis_for(doi)` in
+`UNCONFIRMED_PENALTY_TABLE`; the manifest publishes its authority,
+`basisSource` and `counselConfirmed` beside every opted-in penalty ledger. A
+seed may override the fraction and/or authority. It may set
+`counsel_confirmed: true` only with authority prose that is no longer marked
+unconfirmed.
 
 A seed carrying a genuinely verified authority states it under
 `scenario.wages.rate_basis` and sets `counsel_confirmed: true` — and to set that
@@ -1025,8 +1049,8 @@ corpus only claims.
 were. `tdPeriods` and `pdAdvances` are arrays of records — dates, weeks, weekly
 rate, amount, due, paid, days late — with the cardinalities under
 `tdPeriodCount` and `pdAdvanceCount`, and `gaps` carrying each interruption.
-Wave 3 computes a penalty per late transaction, and a total cannot say which
-transaction it was.
+The statutory schedule separately carries `statutoryDueDate` and
+`operationalDueDate`; §4650(d) uses only the former.
 
 Advances carry `date_due` too, and the ledger is ordered by it rather than by
 the date each was paid. Their cadence is an **engine schedule, not a statutory
@@ -1036,6 +1060,59 @@ lateness against that cadence and is not by itself a measure of legal exposure.
 read the two kinds of lateness the same way. A delayed advance can land *after* a later on-time one —
 that is an ordinary fact of a neglected file, not a sorting mistake — but it only
 reads as a fact once the schedule it slipped from is on the page beside it.
+Only the first PD advance has a represented statutory deadline. Later advances
+are `discretionary_advance` schedule entries with a null `statutoryDueDate`, zero
+statutory `daysLate`, and no assessment regardless of cadence lateness.
+
+**Advances past the first are deliberately unassessed, and that is an open
+question rather than a settled reading.** §4650(c) states a cadence for
+continuing payments, and whether it reaches a discretionary permanent-disability
+advance — and on what interval — is exactly the sort of question this package
+refuses to answer for itself. Until counsel confirms it, a later advance that
+misses the engine's own 45-day cadence produces schedule data and nothing else:
+`statutoryDueDate: null`, `daysLate: 0`, no `PenaltyAssessment`. That is
+deliberate **under-**assessment. A corpus consumer scoring an analyzer against
+these labels is being told "this engine does not claim these were late", not
+"these were timely". COUNSEL-UNCONFIRMED.
+
+### The two temporary-disability deadlines, and why only one assesses
+
+Every TD installment is due a fixed interval after **the accrual it pays for**
+closes: `statutoryDueDate = period.end + subsequentTdPaymentDays`, with
+`firstTdPaymentDays` used for installment 1. That is the deadline §4650(d) is
+assessed against, and it is the only anchor that keeps a deadline and the money
+it pays for in the same order.
+
+§4650(a) is separate, and it does **not** assess. It runs its fourteen days from
+the employer's knowledge of the injury **and** of disability — two events this
+engine does not model. The date of injury stands in, and the result is published
+under `caseFacts.money.penalties.firstPaymentRule`:
+
+```json
+"firstPaymentRule": {
+  "anchor": "date_of_injury",
+  "anchorDate": "2021-06-14",
+  "dueDate": "2021-06-28",
+  "datePaid": "2021-08-12",
+  "daysLate": 45,
+  "assessed": false,
+  "counselConfirmed": false
+}
+```
+
+`assessed` is typed as a constant `false`, not a flag. The engine issues
+temporary disability in four-week blocks paid after each block closes, so the
+first payment is structurally later than a strict §4650(a) reading on *every*
+file it generates — assessing that would convict the carrier on every case in
+the corpus for a modelling decision. The number is still exported, because a
+scorer should be able to see the question; it simply never reaches
+`assessments`, `totalIncrease` or `principalAssessed`.
+
+**The open question is the anchor, not only the count.** Whether §4650(a) runs
+from the date of injury or from knowledge of injury and disability decides
+whether that 45 is a violation or an artifact, and this engine does not have the
+facts to decide it. `openQuestion` carries that sentence into the scorer
+artifact so it cannot be lost between here and a consumer. COUNSEL-UNCONFIRMED.
 
 The due-day interval carries its own caveat, `tdPaymentDueAuthority` and
 `tdPaymentDueConfirmed`, rather than borrowing the rate basis's.
@@ -1101,6 +1178,35 @@ penalty computation are likewise elsewhere.
 
 See `examples/money-showcase.yaml` for seven cases covering all five methods,
 both bounds and four rate vintages.
+
+#### Scorer-only truth manifests
+
+Generation writes lossless money ground truth to
+`<out>/truth/<case_id>.truth.json` and a corpus index to
+`<out>/truth/caseload.truth.json`. These versioned JSON envelopes are for the
+analyzer scorer only and must never be supplied to document analysis. Keeping
+the artifacts outside `<out>/<case_id>/` is the leakage guard: a document
+analyzer can receive the complete case directory without receiving its labels.
+Use `--no-truth-manifest` when an output should contain no scorer artifacts.
+
+`wc-caseload validate --out <out>` validates this optional subtree when it is
+present. It requires one truth file per case and no strays, a complete
+`caseload.truth.json` index whose `truthFile` paths exist, matching seed hashes,
+and equality between the analyzer's `caseFacts.money` and the truth channel's
+published projection after scorer-only penalties are removed. It also
+recomputes penalty amounts, late-day intervals, assessment eligibility, schedule
+counts, and ledger totals. An older output tree with no `truth/` directory
+remains valid.
+
+Envelope schema `1.0.0` carries an open `channels` mapping, and each channel has
+its own version. Consumers MUST ignore channels they do not recognize and MUST
+NOT fail on an unknown channel key. The current `money` channel is version
+`1.1.0`, an additive minor that includes the optional penalty basis and
+assessment ledger, and is a lossless serialization of `MoneyFacts`; planned
+additive successors are `defects` (the
+Phase 3 defect-injection manifest) and `assertions` (medical-story M4
+assertion-quality labels). A case without `scenario.wages` has empty channels,
+not a null or empty money channel.
 
 ### What is fact-aware, and what that costs
 

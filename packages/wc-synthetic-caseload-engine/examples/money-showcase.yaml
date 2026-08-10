@@ -150,11 +150,21 @@ cases:
       settlement:
         funding_days: 10
 
-  # 6. The delay case. A negligent administrator, a deliberate seventy-five day
-  #    hole in the temporary-disability series, and three payments issued late —
-  #    all recorded as facts with their days, which is what lets the penalty work
-  #    in Wave 3 be computed against a *known* exposure rather than inferred
-  #    from payment dates.
+  # 6. The delay case, and the only one that opts into the statutory test. A
+  #    negligent administrator, a deliberate seventy-five day hole in the
+  #    temporary-disability series, and three payments issued late — all recorded
+  #    as facts with their days, which is what lets the §4650(d) exposure be
+  #    computed against a *known* delay rather than inferred from payment dates.
+  #
+  #    `penalties: {}` opts in without authoring an authority, so the engine's
+  #    own counsel-unconfirmed placeholder is used and says so. This case is what
+  #    puts the whole §4650(d) path inside the golden byte gate: three late
+  #    installments assessed, five timely ones assessed at nothing, two
+  #    permanent-disability advances paid inside their window, and the §4650(a)
+  #    first-payment record exported flagged and unassessed. Before this, every
+  #    penalty figure the package shipped was exercised only by tests that build
+  #    their own ledgers — a change to the arithmetic could not move a byte any
+  #    corpus was pinned on.
   - case_id: neglected-file
     rng_seed: 51006
     injury:
@@ -178,6 +188,7 @@ cases:
         late_payments: 3
         max_days_late: 54
         pd_advances: 2
+      penalties: {}
       settlement:
         funding_days: 118
 

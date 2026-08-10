@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "corpus": "doctrine-showcase",
   "spec": "examples/doctrine-showcase.yaml",
   "tier": "suite",
@@ -23,8 +23,18 @@
   },
   "caseCount": 6,
   "documentCount": 210,
-  "fileCount": 229,
-  "corpusTree": "7cac5425e4b97b6748c22ab4a19ec0f8c189004316b1da415dfef774135683dd",
+  "fileCount": 236,
+  "rootFiles": [
+    "caseload_manifest.json",
+    "truth/caseload.truth.json",
+    "truth/showcase-death-dependency.truth.json",
+    "truth/showcase-firefighter-presumption.truth.json",
+    "truth/showcase-imr-challenge.truth.json",
+    "truth/showcase-psychiatric.truth.json",
+    "truth/showcase-rating-doctrines.truth.json",
+    "truth/showcase-threshold-defences.truth.json"
+  ],
+  "corpusTree": "89d9d3dd293a691450b7156beb1af7631abc80be5e3c1f0743669425924ecaac",
   "caseload": "ce973ccd45fe576276fb9b2eb587656cfc34cfc69124a711c37b85a8cdc3e758",
   "cases": {
     "showcase-death-dependency": {

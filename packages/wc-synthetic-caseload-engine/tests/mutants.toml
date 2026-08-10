@@ -450,8 +450,8 @@ id = 'm4-2'
 title = 'the settlement group is skipped by the governance loop again'
 file = 'src/wc_caseload_engine/manifests.py'
 test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_settlement_is_shape_checked_and_governed_like_everything_else'
-find = '''        if key == "settlement" and money.get(key) is None:'''
-replace = '''        if key == "settlement":'''
+find = '''        if key in ("settlement", "penalties") and money.get(key) is None:'''
+replace = '''        if key in ("settlement", "penalties"):'''
 
 [[mutant]]
 id = 'm4-3'
@@ -1383,6 +1383,218 @@ find = '''    "wrist": "wrist",'''
 replace = '''    "wrist": "shoulder",'''
 note = "AJC-55. The substrate's alias table is the single seam through which every operative record and, via _pick_cpt's substrate-first preference (ISC-93), the wcce ledger's SurgeryFact acquire their procedure. The retired 'upper extremity fallback' mapped wrist/hand/elbow to surgery_shoulder here, which is exactly this edit; the guard's per-part oracle is hand-maintained so the pool cannot vouch for itself. First cross-package mutant: the file lives in merus-test-data-generator, the guard in this package, because the defect and its blast radius straddle the bridge."
 
+# Round 16 — AJC-48's ground-truth export and money coherence harness.
+# Numbered 16 rather than 14 because AJC-59's golden-corpus gate took the
+# whole of round 14 while this branch was open; the ids moved, the claims did
+# not. Renumbering rather than interleaving keeps a round readable as the unit
+# of work it records.
+
+[[mutant]]
+id = 'm16-1'
+title = 'an incompatible money-channel major version is silently accepted'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_unknown_channel_is_ignored_and_money_major_is_guarded'
+find = '''    if parts[0] != supported.partition(".")[0]:'''
+replace = '''    if False:'''
+note = 'AJC-48 Round B, re-pointed in the review round. Additive channels and compatible minor versions are open, but a new money major may change the meaning or shape of scorer labels. The reader must refuse it rather than reconstructing an apparently valid but semantically unknown MoneyFacts. The major check moved into the shared _require_compatible_version helper when review finding 4 made one parser serve both the envelope and every channel, so this mutation now disables both — the guard still names the money-channel claim, which is the narrower of the two and therefore the honest one to assert.'
+
+[[mutant]]
+id = 'm16-2'
+title = 'a case with no money facts emits an empty money channel instead of omitting it'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_money_gate_omits_channel_and_reimports_as_none'
+find = '''    channels: dict[str, Any] = {}
+    if plan.money_facts is not None:
+        channels["money"] = _money_channel(plan.money_facts)'''
+replace = '''    channels: dict[str, Any] = {}
+    if plan.money_facts is not None:
+        channels["money"] = _money_channel(plan.money_facts)
+    else:
+        channels["money"] = {}'''
+note = 'AJC-48 Round B. Channel presence means a label family exists for the case. An empty or null money channel invents a third state between absent and populated and makes scorer routing ambiguous.'
+
+[[mutant]]
+id = 'm16-3'
+title = 'the scorer-facing published block drifts away from the public money ledger'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_published_block_is_the_existing_public_contract'
+find = '''        "published": money_manifest_block(facts),'''
+replace = '''        "published": {},'''
+note = 'AJC-48 Round B. The scorer label and case manifest must be the same established public contract, not independently serialized approximations that can drift while each remains internally valid.'
+
+[[mutant]]
+id = 'm16-4'
+title = 'the coherence comparator declares a one-cent paper-to-ledger difference equal'
+file = 'tests/money_coherence.py'
+test = 'tests/test_money_coherence.py::test_one_cent_perturbation_is_reported_for_every_swept_fact[aww]'
+find = '''        return self.printed == self.expected'''
+replace = '''        return True'''
+note = 'AJC-48 Round B anti-criterion. The harness must itself fail red when a governed ledger figure moves by exactly one cent; the parametrized control repeats that proof for every governed rule with a paper surface.'
+
+[[mutant]]
+id = 'm16-5'
+title = 'root-file accounting silently drops one unowned file'
+file = 'tests/golden/demo-caseload.json'
+test = 'tests/test_golden_corpus.py::test_every_registered_corpus_has_a_well_formed_golden'
+find = '''    "caseload_manifest.json",
+'''
+replace = ''''''
+note = 'AJC-48 Round H. The whole-tree file count must equal the sum of case-owned files and every root file recorded by name. Dropping even one accounting entry must make the strict well-formedness equality red; rootFiles is the explicit tree shape that replaces the false one-root-file assumption.'
+
+[[mutant]]
+id = 'm16-6'
+title = 'one case truth manifest disappears from root-file accounting'
+file = 'tests/golden/demo-caseload.json'
+test = 'tests/test_golden_corpus.py::test_truth_subtree_accounting_is_complete_when_present'
+find = '''    "truth/alvarez-denied-recon-remand.truth.json",
+'''
+replace = ''''''
+note = 'AJC-48 Round H. Once a corpus records any truth subtree, it must name exactly truth/caseload.truth.json and one truth/<case_id>.truth.json for every recorded case. Removing one per-case truth name must redden the dedicated completeness guard rather than being tolerated as an optional artifact.'
+
+[[mutant]]
+id = 'm15-1'
+title = 'the automatic increase forgets to multiply the late-payment principal by its fraction'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_the_planted_positive_control_assesses_the_authored_delay'
+find = '''        with _exact():
+            amount = money(principal * basis.increase_fraction)'''
+replace = '''        with _exact():
+            amount = money(principal)'''
+note = 'AJC-48 Round C. The assessment is useful as ground truth only if its amount is the cents-quantized principal times the published statutory fraction; copying principal would produce a plausible currency value with no legal arithmetic behind it.'
+
+[[mutant]]
+id = 'm15-2'
+title = 'a never-paid temporary-disability interruption is assessed as a late payment'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_a_never_paid_period_is_not_assessed_as_a_delay'
+find = '''        if unpaid:
+            return'''
+replace = '''        if unpaid:
+            date_paid = statutory_due_date + dt.timedelta(days=1)
+            days_late = 1'''
+note = 'AJC-48 Rounds C and E. A TdPeriod without date_paid is the benefit model’s interruption state, not a delay: there is no paid principal and no endpoint from which lateness can be counted. The planted unpaid record must leave the assessment tuple empty. Round E registered this same edit again as m15-9 — same file, same find, same replace, same guard — so the registry counted one fix twice and a survivor would have been reported twice while proving one thing. m15-9 was dropped in the round-2 review round; both rounds are recorded here so the second finding is not lost with it.'
+
+[[mutant]]
+id = 'm15-3'
+title = 'penalties are published when the seed did not opt in'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_absence_and_an_empty_assessment_are_different_public_facts'
+find = '''    if facts.penalties is not None:
+        penalties = facts.penalties
+        block["penalties"] = {'''
+replace = '''    if True:
+        penalties = facts.penalties or PenaltyLedger(
+            basis=penalty_basis_for(dt.date.min),
+            deadlines=statutory_deadline_basis_for(dt.date.min),
+        )
+        block["penalties"] = {'''
+note = 'AJC-48 Round C anti-criterion. The PenaltyScenario block is the gate: a case that did not ask has no penalties key at all, while an opted-in timely case publishes an empty ledger. Collapsing those states breaks backward compatibility.'
+
+[[mutant]]
+id = 'm15-4'
+title = 'manifest validation trusts a planted wrong assessment amount'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_the_manifest_validator_recomputes_every_penalty_aggregate'
+find = '''        if published_amount != computed_amount:'''
+replace = '''        if False:'''
+note = 'AJC-48 Round C, re-pointed in the review round. This independent multiplication is the reason the validator adds value. The guard keeps totalIncrease internally consistent with the planted wrong amount, so only recomputing principal times fraction can kill the mutant. The check dedented one level when the penalty rules were extracted into _validate_penalties so they could be reached from the truth subtree as well as the case manifest; the logic is unchanged.'
+
+[[mutant]]
+id = 'm15-5'
+title = 'an empty opted-in penalty ledger changes the benefit document'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_money_coherence.py::test_empty_penalty_ledger_leaves_the_benefit_document_byte_unchanged'
+find = '''            if ledger_penalties is not None and ledger_penalties.assessments:
+                for assessment in ledger_penalties.assessments:'''
+replace = '''            if ledger_penalties is not None:
+                for assessment in ledger_penalties.assessments:'''
+note = 'AJC-48 Round C byte gate. The document gains penalty rows only when an assessment exists; “asked and found none” remains a manifest fact but must render exactly like the pre-penalty benefit record.'
+
+[[mutant]]
+id = 'm15-6'
+title = 'the penalties group is skipped by the governance loop again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_penalties_are_shape_checked_and_governed_like_everything_else'
+find = '''        if key in ("settlement", "penalties") and money.get(key) is None:'''
+replace = '''        if key in ("settlement", "penalties") and (money.get(key) is None or key == "penalties"):'''
+note = 'AJC-48 Round D. Optional means an absent penalties group may be skipped; a present one must still be shape-checked and refused if it publishes an ungoverned extraction label.'
+
+[[mutant]]
+id = 'm15-7'
+title = 'the statutory assessment trigger uses the engine operational due date'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_operationally_late_but_statutorily_timely_is_not_assessed'
+find = '''        statutorily_late = (
+            date_paid is not None
+            and statutory_due_date is not None
+            and date_paid > statutory_due_date
+        )
+        days_late = (
+            (date_paid - statutory_due_date).days if statutorily_late else 0
+        )'''
+replace = '''        statutorily_late = (
+            date_paid is not None
+            and statutory_due_date is not None
+            and date_paid > operational_due_date
+        )
+        days_late = (
+            (date_paid - operational_due_date).days if statutorily_late else 0
+        )'''
+note = 'AJC-48 Round E finding guard. A payment can miss the invented carrier cadence and still meet the represented statutory deadline; operational lateness must never create a §4650(d) assessment.'
+
+[[mutant]]
+id = 'm15-8'
+title = 'a later discretionary PD advance is given an assessable deadline'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_only_first_pd_advance_can_have_a_statutory_assessment'
+find = '''            statutory_due_date=(
+                first_pd_anchor + dt.timedelta(days=deadlines.first_pd_payment_days)
+                if first
+                else None
+            ),'''
+replace = '''            statutory_due_date=(
+                first_pd_anchor + dt.timedelta(days=deadlines.first_pd_payment_days)
+                if first
+                else advance.date_due
+            ),'''
+note = 'AJC-48 Round E. Later PD advances are discretionary schedule facts with no statutory deadline, even when payment misses the 45-day engine cadence.'
+
+[[mutant]]
+id = 'm15-10'
+title = 'statutory days late are subtracted from the operational baseline'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_paid_td_after_its_statutory_deadline_is_assessed_exactly'
+find = '''            (date_paid - statutory_due_date).days if statutorily_late else 0'''
+replace = '''            (date_paid - operational_due_date).days if statutorily_late else 0'''
+note = 'AJC-48 Round E. The assessment daysLate operand is the represented statutoryDueDate, never the engine cadence date carried beside it for contrast.'
+
+[[mutant]]
+id = 'm15-11'
+title = 'truth validation trusts a wrong penalty assessment amount'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_truth_manifest.py::test_output_validator_recomputes_truth_penalty_amount'
+find = '''        if published_amount != computed_amount:'''
+replace = '''        if False:'''
+note = 'AJC-48 Round G. The scorer artifact is the only remaining home of penalty assessments, so validate --out must independently recompute principal times fraction there instead of certifying a planted one-cent error.'
+
+[[mutant]]
+id = 'm15-12'
+title = 'a case may silently lose its per-case truth manifest'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_truth_manifest.py::test_output_validator_reports_missing_and_stray_case_truth_files'
+find = '''    for case_id in sorted(case_ids - truth_case_ids):'''
+replace = '''    for case_id in sorted(set()):'''
+note = 'AJC-48 Round G. A scorer corpus is incomplete when an analyzer-visible case has no matching label file; correspondence must be checked from the case side as well as the truth side.'
+
+[[mutant]]
+id = 'm15-13'
+title = 'truth published facts may drift from the analyzer case manifest'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_truth_manifest.py::test_output_validator_reports_truth_published_projection_drift'
+find = '''        if analyzer_projection != manifest_money:'''
+replace = '''        if False:'''
+note = 'AJC-48 Round G. Removing scorer-only penalties from channels.money.published must produce exactly caseFacts.money; otherwise the analyzer input and scorer label describe different worlds.'
+
 # Round 14 — the golden-corpus gate (AJC-59), after independent review found the
 # gate hashing the corpus's report about its own bytes instead of the bytes
 # themselves. Every one of these puts back a defect that shipped in the first cut.
@@ -1514,3 +1726,81 @@ test = 'tests/test_golden_corpus.py::test_an_interrupt_names_the_files_a_failed_
 find = '''                exc.add_note(state)'''
 replace = '''                pass'''
 note = "The I/O path reported an incomplete rollback; the interrupt path computed the same answer and discarded it, so a Ctrl-C that left a golden rewritten propagated a bare KeyboardInterrupt indistinguishable from the clean case. An interrupt is the exception the operator actually sees, which makes it the one that has to carry the news."
+
+[[mutant]]
+id = 'm15-19'
+title = 'the temporary-disability deadline goes back to a ladder from the date of injury'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheStatutoryDeadlineIsAnchoredToTheAccrualItPays::test_a_wholly_timely_temporary_disability_file_assesses_nothing'
+find = '''            statutory_due_date=period.end + dt.timedelta(days=interval),'''
+replace = '''            statutory_due_date=(
+                onset
+                + dt.timedelta(days=deadlines.first_td_payment_days)
+                + dt.timedelta(days=(ordinal - 1) * deadlines.subsequent_td_payment_days)
+            ),'''
+note = 'AJC-48 round-2 review, finding 1. The engine issues four-week blocks paid fourteen days after each block ends; a ladder run from the date of injury diverges from that by a fortnight per installment forever. Restoring it assessed every payment on a file with no authored lateness at all, produced the same $1,594.86 whatever the delay controls said, and dated installment 2 before the period it paid for. The guard is the negative that was missing: a wholly timely file must assess nothing.'
+
+[[mutant]]
+id = 'm15-20'
+title = 'the first permanent-disability deadline anchors on the last-listed payment again'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestTheStatutoryDeadlineIsAnchoredToTheAccrualItPays::test_the_first_pd_deadline_anchors_on_the_last_td_payment_made'
+find = '''        max(period.date_paid for period in paid_td)'''
+replace = '''        paid_td[-1].date_paid'''
+note = 'AJC-48 round-2 review, finding 4. The benefit ledger is ordered by accrual, not by payment, so front-loaded lateness leaves an early block paid after every later one. Reading list order as a chronology gives the permanent-disability deadline an anchor earlier than the event that starts it, and the deadline can expire before its own trigger.'
+
+[[mutant]]
+id = 'm15-21'
+title = 'the benefit-document requirement fires on an empty penalty ledger again'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_money_spine.py::TestTheAutomaticLateIndemnityIncrease::test_the_benefit_document_requirement_is_gated_on_something_to_read'
+find = '''    if assessments and not (subtypes & MONEY_BENEFIT_DOCUMENTS):'''
+replace = '''    if not (subtypes & MONEY_BENEFIT_DOCUMENTS):'''
+note = 'AJC-48 round-2 review, finding 2. Opting into the statutory test is not a claim needing a document to support it. Ungated, the rule demanded a benefit-payment surface for zero assessments and failed the documented "asked, and the answer was nothing" shape — while its sibling over benefit events, gated on the event count, correctly said nothing.'
+
+[[mutant]]
+id = 'm15-22'
+title = 'the shipped compact penalty block goes back to being validated by nothing'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_truth_manifest.py::test_output_validator_recomputes_the_published_penalty_block'
+find = '''            if isinstance(published_penalties, Mapping):'''
+replace = '''            if False:'''
+note = 'AJC-48 round-2 review, finding 3. published.penalties is the shape a scorer reads. The analyzer projection pops penalties before the manifest is written and the projection comparison pops it again, so every assertion landed on the lossless twin and the shipped bytes went out unexamined. This is also the only path that reaches the compact branch of _validate_penalties from a produced artifact.'
+
+[[mutant]]
+id = 'm15-23'
+title = 'validator penalty arithmetic returns to the caller ambient decimal context'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_truth_manifest.py::test_penalty_validation_is_exact_under_a_reduced_ambient_precision'
+find = '''        with exact():
+            computed_principal = quantized_money(sum(assessed_principals, Decimal("0.00")))'''
+replace = '''        computed_principal = quantized_money(sum(assessed_principals, Decimal("0.00")))'''
+note = 'AJC-48 round-2 review, finding 5. Every published figure is produced inside exact(). Recomputing them under whatever precision the host process carries lets a hostile ambient context invent drift and condemn a correct corpus: at prec=6 a two-assessment principal sum reads 15948.50 against a correct 15948.48.'
+
+[[mutant]]
+id = 'm15-25'
+title = 'checkout-dependent provenance returns to the truth artifacts'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_truth_provenance_carries_no_checkout_dependent_field'
+find = '''        "provenance": {
+            "generator": GENERATOR,
+            "seedHash": plan.seed.seed_hash(),'''
+replace = '''        "provenance": {
+            "generator": GENERATOR,
+            "substrateSha": __import__(
+                "wc_caseload_engine.substrate", fromlist=["substrate_git_sha"]
+            ).substrate_git_sha(),
+            "seedHash": plan.seed.seed_hash(),'''
+note = 'AJC-48 CI round. Truth files are root files, so the golden gate hashes them raw and the provenance.substrateSha redaction that covers the manifests cannot reach them. substrateSha comes from git log over the substrate directory, so it describes the checkout: this branch generated identical corpora locally and under the PR merge ref and the gate reported drift on demo-caseload and doctrine-showcase for corpora nothing had changed. The pin still lives in manifest.json, where the redaction contract governs it.'
+
+[[mutant]]
+id = 'm15-24'
+title = 'an emitted truth key escapes the scorer vocabulary without being classified'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_scorer_vocabulary_covers_every_emitted_truth_key'
+find = '''        "schemaVersion": SCHEMA_VERSION,
+        "kind": "case",'''
+replace = '''        "schemaVersion": SCHEMA_VERSION,
+        "scorerNote": "unclassified",
+        "kind": "case",'''
+note = 'AJC-48 round-2 review, finding 6. The two frozensets are the sweep terms the case-tree leakage anti-probe runs on, and they were hand-maintained with nothing tying them to the builders. A key the envelope emits but the sets never learned about is a term nothing watches; the completeness guard fails until the new key is classified as a sentinel or recorded as one that cannot be.'

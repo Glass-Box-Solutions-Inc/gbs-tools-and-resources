@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "corpus": "personas-showcase",
   "spec": "examples/personas-showcase.yaml",
   "tier": "ci",
@@ -23,8 +23,18 @@
   },
   "caseCount": 6,
   "documentCount": 391,
-  "fileCount": 410,
-  "corpusTree": "d25da275e7c28f657c1a79f49a431e8836b50b081162ada05bde7f6718432552",
+  "fileCount": 417,
+  "rootFiles": [
+    "caseload_manifest.json",
+    "truth/caseload.truth.json",
+    "truth/personas-attentive-adjuster.truth.json",
+    "truth/personas-cadence-event-driven.truth.json",
+    "truth/personas-cadence-every-30-days.truth.json",
+    "truth/personas-cadence-sporadic.truth.json",
+    "truth/personas-negligent-adjuster.truth.json",
+    "truth/personas-scenario-depth.truth.json"
+  ],
+  "corpusTree": "28737d3c65b2ab5230fc45257367d44ad6d313481d057b9a739d6ba93cf20fe8",
   "caseload": "cd6fde68a4cd789532b684c1996e3d97ff3b291df6bb9344286d331e9c5f8395",
   "cases": {
     "personas-attentive-adjuster": {

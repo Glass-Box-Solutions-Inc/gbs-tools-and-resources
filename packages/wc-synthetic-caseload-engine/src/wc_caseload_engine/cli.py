@@ -52,6 +52,7 @@ from wc_caseload_engine.taxonomy import (
     check_taxonomy_drift,
     effective_taxonomy,
 )
+from wc_caseload_engine.truth_manifest import TRUTH_DIR
 
 log = structlog.get_logger(__name__)
 
@@ -114,8 +115,19 @@ def cli() -> None:
     is_flag=True,
     help="Parse, validate and resolve the caseload, print the plan, write nothing.",
 )
+@click.option(
+    "--truth-manifest/--no-truth-manifest",
+    "truth_manifest",
+    default=True,
+    show_default=True,
+    help="Write scorer-only ground truth beneath the output truth directory.",
+)
 def generate(
-    spec_path: Path, out_dir: Path, seed_override: int | None, dry_run: bool
+    spec_path: Path,
+    out_dir: Path,
+    seed_override: int | None,
+    dry_run: bool,
+    truth_manifest: bool,
 ) -> None:
     """Generate synthetic case files from a caseload spec."""
     spec = _load_spec(spec_path)
@@ -127,8 +139,10 @@ def generate(
 
     click.echo(f"caseload : {spec.caseload_id}")
     click.echo(f"spec     : {spec_path}")
-    click.echo(f"cases    : {len(seeds)} ({len(spec.cases)} explicit, "
-               f"{len(seeds) - len(spec.cases)} derived)")
+    click.echo(
+        f"cases    : {len(seeds)} ({len(spec.cases)} explicit, "
+        f"{len(seeds) - len(spec.cases)} derived)"
+    )
     click.echo(f"out      : {out_dir}")
     for seed in seeds:
         click.echo(f"  {_summarize(seed)}")
@@ -138,7 +152,12 @@ def generate(
         return
 
     try:
-        results = generate_caseload(spec.caseload_id, seeds, out_dir)
+        results = generate_caseload(
+            spec.caseload_id,
+            seeds,
+            out_dir,
+            truth=truth_manifest,
+        )
     except SubstrateUnavailableError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -163,6 +182,8 @@ def generate(
     if warnings:
         click.echo(f"warnings : {warnings} (see per-case manifest 'warnings')", err=True)
     click.echo(f"manifest : {out_dir / CASELOAD_MANIFEST_NAME}")
+    if truth_manifest:
+        click.echo(f"truth    : {out_dir / TRUTH_DIR}")
 
 
 @cli.command("seed")

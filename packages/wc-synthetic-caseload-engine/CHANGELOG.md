@@ -9,6 +9,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the ground-truth export (**AJC-48**, money layer Wave 3)
+
+- Added versioned, scorer-only case truth manifests under `truth/` with a
+  lossless `MoneyFacts` channel and validated round-trip reader.
+- Added the caseload truth index, provenance, independent channel versioning,
+  and an ignore-unknown-channels contract for additive future label families.
+- Added the default-on CLI export switch and kept single-case library output
+  byte-compatible unless its caller explicitly supplies a truth directory.
+- Added a reusable money coherence harness spanning capped stipulations and
+  older-vintage delayed-benefit cases, binding scorer truth to the public
+  manifest and every matching paper surface with per-fact one-cent controls.
+- Added the opt-in `scenario.penalties` LC §4650(d) slice: pure cents-quantized
+  assessments from explicit statutory due dates, with separate DOI-keyed,
+  counsel-unconfirmed deadline-basis metadata and a lossless schedule carrying
+  both statutory and operational dates. Engine-cadence lateness no longer
+  creates legal exposure; discretionary later PD advances and unpaid gaps are
+  schedule data rather than assessments. Rendering, validation, truth-channel
+  round trips, the planted 45-day positive control, and absence/empty-ledger
+  byte-identity guards cover the new shape.
+- Bumped only the additive money channel minor from `1.0.0` to `1.1.0`;
+  `schemaVersion` remains `1.0.0`, and same-major consumers remain accepted.
+- Extended `validate --out` across the optional scorer-only `truth/` subtree:
+  it now rejects missing or stray case truth files, incomplete or dangling
+  caseload index entries, seed-provenance drift, disagreement between
+  `channels.money.published` (minus penalties) and analyzer-visible
+  `caseFacts.money`, and incoherent penalty schedules, dates, eligibility,
+  arithmetic, counts, or totals. Trees created without truth output remain
+  valid.
+- Bumped golden-corpus format 3 to record the sorted root files not owned by a
+  case. The strict file-total invariant now accounts by name for the truth
+  subtree and requires its caseload index plus one truth manifest per case.
+
 ## [0.9.0] — 2026-08-08
 
 ### Fixed — body-part-faithful operations (**AJC-55**)

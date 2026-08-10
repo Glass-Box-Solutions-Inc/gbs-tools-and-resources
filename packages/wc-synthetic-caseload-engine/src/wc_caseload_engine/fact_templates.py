@@ -736,8 +736,8 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
         # ``Due`` is here because ``Days Late`` is meaningless without it. The
         # first cut printed the lateness and kept its own yardstick — the due
         # date, computed one line above where it was discarded — off the page, so
-        # the single most consequential number on a delay file was asserted
-        # rather than derivable. Wave 3 computes a penalty against this column.
+        # the operational delay was asserted rather than derivable. This remains
+        # an engine-cadence fact; §4650(d) uses the separate statutory schedule.
         rows: list[list[Any]] = [
             [
                 "Benefit Period",
@@ -837,6 +837,50 @@ def _rewrite_benefit_record(story: list[Any], money: MoneyFacts, styles: Any) ->
         ["Rate Basis Source:", rate.basis.source],
         ["Rate Basis Authority:", rate.basis.authority],
     ]
+    penalties = money.penalties
+    if penalties is not None and penalties.assessments:
+        summary.append(["§4650(d) Automatic Increase", UNCONFIRMED_NOTICE])
+        for assessment in penalties.assessments:
+            source = "TD period" if assessment.source == "td_period" else "PD advance"
+            summary.extend(
+                [
+                    [
+                        f"§4650(d) {source} {assessment.ordinal} Principal:",
+                        f"${assessment.principal:,.2f}",
+                    ],
+                    [
+                        f"§4650(d) {source} {assessment.ordinal} Statutory Due:",
+                        f"{assessment.statutory_due_date:%m/%d/%y}",
+                    ],
+                    [
+                        f"§4650(d) {source} {assessment.ordinal} Operational Due:",
+                        f"{assessment.operational_due_date:%m/%d/%y}",
+                    ],
+                    [
+                        f"§4650(d) {source} {assessment.ordinal} Paid / Statutory Days Late:",
+                        f"{assessment.date_paid:%m/%d/%y} / {assessment.days_late}",
+                    ],
+                    [
+                        f"§4650(d) {source} {assessment.ordinal} Increase:",
+                        f"${assessment.amount:,.2f}",
+                    ],
+                ]
+            )
+        summary.extend(
+            [
+                ["§4650(d) Principal Assessed:", f"${penalties.principal_assessed:,.2f}"],
+                [
+                    "§4650(d) Increase Fraction:",
+                    f"{penalties.basis.increase_fraction.normalize():f}",
+                ],
+                ["§4650(d) Total Increase:", f"${penalties.total_increase:,.2f}"],
+                [
+                    "§4650(d) Penalty Basis:",
+                    f"{penalties.basis.label} — {UNCONFIRMED_NOTICE}",
+                ],
+                ["§4650(d) Penalty Authority:", penalties.basis.authority],
+            ]
+        )
     # No settlement rows. A payment record is dated when the benefits it lists
     # were paid, which on a real file is years before the case settles — one
     # here carries an approval **819 days** in its own future. The release was
@@ -2310,9 +2354,56 @@ def build_fact_aware_templates() -> dict[str, type]:
             rows.append(
                 ["Permanent Disability Paid To Date", "", "", f"${benefits.pd_total:,.2f}"]
             )
+            ledger_penalties = money.penalties
+            if ledger_penalties is not None and ledger_penalties.assessments:
+                for assessment in ledger_penalties.assessments:
+                    source = (
+                        "TD period" if assessment.source == "td_period" else "PD advance"
+                    )
+                    rows.append(
+                        [
+                            f"§4650(d) {source} {assessment.ordinal} Increase",
+                            f"Principal ${assessment.principal:,.2f}; operational due "
+                            f"{assessment.operational_due_date:%m/%d/%y}",
+                            f"Statutory due {assessment.statutory_due_date:%m/%d/%y}; "
+                            f"paid {assessment.date_paid:%m/%d/%y}; "
+                            f"{assessment.days_late} statutory day(s) late",
+                            f"${assessment.amount:,.2f}",
+                        ]
+                    )
+                rows.extend(
+                    [
+                        [
+                            "§4650(d) Principal Assessed",
+                            "",
+                            "",
+                            f"${ledger_penalties.principal_assessed:,.2f}",
+                        ],
+                        [
+                            "§4650(d) Increase Fraction",
+                            "",
+                            DUE_NOTICE,
+                            f"{ledger_penalties.basis.increase_fraction.normalize():f}",
+                        ],
+                        [
+                            "§4650(d) Total Increase",
+                            "",
+                            DUE_NOTICE,
+                            f"${ledger_penalties.total_increase:,.2f}",
+                        ],
+                    ]
+                )
             story.append(
                 _money_table(rows, [2.1 * inch, 1.9 * inch, 1.1 * inch, 1.0 * inch], self.styles)
             )
+            if ledger_penalties is not None and ledger_penalties.assessments:
+                story.append(
+                    Paragraph(
+                        f"<b>§4650(d) Penalty Authority:</b> "
+                        f"{ledger_penalties.basis.authority} — {UNCONFIRMED_NOTICE}",
+                        self.styles["BodyText14"],
+                    )
+                )
             _append_settlement_terms(story, money, self.styles, "funding")
             return story
 

@@ -69,6 +69,19 @@ every commit for a reason that has nothing to do with the bytes the gate exists
 to protect. It is recorded in ``recordedWith`` and printed beside a failure as
 context instead.
 
+**The redaction reaches manifests only, and that is a constraint on the
+generator, not a gap in the gate.** ``CASE_REDACTIONS`` and
+``CASELOAD_REDACTIONS`` are applied while normalizing ``manifest.json`` and
+``caseload_manifest.json``; every other file in the tree — including the
+``truth/*.truth.json`` root files — is hashed from its own raw bytes, which is
+the whole point of enumerating the tree independently. So a *generated artifact*
+may not embed a checkout-dependent value unless it is one of those two
+manifests. The truth envelopes once duplicated ``provenance.substrateSha``, and
+the corpora then drifted between a PR branch and that PR's merge ref while
+nothing about them had changed. The fix belongs in the artifact
+(``truth_manifest.TRUTH_PROVENANCE_KEYS``), never in a wider exemption list:
+redaction that grows to cover nondeterminism is how a gate stops being one.
+
 The engine version is **not** exempt. ``provenance.generator`` carries it, it is
 part of every manifest's bytes, and a version bump is a release event that
 changes shipped output — so it reddens the gate until the goldens are
@@ -271,7 +284,7 @@ CASE_REDACTIONS: tuple[tuple[str, ...], ...] = (("provenance", "substrateSha"),)
 CASELOAD_REDACTIONS: tuple[tuple[str, ...], ...] = (("provenance", "substrateSha"),)
 """Paths redacted from the caseload manifest before digesting."""
 
-GOLDEN_FORMAT = 2
+GOLDEN_FORMAT = 3
 """Golden manifest format version.
 
 Bumped when the *shape* of a golden changes — a new per-case axis, a renamed
@@ -284,6 +297,12 @@ the files themselves rather than from the manifest's account of them — and
 stopped exempting the engine version. Format 1 goldens are refused rather than
 half-read: they record no byte-level digest at all, so comparing what they *do*
 carry would report clean while checking strictly less than the gate claims.
+
+Format 3 added ``rootFiles``: the sorted names of every file not owned by a
+case directory. Format 2 assumed that set contained only the caseload manifest,
+so it cannot account for a corpus carrying another root subtree. It is refused
+rather than half-read because silently supplying the old assumption would make
+the new whole-tree accounting claim false.
 """
 
 
@@ -484,6 +503,7 @@ def digest_corpus(out_dir: Path) -> dict[str, Any]:
     everything = file_digests(out_dir)
 
     cases: dict[str, Any] = {}
+    owned_by_cases: set[str] = set()
     total_documents = 0
     for manifest_path in sorted(out_dir.glob(f"*/{MANIFEST_NAME}")):
         case_dir = manifest_path.parent
@@ -495,6 +515,7 @@ def digest_corpus(out_dir: Path) -> dict[str, Any]:
         total_documents += len(documents)
 
         prefix = f"{case_label}/"
+        owned_by_cases.update(name for name in everything if name.startswith(prefix))
         owned = {
             name[len(prefix) :]: digest
             for name, digest in everything.items()
@@ -527,10 +548,14 @@ def digest_corpus(out_dir: Path) -> dict[str, Any]:
     if not cases:
         raise GoldenError(f"{out_dir}: no case manifests found (expected */{MANIFEST_NAME})")
 
+    # corpusTree already protects every file's bytes. rootFiles is the accounting
+    # record for files no case owns, not a second source of byte digests.
+    root_files = sorted(set(everything) - owned_by_cases)
     return {
         "caseCount": len(cases),
         "documentCount": total_documents,
         "fileCount": len(everything),
+        "rootFiles": root_files,
         "corpusTree": _tree_digest(everything),
         "caseload": normalized_manifest_digest(caseload_manifest, CASELOAD_REDACTIONS),
         "cases": cases,
@@ -924,6 +949,26 @@ def compare(corpus: Corpus, golden: dict[str, Any], fresh: dict[str, Any]) -> li
                     f"{case_id}: {label} drifted "
                     f"({_short(was.get(axis))} -> {_short(now.get(axis))})"
                 )
+
+    # Whole-tree drift with every case's bytes intact means the movement is in
+    # the files no case owns, and the report should say so rather than leaving
+    # "corpus file bytes drifted" as the only clue. Diagnosing exactly this cost
+    # a review round: the corpus digest had moved because every truth file
+    # carried the substrate checkout sha, and nothing in the output named a file
+    # to go and look at. ``rootFiles`` records names, not per-file digests, so
+    # this narrows the search to a named set rather than pointing at one file —
+    # widening the golden format to carry root-file digests would be a bigger
+    # change than the diagnosis is worth.
+    if golden.get("corpusTree") != fresh.get("corpusTree") and not any(
+        golden_cases[case_id].get("tree") != fresh_cases[case_id].get("tree")
+        for case_id in set(golden_cases) & set(fresh_cases)
+    ):
+        root_files = sorted(set(fresh.get("rootFiles") or []) | set(golden.get("rootFiles") or []))
+        if root_files:
+            problems.append(
+                "every case tree is unchanged, so the drift is in the "
+                f"{len(root_files)} file(s) no case owns: {', '.join(root_files)}"
+            )
     return problems
 
 

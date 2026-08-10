@@ -86,10 +86,17 @@ make this module the shared mutable state instead of curing it.
 
 
 @contextmanager
-def _exact() -> Any:
-    """Run a block under :data:`_ARITHMETIC_CONTEXT`."""
+def exact() -> Any:
+    """Run a block under the pinned arithmetic context.
+
+    Exporters use the same context as the calculations they serialize so a
+    caller's process-local decimal settings cannot alter a ground-truth label.
+    """
     with localcontext(_ARITHMETIC_CONTEXT):
         yield
+
+
+_exact = exact
 
 
 def money(value: Any) -> Decimal:
@@ -124,7 +131,7 @@ def _whole_dollars(value: Decimal) -> Decimal:
         return value.quantize(Decimal("1"), rounding=ROUND_HALF_UP).quantize(CENTS)
 
 
-def _dollars(value: Decimal) -> str:
+def dollars(value: Decimal) -> str:
     """A currency figure as the manifest publishes it: an exact decimal string.
 
     Strings rather than floats, and this is not fussiness. A manifest is the
@@ -136,9 +143,38 @@ def _dollars(value: Decimal) -> str:
         return f"{value.quantize(CENTS, rounding=ROUND_HALF_UP):f}"
 
 
+_dollars = dollars
+
+
 # ---------------------------------------------------------------------------
 # Statutory bindings — every one of them unconfirmed
 # ---------------------------------------------------------------------------
+
+PENALTY_INCREASE_AUTHORITY = (
+    "Automatic self-imposed increase on indemnity paid after its due date. "
+    "COUNSEL-UNCONFIRMED placeholder — the fraction, the trigger and the "
+    "date brackets are all unverified."
+)
+
+STATUTORY_DEADLINE_AUTHORITY = (
+    "LC 4650(a)-(c) payment deadlines. COUNSEL-UNCONFIRMED placeholder — "
+    "the 14-day counts and the events from which each count runs are all unverified."
+)
+
+FIRST_TD_PAYMENT_ANCHOR_QUESTION = (
+    "LC 4650(a) runs its first-payment count from the employer's knowledge of the "
+    "injury AND of disability. This engine models neither date and substitutes the "
+    "date of injury, so a first payment issued on the accrual cadence cannot be "
+    "judged late from these facts. Recorded, never assessed. COUNSEL-UNCONFIRMED — "
+    "the anchor event is the open question, not only the count."
+)
+"""Why the §4650(a) deadline is exported as a flagged datum instead of an exposure.
+
+Every continuing installment is assessed against its own accrual (see
+:func:`_derive_penalties`); this is the one deadline the engine declines to
+decide, and the reason travels with it into the scorer artifact rather than
+living only in a docstring.
+"""
 
 
 class RateBasis(BaseModel):
@@ -227,6 +263,100 @@ class RateBasis(BaseModel):
         if when < self.effective_from:
             return False
         return self.effective_to is None or when <= self.effective_to
+
+
+class PenaltyBasis(BaseModel):
+    """The automatic late-indemnity increase binding for one DOI vintage.
+
+    This mirrors :class:`RateBasis` because the legal-number problem is the
+    same: a fraction without its date bracket, authority caveat and provenance
+    is not a usable extraction label. Nothing shipped here is counsel-confirmed.
+    A seed can replace the fraction or authority, and rebuilding the merged
+    object through this constructor keeps validation on that seam.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    label: str
+    effective_from: dt.date
+    effective_to: dt.date | None = None
+    increase_fraction: Decimal
+    authority: str
+    counsel_confirmed: bool = False
+    source: Literal["engine_default_table", "seed", "mixed"] = "engine_default_table"
+
+    def covers(self, when: dt.date) -> bool:
+        return when >= self.effective_from and (
+            self.effective_to is None or when <= self.effective_to
+        )
+
+
+class StatutoryDeadlineBasis(BaseModel):
+    """DOI-keyed statutory deadline placeholders, separate from engine cadence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    label: str
+    effective_from: dt.date
+    effective_to: dt.date | None = None
+    first_td_payment_days: int
+    subsequent_td_payment_days: int
+    first_pd_payment_days: int
+    authority: str
+    counsel_confirmed: bool = False
+    source: Literal["engine_default_table", "seed", "mixed"] = "engine_default_table"
+
+    def covers(self, when: dt.date) -> bool:
+        return when >= self.effective_from and (
+            self.effective_to is None or when <= self.effective_to
+        )
+
+
+UNCONFIRMED_PENALTY_TABLE: tuple[PenaltyBasis, ...] = (
+    PenaltyBasis(
+        label="doi-all-unconfirmed",
+        effective_from=dt.date.min,
+        increase_fraction=Decimal("0.10"),
+        authority=PENALTY_INCREASE_AUTHORITY,
+    ),
+)
+"""DOI-keyed §4650(d) placeholders; every row is counsel-unconfirmed."""
+
+
+def penalty_basis_for(doi: dt.date) -> PenaltyBasis:
+    """Return the penalty vintage covering *doi*: the authority replacement seam.
+
+    Only this function reads :data:`UNCONFIRMED_PENALTY_TABLE`. A verified dated
+    authority can therefore replace the table without changing derivation,
+    publication or rendering, all of which consume the validated basis object.
+    The earliest row opens at :data:`datetime.date.min`, but the fallback keeps
+    this seam total if a future replacement table accidentally leaves a hole.
+    """
+    for basis in UNCONFIRMED_PENALTY_TABLE:
+        if basis.covers(doi):
+            return basis
+    return UNCONFIRMED_PENALTY_TABLE[0]
+
+
+UNCONFIRMED_STATUTORY_DEADLINE_TABLE: tuple[StatutoryDeadlineBasis, ...] = (
+    StatutoryDeadlineBasis(
+        label="doi-all-deadlines-unconfirmed",
+        effective_from=dt.date.min,
+        first_td_payment_days=14,
+        subsequent_td_payment_days=14,
+        first_pd_payment_days=14,
+        authority=STATUTORY_DEADLINE_AUTHORITY,
+    ),
+)
+"""DOI-keyed payment-deadline placeholders; every row is counsel-unconfirmed."""
+
+
+def statutory_deadline_basis_for(doi: dt.date) -> StatutoryDeadlineBasis:
+    """Return the deadline vintage covering *doi*: the sole table-reading seam."""
+    for basis in UNCONFIRMED_STATUTORY_DEADLINE_TABLE:
+        if basis.covers(doi):
+            return basis
+    return UNCONFIRMED_STATUTORY_DEADLINE_TABLE[0]
 
 
 UNCONFIRMED_RATE_TABLE: tuple[RateBasis, ...] = (
@@ -712,6 +842,131 @@ class BenefitLedger(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Automatic late-indemnity increase
+# ---------------------------------------------------------------------------
+
+
+class StatutoryDueDate(BaseModel):
+    """One benefit installment and its represented statutory deadline, if any."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: Literal["td_period", "pd_advance"]
+    ordinal: int = Field(ge=1)
+    rule: Literal[
+        "first_td_payment",
+        "subsequent_td_payment",
+        "first_pd_payment",
+        "discretionary_advance",
+    ]
+    statutory_due_date: dt.date | None
+    operational_due_date: dt.date
+    date_paid: dt.date | None
+    days_late: int = Field(default=0, ge=0)
+    unpaid: bool = False
+
+
+class PenaltyAssessment(BaseModel):
+    """One late payment and the automatic increase computed from its principal.
+
+    The source and one-based ordinal point back to the corresponding benefit
+    series without duplicating that record. Due, paid and late-day fields remain
+    here because they are the trigger a scorer must be able to verify before it
+    judges the multiplication.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: Literal["td_period", "pd_advance"]
+    ordinal: int = Field(ge=1)
+    rule: Literal[
+        "first_td_payment",
+        "subsequent_td_payment",
+        "first_pd_payment",
+        "discretionary_advance",
+    ]
+    principal: Decimal
+    statutory_due_date: dt.date
+    operational_due_date: dt.date
+    date_paid: dt.date
+    days_late: int = Field(ge=1)
+    increase_fraction: Decimal
+    amount: Decimal
+
+
+class FirstPaymentRule(BaseModel):
+    """§4650(a)'s first-payment deadline: recorded, flagged, never assessed.
+
+    The statute runs its fourteen days from the employer's knowledge of the
+    injury **and** of disability. This engine models neither date, so the date of
+    injury stands in — enough to publish the question, not enough to answer it.
+
+    That gap is why ``assessed`` is typed ``Literal[False]`` rather than left as
+    a boolean somebody could flip. The engine issues temporary disability in
+    four-week blocks paid after each block closes, so the first payment is
+    structurally later than a strict reading of §4650(a) would allow on *every*
+    file it generates. Assessing that would turn a modelling decision into a
+    finding against the carrier on every case in the corpus, which is exactly the
+    defect the accrual-anchored schedule beside this record exists to remove.
+
+    The separation is the point: :attr:`PenaltyLedger.schedule` carries the
+    deadlines this engine will assess against, and this record carries the one it
+    will not, with the reason attached.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    anchor: Literal["date_of_injury"] = "date_of_injury"
+    anchor_date: dt.date
+    due_date: dt.date
+    date_paid: dt.date | None
+    days_late: int = Field(default=0, ge=0)
+    assessed: Literal[False] = False
+    counsel_confirmed: bool = False
+    authority: str
+    open_question: str
+
+
+class PenaltyLedger(BaseModel):
+    """The complete automatic-increase assessment requested by the seed.
+
+    An empty ledger is meaningful: the author asked for the statutory test and
+    the decided benefit ledger contained no late payment. It therefore stays
+    distinct from ``None``, which means the author did not ask for this layer.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    basis: PenaltyBasis
+    deadlines: StatutoryDeadlineBasis
+    schedule: tuple[StatutoryDueDate, ...] = ()
+    assessments: tuple[PenaltyAssessment, ...] = ()
+    first_payment_rule: FirstPaymentRule | None = None
+
+    @property
+    def total_increase(self) -> Decimal:
+        with _exact():
+            return sum((item.amount for item in self.assessments), ZERO).quantize(
+                CENTS, rounding=ROUND_HALF_UP
+            )
+
+    @property
+    def assessed_count(self) -> int:
+        return len(self.assessments)
+
+    @property
+    def unpaid_count(self) -> int:
+        return sum(1 for item in self.schedule if item.unpaid)
+
+    @property
+    def principal_assessed(self) -> Decimal:
+        with _exact():
+            return sum((item.principal for item in self.assessments), ZERO).quantize(
+                CENTS, rounding=ROUND_HALF_UP
+            )
+
+
+# ---------------------------------------------------------------------------
 # Settlement
 # ---------------------------------------------------------------------------
 
@@ -755,6 +1010,7 @@ class MoneyFacts(BaseModel):
     wages: WageFacts
     benefits: BenefitLedger = Field(default_factory=BenefitLedger)
     settlement: SettlementFact | None = None
+    penalties: PenaltyLedger | None = None
 
     @property
     def aww(self) -> Decimal:
@@ -1094,9 +1350,7 @@ def _pattern_of(
     return ("irregular" if variation > IRREGULARITY_THRESHOLD else "regular"), "derived"
 
 
-def compute_aww(
-    wages: WageScenario, periods: tuple[EarningsPeriod, ...]
-) -> AwwComputation:
+def compute_aww(wages: WageScenario, periods: tuple[EarningsPeriod, ...]) -> AwwComputation:
     """Average weekly wage under the selected method, with every operand kept.
 
     Each method differs in *which earnings it counts and over how many weeks*,
@@ -1134,9 +1388,7 @@ def compute_aww(
         return _compute_aww(wages, periods)
 
 
-def _compute_aww(
-    wages: WageScenario, periods: tuple[EarningsPeriod, ...]
-) -> AwwComputation:
+def _compute_aww(wages: WageScenario, periods: tuple[EarningsPeriod, ...]) -> AwwComputation:
     """The body of :func:`compute_aww`, under the pinned arithmetic context."""
     method, source, reason = select_method(wages, periods)
 
@@ -1403,9 +1655,7 @@ def _derive_benefits(
         )
         advance_cursor = advance_cursor + dt.timedelta(days=PD_ADVANCE_INTERVAL_DAYS)
 
-    return BenefitLedger(
-        td_periods=tuple(periods), pd_advances=tuple(advances), gaps=tuple(gaps)
-    )
+    return BenefitLedger(td_periods=tuple(periods), pd_advances=tuple(advances), gaps=tuple(gaps))
 
 
 #: How long after the Application is filed a settlement may first be approved.
@@ -1451,9 +1701,7 @@ def _derive_settlement(
 
     scenario = seed.scenario.settlement
     approval_shift = 0
-    approval = getattr(timeline, "award_date", None) or getattr(
-        timeline, "resolution_date", None
-    )
+    approval = getattr(timeline, "award_date", None) or getattr(timeline, "resolution_date", None)
     if scenario is not None and scenario.approval_date is not None:
         # An authored approval still has to be an approval this file could have
         # reached. Review found `approval_date: 2021-06-15` on a case whose claim
@@ -1540,6 +1788,186 @@ def _derive_settlement(
     )
 
 
+def _derive_penalties(
+    seed: CaseSeed, benefits: BenefitLedger, doi: dt.date, onset: dt.date
+) -> PenaltyLedger:
+    """Assess the seed-requested automatic increase from decided payment facts.
+
+    There is deliberately no random input. Lateness, principal and dates have
+    already been decided in :class:`BenefitLedger`; this layer merely applies a
+    validated DOI-keyed fraction to each late payment. Rebuilding an overridden
+    basis through its constructor matters because Pydantic's
+    ``model_copy(update=...)`` skips validation at precisely the authority seam
+    where a seed can replace a statutory figure.
+    """
+    scenario = seed.scenario.penalties
+    if scenario is None:
+        raise ValueError("_derive_penalties requires an opted-in scenario.penalties block")
+
+    basis = penalty_basis_for(doi)
+    changes: dict[str, Any] = {}
+    authored: set[str] = set()
+    if scenario.increase_fraction is not None:
+        changes["increase_fraction"] = scenario.increase_fraction
+        authored.add("increase_fraction")
+    if scenario.authority is not None:
+        changes["authority"] = scenario.authority
+        authored.add("authority")
+    if authored:
+        changes["source"] = (
+            "seed" if authored == {"increase_fraction", "authority"} else "mixed"
+        )
+    changes["counsel_confirmed"] = scenario.counsel_confirmed
+    basis = PenaltyBasis(**{**basis.model_dump(), **changes})
+
+    deadlines = statutory_deadline_basis_for(doi)
+    schedule: list[StatutoryDueDate] = []
+    assessments: list[PenaltyAssessment] = []
+
+    def record(
+        *,
+        source: Literal["td_period", "pd_advance"],
+        ordinal: int,
+        rule: Literal[
+            "first_td_payment",
+            "subsequent_td_payment",
+            "first_pd_payment",
+            "discretionary_advance",
+        ],
+        statutory_due_date: dt.date | None,
+        operational_due_date: dt.date,
+        date_paid: dt.date | None,
+        principal: Decimal,
+    ) -> None:
+        statutorily_late = (
+            date_paid is not None
+            and statutory_due_date is not None
+            and date_paid > statutory_due_date
+        )
+        days_late = (
+            (date_paid - statutory_due_date).days if statutorily_late else 0
+        )
+        unpaid = date_paid is None
+        schedule.append(
+            StatutoryDueDate(
+                source=source,
+                ordinal=ordinal,
+                rule=rule,
+                statutory_due_date=statutory_due_date,
+                operational_due_date=operational_due_date,
+                date_paid=date_paid,
+                days_late=days_late,
+                unpaid=unpaid,
+            )
+        )
+        # Nothing was paid, so there is no late payment to increase. Recording
+        # absence as an assessment would turn a gap into invented arithmetic.
+        if unpaid:
+            return
+        if statutory_due_date is None or days_late == 0:
+            return
+        with _exact():
+            amount = money(principal * basis.increase_fraction)
+        assessments.append(
+            PenaltyAssessment(
+                source=source,
+                ordinal=ordinal,
+                rule=rule,
+                principal=principal,
+                statutory_due_date=statutory_due_date,
+                operational_due_date=operational_due_date,
+                date_paid=date_paid,
+                days_late=days_late,
+                increase_fraction=basis.increase_fraction,
+                amount=amount,
+            )
+        )
+
+    # Every installment is due a fixed interval after the accrual **it pays
+    # for** closes, which is the only anchor that keeps the deadline and the
+    # money in the same order.
+    #
+    # The first cut ran a ladder from the date of injury instead —
+    # ``onset + 14 + (n-1)*14`` — while the benefit ledger issues four-week
+    # blocks fourteen days after each block ends. Those two clocks diverge by a
+    # fortnight per installment forever, so the model assessed a file with no
+    # authored lateness on every payment, produced the same $1,594.86 whatever
+    # the delay controls said, and dated installment 2's deadline three days
+    # before the period it was paying for. A deadline that precedes its own
+    # accrual is not a strict reading of the statute; it is a different quantity
+    # wearing its name.
+    for ordinal, period in enumerate(benefits.td_periods, 1):
+        interval = (
+            deadlines.first_td_payment_days
+            if ordinal == 1
+            else deadlines.subsequent_td_payment_days
+        )
+        record(
+            source="td_period",
+            ordinal=ordinal,
+            rule="first_td_payment" if ordinal == 1 else "subsequent_td_payment",
+            statutory_due_date=period.end + dt.timedelta(days=interval),
+            operational_due_date=period.date_due,
+            date_paid=period.date_paid,
+            principal=period.amount,
+        )
+
+    # §4650(a) is kept, separately, as the one deadline this engine will not
+    # decide: see :class:`FirstPaymentRule`. It never reaches ``assessments``.
+    first_payment_rule: FirstPaymentRule | None = None
+    if benefits.td_periods:
+        first_period = benefits.td_periods[0]
+        doi_anchored_due = onset + dt.timedelta(days=deadlines.first_td_payment_days)
+        first_payment_rule = FirstPaymentRule(
+            anchor_date=onset,
+            due_date=doi_anchored_due,
+            date_paid=first_period.date_paid,
+            days_late=(
+                max(0, (first_period.date_paid - doi_anchored_due).days)
+                if first_period.date_paid is not None
+                else 0
+            ),
+            counsel_confirmed=deadlines.counsel_confirmed,
+            authority=deadlines.authority,
+            open_question=FIRST_TD_PAYMENT_ANCHOR_QUESTION,
+        )
+
+    paid_td = [period for period in benefits.td_periods if period.date_paid is not None]
+    # The **latest payment made**, not the last one listed. The ledger is ordered
+    # by accrual, so front-loaded lateness leaves an early block paid after every
+    # later one; reading list order as a chronology produced a permanent-
+    # disability deadline that expired before the payment supposed to start it.
+    first_pd_anchor = (
+        max(period.date_paid for period in paid_td)
+        if paid_td
+        else benefits.td_periods[-1].end
+        if benefits.td_periods
+        else onset
+    )
+    for ordinal, advance in enumerate(benefits.pd_advances, 1):
+        first = ordinal == 1
+        record(
+            source="pd_advance",
+            ordinal=ordinal,
+            rule="first_pd_payment" if first else "discretionary_advance",
+            statutory_due_date=(
+                first_pd_anchor + dt.timedelta(days=deadlines.first_pd_payment_days)
+                if first
+                else None
+            ),
+            operational_due_date=advance.date_due,
+            date_paid=advance.date_paid,
+            principal=advance.amount,
+        )
+    return PenaltyLedger(
+        basis=basis,
+        deadlines=deadlines,
+        schedule=tuple(schedule),
+        assessments=tuple(assessments),
+        first_payment_rule=first_payment_rule,
+    )
+
+
 def derive_money_facts(
     seed: CaseSeed, timeline: Any, diligence: str = "ordinary"
 ) -> MoneyFacts | None:
@@ -1571,7 +1999,8 @@ def _derive_money_facts(
     seed: CaseSeed, wages: WageScenario, timeline: Any, diligence: str
 ) -> MoneyFacts:
     """The body of :func:`derive_money_facts`, under the pinned arithmetic context."""
-    doi = getattr(timeline, "injury_date", None) or seed.injury.onset_date
+    onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
+    doi = onset
     periods = _derive_periods(seed, wages, doi)
     computation = compute_aww(wages, periods)
     basis = _apply_rate_basis_override(rate_basis_for(doi), seed)
@@ -1585,8 +2014,7 @@ def _derive_money_facts(
             for item in wages.in_kind
         ),
         employment_start=wages.employment_start,
-        concurrent_employment=wages.concurrent_employment
-        or any(p.concurrent for p in periods),
+        concurrent_employment=wages.concurrent_employment or any(p.concurrent for p in periods),
         pattern=pattern,
         pattern_source=pattern_source,
         computation=computation,
@@ -1595,8 +2023,18 @@ def _derive_money_facts(
 
     benefits = _derive_benefits(seed, wage_facts, timeline, diligence)
     settlement = _derive_settlement(seed, wage_facts, benefits, timeline, diligence)
+    penalties = (
+        _derive_penalties(seed, benefits, doi, onset)
+        if seed.scenario.penalties is not None
+        else None
+    )
 
-    facts = MoneyFacts(wages=wage_facts, benefits=benefits, settlement=settlement)
+    facts = MoneyFacts(
+        wages=wage_facts,
+        benefits=benefits,
+        settlement=settlement,
+        penalties=penalties,
+    )
     log.debug(
         "money.derived",
         case_id=seed.case_id,
@@ -1607,6 +2045,7 @@ def _derive_money_facts(
         periods=len(periods),
         td_periods=len(benefits.td_periods),
         settled=settlement is not None,
+        penalties=penalties.assessed_count if penalties is not None else None,
     )
     return facts
 
@@ -1678,11 +2117,32 @@ GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
         "pdAdvanceScheduleAuthority",
     ),
     "settlement": ("kind", "grossAmount", "approvalDate", "fundingDate", "fundingLagDays"),
+    "penalties": (
+        "assessmentCount",
+        "assessments",
+        "schedule",
+        "unpaidCount",
+        "totalIncrease",
+        "principalAssessed",
+        "increaseFraction",
+        "basisLabel",
+        "basisAuthority",
+        "counselConfirmed",
+        "basisSource",
+        "deadlineLabel",
+        "deadlineAuthority",
+        "deadlineConfirmed",
+        "deadlineSource",
+        "firstTdPaymentDays",
+        "subsequentTdPaymentDays",
+        "firstPdPaymentDays",
+        "firstPaymentRule",
+    ),
 }
 
 
 def money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
-    """The ``caseFacts.money`` object a manifest publishes.
+    """The cents-formatted money projection embedded in scorer truth.
 
     Currency as exact decimal strings, never floats — see :func:`_dollars`.
     Restricted to :data:`GOVERNED_MONEY_FIELDS`, and the restriction is checked
@@ -1690,6 +2150,19 @@ def money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
     """
     with _exact():
         return _money_manifest_block(facts)
+
+
+def analyzer_money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
+    """Publish world facts while keeping penalty assessments scorer-only.
+
+    Wage, benefit, and settlement facts are analyzer inputs because documents
+    are checked against them.  The automatic-increase assessment is the label
+    used to score that analysis, so publishing it in the case tree would hand
+    the analyzer its answer.
+    """
+    block = money_manifest_block(facts)
+    block.pop("penalties", None)
+    return block
 
 
 def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
@@ -1735,9 +2208,7 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
                     "weeklyRate": _dollars(period.weekly_rate),
                     "amount": _dollars(period.amount),
                     "dateDue": period.date_due.isoformat(),
-                    "datePaid": (
-                        period.date_paid.isoformat() if period.date_paid else None
-                    ),
+                    "datePaid": (period.date_paid.isoformat() if period.date_paid else None),
                     "daysLate": period.days_late,
                 }
                 for period in benefits.td_periods
@@ -1793,7 +2264,87 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
             ),
             "fundingLagDays": settlement.funding_lag_days,
         }
+    if facts.penalties is not None:
+        penalties = facts.penalties
+        block["penalties"] = {
+            "assessmentCount": penalties.assessed_count,
+            "schedule": [
+                {
+                    "source": item.source,
+                    "ordinal": item.ordinal,
+                    "rule": item.rule,
+                    "statutoryDueDate": (
+                        item.statutory_due_date.isoformat()
+                        if item.statutory_due_date is not None
+                        else None
+                    ),
+                    "operationalDueDate": item.operational_due_date.isoformat(),
+                    "datePaid": item.date_paid.isoformat() if item.date_paid else None,
+                    "daysLate": item.days_late,
+                    "unpaid": item.unpaid,
+                }
+                for item in penalties.schedule
+            ],
+            "unpaidCount": penalties.unpaid_count,
+            "assessments": [
+                {
+                    "source": assessment.source,
+                    "ordinal": assessment.ordinal,
+                    "rule": assessment.rule,
+                    "principal": _dollars(assessment.principal),
+                    "statutoryDueDate": assessment.statutory_due_date.isoformat(),
+                    "operationalDueDate": assessment.operational_due_date.isoformat(),
+                    "datePaid": assessment.date_paid.isoformat(),
+                    "daysLate": assessment.days_late,
+                    "increaseFraction": f"{assessment.increase_fraction.normalize():f}",
+                    "amount": _dollars(assessment.amount),
+                }
+                for assessment in penalties.assessments
+            ],
+            "totalIncrease": _dollars(penalties.total_increase),
+            "principalAssessed": _dollars(penalties.principal_assessed),
+            "increaseFraction": f"{penalties.basis.increase_fraction.normalize():f}",
+            "basisLabel": penalties.basis.label,
+            "basisAuthority": penalties.basis.authority,
+            "counselConfirmed": penalties.basis.counsel_confirmed,
+            "basisSource": penalties.basis.source,
+            "deadlineLabel": penalties.deadlines.label,
+            "deadlineAuthority": penalties.deadlines.authority,
+            "deadlineConfirmed": penalties.deadlines.counsel_confirmed,
+            "deadlineSource": penalties.deadlines.source,
+            "firstTdPaymentDays": penalties.deadlines.first_td_payment_days,
+            "subsequentTdPaymentDays": penalties.deadlines.subsequent_td_payment_days,
+            "firstPdPaymentDays": penalties.deadlines.first_pd_payment_days,
+        }
+        block["penalties"]["firstPaymentRule"] = _first_payment_rule_block(
+            penalties.first_payment_rule
+        )
     return block
+
+
+def _first_payment_rule_block(rule: FirstPaymentRule | None) -> dict[str, Any] | None:
+    """Publish the §4650(a) record, in one place, for both money channels.
+
+    ``None`` when the file paid no temporary disability at all: there is no first
+    payment for a deadline to attach to. Null rather than absent because this is
+    a *field inside* the penalties group, and every governed field is published
+    unconditionally — absence is how this schema says "this case has no such
+    group", which is a different fact and one the opted-in ledger has already
+    denied by existing.
+    """
+    if rule is None:
+        return None
+    return {
+        "anchor": rule.anchor,
+        "anchorDate": rule.anchor_date.isoformat(),
+        "dueDate": rule.due_date.isoformat(),
+        "datePaid": rule.date_paid.isoformat() if rule.date_paid is not None else None,
+        "daysLate": rule.days_late,
+        "assessed": rule.assessed,
+        "counselConfirmed": rule.counsel_confirmed,
+        "authority": rule.authority,
+        "openQuestion": rule.open_question,
+    }
 
 
 __all__ = [
@@ -1807,24 +2358,37 @@ __all__ = [
     "SHORT_HISTORY_WEEKS",
     "TD_PAYMENT_DUE_AUTHORITY",
     "TD_PAYMENT_DUE_DAYS",
+    "UNCONFIRMED_PENALTY_TABLE",
     "UNCONFIRMED_RATE_TABLE",
+    "UNCONFIRMED_STATUTORY_DEADLINE_TABLE",
     "AwwComputation",
     "BenefitGap",
     "BenefitLedger",
     "CompRate",
     "EarningsPeriod",
+    "FirstPaymentRule",
     "InKindWage",
     "MoneyFacts",
     "PdAdvance",
+    "PenaltyAssessment",
+    "PenaltyBasis",
+    "PenaltyLedger",
     "RateBasis",
     "SettlementFact",
+    "StatutoryDeadlineBasis",
+    "StatutoryDueDate",
     "TdPeriod",
     "WageFacts",
+    "analyzer_money_manifest_block",
     "compute_aww",
     "compute_comp_rate",
     "derive_money_facts",
+    "dollars",
+    "exact",
     "money",
     "money_manifest_block",
+    "penalty_basis_for",
     "rate_basis_for",
     "select_method",
+    "statutory_deadline_basis_for",
 ]

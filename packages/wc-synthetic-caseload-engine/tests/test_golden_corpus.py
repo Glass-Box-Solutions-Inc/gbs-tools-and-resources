@@ -160,7 +160,12 @@ def test_every_registered_corpus_is_in_exactly_one_tier() -> None:
 
 
 def test_every_registered_corpus_has_a_well_formed_golden() -> None:
-    """The goldens are committed, current-format, and internally consistent."""
+    """The goldens are committed, current-format, and internally consistent.
+
+    The old count was right to be strict but wrong to assume the tree had one
+    non-case file. Recording that part of the tree keeps the equality strict
+    while making its shape checked data rather than an embedded assumption.
+    """
     for corpus in CORPORA:
         assert corpus.golden.is_file(), (
             f"{corpus.name}: no committed golden. Record one with "
@@ -176,7 +181,11 @@ def test_every_registered_corpus_has_a_well_formed_golden() -> None:
         assert cases, f"{corpus.name}: golden records no cases"
         assert golden["caseCount"] == len(cases)
         assert golden["documentCount"] == sum(case["documentCount"] for case in cases.values())
-        assert golden["fileCount"] == sum(case["fileCount"] for case in cases.values()) + 1
+        assert golden["fileCount"] == sum(
+            case["fileCount"] for case in cases.values()
+        ) + len(golden["rootFiles"])
+        assert "caseload_manifest.json" in golden["rootFiles"]
+        assert golden["rootFiles"] == sorted(golden["rootFiles"])
         assert SHA256_RE.match(golden["caseload"])
         assert SHA256_RE.match(golden["corpusTree"])
         for case_id, case in cases.items():
@@ -186,6 +195,24 @@ def test_every_registered_corpus_has_a_well_formed_golden() -> None:
             assert 0 < case["distinctSubtypes"] <= case["documentCount"]
             # seed.yaml + case_facts.yaml + manifest.json + every document.
             assert case["fileCount"] == case["documentCount"] + 3
+
+
+def test_truth_subtree_accounting_is_complete_when_present() -> None:
+    """A recorded truth subtree contains its index and one file per case.
+
+    Strictness was never the defect in the old one-root-file invariant; its
+    assumed tree shape was. Once truth files are present, their exact recorded
+    names make a missing case manifest or an unowned extra artifact fail loud.
+    """
+    for corpus in CORPORA:
+        golden = json.loads(corpus.golden.read_text(encoding="utf-8"))
+        truth_files = [name for name in golden["rootFiles"] if name.startswith("truth/")]
+        if truth_files:
+            expected = [
+                *(f"truth/{case_id}.truth.json" for case_id in golden["cases"]),
+                "truth/caseload.truth.json",
+            ]
+            assert truth_files == sorted(expected)
 
 
 def test_a_golden_records_the_provenance_needed_to_explain_a_drift() -> None:
@@ -622,6 +649,7 @@ def test_record_records_when_both_runs_agree(
     written = json.loads(golden_path.read_text(encoding="utf-8"))
     assert written["caseCount"] == 1
     assert written["fileCount"] == 6
+    assert written["rootFiles"] == ["caseload_manifest.json"]
     assert SHA256_RE.match(written["corpusTree"])
 
 
@@ -891,6 +919,28 @@ def test_a_format_one_golden_is_refused_rather_than_half_read(
     from golden_gate import _load_golden
 
     with pytest.raises(GoldenError, match="format 1") as raised:
+        _load_golden(Corpus(name="legacy", tier=SUITE_TIER, why="probe"))
+    assert "--record --only legacy" in str(raised.value)
+
+
+def test_a_format_two_golden_is_refused_rather_than_assuming_one_root_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Format 2 cannot account by name for files outside case directories.
+
+    Reading it as format 3 would silently restore the false one-root-file
+    assumption. Refusal keeps the invariant strict and names the gate's safe,
+    reproducibility-checked re-record path.
+    """
+    golden_path = tmp_path / "legacy.json"
+    golden_path.write_text(
+        json.dumps({"format": 2, "corpus": "legacy", "cases": {}}) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(Corpus, "golden", property(lambda self: golden_path))
+
+    from golden_gate import _load_golden
+
+    with pytest.raises(GoldenError, match="format 2") as raised:
         _load_golden(Corpus(name="legacy", tier=SUITE_TIER, why="probe"))
     assert "--record --only legacy" in str(raised.value)
 
