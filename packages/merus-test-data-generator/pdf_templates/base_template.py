@@ -278,10 +278,25 @@ class BaseTemplate:
         substrate authors the body from it. Truthiness is the shared contract,
         so passing a non-empty block here also reads as on, and a later phase
         can thread per-variant parameters through this key without a second one.
+
+        **Accepted shapes: ``bool`` or ``dict``.** Anything else raises, rather
+        than being silently truthy. Pinning this now is deliberate — the key is
+        new, so no existing caller can break, and AJC-65's block seam and M3 are
+        both about to build on it. A string ``"false"`` or a stray object
+        reading as "on" would be discovered as a corpus diff months later.
         """
         if not getattr(doc_spec, "context", None):
             return False
-        return bool(doc_spec.context.get(self.VARIANT_CONTENT_KEY))
+        value = doc_spec.context.get(self.VARIANT_CONTENT_KEY)
+        if value is None or isinstance(value, bool):
+            return bool(value)
+        if isinstance(value, dict):
+            return bool(value)
+        raise ValueError(
+            f"{self.VARIANT_CONTENT_KEY} must be a bool or a dict of per-variant "
+            f"parameters; got {type(value).__name__!r} ({value!r}). A truthy "
+            f"value of another type is refused rather than guessed at."
+        )
 
     def variant_of(self, doc_spec: Any, default: str = "") -> str:
         """The raw registry ``variant`` string for this document."""

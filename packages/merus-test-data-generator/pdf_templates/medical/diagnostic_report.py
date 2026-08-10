@@ -9,7 +9,7 @@ from pdf_templates.base_template import BaseTemplate
 from reportlab.platypus import Paragraph, Spacer
 from reportlab.lib.units import inch
 
-from data.variant_content import diagnostic_register
+from data.variant_content import diagnostic_register, region_for_body_part
 
 
 class DiagnosticReport(BaseTemplate):
@@ -126,25 +126,32 @@ class DiagnosticReport(BaseTemplate):
     # Variant registers (opt-in only — see BaseTemplate.VARIANT_CONTENT_KEY)
     # ------------------------------------------------------------------
 
-    def _result_row(self, label, value, unit, reference):
-        """One reported result line, aligned the way a result table reads."""
-        unit_part = f" {unit}" if unit else ""
+    def _result_row(self, row):
+        """One reported result line, formatted the way a result table reads."""
+        unit = f" {row.unit}" if row.unit else ""
+        reference = f" &nbsp;&nbsp;(Reference Range: {row.reference})" if row.reference else ""
         return Paragraph(
-            f"{label}: <b>{value}</b>{unit_part} &nbsp;&nbsp;(Reference Range: {reference})",
+            f"{row.label}: <b>{row.value}</b>{unit}{reference}",
             self.styles['BodyText14'],
         )
 
     def _build_register_story(self, doc_spec, register):
         """Render a non-radiology diagnostic document.
 
-        Shares the substrate's letterhead, patient header and signature
-        scaffolding — a lab report and a radiology report are the same kind of
-        artifact administratively. What differs is everything clinical, which is
-        what the register supplies.
+        The clinical content comes from a single scenario drawn as one unit, so
+        technique, measurements and impression cannot disagree with each other.
+        Only the administrative scaffolding — letterhead, patient header,
+        signature — is shared with the radiology path.
         """
         story = []
         injury = self.case.injuries[0] if self.case.injuries else None
         body_part = ", ".join(injury.body_parts) if injury else "Spine"
+
+        # Anatomy first: a study of the lower limb is the wrong document for a
+        # wrist injury, so the candidates are narrowed to the region before
+        # anything is drawn.
+        candidates = register.scenarios_for_region(region_for_body_part(body_part))
+        scenario = random.choice(candidates)
 
         facility_name = random.choice(register.facilities)
         story.extend(self.make_letterhead(
@@ -158,7 +165,7 @@ class DiagnosticReport(BaseTemplate):
         story.extend(self.make_patient_header())
         story.append(Spacer(1, 0.3*inch))
 
-        story.append(Paragraph(f"<b>EXAMINATION:</b> {register.exam_label}", self.styles['BodyText14']))
+        story.append(Paragraph(f"<b>EXAMINATION:</b> {scenario.exam_label}", self.styles['BodyText14']))
         story.append(Paragraph(
             f"<b>Date of Service:</b> {doc_spec.doc_date.strftime('%B %d, %Y')}",
             self.styles['BodyText14'],
@@ -175,17 +182,20 @@ class DiagnosticReport(BaseTemplate):
             f"involving the {body_part.lower()}."
         )
         story.extend(self.make_section("CLINICAL INDICATION", indication))
+        story.extend(self.make_section("TECHNIQUE", scenario.technique))
 
-        story.extend(self.make_section("TECHNIQUE", random.choice(register.technique)))
+        story.append(Paragraph(f"<b>{scenario.result_heading}</b>", self.styles['BodyText14']))
+        for row in scenario.rows:
+            story.append(self._result_row(row))
+        story.append(Spacer(1, 0.2*inch))
 
-        if register.key == "lab":
-            story.extend(self._build_lab_results(register))
-        elif register.key == "emg_ncv":
-            story.extend(self._build_electrodiagnostic_results(register, body_part))
-        else:
-            story.extend(self._build_measurement_results(register))
+        if scenario.secondary_rows:
+            story.append(Paragraph(f"<b>{scenario.secondary_heading}</b>", self.styles['BodyText14']))
+            for row in scenario.secondary_rows:
+                story.append(self._result_row(row))
+            story.append(Spacer(1, 0.2*inch))
 
-        story.extend(self.make_section("IMPRESSION", random.choice(register.impressions)))
+        story.extend(self.make_section("IMPRESSION", scenario.impression))
 
         signer = f"Dr. {random.choice(['Robert', 'Jennifer', 'Michael', 'Sarah', 'David'])} "
         signer += random.choice(['Chen', 'Patel', 'Johnson', 'Martinez', 'Lee'])
@@ -197,57 +207,3 @@ class DiagnosticReport(BaseTemplate):
         ))
 
         return story
-
-    def _build_lab_results(self, register):
-        """A named panel with per-analyte results and reference intervals."""
-        from data.variant_content import LAB_PANELS
-
-        panel_name = random.choice(sorted(LAB_PANELS))
-        rows = [Paragraph(f"<b>{register.result_heading} — {panel_name}</b>", self.styles['BodyText14'])]
-        for analyte in LAB_PANELS[panel_name]:
-            rows.append(
-                self._result_row(
-                    analyte.name, random.choice(analyte.values), analyte.unit, analyte.reference
-                )
-            )
-        rows.append(Spacer(1, 0.2*inch))
-        return rows
-
-    def _build_electrodiagnostic_results(self, register, body_part):
-        """Nerve conduction rows, then the needle examination."""
-        from data.variant_content import EMG_ROWS, NCV_ROWS
-
-        rows = [Paragraph(f"<b>{register.result_heading}</b>", self.styles['BodyText14'])]
-        for nerve, latencies, amplitudes, velocities, reference in NCV_ROWS:
-            rows.append(Paragraph(
-                f"{nerve}: latency <b>{random.choice(latencies)}</b> ms, "
-                f"amplitude <b>{random.choice(amplitudes)}</b>, "
-                f"conduction velocity <b>{random.choice(velocities)}</b> m/s "
-                f"&nbsp;&nbsp;(Reference Range: {reference})",
-                self.styles['BodyText14'],
-            ))
-        rows.append(Spacer(1, 0.2*inch))
-
-        rows.append(Paragraph("<b>NEEDLE EMG</b>", self.styles['BodyText14']))
-        for muscle, insertional, spontaneous, muap, recruitment in EMG_ROWS:
-            rows.append(Paragraph(
-                f"{muscle}: insertional activity {random.choice(insertional).lower()}, "
-                f"spontaneous activity {random.choice(spontaneous).lower()}, "
-                f"motor unit potentials {random.choice(muap).lower()}, "
-                f"recruitment {random.choice(recruitment).lower()}.",
-                self.styles['BodyText14'],
-            ))
-        rows.append(Spacer(1, 0.2*inch))
-        return rows
-
-    def _build_measurement_results(self, register):
-        """A measurement summary — the shape a sleep study reports in."""
-        rows = [Paragraph(f"<b>{register.result_heading}</b>", self.styles['BodyText14'])]
-        for analyte in register.analytes:
-            rows.append(
-                self._result_row(
-                    analyte.name, random.choice(analyte.values), analyte.unit, analyte.reference
-                )
-            )
-        rows.append(Spacer(1, 0.2*inch))
-        return rows
