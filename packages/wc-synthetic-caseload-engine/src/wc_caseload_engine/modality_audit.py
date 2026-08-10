@@ -425,13 +425,6 @@ MODALITY_SITES: tuple[ModalitySite, ...] = (
     ),
     ModalitySite(
         "data/variant_content.py",
-        'exam_label="ELECTRODIAGNOSTIC STUDY",',
-        "documented",
-        "region-neutral exam label, normal study — opt-in only (variant_content); no corpus sets "
-        "it, so this does not render for this engine (AJC-66)",
-    ),
-    ModalitySite(
-        "data/variant_content.py",
         'result_heading="NERVE CONDUCTION STUDIES",',
         "documented",
         "result heading, identical across scenarios — opt-in only (variant_content); no corpus "
@@ -474,10 +467,17 @@ MODALITY_SITES: tuple[ModalitySite, ...] = (
     ),
     ModalitySite(
         "data/variant_content.py",
-        'Study within normal limits. There is no electrodiagnostic evidence of focal',
+        "Study of the upper limb within normal limits",
         "documented",
-        "impression, normal study — opt-in only (variant_content); no corpus sets it, so this "
-        "does not render for this engine (AJC-66)",
+        "impression, normal upper-limb study — opt-in only (variant_content); no corpus "
+        "sets it, so this does not render for this engine (AJC-66)",
+    ),
+    ModalitySite(
+        "data/variant_content.py",
+        "Study of the lower limb within normal limits",
+        "documented",
+        "impression, normal lower-limb study — opt-in only (variant_content); no corpus "
+        "sets it, so this does not render for this engine (AJC-66)",
     ),
     ModalitySite(
         "data/variant_content.py",
