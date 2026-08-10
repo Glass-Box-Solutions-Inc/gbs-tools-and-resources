@@ -500,16 +500,39 @@ def archetype_weights(
     return {name: weight / total for name, weight in weights.items()}
 
 
-def _clamped(scale: float, affinity: float, multiplier: float = 1.0) -> float:
-    return min(_P_CEILING, max(_P_FLOOR, scale * affinity * multiplier))
+def _clamped(probability: float) -> float:
+    """The floor and ceiling, and nothing else.
+
+    Separated from the gradient so the two cannot be confused again. The clamp is the
+    anti-fingerprint guarantee — no archetype probability ever reaches 0 or 1 — and it
+    is applied last, after the odds-scale transform, so it bounds the number that is
+    actually used.
+    """
+    return min(_P_CEILING, max(_P_FLOOR, probability))
+
+
+def _graded(scale: float, affinity: float, condition: str, bmi: str, smoking: str) -> float:
+    """One archetype's probability in one cell: baseline, graded on odds, clamped.
+
+    The order is the correction review forced. ``scale * affinity`` is the archetype's
+    baseline probability for this condition; the gradient then moves it **on the odds
+    scale**, because that is what an odds ratio is a ratio of. Multiplying the
+    probability instead overstates the effect wherever the baseline is large — and
+    these conditions are common — so hypertension at 0.525 times 2.20 produced 1.155,
+    an impossible number the clamp silently turned into 0.995.
+    """
+    return _clamped(
+        RISK_MULTIPLIERS[condition].apply(scale * affinity, bmi, smoking)
+    )
 
 
 def _cell_rate(scale: float, condition: str, age: int, bmi: str, smoking: str) -> float:
     """The mixture rate for one demographic cell at a given scale."""
-    multiplier = RISK_MULTIPLIERS[condition].multiplier(bmi, smoking)
     return sum(
         weight
-        * _clamped(scale, HEALTH_ARCHETYPES[name].affinity_for(condition), multiplier)
+        * _graded(
+            scale, HEALTH_ARCHETYPES[name].affinity_for(condition), condition, bmi, smoking
+        )
         for name, weight in archetype_weights(age, bmi, smoking).items()
     )
 
@@ -584,9 +607,10 @@ def condition_probabilities(
     * the **archetype mixture** carries correlation *between* conditions, so a
       metabolic applicant's diabetes and hypertension arrive together;
     * the **risk gradient** carries dose-response *within* one condition, at the
-      magnitude its own source reports. Nothing about archetype membership can express
-      that knee cartilage responds to body mass more steeply (OR 2.63) than a lumbar
-      disc does (OR 1.79); only a per-condition multiplier can.
+      magnitude its own source reports, and on the **odds scale**. Nothing about
+      archetype membership can express that knee cartilage responds to body mass more
+      steeply (OR 2.63) than a lumbar disc does (OR 1.79); only a per-condition odds
+      ratio can.
 
     Memoised because the solve is pure in its arguments and a cohort of any size
     revisits the same few thousand cells. Purity is also what keeps this
@@ -597,11 +621,16 @@ def condition_probabilities(
     if citation is None:
         return ()
     scale = calibrate(condition, age, citation.value)
-    multiplier = RISK_MULTIPLIERS[condition].multiplier(bmi_band, smoking_status)
     return tuple(
         (
             name,
-            _clamped(scale, HEALTH_ARCHETYPES[name].affinity_for(condition), multiplier),
+            _graded(
+                scale,
+                HEALTH_ARCHETYPES[name].affinity_for(condition),
+                condition,
+                bmi_band,
+                smoking_status,
+            ),
         )
         for name in sorted(archetype_weights(age, bmi_band, smoking_status))
     )
@@ -936,7 +965,10 @@ def _claim_from_entry(entry: Any, index: int) -> PriorClaim:
             body_parts=tuple(entry.award.body_parts),
             pd_percent=entry.award.pd_percent,
             award_date=entry.award.award_date,
-            resolution_type=entry.award.resolution_type,
+            # ``None`` on the seed means "the claim's own", which the seed schema has
+            # already checked is a resolution capable of producing an award. The
+            # ledger carries the resolved value so no consumer has to know that.
+            resolution_type=entry.award.resolution_type or entry.resolution_type,
             still_exists_conclusively_presumed=entry.award.conclusively_presumed,
         )
     return PriorClaim(
@@ -1057,10 +1089,23 @@ class SibtfClause:
 SIBTF_DISABLING_SEVERITIES: frozenset[str] = frozenset({"moderate", "severe"})
 
 
+#: Trajectories a §4751 disability can still be running on at the date of injury.
+#:
+#: ``resolved`` is excluded, and the exclusion is not a technicality. This module defines
+#: a resolved condition as one that is no longer a live factor; §4751 asks whether a
+#: pre-existing disability *combines* with the new injury to produce a greater one. A
+#: factor that has stopped operating cannot combine with anything, so a moderate
+#: condition that resolved before the injury grounds no more than no condition at all.
+SIBTF_LIVE_TRAJECTORIES: frozenset[str] = frozenset(
+    {"stable", "progressive", "fluctuating"}
+)
+
+
 def _has_qualifying_condition(history: MedicalHistory) -> bool:
     return any(
         condition.symptomatic_before_doi is True
         and condition.severity in SIBTF_DISABLING_SEVERITIES
+        and condition.trajectory in SIBTF_LIVE_TRAJECTORIES
         for condition in history.conditions
     )
 
@@ -1084,8 +1129,8 @@ SIBTF_QUALIFYING: tuple[SibtfClause, ...] = (
     SibtfClause(
         name="predating_condition",
         remediation=(
-            "add a conditions entry with symptomatic_before_doi true and severity "
-            "moderate or severe"
+            "add a conditions entry with symptomatic_before_doi true, severity "
+            "moderate or severe, and a trajectory other than resolved"
         ),
         holds=_has_qualifying_condition,
     ),

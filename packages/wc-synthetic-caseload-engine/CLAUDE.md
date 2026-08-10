@@ -381,12 +381,24 @@ Consequences worth knowing before touching it:
   reproduces its marginal exactly — and is the opposite: each cell absorbs its own risk
   multiplier, so a severely obese current smoker and a normal-weight never-smoker of the same
   age come out identical and `bmi_band` / `smoking_status` become fields nothing reads.
-- **Two things move risk across BMI bands, and a mixture reading cannot tell them apart.** The
-  *steer* shifts the archetype mixture toward the metabolic and degenerative profiles; the
-  *multiplier* raises that profile's own risk. m17-8 flattened every multiplier to 1.0 and the
-  mixture-level gradient survived on the steer alone. `RISK_MULTIPLIERS` is guarded by a
-  single-profile reading with the mixture held out; the mixture reading is kept beside it
-  because it is the reader-visible claim.
+- **Gradients are odds ratios and are applied on the odds scale**, `p' = OR*p / (1 - p + OR*p)`,
+  before the population calibration. Multiplying a probability by an OR does not preserve the
+  OR, and the error grows with the baseline: hypertension at 0.525 times a 2.20 body-mass
+  figure gave 1.155, which the clamp then turned into 0.995 — a gradient far steeper than the
+  table claimed, arriving silently because the clamp made it look like a number. Two ratios
+  combine by multiplying on the odds scale. The invented ratios are declared as odds ratios
+  too: two scales in one table is how the original error survived a review round.
+- **Provenance is per band, not per gradient.** `OddsRatio` carries its own tag, and `Tag` has
+  `interpolated` (inside the published range) and `extrapolated` (outside it) because
+  "measured" was covering values nobody measured — the knee curve's severe-obesity band is a
+  reading off a dose-response line sitting between two pooled figures from twenty-two studies.
+- **Two things move risk across a demographic axis, and a mixture reading cannot tell them
+  apart.** The *steer* shifts the archetype mixture toward the metabolic and degenerative
+  profiles; the *gradient* raises that profile's own risk. m17-8 flattened every BMI ratio and
+  the mixture gradient survived on the steer alone; m17-21 did the same to smoking one round
+  later, because the fix had been applied per module rather than per gradient. Every gradient
+  is guarded by a single-profile reading with the mixture held out (`_profile_rate`); the
+  mixture readings are kept beside them because they are the reader-visible claim.
 - **The probability floor is the anti-fingerprint guarantee.** No per-archetype probability
   ever reaches 0 or 1, so no chain of observed conditions can exclude an archetype. m17-4 has
   survived twice, for two different reasons: first a guard asking only for `0 < p < 1`, which
@@ -394,17 +406,37 @@ Consequences worth knowing before touching it:
   affinities lifted every probed cell above the floor on its own. The clamp is now asserted
   directly as well as over the corpus — a corpus-shaped assertion is always one refactor
   elsewhere away from proving nothing.
-- **The anti-fingerprint bound is measured per claim shape.** Body parts are visible on the
-  face of the file, so the posterior that matters is `P(archetype | conditions, body parts)`.
-  Pooling the seven shapes averages a decisive shape against six that cannot produce the same
-  set: it read 0.934 while the real worst was 0.989. A control test asserts the per-shape worst
-  still exceeds the pooled one, so the parametrization cannot quietly stop earning its runtime.
+- **The anti-fingerprint contract, stated exactly** — two rounds of review pushed it into this
+  shape, and the earlier wording promised more than any sampler delivers:
+  **(a) singleton-freedom, within every demographic cell and claim shape** — no condition set
+  is producible by only one archetype, proved rather than sampled (conditions are drawn
+  independently given the archetype, so every subset has positive probability precisely when
+  every per-condition probability is strictly inside `(0, 1)` — which the clamp guarantees);
+  **(b) a 0.97 posterior bound on shape-conditioned common sets**, measured per claim shape
+  and pooled across demographics. Body parts are visible on the face of the file, so pooling
+  *shapes* is the mistake — it read 0.934 while the real worst was 0.989.
+
+  **(b) is not conditioned on demographics, and there is a known counterexample**: a
+  62-year-old severely obese female never-smoker on a lumbar-plus-shoulder claim, where the
+  empty set alone gives `resilient` 0.9801. Deliberately not chased. The archetype prior really
+  does concentrate with age and body mass — that is the epidemiology the steer carries — and
+  **the archetype label is published nowhere**, so flattening it would trade realism for a
+  guarantee nobody consumes. The claim that matters, `P(archetype | every analyzer-visible
+  feature)`, needs artifacts that do not exist in M1: that is **AJC-63**, M4's leakage
+  anti-probe.
 - **SIBTF grounding is one predicate, and the warning text is generated from it.** §4751 turns
-  on a pre-existing permanent *disability*, so a denied or pending prior claim grounds nothing
-  while a qualifying award or a moderate-or-worse condition symptomatic before the injury
+  on a pre-existing permanent *disability* that **combines** with the new injury, so a denied
+  or pending prior claim grounds nothing, and neither does a condition whose trajectory is
+  `resolved` — a factor that has stopped operating cannot combine with anything. A qualifying
+  award, or a moderate-or-worse condition symptomatic before the injury and still running,
   does. The remediation sentence is built from `SIBTF_QUALIFYING` because the hand-maintained
   version drifted from the check before anyone ran it — it told authors to add a predating
   condition, which the check ignored.
+- **An award is how a claim resolved, not an independent event.** `PriorAwardEntry`'s
+  `resolution_type` defaults to `None`, meaning the claim's own, and a claim that was denied,
+  dismissed or is still pending cannot carry an award at all. The old default was
+  `stipulated_award`, so a denied claim with an award block — a contradiction nobody had to
+  type — loaded cleanly and grounded SIBTF on the Fund's own argument against liability.
 - **New rng streams live under `medical:`**, a namespace nothing else uses. Salting here buys
   *stream separation*, not interference immunity: every stream is a fresh `random.Random`, so
   two streams cannot disturb each other whatever their salts. What a collision would cost is

@@ -13,6 +13,7 @@ from __future__ import annotations
 import email
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -409,6 +410,14 @@ def test_the_ledger_itself_is_identical_across_processes() -> None:
     The memoised calibration is the reason this needs separate processes rather than
     a loop: a cache is only an optimisation if two processes that filled it in
     different orders still agree, and one keyed on anything unstable would not.
+
+    **The two children get different, named hash seeds.** Left to itself Python picks
+    a random salt per process, so the witness this probe depends on — that the two
+    interpreters really did order strings differently — was itself random: two runs
+    could draw salts that happened to agree on the handful of strings involved and the
+    probe would pass against genuinely hash-dependent code. ``PYTHONHASHSEED=1`` and
+    ``=2`` are chosen values, so the disagreement is guaranteed rather than likely, and
+    a failure names a reproducible pair.
     """
     case = seed_dict("det-ledger")
     case["profile"] = {"applicant": {"age": 47}}
@@ -427,12 +436,13 @@ def test_the_ledger_itself_is_identical_across_processes() -> None:
     payload_arg = json.dumps(case)
 
     results: list[tuple[str, str]] = []
-    for _ in range(2):
+    for hash_seed in ("1", "2"):
         completed = subprocess.run(
             [sys.executable, "-c", _LEDGER_PROBE, payload_arg],
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "PYTHONHASHSEED": hash_seed},
         )
         assert completed.returncode == 0, completed.stderr[-2000:]
         assert "<<<LEDGER" in completed.stdout, completed.stdout[-2000:]
@@ -441,8 +451,8 @@ def test_the_ledger_itself_is_identical_across_processes() -> None:
 
     (first_digest, first_blob), (second_digest, _) = results
     assert first_digest == second_digest, (
-        "the world-truth ledger differs between two fresh interpreters — the "
-        "derivation is reading something the hash salt reorders"
+        "the world-truth ledger differs between interpreters run at PYTHONHASHSEED 1 "
+        "and 2 — the derivation is reading something the hash salt reorders"
     )
 
     ledger = json.loads(first_blob)

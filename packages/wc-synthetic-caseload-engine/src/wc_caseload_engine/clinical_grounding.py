@@ -87,12 +87,26 @@ type Confidence = Literal["strong", "single_study", "approximate"]
 reported without a point estimate.
 """
 
-type Tag = Literal["measured", "counsel_confirmed", "counsel_unconfirmed", "invented"]
+type Tag = Literal[
+    "measured",
+    "interpolated",
+    "extrapolated",
+    "counsel_confirmed",
+    "counsel_unconfirmed",
+    "invented",
+]
 """Note F's provenance grade for one *design choice*.
 
 Distinct from :data:`Confidence`, which grades a published number. A knob built by
 combining two measured inputs is a derivation and is never tagged ``measured``, no
 matter how good its inputs are — note F states that rule and this module keeps it.
+
+``interpolated`` and ``extrapolated`` exist because "measured" was being asked to
+cover values nobody measured. A gradient tagged ``measured`` as a whole was carrying
+a severe-obesity band read off a rising curve past its last published point; that is
+a reading of a measurement, not a measurement, and review was right that it needed
+its own grade. ``interpolated`` sits *inside* the published range, ``extrapolated``
+outside it — the second is the weaker claim and the one worth spotting.
 """
 
 type ApportionmentBasis = Literal["population_epidemiology", "case_specific_history"]
@@ -630,33 +644,84 @@ def bmi_distribution(age: int) -> dict[str, float]:
 
 
 @dataclass(frozen=True, slots=True)
+class OddsRatio:
+    """One band's odds ratio against its reference band, with its own provenance.
+
+    Per band rather than per gradient, because a gradient is rarely uniform in how
+    well it is known. The knee-cartilage curve is the case that forced this: 2.18 and
+    2.63 are pooled figures from twenty-two studies, and 3.20 is a reading off a
+    dose-response curve past its last published point. Tagging the whole gradient
+    ``measured`` made the third number look like the first two.
+    """
+
+    value: float
+    tag: Tag
+    note: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class RiskGradient:
     """How one condition responds to body mass and smoking, relative to baseline.
 
-    **Relative, never absolute.** These are multipliers on an archetype's calibrated
-    probability, and the calibration then re-solves so the population-weighted
-    aggregate still equals the cited age/sex marginal. That is what lets a gradient
-    exist *within* a marginal instead of replacing it: a severely obese current smoker
-    and a normal-weight never-smoker of the same age differ from each other and still
-    average to what CDC measured.
+    **Odds ratios, applied on the odds scale.** This is the correction review forced
+    and it is not cosmetic. An odds ratio is a ratio of *odds*, and multiplying a
+    probability by one does not preserve it — the error grows with baseline
+    prevalence, which is exactly where these conditions live. Hypertension at 0.525 in
+    the fifties times a 2.20 body-mass figure gives 1.155, an impossible probability
+    that the clamp then quietly turned into 0.995. Applied properly,
+    ``p' = OR*p / (1 - p + OR*p)``, it gives 0.709: still a large effect, and a
+    real one.
 
-    A multiplier of 1.0 everywhere means **no source reports a gradient**, and flatness
-    is then the honest answer rather than a missing feature. Three of the nine
-    conditions are flat for exactly that reason.
+    Two ratios combine by multiplying on the odds scale, which is the ordinary
+    logistic assumption that log-odds contributions add. The transform runs *before*
+    the population calibration, so the aggregate still lands on its cited marginal.
+
+    **Every band is an odds ratio now, including the invented ones.** They could have
+    stayed declared as probability multipliers and converted at the boundary; uniform
+    is the better choice because two scales in one table is how the original error
+    survived review in the first place. The invented magnitudes are unchanged — what
+    changed is the claim being made about them, and they are tagged ``invented``
+    either way.
+
+    A ratio of 1.0 everywhere means **no source reports a gradient**, and flatness is
+    then the honest answer rather than a missing feature. Three of the nine conditions
+    are flat for exactly that reason.
     """
 
-    bmi: dict[str, float]
-    smoking: dict[str, float]
+    bmi: dict[str, OddsRatio]
+    smoking: dict[str, OddsRatio]
     tag: Tag
     rationale: str
     source: str
 
-    def multiplier(self, bmi_band: str, smoking_status: str) -> float:
-        return self.bmi.get(bmi_band, 1.0) * self.smoking.get(smoking_status, 1.0)
+    def odds_ratio(self, bmi_band: str, smoking_status: str) -> float:
+        """The combined odds ratio for one cell, against the reference cell."""
+        bmi = self.bmi.get(bmi_band)
+        smoking = self.smoking.get(smoking_status)
+        return (1.0 if bmi is None else bmi.value) * (
+            1.0 if smoking is None else smoking.value
+        )
+
+    def apply(self, probability: float, bmi_band: str, smoking_status: str) -> float:
+        """*probability* moved onto this cell's odds, then back to a probability.
+
+        The identity worth keeping in view: ``odds(apply(p)) == OR · odds(p)``. That
+        is the property the tests assert, and it is the one plain multiplication does
+        not have.
+        """
+        ratio = self.odds_ratio(bmi_band, smoking_status)
+        if ratio == 1.0:
+            return probability
+        return ratio * probability / (1.0 - probability + ratio * probability)
 
 
-_FLAT_BMI = dict.fromkeys(BMI_BANDS, 1.0)
-_FLAT_SMOKING = dict.fromkeys(SMOKING_STATUSES, 1.0)
+_FLAT_BMI: dict[str, OddsRatio] = {
+    band: OddsRatio(1.0, "measured", "no gradient reported") for band in BMI_BANDS
+}
+_FLAT_SMOKING: dict[str, OddsRatio] = {
+    status: OddsRatio(1.0, "measured", "no gradient reported")
+    for status in SMOKING_STATUSES
+}
 
 
 def _flat(reason: str) -> RiskGradient:
@@ -672,10 +737,16 @@ def _flat(reason: str) -> RiskGradient:
 RISK_MULTIPLIERS: dict[str, RiskGradient] = {
     "lumbar_disc_degeneration": RiskGradient(
         bmi={
-            "normal_or_under": 1.0,
-            "overweight": 1.30,
-            "obese": 1.79,
-            "severely_obese": 1.79,
+            "normal_or_under": OddsRatio(1.0, "measured", "the reference band"),
+            "overweight": OddsRatio(1.30, "measured", "published OR, overweight"),
+            "obese": OddsRatio(1.79, "measured", "published OR, obese"),
+            "severely_obese": OddsRatio(
+                1.79,
+                "extrapolated",
+                "the source does not split above BMI 30; the obese figure is held "
+                "flat rather than extended, so this is a deliberately conservative "
+                "extrapolation — the curve is very unlikely to be flat there",
+            ),
         },
         smoking=dict(_FLAT_SMOKING),
         tag="measured",
@@ -689,10 +760,17 @@ RISK_MULTIPLIERS: dict[str, RiskGradient] = {
     ),
     "knee_cartilage_defect": RiskGradient(
         bmi={
-            "normal_or_under": 1.0,
-            "overweight": 2.18,
-            "obese": 2.63,
-            "severely_obese": 3.20,
+            "normal_or_under": OddsRatio(1.0, "measured", "the reference band"),
+            "overweight": OddsRatio(2.18, "measured", "pooled OR across 22 studies"),
+            "obese": OddsRatio(2.63, "measured", "pooled OR across 22 studies"),
+            "severely_obese": OddsRatio(
+                3.20,
+                "interpolated",
+                "read off the dose-response curve between the pooled obese figure and "
+                "the 4.7-5.7 relative risk the same meta-analysis reports at BMI 32.5 "
+                "— inside the published range, but a reading rather than a reported "
+                "point estimate",
+            ),
         },
         smoking=dict(_FLAT_SMOKING),
         tag="measured",
@@ -706,12 +784,16 @@ RISK_MULTIPLIERS: dict[str, RiskGradient] = {
     ),
     "diabetes": RiskGradient(
         bmi={
-            "normal_or_under": 1.0,
-            "overweight": 1.40,
-            "obese": 2.50,
-            "severely_obese": 3.50,
+            "normal_or_under": OddsRatio(1.0, "invented", "the reference band"),
+            "overweight": OddsRatio(1.40, "invented"),
+            "obese": OddsRatio(2.50, "invented"),
+            "severely_obese": OddsRatio(3.50, "invented"),
         },
-        smoking={"never": 1.0, "former": 1.05, "current": 1.15},
+        smoking={
+            "never": OddsRatio(1.0, "invented", "the reference band"),
+            "former": OddsRatio(1.05, "invented"),
+            "current": OddsRatio(1.15, "invented"),
+        },
         tag="invented",
         rationale=(
             "Note C carries obesity and diabetes prevalence separately and never joins "
@@ -727,12 +809,16 @@ RISK_MULTIPLIERS: dict[str, RiskGradient] = {
     ),
     "hypertension": RiskGradient(
         bmi={
-            "normal_or_under": 1.0,
-            "overweight": 1.30,
-            "obese": 1.80,
-            "severely_obese": 2.20,
+            "normal_or_under": OddsRatio(1.0, "invented", "the reference band"),
+            "overweight": OddsRatio(1.30, "invented"),
+            "obese": OddsRatio(1.80, "invented"),
+            "severely_obese": OddsRatio(2.20, "invented"),
         },
-        smoking={"never": 1.0, "former": 1.05, "current": 1.10},
+        smoking={
+            "never": OddsRatio(1.0, "invented", "the reference band"),
+            "former": OddsRatio(1.05, "invented"),
+            "current": OddsRatio(1.10, "invented"),
+        },
         tag="invented",
         rationale=(
             "Same absence of a joined figure in note C as diabetes, same reasoning, "
@@ -745,12 +831,16 @@ RISK_MULTIPLIERS: dict[str, RiskGradient] = {
         bmi={
             # Inverted on purpose: low body mass is a *risk* for low bone density,
             # which is the one condition here where the gradient runs downhill.
-            "normal_or_under": 1.0,
-            "overweight": 0.80,
-            "obese": 0.65,
-            "severely_obese": 0.60,
+            "normal_or_under": OddsRatio(1.0, "invented", "the reference band"),
+            "overweight": OddsRatio(0.80, "invented"),
+            "obese": OddsRatio(0.65, "invented"),
+            "severely_obese": OddsRatio(0.60, "invented"),
         },
-        smoking={"never": 1.0, "former": 1.10, "current": 1.40},
+        smoking={
+            "never": OddsRatio(1.0, "invented", "the reference band"),
+            "former": OddsRatio(1.10, "invented"),
+            "current": OddsRatio(1.40, "invented"),
+        },
         tag="invented",
         rationale=(
             "Direction is textbook and note C supports neither magnitude: mechanical "
@@ -765,7 +855,11 @@ RISK_MULTIPLIERS: dict[str, RiskGradient] = {
     ),
     "depression_anxiety": RiskGradient(
         bmi=dict(_FLAT_BMI),
-        smoking={"never": 1.0, "former": 1.10, "current": 1.35},
+        smoking={
+            "never": OddsRatio(1.0, "invented", "the reference band"),
+            "former": OddsRatio(1.10, "invented"),
+            "current": OddsRatio(1.35, "invented"),
+        },
         tag="invented",
         rationale=(
             "The smoking association is well established in direction and absent from "

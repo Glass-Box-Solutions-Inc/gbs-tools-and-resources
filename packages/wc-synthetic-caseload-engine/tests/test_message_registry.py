@@ -286,6 +286,68 @@ REGISTRY: dict[str, RegisteredMessage] = {
             "is why the overlap has to be real rather than assumed."
         ),
     ),
+    "award_on_a_claim_that_produced_none": RegisteredMessage(
+        where="PriorClaimEntry._an_award_needs_a_resolution_that_can_produce_one",
+        directives=(
+            "Remove the award block, or change the claim's resolution_type to one of "
+            "them",
+        ),
+        trigger={
+            "scenario": {
+                "medical_history": {
+                    "prior_claims": [
+                        {**_PRIOR_CLAIM_WITH_AWARD, "resolution_type": "denied"}
+                    ]
+                }
+            }
+        },
+        resolution={
+            "scenario": {"medical_history": {"prior_claims": [_PRIOR_CLAIM_WITH_AWARD]}}
+        },
+        note=(
+            "AJC-60 R3 finding 3a. Follows the second edit — the claim goes back to a "
+            "resolution that can produce an award. The first, removing the award, is "
+            "the right one when the denial is the fact being modelled."
+        ),
+    ),
+    "award_resolution_disagrees_with_its_claim": RegisteredMessage(
+        where="PriorClaimEntry._an_award_needs_a_resolution_that_can_produce_one",
+        directives=(
+            "Set the award's resolution_type to match the claim, or drop it and let it "
+            "inherit",
+        ),
+        trigger={
+            "scenario": {
+                "medical_history": {
+                    "prior_claims": [
+                        {
+                            **_PRIOR_CLAIM_WITH_AWARD,
+                            "resolution_type": "c_and_r",
+                            "award": {
+                                **_PRIOR_CLAIM_WITH_AWARD["award"],
+                                "resolution_type": "stipulated_award",
+                            },
+                        }
+                    ]
+                }
+            }
+        },
+        resolution={
+            "scenario": {
+                "medical_history": {
+                    "prior_claims": [
+                        {**_PRIOR_CLAIM_WITH_AWARD, "resolution_type": "c_and_r"}
+                    ]
+                }
+            }
+        },
+        note=(
+            "AJC-60 R3 finding 3a, second clause. Follows the second edit literally: "
+            "the award drops its own resolution_type and inherits the claim's. That "
+            "the inheriting form is now the *default* is the actual fix — the old "
+            "default could contradict the claim without anybody typing it."
+        ),
+    ),
     "prior_claim_does_not_precede": RegisteredMessage(
         where="CaseSeed._a_prior_claim_precedes_the_current_injury",
         directives=(

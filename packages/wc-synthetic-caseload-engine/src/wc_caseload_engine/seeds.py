@@ -1745,9 +1745,19 @@ class PriorAwardEntry(_Model):
     body_parts: list[str] = Field(min_length=1)
     pd_percent: int = Field(ge=1, le=100)
     award_date: date
-    resolution_type: Literal["stipulated_award", "findings_and_award", "c_and_r"] = (
-        "stipulated_award"
+    resolution_type: Literal["stipulated_award", "findings_and_award", "c_and_r"] | None = (
+        None
     )
+    """``None`` means the claim's own resolution, which is nearly always the answer.
+
+    It used to default to ``stipulated_award``, and that default was a small trap: an
+    award is not an independent event, it is *how the claim resolved*, so a default
+    value here could contradict the claim it sits inside without anybody typing the
+    contradiction. Writing it is still allowed — an author who states it explicitly
+    means it — and :meth:`PriorClaimEntry._an_award_needs_a_resolution_that_can_produce_one`
+    then checks the two agree.
+    """
+
     conclusively_presumed: bool = False
     """Whether section 4664(b)'s presumption is taken to apply.
 
@@ -1789,6 +1799,57 @@ class PriorClaimEntry(_Model):
                 "overlap the claim's own body_parts — an award for a region the claim "
                 "never named cannot have come from that claim. Add the region to the "
                 "claim's body_parts, or move the award to the claim it belongs to."
+            )
+        return self
+
+    #: Resolutions that can produce a permanent-disability award, and their names.
+    #:
+    #: The other three cannot. ``denied`` and ``dismissed`` are the claim ending with
+    #: nothing awarded; ``pending`` has not ended at all. A claim in one of those
+    #: states carrying an award block is not an unusual case, it is two contradictory
+    #: facts in one entry — and because :class:`PriorAwardEntry` defaults its own
+    #: ``resolution_type`` to ``stipulated_award``, the contradiction could be created
+    #: by writing nothing at all.
+    AWARDING_RESOLUTIONS: ClassVar[frozenset[str]] = frozenset(
+        {"c_and_r", "stipulated_award", "findings_and_award"}
+    )
+
+    @model_validator(mode="after")
+    def _an_award_needs_a_resolution_that_can_produce_one(self) -> PriorClaimEntry:
+        """A denied claim cannot hold an award, and a matching one cannot disagree.
+
+        Two failures, one cause: nothing was comparing the claim's resolution with the
+        award's. A ``denied`` claim with a default award block loaded cleanly, derived
+        into the ledger, and grounded a SIBTF hook on evidence that says the opposite
+        of what the hook needs — the Fund's argument *against* liability, read as
+        evidence for it.
+
+        The second clause is the one that would otherwise be found later: a
+        ``c_and_r`` claim whose award says ``stipulated_award`` is a smaller
+        contradiction than the first but the same kind, and the award's default value
+        makes it the easy one to write by accident.
+        """
+        if self.award is None:
+            return self
+        if self.resolution_type not in self.AWARDING_RESOLUTIONS:
+            raise ValueError(
+                "scenario.medical_history.prior_claims[] carries an award block but "
+                f"its resolution_type is {self.resolution_type!r} — a claim that was "
+                "denied, dismissed or is still pending produced no permanent "
+                "disability to award. The resolutions that can produce one are "
+                f"{', '.join(sorted(self.AWARDING_RESOLUTIONS))}. Remove the award "
+                "block, or change the claim's resolution_type to one of them."
+            )
+        if (
+            self.award.resolution_type is not None
+            and self.award.resolution_type != self.resolution_type
+        ):
+            raise ValueError(
+                "scenario.medical_history.prior_claims[].award.resolution_type is "
+                f"{self.award.resolution_type!r} but the claim resolved by "
+                f"{self.resolution_type!r} — one award cannot have issued out of two "
+                "different resolutions. Set the award's resolution_type to match the "
+                "claim, or drop it and let it inherit."
             )
         return self
 

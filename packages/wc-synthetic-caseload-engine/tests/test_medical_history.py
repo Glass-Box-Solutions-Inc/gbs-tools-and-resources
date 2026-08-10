@@ -406,18 +406,112 @@ class TestRiskGradientsSurviveCalibration:
             "density and this gradient has been flattened or inverted"
         )
 
+    SMOKING_GRADED = (
+        ("depression_anxiety", 45, "female"),
+        ("osteoporosis", 68, "female"),
+        ("diabetes", 45, "male"),
+    )
+
+    @pytest.mark.parametrize(("condition", "age", "sex"), SMOKING_GRADED)
+    def test_smoking_moves_the_risk_within_a_single_profile(
+        self, condition: str, age: int, sex: str
+    ) -> None:
+        """The smoking half of the same correction, and it needed it separately.
+
+        Fixing the BMI reading did not fix this one: the smoking assertions were still
+        reading ``_cell_rate``, so flattening only the smoking ratios left all three
+        of them green on the archetype steer alone. Two mechanisms, two readings — the
+        pattern has to be applied per gradient, not per module.
+        """
+        never = _profile_rate(condition, age, sex, "overweight", "never", "resilient")
+        current = _profile_rate(condition, age, sex, "overweight", "current", "resilient")
+        assert current > never, (
+            f"{condition}: holding the profile fixed, current smokers are at "
+            f"{current:.5f} against {never:.5f} for never-smokers — the documented "
+            "smoking ratio is doing nothing"
+        )
+
     def test_smoking_moves_the_risks_it_is_documented_to_move(self) -> None:
-        for condition, age, sex in (
-            ("depression_anxiety", 45, "female"),
-            ("osteoporosis", 68, "female"),
-            ("diabetes", 45, "male"),
-        ):
+        """The mixture reading, kept for the same reason as its BMI counterpart."""
+        for condition, age, sex in self.SMOKING_GRADED:
             never = _cell_rate(condition, age, sex, "overweight", "never")
             current = _cell_rate(condition, age, sex, "overweight", "current")
             assert current > never, (
                 f"{condition}: current smokers are at {current:.4f} against "
                 f"{never:.4f} for never-smokers — the smoking gradient is flat"
             )
+
+    @pytest.mark.parametrize(("condition", "age", "sex"), GRADED)
+    def test_the_odds_of_a_matched_pair_reproduce_the_cited_ratio(
+        self, condition: str, age: int, sex: str
+    ) -> None:
+        """Finding 1. An odds ratio has to come back out as an odds ratio.
+
+        The original code multiplied a *probability* by a published OR, which does not
+        preserve it and overstates the effect exactly where the baseline is large.
+        Hypertension is the case that shows it: 0.525 in the fifties times the 2.20
+        body-mass figure is 1.155, an impossible probability the clamp then turned
+        into 0.995 — a gradient the table never claimed.
+
+        Matched profile, matched everything but body mass, so the only thing between
+        the two numbers is the ratio under test. Asserted on the odds scale because
+        that is the scale the ratio was published on.
+        """
+        gradient = RISK_MULTIPLIERS[condition]
+        reference = _profile_rate(condition, age, sex, "normal_or_under", "never", "resilient")
+        assert _P_FLOOR < reference < _P_CEILING, "the reference cell is clamped"
+        for band in BMI_BANDS:
+            graded = _profile_rate(condition, age, sex, band, "never", "resilient")
+            if not _P_FLOOR < graded < _P_CEILING:
+                continue  # a clamped cell cannot testify about a ratio
+            realised = (graded / (1 - graded)) / (reference / (1 - reference))
+            assert realised == pytest.approx(gradient.bmi[band].value, rel=1e-9), (
+                f"{condition}/{band}: the realised odds ratio is {realised:.4f} "
+                f"against the cited {gradient.bmi[band].value} — the gradient is not "
+                "being applied on the odds scale"
+            )
+
+    def test_a_probability_multiplier_would_have_failed_that(self) -> None:
+        """The control: the two scales genuinely differ where it matters.
+
+        Without this the test above could be passing on arithmetic that happens to
+        agree — it does agree, to three decimals, whenever the baseline is small. The
+        whole finding is that these conditions are not small.
+        """
+        probability, ratio = 0.525, 2.20
+        on_odds = ratio * probability / (1 - probability + ratio * probability)
+        assert on_odds == pytest.approx(0.7088, abs=5e-4)
+        assert ratio * probability > 1.0, (
+            "the multiplicative reading no longer overflows at the hypertension "
+            "baseline, so this control has stopped demonstrating the defect"
+        )
+
+    def test_every_band_carries_its_own_provenance(self) -> None:
+        """Finding 1, second half. "Measured" was covering values nobody measured.
+
+        The knee curve is the case: 2.18 and 2.63 are pooled from twenty-two studies
+        and 3.20 is a reading off a dose-response line. One gradient-level tag made
+        the third look like the first two, so tags are per band now — and the two
+        readings are named as what they are.
+        """
+        for condition, gradient in RISK_MULTIPLIERS.items():
+            for band, ratio in gradient.bmi.items():
+                assert ratio.tag in TAG_VALUES, f"{condition}/{band}: {ratio.tag}"
+                if ratio.tag in {"interpolated", "extrapolated"}:
+                    assert ratio.note.strip(), (
+                        f"{condition}/{band} is {ratio.tag} and says nothing about "
+                        "how — a derived value with no derivation is the thing these "
+                        "tags exist to prevent"
+                    )
+            for status, ratio in gradient.smoking.items():
+                assert ratio.tag in TAG_VALUES, f"{condition}/{status}: {ratio.tag}"
+
+        assert RISK_MULTIPLIERS["knee_cartilage_defect"].bmi["severely_obese"].tag == (
+            "interpolated"
+        ), "the knee severe-obesity band is a reading inside the published range"
+        assert RISK_MULTIPLIERS["lumbar_disc_degeneration"].bmi["severely_obese"].tag == (
+            "extrapolated"
+        ), "the lumbar severe-obesity band is held flat past the last measured point"
 
     def test_a_flat_gradient_is_flat_because_its_source_is_silent(self) -> None:
         """Three conditions carry no gradient, and that is the honest answer.
@@ -427,8 +521,10 @@ class TestRiskGradientsSurviveCalibration:
         """
         for condition in ("cervical_disc_bulge", "lumbar_facet_arthropathy", "hip_labral_tear"):
             gradient = RISK_MULTIPLIERS[condition]
-            assert set(gradient.bmi.values()) == {1.0}, f"{condition} grew a BMI gradient"
-            assert set(gradient.smoking.values()) == {1.0}
+            assert {r.value for r in gradient.bmi.values()} == {1.0}, (
+                f"{condition} grew a BMI gradient"
+            )
+            assert {r.value for r in gradient.smoking.values()} == {1.0}
             assert "Deliberately flat" in gradient.rationale
 
     def test_the_gradient_does_not_move_the_population_aggregate(self) -> None:
@@ -513,13 +609,13 @@ class TestRiskGradientsSurviveCalibration:
         # of a fix somewhere else — which is the failure mode a corpus-shaped assertion
         # is always one refactor away from. So the clamp is asked directly, at a
         # product no plausible catalog rate reaches.
-        starved = _clamped(1e-9, 1e-9)
+        starved = _clamped(1e-18)
         assert starved == _P_FLOOR, (
-            f"a vanishing scale-affinity product came back as {starved} rather than "
+            f"a vanishing probability came back as {starved} rather than "
             f"the floor {_P_FLOOR}; nothing is clamping, and the loop above is only "
             "passing because the current affinities happen to sit above the floor"
         )
-        assert _clamped(1e9, 1e9) == _P_CEILING, "nothing is clamping at the ceiling"
+        assert _clamped(1.0 - 1e-18) == _P_CEILING, "nothing is clamping at the ceiling"
 
     def test_archetype_weights_are_a_distribution(self) -> None:
         for age in (20, 40, 60, 80):
@@ -633,6 +729,22 @@ MAX_ARCHETYPE_POSTERIOR = 0.97
 #: noise, which is the tell that twenty was measuring the wrong thing.
 MIN_SET_SUPPORT = 60
 
+#: The provenance grades a gradient band may carry.
+#:
+#: Mirrored from the ``Tag`` alias rather than imported, because a test that read the
+#: alias would accept whatever the alias grew. The point of asserting it here is that
+#: adding a grade is a decision somebody has to make twice.
+TAG_VALUES: frozenset[str] = frozenset(
+    {
+        "measured",
+        "interpolated",
+        "extrapolated",
+        "counsel_confirmed",
+        "counsel_unconfirmed",
+        "invented",
+    }
+)
+
 #: Applicants drawn per claim shape for the anti-fingerprint probes.
 #:
 #: Seven shapes at this size is 42k derivations, which is the runtime price of measuring
@@ -670,7 +782,38 @@ def _shape_posteriors(
 class TestProfileMembershipIsNotAFingerprint:
     """Gate 3. Within-profile variation is mandatory, so it has to be falsifiable.
 
-    Two claims, and they are genuinely different strengths.
+    **What M1 guarantees, stated exactly.** Two rounds of review pushed on this and
+    the second one pushed it into a shape worth writing down, because the earlier
+    wording promised more than any sampler can deliver:
+
+    a. **Singleton-freedom, within every demographic cell and claim shape.** No
+       condition set is producible by only one archetype. This is exact rather than
+       empirical — it follows from every per-archetype probability sitting strictly
+       inside ``(0, 1)``, so every subset has positive probability under every
+       archetype — and it is what "no observation rules a profile out" actually means.
+    b. **A 0.97 posterior bound on shape-conditioned common sets**, measured as below:
+       per claim shape, over sets with real support, pooled across demographics.
+
+    **What M1 does not guarantee, with the counterexample.** The bound in (b) is not
+    conditioned on demographics, and review found a cell where it does not hold: a
+    62-year-old severely obese female never-smoker on a lumbar-plus-shoulder claim,
+    where the *empty* condition set already gives ``resilient`` a posterior of 0.9801.
+    That is not a defect to tune away, and deliberately so. The archetype prior really
+    does concentrate with age and body mass — that is the epidemiology the steer
+    exists to carry — and flattening it to win a number here would make the corpus
+    less realistic in exchange for a guarantee nobody consumes, because **the archetype
+    label is published nowhere**. It is a latent variable of the sampler, not a fact
+    about a case.
+
+    **Where the real question is answered.** The claim that matters is
+    ``P(archetype | every analyzer-visible feature)`` — rendered documents, document
+    counts, section lengths, manifest fields — and none of those exist in M1. That is
+    M4's leakage anti-probe, specified in **AJC-63**, and it is the one that can fail
+    for a reason a consumer would feel. Note F's standing warning points the same way:
+    the leak to fear is a correlation between profile and something the *renderer*
+    varies.
+
+    Two claims below, and they are genuinely different strengths.
 
     The **structural** one — every archetype can produce every condition — is exact
     and is asserted analytically in ``TestTheCalibrationSolves``. No chain of observed
@@ -759,6 +902,73 @@ class TestProfileMembershipIsNotAFingerprint:
         assert worst <= MAX_ARCHETYPE_POSTERIOR, (
             f"{parts}: {worst_key} identifies its archetype with posterior "
             f"{worst:.3f}; a condition set that settles the profile is a fingerprint"
+        )
+
+    #: The demographic corners the singleton check walks, plus review's witness cell.
+    #:
+    #: Corners rather than a grid: the steer is monotone in each input, so the extremes
+    #: are where a probability would reach a bound if it ever did. The witness cell is
+    #: carried explicitly because it is the one review found, and a check that no
+    #: longer covers it would have quietly stopped answering the finding.
+    DEMOGRAPHIC_CELLS: tuple[tuple[int, str, str, str], ...] = (
+        (25, "female", "normal_or_under", "never"),
+        (25, "male", "severely_obese", "current"),
+        (45, "female", "obese", "former"),
+        (62, "female", "severely_obese", "never"),  # review's witness cell
+        (70, "male", "normal_or_under", "current"),
+        (70, "female", "severely_obese", "current"),
+    )
+
+    @pytest.mark.parametrize(("age", "sex", "bmi", "smoking"), DEMOGRAPHIC_CELLS)
+    def test_no_condition_set_is_producible_by_only_one_archetype(
+        self, age: int, sex: str, bmi: str, smoking: str
+    ) -> None:
+        """Guarantee (a), proved rather than sampled — round 2, finding 2.
+
+        Conditions are drawn independently given the archetype, so the probability of
+        any particular *set* under an archetype is a product of per-condition terms and
+        their complements. That product is zero only if some term is zero. Assert every
+        term is strictly inside ``(0, 1)`` for every archetype in this cell, and
+        singleton-freedom follows for all 2^n sets at once — including the sets a
+        cohort of any size would never happen to draw.
+
+        A sampled version of this claim would be strictly weaker and vastly slower: it
+        could only ever speak about the sets it saw.
+        """
+        for shape in REALISTIC_PART_SETS:
+            eligible = eligible_conditions(frozenset(shape))
+            assert eligible, f"{shape} makes nothing eligible"
+            for condition in eligible:
+                probabilities = condition_probabilities(condition, age, sex, bmi, smoking)
+                if not probabilities:
+                    continue  # a NOT-FOUND cell: nobody measured it, so nothing is drawn
+                assert {name for name, _ in probabilities} == set(HEALTH_ARCHETYPES)
+                for name, probability in probabilities:
+                    assert 0.0 < probability < 1.0, (
+                        f"{shape}/{condition}/{name} is {probability} at "
+                        f"age {age} {sex} {bmi} {smoking} — an archetype that cannot "
+                        "produce this condition, or cannot avoid it, makes some "
+                        "condition set unique to the others"
+                    )
+
+    def test_the_singleton_proof_rests_on_something_that_can_fail(self) -> None:
+        """The control for the argument above, not for the code.
+
+        The proof is only as good as its premise, so the premise is exercised: a
+        probability of exactly zero or one really does make a set unique to one
+        archetype. Written out arithmetically because the point is the reasoning, and
+        the reasoning is what a reader has to check.
+        """
+        live = {"a": 0.4, "b": 0.001}
+        dead = {"a": 0.4, "b": 0.0}
+
+        def probability_of_exactly_b(cell: dict[str, float]) -> float:
+            return (1 - cell["a"]) * cell["b"]
+
+        assert probability_of_exactly_b(live) > 0.0
+        assert probability_of_exactly_b(dead) == 0.0, (
+            "a zero-probability condition would leave the set {b} unreachable for this "
+            "archetype, which is exactly the exclusion the floor prevents"
         )
 
     def test_pooling_claim_shapes_would_have_hidden_the_leak(self) -> None:
@@ -1284,6 +1494,113 @@ class TestTheSchemaRejectsIncoherentInput:
         assert claim.date_of_injury > seed.injury.ct_start
         assert claim.date_of_injury < seed.injury.onset_date
 
+    def test_a_denied_claim_cannot_carry_an_award(self) -> None:
+        """Finding 3a. The contradiction could be written by typing nothing.
+
+        ``PriorAwardEntry.resolution_type`` used to default to ``stipulated_award``,
+        so a denied claim with an award block loaded cleanly, derived into the ledger,
+        and grounded a SIBTF hook on the Fund's own argument against liability.
+        """
+        with pytest.raises(Exception, match="produced no permanent disability to award"):
+            parse_case_seed(
+                _seed_body(
+                    892,
+                    scenario={
+                        "prior_claims": [
+                            {
+                                "body_parts": ["lumbar_spine"],
+                                "date_of_injury": "2015-01-05",
+                                "resolution_type": "denied",
+                                "award": {
+                                    "body_parts": ["lumbar_spine"],
+                                    "pd_percent": 12,
+                                    "award_date": "2016-02-01",
+                                },
+                            }
+                        ]
+                    },
+                )
+            )
+
+    def test_a_pending_claim_cannot_carry_an_award_either(self) -> None:
+        with pytest.raises(Exception, match="produced no permanent disability to award"):
+            parse_case_seed(
+                _seed_body(
+                    893,
+                    scenario={
+                        "prior_claims": [
+                            {
+                                "body_parts": ["knee"],
+                                "date_of_injury": "2015-01-05",
+                                "resolution_type": "pending",
+                                "award": {
+                                    "body_parts": ["knee"],
+                                    "pd_percent": 8,
+                                    "award_date": "2016-02-01",
+                                },
+                            }
+                        ]
+                    },
+                )
+            )
+
+    def test_an_award_cannot_have_issued_out_of_a_different_resolution(self) -> None:
+        with pytest.raises(Exception, match="cannot have issued out of two"):
+            parse_case_seed(
+                _seed_body(
+                    894,
+                    scenario={
+                        "prior_claims": [
+                            {
+                                "body_parts": ["lumbar_spine"],
+                                "date_of_injury": "2015-01-05",
+                                "resolution_type": "c_and_r",
+                                "award": {
+                                    "body_parts": ["lumbar_spine"],
+                                    "pd_percent": 12,
+                                    "award_date": "2016-02-01",
+                                    "resolution_type": "stipulated_award",
+                                },
+                            }
+                        ]
+                    },
+                )
+            )
+
+    def test_an_unstated_award_resolution_inherits_the_claims(self) -> None:
+        """The other half of the same fix: silence is not a contradiction.
+
+        An award is *how the claim resolved*, so the seed no longer defaults it to a
+        value that can disagree — it defaults to the claim's own.
+        """
+        seed = parse_case_seed(
+            _seed_body(
+                895,
+                scenario={
+                    "prior_claims": [
+                        {
+                            "body_parts": ["lumbar_spine"],
+                            "date_of_injury": "2015-01-05",
+                            "resolution_type": "c_and_r",
+                            "award": {
+                                "body_parts": ["lumbar_spine"],
+                                "pd_percent": 12,
+                                "award_date": "2016-02-01",
+                            },
+                        }
+                    ]
+                },
+            )
+        )
+        assert seed.scenario.medical_history.prior_claims[0].award.resolution_type is None
+        history = derive_medical_history(
+            seed, None, date_of_birth=applicant_date_of_birth(seed)
+        )
+        assert history.awards[0].resolution_type == "c_and_r", (
+            "the ledger should carry the resolved value so no consumer has to know "
+            "the seed left it unstated"
+        )
+
     def test_a_pinned_archetype_with_nothing_to_draw_is_refused(self) -> None:
         with pytest.raises(Exception, match="nothing draws from it"):
             parse_case_seed(
@@ -1478,6 +1795,49 @@ class TestTheSibtfPredicateMeansWhatItSays:
             }
         )
         assert self._warned(plan)
+
+    def test_a_resolved_condition_does_not_qualify(self) -> None:
+        """Finding 3b. A factor that stopped operating cannot combine with anything.
+
+        §4751 asks whether a pre-existing disability *combines* with the new injury to
+        produce a greater one. This module defines ``resolved`` as no longer a live
+        factor, so a moderate condition that resolved before the injury grounds no
+        more than no condition at all — and the old predicate accepted it, because it
+        read severity and symptom history and never looked at trajectory.
+        """
+        plan = self._plan(
+            {
+                "sample_conditions": False,
+                "conditions": [
+                    {
+                        "label": "resolved lumbar strain with degenerative change",
+                        "key": "lumbar_disc_degeneration",
+                        "severity": "moderate",
+                        "symptomatic_before_doi": True,
+                        "trajectory": "resolved",
+                    }
+                ],
+            }
+        )
+        assert self._warned(plan)
+
+    def test_the_same_condition_still_running_does_qualify(self) -> None:
+        """The matched control: trajectory is the only thing that moved."""
+        plan = self._plan(
+            {
+                "sample_conditions": False,
+                "conditions": [
+                    {
+                        "label": "lumbar degenerative disc disease",
+                        "key": "lumbar_disc_degeneration",
+                        "severity": "moderate",
+                        "symptomatic_before_doi": True,
+                        "trajectory": "progressive",
+                    }
+                ],
+            }
+        )
+        assert not self._warned(plan)
 
     def test_an_asymptomatic_incidental_finding_does_not_qualify(self) -> None:
         """The boundary the severity clause draws, asserted so it is not an accident.
