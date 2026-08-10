@@ -260,9 +260,13 @@ def main() -> int:
         print(f"OK — {len(computed)} render cases byte-identical to the baseline.")
         return 0
 
+    # First, before anything that can fail for an unrelated reason. This check
+    # reads two local files and needs no git, no network and no arguments, so
+    # ordering it first means an environment problem can never mask a tampered
+    # harness behind a message about something else.
+    harness = _verify_harness()
     base_commit = _resolve_base(args.base_ref)
     source_commit, base_patches = _refuse_unless_clean_base_checkout(base_commit)
-    harness = _verify_harness()
 
     # Imported only after the hash check: this module is what computes the
     # digests the baseline is made of.

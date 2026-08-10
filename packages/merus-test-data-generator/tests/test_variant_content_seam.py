@@ -27,6 +27,7 @@ templates with allowlists is exercised, not just the ones the registers claim.
 
 from __future__ import annotations
 
+import os
 import random
 import re
 
@@ -1182,4 +1183,169 @@ def test_the_baseline_records_the_patches_its_base_carried():
         f"unexpected base patches: {meta['base_patches']}"
     )
     assert meta.get("base_commit"), "provenance does not pin a base commit"
+
+
+# --- The harness that computes the digests is itself verified -------------
+#
+# Every other guard on the recorder describes the *template sources*. None of
+# them looks at tests/render_baseline.py, which is copied into the base checkout
+# and imported to produce the trusted numbers. A harness that dropped cases or
+# returned constants would satisfy ancestry, cleanliness and provenance alike.
+# Three properties are needed, and only together: the recorded hash matches the
+# reviewed file, a mismatch actually refuses, and the check happens before the
+# import it is protecting.
+
+
+def _recorder_module():
+    import importlib.util
+
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    path = os.path.join(_PACKAGE_ROOT, "scripts", "record_render_baseline.py")
+    spec = importlib.util.spec_from_file_location("_ajc66_recorder_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_recorded_harness_hash_matches_the_harness_on_disk():
+    """The constant is only a guard while it describes the reviewed file.
+
+    A harness edit that lands without touching HARNESS_FILES leaves a recorder
+    that trusts bytes nobody approved. That is the drift this catches, and it is
+    the failure the other two tests here cannot see: they both pass happily
+    against a stale-but-self-consistent pair.
+    """
+    import hashlib
+
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    recorder = _recorder_module()
+    assert recorder.HARNESS_FILES, "the recorder verifies no harness files at all"
+    for relative, expected in recorder.HARNESS_FILES.items():
+        path = os.path.join(_PACKAGE_ROOT, relative)
+        assert os.path.exists(path), f"HARNESS_FILES names a file that is not here: {relative}"
+        with open(path, "rb") as fh:
+            actual = hashlib.sha256(fh.read()).hexdigest()
+        assert actual == expected, (
+            f"{relative} was edited without updating HARNESS_FILES in a reviewed diff.\n"
+            f"  reviewed {expected}\n  on disk  {actual}\n"
+            f"If the change is intended, update the constant in scripts/record_render_baseline.py."
+        )
+
+
+def test_record_mode_refuses_a_harness_it_has_not_reviewed(tmp_path):
+    """End-to-end: a tampered harness is refused, not merely detectable.
+
+    Builds a package root out of the real recorder and a *mutated* copy of the
+    harness — one that records three of the eighteen cases — then runs the
+    recorder against it. Everything else about that tree is fine, which is the
+    point: with a clean checkout, a valid HEAD and valid ancestry, the harness
+    hash is the only thing standing between a doctored harness and a baseline
+    the whole gate then trusts.
+    """
+    import shutil
+    import subprocess
+    import sys as _sys
+
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    fake_root = tmp_path / "package"
+    (fake_root / "scripts").mkdir(parents=True)
+    (fake_root / "tests").mkdir(parents=True)
+    shutil.copy2(
+        os.path.join(_PACKAGE_ROOT, "scripts", "record_render_baseline.py"),
+        fake_root / "scripts" / "record_render_baseline.py",
+    )
+
+    harness_source = os.path.join(_PACKAGE_ROOT, "tests", "render_baseline.py")
+    with open(harness_source, encoding="utf-8") as fh:
+        harness_text = fh.read()
+    tampered = harness_text + "\n\nRENDER_CASES = RENDER_CASES[:3]  # tampered\n"
+    assert tampered != harness_text
+    (fake_root / "tests" / "render_baseline.py").write_text(tampered, encoding="utf-8")
+
+    result = subprocess.run(
+        [_sys.executable, "scripts/record_render_baseline.py", "--record"],
+        cwd=str(fake_root), capture_output=True, text=True,
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, f"a tampered harness was accepted:\n{combined}"
+    assert "does not match its reviewed hash" in combined, (
+        f"refused for some other reason than the harness hash:\n{combined}"
+    )
+
+
+def test_the_harness_is_verified_before_it_is_imported():
+    """Order is the whole property — a check after the import guards nothing.
+
+    Importing the harness runs its module body. Verifying afterwards would let
+    the untrusted file execute first and then report on itself, so this asserts
+    statically that the import sits inside ``main`` *after* the verify call,
+    rather than at module scope where it would run before anything.
+    """
+    import ast
+
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    path = os.path.join(_PACKAGE_ROOT, "scripts", "record_render_baseline.py")
+    with open(path, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read(), filename=path)
+
+    def harness_imports(node):
+        return [
+            child.lineno
+            for child in ast.walk(node)
+            if isinstance(child, ast.ImportFrom)
+            and child.module in {"tests.render_baseline", "render_baseline"}
+        ]
+
+    module_level = [
+        lineno
+        for stmt in tree.body
+        if isinstance(stmt, (ast.Import, ast.ImportFrom))
+        for lineno in harness_imports(stmt)
+    ]
+    assert not module_level, (
+        f"the harness is imported at module scope (line {module_level}), so it runs "
+        f"before any verification can happen"
+    )
+
+    main = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+    verify_calls = [
+        node.lineno
+        for node in ast.walk(main)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_verify_harness"
+    ]
+    assert verify_calls, "main() never verifies the harness"
+
+    verify_line = min(verify_calls)
+    assert [lineno for lineno in harness_imports(main) if lineno > verify_line], (
+        "no harness import follows the verification, so nothing is being protected"
+    )
+
+    # --check imports the harness too, and legitimately: it compares against a
+    # baseline it never writes, so a bad harness there reddens the gate rather
+    # than blessing a lie. Recording is the trusted act, so the exemption is
+    # allowed only for imports that live inside the ``--check`` branch.
+    check_branches = [
+        node for node in main.body
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Attribute)
+        and node.test.attr == "check"
+    ]
+    exempt = {lineno for branch in check_branches for lineno in harness_imports(branch)}
+    unguarded = [
+        lineno for lineno in harness_imports(main)
+        if lineno < verify_line and lineno not in exempt
+    ]
+    assert not unguarded, (
+        f"the harness is imported at line {unguarded} on the record path before "
+        f"_verify_harness() at line {verify_line}"
+    )
 
