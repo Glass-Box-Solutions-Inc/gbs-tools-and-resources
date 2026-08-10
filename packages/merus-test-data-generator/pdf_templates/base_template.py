@@ -264,8 +264,20 @@ class BaseTemplate:
     def variant_content_enabled(self, doc_spec: Any) -> bool:
         """True when the caller opted this document into variant-aware content.
 
-        Absent and explicitly false are the same answer, so a caller can carry
-        the key permanently and flip it per document.
+        Absent, ``None``, ``False`` and an empty block are all the same answer,
+        so a caller can carry the key permanently and flip it per document. That
+        matters more than it looks: the consuming engine sets a dozen keys on
+        every context, and a template that has not opted in must read a key
+        arriving empty exactly like a key that is not there at all.
+
+        Relationship to AJC-65's seam, which governs the QME report's
+        apportionment on this same context channel: that one carries a **block**
+        of caller-supplied values, because the caller is pinning a number the
+        substrate would otherwise draw. This one is a **switch**, because the
+        caller supplies nothing — the variant is already in the context and the
+        substrate authors the body from it. Truthiness is the shared contract,
+        so passing a non-empty block here also reads as on, and a later phase
+        can thread per-variant parameters through this key without a second one.
         """
         if not getattr(doc_spec, "context", None):
             return False
