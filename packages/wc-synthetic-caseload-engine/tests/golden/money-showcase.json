@@ -6,7 +6,7 @@
   "recordedWith": {
     "engine": "0.9.0",
     "substratePin": "cb485354f16164ca2d422804fe9d40f9a2250920",
-    "substrateSha": "bce7e9657c5612d5f18149ad6930d326ed9965da",
+    "substrateSha": "70c8f3bed4c8df9b352e557e4128460798c62bfb",
     "python": "3.12.13",
     "dependencies": {
       "reportlab": "4.5.1",
@@ -35,16 +35,16 @@
     "truth/steady-earner.truth.json",
     "truth/two-jobs.truth.json"
   ],
-  "corpusTree": "02f8df0fcad958d14477d9a89ab6fac9bc96d9fd024eff9ae2ffe4487b4fd2cf",
+  "corpusTree": "f07458e541b2e157526496c8e08af774eea49c97416b5d9b0d682e89f036390b",
   "caseload": "9e44477f8497ed8d80aab704ea2c89f310a597475d23e724ae114e39c40a2f0a",
   "cases": {
     "atypical-earner": {
       "documentCount": 64,
       "distinctSubtypes": 39,
       "fileCount": 67,
-      "tree": "0f0ac191988ec18e62c96d299ce81775156e1e6b10f09a33eeb052c7291a8e70",
-      "documents": "427ce7449c4c9ca84cad12991dca5f409bd166207d1a7f5521b187b3ae28bd86",
-      "manifest": "9c41cf28d6ffed1336f848adb75f3f60d5d22bfb8f3bfe482832f3ca44fff6a8",
+      "tree": "cfba988deeb7efeafbfd542257de9f68d24b07da8c3102712b116c46b826e205",
+      "documents": "ea0084ebf157fe308f5965510f5380406faefd423404e6359548db2fc93d874f",
+      "manifest": "77e7bafac55401671ed8c894b00de534c98a9a2a4a78936d175526df92f121f1",
       "seed": "2fa8f80d20c31b31e03260103a95a0ad734f91499fcf16073baa68c73ba4a979",
       "facts": "1f82e3b04a3f550b4c25f3c3c3c1526f34d6e43853fa0f5438fe849b5edfdea4"
     },
@@ -52,9 +52,9 @@
       "documentCount": 80,
       "distinctSubtypes": 48,
       "fileCount": 83,
-      "tree": "003d30f28c6a706fc72b14660760708013cd794bf2fcda0b4788178562924dcd",
-      "documents": "b6e00777ad369f3bc351ec458bcce8777acef32cf088e9428821cbab97e48f6e",
-      "manifest": "16b18ce46a43252352b78021c7758dcb5799d518fe7f4bb41a73956a4c16a91e",
+      "tree": "464423813ccdd2e3f56d1757752d63a3830b6919c173e6d778eab3c76d122897",
+      "documents": "4e140a09acfd8ee0e440a0875ffd08baae2775fa085664757dea97ca55e4ca74",
+      "manifest": "83093d812b05a69100fb2b2789157af4f67a5ea7d8cc14633af626d8246542cb",
       "seed": "38358e9762c991dbddebb556bd61d8c1fe15cda939497f3fc4a3314fc8814762",
       "facts": "32c9337699cc55ff4f0b27e9b74067b7a2d3cd749147b90d2b7e9582867f3641"
     },
@@ -62,9 +62,9 @@
       "documentCount": 75,
       "distinctSubtypes": 51,
       "fileCount": 78,
-      "tree": "bebd5256236a9a40578337dca00147bd60d523cd14ece29f328da2a6e91789ff",
-      "documents": "5fc9fd51af860da0ad722a9275ab40fa3f52b3c9ff50de895c9fe768a2746e56",
-      "manifest": "f34448ec12c51d61a049e0d03560635f69665818a013eae2fa3111c033d3216e",
+      "tree": "fed47c71981949df569f01124a54a5639d5f727f97373dc42596500e72e69606",
+      "documents": "00dcbbcf9ff3392dc6fac3e4108a380066d08c5bc3c4dc62d8293551d50d9434",
+      "manifest": "4cc8a1bcff7e839301c7b5302f324fb5b2ab962ef76ec0e6ce2a440571906721",
       "seed": "36d9efb81e7589fc35d5eaa5814a69ea52c97d20e40928e9043cfed8a503169b",
       "facts": "2c1ba650fd1e0608315394fd2bc202ecb7016785d37de5be4510f885cc9ffd84"
     },
@@ -72,9 +72,9 @@
       "documentCount": 87,
       "distinctSubtypes": 49,
       "fileCount": 90,
-      "tree": "d71fa15c2f11f15d584e98b4ac5f9d724730600b43c42373e1c862a64f7248d5",
-      "documents": "7ae9c3e2273d2fc970a9086df6c484ad5eec83cfcaf6b092bd867067e159b6f6",
-      "manifest": "991a4a902dc14faa35093a9b13c4e0d5247b82007211133a5c0af3e4078a16b0",
+      "tree": "26b07e142f1347d320086d0bd1abcf14087f7a92a2459c45e425405dc5bc6eca",
+      "documents": "e04d52e2158c2d2adb8969822be9c5a7e78152411462ff2f1aabadc18aa5738e",
+      "manifest": "e8cc3ceb06ea11c79e9e132c046d6947043f9831993ba862f67f6ea49bb388f3",
       "seed": "aeab96c44f1e7be4b656bc7b2218a0bc0775aafc3cebf5c54682311ea513919e",
       "facts": "fad389cfe1f40078a5c3ce139a23e573f46d2b13789a906e3e7a0acfced3b6a8"
     },
@@ -82,9 +82,9 @@
       "documentCount": 58,
       "distinctSubtypes": 37,
       "fileCount": 61,
-      "tree": "94bd200f9829b10d5aaa285010cd7eb910fab2b588a0dc337f22d8d87257bab9",
-      "documents": "7354668a31d45ddfef66fae76141a347caaeafeee435fec47bab2d075bdbb8bc",
-      "manifest": "3bb43949618f26a65870e7b4869487995c92ac7484c9c1e9529408f7ab698765",
+      "tree": "92fdef7e2b8a433d879ef67f1a8a784cb4df098e100b394729348040dd9421e8",
+      "documents": "7d1c449fd4f0f07992e36f35c9cf993c6046a58da18ad40bb5abc052bd67dc85",
+      "manifest": "d848569f7568c5ccc94a9a83d3af3afa73d598acd513b309e59b0716b7f2c841",
       "seed": "1f29584a62d42a25479d03f40c9456cfab9c2785d7be3e8e3a62ceae19eb0808",
       "facts": "ba02ebcd10686f31fad6d886827e5d7c64a9aa6f946d63c58f4bbfde7371112b"
     },
@@ -92,9 +92,9 @@
       "documentCount": 91,
       "distinctSubtypes": 59,
       "fileCount": 94,
-      "tree": "e0436de2bc21cda65b57f73353b6aaab6caac837ab25ac5c883960e8f6651981",
-      "documents": "8ce48c112db1774c5b0459f477f6df8b7f717680015a551e3d25a39d3bba8c08",
-      "manifest": "da6b371b4526793d15e2632777d98c4c5261514de83929ad0651a350b8a741fc",
+      "tree": "6b90577df411183dbc993f76f15ee1a32a36e5f2b60a97a73ce2a3546bff9f27",
+      "documents": "615483d63f9ca081347a7b17b17d4895f07af068ee1d1c75945d03fa96f390d9",
+      "manifest": "f3fd1ccaf71196b015262a272839d0d92f935552235c94821eb93946bd2a31a1",
       "seed": "8a113011c87e7583c255c37dbfb7db77ddcf02b93a26a77c1d6cf239e2f18315",
       "facts": "c9ee7b40f2032e914b62c2716c34f9c25e04ab6ec24273cb257ef3ee8acd5a2b"
     },
@@ -102,9 +102,9 @@
       "documentCount": 62,
       "distinctSubtypes": 39,
       "fileCount": 65,
-      "tree": "a5196177fce9d369dee8b767760003ee953444e392392001e959073160634015",
-      "documents": "78c309142ef5fcd73d2b9e9b7961cbbc93049364048c1231233f7681b1600130",
-      "manifest": "85712f6bf8f7729a162229b1a46456642dd9d1d85cfc0cb41a35243c8206a6d1",
+      "tree": "7ad747cfaa5a75b651e99d36aaf8c7be08a2dd2c985064a755fa2adad3d949eb",
+      "documents": "f489d4cf2e25d99d7b5dccb10f1301bb80ec1109b9766e1c1d41cef8dfd52643",
+      "manifest": "b03de0489aa437f8da765434df7af525ea46fda94451801dffe60e02b8bb57e5",
       "seed": "8d6abe5e277c8a49ef218940e4741a74cd76b0df6653a6ffc6c58094028a300f",
       "facts": "989ec4d991d155e983f1b0b51cc8e390cb766957b1abeeab804791916ab905f3"
     }
