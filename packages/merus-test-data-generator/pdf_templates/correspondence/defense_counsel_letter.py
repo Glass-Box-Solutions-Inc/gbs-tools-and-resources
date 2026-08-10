@@ -13,6 +13,8 @@ from reportlab.lib.units import inch
 import random
 from datetime import timedelta
 
+from data.variant_content import letter_register
+
 
 class DefenseCounselLetter(BaseTemplate):
     """Defense attorney correspondence template"""
@@ -59,7 +61,10 @@ class DefenseCounselLetter(BaseTemplate):
         story.append(Paragraph("Dear Counsel:", self.styles['BodyText14']))
         story.append(Spacer(1, 0.2 * inch))
 
-        # Body - randomly select letter type
+        # Body — the registry routes ~15 subtypes here with distinct variant
+        # strings, and without the opt-in all of them draw from the same five
+        # bodies below. An opted-in variant that a register claims gets the
+        # letter its subtype actually names; everything else draws as before.
         letter_types = [
             self._discovery_request,
             self._deposition_scheduling,
@@ -68,7 +73,15 @@ class DefenseCounselLetter(BaseTemplate):
             self._motion_to_compel
         ]
 
-        letter_content = random.choice(letter_types)()
+        register = (
+            letter_register(self.variant_of(doc_spec))
+            if self.variant_content_enabled(doc_spec)
+            else None
+        )
+        if register is not None:
+            letter_content = list(register.paragraphs)
+        else:
+            letter_content = random.choice(letter_types)()
         for para in letter_content:
             story.append(Paragraph(para, self.styles['DoubleSpaced']))
             story.append(Spacer(1, 0.15 * inch))

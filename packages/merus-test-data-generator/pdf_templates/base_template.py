@@ -247,6 +247,36 @@ class BaseTemplate:
     def build_story(self, doc_spec: Any) -> list:
         raise NotImplementedError
 
+    # --- Variant-content seam (AJC-66) ---
+
+    #: Context key that opts a document into variant-appropriate body content.
+    #:
+    #: Off by default, and deliberately a key of its own rather than a change in
+    #: how ``variant`` is read. Several templates serve many subtypes whose
+    #: variant strings were registered and then discarded, so the same document
+    #: rendered for all of them. Making ``variant`` suddenly significant would
+    #: rewrite output for every existing caller — wc-synthetic-caseload-engine
+    #: pins four golden corpora against these templates and passes variant
+    #: strings today. A separate opt-in keeps those bytes frozen and lets a
+    #: caller ask for the richer content when it is ready for it.
+    VARIANT_CONTENT_KEY = "variant_content"
+
+    def variant_content_enabled(self, doc_spec: Any) -> bool:
+        """True when the caller opted this document into variant-aware content.
+
+        Absent and explicitly false are the same answer, so a caller can carry
+        the key permanently and flip it per document.
+        """
+        if not getattr(doc_spec, "context", None):
+            return False
+        return bool(doc_spec.context.get(self.VARIANT_CONTENT_KEY))
+
+    def variant_of(self, doc_spec: Any, default: str = "") -> str:
+        """The raw registry ``variant`` string for this document."""
+        if not getattr(doc_spec, "context", None):
+            return default
+        return doc_spec.context.get("variant", default)
+
     # --- Interdocument coherence helpers (Phase 6) ---
 
     def _get_accumulator(self, doc_spec: Any) -> Any | None:
