@@ -50,6 +50,8 @@ from wc_caseload_engine.clinical_grounding import (
 )
 from wc_caseload_engine.manifests import CASE_FACTS_NAME, MANIFEST_NAME, generate_case
 from wc_caseload_engine.medical_history import (
+    _P_CEILING,
+    _P_FLOOR,
     HEALTH_ARCHETYPES,
     archetype_weights,
     calibrate,
@@ -281,10 +283,16 @@ class TestTheCalibrationSolves:
     def test_every_archetype_can_produce_every_condition(self) -> None:
         """The anti-fingerprint guarantee, at its source rather than in the corpus.
 
-        A zero probability anywhere would let an observer *exclude* an archetype by
-        seeing the condition, and a chain of exclusions is how membership becomes
-        recoverable. The floor is what makes that impossible, so it is asserted
-        directly rather than inferred from a sample that might merely not have hit it.
+        The bound asserted is the **floor**, not merely "greater than zero", and the
+        mutation gate is why. The first version of this guard asked for
+        ``0 < p < 1``, which is satisfied with the floor deleted — ``scale * affinity``
+        is a product of positives and never actually reaches zero. m17-4 survived it.
+
+        That was the guard failing to cover its own fix, and the distinction it missed
+        is the whole point: a probability of one in a million is not zero, but an
+        archetype carrying one is *effectively* excludable, which is exactly the
+        recoverability the floor exists to prevent. So the floor itself is the
+        assertion.
         """
         for key in CONDITION_CATALOG:
             for age in (25, 45, 70):
@@ -295,9 +303,11 @@ class TestTheCalibrationSolves:
                     assert probabilities, f"{key} has no probabilities at all"
                     assert {name for name, _ in probabilities} == set(HEALTH_ARCHETYPES)
                     for name, probability in probabilities:
-                        assert 0.0 < probability < 1.0, (
-                            f"{key}/{name} is {probability} — an archetype that cannot "
-                            "produce a condition can be ruled out by observing it"
+                        assert _P_FLOOR <= probability <= _P_CEILING, (
+                            f"{key}/{name} is {probability}, outside "
+                            f"[{_P_FLOOR}, {_P_CEILING}] — an archetype whose "
+                            "probability approaches zero can be ruled out by observing "
+                            "the condition, which makes membership recoverable"
                         )
 
     def test_archetype_weights_are_a_distribution(self) -> None:
