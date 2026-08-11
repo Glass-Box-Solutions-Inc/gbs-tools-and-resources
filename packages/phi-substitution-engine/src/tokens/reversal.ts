@@ -199,22 +199,44 @@ export async function reverseText(
     }
   }
 
-  if (distinct.length > store.maximumEncounteredTokenBatch) {
+  // §7/N2: the reversal store is an INJECTED port and its OWN behavior is UNTRUSTED — a throwing
+  // `maximumEncounteredTokenBatch` getter, a `resolveEncounteredTokens` REJECTION, or a returned map
+  // whose `has`/`get` throws could carry raw PHI. Contain ALL of it here: the composed engine calls
+  // reverseText DIRECTLY (without the atomic/streaming adapters' outer guard), so this function must
+  // never propagate a raw store error — only a fixed-code ReversalFailedError.
+  let batchLimit: unknown;
+  try {
+    batchLimit = store.maximumEncounteredTokenBatch;
+  } catch {
+    throw new ReversalFailedError(keys.operationId);
+  }
+  if (typeof batchLimit !== "number" || distinct.length > batchLimit) {
     throw new ReversalFailedError(keys.operationId);
   }
 
-  const resolved =
-    distinct.length === 0
-      ? new Map<SubstitutionToken, string>()
-      : await store.resolveEncounteredTokens({
-          tenantId: keys.tenantId,
-          matterId: keys.matterId,
-          dictionaryVersion: keys.dictionaryVersion,
-          tokens: distinct,
-        });
+  let resolved: ReadonlyMap<SubstitutionToken, string>;
+  try {
+    resolved =
+      distinct.length === 0
+        ? new Map<SubstitutionToken, string>()
+        : await store.resolveEncounteredTokens({
+            tenantId: keys.tenantId,
+            matterId: keys.matterId,
+            dictionaryVersion: keys.dictionaryVersion,
+            tokens: distinct,
+          });
+  } catch {
+    throw new ReversalFailedError(keys.operationId);
+  }
 
   for (const token of distinct) {
-    if (!resolved.has(token)) {
+    let present: boolean;
+    try {
+      present = resolved.has(token);
+    } catch {
+      throw new ReversalFailedError(keys.operationId);
+    }
+    if (!present) {
       // Known-shape but unknown token: fail visibly, never display the raw chunk.
       throw new ReversalFailedError(keys.operationId);
     }
@@ -226,10 +248,14 @@ export async function reverseText(
     if (span.parsed.kind !== "valid") {
       continue;
     }
-    // §7/N2: `resolved` is the INJECTED reversal store's return. A canonical value that is NOT a genuine
-    // string (e.g. an object whose `Symbol.toPrimitive`/`toString` returns PHI) must NOT be coerced by
-    // `out +=` and emitted as DisplayText — fail closed with a fixed-code error rather than leak raw.
-    const canonical = resolved.get(span.parsed.token);
+    // §7/N2: read the canonical getter-throw-safe and require a genuine string — an object whose
+    // toString/toPrimitive yields PHI must NOT be coerced by `out +=` and emitted as DisplayText.
+    let canonical: unknown;
+    try {
+      canonical = resolved.get(span.parsed.token);
+    } catch {
+      throw new ReversalFailedError(keys.operationId);
+    }
     if (typeof canonical !== "string") {
       throw new ReversalFailedError(keys.operationId);
     }

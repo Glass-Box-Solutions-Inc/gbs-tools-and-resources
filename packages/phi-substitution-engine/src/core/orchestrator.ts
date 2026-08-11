@@ -287,7 +287,16 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     // ever touches a live (possibly PHI-throwing / mutating) getter on the request envelope.
     const context = this.#ingestContext(request);
     const segments = this.#ingestSegments(request, context.operationId);
-    const locale = request.policy.locale as unknown as string;
+    // §7/N2: read the policy scalars the engine consumes OUTSIDE the compile guard ONCE, getter-throw-
+    // safe. A throwing `policy.locale`/`detectorRequirement` getter (a hostile direct caller) must fail
+    // closed with a FIXED code, never propagate raw. (The whole `request.policy` is still handed to
+    // getOrCompile, but that runs inside the fixed-closed compile try/catch below.)
+    const policy = safeRead(request, "policy");
+    const locale = safeString(policy, "locale");
+    const detectorRequirement = safeString(policy, "detectorRequirement");
+    if (locale === undefined || detectorRequirement === undefined) {
+      throw new PhiEngineError("MISSING_TRUSTED_POLICY", context.operationId, {});
+    }
 
     // §4.1 step 2 / L2 / N4: require an active READY dictionary version.
     let dictionaryVersion: DictionaryVersion;
@@ -306,10 +315,15 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       // must never surface a raw message/code — fail closed with a fixed code.
       throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
     }
+    // §7/N2: the injected coordinator's SUCCESS value is UNTRUSTED — a non-`bigint` (e.g. a PHI string)
+    // must NOT be returned to the caller as SubstitutionResult.dictionaryVersion. Require a bigint.
+    if (typeof (dictionaryVersion as unknown) !== "bigint") {
+      throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
+    }
 
     // N4: phase-1 has no detection belt wired. A policy that REQUIRES it cannot be
     // satisfied, so we fail closed rather than brand untagged free text as safe.
-    if (request.policy.detectorRequirement === "REQUIRED") {
+    if (detectorRequirement === "REQUIRED") {
       throw new PhiEngineError("DETECTOR_UNAVAILABLE", context.operationId, {});
     }
 
@@ -363,13 +377,22 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       for (const span of detectStructuredIdentifiers(sourceText)) {
         detectorOrdinal += 1;
         const syntheticSubject = `${SYNTHETIC_DETECTOR_PREFIX}${String(context.operationId)}\u0000${detectorOrdinal}`;
-        const token = await this.#assignmentStore.getOrAllocate({
-          tenantId: context.tenantId,
-          matterId: context.matterId,
-          subjectId: syntheticSubject as unknown as SubjectId,
-          role: CLASS_ROLE[span.identifierClass] as unknown as TokenRole,
-          dictionaryVersion,
-        });
+        // §7/N2: the injected assignment store is UNTRUSTED — a `getOrAllocate` REJECTION (its message
+        // could carry PHI) must fail closed with a FIXED code, never propagate raw out of substitute
+        // (this call sits outside the compile guard). A failed allocation means the detector span could
+        // not be tokenized, so failing closed prevents the identifier egressing raw.
+        let token: unknown;
+        try {
+          token = await this.#assignmentStore.getOrAllocate({
+            tenantId: context.tenantId,
+            matterId: context.matterId,
+            subjectId: syntheticSubject as unknown as SubjectId,
+            role: CLASS_ROLE[span.identifierClass] as unknown as TokenRole,
+            dictionaryVersion,
+          });
+        } catch {
+          throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
+        }
         const start = span.startUtf16 as unknown as number;
         const end = span.endUtf16 as unknown as number;
         detectorCanonicalByToken.set(String(token), canonicalize(sourceText.slice(start, end)));
@@ -408,13 +431,19 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
         if (canonical === undefined) {
           continue;
         }
-        this.#reversalStore.record({
-          tenantId: context.tenantId,
-          matterId: context.matterId,
-          dictionaryVersion,
-          token,
-          canonical,
-        });
+        // §7/N2: the injected reversal store is UNTRUSTED — a `record()` throw (its message could carry
+        // PHI) must fail closed with a FIXED code, never propagate raw out of substitute.
+        try {
+          this.#reversalStore.record({
+            tenantId: context.tenantId,
+            matterId: context.matterId,
+            dictionaryVersion,
+            token,
+            canonical,
+          });
+        } catch {
+          throw new PhiEngineError("REVERSAL_FAILED", context.operationId, {});
+        }
         const identifierClass = ROLE_CLASS[span.parsed.role as unknown as string];
         if (identifierClass !== undefined) {
           counts[identifierClass] = (counts[identifierClass] ?? 0) + 1;
@@ -455,17 +484,23 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
   }
 
   public async reverse(text: TokenizedText, handle: ReversalHandle): Promise<DisplayText> {
-    // §7/N2: read the handle's routing scalars ONCE, getter-throw-safe, into inert locals. A hostile
-    // handle scalar getter must fail closed with a FIXED message here, never propagate a raw (PHI)
-    // throw out of this public method. The BOUNDED `restoreEscapedLiterals` capability below stays on
-    // the live handle (it cannot be snapshotted) and is already guarded by its own try/catch.
-    const tenantId = safeRead(handle, "tenantId");
-    const matterId = safeRead(handle, "matterId");
+    // §7/N2: `text` is a PUBLIC input — a NON-STRING carrier (e.g. { get length(){ throw PHI } }) would
+    // leak raw through grammar scanning. Require a genuine string, fail closed otherwise.
+    if (typeof (text as unknown) !== "string") {
+      throw new Error("reversal_failed");
+    }
+    // §7/N2: read the handle's routing scalars ONCE, getter-throw-safe, AND validate their shapes — the
+    // id fields as strings, `dictionaryVersion` as a bigint (a non-bigint whose `toString` throws PHI
+    // would leak during a store lookup). A hostile handle getter or wrong-typed scalar fails closed
+    // here. The BOUNDED `restoreEscapedLiterals` capability below stays on the live handle (it cannot be
+    // snapshotted) and is already guarded by its own try/catch.
+    const tenantId = safeString(handle, "tenantId");
+    const matterId = safeString(handle, "matterId");
+    const operationId = safeString(handle, "operationId");
     const dictionaryVersion = safeRead(handle, "dictionaryVersion");
-    const operationId = safeRead(handle, "operationId");
     if (
-      tenantId === undefined || matterId === undefined ||
-      dictionaryVersion === undefined || operationId === undefined
+      tenantId === undefined || matterId === undefined || operationId === undefined ||
+      typeof dictionaryVersion !== "bigint"
     ) {
       throw new Error("reversal_failed");
     }
@@ -474,10 +509,10 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     const reversed = await reverseText(
       text as unknown as string,
       {
-        tenantId: tenantId as TenantId,
-        matterId: matterId as MatterId,
-        dictionaryVersion: dictionaryVersion as DictionaryVersion,
-        operationId: operationId as OperationId,
+        tenantId: tenantId as unknown as TenantId,
+        matterId: matterId as unknown as MatterId,
+        dictionaryVersion: dictionaryVersion as unknown as DictionaryVersion,
+        operationId: operationId as unknown as OperationId,
       },
       this.#reversalStore,
       this.#grammar,

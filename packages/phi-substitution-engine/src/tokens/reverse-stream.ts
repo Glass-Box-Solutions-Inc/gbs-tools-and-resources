@@ -141,6 +141,12 @@ class HoldbackReverseStream implements ReverseStream {
     if (this.failed || this.ended) {
       return;
     }
+    // §7/N2: `chunk` is a PUBLIC input — a NON-STRING carrier (whose toString/toPrimitive yields PHI)
+    // must NOT be coerced by `this.buffer += chunk`. Fail closed (latch) rather than concatenate raw.
+    if (typeof (chunk as unknown) !== "string") {
+      await this.fail();
+      return;
+    }
     this.buffer += chunk;
     if (openTokenIsOverlong(this.buffer, this.policy)) {
       await this.fail();

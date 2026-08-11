@@ -3883,4 +3883,105 @@ describe("GLY-330 R14 (§7/N2): structural ingestion hardening at the public bou
     expect(String(thrown?.message ?? "") + readErr).not.toContain(CANARY);
     expect((thrown as any)?.code).toBe("AUDIT_DURABILITY_UNAVAILABLE");
   });
+
+  // -------------------------------------------------------------------------
+  // Round 21 — the wrapper is fully clean; the remaining leaks are all inside
+  // ComposedSubstitutionEngine (reached directly), which consumes its injected
+  // stores + public inputs without the wrapper/adapter containment. Engine-layer
+  // systematic pass (mirrors the wrapper-layer one).
+  // -------------------------------------------------------------------------
+
+  // R21-1 (finding 1) — a throwing policy.locale getter on a substitute() request fails closed.
+  it("engine.substitute: a throwing policy.locale getter fails closed, never leaks raw", async () => {
+    const { engine } = makeEngine();
+    const hostilePolicy: any = {
+      mode: "REQUIRED", activeDictionaryVersion: VERSION, schemaVersion: SCHEMA,
+      detectorRequirement: "DISABLED_PHASE_1", approvedOffDecisionId: null,
+      get locale(): never { throw new Error(CANARY); },
+    };
+    let thrown: any; let out: any;
+    try {
+      out = await engine.substitute({ context: ctx("att-r21-1"), policy: hostilePolicy, segments: [{ path: "system", kind: "system", text: "hi" }], purpose: "generation" } as any);
+    } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("MISSING_TRUSTED_POLICY");
+  });
+
+  // R21-2 (finding 2) — an injected coordinator resolving requireActiveReady() to a NON-bigint PHI
+  // string must NOT be returned as SubstitutionResult.dictionaryVersion; fail closed.
+  it("engine.substitute: a non-bigint coordinator version fails closed, never returned to the caller", async () => {
+    const coordinator: any = { requireActiveReady: async (): Promise<any> => "ALICE_SMITH_SSN_123" };
+    const truthReader: any = { readTaggedValues: async (): Promise<any[]> => [] };
+    const engine = new ComposedSubstitutionEngine({ coordinator, truthReader, sourceTruthRevision: REVISION, reversalStore: new InMemoryReversalStore(), engineVersion: ENGINE } as any);
+    let thrown: any; let out: any;
+    try {
+      out = await engine.substitute({ context: ctx("att-r21-2"), policy: policy(), segments: [{ path: "system", kind: "system", text: "hi" }], purpose: "generation" } as any);
+    } catch (e) { thrown = e; }
+    expect(out).toBeUndefined();
+    expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain("ALICE_SMITH_SSN_123");
+    expect((thrown as any)?.code).toBe("DICTIONARY_UNAVAILABLE");
+  });
+
+  // R21-3a (finding 3) — a throwing injected reversalStore.record() during substitute fails closed.
+  it("engine.substitute: a throwing reversalStore.record fails closed, never leaks raw", async () => {
+    const hostileStore: any = { record: (): never => { throw new Error(CANARY); }, maximumEncounteredTokenBatch: 8, resolveEncounteredTokens: async (): Promise<Map<any, any>> => new Map() };
+    const { engine } = makeEngine(DEFAULT_TRUTH, { reversalStore: hostileStore });
+    let thrown: any; let out: any;
+    try {
+      out = await engine.substitute({ context: ctx("att-r21-3a"), policy: policy(), segments: [{ path: "system", kind: "system", text: "Maria García" }], purpose: "generation" } as any);
+    } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("REVERSAL_FAILED");
+  });
+
+  // R21-3c (finding 3) — engine.reverse now CONTAINS the injected store (reverseText wraps it): a
+  // rejecting resolveEncounteredTokens fails closed, never propagates raw (the composed engine lacked
+  // the atomic/streaming adapters' outer guard).
+  it("engine.reverse: a rejecting reversalStore.resolve fails closed, never leaks raw", async () => {
+    const hostileStore: any = { record: (): void => {}, maximumEncounteredTokenBatch: 8, resolveEncounteredTokens: async (): Promise<never> => { throw new Error(CANARY); } };
+    const { engine } = makeEngine(DEFAULT_TRUTH, { reversalStore: hostileStore });
+    const result: any = await engine.substitute({ context: ctx("att-r21-3c"), policy: policy(), segments: [{ path: "system", kind: "system", text: "Maria García" }], purpose: "generation" } as any);
+    let thrown: any; let display: any;
+    try { display = await engine.reverse(result.segments[0].text, result.reversalHandle); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String(display ?? "")).not.toContain(CANARY);
+  });
+
+  // R21-4 (finding 4) — a rejecting injected assignmentStore.getOrAllocate on a detector-only
+  // identifier fails closed (this call sits outside the compile guard).
+  it("engine.substitute: a rejecting assignmentStore.getOrAllocate fails closed, never leaks raw", async () => {
+    const coordinator: any = { requireActiveReady: async (): Promise<any> => VERSION_BIGINT };
+    const truthReader: any = { readTaggedValues: async (): Promise<any[]> => [] };
+    const hostileAssign: any = { getOrAllocate: async (): Promise<never> => { throw new Error(CANARY); } };
+    const engine = new ComposedSubstitutionEngine({ coordinator, truthReader, sourceTruthRevision: REVISION, reversalStore: new InMemoryReversalStore(), engineVersion: ENGINE, assignmentStore: hostileAssign } as any);
+    let thrown: any; let out: any;
+    try {
+      out = await engine.substitute({ context: ctx("att-r21-4"), policy: policy(), segments: [{ path: "system", kind: "system", text: "SSN 123-45-6789 on file" }], purpose: "generation" } as any);
+    } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("DICTIONARY_UNAVAILABLE");
+  });
+
+  // R21-5a (finding 5) — engine.reverse requires a genuine string `text`; a non-string carrier whose
+  // length getter throws must not leak through grammar scanning.
+  it("engine.reverse: a non-string text input fails closed, never leaks raw", async () => {
+    const { engine } = makeEngine();
+    const result: any = await engine.substitute({ context: ctx("att-r21-5a"), policy: policy(), segments: [{ path: "system", kind: "system", text: "Maria García" }], purpose: "generation" } as any);
+    const hostileText: any = { get length(): never { throw new Error(CANARY); } };
+    let thrown: any; let display: any;
+    try { display = await engine.reverse(hostileText, result.reversalHandle); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String(display ?? "")).not.toContain(CANARY);
+  });
+
+  // R21-5c (finding 5) — the reverse stream requires a genuine string chunk; a non-string carrier whose
+  // Symbol.toPrimitive throws must not be coerced by the buffer concatenation.
+  it("engine.createReverseStream: a non-string push chunk fails closed, never leaks raw", async () => {
+    const { engine } = makeEngine();
+    const result: any = await engine.substitute({ context: ctx("att-r21-5c"), policy: policy(), segments: [{ path: "system", kind: "system", text: "Maria García" }], purpose: "generation" } as any);
+    const emitted: string[] = [];
+    const stream: any = engine.createReverseStream(result.reversalHandle, (safe: any) => { emitted.push(String(safe)); });
+    const hostileChunk: any = { [Symbol.toPrimitive]: (): never => { throw new Error(CANARY); } };
+    let thrown: any;
+    try { await stream.push(hostileChunk); await stream.end(); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + emitted.join("")).not.toContain(CANARY);
+  });
 });
