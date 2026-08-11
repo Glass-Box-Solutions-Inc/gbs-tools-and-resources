@@ -162,6 +162,14 @@ export class MatterDictionaryCompiler implements DictionaryCompiler {
     const entries: CompiledEntry[] = [];
 
     for (const value of orderedValues) {
+      // #6 / L1: the composed engine reserves the NUL byte to fence the detector-only synthetic
+      // subject namespace, and the assignment store joins key components with NUL. A tagged (real)
+      // subject id carrying NUL would blur those boundaries and could share a token-assignment key
+      // with a synthetic subject. Real subject ids are system-generated and NUL-free; enforce it
+      // (fail closed) so the synthetic/real namespaces are PROVABLY disjoint, not merely assumed.
+      if ((value.subjectId as unknown as string).includes("\u0000")) {
+        throw new Error("subject_id_contains_reserved_nul");
+      }
       const token = await assignmentPort.requireAssignment({
         tenantId: input.tenantId,
         matterId: input.matterId,

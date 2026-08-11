@@ -49,12 +49,13 @@ import type {
   SubstitutionResult,
   TokenizedTextSegment,
 } from "./contracts";
-import type { CaseTruthReader, DictionaryVersionCoordinator } from "../dictionary/contracts";
+import type { CaseTruthReader, CompiledDictionaryCache, DictionaryVersionCoordinator } from "../dictionary/contracts";
 import type { EscapedTokenLiteral, TokenGrammarPolicy } from "../tokens/ports";
 import { isDictionaryError } from "../dictionary/errors";
 import { canonicalize, detectStructuredIdentifiers } from "../collision/index";
 import { MatterDictionaryCompiler } from "../dictionary/compiler";
-import { tokenize, type DetectorSpanInput } from "../dictionary/tokenize";
+import { getOrCompile, tokenize, type DetectorSpanInput } from "../dictionary/tokenize";
+import { InMemoryCompiledDictionaryCache } from "../dictionary/cache";
 import { TokensLeafAssignmentPort } from "../dictionary/token-port";
 import type { AhoCorasickCompiledDictionary } from "../dictionary/compiled-dictionary";
 import {
@@ -172,6 +173,12 @@ export interface ComposedSubstitutionEngineDeps {
    * operations' detector-only tokens never collide on the operation-blind reversal key.
    */
   readonly assignmentStore?: InMemoryTokenAssignmentStore;
+  /**
+   * Warm compiled-dictionary cache (L9). Reused across requests so an identical warm call does
+   * NOT recompile the matter dictionary (truth read + variant expansion + automaton build) every
+   * time — a per-request recompile is a latency/availability regression (NEW-B). Tenant-scoped.
+   */
+  readonly cache?: CompiledDictionaryCache;
 }
 
 export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
@@ -186,6 +193,7 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
   readonly #escaper: SentinelSourceTokenEscaper;
   readonly #assignmentStore: InMemoryTokenAssignmentStore;
   readonly #compiler: MatterDictionaryCompiler;
+  readonly #cache: CompiledDictionaryCache;
 
   public constructor(deps: ComposedSubstitutionEngineDeps) {
     this.#coordinator = deps.coordinator;
@@ -206,6 +214,7 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       this.#truthReader,
       () => new TokensLeafAssignmentPort(this.#assignmentStore),
     );
+    this.#cache = deps.cache ?? new InMemoryCompiledDictionaryCache();
   }
 
   public async substitute(request: SubstitutionRequest): Promise<SubstitutionResult> {
@@ -237,7 +246,9 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     // stable across compiles because the shared assignment store owns their identity.
     let compiled: AhoCorasickCompiledDictionary;
     try {
-      compiled = (await this.#compiler.compile({
+      // L9 / NEW-B: the WARM-CACHE serving path — a compiled dictionary for this
+      // tenant+matter+version+engine+schema is reused instead of recompiled on every request.
+      compiled = await getOrCompile(this.#cache, this.#compiler, {
         tenantId: context.tenantId,
         matterId: context.matterId,
         policy: request.policy,
@@ -245,7 +256,7 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
         engineVersion: this.#engineVersion,
         schemaVersion: request.policy.schemaVersion,
         sourceTruthRevision: this.#sourceTruthRevision,
-      })) as AhoCorasickCompiledDictionary;
+      });
     } catch (error) {
       if (isDictionaryError(error)) {
         throw new PhiEngineError(mapDictionaryFailure(error.code), context.operationId, {});
