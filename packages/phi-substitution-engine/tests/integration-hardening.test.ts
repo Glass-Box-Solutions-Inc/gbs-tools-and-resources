@@ -1636,3 +1636,201 @@ describe("GLY-330 finding 7 R5 (L6): the low-level AtomicTokenReverser fails clo
     expect(String(out)).toBe("plain text no tokens");
   });
 });
+
+// ===========================================================================
+// R6 — the round-6 gate found DEEPER adversarial-injection siblings behind the
+// R5 chokepoint fixes: an arbitrary code smuggled inside a PhiAuditError /
+// PhiEngineError instance, a getter that returns different values on successive
+// reads (TOCTOU), a provider getter that throws after prepare, and a raw drain
+// prepare error. These lock each. Each is mutation-proven.
+// ===========================================================================
+
+/** finalize() throws a PhiEngineError carrying an ARBITRARY (non-allow-listed) code — probes that a
+ *  success-path finalizer's code is NOT trusted just for being a PhiEngineError (#3b). */
+class PhiEngineFinalizeAudit {
+  public constructor(private readonly gate: Gate) {}
+  public async prepare(record: any): Promise<any> {
+    this.gate.prepared = true;
+    return { attemptId: record.attemptId, location: "PRIMARY_STORE", durableRecordId: "r-1" };
+  }
+  public async finalize(): Promise<void> {
+    throw new PhiEngineError("RAW_FINALIZER_ALICE" as any);
+  }
+}
+
+describe("GLY-330 finding 3 R6 (§7/N2): an arbitrary code inside an error instance is NOT trusted", () => {
+  it("emitter.prepare re-wraps a PhiAuditError whose code is not an allow-listed AuditFailureCode", async () => {
+    const roguePrimary = {
+      async prepare(): Promise<any> {
+        throw new PhiAuditError("RAW_STORE_ALICE" as any, null);
+      },
+      async finalize(): Promise<void> {},
+    };
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
+    const emitter = new DurablePhiAuditEmitter(roguePrimary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
+    let thrown: any;
+    try {
+      await emitter.prepare(spoolPrepared("att-rogue-p"));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PhiAuditError);
+    expect(String(thrown?.code ?? "")).not.toContain("RAW_STORE_ALICE");
+    expect(String(thrown?.message ?? "")).not.toContain("RAW_STORE_ALICE");
+  });
+
+  it("emitter.finalize re-wraps a PhiAuditError whose code is not an allow-listed AuditFailureCode", async () => {
+    const roguePrimary = {
+      async prepare(r: any): Promise<any> {
+        return { status: "stored", durableRecordId: `p:${String(r.attemptId)}` };
+      },
+      async finalize(): Promise<void> {
+        throw new PhiAuditError("RAW_STORE_ALICE" as any, null);
+      },
+    };
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
+    const emitter = new DurablePhiAuditEmitter(roguePrimary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
+    const rec = spoolPrepared("att-rogue-f");
+    const receipt = await emitter.prepare(rec);
+    let thrown: any;
+    try {
+      await emitter.finalize(receipt, spoolTerminal(rec));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PhiAuditError);
+    expect(String(thrown?.code ?? "")).not.toContain("RAW_STORE_ALICE");
+    expect(String(thrown?.message ?? "")).not.toContain("RAW_STORE_ALICE");
+  });
+
+  it("generateText SUCCESS: a finalizer's arbitrary PhiEngineError.code is replaced by a fixed code", async () => {
+    const gate: Gate = { prepared: false };
+    const audit = new PhiEngineFinalizeAudit(gate);
+    const provider = new FakeRawProvider(gate, { responseText: "done" });
+    const built = buildManualWrapper(gate, { audit, provider });
+    let thrown: any;
+    try {
+      await built.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PhiEngineError);
+    expect(String(thrown?.code ?? "")).not.toContain("RAW_FINALIZER_ALICE");
+    expect(String(thrown?.message ?? "")).not.toContain("RAW_FINALIZER_ALICE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #9 R6 — a provider getter that throws AFTER routing must not double-prepare:
+// every untrusted-getter deref precedes the durable prepare.
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 9 R6 (N3): an untrusted getter throwing after routing does not double-prepare", () => {
+  it("dereferences decision.provider BEFORE prepare, so a throwing getter yields exactly one prepare", async () => {
+    const gate: Gate = { prepared: false };
+    const audit = new PermissiveAudit(gate);
+    const decision: any = { isProductionSafe: true, baaSatisfied: true, providerId: "azure-openai-baa" };
+    Object.defineProperty(decision, "provider", {
+      get() {
+        throw new Error("provider getter boom");
+      },
+      enumerable: true,
+    });
+    const router = { selectUsingOriginalContent: async (): Promise<any> => decision };
+    const built = buildManualWrapper(gate, { audit, router });
+    let threw = false;
+    try {
+      await built.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+    expect(built.provider.calls).toBe(0);
+    expect(audit.prepareCalls).toBe(1); // NO second prepare
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #4 R6 — a getter that returns a benign value at validation and a PHI value at
+// rebuild (TOCTOU) cannot smuggle raw PHI to the provider.
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 4 R6 (L5): a check-vs-use getter cannot smuggle PHI past the projector", () => {
+  it("reads each provider-visible value once, so a mutating tool.name getter never egresses its canary", () => {
+    const projector = new StructuralOptionsProjector();
+    let reads = 0;
+    const tool: any = { description: "ok" };
+    Object.defineProperty(tool, "name", {
+      get() {
+        reads += 1;
+        return reads === 1 ? "safe_tool" : { phi: "ALICE_CANARY" };
+      },
+      enumerable: true,
+    });
+    const classified = projector.classify({ tools: [tool] } as any);
+    const rebuilt: any = classified.rebuild(
+      classified.segments.map((s) => ({ path: s.path, text: s.text })) as any,
+    );
+    expect(rebuilt.tools[0].name).toBe("safe_tool");
+    expect(JSON.stringify(rebuilt)).not.toContain("ALICE_CANARY");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NEW-R6-A — the background spool drain never surfaces a raw primary.prepare error.
+// ---------------------------------------------------------------------------
+describe("GLY-330 NEW-R6-A (§7/N2): spool.drainTo never surfaces a raw primary.prepare rejection", () => {
+  it("keeps the entry and returns a report instead of rejecting with the raw message", async () => {
+    const volume = new InMemorySpoolVolume();
+    const spool = new Aes256GcmAuditSpool(volume as any, new FixedKeyProvider() as any, CLOCK);
+    await spool.appendPrepared(spoolPrepared("att-drain-raw"));
+    const rawPrimary = {
+      async prepare(): Promise<any> {
+        const raw: any = new Error("RAW_PRIMARY_ALICE");
+        raw.code = "RAW_PRIMARY_CODE";
+        throw raw;
+      },
+      async finalize(): Promise<void> {},
+    };
+    let thrown: any;
+    let report: any;
+    try {
+      report = await spool.drainTo(rawPrimary as any);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeUndefined(); // no raw rejection escapes the drain
+    expect(report.remaining).toBeGreaterThanOrEqual(1); // entry kept for a later drain
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3 R6 (pre-empt) — an injected component's PhiEngineError with an ARBITRARY code
+// is never surfaced raw to the caller OR recorded in the durable audit terminal.
+// Locks the whole class: the guarded passthrough, toFailureCode, and errorCodeString.
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 3 R6 (§7/N2): an arbitrary PhiEngineError.code is never surfaced (caller or audit)", () => {
+  it("replaces a policy rejection's non-allow-listed code with a fixed code, everywhere", async () => {
+    const gate: Gate = { prepared: false };
+    const built = buildManualWrapper(gate, {
+      policyFn: (): Promise<any> =>
+        Promise.reject(new PhiEngineError("RAW_POLICY_ALICE" as any, b<any>("op-1"), {})),
+    });
+    let thrown: any;
+    try {
+      await built.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PhiEngineError);
+    // (a) the caller never sees the raw code/message
+    expect(String(thrown?.code ?? "")).not.toContain("RAW_POLICY_ALICE");
+    expect(String(thrown?.message ?? "")).not.toContain("RAW_POLICY_ALICE");
+    // (b) the durable audit terminal never records the raw code
+    expect(JSON.stringify(built.primary.finalizedEvents)).not.toContain("RAW_POLICY_ALICE");
+  });
+});

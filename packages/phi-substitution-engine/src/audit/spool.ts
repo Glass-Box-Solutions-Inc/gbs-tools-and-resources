@@ -184,7 +184,16 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
 
     for (const entry of [...this.#entries.values()]) {
       examined += 1;
-      const outcome = await primary.prepare(entry.prepared);
+      let outcome;
+      try {
+        outcome = await primary.prepare(entry.prepared);
+      } catch {
+        // §7/N2: a RAW primary.prepare rejection must never surface from a background drain (it
+        // could carry an upstream message/code). Treat it as a transient outage — keep the durable
+        // entry and retry on a later drain rather than propagate.
+        remaining += 1;
+        continue;
+      }
       if (outcome.status === "unavailable") {
         remaining += 1;
         continue;

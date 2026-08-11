@@ -67,19 +67,18 @@ export interface ComposedProtectedAiProviderDeps<GenerateOptions, EmbeddingKind 
   readonly embeddingOptionsFactory?: (text: string) => GenerateOptions;
 }
 
-/** Extracts a safe fixed error-code string for a terminal audit event's failureCode. */
+/**
+ * Extracts a safe fixed error-code string for a terminal audit event's failureCode. A `code` is
+ * honored ONLY if it is a recognized `PhiEngineFailureCode` — a `PhiEngineError` instance's `.code`
+ * is not trusted just for being an instance (an injected component could cast a raw value to a
+ * code), so nothing PHI-laden can land in the durable audit trail (§7/N2).
+ */
 function errorCodeString(error: unknown): string {
-  if (isPhiEngineError(error)) return error.code;
-  if (
-    error !== null &&
-    typeof error === "object" &&
-    "code" in error &&
-    typeof (error as { code?: unknown }).code === "string" &&
-    isPhiEngineFailureCode((error as { code: string }).code)
-  ) {
-    return (error as { code: string }).code;
-  }
-  return "FAILED_CLOSED";
+  const code =
+    error !== null && typeof error === "object" && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+  return typeof code === "string" && isPhiEngineFailureCode(code) ? code : "FAILED_CLOSED";
 }
 
 export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string>
@@ -113,7 +112,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       // §4.1 step 12 / N3: any pre-egress failure finalizes exactly one terminal.
       await this.#recordPreEgressFailure(context, "generation", error);
       // §7: never surface a raw upstream message/code to the caller.
-      throw isPhiEngineError(error)
+      throw isPhiEngineError(error) && isPhiEngineFailureCode(error.code)
         ? error
         : new PhiEngineError(
             toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
@@ -133,7 +132,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     } catch (error) {
       // N3: a provider rejection after send still finalizes exactly one terminal.
       await this.#finalizeQuietly(prepared, "unknown_after_send", errorCodeString(error));
-      throw error instanceof PhiEngineError
+      throw error instanceof PhiEngineError && isPhiEngineFailureCode(error.code)
         ? error
         : new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), prepared.context.operationId, {});
     }
@@ -143,7 +142,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       await this.#deps.safeTrace.response(rawOutput);
     } catch (error) {
       await this.#finalizeQuietly(prepared, "unknown_after_send", errorCodeString(error));
-      throw isPhiEngineError(error)
+      throw isPhiEngineError(error) && isPhiEngineFailureCode(error.code)
         ? error
         : new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), prepared.context.operationId, {});
     }
@@ -159,7 +158,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       prepared = await this.#prepareForEgress(options, "stream", context, policy);
     } catch (error) {
       await this.#recordPreEgressFailure(context, "stream", error);
-      throw isPhiEngineError(error)
+      throw isPhiEngineError(error) && isPhiEngineFailureCode(error.code)
         ? error
         : new PhiEngineError(
             toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
@@ -182,7 +181,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       });
     } catch (error) {
       await this.#finalizeQuietly(prepared, "failed_closed", errorCodeString(error));
-      throw isPhiEngineError(error)
+      throw isPhiEngineError(error) && isPhiEngineFailureCode(error.code)
         ? error
         : new PhiEngineError(
             toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
@@ -205,7 +204,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       const outcome: PhiAuditOutcome = code === "REVERSAL_FAILED" ? "reversal_failed" : "unknown_after_send";
       // N3: a push/end failure after send still finalizes exactly one terminal.
       await this.#finalizeQuietly(prepared, outcome, code);
-      throw error instanceof PhiEngineError
+      throw error instanceof PhiEngineError && isPhiEngineFailureCode(error.code)
         ? error
         : new PhiEngineError(code, prepared.context.operationId, {});
     }
@@ -248,7 +247,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       receipt = await this.#prepareAudit(context, policy, substitution, "embedding");
     } catch (error) {
       await this.#recordPreEgressFailure(context, "embedding", error);
-      throw isPhiEngineError(error)
+      throw isPhiEngineError(error) && isPhiEngineFailureCode(error.code)
         ? error
         : new PhiEngineError(
             toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
@@ -269,7 +268,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         "failed_closed",
         errorCodeString(error),
       );
-      throw isPhiEngineError(error)
+      throw isPhiEngineError(error) && isPhiEngineFailureCode(error.code)
         ? error
         : new PhiEngineError(
             toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
@@ -288,7 +287,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         "unknown_after_send",
         errorCodeString(error),
       );
-      throw error instanceof PhiEngineError
+      throw error instanceof PhiEngineError && isPhiEngineFailureCode(error.code)
         ? error
         : new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), context.operationId, {});
     }
@@ -328,18 +327,24 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     // or unexpected path fails closed here, before egress.
     const tokenizedOptions = classified.rebuild(substitution.segments);
 
-    // §4.1 step 9 / N3: durably PREPARE the metadata-only record BEFORE egress.
+    // N3: read every value the prepared record needs — including the PINNED provider and the
+    // reversal handle, which may be adversarial getters — BEFORE the durable PREPARE. Nothing may
+    // be dereferenced AFTER prepare, or a throw there would re-enter the pre-egress handler and
+    // prepare a SECOND durable record (no double-prepare). Prepare is therefore the LAST step.
+    const substitutionHandle = substitution.reversalHandle;
+    const provider = decision.provider; // L11: the pinned provider for the routed+gated decision.
+
+    // §4.1 step 9 / N3: durably PREPARE the metadata-only record BEFORE egress (and last here).
     const receipt = await this.#prepareAudit(context, policy, substitution, purpose);
 
     const prepared: PreparedEgress<GenerateOptions, EmbeddingKind> = {
       context,
       purpose,
       substitution,
-      substitutionHandle: substitution.reversalHandle,
+      substitutionHandle,
       tokenizedOptions,
       receipt,
-      // L11: the PINNED provider object selected for the routed+gated decision.
-      provider: decision.provider,
+      provider,
     };
 
     // §4.1 step 10 tracing of the tokenized input happens in the CALLER (after this returns), not
@@ -365,7 +370,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       );
     } catch (error) {
       await this.#finalizeQuietly(prepared, "failed_closed", errorCodeString(error));
-      throw isPhiEngineError(error)
+      throw isPhiEngineError(error) && isPhiEngineFailureCode(error.code)
         ? error
         : new PhiEngineError(
             toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
@@ -405,7 +410,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     try {
       return await this.#deps.context.require();
     } catch (error) {
-      throw error instanceof PhiEngineError
+      throw error instanceof PhiEngineError && isPhiEngineFailureCode(error.code)
         ? error
         : new PhiEngineError("MISSING_TRUSTED_CONTEXT");
     }
@@ -588,12 +593,11 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
   ): Promise<void> {
     try {
       await this.#finalize(prepared, outcome, failureCode);
-    } catch (error) {
-      throw new PhiEngineError(
-        isPhiEngineError(error) ? error.code : "AUDIT_DURABILITY_UNAVAILABLE",
-        prepared.context.operationId,
-        {},
-      );
+    } catch {
+      // §7/N2: the rejected error's message/code is NEVER surfaced — even a `PhiEngineError.code`
+      // is untrusted here (it could be a raw value cast to a code by an injected finalizer). Fail
+      // closed with a FIXED code.
+      throw new PhiEngineError("AUDIT_DURABILITY_UNAVAILABLE", prepared.context.operationId, {});
     }
   }
 
@@ -607,12 +611,9 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
   ): Promise<void> {
     try {
       await this.#finalizeAt(receipt, record, outcome, failureCode);
-    } catch (error) {
-      throw new PhiEngineError(
-        isPhiEngineError(error) ? error.code : "AUDIT_DURABILITY_UNAVAILABLE",
-        operationId,
-        {},
-      );
+    } catch {
+      // §7/N2: never surface the rejected error's message/code (a fixed code only, see above).
+      throw new PhiEngineError("AUDIT_DURABILITY_UNAVAILABLE", operationId, {});
     }
   }
 }

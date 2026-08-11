@@ -151,7 +151,11 @@ export class StructuralOptionsProjector
   implements AiProviderOptionProjector<BoundaryGenerateOptions>
 {
   public classify(options: BoundaryGenerateOptions): ClassifiedProviderOptions<BoundaryGenerateOptions> {
-    const raw = options as unknown as Record<string, unknown>;
+    // Snapshot the caller's options ONCE into an inert, getter-free object; every read below (and
+    // the rebuild) uses the snapshot, so a getter cannot pass validation and then egress a
+    // different, PHI-laden value (TOCTOU / L5 fail-closed).
+    const snap = snapshotBoundaryOptions(options);
+    const raw = snap as unknown as Record<string, unknown>;
     const collected: CollectedSegment[] = [];
 
     // L5: fail closed on ANY unknown, potentially text-bearing top-level field.
@@ -206,7 +210,7 @@ export class StructuralOptionsProjector
     // messages[i].content[j].text — EVERY text-bearing part, regardless of `type`.
     // A non-"text" part (e.g. `tool_result`) that still carries a `text` string must
     // be classified and tokenized, never egressed raw (L5 / fail-closed).
-    (options.messages ?? []).forEach((message, i) => {
+    (snap.messages ?? []).forEach((message, i) => {
       assertAllowedEnum(message.role, ALLOWED_MESSAGE_ROLES, `messages[${i}].role`);
       message.content.forEach((part, j) => {
         assertAllowedEnum(part.type, ALLOWED_CONTENT_TYPES, `messages[${i}].content[${j}].type`);
@@ -232,7 +236,7 @@ export class StructuralOptionsProjector
     });
 
     // tools[k].description
-    (options.tools ?? []).forEach((tool, k) => {
+    (snap.tools ?? []).forEach((tool, k) => {
       assertStructuralProviderString(tool.name, `tools[${k}].name`);
       // A tool description is a known text carrier and MUST be a string. A present-but-non-string
       // value (an object smuggling PHI text past the segment's `text` typing, then egressed RAW via
@@ -299,7 +303,7 @@ export class StructuralOptionsProjector
             missingTokenizedSegments: collected.length - byPath.size,
           });
         }
-        const draft: MutableOptions = structuredCloneOptions(options);
+        const draft: MutableOptions = cloneSnapshot(snap);
         for (const entry of collected) {
           entry.write(draft, byPath.get(entry.segment.path) as string);
         }
@@ -309,20 +313,60 @@ export class StructuralOptionsProjector
   }
 }
 
-/** Deep-enough clone of the classified text carriers so rebuild never mutates the caller's input. */
-function structuredCloneOptions(options: BoundaryGenerateOptions): MutableOptions {
-  // Preserve every option field (incl. non-text sampling knobs model/temperature/maxTokens/
-  // topP/stream) so the provider receives them unchanged; deep-clone the text carriers so a
-  // tokenized write never mutates the caller's input.
-  const draft: MutableOptions = { ...(options as unknown as Record<string, unknown>) };
-  if (options.messages !== undefined) {
-    draft.messages = options.messages.map((message) => ({
+/**
+ * Reads every provider-visible value out of the caller's option object EXACTLY ONCE into an inert,
+ * getter-free snapshot. The projector then both VALIDATES and REBUILDS from this snapshot and never
+ * re-reads the original — closing the check-vs-use (TOCTOU) gap where a property getter returns a
+ * benign value during validation and a PHI-laden one during rebuild (L5 fail-closed). Nested
+ * message/tool carriers are normalized so their getters are read once too.
+ */
+function snapshotBoundaryOptions(options: BoundaryGenerateOptions): MutableOptions {
+  const src = options as unknown as Record<string, unknown>;
+  const snap: Record<string, unknown> = {};
+  for (const key of Object.keys(src)) {
+    snap[key] = src[key]; // one read per own-enumerable top-level property
+  }
+  const messages = snap["messages"];
+  if (Array.isArray(messages)) {
+    snap["messages"] = messages.map((message) => {
+      const m = message as Record<string, unknown>;
+      const content = m["content"];
+      return {
+        role: m["role"],
+        content: Array.isArray(content)
+          ? content.map((part) => {
+              const p = part as Record<string, unknown>;
+              return { type: p["type"], text: p["text"] };
+            })
+          : content,
+      };
+    });
+  }
+  const tools = snap["tools"];
+  if (Array.isArray(tools)) {
+    snap["tools"] = tools.map((tool) => {
+      const t = tool as Record<string, unknown>;
+      return { name: t["name"], description: t["description"] };
+    });
+  }
+  return snap as MutableOptions;
+}
+
+/** Fresh deep clone of the inert snapshot so a tokenized write never mutates the shared snapshot.
+ *  Reads only the snapshot (never the caller's original), so it introduces no new getter reads. */
+function cloneSnapshot(snap: MutableOptions): MutableOptions {
+  const draft: MutableOptions = { ...(snap as unknown as Record<string, unknown>) };
+  if (Array.isArray(snap.messages)) {
+    draft.messages = snap.messages.map((message) => ({
       role: message.role,
-      content: message.content.map((part) => ({ type: part.type, text: part.text })),
+      content: (message.content as { type: string; text: string }[]).map((part) => ({
+        type: part.type,
+        text: part.text,
+      })),
     }));
   }
-  if (options.tools !== undefined) {
-    draft.tools = options.tools.map((tool) => ({ name: tool.name, description: tool.description }));
+  if (Array.isArray(snap.tools)) {
+    draft.tools = snap.tools.map((tool) => ({ name: tool.name, description: tool.description }));
   }
   return draft;
 }

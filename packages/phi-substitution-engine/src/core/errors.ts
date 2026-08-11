@@ -51,19 +51,16 @@ export function isPhiEngineFailureCode(value: unknown): value is PhiEngineFailur
   return typeof value === "string" && PHI_ENGINE_FAILURE_CODES.has(value);
 }
 
-/** Maps a thrown value to its fixed failure code, defaulting to a safe generic code. */
+/**
+ * Maps a thrown value to a fixed, allow-listed failure code, defaulting to a safe generic code.
+ * A `code` field is honored ONLY if it is a recognized `PhiEngineFailureCode` — being a
+ * `PhiEngineError` instance is NOT sufficient, because an injected component can construct one with
+ * an arbitrary (PHI-laden) code via an `as any` cast (§7/N2). Any unrecognized code → the fallback.
+ */
 export function toFailureCode(value: unknown, fallback: PhiEngineFailureCode): PhiEngineFailureCode {
-  if (isPhiEngineError(value)) {
-    return value.code;
-  }
-  if (
-    value !== null &&
-    typeof value === "object" &&
-    "code" in value &&
-    typeof (value as { code?: unknown }).code === "string" &&
-    isPhiEngineFailureCode((value as { code: string }).code)
-  ) {
-    return (value as { code: PhiEngineFailureCode }).code;
-  }
-  return fallback;
+  const code =
+    value !== null && typeof value === "object" && "code" in value
+      ? (value as { code?: unknown }).code
+      : undefined;
+  return typeof code === "string" && isPhiEngineFailureCode(code) ? code : fallback;
 }

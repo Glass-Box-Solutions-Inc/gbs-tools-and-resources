@@ -8,7 +8,7 @@ import type {
   PhiAuditPreparedRecord,
   PhiAuditSerializer,
 } from "./ports";
-import { PhiAuditError } from "./errors";
+import { isAuditFailureCode, PhiAuditError } from "./errors";
 import { preparedToTerminalEvent } from "./event-factory";
 
 interface InFlight {
@@ -88,8 +88,10 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       this.#remember(receipt, record);
       return receipt;
     } catch (error) {
-      // The fixed-code audit failures above are re-thrown verbatim.
-      if (error instanceof PhiAuditError) {
+      // The fixed-code audit failures thrown above are re-thrown verbatim — but ONLY if the code is
+      // a RECOGNIZED AuditFailureCode. A store that throws `new PhiAuditError(rawValue as any)` is
+      // NOT trusted just for being a PhiAuditError instance; an unknown code is re-wrapped (§7/N2).
+      if (error instanceof PhiAuditError && isAuditFailureCode(error.code)) {
         throw error;
       }
       // §7/N2 + N3: a RAW store/spool rejection must never surface an upstream message/code, and it
@@ -118,8 +120,10 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     } catch (error) {
       // §7/N2: a RAW store/spool finalize rejection must never surface an upstream message/code to
       // any caller (a rejecting finalizer could carry PHI). The terminal is NOT marked written, so a
-      // later drain/reconcile can still deliver it; the caller sees only this fixed, safe code.
-      if (error instanceof PhiAuditError) {
+      // later drain/reconcile can still deliver it; the caller sees only this fixed, safe code. Only
+      // a RECOGNIZED AuditFailureCode passes through — a `PhiAuditError` with an unknown code (raw
+      // value cast to a code) is re-wrapped, not trusted for being an instance.
+      if (error instanceof PhiAuditError && isAuditFailureCode(error.code)) {
         throw error;
       }
       throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, {});

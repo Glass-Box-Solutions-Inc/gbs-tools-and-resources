@@ -43,3 +43,21 @@ export function isAuditError(value: unknown, code?: AuditFailureCode): value is 
   }
   return code === undefined || value.code === code;
 }
+
+const AUDIT_FAILURE_CODES: ReadonlySet<string> = new Set<AuditFailureCode>([
+  "AUDIT_SCHEMA_REJECTED",
+  "AUDIT_REQUIRED_FIELD_MISSING",
+  "AUDIT_DURABILITY_UNAVAILABLE",
+  "AUDIT_SPOOL_FLUSH_FAILED",
+  "AUDIT_ATTEMPT_ALREADY_FINALIZED",
+]);
+
+/**
+ * True only for a RECOGNIZED, fixed, safe `AuditFailureCode`. A `PhiAuditError` whose `code` is not
+ * in this allow-list (e.g. an upstream store threw `new PhiAuditError(rawValue as any)`) is NOT
+ * safe to surface — its code/message could carry PHI — so callers must re-wrap it (§7/N2). Being a
+ * `PhiAuditError` instance is not, by itself, proof of a safe code.
+ */
+export function isAuditFailureCode(value: unknown): value is AuditFailureCode {
+  return typeof value === "string" && AUDIT_FAILURE_CODES.has(value);
+}
