@@ -1459,6 +1459,16 @@ def _affirmative_evidence(
     if claim_type == "industrial_causation":
         if target is None:
             return "indeterminate"
+        if (
+            "firefighter_presumption" in contention.doctrine_hooks
+            and target.body_system == "oncologic"
+            and target.surfaces_in_file
+        ):
+            # The presumption IS the evidence theory: a diagnosed cancer that
+            # looks wholly unrelated is exactly what the safety-member statutes
+            # presume industrial. Rebuttal is the defense's burden, not a
+            # contradiction on the face of the record.
+            return "supports"
         if target.causal_ground_truth in ("industrial", "mixed") and target.surfaces_in_file:
             return "supports"
         if target.causal_ground_truth == "nonindustrial" or target.wholly_unrelated:
@@ -2189,7 +2199,14 @@ def _contention_candidates(
     firefighter_hook = "firefighter_presumption" in seed.lifecycle.doctrine_hooks
 
     for condition in history.conditions:
-        claim_types = _condition_claim_types(condition, context)
+        # An EVIDENCE candidate (B.4): a condition the file never shows is not
+        # something a party can hang a contention on — prior claims and awards
+        # are litigated events and are on the record by nature.
+        claim_types = (
+            _condition_claim_types(condition, context)
+            if condition.surfaces_in_file
+            else ()
+        )
         if claim_types:
             note_eligible("condition")
             incidence = _assertion_rng(
@@ -2340,13 +2357,27 @@ def _contention_candidates(
                 and c.trajectory != "resolved"
             )
             award_ids = tuple(a.id for a in history.awards)
+            # Target the concrete qualifying entity, award first — a
+            # target-free defense contention would read indeterminate against
+            # any record, and the SIBTF argument is about *that* disability.
+            target_award = award_ids[0] if award_ids else None
+            target_condition = (
+                qualifying_conditions[0]
+                if target_award is None and qualifying_conditions
+                else None
+            )
+            target_claim = (
+                history.prior_award(target_award).prior_claim_id
+                if target_award is not None
+                else None
+            )
             key = (
                 "contention",
                 "apportionment_defense",
                 "affirm",
-                None,
-                None,
-                None,
+                target_condition,
+                target_claim,
+                target_award,
                 None,
                 ("sibtf",),
             )
@@ -2357,6 +2388,9 @@ def _contention_candidates(
                     claim_type="apportionment_defense",
                     party="applicant",
                     position="affirm",
+                    target_condition_id=target_condition,
+                    target_prior_claim_id=target_claim,
+                    target_prior_award_id=target_award,
                     doctrine_hooks=("sibtf",),
                     rationale="a prior permanent disability combines with the new injury",
                     groundings=(
@@ -2702,6 +2736,7 @@ def _append_sampled(
 
         determination_kind: str | None = None
         determination_rationale: str | None = None
+        branch = "-"
         if report_stage == "final":
             omitted = _fraction_draw(
                 _assertion_rng(seed, "final-omission", opinion_salt),
@@ -2709,10 +2744,12 @@ def _append_sampled(
             )
             if omitted:
                 state = "omitted"
+                branch = "omitted"
             else:
                 state = "determined"
                 substantial = has_substantial_nonindustrial_evidence(history)
                 if substantial:
+                    branch = "A"
                     nonzero = _fraction_draw(
                         _assertion_rng(seed, "nonzero-apportionment", opinion_salt),
                         P_NONZERO_APPORTIONMENT.value,
@@ -2743,44 +2780,120 @@ def _append_sampled(
                         for c in history.conditions
                     )
                     if contributor_exists:
+                        branch = "C"
                         determination_kind = "unable_to_approximate"
                         determination_rationale = (
                             "the undocumented history precludes approximating the "
                             "contributions to reasonable medical probability"
                         )
                     else:
+                        branch = "B"
                         determination_kind = "no_nonindustrial_share"
                         determination_rationale = (
                             "the record affirmatively shows the disability is "
                             "entirely industrial"
                         )
 
-        # Dispositions over every contention, explicit and sampled (rule 7).
+        # The review budget, drawn before the rows so a coherent build can
+        # align its citations with the record it will actually review (item 5b
+        # is a *planted* defect, never an accident of ordering).
+        budget = 1 + _weighted_index(
+            _assertion_rng(seed, "evidence-budget", opinion_salt),
+            EVIDENCE_BUDGET_MIX.value,
+        )
+        if trace is not None:
+            trace.evidence_budgets.append(budget)
+
+        # Dispositions. The evidence policy is absolute — an evaluator never
+        # endorses what the record contradicts and always rejects it — while
+        # WHICH supported claims the report takes up is construction: a real
+        # report addresses the disputed issue, not the docket. The opinion has
+        # no quality-target recipe of its own: B.6's omission, deferral and
+        # zero-share machinery are its deliberate defects, and everything else
+        # it stands behind grades it through the worst-of rubric.
         endorses: list[str] = []
         rejects: list[str] = []
+        supportable: list[Contention] = []
         for contention in all_contentions:
             evidence = contention_evidence(history, context, contention)
-            if author_role in ("qme", "ame"):
-                disposition = qme_disposition(evidence)
-            else:
-                endorse_p = {
-                    "supports": P_PTP_ENDORSE_SUPPORTED.value,
-                    "indeterminate": P_PTP_ENDORSE_INDETERMINATE.value,
-                    "contradicts": P_PTP_ENDORSE_CONTRADICTED.value,
-                }[evidence]
-                contention_salt = _semantic_salt(_contention_semantic_key(contention))
-                disposition = (
-                    "endorse"
+            if evidence == "contradicts" and author_role in ("qme", "ame"):
+                if qme_disposition(evidence) == "reject":
+                    rejects.append(contention.id)
+            elif evidence == "supports":
+                supportable.append(contention)
+        if supportable:
+            would_be = {
+                c.id: contention_quality(history, context, c) for c in supportable
+            }
+            pick = next(
+                (c for c in supportable if would_be[c.id] == "supported"),
+                supportable[0] if author_role == "ptp" else None,
+            )
+            if pick is not None:
+                if author_role in ("qme", "ame"):
+                    if qme_disposition("supports") == "endorse":
+                        endorses.append(pick.id)
+                else:
+                    contention_salt = _semantic_salt(_contention_semantic_key(pick))
                     if _fraction_draw(
                         _assertion_rng(seed, "ptp-disposition", contention_salt),
-                        endorse_p,
-                    )
-                    else "neither"
-                )
-            if disposition == "endorse":
-                endorses.append(contention.id)
-            elif disposition == "reject":
-                rejects.append(contention.id)
+                        P_PTP_ENDORSE_SUPPORTED.value,
+                    ):
+                        endorses.append(pick.id)
+        elif author_role == "ptp" and all_contentions:
+            # The treater's occasional adoption of a weaker claim keeps the
+            # indeterminate/contradicted PTP policies live decision families.
+            candidate = all_contentions[0]
+            evidence = contention_evidence(history, context, candidate)
+            endorse_p = {
+                "supports": P_PTP_ENDORSE_SUPPORTED.value,
+                "indeterminate": P_PTP_ENDORSE_INDETERMINATE.value,
+                "contradicts": P_PTP_ENDORSE_CONTRADICTED.value,
+            }[evidence]
+            contention_salt = _semantic_salt(_contention_semantic_key(candidate))
+            if _fraction_draw(
+                _assertion_rng(seed, "ptp-disposition", contention_salt), endorse_p
+            ):
+                endorses.append(candidate.id)
+
+        # The record pool a supported build may cite: the first ``budget``
+        # relevant, visible entities. Reviewed is built FROM the citations, so
+        # the review-gap defect is only ever planted by the thin lever.
+        def _relevant_pool() -> list[tuple[str, str]]:
+            pool: list[tuple[str, str]] = []
+            contributors_pool = [
+                c
+                for c in history.conditions
+                if not c.wholly_unrelated
+                and c.causal_ground_truth in ("nonindustrial", "mixed")
+                and c.surfaces_in_file
+                and c.trajectory != "resolved"
+            ]
+            pool.extend(("condition", c.id) for c in contributors_pool)
+            for claim in history.prior_claims:
+                if (
+                    claim.award is not None
+                    and claim.overlaps_current
+                    and claim.award.conclusively_presumed
+                ):
+                    pool.append(("prior_award", claim.award.id))
+            for contention in all_contentions:
+                if contention.id in endorses or contention.id in rejects:
+                    if contention.target_condition_id is not None:
+                        condition = history.condition(contention.target_condition_id)
+                        if condition is not None and condition.surfaces_in_file:
+                            pool.append(("condition", condition.id))
+                    if contention.target_prior_claim_id is not None:
+                        pool.append(("prior_claim", contention.target_prior_claim_id))
+                    if contention.target_prior_award_id is not None:
+                        pool.append(("prior_award", contention.target_prior_award_id))
+            deduped: list[tuple[str, str]] = []
+            for record in pool:
+                if record not in deduped:
+                    deduped.append(record)
+            return deduped
+
+        citable = _relevant_pool()[:budget]
 
         # Allocated rows: one per targeted body part, register-drawn split.
         if determination_kind == "allocated":
@@ -2825,8 +2938,12 @@ def _append_sampled(
                         if value not in COMMON_NONINDUSTRIAL_PERCENTAGES
                     ]
                     nonindustrial = granular[register.randrange(len(granular))]
+                citable_conditions = {r for f, r in citable if f == "condition"}
+                citable_awards = {r for f, r in citable if f == "prior_award"}
                 part_conditions = tuple(
-                    c.id for c in contributors if part in c.apportionment_targets
+                    c.id
+                    for c in contributors
+                    if part in c.apportionment_targets and c.id in citable_conditions
                 )
                 part_awards = tuple(
                     claim.award.id
@@ -2835,8 +2952,24 @@ def _append_sampled(
                     and claim.overlaps_current
                     and claim.award.conclusively_presumed
                     and part in claim.award.body_parts
+                    and claim.award.id in citable_awards
                 )
+                part_claims: tuple[str, ...] = ()
+                if not part_conditions and not part_awards and citable:
+                    # Every row states at least one record it relies on (item
+                    # 3a); at budget 1 that can be the pool's one record even
+                    # when it sits off this exact part — realistic, and still
+                    # a reviewed, visible citation.
+                    family, ref = citable[0]
+                    if family == "condition":
+                        part_conditions = (ref,)
+                    elif family == "prior_award":
+                        part_awards = (ref,)
+                    else:
+                        part_claims = (ref,)
                 basis: list[str] = []
+                if part_claims:
+                    basis.append("prior_symptomatic_disability")
                 for ref in part_conditions:
                     condition = history.condition(ref)
                     if condition is None:
@@ -2882,6 +3015,15 @@ def _append_sampled(
                         else None
                     ),
                 }
+                uncited_contributor = next(
+                    (
+                        c.id
+                        for c in contributors
+                        if part in c.apportionment_targets
+                        and c.id not in part_conditions
+                    ),
+                    None,
+                )
                 if recipe == "thin":
                     levers = [
                         "description",
@@ -2889,15 +3031,24 @@ def _append_sampled(
                         "reasonable_medical_probability",
                         "causal_rationale",
                         "percentage_rationale",
+                        "review_gap",
                     ]
+                    if uncited_contributor is None:
+                        levers.remove("review_gap")
                     lever = levers[
                         _assertion_rng(
                             seed, "thin-defect", _semantic_salt(assertion_key)
                         ).randrange(len(levers))
                     ]
-                    fields[lever] = False if lever == "disability_causation_stated" else None
-                    if lever == "reasonable_medical_probability":
+                    if lever == "review_gap":
+                        # Item 5b, planted: rely on a record the review never
+                        # reached.
+                        part_conditions = (*part_conditions, uncited_contributor)
+                    elif lever in ("disability_causation_stated",
+                                   "reasonable_medical_probability"):
                         fields[lever] = False
+                    else:
+                        fields[lever] = None
                 elif recipe == "unsupportable":
                     variants = ["vocational_apportionment", "bare_age", "bare_gender",
                                 "risk_factor_only"]
@@ -2916,6 +3067,7 @@ def _append_sampled(
                         nonindustrial_percent=nonindustrial,
                         basis_kinds=tuple(basis),  # type: ignore[arg-type]
                         condition_ids=part_conditions,
+                        prior_claim_ids=part_claims,
                         prior_award_ids=part_awards,
                         groundings=tuple(groundings),
                         quality="supported",
@@ -2925,42 +3077,22 @@ def _append_sampled(
                 if trace is not None:
                     trace.recipes.append((f"app@{part}", recipe, ""))
 
-        # Reviewed records: budget, relevant-first, distractor (B.7).
-        budget = 1 + _weighted_index(
-            _assertion_rng(seed, "evidence-budget", opinion_salt),
-            EVIDENCE_BUDGET_MIX.value,
-        )
-        if trace is not None:
-            trace.evidence_budgets.append(budget)
-        relevant: list[tuple[str, str]] = []
-        for assertion in sampled_assertions:
-            relevant.extend(("condition", ref) for ref in assertion.condition_ids)
-            relevant.extend(("prior_award", ref) for ref in assertion.prior_award_ids)
-        for contention in all_contentions:
-            if contention.id in endorses or contention.id in rejects:
-                if contention.target_condition_id is not None:
-                    relevant.append(("condition", contention.target_condition_id))
-                if contention.target_prior_claim_id is not None:
-                    relevant.append(("prior_claim", contention.target_prior_claim_id))
-                if contention.target_prior_award_id is not None:
-                    relevant.append(("prior_award", contention.target_prior_award_id))
-        seen: set[tuple[str, str]] = set()
-        ordered_relevant = [r for r in relevant if not (r in seen or seen.add(r))]
-        reviewed: list[tuple[str, str]] = ordered_relevant[:1]
-        for record in _visible_records(history):
-            if len(reviewed) >= budget:
-                break
-            if record not in reviewed and record in ordered_relevant:
-                reviewed.append(record)
+        # Reviewed records: the citable pool first (relevant records, capped at
+        # the budget), filled from other visible records in stable ID order,
+        # plus the label-independent distractor (B.7). The thin lever's extra
+        # citation deliberately stays OUT of the review — that is the planted
+        # 5b gap, and the only route to one.
+        reviewed: list[tuple[str, str]] = list(citable)
         for record in _visible_records(history):
             if len(reviewed) >= budget:
                 break
             if record not in reviewed:
                 reviewed.append(record)
+        relevant_all = _relevant_pool()
         unselected_irrelevant = [
             record
             for record in _visible_records(history)
-            if record not in reviewed and record not in ordered_relevant
+            if record not in reviewed and record not in relevant_all
         ]
         if unselected_irrelevant:
             if trace is not None:
@@ -3001,7 +3133,9 @@ def _append_sampled(
             )
         )
         if trace is not None:
-            trace.lifecycle.append(f"{author_role}:{report_stage}:{state}")
+            trace.lifecycle.append(
+                f"{author_role}:{report_stage}:{state}:{determination_kind or '-'}:{branch}"
+            )
 
     # --- assign opinion/assertion IDs and resolve internal references -------
     used_opinion_ids = {o.id for o in opinions}
