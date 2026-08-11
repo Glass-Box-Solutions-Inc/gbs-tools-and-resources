@@ -11,7 +11,7 @@ import type {
 import { isAuditError, isAuditFailureCode, PhiAuditError } from "./errors";
 import { safeCodeString } from "../core/errors";
 import { preparedToTerminalEvent } from "./event-factory";
-import { sanitizeTerminalEvent } from "./serializer";
+import { sanitizePreparedRecord, sanitizeTerminalEvent } from "./serializer";
 
 interface InFlight {
   readonly receipt: AuditPreparationReceipt;
@@ -49,45 +49,50 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
   }
 
   public async prepare(record: PhiAuditPreparedRecord): Promise<AuditPreparationReceipt> {
-    // The PREPARED record must itself be metadata-only; reject any leaked value before durability.
-    this.#serializer.validatePrepared(record);
+    // The PREPARED record is itself UNTRUSTED — its fields may be mutating/throwing getters or a
+    // poisoned own iterator. Validate AND read-once snapshot it into an inert record here; a bad
+    // record is AUDIT_SCHEMA_REJECTED, and ONLY the inert snapshot is keyed on, remembered, or handed
+    // to a durable store (§7/N2) — so the store can never re-read a getter into a PHI value.
+    const durableRecord = sanitizePreparedRecord(record);
+    // Injected-serializer allow-list runs on the INERT snapshot (never a re-read of a live getter).
+    this.#serializer.validatePrepared(durableRecord);
 
     // N3 idempotency: an attempt id that already has a terminal in this process must
     // not be re-prepared — that would permit a second provider egress and a second
     // terminal event for the same logical attempt.
-    if (this.#finalized.has(this.#key(record.attemptId))) {
-      throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", record.operationId, {
-        attemptId: record.attemptId,
+    if (this.#finalized.has(this.#key(durableRecord.attemptId))) {
+      throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", durableRecord.operationId, {
+        attemptId: durableRecord.attemptId,
       });
     }
 
     try {
-      const primaryResult = await this.#primary.prepare(record);
+      const primaryResult = await this.#primary.prepare(durableRecord);
       if (primaryResult.status === "stored") {
         const receipt: AuditPreparationReceipt = {
-          attemptId: record.attemptId,
+          attemptId: durableRecord.attemptId,
           location: "PRIMARY_STORE",
           durableRecordId: primaryResult.durableRecordId,
         };
-        this.#remember(receipt, record);
+        this.#remember(receipt, durableRecord);
         return receipt;
       }
       if (primaryResult.status === "already_exists") {
         // A durable record for this attempt already exists — never egress or finalize a
         // second time for the same attempt id (N3 exactly-one-terminal / idempotency).
-        throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", record.operationId, {
-          attemptId: record.attemptId,
+        throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", durableRecord.operationId, {
+          attemptId: durableRecord.attemptId,
         });
       }
 
       // Primary outage alone proceeds through the spool.
       if ((await this.#spool.health()) !== "ready") {
-        throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", record.operationId, {
-          attemptId: record.attemptId,
+        throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", durableRecord.operationId, {
+          attemptId: durableRecord.attemptId,
         });
       }
-      const receipt = await this.#spool.appendPrepared(record);
-      this.#remember(receipt, record);
+      const receipt = await this.#spool.appendPrepared(durableRecord);
+      this.#remember(receipt, durableRecord);
       return receipt;
     } catch (error) {
       // A fixed-code audit failure thrown above is preserved ONLY if its code is a RECOGNIZED
@@ -98,14 +103,14 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       if (isAuditError(error)) {
         const code = safeCodeString(error); // read ONCE, getter-throw-safe
         if (code !== undefined && isAuditFailureCode(code)) {
-          throw new PhiAuditError(code, record.operationId, { attemptId: record.attemptId });
+          throw new PhiAuditError(code, durableRecord.operationId, { attemptId: durableRecord.attemptId });
         }
       }
       // §7/N2 + N3: a RAW store/spool rejection must never surface an upstream message/code, and it
       // must be recognizable to the caller as an audit-layer failure (a `PhiAuditError`) so a failed
       // PREPARE is never re-attempted into a second durable record (no double-prepare).
-      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", record.operationId, {
-        attemptId: record.attemptId,
+      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", durableRecord.operationId, {
+        attemptId: durableRecord.attemptId,
       });
     }
   }
@@ -116,12 +121,13 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     if (this.#finalized.has(this.#key(receipt.attemptId))) {
       return;
     }
-    // Validate the exact allow-list before anything is published as a terminal event.
-    this.#serializer.serialize(event);
-    // §7/N2: persist a READ-ONCE, validated, inert snapshot — NOT the live event object. A store that
-    // re-read a mutating getter (valid on the validation read, PHI on the persistence read) would
-    // otherwise land a canary in the durable record; the snapshot has only plain data.
+    // §7/N2: read the live event EXACTLY ONCE into a validated, inert snapshot, then run the injected
+    // serializer's allow-list on the SNAPSHOT (plain data — never a second read of a live getter) and
+    // persist the SNAPSHOT, never the live event. This closes the validate-then-reread TOCTOU: a
+    // mutating getter (valid on the check read, PHI on the persistence read) can no longer land a
+    // canary in the durable record, because the store only ever sees inert data.
     const durable = sanitizeTerminalEvent(event);
+    this.#serializer.serialize(durable);
     try {
       if (receipt.location === "PRIMARY_STORE") {
         await this.#primary.finalize(durable);

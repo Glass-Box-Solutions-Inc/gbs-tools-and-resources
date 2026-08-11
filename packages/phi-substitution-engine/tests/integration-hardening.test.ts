@@ -37,10 +37,12 @@ import {
 import {
   decideEgress,
   DictionaryError,
+  getOrCompile,
   InMemoryCaseTruthReader,
   InMemoryCompiledDictionaryCache,
   InMemoryDictionaryVersionCoordinator,
   isDictionaryError,
+  MatterDictionaryCompiler,
   tokenize,
 } from "../src/dictionary/index";
 import { isPhiEngineError, PhiEngineError } from "../src/core/errors";
@@ -2647,5 +2649,314 @@ describe("GLY-330 R11 (§7/N2): hostile-object leak class swept onto remaining t
     });
     expect(() => isInProcessReversalHandle(evil)).not.toThrow();
     expect(isInProcessReversalHandle(evil)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R12 (§7/N2): deeper boundary-data attacks WITHIN the accepted threat model
+// (no global built-in reassignment) — own Symbol.iterator poisoning, per-field
+// getters that mutate/throw between reads, unrestricted metadata strings, and
+// method calls / scalar reads on injected results left outside a guard.
+// ---------------------------------------------------------------------------
+describe("GLY-330 R12 (§7/N2): per-field getter TOCTOU, poisoned iterators, unguarded boundary reads", () => {
+  const CANARY = "ALICE_SMITH_DOB_1970";
+  const newSpool = (): any => new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
+  const emitterWith = (primary: any): any =>
+    new DurablePhiAuditEmitter(primary, newSpool(), new ExactAllowListAuditSerializer(), CLOCK);
+
+  // R12-A — prepared-record read-once: a mutating preparedAt getter cannot reach the store.
+  it("emitter: a prepared record's mutating preparedAt getter cannot persist PHI (record read-once)", async () => {
+    const record: any = spoolPrepared("att-r12a");
+    let reads = 0;
+    Object.defineProperty(record, "preparedAt", {
+      configurable: true,
+      get(): string {
+        reads += 1;
+        return reads === 1 ? CLOCK() : CANARY;
+      },
+    });
+    const persisted: string[] = [];
+    const primary: any = {
+      async prepare(r: any): Promise<any> {
+        persisted.push(String(r.preparedAt));
+        return { status: "stored", durableRecordId: "d" };
+      },
+      async finalize(): Promise<void> {},
+    };
+    await emitterWith(primary).prepare(record);
+    expect(JSON.stringify(persisted)).not.toContain(CANARY);
+  });
+
+  // R12-B — terminal read-once: a mutating id getter read once, so the store cannot see a canary.
+  it("emitter: a terminal event's mutating id getter cannot persist PHI (event read-once)", async () => {
+    const event: any = preparedToTerminalEvent(spoolPrepared("att-r12b"), "completed", null, CLOCK());
+    let reads = 0;
+    Object.defineProperty(event, "operationId", {
+      configurable: true,
+      get(): string {
+        reads += 1;
+        return reads === 1 ? "op-1" : CANARY;
+      },
+    });
+    const persisted: string[] = [];
+    const primary: any = {
+      async prepare(): Promise<any> {
+        return { status: "stored", durableRecordId: "d" };
+      },
+      async finalize(e: any): Promise<void> {
+        persisted.push(JSON.stringify(e));
+      },
+    };
+    const emitter = emitterWith(primary);
+    const receipt = await emitter.prepare(spoolPrepared("att-r12b"));
+    await emitter.finalize(receipt, event);
+    expect(JSON.stringify(persisted)).not.toContain(CANARY);
+  });
+
+  // R12-C — metadata string fields are shape-restricted (no arbitrary/PHI text in the audit record).
+  it("serializer: arbitrary dictionaryVersion / detectorName strings (PHI) are rejected", () => {
+    const serializer = new ExactAllowListAuditSerializer();
+    const badVersion: any = preparedToTerminalEvent(spoolPrepared("att-r12c1"), "completed", null, CLOCK());
+    badVersion.dictionaryVersion = CANARY;
+    let t1: any;
+    try { serializer.serialize(badVersion); } catch (e) { t1 = e; }
+    expect(String((t1 as any)?.code ?? "")).toBe("AUDIT_SCHEMA_REJECTED");
+    const badName: any = preparedToTerminalEvent(spoolPrepared("att-r12c2"), "completed", null, CLOCK());
+    badName.detectorName = `${CANARY} lives here`;
+    let t2: any;
+    try { serializer.serialize(badName); } catch (e) { t2 = e; }
+    expect(String((t2 as any)?.code ?? "")).toBe("AUDIT_SCHEMA_REJECTED");
+  });
+
+  // R12-D — projector rebuild uses index iteration; a poisoned own Symbol.iterator cannot egress raw.
+  it("projector rebuild: a poisoned segments Symbol.iterator cannot egress the raw indexed value", () => {
+    const projector = new StructuralOptionsProjector();
+    const classified: any = projector.classify({ system: "hello there" } as any);
+    const path = classified.segments[0].path;
+    const poisoned: any = [{ path, kind: "system", text: b<any>("[[TOKEN_1]]") }];
+    poisoned[Symbol.iterator] = function* (): any {
+      yield { path, kind: "system", text: CANARY };
+    };
+    const draft: any = classified.rebuild(poisoned);
+    expect(JSON.stringify(draft)).not.toContain(CANARY);
+  });
+
+  // R12-E — segment.text read once (snapshot), so rebuild and the trace see the same tokenized value.
+  it("wrapper: a segment.text getter that mutates between rebuild and trace cannot leak raw PHI", async () => {
+    const gate: Gate = { prepared: false };
+    const trace = new FakeSafeTrace();
+    const engineWrap = (real: any): any =>
+      new Proxy(real, {
+        get(t, p, r): unknown {
+          if (p === "substitute") {
+            return async (req: any): Promise<any> => {
+              const res = await t.substitute(req);
+              const seg: any = res.segments[0];
+              const first = seg.text;
+              let reads = 0;
+              Object.defineProperty(seg, "text", {
+                configurable: true,
+                get(): any {
+                  reads += 1;
+                  return reads <= 1 ? first : (CANARY as any);
+                },
+              });
+              return res;
+            };
+          }
+          const v = Reflect.get(t, p, r);
+          return typeof v === "function" ? v.bind(t) : v;
+        },
+      });
+    const built = buildManualWrapper(gate, { trace, engineWrap });
+    try {
+      await built.wrapper.generateText({ messages: [{ role: "user", content: [{ type: "text", text: "Maria García" }] }] });
+    } catch {
+      /* trace is the point */
+    }
+    expect(JSON.stringify(trace.payloads)).not.toContain(CANARY);
+  });
+
+  // R12-F — tokenize builds detectorTokenBySpan by index; a poisoned iterator cannot inject a raw token.
+  it("tokenize: a poisoned detectorSpans Symbol.iterator cannot inject a raw token replacement", () => {
+    const compiled: any = { match: (): any[] => [], canonicalForToken: (): undefined => undefined };
+    const email = `${CANARY}@example.com`;
+    const spans: any = [{ startUtf16: 0, endUtf16: email.length, identifierClass: "EMAIL", confidence: 1, token: "[[Detected_Email_1]]" }];
+    spans[Symbol.iterator] = function* (): any {
+      yield { startUtf16: 0, endUtf16: email.length, identifierClass: "EMAIL", confidence: 1, token: CANARY };
+    };
+    const result: any = tokenize(compiled, email, LOCALE, spans);
+    expect(String(result.tokenizedText)).not.toContain(CANARY);
+  });
+
+  // R12-G — the normalizer INVOCATION is guarded, not just its result reads.
+  it("detector belt: a normalizer.normalize() that THROWS PHI fails closed", async () => {
+    const runner = new SharedDeadlineDetectorRunner();
+    const port: any = {
+      descriptor: { engineVersion: ENGINE },
+      health: async (): Promise<string> => "ready",
+      detect: async (): Promise<any[]> => [],
+    };
+    const normalizer: any = {
+      normalize: (): never => {
+        throw Object.assign(new Error(CANARY), { code: CANARY });
+      },
+    };
+    let thrown: any;
+    let result: any;
+    try {
+      result = await runner.detectWithin({ primary: port, fallback: null, request: { text: "x" } as any, deadlineMs: 1000, normalizer });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(String(thrown?.message ?? "") + JSON.stringify(result ?? {})).not.toContain(CANARY);
+  });
+
+  // R12-I — a hostile stream's abort() rejection is swallowed, never surfaced.
+  it("wrapper stream: a hostile stream.abort rejection cannot escape the fixed-code failure", async () => {
+    const gate: Gate = { prepared: false };
+    const engineWrap = (real: any): any =>
+      new Proxy(real, {
+        get(t, p, r): unknown {
+          if (p === "createReverseStream") {
+            return (): any => ({
+              push: async (): Promise<never> => {
+                throw new Error("push boom");
+              },
+              end: async (): Promise<void> => {},
+              abort: async (): Promise<never> => {
+                throw Object.assign(new Error(CANARY), { code: CANARY });
+              },
+            });
+          }
+          const v = Reflect.get(t, p, r);
+          return typeof v === "function" ? v.bind(t) : v;
+        },
+      });
+    const built = buildManualWrapper(gate, { engineWrap });
+    let thrown: any;
+    try {
+      await built.wrapper.generateStream({ messages: [{ role: "user", content: [{ type: "text", text: "Maria García" }] }] });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(String(thrown?.message ?? "")).not.toContain(CANARY);
+    expect(String(thrown?.code ?? "")).not.toContain(CANARY);
+  });
+
+  // R12-J — the reverser reads operationId ONCE, so a getter that throws on re-read can't leak in the catch.
+  it("AtomicTokenReverser: a handle operationId getter that throws on re-read cannot leak in the catch", async () => {
+    const store: any = { maximumEncounteredTokenBatch: 8, resolveEncounteredTokens: async (): Promise<never> => { throw new Error("store boom"); } };
+    const reverser = new AtomicTokenReverser(store, new BracketTokenGrammar(), BOUNDARY_TOKEN_GRAMMAR_POLICY);
+    const handle: any = { tenantId: TENANT, matterId: MATTER, dictionaryVersion: VERSION };
+    let reads = 0;
+    Object.defineProperty(handle, "operationId", {
+      configurable: true,
+      get(): any {
+        reads += 1;
+        if (reads === 1) return b<any>("op-1");
+        throw new Error(CANARY);
+      },
+    });
+    let thrown: any;
+    try {
+      await reverser.reverse(b<any>("[[Claimant]]"), handle);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ReversalFailedError);
+    expect(String(thrown?.message ?? "")).not.toContain(CANARY);
+  });
+
+  // R12-K — the coordinator reads receipt.location getter-safe.
+  it("coordinator: a receipt whose location getter throws cannot leak into the AttemptResult", async () => {
+    const receipt: any = { attemptId: b<any>("att-r12k"), durableRecordId: "d" };
+    Object.defineProperty(receipt, "location", {
+      configurable: true,
+      get(): never {
+        throw new Error(CANARY);
+      },
+    });
+    const emitter: any = {
+      prepare: async (): Promise<any> => receipt,
+      finalize: async (): Promise<void> => {},
+      reconcileUnknownAfterSend: async (): Promise<void> => {},
+    };
+    const coordinator = new PhiAuditedAttemptCoordinator(emitter, CLOCK);
+    const plan = { prepared: spoolPrepared("att-r12k"), precondition: { ok: true }, invokeProvider: async (): Promise<void> => {} };
+    let thrown: any;
+    let result: any;
+    try {
+      result = await coordinator.run(plan as any);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(String(thrown?.message ?? "") + JSON.stringify(result ?? {})).not.toContain(CANARY);
+  });
+
+  // R12-L — decideEgress reads the coordinator version's toString getter/throw-safe (cache-hit path).
+  it("decideEgress: a coordinator version whose toString throws cannot leak (fails closed)", async () => {
+    const reader = new InMemoryCaseTruthReader();
+    reader.set({ tenantId: TENANT, matterId: MATTER, dictionaryVersion: VERSION, sourceTruthRevision: REVISION }, []);
+    const compiler = new MatterDictionaryCompiler(reader);
+    const cache = new InMemoryCompiledDictionaryCache();
+    // Warm the cache under decimal "7" so the hostile version's toString need only survive one read.
+    await getOrCompile(cache as any, compiler as any, {
+      tenantId: TENANT, matterId: MATTER, policy: { schemaVersion: SCHEMA, locale: LOCALE } as any,
+      dictionaryVersion: VERSION, engineVersion: ENGINE, schemaVersion: SCHEMA, sourceTruthRevision: REVISION,
+    } as any);
+    const hostileVersion: any = {};
+    let calls = 0;
+    Object.defineProperty(hostileVersion, "toString", {
+      configurable: true,
+      value: (): string => {
+        calls += 1;
+        if (calls === 1) return String(VERSION_BIGINT);
+        throw new Error(CANARY);
+      },
+    });
+    const coordinator: any = { requireActiveReady: async (): Promise<any> => hostileVersion };
+    let decision: any;
+    let thrown: any;
+    try {
+      decision = await decideEgress(
+        {
+          context: { tenantId: TENANT, matterId: MATTER } as any,
+          dictionaryHealth: "available",
+          text: "hello there",
+          policy: { schemaVersion: SCHEMA, locale: LOCALE } as any,
+          engineVersion: ENGINE,
+          sourceTruthRevision: REVISION,
+        },
+        { coordinator, cache: cache as any, compiler },
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(JSON.stringify(decision ?? {}) + String(thrown?.message ?? "")).not.toContain(CANARY);
+  });
+
+  // R12-M — even a REAL handle's own restoreEscapedLiterals is guarded.
+  it("AtomicTokenReverser: a real handle whose own restoreEscapedLiterals throws PHI fails closed", async () => {
+    const store: any = { maximumEncounteredTokenBatch: 8, resolveEncounteredTokens: async (): Promise<any> => new Map() };
+    const reverser = new AtomicTokenReverser(store, new BracketTokenGrammar(), BOUNDARY_TOKEN_GRAMMAR_POLICY);
+    const handle: any = new InProcessReversalHandle({
+      tenantId: TENANT, matterId: MATTER, dictionaryVersion: VERSION,
+      operationId: b<any>("op-1"), attemptId: b<any>("att-1"), literals: [],
+    });
+    Object.defineProperty(handle, "restoreEscapedLiterals", {
+      configurable: true,
+      value: (): never => {
+        throw Object.assign(new Error(CANARY), { code: CANARY });
+      },
+    });
+    let thrown: any;
+    try {
+      await reverser.reverse(b<any>("hello world"), handle);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ReversalFailedError);
+    expect(String(thrown?.message ?? "")).not.toContain(CANARY);
   });
 });

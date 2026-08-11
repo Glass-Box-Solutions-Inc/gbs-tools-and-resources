@@ -50,6 +50,8 @@ type FieldSpec =
   | { readonly kind: "enum"; readonly values: readonly string[] }
   | { readonly kind: "enumOrNull"; readonly values: readonly string[] }
   | { readonly kind: "timestamp" }
+  | { readonly kind: "versionOrNull" }
+  | { readonly kind: "slugOrNull" }
   | { readonly kind: "totalCounts" }
   | { readonly kind: "exactObject"; readonly fields: ObjectSchema };
 
@@ -70,12 +72,12 @@ const EVENT_SCHEMA: ObjectSchema = {
   matterId: { kind: "string" },
   actorId: { kind: "string" },
   operation: { kind: "enum", values: AI_OPERATIONS },
-  dictionaryVersion: { kind: "stringOrNull" },
+  dictionaryVersion: { kind: "versionOrNull" },
   engineVersion: { kind: "string" },
   counts: { kind: "totalCounts" },
   ambiguityCount: { kind: "number" },
-  detectorName: { kind: "stringOrNull" },
-  detectorVersion: { kind: "stringOrNull" },
+  detectorName: { kind: "slugOrNull" },
+  detectorVersion: { kind: "slugOrNull" },
   latencyMs: { kind: "exactObject", fields: LATENCY_SCHEMA },
   outcome: { kind: "enum", values: AUDIT_OUTCOMES },
   failureCode: { kind: "enumOrNull", values: TERMINAL_FAILURE_CODES },
@@ -94,8 +96,8 @@ const PREPARED_SCHEMA: ObjectSchema = {
   engineVersion: { kind: "string" },
   counts: { kind: "totalCounts" },
   ambiguityCount: { kind: "number" },
-  detectorName: { kind: "stringOrNull" },
-  detectorVersion: { kind: "stringOrNull" },
+  detectorName: { kind: "slugOrNull" },
+  detectorVersion: { kind: "slugOrNull" },
   latencyMs: { kind: "exactObject", fields: LATENCY_SCHEMA },
   preparedAt: { kind: "timestamp" },
 };
@@ -123,6 +125,13 @@ function listIncludes(values: readonly string[], value: string): boolean {
 /** Strict ISO-8601 UTC instant — the ONLY shape a timestamp field may take. A caller-supplied
  *  `occurredAt` (via `reconcileUnknownAfterSend`) is otherwise free text that would persist raw. */
 const ISO_8601_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+
+/** A projected dictionary version is a bigint's decimal string (or null). Without this, a metadata
+ *  string field (§7 line 73) would accept arbitrary — possibly PHI — text into the durable record. */
+const DECIMAL_VERSION = /^\d{1,20}$/;
+
+/** A detector name/version is a conservative slug (or null) — never free text. */
+const SAFE_SLUG = /^[A-Za-z0-9._-]{1,64}$/;
 
 function safeOperationId(candidate: unknown): OperationId | null {
   if (isPlainObject(candidate) && typeof candidate["operationId"] === "string") {
@@ -164,6 +173,12 @@ function validateField(root: unknown, value: unknown, spec: FieldSpec, path: str
       return;
     case "timestamp":
       if (typeof value !== "string" || !ISO_8601_UTC.test(value)) reject(root, path);
+      return;
+    case "versionOrNull":
+      if (value !== null && (typeof value !== "string" || !DECIMAL_VERSION.test(value))) reject(root, path);
+      return;
+    case "slugOrNull":
+      if (value !== null && (typeof value !== "string" || !SAFE_SLUG.test(value))) reject(root, path);
       return;
     case "totalCounts":
       validateTotalCounts(root, value, path);
@@ -239,13 +254,26 @@ function canonicalize(value: unknown, schema: ObjectSchema): Record<string, unkn
   return ordered;
 }
 
+/** A field whose getter THROWS (its message could carry PHI) is replaced with this sentinel, which
+ *  fails EVERY FieldSpec — the record is AUDIT_SCHEMA_REJECTED, never persisted or surfaced raw. */
+const THROWING_FIELD_SENTINEL: unique symbol = Symbol("phi-audit-throwing-field");
+
+/** Reads one own field getter-throw-safe (§7/N2): a throwing getter yields the reject sentinel. */
+function readOnceSafe(obj: Record<string, unknown>, key: string): unknown {
+  try {
+    return obj[key];
+  } catch {
+    return THROWING_FIELD_SENTINEL;
+  }
+}
+
 function materializeShallow(value: unknown): unknown {
   if (!isPlainObject(value)) {
     return value;
   }
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(value)) {
-    out[key] = value[key]; // single read
+    out[key] = readOnceSafe(value, key); // single, throw-safe read
   }
   return out;
 }
@@ -264,7 +292,7 @@ function materialize(value: unknown, schema: ObjectSchema): unknown {
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(value)) {
     const spec = schema[key];
-    const raw = value[key]; // single read of a possibly-getter field
+    const raw = readOnceSafe(value, key); // single, throw-safe read of a possibly-getter field
     if (spec !== undefined && spec.kind === "exactObject") {
       out[key] = materialize(raw, spec.fields);
     } else if (spec !== undefined && spec.kind === "totalCounts") {
@@ -285,6 +313,17 @@ export function sanitizeTerminalEvent(event: PhiAuditEvent): PhiAuditEvent {
   const snapshot = materialize(event, EVENT_SCHEMA);
   validateObject(snapshot, snapshot, EVENT_SCHEMA, "");
   return canonicalize(snapshot, EVENT_SCHEMA) as unknown as PhiAuditEvent;
+}
+
+/**
+ * Read-once, validated, plain-object projection of a PREPARED record (§7/N2), symmetric with
+ * {@link sanitizeTerminalEvent}: every field is read a SINGLE time and validated, so a durable store
+ * that persists the returned record can never re-read a mutating/throwing getter into a PHI value.
+ */
+export function sanitizePreparedRecord(record: PhiAuditPreparedRecord): PhiAuditPreparedRecord {
+  const snapshot = materialize(record, PREPARED_SCHEMA);
+  validateObject(snapshot, snapshot, PREPARED_SCHEMA, "");
+  return canonicalize(snapshot, PREPARED_SCHEMA) as unknown as PhiAuditPreparedRecord;
 }
 
 /**

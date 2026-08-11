@@ -247,6 +247,21 @@ export function isInProcessReversalHandle(value: unknown): value is InProcessRev
   }
 }
 
+/** A fixed placeholder id used when a hostile handle's `operationId` getter itself throws (§7/N2). */
+const UNKNOWN_OPERATION_ID = "op-unknown" as unknown as OperationId;
+
+/** Reads a reversal handle's `operationId` ONCE, getter-throw-safe — every fixed-code failure below
+ *  carries only this id, so a getter that throws/mutates can't turn a fixed failure into a raw PHI
+ *  throw. Absent / non-string / throwing → a fixed placeholder. */
+function safeHandleOperationId(handle: ReversalHandle): OperationId {
+  try {
+    const id = (handle as { operationId?: unknown }).operationId;
+    return typeof id === "string" ? (id as unknown as OperationId) : UNKNOWN_OPERATION_ID;
+  } catch {
+    return UNKNOWN_OPERATION_ID;
+  }
+}
+
 /** Adapts the shared `reverseText` to the frozen `TokenReverser` port. */
 export class AtomicTokenReverser implements TokenReverser {
   constructor(
@@ -256,6 +271,10 @@ export class AtomicTokenReverser implements TokenReverser {
   ) {}
 
   async reverse(text: TokenizedText, handle: ReversalHandle): Promise<DisplayText> {
+    // §7/N2: read the operation id ONCE, getter-throw-safe — every fixed-code failure below carries
+    // only this id, so a handle whose `operationId` getter throws (or changes between reads) can't
+    // turn a fixed-code failure back into a raw PHI throw.
+    const opId = safeHandleOperationId(handle);
     let reversed: string;
     try {
       reversed = await reverseText(
@@ -264,7 +283,7 @@ export class AtomicTokenReverser implements TokenReverser {
           tenantId: handle.tenantId,
           matterId: handle.matterId,
           dictionaryVersion: handle.dictionaryVersion,
-          operationId: handle.operationId,
+          operationId: opId,
         },
         this.store,
         this.grammar,
@@ -275,18 +294,22 @@ export class AtomicTokenReverser implements TokenReverser {
       // closed with a fixed-code error carrying only the operation id, exactly as the streaming
       // reverser does. `reverseText` itself only throws fixed-code ReversalFailedErrors, but an
       // injected store's `resolveEncounteredTokens` rejection would otherwise propagate raw.
-      throw new ReversalFailedError(handle.operationId);
+      throw new ReversalFailedError(opId);
     }
     // L6/§7: restore escaped source-token literals via the handle's bounded capability, then FAIL
-    // CLOSED on any residual escape sentinel — identical to the non-stream orchestrator path and the
-    // streaming reverser — so a provider-generated dangling sentinel can never reach the display
-    // through this port either.
-    const restored =
-      isInProcessReversalHandle(handle)
+    // CLOSED on any residual escape sentinel. The `restoreEscapedLiterals` call is an injected
+    // capability even on a REAL handle, so a throw from it must fail closed here rather than
+    // propagate a raw PHI message/code (the residual-sentinel check is likewise fail-closed).
+    let restored: string;
+    try {
+      restored = isInProcessReversalHandle(handle)
         ? handle.restoreEscapedLiterals(String(reversed))
         : String(reversed);
+    } catch {
+      throw new ReversalFailedError(opId);
+    }
     if (restored.includes(SENTINEL_OPEN) || restored.includes(SENTINEL_CLOSE)) {
-      throw new ReversalFailedError(handle.operationId);
+      throw new ReversalFailedError(opId);
     }
     return restored as DisplayText;
   }

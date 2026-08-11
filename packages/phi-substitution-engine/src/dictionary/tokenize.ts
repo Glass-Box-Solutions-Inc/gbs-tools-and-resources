@@ -119,8 +119,13 @@ export function tokenize(
     });
   }
 
+  // Intrinsic index iteration (own-index + own-`length`), NEVER `for..of` (§7/N2 / L12): a boundary
+  // `detectorSpans` array with an OWN poisoned `Symbol.iterator` could otherwise yield a different
+  // `token` here than the indexed span the detector-candidate loop used, so the splice would replace
+  // a real span with a raw (untokenized) value.
   const detectorTokenBySpan = new Map<string, string>();
-  for (const span of detectorSpans) {
+  for (let i = 0; i < (detectorSpans as { length: number }).length; i += 1) {
+    const span = detectorSpans[i]!;
     detectorTokenBySpan.set(`${span.startUtf16}:${span.endUtf16}`, span.token);
   }
 

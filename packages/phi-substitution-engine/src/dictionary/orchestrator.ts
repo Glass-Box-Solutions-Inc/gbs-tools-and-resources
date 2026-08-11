@@ -148,11 +148,24 @@ export async function decideEgress(req: EgressRequest, deps: EgressDeps): Promis
     // C6 ambiguity (and any other tokenize failure) fails closed; a known value is never guessed.
     return dictionaryFailClosed(error, AMBIGUOUS_KNOWN_IDENTIFIER);
   }
+  // §7/N2: `activeVersion` is an injected-coordinator result — its `toString()` is untrusted. Read
+  // it ONCE, getter/throw-safe, and accept only the safe decimal-version shape; a throwing or
+  // non-decimal `toString` (a compromised coordinator) fails closed rather than surfacing raw text.
+  let versionString: string;
+  try {
+    const s = String(activeVersion);
+    versionString = /^\d{1,20}$/.test(s) ? s : "";
+  } catch {
+    versionString = "";
+  }
+  if (versionString === "") {
+    return dictionaryFailClosed(undefined, DICTIONARY_UNAVAILABLE);
+  }
   // Only the tokenized text ever egresses; the raw provider is never invoked.
   return {
     kind: "SUBSTITUTED",
     egressText: tokenizedText,
     reversedText,
-    dictionaryVersion: activeVersion.toString(),
+    dictionaryVersion: versionString,
   };
 }

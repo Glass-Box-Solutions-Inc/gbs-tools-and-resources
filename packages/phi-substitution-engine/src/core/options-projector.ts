@@ -338,8 +338,17 @@ export class StructuralOptionsProjector
         // paths and the tokenized segments. A missing segment (which would leave the raw
         // original value in place), an unexpected path, or a duplicate path all fail
         // closed before egress rather than silently egressing an unprotected value.
+        // Intrinsic index iteration (own-index + own-`length`), NEVER `for..of` (§7/N2 / L5): a
+        // boundary `tokenized` array with an OWN poisoned `Symbol.iterator` must not be able to yield
+        // a benign path/text to classification while the caller egresses the raw indexed value.
         const byPath = new Map<string, string>();
-        for (const seg of tokenized) {
+        for (let i = 0; i < (tokenized as { length: number }).length; i += 1) {
+          const seg = tokenized[i];
+          if (seg === undefined || seg === null) {
+            throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+              unexpectedTokenizedPath: `[${i}]`,
+            });
+          }
           if (!expectedPaths.has(seg.path)) {
             throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
               unexpectedTokenizedPath: seg.path,

@@ -30,6 +30,17 @@ export interface AttemptResult {
   readonly durability: AuditDurabilityLocation | null;
 }
 
+/** Reads an injected-emitter receipt's `location` ONCE, getter-throw-safe and allow-listed (§7/N2):
+ *  a hostile `.location` getter can neither throw a raw PHI error nor smuggle an arbitrary string. */
+function safeDurability(receipt: AuditPreparationReceipt): AuditDurabilityLocation | null {
+  try {
+    const loc = (receipt as { location?: unknown }).location;
+    return loc === "PRIMARY_STORE" || loc === "ENCRYPTED_LOCAL_SPOOL" ? loc : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Wraps a single attempted AI call in the audit lifecycle (CONTRACT §4.1 / §5 N3-N4):
  *
@@ -72,6 +83,10 @@ export class PhiAuditedAttemptCoordinator {
         durability: null,
       };
     }
+    // §7/N2: `receipt.location` is an injected-emitter result — read it ONCE, getter-throw-safe and
+    // allow-listed, so a hostile `.location` getter can't throw a raw PHI error out of the (otherwise
+    // fixed-code) AttemptResult, nor smuggle an arbitrary string into `durability`.
+    const durability = safeDurability(receipt);
 
     // §7/N2: the precondition is UNTRUSTED input. BOTH `ok` and `failureCode` are read EXACTLY ONCE
     // behind a getter-throw guard — a hostile Proxy/getter on `.ok` (not just `.failureCode`) must
@@ -99,7 +114,7 @@ export class PhiAuditedAttemptCoordinator {
         outcome: "failed_closed",
         errorCode: safeCode,
         providerInvoked: false,
-        durability: receipt.location,
+        durability,
       };
     }
 
@@ -120,12 +135,12 @@ export class PhiAuditedAttemptCoordinator {
         outcome: "unknown_after_send",
         errorCode: failureCode,
         providerInvoked: true,
-        durability: receipt.location,
+        durability,
       };
     }
     const event = preparedToTerminalEvent(plan.prepared, "completed", null, this.#clock());
     await this.#finalizeQuietly(receipt, event);
-    return { outcome: "completed", errorCode: null, providerInvoked: true, durability: receipt.location };
+    return { outcome: "completed", errorCode: null, providerInvoked: true, durability };
   }
 
   /**

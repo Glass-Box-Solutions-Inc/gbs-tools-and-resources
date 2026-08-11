@@ -185,8 +185,14 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       });
       await stream.end();
     } catch (error) {
-      // L4: latch the reverse stream so no later chunk can resume/complete.
-      await stream.abort(error);
+      // L4: latch the reverse stream so no later chunk can resume/complete. §7/N2: `abort()` is an
+      // injected-stream capability — its OWN rejection could carry PHI, so it is swallowed here and
+      // the caller sees only the fixed-code error below, never the raw abort rejection.
+      try {
+        await stream.abort(error);
+      } catch {
+        /* best-effort latch; a hostile abort rejection must not escape */
+      }
       const code = toFailureCode(error, "REVERSAL_FAILED");
       const outcome: PhiAuditOutcome = code === "REVERSAL_FAILED" ? "reversal_failed" : "unknown_after_send";
       // N3: a push/end failure after send still finalizes exactly one terminal.
@@ -302,9 +308,14 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       segments: classified.segments,
       purpose,
     });
+    // §7/N2: snapshot the injected engine's segments ONCE (path/text read a single time, by index)
+    // so rebuild and the later trace see identical values — a mutating own getter cannot show a
+    // tokenized value to rebuild and raw PHI to the trace, and a poisoned own iterator cannot slip a
+    // raw value past rebuild's classification.
+    const tracedSegments = snapshotSegments(substitution.segments);
     // §4.1 step 4 / L5: rebuild asserts a 1:1 path↔tokenized-segment mapping; a missing
     // or unexpected path fails closed here, before egress.
-    const tokenizedOptions = classified.rebuild(substitution.segments);
+    const tokenizedOptions = classified.rebuild(tracedSegments as unknown as readonly TokenizedTextSegment[]);
 
     // N3: read every value the prepared record needs — including the PINNED provider and the
     // reversal handle, which may be adversarial getters — BEFORE the durable PREPARE. Nothing may
@@ -324,6 +335,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       tokenizedOptions,
       receipt,
       provider,
+      tracedSegments,
     };
 
     // §4.1 step 10 tracing of the tokenized input happens in the CALLER (after this returns), not
@@ -341,13 +353,14 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
    */
   async #traceTokenizedRequest(prepared: PreparedEgress<GenerateOptions, EmbeddingKind>): Promise<void> {
     try {
-      // Intrinsic index iteration (never `Array.prototype.map`): the substitution result comes from
-      // an injected engine, so a hostile own/overridden `map` must not be able to swap the TOKENIZED
-      // segments for a raw-PHI payload that then reaches the trace sink (§7/N2 / N2-observability).
-      const segments = prepared.substitution.segments;
+      // Trace the INERT read-once snapshot (built by #prepareForEgress from the injected engine's
+      // segments), NEVER the live substitution object — so a mutating getter or a poisoned own
+      // `map`/iterator cannot swap the TOKENIZED value shown to rebuild for raw PHI at the trace sink
+      // (§7/N2 / N2-observability).
+      const segments = prepared.tracedSegments;
       const traced: { path: string; text: TokenizedText }[] = [];
       for (let i = 0; i < (segments as { length: number }).length; i += 1) {
-        const segment = segments[i] as TokenizedTextSegment;
+        const segment = segments[i]!;
         traced[traced.length] = { path: segment.path, text: segment.text };
       }
       await this.#deps.safeTrace.request(traced);
@@ -605,4 +618,26 @@ interface PreparedEgress<GenerateOptions, EmbeddingKind> {
   readonly tokenizedOptions: GenerateOptions;
   readonly receipt: AuditPreparationReceipt;
   readonly provider: RawProviderPort<GenerateOptions, EmbeddingKind>;
+  /** §7/N2: an INERT read-once snapshot of the substitution segments (path/text read exactly once
+   *  from the injected engine's result), used by BOTH rebuild and the trace so a mutating getter
+   *  cannot show a tokenized value to rebuild and raw PHI to the trace. */
+  readonly tracedSegments: readonly { readonly path: string; readonly text: TokenizedText }[];
+}
+
+/**
+ * Read-once, index-iterated snapshot of the injected engine's substitution segments (§7/N2). `path`
+ * and `text` are each read a SINGLE time (a mutating getter cannot differ between rebuild and trace),
+ * via own-index access (a poisoned own `Symbol.iterator` cannot yield different values than the
+ * indexed segments). A throwing getter propagates to the pre-egress handler, which fails closed.
+ */
+function snapshotSegments(
+  segments: readonly TokenizedTextSegment[],
+): { path: string; kind: TokenizedTextSegment["kind"]; text: TokenizedText }[] {
+  const out: { path: string; kind: TokenizedTextSegment["kind"]; text: TokenizedText }[] = [];
+  const len = (segments as { length: number }).length;
+  for (let i = 0; i < len; i += 1) {
+    const seg = segments[i] as TokenizedTextSegment;
+    out[out.length] = { path: seg.path, kind: seg.kind, text: seg.text };
+  }
+  return out;
 }
