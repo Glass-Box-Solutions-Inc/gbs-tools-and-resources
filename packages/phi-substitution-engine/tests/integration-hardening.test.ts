@@ -3699,4 +3699,43 @@ describe("GLY-330 R14 (§7/N2): structural ingestion hardening at the public bou
     }
     expect(String(ctorErr?.message ?? "") + String(opErr?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
   });
+
+  // -------------------------------------------------------------------------
+  // Round 18 — the gate accepted the trust-model rulings (A/B out of scope) and
+  // found ONE genuine realistic in-scope leak: an unguarded injected-volume
+  // REJECTION (distinct from a hostile RESOLVED carrier) from a PUBLIC method.
+  // -------------------------------------------------------------------------
+
+  // R18-1 (gate finding 1) — a REJECTING injected volume.list() must fail closed to a no-op in the
+  // PUBLIC rebuildFromVolume (a later drain re-drives it), never propagate the raw (PHI) rejection.
+  it("spool.rebuildFromVolume: a rejecting volume.list() fails closed to no-op, never leaks raw", async () => {
+    const rejectingVolume: any = {
+      read: async (): Promise<null> => null,
+      list: async (): Promise<never> => { throw Object.assign(new Error(CANARY), { code: CANARY }); },
+      putAtomic: async (): Promise<any> => ({ flushed: true }),
+      remove: async (): Promise<void> => {},
+    };
+    const spool = new Aes256GcmAuditSpool(rejectingVolume, new FixedKeyProvider() as any, CLOCK);
+    let thrown: any;
+    try { await spool.rebuildFromVolume(); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String((thrown as any)?.code ?? "")).not.toContain(CANARY);
+    expect(thrown).toBeUndefined();
+  });
+
+  // R18-2 (sweep the same class) — a REJECTING injected volume.read in the PUBLIC appendPrepared must
+  // surface a FIXED code, never the raw (PHI) rejection.
+  it("spool.appendPrepared: a rejecting volume.read fails closed with a fixed code, never leaks raw", async () => {
+    const rejectingVolume: any = {
+      read: async (): Promise<never> => { throw Object.assign(new Error(CANARY), { code: CANARY }); },
+      list: async (): Promise<string[]> => [],
+      putAtomic: async (): Promise<any> => ({ flushed: true }),
+      remove: async (): Promise<void> => {},
+    };
+    const spool = new Aes256GcmAuditSpool(rejectingVolume, new FixedKeyProvider() as any, CLOCK);
+    const rec = spoolPrepared("att-r18-2");
+    let thrown: any;
+    try { await spool.appendPrepared(rec); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String((thrown as any)?.code ?? "")).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("AUDIT_DURABILITY_UNAVAILABLE");
+  });
 });

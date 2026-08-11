@@ -12,7 +12,7 @@ import type {
 import type { SpoolKeyProvider, SpoolVolume } from "./spool-ports";
 import { PhiAuditError } from "./errors";
 import { preparedToTerminalEvent, safeClockNow } from "./event-factory";
-import { intrinsicCopy, safeString } from "../core/boundary-snapshot";
+import { intrinsicCopy, safeRead, safeString } from "../core/boundary-snapshot";
 
 /** Cleartext-envelope `createdAt` must be an ISO-8601 UTC instant (never injected free text). */
 const ENVELOPE_ISO_8601_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
@@ -141,14 +141,29 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
     // N3 durable idempotency: after a restart the in-process finalized-set is empty, so the
     // durable `.final` marker on the volume is the only source of truth. A fresh append for an
     // attempt already finalized on the volume must be refused — never permit a second egress.
-    if ((await this.#volume.read(`${recordId}.final`)) !== null) {
+    // §7/N2: the injected-volume `read` may REJECT with a raw (PHI) error — a rejection means we cannot
+    // confirm the absence of a prior finalize, so fail closed with a fixed code (never propagate raw).
+    let finalMarker: unknown;
+    try {
+      finalMarker = await this.#volume.read(`${recordId}.final`);
+    } catch {
+      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", record.operationId, { attemptId: record.attemptId });
+    }
+    if (finalMarker !== null) {
       throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", record.operationId, {
         attemptId: record.attemptId,
       });
     }
     const envelope = this.#encrypt(recordId, record.attemptId, toWireBytes(record));
-    const { flushed } = await this.#volume.putAtomic(recordId, encodeEnvelope(envelope));
-    if (!flushed) {
+    // §7/N2: guard the injected-volume `putAtomic` REJECTION and read its `flushed` result getter-safe
+    // (a resolved hostile object could carry a throwing getter) — either failure → a fixed code.
+    let putResult: unknown;
+    try {
+      putResult = await this.#volume.putAtomic(recordId, encodeEnvelope(envelope));
+    } catch {
+      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", record.operationId, { attemptId: record.attemptId });
+    }
+    if (safeRead(putResult, "flushed") !== true) {
       throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", record.operationId, { attemptId: record.attemptId });
     }
     this.#entries.set(recordId, {
@@ -170,8 +185,15 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
     }
     const finalId = `${entry.recordId}.final`;
     const envelope = this.#encrypt(finalId, event.attemptId, toWireBytes(event));
-    const { flushed } = await this.#volume.putAtomic(finalId, encodeEnvelope(envelope));
-    if (!flushed) {
+    // §7/N2: guard the injected-volume `putAtomic` REJECTION and read its `flushed` result getter-safe
+    // — either failure surfaces a fixed code, never a raw (PHI) message from this public method.
+    let putResult: unknown;
+    try {
+      putResult = await this.#volume.putAtomic(finalId, encodeEnvelope(envelope));
+    } catch {
+      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", event.operationId, { attemptId: event.attemptId });
+    }
+    if (safeRead(putResult, "flushed") !== true) {
       throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", event.operationId, { attemptId: event.attemptId });
     }
     entry.event = event;
@@ -250,11 +272,18 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
    * terminal, if present) that is not already tracked in-process.
    */
   public async rebuildFromVolume(): Promise<void> {
-    // §7/N2: `list()` is an injected-volume result — a NON-array carrier, an OWN poisoned
-    // `Symbol.iterator`, or a throwing own-index getter must not throw a raw (PHI) value out of this
-    // PUBLIC method (the guarded `drainTo` already tolerates it; this sibling must too). `intrinsicCopy`
-    // reads it ONCE by own index/length, getter-throw-safe; a hostile carrier fails closed to no-op.
-    const idList = intrinsicCopy<string>(await this.#volume.list());
+    // §7/N2: `list()` is an injected-volume CALL. BOTH failure modes must fail closed to a no-op in this
+    // PUBLIC method (a later drain re-drives the rebuild): (1) its promise REJECTS with a raw — possibly
+    // PHI — error/code, so the `await` is guarded here; and (2) it RESOLVES a hostile carrier (non-array,
+    // poisoned own iterator, throwing own-index, length-trap), which `intrinsicCopy` reads once by own
+    // index/length getter-throw-safe. Neither may propagate a raw message/code from this method.
+    let listed: unknown;
+    try {
+      listed = await this.#volume.list();
+    } catch {
+      return;
+    }
+    const idList = intrinsicCopy<string>(listed);
     if (idList === null) {
       return;
     }
