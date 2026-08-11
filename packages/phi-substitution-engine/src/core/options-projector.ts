@@ -60,6 +60,19 @@ const NON_TEXT_KNOB_KEYS: ReadonlySet<string> = new Set([
   "model",
 ]);
 
+/** Provider-visible structural strings (role, content type, tool name) are dispatched verbatim
+ *  and are never tokenized; they must be conservative identifiers so a PHI canary cannot ride
+ *  in a name/role/type slot (L5 fail-closed). */
+const PROVIDER_VISIBLE_STRUCTURAL_STRING = /^[A-Za-z0-9_.:-]+$/u;
+
+function assertStructuralProviderString(value: string, path: string): void {
+  if (!PROVIDER_VISIBLE_STRUCTURAL_STRING.test(value)) {
+    throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+      unvalidatedProviderString: path,
+    });
+  }
+}
+
 function kindForRole(role: string): TextSegmentKind {
   if (role === "system") return "system";
   if (role === "tool") return "tool";
@@ -77,6 +90,7 @@ interface MutableOptions {
   messages?: { role: string; content: { type: string; text: string }[] }[];
   tools?: { name: string; description: string }[];
   embeddingText?: string;
+  [key: string]: unknown;
 }
 
 /**
@@ -120,7 +134,9 @@ export class StructuralOptionsProjector
     // A non-"text" part (e.g. `tool_result`) that still carries a `text` string must
     // be classified and tokenized, never egressed raw (L5 / fail-closed).
     (options.messages ?? []).forEach((message, i) => {
+      assertStructuralProviderString(message.role, `messages[${i}].role`);
       message.content.forEach((part, j) => {
+        assertStructuralProviderString(part.type, `messages[${i}].content[${j}].type`);
         if (typeof part.text === "string") {
           const path = `messages[${i}].content[${j}].text`;
           collected.push({
@@ -136,6 +152,7 @@ export class StructuralOptionsProjector
 
     // tools[k].description
     (options.tools ?? []).forEach((tool, k) => {
+      assertStructuralProviderString(tool.name, `tools[${k}].name`);
       const path = `tools[${k}].description`;
       collected.push({
         segment: { path, kind: "tool", text: tool.description },
@@ -198,10 +215,10 @@ export class StructuralOptionsProjector
 
 /** Deep-enough clone of the classified text carriers so rebuild never mutates the caller's input. */
 function structuredCloneOptions(options: BoundaryGenerateOptions): MutableOptions {
-  const draft: MutableOptions = {};
-  if (typeof options.system === "string") {
-    draft.system = options.system;
-  }
+  // Preserve every option field (incl. non-text sampling knobs model/temperature/maxTokens/
+  // topP/stream) so the provider receives them unchanged; deep-clone the text carriers so a
+  // tokenized write never mutates the caller's input.
+  const draft: MutableOptions = { ...(options as unknown as Record<string, unknown>) };
   if (options.messages !== undefined) {
     draft.messages = options.messages.map((message) => ({
       role: message.role,
@@ -210,9 +227,6 @@ function structuredCloneOptions(options: BoundaryGenerateOptions): MutableOption
   }
   if (options.tools !== undefined) {
     draft.tools = options.tools.map((tool) => ({ name: tool.name, description: tool.description }));
-  }
-  if (typeof options.embeddingText === "string") {
-    draft.embeddingText = options.embeddingText;
   }
   return draft;
 }
