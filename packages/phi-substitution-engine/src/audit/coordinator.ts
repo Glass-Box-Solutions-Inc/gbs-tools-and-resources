@@ -1,5 +1,6 @@
 import type { AuditDurabilityLocation, PhiAuditEmitter, PhiAuditOutcome, PhiAuditPreparedRecord } from "./ports";
 import { isAuditError } from "./errors";
+import { isPhiEngineFailureCode } from "../core/errors";
 import { preparedToTerminalEvent } from "./event-factory";
 
 /** Performs the single provider egress for an attempt. Called at most once, only after durability. */
@@ -73,12 +74,14 @@ export class PhiAuditedAttemptCoordinator {
       await plan.invokeProvider();
     } catch (error) {
       // N3: a provider rejection after send still finalizes exactly one terminal
-      // (never a stuck PREPARED record).
+      // (never a stuck PREPARED record). §7/N2: only a RECOGNIZED fixed failure code may be
+      // recorded — an arbitrary upstream `.code` (which can carry PHI) is never copied.
       const failureCode =
         error !== null &&
         typeof error === "object" &&
         "code" in error &&
-        typeof (error as { code?: unknown }).code === "string"
+        typeof (error as { code?: unknown }).code === "string" &&
+        isPhiEngineFailureCode((error as { code: string }).code)
           ? (error as { code: string }).code
           : "PROVIDER_INVOCATION_FAILED";
       const failedEvent = preparedToTerminalEvent(plan.prepared, "unknown_after_send", failureCode, this.#clock());

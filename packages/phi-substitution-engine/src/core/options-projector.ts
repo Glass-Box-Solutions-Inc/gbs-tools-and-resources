@@ -60,10 +60,54 @@ const NON_TEXT_KNOB_KEYS: ReadonlySet<string> = new Set([
   "model",
 ]);
 
-/** Provider-visible structural strings (role, content type, tool name) are dispatched verbatim
- *  and are never tokenized; they must be conservative identifiers so a PHI canary cannot ride
- *  in a name/role/type slot (L5 fail-closed). */
+/**
+ * Provider-visible message roles are a CLOSED enum, dispatched verbatim. Validating against a
+ * fixed allow-list (not a permissive character pattern) is what stops a PHI value — even a
+ * legal-identifier-shaped one like `Alice_Smith` — from riding in a role slot (L5 fail-closed).
+ */
+const ALLOWED_MESSAGE_ROLES: ReadonlySet<string> = new Set([
+  "system",
+  "user",
+  "assistant",
+  "tool",
+  "developer",
+]);
+
+/** Provider-visible content-part types are likewise a closed enum. */
+const ALLOWED_CONTENT_TYPES: ReadonlySet<string> = new Set([
+  "text",
+  "tool_result",
+  "tool_use",
+  "image",
+  "document",
+  "thinking",
+]);
+
+/**
+ * A tool NAME is a developer-defined structural identifier (not case truth), but it is still
+ * provider-visible, so it must be a conservative identifier — never free text that could carry a
+ * PHI canary through the name slot (L5 fail-closed).
+ */
 const PROVIDER_VISIBLE_STRUCTURAL_STRING = /^[A-Za-z0-9_.:-]+$/u;
+
+/** Expected runtime type of each non-text sampling knob. A knob present with any OTHER type —
+ *  above all an object/array that could smuggle PHI text through a numeric/boolean slot — fails
+ *  closed rather than reaching the provider unclassified (L5). */
+const NON_TEXT_KNOB_TYPES: ReadonlyMap<string, "number" | "boolean" | "string"> = new Map([
+  ["temperature", "number"],
+  ["maxTokens", "number"],
+  ["topP", "number"],
+  ["stream", "boolean"],
+  ["model", "string"],
+]);
+
+function assertAllowedEnum(value: string, allowed: ReadonlySet<string>, path: string): void {
+  if (!allowed.has(value)) {
+    throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+      unvalidatedProviderString: path,
+    });
+  }
+}
 
 function assertStructuralProviderString(value: string, path: string): void {
   if (!PROVIDER_VISIBLE_STRUCTURAL_STRING.test(value)) {
@@ -120,6 +164,17 @@ export class StructuralOptionsProjector
       }
     }
 
+    // L5: a KNOWN non-text knob present with an unexpected runtime type (e.g. an object that
+    // could smuggle PHI text through a numeric/boolean "temperature"/"stream" slot) fails closed.
+    for (const [knob, expected] of NON_TEXT_KNOB_TYPES) {
+      const value = raw[knob];
+      if (value !== undefined && value !== null && typeof value !== expected) {
+        throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+          malformedKnob: knob,
+        });
+      }
+    }
+
     // system
     if (typeof options.system === "string") {
       collected.push({
@@ -134,9 +189,9 @@ export class StructuralOptionsProjector
     // A non-"text" part (e.g. `tool_result`) that still carries a `text` string must
     // be classified and tokenized, never egressed raw (L5 / fail-closed).
     (options.messages ?? []).forEach((message, i) => {
-      assertStructuralProviderString(message.role, `messages[${i}].role`);
+      assertAllowedEnum(message.role, ALLOWED_MESSAGE_ROLES, `messages[${i}].role`);
       message.content.forEach((part, j) => {
-        assertStructuralProviderString(part.type, `messages[${i}].content[${j}].type`);
+        assertAllowedEnum(part.type, ALLOWED_CONTENT_TYPES, `messages[${i}].content[${j}].type`);
         if (typeof part.text === "string") {
           const path = `messages[${i}].content[${j}].text`;
           collected.push({

@@ -207,7 +207,6 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
 
   public async embedText(text: string, kind: EmbeddingKind): Promise<readonly number[]> {
     const context = await this.#requireContext();
-    const policy = await this.#deps.policy.require(context);
 
     // §4.3 / L11: embedding MUST route on ORIGINAL content and enforce the conjunctive
     // safety/BAA gate. Without a factory we cannot inspect original content, so we FAIL
@@ -217,21 +216,19 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", context.operationId, {});
     }
 
-    const routingOptions = this.#deps.embeddingOptionsFactory(text);
     let providerBinding: RawProviderPort<GenerateOptions, EmbeddingKind>;
-    try {
-      const decision = await this.#deps.router.selectUsingOriginalContent(routingOptions);
-      this.#enforceSafetyGate(decision, context);
-      providerBinding = decision.provider;
-    } catch (error) {
-      await this.#recordPreEgressFailure(context, "embedding", error);
-      throw error;
-    }
-
     let substitution: SubstitutionResult;
     let receipt: AuditPreparationReceipt;
     let tokenizedText: TokenizedText;
     try {
+      // §4.3 step 2 / N3: policy load, routing/gate, substitution, and the durable PREPARE
+      // are ALL inside the protected region — any failure after context finalizes exactly one
+      // terminal (N3) and NEVER surfaces a raw upstream message/code to the caller (§7).
+      const policy = await this.#deps.policy.require(context);
+      const routingOptions = this.#deps.embeddingOptionsFactory(text);
+      const decision = await this.#deps.router.selectUsingOriginalContent(routingOptions);
+      this.#enforceSafetyGate(decision, context);
+      providerBinding = decision.provider;
       // §4.3: substitute the embedding text; tokenized-only, NO output reversal.
       substitution = await this.#deps.engine.substitute({
         context,
@@ -243,11 +240,36 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       receipt = await this.#prepareAudit(context, policy, substitution, "embedding");
     } catch (error) {
       await this.#recordPreEgressFailure(context, "embedding", error);
-      throw error;
+      throw isPhiEngineError(error)
+        ? error
+        : new PhiEngineError(
+            toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
+            context.operationId,
+            {},
+          );
     }
 
-    // §4.3 / N2: only tokenized text is vectorized or traced.
-    await this.#deps.safeTrace.request([{ path: "embedding", text: tokenizedText }]);
+    // §4.3 step 10 / N2/N3: tracing the tokenized input runs AFTER the durable prepare, so a
+    // failure here finalizes against THIS receipt (exactly one terminal, no second prepare) and
+    // surfaces only a fixed code.
+    try {
+      await this.#deps.safeTrace.request([{ path: "embedding", text: tokenizedText }]);
+    } catch (error) {
+      await this.#finalizeAt(
+        receipt,
+        this.#preparedRecord(context, substitution, "embedding"),
+        "failed_closed",
+        errorCodeString(error),
+      );
+      throw isPhiEngineError(error)
+        ? error
+        : new PhiEngineError(
+            toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
+            context.operationId,
+            {},
+          );
+    }
+
     let vector: readonly number[];
     try {
       vector = await providerBinding.embedText(tokenizedText, kind);

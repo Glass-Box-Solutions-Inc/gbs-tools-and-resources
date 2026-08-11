@@ -16,6 +16,15 @@ const OPEN_BRACKET = 0x5b; // "["
 /** Identity restore used when the handle carries no escaped source literals. */
 const IDENTITY_RESTORE = (text: string): string => text;
 
+/**
+ * True when reversed+restored output still carries an escape sentinel code unit (L6). The
+ * sentinels are internal machinery: a COMPLETE escaped literal is replaced by `restore`, so any
+ * residual sentinel means a partial/dangling escape that must never reach the display.
+ */
+function hasResidualSentinel(text: string): boolean {
+  return text.includes(SENTINEL_OPEN) || text.includes(SENTINEL_CLOSE);
+}
+
 function isHighSurrogate(unit: number): boolean {
   return unit >= 0xd800 && unit <= 0xdbff;
 }
@@ -163,6 +172,12 @@ class HoldbackReverseStream implements ReverseStream {
     }
     this.buffer = "";
     const restored = this.restore(reversed);
+    if (hasResidualSentinel(restored)) {
+      // L6: a dangling/partial escape sentinel never completed into a literal — fail closed
+      // rather than leak internal sentinel machinery to the display.
+      this.failed = true;
+      throw new ReversalFailedError(this.keys.operationId);
+    }
     if (restored.length > 0) {
       await this.sink(restored as DisplayText);
     }
@@ -187,6 +202,13 @@ class HoldbackReverseStream implements ReverseStream {
     }
     this.buffer = this.buffer.slice(cut);
     const restored = this.restore(reversed);
+    if (hasResidualSentinel(restored)) {
+      // L6: never emit a partial/dangling escape sentinel (defensive — settledBoundary already
+      // withholds unclosed sentinels, but a mid-emit residual must still fail closed).
+      this.failed = true;
+      this.buffer = "";
+      throw new ReversalFailedError(this.keys.operationId);
+    }
     if (restored.length > 0) {
       await this.sink(restored as DisplayText);
     }

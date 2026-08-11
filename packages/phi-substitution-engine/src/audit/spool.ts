@@ -86,12 +86,20 @@ const PRIMED_MARKER = new TextEncoder().encode("1");
  * (see `toWireBytes`). Restore the branded `dictionaryVersion` bigint so a drained record is
  * byte-for-type identical to the one that was prepared — the primary store must never receive
  * a string where a branded version bigint is contracted (CONTRACT §5 N3/N4, L2).
+ *
+ * `dictionaryVersion` is contractually NULLABLE: a fail-closed terminal recorded BEFORE any
+ * substitution (see the wrapper's minimal prepared record) stores `null`. Such a record must
+ * rehydrate to `null`, never `BigInt(null)` — which would throw and drop the terminal on drain.
  */
 function rehydratePrepared(value: unknown): PhiAuditPreparedRecord {
   const record = value as PhiAuditPreparedRecord & { dictionaryVersion: unknown };
+  const version = record.dictionaryVersion;
   return {
     ...record,
-    dictionaryVersion: BigInt(record.dictionaryVersion as string | number | bigint) as unknown as DictionaryVersion,
+    dictionaryVersion:
+      version === null || version === undefined
+        ? (null as unknown as DictionaryVersion)
+        : (BigInt(version as string | number | bigint) as unknown as DictionaryVersion),
   };
 }
 
