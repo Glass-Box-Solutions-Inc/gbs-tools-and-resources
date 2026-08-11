@@ -121,13 +121,13 @@ def _world(**overrides: Any) -> AssertionWorldProjection:
             ProjectedPriorClaim(
                 id="prior-02",
                 date_of_injury=dt.date(2017, 3, 9),
-                body_parts=("shoulder",),
+                body_parts=("knee",),
                 resolution_type="c_and_r",
-                overlaps_current=True,
+                overlaps_current=False,
                 award=ProjectedPriorAward(
                     id="prior-02-award",
                     prior_claim_id="prior-02",
-                    body_parts=("shoulder",),
+                    body_parts=("knee",),
                     pd_percent=8,
                     award_date=dt.date(2018, 1, 15),
                     resolution_type="c_and_r",
@@ -993,3 +993,472 @@ def test_apportionment_shape_error_templates_are_exact() -> None:
         ),
     )
     assert not _problems(grounded)
+
+
+# ---------------------------------------------------------------------------
+# The quality rubric — closed table, checklist independence, Hikida fixtures
+# ---------------------------------------------------------------------------
+
+from wc_caseload_engine.medical_assertions import (
+    UNCONDITIONAL_HARD_INVALID_BASES,
+    apportionment_quality,
+    contention_quality,
+    escobedo_misses,
+    opinion_quality,
+)
+
+
+def _graded_assertion(**overrides: Any) -> str:
+    """Grade one assertion inside a coherent single-opinion ledger."""
+    assertion = _assertion(**overrides)
+    ledger = _ledger(opinions=(_opinion(),), assertions=(assertion,))
+    return apportionment_quality(_world(), _context(), ledger, assertion)
+
+
+def test_closed_invalid_basis_decision_table_is_exact() -> None:
+    """All fourteen bases, each mapped: the closed list is closed."""
+    assert frozenset(
+        {
+            "vocational_apportionment",
+            "lc3208_3_threshold_misuse",
+            "bare_age",
+            "bare_gender",
+            "risk_factor_only",
+        }
+    ) == UNCONDITIONAL_HARD_INVALID_BASES
+    for basis in sorted(UNCONDITIONAL_HARD_INVALID_BASES):
+        grade = _graded_assertion(
+            basis_kinds=("preexisting_degenerative_pathology", basis)
+        )
+        assert grade == "unsupportable", basis
+
+    # The one conditional member: its predicate is exactly the four
+    # psych_exception_analysis rows.
+    assert (
+        _graded_assertion(basis_kinds=("psych_impairment_add_on",)) == "unsupportable"
+    )
+    assert (
+        _graded_assertion(
+            basis_kinds=("psych_impairment_add_on",),
+            psych_exception_analysis="none_applies",
+        )
+        == "unsupportable"
+    )
+    for exception in ("violent_act", "direct_exposure", "catastrophic_injury"):
+        grade = _graded_assertion(
+            basis_kinds=("psych_impairment_add_on",),
+            psych_exception_analysis=exception,  # type: ignore[arg-type]
+        )
+        assert grade == "supported", exception
+
+    # Every remaining basis is gradeable, not barred: a full build stays
+    # supported. Genetics needs its diagnosed pathology; the doctrine-linked
+    # bases need their grounding/link, exercised in their own tests below.
+    for basis in (
+        "preexisting_degenerative_pathology",
+        "asymptomatic_prior_condition",
+        "nonindustrial_medical_condition",
+        "prior_symptomatic_disability",
+        "genetics_heredity_pathology",
+    ):
+        assert _graded_assertion(basis_kinds=(basis,)) == "supported", basis
+
+
+def test_every_escobedo_checklist_item_can_independently_move_supported_to_the_expected_lower_grade() -> None:  # noqa: E501
+    assert _graded_assertion() == "supported"
+
+    thin_toggles: dict[str, dict[str, Any]] = {
+        "1": {"disability_causation_stated": False},
+        "2": {"description": None},
+        "3a": {"condition_ids": (), "prior_claim_ids": (), "prior_award_ids": ()},
+        "4": {"reasonable_medical_probability": False},
+        "6": {"causal_rationale": None},
+        "7": {"percentage_rationale": None},
+    }
+    for item, toggle in thin_toggles.items():
+        assert _graded_assertion(**toggle) == "thin", item
+
+    # 5a — the owning opinion never examined.
+    assertion = _assertion()
+    ledger = _ledger(
+        opinions=(_opinion(examination_performed=False),), assertions=(assertion,)
+    )
+    assert apportionment_quality(_world(), _context(), ledger, assertion) == "thin"
+
+    # 5b — a relied-on factor outside the reviewed record.
+    ledger = _ledger(
+        opinions=(_opinion(reviewed_condition_ids=()),), assertions=(assertion,)
+    )
+    assert apportionment_quality(_world(), _context(), ledger, assertion) == "thin"
+    assert "5b" in escobedo_misses(_world(), ledger, assertion)
+
+    # 8 — industrial_treatment without the explicit sole/contributing statement.
+    treatment = _contention(
+        claim_type="compensable_consequence",
+        target_condition_id="cond-01",
+    )
+    assertion8 = _assertion(
+        basis_kinds=("preexisting_degenerative_pathology", "industrial_treatment"),
+        linked_contention_id="ctn-01",
+    )
+    ledger8 = _ledger(
+        contentions=(treatment,), opinions=(_opinion(),), assertions=(assertion8,)
+    )
+    assert apportionment_quality(_world(), _context(), ledger8, assertion8) == "thin"
+    assert "8" in escobedo_misses(_world(), ledger8, assertion8)
+
+    # 9 — §4664 basis with no separate presumption analysis.
+    assertion9 = _assertion(
+        basis_kinds=("lc4664_prior_award",),
+        prior_award_ids=("prior-01-award",),
+        groundings=(Lc4664PriorAwardGrounding(prior_award_id="prior-01-award"),),
+    )
+    ledger9 = _ledger(
+        opinions=(_opinion(reviewed_prior_award_ids=("prior-01-award",)),),
+        assertions=(assertion9,),
+    )
+    assert apportionment_quality(_world(), _context(), ledger9, assertion9) == "thin"
+    assert "9" in escobedo_misses(_world(), ledger9, assertion9)
+
+    # 10 — an unexplained material revision is the expected lower grade
+    # UNSUPPORTABLE (Part 3 B.8); a reasoned one is not a defect at all.
+    assert (
+        _graded_assertion(revised_from_percent=10) == "unsupportable"
+    )
+    assert (
+        _graded_assertion(
+            revised_from_percent=10,
+            revision_rationale="after reviewing all the previous data again",
+        )
+        == "supported"
+    )
+
+    # 11 — Benson basis whose grounding does not separate every cited injury.
+    assertion11 = _assertion(
+        basis_kinds=("benson_successive_injury",),
+        prior_claim_ids=("prior-01", "prior-02"),
+        groundings=(BensonGrounding(prior_claim_ids=("prior-01",)),),
+    )
+    ledger11 = _ledger(
+        opinions=(
+            _opinion(reviewed_prior_claim_ids=("prior-01", "prior-02")),
+        ),
+        assertions=(assertion11,),
+    )
+    assert apportionment_quality(_world(), _context(), ledger11, assertion11) == "thin"
+    assert "11" in escobedo_misses(_world(), ledger11, assertion11)
+
+    # 12 — genetics with no diagnosed pathology referenced.
+    assertion12 = _assertion(
+        basis_kinds=("genetics_heredity_pathology",), condition_ids=()
+    )
+    ledger12 = _ledger(opinions=(_opinion(),), assertions=(assertion12,))
+    assert apportionment_quality(_world(), _context(), ledger12, assertion12) == "thin"
+    assert "12" in escobedo_misses(_world(), ledger12, assertion12)
+
+
+def _hikida_world() -> AssertionWorldProjection:
+    """A world with a post-DOI industrial consequence AND a live nonindustrial
+    contributor — both sides of the narrowed Justice line reachable."""
+    return _world(
+        conditions=(
+            _condition(),
+            _condition(
+                "cond-03",
+                key="seeded",
+                label="post-surgical CRPS",
+                causal_ground_truth="industrial",
+                onset=dt.date(2022, 9, 1),
+                body_part="lumbar_spine",
+                apportionment_targets=("lumbar_spine",),
+                symptomatic_before_doi=False,
+            ),
+        ),
+    )
+
+
+def test_explicit_hikida_forward_and_inverse_fixture_decision_table_is_exact() -> None:
+    world = _hikida_world()
+
+    def grade(**overrides: Any) -> str:
+        contention = _contention(
+            claim_type="compensable_consequence",
+            target_condition_id="cond-03",
+            **overrides,
+        )
+        return contention_quality(world, _context(), contention)
+
+    # Forward: treatment stated as SOLE cause, apportionment requested anyway.
+    assert grade(
+        treatment_causation="sole_cause", requested_apportionment="apply"
+    ) == "unsupportable"
+    # Inverse: contributing cause, refusal to apportion despite a substantial
+    # nonindustrial contributor on the record — over-applying Hikida.
+    assert grade(
+        treatment_causation="contributing_cause", requested_apportionment="refuse"
+    ) == "unsupportable"
+    # Contributing cause with application and reasoning may be supported.
+    assert grade(
+        treatment_causation="contributing_cause", requested_apportionment="apply"
+    ) == "supported"
+    # Sole cause with refusal is the correct Hikida paradigm.
+    assert grade(
+        treatment_causation="sole_cause", requested_apportionment="refuse"
+    ) == "supported"
+
+    # The assertion-side hard direction: a nonzero nonindustrial share where the
+    # linked treatment story says sole cause.
+    sole = _contention(
+        claim_type="compensable_consequence",
+        target_condition_id="cond-03",
+        treatment_causation="sole_cause",
+        requested_apportionment="refuse",
+    )
+    assertion = _assertion(linked_contention_id="ctn-01")
+    ledger = _ledger(contentions=(sole,), opinions=(_opinion(),), assertions=(assertion,))
+    assert apportionment_quality(world, _context(), ledger, assertion) == "unsupportable"
+
+
+def _agreeing_world() -> AssertionWorldProjection:
+    """A world with NO substantial nonindustrial contributor."""
+    return AssertionWorldProjection(
+        conditions=(
+            _condition(
+                causal_ground_truth="industrial",
+                symptomatic_before_doi=False,
+            ),
+        ),
+        prior_claims=(),
+    )
+
+
+def test_reasoned_zero_share_and_unable_to_approximate_can_grade_supported_when_ledger_agrees() -> None:  # noqa: E501
+    world = _agreeing_world()
+    zero_share = _opinion(
+        determination_kind="no_nonindustrial_share",
+        determination_rationale=(
+            "the record shows no nonindustrial factor causing present disability"
+        ),
+    )
+    unable = _opinion(
+        "opn-02",
+        report_date=dt.date(2023, 7, 1),
+        determination_kind="unable_to_approximate",
+        determination_rationale=(
+            "the percentages cannot be approximated to reasonable medical probability"
+        ),
+    )
+    ledger = _ledger(opinions=(zero_share, unable))
+    assert not _problems(ledger, world)
+    assert opinion_quality(world, _context(), ledger, zero_share) == "supported"
+    assert opinion_quality(world, _context(), ledger, unable) == "supported"
+
+
+def test_zero_share_contradicted_by_substantial_nonindustrial_evidence_is_unsupportable() -> None:
+    """The deliberate B.6 defect: zero share against a recorded contributor —
+    unsupportable regardless of rationale."""
+    zero_share = _opinion(
+        determination_kind="no_nonindustrial_share",
+        determination_rationale="I find no nonindustrial contribution whatsoever",
+    )
+    ledger = _ledger(opinions=(zero_share,))
+    assert not _problems(ledger)
+    assert opinion_quality(_world(), _context(), ledger, zero_share) == "unsupportable"
+
+
+# ---------------------------------------------------------------------------
+# E.2 — divergence-must-pass: legal case content is graded, never rejected
+# ---------------------------------------------------------------------------
+
+
+def test_nonindustrial_world_condition_may_be_asserted_industrial() -> None:
+    contention = _contention()  # cond-01 is nonindustrial world truth
+    ledger = _ledger(contentions=(contention,))
+    assert not _problems(ledger)
+    assert contention_quality(_world(), _context(), contention) == "unsupportable"
+
+
+def test_wholly_unrelated_condition_may_be_apportioned() -> None:
+    assertion = _assertion(condition_ids=("cond-02",), body_part="lumbar_spine")
+    ledger = _ledger(
+        opinions=(_opinion(reviewed_condition_ids=("cond-02",)),),
+        assertions=(assertion,),
+    )
+    assert not _problems(ledger)
+    assert apportionment_quality(_world(), _context(), ledger, assertion) == "unsupportable"
+
+
+def test_false_prior_award_overlap_is_graded_not_rejected() -> None:
+    contention = _contention(
+        claim_type="apportionment_defense",
+        party="defense",
+        target_condition_id=None,
+        target_prior_claim_id="prior-02",
+        target_prior_award_id="prior-02-award",
+    )
+    ledger = _ledger(contentions=(contention,))
+    assert not _problems(ledger)
+    assert contention_quality(_world(), _context(), contention) in ("thin", "unsupportable")
+
+
+def test_false_c_and_r_legal_assertion_is_graded_not_rejected() -> None:
+    """Asserting §4664 presumption out of a C&R is bad law, not incoherence."""
+    contention = _contention(
+        claim_type="apportionment_defense",
+        party="defense",
+        target_condition_id=None,
+        target_prior_award_id="prior-02-award",
+        rationale="the prior C&R conclusively presumes continuing disability",
+    )
+    ledger = _ledger(contentions=(contention,))
+    assert not _problems(ledger)
+    assert contention_quality(_world(), _context(), contention) in ("thin", "unsupportable")
+
+
+def test_competing_medical_opinions_may_disagree() -> None:
+    contention = _contention()
+    endorser = _opinion(
+        endorses_contention_ids=("ctn-01",),
+        determination_kind=None,
+        apportionment_state="deferred",
+        report_stage="interim",
+    )
+    rejecter = _opinion(
+        "opn-02",
+        report_date=dt.date(2023, 8, 1),
+        rejects_contention_ids=("ctn-01",),
+        determination_kind=None,
+        apportionment_state="deferred",
+        report_stage="interim",
+    )
+    ledger = _ledger(contentions=(contention,), opinions=(endorser, rejecter))
+    assert not _problems(ledger)
+
+
+def test_explicit_qme_may_dissent_from_ledger_evidence() -> None:
+    """An explicit evaluator endorsing a contradicted claim is graded, kept."""
+    contention = _contention()  # contradicted by world truth
+    dissenting = _opinion(
+        endorses_contention_ids=("ctn-01",),
+        determination_kind=None,
+        apportionment_state="deferred",
+        report_stage="interim",
+    )
+    ledger = _ledger(contentions=(contention,), opinions=(dissenting,))
+    assert not _problems(ledger)
+    assert opinion_quality(_world(), _context(), ledger, dissenting) == "unsupportable"
+
+
+def test_hikida_legal_error_is_graded_not_rejected() -> None:
+    contention = _contention(
+        claim_type="compensable_consequence",
+        target_condition_id="cond-03",
+        treatment_causation="sole_cause",
+        requested_apportionment="apply",
+    )
+    ledger = _ledger(contentions=(contention,))
+    assert not _problems(ledger, _hikida_world())
+    assert contention_quality(_hikida_world(), _context(), contention) == "unsupportable"
+
+
+def test_vocational_apportionment_is_graded_not_rejected() -> None:
+    assert _graded_assertion(
+        basis_kinds=("vocational_apportionment",)
+    ) == "unsupportable"
+    ledger = _ledger(
+        opinions=(_opinion(),),
+        assertions=(_assertion(basis_kinds=("vocational_apportionment",)),),
+    )
+    assert not _problems(ledger)
+
+
+def test_psych_add_on_error_is_graded_not_rejected() -> None:
+    ledger = _ledger(
+        opinions=(_opinion(),),
+        assertions=(
+            _assertion(
+                basis_kinds=("psych_impairment_add_on",),
+                psych_exception_analysis="none_applies",
+            ),
+        ),
+    )
+    assert not _problems(ledger)
+    assert _graded_assertion(
+        basis_kinds=("psych_impairment_add_on",),
+        psych_exception_analysis="none_applies",
+    ) == "unsupportable"
+
+
+def test_bare_demographic_basis_is_graded_not_rejected() -> None:
+    for basis in ("bare_age", "bare_gender"):
+        ledger = _ledger(
+            opinions=(_opinion(),), assertions=(_assertion(basis_kinds=(basis,)),)
+        )
+        assert not _problems(ledger)
+        assert _graded_assertion(basis_kinds=(basis,)) == "unsupportable"
+
+
+def test_rice_genetics_basis_is_weighed_not_barred() -> None:
+    assert _graded_assertion(
+        basis_kinds=("genetics_heredity_pathology",), condition_ids=("cond-01",)
+    ) == "supported"
+
+
+def test_interim_deferral_is_valid() -> None:
+    deferring = _opinion(
+        author_role="ptp",
+        report_stage="interim",
+        apportionment_state="deferred",
+        determination_kind=None,
+    )
+    ledger = _ledger(opinions=(deferring,))
+    assert not _problems(ledger)
+    # Deferral itself carries no penalty: with a real foundation the opinion
+    # stays supported.
+    assert opinion_quality(_world(), _context(), ledger, deferring) == "supported"
+
+
+def test_final_report_omission_is_valid_but_unsupportable() -> None:
+    omitting = _opinion(apportionment_state="omitted", determination_kind=None)
+    ledger = _ledger(opinions=(omitting,))
+    assert not _problems(ledger)
+    assert opinion_quality(_world(), _context(), ledger, omitting) == "unsupportable"
+
+
+def test_ungrounded_entity_hook_warns_and_survives() -> None:
+    contention = _contention(
+        claim_type="apportionment_defense",
+        party="defense",
+        doctrine_hooks=("lc4664_prior_award",),
+        target_condition_id=None,
+        target_prior_award_id="prior-01-award",
+    )
+    ledger = _ledger(contentions=(contention,))
+    assert not _problems(ledger)
+    assert assertion_warnings(_world(), ledger) == (
+        "medical_assertions: doctrine hook 'lc4664_prior_award' has no typed "
+        "MedicalHistory grounding; explicit hook retained",
+    )
+
+
+def test_reasoned_revision_chain_is_valid() -> None:
+    first = _opinion(
+        report_stage="interim",
+        apportionment_state="deferred",
+        determination_kind=None,
+        report_date=dt.date(2023, 2, 1),
+    )
+    revised = _opinion(
+        "opn-02",
+        report_date=dt.date(2023, 9, 1),
+        supersedes_opinion_id="opn-01",
+        revision_rationale="after reviewing all the previous data again",
+    )
+    assertion = _assertion(
+        opinion_id="opn-02",
+        revised_from_percent=10,
+        revision_rationale="after reviewing all the previous data again",
+    )
+    ledger = _ledger(opinions=(first, revised), assertions=(assertion,))
+    assert not _problems(ledger)
+    assert apportionment_quality(_world(), _context(), ledger, assertion) == "supported"

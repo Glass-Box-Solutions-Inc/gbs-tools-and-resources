@@ -1014,6 +1014,506 @@ def validate_medical_assertions(
     return tuple(problems)
 
 
+# ---------------------------------------------------------------------------
+# The evidence predicate and the frozen quality rubric (Escobedo v2)
+# ---------------------------------------------------------------------------
+
+#: The closed invalid-basis table: bases that are unsupportable as a matter of
+#: law whenever they appear, regardless of surrounding prose. Closed means
+#: closed — ``genetics_heredity_pathology`` is deliberately NOT here (*Rice*
+#: weighs it), and ``psych_impairment_add_on`` is the one conditional member,
+#: its predicate given exactly by the four ``psych_exception_analysis`` rows.
+UNCONDITIONAL_HARD_INVALID_BASES: Final[frozenset[str]] = frozenset(
+    {
+        "vocational_apportionment",
+        "lc3208_3_threshold_misuse",
+        "bare_age",
+        "bare_gender",
+        "risk_factor_only",
+    }
+)
+
+#: Rubric confidence carried into the table rather than dropped (finding 19):
+#: the §3208.3 row is LOW-MEDIUM (doctrine-tag only) and the §4664
+#: separate-analysis rule is the rubric's lower-confidence item 9. Metadata for
+#: reviewers and M4's re-grading pass; the grades themselves are unconditional.
+BASIS_RULE_CONFIDENCE: Final[dict[str, str]] = {
+    "lc3208_3_threshold_misuse": "low_medium",
+    "lc4664_prior_award": "lower",
+}
+
+
+def has_substantial_nonindustrial_evidence(history: AssertionWorldProjection) -> bool:
+    """Whether the record carries a live, overlapping nonindustrial contributor.
+
+    The predicate behind three rules that must agree: B.6's final-determination
+    branch A, the inverse-Hikida refusal row, and the contradicted-zero-share
+    row. A contributor is substantial when it is visible, overlaps the claimed
+    regions, is nonindustrial or mixed, and has not resolved — or when an
+    overlapping conclusively presumed prior award exists.
+    """
+    for condition in history.conditions:
+        if (
+            not condition.wholly_unrelated
+            and condition.causal_ground_truth in ("nonindustrial", "mixed")
+            and condition.surfaces_in_file
+            and condition.trajectory != "resolved"
+        ):
+            return True
+    return any(
+        claim.overlaps_current and claim.award is not None and claim.award.conclusively_presumed
+        for claim in history.prior_claims
+    )
+
+
+def contention_evidence(
+    history: AssertionWorldProjection,
+    context: AssertionValidationContext,
+    contention: Contention,
+) -> EvidenceDisposition:
+    """The tri-state ledger-evidence read for one contention (B.5).
+
+    For ``position="deny"`` the supports/contradicts poles swap: evidence that
+    supports the affirmative proposition contradicts its denial.
+    """
+    disposition = _affirmative_evidence(history, context, contention)
+    if contention.position == "deny":
+        if disposition == "supports":
+            return "contradicts"
+        if disposition == "contradicts":
+            return "supports"
+    return disposition
+
+
+def _affirmative_evidence(
+    history: AssertionWorldProjection,
+    context: AssertionValidationContext,
+    contention: Contention,
+) -> EvidenceDisposition:
+    target = (
+        history.condition(contention.target_condition_id)
+        if contention.target_condition_id is not None
+        else None
+    )
+    claim_type = contention.claim_type
+
+    if claim_type == "industrial_causation":
+        if target is None:
+            return "indeterminate"
+        if target.causal_ground_truth in ("industrial", "mixed") and target.surfaces_in_file:
+            return "supports"
+        if target.causal_ground_truth == "nonindustrial" or target.wholly_unrelated:
+            return "contradicts"
+        return "indeterminate"
+
+    if claim_type == "aggravation":
+        if target is None:
+            return "indeterminate"
+        if target.wholly_unrelated or target.trajectory == "resolved":
+            return "contradicts"
+        if target.symptomatic_before_doi is True and target.trajectory in (
+            "stable",
+            "progressive",
+            "fluctuating",
+        ):
+            return "supports"
+        return "indeterminate"
+
+    if claim_type == "apportionment_defense":
+        claim = (
+            history.prior_claim(contention.target_prior_claim_id)
+            if contention.target_prior_claim_id is not None
+            else None
+        )
+        award = (
+            history.prior_award(contention.target_prior_award_id)
+            if contention.target_prior_award_id is not None
+            else None
+        )
+        relevant_condition = (
+            target is not None
+            and not target.wholly_unrelated
+            and target.surfaces_in_file
+            and target.causal_ground_truth in ("nonindustrial", "mixed")
+        )
+        overlapping_claim = claim is not None and claim.overlaps_current
+        presumed_award = (
+            award is not None
+            and award.conclusively_presumed
+            and any(part in context.current_body_parts for part in award.body_parts)
+        )
+        if relevant_condition or overlapping_claim or presumed_award:
+            return "supports"
+        if target is None and claim is None and award is None:
+            return "indeterminate"
+        target_dead = target is None or target.wholly_unrelated
+        claim_dead = claim is None or not claim.overlaps_current
+        award_dead = award is None or not any(
+            part in context.current_body_parts for part in award.body_parts
+        )
+        if target_dead and claim_dead and award_dead:
+            return "contradicts"
+        return "indeterminate"
+
+    if claim_type == "compensable_consequence":
+        if target is None:
+            return "indeterminate"
+        if (
+            target.causal_ground_truth == "industrial"
+            and target.onset is not None
+            and target.onset >= context.date_of_injury
+            and target.surfaces_in_file
+        ):
+            return "supports"
+        if target.causal_ground_truth == "nonindustrial" or (
+            target.onset is not None and target.onset < context.date_of_injury
+        ):
+            return "contradicts"
+        return "indeterminate"
+
+    if claim_type == "psych_add_on":
+        psych = next(
+            (c for c in history.conditions if c.key == "depression_anxiety"), None
+        )
+        if target is not None:
+            psych = target
+        if psych is None:
+            return "indeterminate"
+        if psych.causal_ground_truth == "nonindustrial" or psych.trajectory == "resolved":
+            return "contradicts"
+        if (
+            psych.causal_ground_truth in ("industrial", "mixed")
+            and psych.onset is not None
+            and psych.onset >= context.date_of_injury
+            and psych.surfaces_in_file
+        ):
+            return "supports"
+        return "indeterminate"
+
+    # denial_of_injury
+    if target is None:
+        if context.claim_response == "denied":
+            return "supports"
+        return "indeterminate"
+    if target.causal_ground_truth == "nonindustrial" or target.wholly_unrelated:
+        return "supports"
+    if target.causal_ground_truth in ("industrial", "mixed") and target.surfaces_in_file:
+        return "contradicts"
+    return "indeterminate"
+
+
+def qme_disposition(evidence: EvidenceDisposition) -> Literal["endorse", "reject", "neither"]:
+    """The QME/AME evidence policy — completely conditioned on the ledger read.
+
+    No draw, no flat endorsement rate: a sampled medical-legal evaluator
+    endorses what the evidence supports, rejects what it contradicts, and
+    stays silent on the indeterminate. Explicit evaluator dissent remains
+    legal divergence — it is graded, never rejected.
+    """
+    if evidence == "supports":
+        disposition = "endorse"
+    elif evidence == "contradicts":
+        disposition = "reject"
+    else:
+        disposition = "neither"
+    return disposition
+
+
+def contention_quality(
+    history: AssertionWorldProjection,
+    context: AssertionValidationContext,
+    contention: Contention,
+) -> AssertionQuality:
+    """Grade one contention against the world ledger.
+
+    The two hard Hikida rows come first — they are legal-error terminals under
+    the narrowed *Justice* rule, not evidence questions. Everything else is the
+    evidence tri-state: contradicted is unsupportable, supported-with-reasoning
+    is supported, and the indeterminate or unreasoned middle is thin.
+    """
+    if (
+        contention.treatment_causation == "sole_cause"
+        and contention.requested_apportionment == "apply"
+    ):
+        return "unsupportable"
+    if (
+        contention.treatment_causation == "contributing_cause"
+        and contention.requested_apportionment == "refuse"
+        and has_substantial_nonindustrial_evidence(history)
+    ):
+        return "unsupportable"
+    evidence = contention_evidence(history, context, contention)
+    if evidence == "contradicts":
+        return "unsupportable"
+    if evidence == "supports" and contention.rationale:
+        return "supported"
+    return "thin"
+
+
+def _hard_invalid_basis(
+    assertion: ApportionmentAssertion, linked: Contention | None
+) -> bool:
+    """Precedence rule 1 — the closed invalid-basis decision."""
+    if any(basis in UNCONDITIONAL_HARD_INVALID_BASES for basis in assertion.basis_kinds):
+        return True
+    if "psych_impairment_add_on" in assertion.basis_kinds and (
+        assertion.psych_exception_analysis is None
+        or assertion.psych_exception_analysis == "none_applies"
+    ):
+        return True
+    # Item 8's hard direction: a nonindustrial share applied where the linked
+    # treatment story states industrial treatment was the SOLE cause.
+    return (
+        linked is not None
+        and linked.treatment_causation == "sole_cause"
+        and assertion.nonindustrial_percent > 0
+    )
+
+
+def escobedo_misses(
+    history: AssertionWorldProjection,
+    ledger: MedicalAssertionLedger,
+    assertion: ApportionmentAssertion,
+) -> tuple[str, ...]:
+    """Which applicable checklist items this assertion misses, in item order.
+
+    Each item reads an independently controllable input, so the frozen oracle
+    can move a supported build to its expected lower grade one item at a time.
+    """
+    owner = ledger.opinion(assertion.opinion_id)
+    linked = (
+        ledger.contention(assertion.linked_contention_id)
+        if assertion.linked_contention_id is not None
+        else None
+    )
+    misses: list[str] = []
+    if not assertion.disability_causation_stated:
+        misses.append("1")
+    if not assertion.description:
+        misses.append("2")
+    cited_any = bool(
+        assertion.condition_ids or assertion.prior_claim_ids or assertion.prior_award_ids
+    )
+    if not assertion.basis_kinds or not cited_any:
+        misses.append("3a")
+    if not assertion.reasonable_medical_probability:
+        misses.append("4")
+    if owner is not None and not owner.examination_performed:
+        misses.append("5a")
+    if owner is not None and _relied_on_record_gap(history, owner, assertion):
+        misses.append("5b")
+    if not assertion.causal_rationale:
+        misses.append("6")
+    if not assertion.percentage_rationale:
+        misses.append("7")
+    if "industrial_treatment" in assertion.basis_kinds and (
+        linked is None or linked.treatment_causation is None
+    ):
+        misses.append("8")
+    if "lc4664_prior_award" in assertion.basis_kinds and not assertion.prior_award_analysis:
+        misses.append("9")
+    if "benson_successive_injury" in assertion.basis_kinds:
+        benson = next(
+            (g for g in assertion.groundings if isinstance(g, BensonGrounding)), None
+        )
+        separated = benson is not None and set(assertion.prior_claim_ids) <= set(
+            benson.prior_claim_ids
+        )
+        if not separated:
+            misses.append("11")
+    if "genetics_heredity_pathology" in assertion.basis_kinds and not assertion.condition_ids:
+        misses.append("12")
+    return tuple(misses)
+
+
+def _relied_on_record_gap(
+    history: AssertionWorldProjection,
+    owner: MedicalOpinion,
+    assertion: ApportionmentAssertion,
+) -> bool:
+    """Item 5b — a relied-on factor outside the reviewed record, or invisible."""
+    for ref in assertion.condition_ids:
+        condition = history.condition(ref)
+        if ref not in owner.reviewed_condition_ids:
+            return True
+        if condition is not None and not condition.surfaces_in_file:
+            return True
+    if any(ref not in owner.reviewed_prior_claim_ids for ref in assertion.prior_claim_ids):
+        return True
+    return any(
+        ref not in owner.reviewed_prior_award_ids for ref in assertion.prior_award_ids
+    )
+
+
+def apportionment_quality(
+    history: AssertionWorldProjection,
+    context: AssertionValidationContext,
+    ledger: MedicalAssertionLedger,
+    assertion: ApportionmentAssertion,
+) -> AssertionQuality:
+    """Grade one apportionment assertion under the frozen precedence.
+
+    1. hard invalid / zero foundation -> unsupportable;
+    2. direct contradiction by all cited factors -> unsupportable;
+    3. any applicable checklist miss -> thin;
+    4. all pass -> supported.
+    """
+    linked = (
+        ledger.contention(assertion.linked_contention_id)
+        if assertion.linked_contention_id is not None
+        else None
+    )
+    hard_invalid = _hard_invalid_basis(assertion, linked)
+    zero_foundation = not assertion.basis_kinds and not (
+        assertion.condition_ids or assertion.prior_claim_ids or assertion.prior_award_ids
+    )
+    if zero_foundation:
+        hard_invalid = True
+    if hard_invalid:
+        return "unsupportable"
+
+    cited = [history.condition(ref) for ref in assertion.condition_ids]
+    cited_claims = [history.prior_claim(ref) for ref in assertion.prior_claim_ids]
+    if (cited or cited_claims) and all(
+        c is None or c.wholly_unrelated for c in cited
+    ) and all(c is None or not c.overlaps_current for c in cited_claims):
+        contradicted = any(c is not None and c.wholly_unrelated for c in cited) or any(
+            c is not None and not c.overlaps_current for c in cited_claims
+        )
+        if contradicted:
+            return "unsupportable"
+
+    if (
+        assertion.revised_from_percent is not None
+        and assertion.revised_from_percent != assertion.nonindustrial_percent
+        and not assertion.revision_rationale
+    ):
+        # An unexplained material revision (*Lindh*'s fail condition, promoted
+        # to hard by Part 3); an explained one is not a defect at all.
+        return "unsupportable"
+
+    if escobedo_misses(history, ledger, assertion):
+        return "thin"
+    return "supported"
+
+
+def opinion_quality(
+    history: AssertionWorldProjection,
+    context: AssertionValidationContext,
+    ledger: MedicalAssertionLedger,
+    opinion: MedicalOpinion,
+) -> AssertionQuality:
+    """Grade one opinion: the worst of everything it stands behind.
+
+    Endorsed contentions are graded as stated; rejected ones on the OPPOSITE
+    proposition (a rejection of a false claim is good medicine, never a
+    mechanical inversion of the claim's own grade); owned assertions carry
+    their own grades; the opinion's own foundation and its final determination
+    close the set. Interim deferral itself carries no penalty.
+    """
+    order = {"supported": 0, "thin": 1, "unsupportable": 2}
+    worst = "supported"
+
+    def sink(grade: AssertionQuality) -> None:
+        nonlocal worst
+        if order[grade] > order[worst]:
+            worst = grade
+
+    if opinion.report_stage == "final" and opinion.apportionment_state == "omitted":
+        sink("unsupportable")
+
+    for ref in opinion.endorses_contention_ids:
+        contention = ledger.contention(ref)
+        if contention is not None:
+            sink(contention_quality(history, context, contention))
+    for ref in opinion.rejects_contention_ids:
+        contention = ledger.contention(ref)
+        if contention is not None:
+            flipped: ContentionPosition = (
+                "deny" if contention.position == "affirm" else "affirm"
+            )
+            opposite = contention.model_copy(update={"position": flipped})
+            sink(contention_quality(history, context, opposite))
+
+    for assertion in ledger.assertions_of(opinion.id):
+        sink(apportionment_quality(history, context, ledger, assertion))
+
+    relevant_review = bool(
+        [
+            ref
+            for ref in opinion.reviewed_condition_ids
+            if (condition := history.condition(ref)) is not None
+            and condition.surfaces_in_file
+        ]
+        or opinion.reviewed_prior_claim_ids
+        or opinion.reviewed_prior_award_ids
+    )
+    foundation = opinion.examination_performed or relevant_review
+    if foundation and opinion.rationale:
+        pass
+    elif foundation or opinion.rationale:
+        sink("thin")
+    else:
+        sink("unsupportable")
+
+    if opinion.determination_kind == "no_nonindustrial_share":
+        if has_substantial_nonindustrial_evidence(history):
+            # Contradicted by its own record — unsupportable regardless of how
+            # well the zero share is written up (Part 4 B.8 row 1).
+            sink("unsupportable")
+        elif not opinion.determination_rationale:
+            sink("thin")
+    if opinion.determination_kind == "unable_to_approximate" and not (
+        opinion.determination_rationale and foundation
+    ):
+        sink("thin")
+
+    return worst
+
+
+def grade_ledger(
+    context: AssertionValidationContext,
+    history: AssertionWorldProjection,
+    ledger: MedicalAssertionLedger,
+) -> MedicalAssertionLedger:
+    """Re-derive every quality in *ledger* from the frozen rubric.
+
+    The single grading pass both composition paths share: explicit entries and
+    sampled entries are graded identically, and a sampling target recipe is
+    never copied — the truth-side validator re-runs this exact function to
+    prove a stated label is the derived one.
+    """
+    contentions = tuple(
+        c.model_copy(update={"quality": contention_quality(history, context, c)})
+        for c in ledger.contentions
+    )
+    regraded = MedicalAssertionLedger(
+        contentions=contentions,
+        medical_opinions=ledger.medical_opinions,
+        apportionment_assertions=ledger.apportionment_assertions,
+    )
+    assertions = tuple(
+        a.model_copy(
+            update={"quality": apportionment_quality(history, context, regraded, a)}
+        )
+        for a in ledger.apportionment_assertions
+    )
+    regraded = MedicalAssertionLedger(
+        contentions=contentions,
+        medical_opinions=ledger.medical_opinions,
+        apportionment_assertions=assertions,
+    )
+    opinions = tuple(
+        o.model_copy(update={"quality": opinion_quality(history, context, regraded, o)})
+        for o in ledger.medical_opinions
+    )
+    return MedicalAssertionLedger(
+        contentions=contentions,
+        medical_opinions=opinions,
+        apportionment_assertions=assertions,
+    )
+
+
 def assertion_warnings(
     history: AssertionWorldProjection, ledger: MedicalAssertionLedger
 ) -> tuple[str, ...]:
@@ -1038,11 +1538,13 @@ def assertion_warnings(
 
 __all__ = [
     "APPORTIONMENT_ID_PATTERN",
+    "BASIS_RULE_CONFIDENCE",
     "CONTENTION_ID_PATTERN",
     "GROUNDABLE_HOOKS",
     "HOOK_TO_BASIS",
     "OPINION_ID_PATTERN",
     "REVIEWED_IDS_COMBINED_CAP",
+    "UNCONDITIONAL_HARD_INVALID_BASES",
     "ApportionmentAssertion",
     "ApportionmentBasisKind",
     "ApportionmentDeterminationKind",
@@ -1071,8 +1573,16 @@ __all__ = [
     "RequestedApportionment",
     "SibtfGrounding",
     "TreatmentCausation",
+    "apportionment_quality",
     "assertion_warnings",
+    "contention_evidence",
+    "contention_quality",
+    "escobedo_misses",
+    "grade_ledger",
+    "has_substantial_nonindustrial_evidence",
+    "opinion_quality",
     "project_medical_history",
+    "qme_disposition",
     "sibtf_grounding_clauses",
     "validate_medical_assertions",
 ]
