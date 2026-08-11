@@ -393,6 +393,19 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
         } catch {
           throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
         }
+        // §7/N2: the injected store's SUCCESS return is UNTRUSTED. Guarding only the REJECTION
+        // (above) still lets a hostile allocation escape two ways: a non-string carrier whose
+        // `Symbol.toPrimitive`/`toString` throws raw (PHI) out of `String(token)` below (sink c),
+        // and a returned raw-PHI STRING that becomes the detector token spliced into the output
+        // (SubstitutionResult.segments[].text, sink a) and enters compiled/scanned entries — both
+        // SUCCESS paths, so the compile/tokenize catch blocks never contain them. Require a genuine,
+        // GRAMMAR-VALID token (the real store returns `grammar.format()` output, always valid, so no
+        // legitimate allocation is rejected); a bracketed token can only carry an allow-listed role +
+        // numeric sequence, structurally incapable of holding raw PHI. Anything else fails closed with
+        // the same fixed code as a rejection.
+        if (typeof token !== "string" || this.#grammar.parse(token, this.#policy).kind !== "valid") {
+          throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
+        }
         const start = span.startUtf16 as unknown as number;
         const end = span.endUtf16 as unknown as number;
         detectorCanonicalByToken.set(String(token), canonicalize(sourceText.slice(start, end)));

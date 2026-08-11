@@ -3984,4 +3984,43 @@ describe("GLY-330 R14 (§7/N2): structural ingestion hardening at the public bou
     try { await stream.push(hostileChunk); await stream.end(); } catch (e) { thrown = e; }
     expect(String(thrown?.message ?? "") + emitted.join("")).not.toContain(CANARY);
   });
+
+  // R22 (finding, R22 gate) — the injected assignmentStore's SUCCESS return is UNTRUSTED. R21 guarded
+  // only the REJECTION; the returned value is consumed at `String(token)` and spliced into the output.
+  // Two SUCCESS-path leaks (neither caught by the compile/tokenize catch blocks) must fail closed.
+
+  // R22-a (sink c) — a returned object whose Symbol.toPrimitive/toString throws raw (PHI) must not
+  // escape at String(token) on a detector-triggering input.
+  it("engine.substitute: a getOrAllocate success value with a throwing Symbol.toPrimitive fails closed", async () => {
+    const coordinator: any = { requireActiveReady: async (): Promise<any> => VERSION_BIGINT };
+    const truthReader: any = { readTaggedValues: async (): Promise<any[]> => [] };
+    const hostileAssign: any = { getOrAllocate: async (): Promise<any> => ({
+      [Symbol.toPrimitive]: (): never => { throw new Error(CANARY); },
+      toString: (): never => { throw new Error(CANARY); },
+    }) };
+    const engine = new ComposedSubstitutionEngine({ coordinator, truthReader, sourceTruthRevision: REVISION, reversalStore: new InMemoryReversalStore(), engineVersion: ENGINE, assignmentStore: hostileAssign } as any);
+    let thrown: any; let out: any;
+    try {
+      out = await engine.substitute({ context: ctx("att-r22-a"), policy: policy(), segments: [{ path: "system", kind: "system", text: "SSN 123-45-6789 on file" }], purpose: "generation" } as any);
+    } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("DICTIONARY_UNAVAILABLE");
+  });
+
+  // R22-b (sink a) — a returned raw (PHI) STRING must not become the detector token spliced into
+  // SubstitutionResult.segments[].text; a non-grammar-valid token fails closed.
+  it("engine.substitute: a getOrAllocate success value that is a raw PHI string fails closed, never spliced", async () => {
+    const coordinator: any = { requireActiveReady: async (): Promise<any> => VERSION_BIGINT };
+    const truthReader: any = { readTaggedValues: async (): Promise<any[]> => [] };
+    // CANARY is not `[[...]]`-shaped, so it can never be a genuine grammar token.
+    const hostileAssign: any = { getOrAllocate: async (): Promise<any> => CANARY };
+    const engine = new ComposedSubstitutionEngine({ coordinator, truthReader, sourceTruthRevision: REVISION, reversalStore: new InMemoryReversalStore(), engineVersion: ENGINE, assignmentStore: hostileAssign } as any);
+    let thrown: any; let out: any;
+    try {
+      out = await engine.substitute({ context: ctx("att-r22-b"), policy: policy(), segments: [{ path: "system", kind: "system", text: "SSN 123-45-6789 on file" }], purpose: "generation" } as any);
+    } catch (e) { thrown = e; }
+    expect(out).toBeUndefined();
+    expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("DICTIONARY_UNAVAILABLE");
+  });
 });
