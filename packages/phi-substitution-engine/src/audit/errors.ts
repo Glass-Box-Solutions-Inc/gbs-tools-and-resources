@@ -1,4 +1,5 @@
 import type { OperationId } from "../core/brands";
+import { safeCodeString } from "../core/errors";
 
 /**
  * Fixed, safe failure codes for the audit module. These are the only strings that ever
@@ -36,12 +37,23 @@ export class PhiAuditError extends Error {
   }
 }
 
-/** Narrow an unknown thrown value to a PhiAuditError carrying a specific code. */
+/**
+ * Narrow an unknown thrown value to a PhiAuditError carrying a specific code — SAFELY. Both the
+ * `instanceof` test (a hostile Proxy `getPrototypeOf`/`Symbol.hasInstance` trap could throw a PHI
+ * canary) and the `.code` compare (a throwing/mutating getter) are guarded, so classifying a
+ * hostile thrown value can never itself surface PHI (§7/N2).
+ */
 export function isAuditError(value: unknown, code?: AuditFailureCode): value is PhiAuditError {
-  if (!(value instanceof PhiAuditError)) {
+  let isAudit: boolean;
+  try {
+    isAudit = value instanceof PhiAuditError;
+  } catch {
     return false;
   }
-  return code === undefined || value.code === code;
+  if (!isAudit) {
+    return false;
+  }
+  return code === undefined || safeCodeString(value) === code;
 }
 
 const AUDIT_FAILURE_CODES: ReadonlySet<string> = new Set<AuditFailureCode>([

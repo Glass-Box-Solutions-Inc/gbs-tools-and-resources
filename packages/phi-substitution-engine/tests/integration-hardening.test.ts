@@ -26,6 +26,7 @@ import {
   Aes256GcmAuditSpool,
   DurablePhiAuditEmitter,
   ExactAllowListAuditSerializer,
+  isAuditError,
   PhiAuditedAttemptCoordinator,
   PhiAuditError,
 } from "../src/audit/index";
@@ -33,7 +34,7 @@ import {
   InMemoryCaseTruthReader,
   InMemoryDictionaryVersionCoordinator,
 } from "../src/dictionary/index";
-import { PhiEngineError } from "../src/core/errors";
+import { isPhiEngineError, PhiEngineError } from "../src/core/errors";
 
 // ---------------------------------------------------------------------------
 // Shared brand casters (runtime identity) + fixtures
@@ -2145,5 +2146,96 @@ describe("GLY-330 NEW-R6-A R8 (§7/N2): drainTo guards ALL volume/store I/O", ()
     }
     expect(thrown).toBeUndefined();
     expect(report.remaining).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R9 (§7/N2): classifying a DELIBERATELY-HOSTILE thrown value can never itself
+// surface PHI. A rejected value is untrusted: its `.code` may be a throwing
+// getter, and its prototype access may be a throwing Proxy `getPrototypeOf` /
+// `Symbol.hasInstance` trap. Both the `instanceof` test and the `.code` compare
+// inside `isAuditError` / `isPhiEngineError` must swallow such a throw and fail
+// closed, never re-raise the canary to the caller.
+// ---------------------------------------------------------------------------
+describe("GLY-330 R9 (§7/N2): hostile-object error classification cannot surface PHI", () => {
+  it("coordinator: a prepare rejection whose .code getter THROWS PHI is sanitized to AUDIT_PREPARE_FAILED", async () => {
+    // A real PhiAuditError (so `instanceof` passes) whose `.code` getter throws a canary on read.
+    // The coordinator's `isAuditError(error, "AUDIT_DURABILITY_UNAVAILABLE")` must read that code
+    // through the getter-throw guard, not by touching `.code` directly.
+    const evil = new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", b<any>("op-1"));
+    Object.defineProperty(evil, "code", {
+      configurable: true,
+      get(): string {
+        throw new Error("ALICE_SMITH_DOB_1970");
+      },
+    });
+    const emitter = {
+      prepare: async (): Promise<never> => {
+        throw evil;
+      },
+      finalize: async (): Promise<void> => {},
+      reconcileUnknownAfterSend: async (): Promise<void> => {},
+    };
+    const coordinator = new PhiAuditedAttemptCoordinator(emitter as any, CLOCK);
+    const plan = {
+      prepared: spoolPrepared("att-r9-code"),
+      precondition: { ok: true },
+      invokeProvider: async (): Promise<void> => {},
+    };
+    let thrown: any;
+    let result: any;
+    try {
+      result = await coordinator.run(plan as any);
+    } catch (e) {
+      thrown = e;
+    }
+    const surfaced = String(thrown?.message ?? "") + JSON.stringify(result ?? {});
+    expect(surfaced).not.toContain("ALICE_SMITH_DOB_1970");
+    expect(result?.errorCode).toBe("AUDIT_PREPARE_FAILED");
+    expect(result?.providerInvoked).toBe(false);
+  });
+
+  it("isAuditError / isPhiEngineError never throw on a hostile getPrototypeOf Proxy (fail closed to false)", () => {
+    // `instanceof` walks the LHS prototype chain via [[GetPrototypeOf]]; a Proxy trap that throws
+    // there would otherwise escape the classifier with a PHI canary.
+    const evilAudit = new Proxy(new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", b<any>("op-1")), {
+      getPrototypeOf(): never {
+        throw new Error("ALICE_SMITH_DOB_1970");
+      },
+    });
+    const evilEngine = new Proxy(new PhiEngineError("REVERSAL_FAILED"), {
+      getPrototypeOf(): never {
+        throw new Error("ALICE_SMITH_DOB_1970");
+      },
+    });
+    expect(() => isAuditError(evilAudit)).not.toThrow();
+    expect(isAuditError(evilAudit)).toBe(false);
+    expect(() => isPhiEngineError(evilEngine)).not.toThrow();
+    expect(isPhiEngineError(evilEngine)).toBe(false);
+  });
+
+  it("emitter.prepare sanitizes a store rejection that is a hostile getPrototypeOf Proxy", async () => {
+    const evil = new Proxy(new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", b<any>("op-1")), {
+      getPrototypeOf(): never {
+        throw new Error("ALICE_SMITH_DOB_1970");
+      },
+    });
+    const primary = {
+      prepare: async (): Promise<never> => {
+        throw evil;
+      },
+      finalize: async (): Promise<void> => {},
+    };
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
+    const emitter = new DurablePhiAuditEmitter(primary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
+    let thrown: any;
+    try {
+      await emitter.prepare(spoolPrepared("att-r9-proxy"));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PhiAuditError);
+    expect(String(thrown?.message ?? "")).not.toContain("ALICE_SMITH_DOB_1970");
+    expect(String(thrown?.code ?? "")).not.toContain("ALICE_SMITH_DOB_1970");
   });
 });

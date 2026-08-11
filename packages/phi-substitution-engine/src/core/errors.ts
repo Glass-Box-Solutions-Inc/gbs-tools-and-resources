@@ -29,7 +29,13 @@ export class PhiEngineError extends Error {
 }
 
 export function isPhiEngineError(value: unknown): value is PhiEngineError {
-  return value instanceof PhiEngineError;
+  try {
+    return value instanceof PhiEngineError;
+  } catch {
+    // A hostile Proxy `getPrototypeOf` / `Symbol.hasInstance` trap must not escape the check with a
+    // PHI-laden throw (§7/N2). An unclassifiable value is simply not one of our errors.
+    return false;
+  }
 }
 
 const PHI_ENGINE_FAILURE_CODES: ReadonlySet<string> = new Set<PhiEngineFailureCode>([
