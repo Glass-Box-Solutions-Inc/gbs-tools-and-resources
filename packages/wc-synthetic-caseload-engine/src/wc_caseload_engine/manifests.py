@@ -72,6 +72,7 @@ from wc_caseload_engine.truth_manifest import (
     TruthManifestError,
     _write_json,
     check_truth_dir_is_isolated,
+    medical_assertions_from_truth,
     money_facts_from_truth,
     read_truth_manifest,
     write_case_truth_manifest,
@@ -1539,6 +1540,11 @@ def _validate_truth_tree(
         try:
             truth = read_truth_manifest(truth_path)
             money_facts_from_truth(truth)
+            # The assertions channel, when present: digest, §C incoherence and
+            # quality rederivation — all from the recorded payload, no sampler
+            # re-run and no substrate checkout. Divergence from world truth
+            # passes; a tampered label or reference fails here.
+            medical_assertions_from_truth(truth)
         except TruthManifestError as exc:
             report.problems.append(
                 f"{case_id}: truth manifest {truth_path} cannot be validated ({exc}) — "

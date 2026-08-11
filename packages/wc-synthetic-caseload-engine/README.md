@@ -149,6 +149,30 @@ Distributions: `balanced` (mirrors the KB PRD attorney caseload), `early_stage`,
 
 ---
 
+## The medical-story ledgers (AJC-60 world truth, AJC-61 assertions)
+
+Two opt-in sibling ledgers open the medical story, each behind a `None`-defaulting gate that
+moves zero bytes when absent:
+
+- `scenario.medical_history` (M1) — what the applicant *actually had*: comorbid conditions
+  drawn from a calibrated archetype sampler plus stated prior claims and §4664 awards. It
+  reaches no analyzer-visible artifact.
+- `scenario.medical_assertions` (M2, requires `medical_history`) — what the parties *say*
+  about it: contentions, medical opinions (interim deferral is a lifecycle state; a final
+  report may deliberately omit its §4663(c) determination) and apportionment assertions,
+  each graded `supported | thin | unsupportable` against the Escobedo adequacy rubric.
+  Divergence from world truth is case content and validates clean; only internal
+  incoherence — a dangling reference, an impossible lifecycle, percentages that cannot
+  sum — fails `validate`, with byte-exact messages. The grades and a redacted world-truth
+  projection export to exactly one place: the scorer-only truth manifest's `assertions`
+  channel (`channelVersion 1.0.0` under the unchanged `1.0.0` envelope, sealed by a
+  `ledgerDigest`); no label vocabulary appears in any analyzer-visible artifact.
+
+Explicit entries are authoritative — sampling appends drawn assertions on semantically keyed
+`medical-assertions:` streams and never alters or "repairs" an authored one.
+
+---
+
 ## Document control precedence
 
 Highest wins:

@@ -428,6 +428,11 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      # The label-position leakage probe (AJC-61) OCRs image-only PDF pages —
+      # an OCR-only surface that cannot be certified without the engine, and
+      # the scan fails loudly rather than skipping when it is missing.
+      - name: Install tesseract (OCR-only leakage surfaces)
+        run: sudo apt-get update -q && sudo apt-get install -y -q tesseract-ocr
       - name: Lint (ruff)
         run: python -m ruff check src/ tests/
       - name: Test
@@ -519,6 +524,14 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      # The leakage-scan guards OCR image-only pages and fail loudly when the
+      # engine is missing (by design), so every job that RUNS those guards
+      # must provision it — the full-suite job already does. Proven root
+      # cause of the shard 5-9 GUARD-NOT-GREEN failures on a08f8f4: a clean
+      # checkout passes both guards in isolation WITH tesseract and fails
+      # with the scan's own RuntimeError without it.
+      - name: Install tesseract (OCR-only leakage surfaces)
+        run: sudo apt-get update -q && sudo apt-get install -y -q tesseract-ocr
       - name: Every registered guard collects exactly one test
         run: python tools/mutation_gate.py --preflight --shard ${{ matrix.shard }}/10
       - name: Every guard still catches its own defect

@@ -141,6 +141,63 @@ lifecycle:
     - kite
 
 # ---------------------------------------------------------------------------
+# scenario — optional story overlays. surgery / diagnostics / treatment /
+# adjuster / attorney / discovery are documented in the operator guide
+# (docs/user-guide, "Scenario" rows); the two medical-story ledgers are shown
+# here because their gates bite at load time.
+#
+# scenario.medical_history (AJC-60, M1) opens the WORLD-TRUTH ledger: what is
+# medically true of this applicant. Analyzer-invisible by design — no
+# document, manifest or warning states it; its one outlet is the scorer-only
+# truth manifest.
+#
+# scenario.medical_assertions (AJC-61, M2) opens the ASSERTION ledger: what
+# the parties SAY about that truth. It REQUIRES scenario.medical_history —
+# loading fails loudly without it. Explicit entries are authoritative and
+# sampling appends around them (sample_assertions: false keeps exactly the
+# explicit entries). Caps: 12 contentions, 8 medical opinions, 12
+# apportionment assertions, and one opinion reviews at most 12 records
+# combined. NO seed model carries a quality field: the supported | thin |
+# unsupportable grades are truth-only — derived by the engine, published
+# ONLY to the truth manifest's assertions channel, and a seed that tries to
+# state one is rejected. Divergence from world truth is legal case content
+# and loads cleanly; only internal incoherence (dangling references,
+# impossible lifecycles, percentages that cannot sum) fails validation.
+#
+# Hikida/King is TYPED, never an enum hook: claim_type
+# compensable_consequence + treatment_causation (sole_cause |
+# contributing_cause) + requested_apportionment (apply | refuse) state the
+# narrowed Justice rule, and both wrong directions grade unsupportable.
+#
+# scenario:
+#   medical_history:
+#     conditions:
+#       - label: nonindustrial lumbar degenerative disease
+#         origin: nonindustrial            # industrial | nonindustrial | mixed
+#         body_part: lumbar_spine
+#         severity: moderate
+#         symptomatic_before_doi: true
+#     prior_claims:
+#       - body_parts: [lumbar_spine]
+#         date_of_injury: 2015-01-05
+#         resolution_type: stipulated_award
+#         award:
+#           body_parts: [lumbar_spine]
+#           pd_percent: 12
+#           award_date: 2016-02-01
+#   medical_assertions:
+#     sample_assertions: true
+#     contentions:
+#       - id: ctn-01
+#         claim_type: compensable_consequence
+#         party: applicant
+#         position: affirm
+#         target_condition_id: cond-00
+#         treatment_causation: sole_cause
+#         requested_apportionment: refuse
+#         rationale: the consequence flows from industrial treatment
+
+# ---------------------------------------------------------------------------
 # documents — fine-grained control over what lands in the file.
 #
 # Precedence, highest first:

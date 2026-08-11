@@ -9,6 +9,112 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the assertion layer (**AJC-61**, medical story M2)
+
+- Added `scenario.medical_assertions`: contentions, medical opinions and
+  apportionment assertions over the AJC-60 world-truth ledger, with truth-only
+  `supported | thin | unsupportable` grades derived from the frozen Escobedo v2
+  rubric. Requires `scenario.medical_history`; an absent block moves zero bytes
+  (all four golden corpora byte-identical throughout).
+- Added the §C referential validator with byte-exact templates, failing at
+  generation time, at `validate --spec` and at `validate --out`. Polarity is
+  the contract: assertion divergence from world truth is legal case content and
+  passes; only internal incoherence fails.
+- Typed the narrowed *Justice*/Hikida rule (`claim_type=compensable_consequence`
+  + `treatment_causation` + `requested_apportionment`) instead of adding a
+  fifteenth `DoctrineHook` — the enum member, its doctrine content and the
+  showcase golden re-record are AJC-62's; note that adding the fifteenth hook
+  later changes the auto-derived doctrine pool and re-rolls `auto:` caseloads.
+- Upgraded the four missing-entity doctrine hooks (`benson`, `sibtf`,
+  `lc4664_prior_award`, `firefighter_presumption`) to typed groundings; an
+  explicit hook without one warns and survives (explicit control wins, loudly).
+- Resolved `PriorAwardEntry.conclusively_presumed` (`bool | None`) from the
+  award's own resolution: stipulated award and findings-and-award presume, a
+  compromise and release never does (counsel, 2026-08-10); an explicit seed
+  value always wins.
+- Added the semantically keyed 15-family `medical-assertions:` sampler behind
+  the seed gate: Fraction-exact provenance-bearing knobs, explicit-entry
+  authority with skip-not-redraw suppression, evidence-conditioned QME/AME
+  dispositions, the deliberate final-omission and contradicted-zero-share
+  defects, label-independent evidence budgets and distractors, and IDs
+  (`ctn-NN`/`opn-NN`/`app-NN`) assigned only after every draw.
+- Pinned the 6,000-case measurement cohort (seeds `610000..615999`, frozen
+  6-cell lifecycle schedule, five explicit witness strata meeting three-sigma
+  denominator floors) and froze its empirical constants and recipe→grade
+  confusion matrix as the property oracle.
+- Added the `assertions` truth channel at envelope `1.0.0` /
+  `channelVersion 1.0.0` — the forward-compatibility contract AJC-48 shipped is
+  exactly what let it arrive without a version bump — carrying the graded
+  ledger, a typed `validationContext`, a redacted world-truth projection and a
+  canonical `ledgerDigest`, so `validate --out` re-validates and re-grades from
+  the recorded artifact alone, substrate-checkout-free. A tampered quality,
+  reference or digest fails with an exact template.
+- Added the label-position leakage anti-probe: the reserved keys (`quality`,
+  `rubric`, `assertionQuality`, `medicalAssertions`) and the bare token
+  `unsupportable` are absent from every analyzer-visible artifact — seed and
+  facts YAML, manifests, filenames and directory names, raw document bytes,
+  parsed DOCX `docProps` (property names included), the raw PDF Info
+  dictionary, XMP, annotations and page text, OCR over image-only pages
+  (tesseract; an unscannable OCR-only surface fails loudly), decoded EML
+  parts and header names, and the CLI streams — with a planted positive
+  control for every position and an (empty) named exemption ledger.
+
+### Changed — assertion-layer fix round 1 (sol review PR #44; counsel ruling AJC-61/D1, 2026-08-11)
+
+- Reverted two contract alterations: condition candidacy is world-truth-typed
+  (visibility only conditions the B.5 evidence read), and the firefighter
+  evidence override is gone — a presumption contention on wholly-unrelated
+  oncology grades what the frozen rubric says.
+- Suppression now keys on the post-shaping semantic surface with the same
+  rule-6 function that keys explicit entries, and every ID (`ctn`/`opn`/`app`)
+  is assigned in one labelling pass after the last stochastic draw.
+- Opinions carry their own semantically salted quality-target recipe driving
+  the B.8 foundation surface, with `OPINION_RECIPE_WEIGHTS` derived against
+  the measured worst-of drag (the sanctioned Part 3:659 adjustment). Measured
+  on the re-pinned 6,000-case cohort: opinions 0.7704 and apportionment
+  assertions 0.7900 supported, inside counsel's 0.75–0.85.
+- Contentions measure 0.5880 supported after the reversions — below the
+  counsel ruling's 0.65 floor. The floor assertion is deliberately left
+  failing with the value pinned exactly: an open counsel question, recorded
+  rather than absorbed.
+- The caseload truth rollup allocates its money-channel case list and record
+  dicts independently of the top-level index (byte-identical output).
+- Dangling typed-grounding entity references now warn and survive (no frozen
+  §C literal exists, so existence is an authoring warning, never an error).
+- The seed template and the operator guide document both medical-story
+  ledgers: the requires-history gate, the 12/8/12 and combined-12 caps,
+  truth-only quality, and the typed Hikida fields.
+
+### Changed — assertion-layer fix round 2 (sol review PR #44 round 2)
+
+- The leakage scan parses the XMP packet so element and attribute NAMES are
+  reserved keys (an unparseable packet fails loudly) and enumerates RAW
+  annotation dictionary keys through the xref — `annotation.info` cannot see
+  a custom key, proved with a live PyMuPDF probe. A planted positive control
+  and a detector mutant cover each new direction.
+- Endorsement grade bookkeeping keys on the unique pending reference: two
+  distinct explicit contentions may legally share the B.2 suppression tuple,
+  and the tuple-keyed dict kept only the last twin's grade (an evaluator
+  endorsed nothing where it endorsed ctn-01 alone; reproduced RED before
+  fixing).
+- Every post-type contention draw salts on the full Part-3 candidate stream
+  key (candidate family + rule-6 surface + normalized grounding IDs),
+  distinct from the 8-field suppression tuple; pre-type incidence/type draws
+  keep their family-prefixed entity keys — the documented reading, ratified
+  verbatim by the spec author in round 3. Cohort re-measured: contentions
+  0.5857 supported (was 0.5880); opinions 0.7698 and assertions 0.7900 in
+  band; every pre-type pin byte-identical.
+- **Counsel ruling AJC-61/D1-R2 Option A2 (ratified 2026-08-11) closes the
+  open question**: the measured contention share IS the modeled behavior
+  (invisible-condition, psych add-on and presumption-fight mass), the
+  contention floor is 0.55 with the exact 3,770/6,437 = 0.5857 pin
+  retained, the opinions/assertions band stays 0.75–0.85, and the psych
+  rules and 2:1 residual stand unchanged. The suite carries no designed
+  RED any more.
+- `OPINION_RECIPE_WEIGHTS` states its 0.8267 figure as fix-round-1
+  calibration arithmetic and defers realized measurement to the pinned
+  cohort constants.
+
 ### Added — the ground-truth export (**AJC-48**, money layer Wave 3)
 
 - Added versioned, scorer-only case truth manifests under `truth/` with a

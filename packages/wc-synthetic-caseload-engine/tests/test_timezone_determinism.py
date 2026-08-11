@@ -15,6 +15,7 @@ same tree would also have drifted from one day to the next.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -635,3 +636,90 @@ class TestModuleEntryPoint:
         )
         assert completed.returncode == 0, completed.stderr[-2000:]
         assert "wc-caseload" in completed.stdout
+
+
+# ---------------------------------------------------------------------------
+# AJC-61 (M2) — the assertion ledger and its truth digest
+# ---------------------------------------------------------------------------
+
+
+def assertion_case(case_id: str) -> dict[str, Any]:
+    """The AJC-60 probe, opted into the M2 assertion layer as well.
+
+    Its own probe for the same reason ``medical_case`` is: the assertion layer
+    adds clock-shaped surfaces of its own — sampled report dates are computed
+    from the injury date, the validation context carries the anchor, and the
+    ledger digest seals every one of them into the truth channel.
+    """
+    case = medical_case(case_id)
+    case["scenario"]["medical_assertions"] = {}
+    return case
+
+
+@requires_substrate
+def test_assertion_ledger_and_truth_digest_are_identical_across_timezones(
+    tmp_path: Path,
+) -> None:
+    from wc_caseload_engine.truth_manifest import build_case_truth_manifest
+
+    seed = parse_case_seed(assertion_case("tz-assertions"))
+
+    with timezone_set(ZONE_WEST):
+        west_plan = build_case_plan(seed)
+        west_truth = build_case_truth_manifest(west_plan)
+    with timezone_set(ZONE_EAST):
+        east_plan = build_case_plan(seed)
+        east_truth = build_case_truth_manifest(east_plan)
+
+    assert west_plan.medical_assertions is not None
+    assert east_plan.medical_assertions is not None
+    assert (
+        west_plan.medical_assertions.model_dump()
+        == east_plan.medical_assertions.model_dump()
+    ), "the assertion ledger differs between zones"
+    west_channel = west_truth["channels"]["assertions"]
+    east_channel = east_truth["channels"]["assertions"]
+    assert west_channel["ledgerDigest"] == east_channel["ledgerDigest"]
+    assert json.dumps(west_truth, sort_keys=True) == json.dumps(
+        east_truth, sort_keys=True
+    ), "the truth manifest differs between zones"
+
+
+@requires_substrate
+def test_assertion_ledger_digest_is_identical_across_hash_seeded_processes(
+    tmp_path: Path,
+) -> None:
+    """Two fresh interpreters under different PYTHONHASHSEED values must seal
+    the same ledger into the same digest — set iteration or dict order leaking
+    into composition would land exactly here."""
+    import yaml as yaml_module
+
+    spec_path = tmp_path / "assertions.yaml"
+    spec_path.write_text(
+        yaml_module.safe_dump(
+            {
+                "caseload_id": "assertion-hashseed",
+                "cases": [
+                    {**assertion_case("ah-001"), "documents": {"global_cap": 6}}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    first_out = tmp_path / "first"
+    second_out = tmp_path / "second"
+    _generate_in_subprocess(spec_path, first_out, hash_seed="0")
+    _generate_in_subprocess(spec_path, second_out, hash_seed="424242")
+
+    first_truth = json.loads(
+        (first_out / "truth" / "ah-001.truth.json").read_text(encoding="utf-8")
+    )
+    second_truth = json.loads(
+        (second_out / "truth" / "ah-001.truth.json").read_text(encoding="utf-8")
+    )
+    first_channel = first_truth["channels"]["assertions"]
+    second_channel = second_truth["channels"]["assertions"]
+    assert first_channel["ledgerDigest"] == second_channel["ledgerDigest"]
+    assert json.dumps(first_channel, sort_keys=True) == json.dumps(
+        second_channel, sort_keys=True
+    )

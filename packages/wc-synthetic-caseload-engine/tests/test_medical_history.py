@@ -1422,6 +1422,37 @@ SUPERSEDED_DOC_CLAIMS: tuple[tuple[str, str], ...] = (
         "the cross-check draws 1,500 per shape across seven shapes — 10,500 cases, "
         "equally weighted; see AGGREGATE_PROBE_N",
     ),
+    # AJC-61 (M2). The ledger gained its one publication outlet — the truth
+    # manifest's redacted assertions-channel projection — so every "published
+    # nowhere / M4 will do it" sentence this package shipped became stale at
+    # once. Registered in both wrap forms each occurrence actually used.
+    (
+        "not into the truth manifest",
+        "M2 gives the ledger a redacted scorer-only projection inside the truth "
+        "manifest's assertions channel (AJC-61)",
+    ),
+    (
+        "or to the truth manifest",
+        "same claim, planner wording — the assertions channel is the one outlet now",
+    ),
+    (
+        "M4 gives the ledger a scorer-only channel",
+        "the scorer-only channel shipped in M2 as channels.assertions (AJC-61)",
+    ),
+    (
+        "M4 gives the ledger a\nscorer-only channel",
+        "same claim, wrapped as the module docstring carried it",
+    ),
+    (
+        "M5 owns the arithmetic this flag will govern",
+        "M2 consumes the resolved presumption (default by resolution, explicit "
+        "override wins); M5 still owns only the offset arithmetic",
+    ),
+    (
+        "Defaults ``False`` on the design record's conservative ruling",
+        "counsel resolved §2-Q7 on 2026-08-10: the default derives from the award's "
+        "resolution (stip/F&A presume, C&R never); the seed field is bool | None",
+    ),
 )
 
 #: How far either side of a hit counts as "the passage it sits in".
@@ -1536,6 +1567,35 @@ class TestTheDocsDoNotStateSupersededContracts:
                 )
             )
         assert not offenders, "superseded claims still stated:\n  " + "\n  ".join(offenders)
+
+    def test_prior_award_presumption_docstring_has_no_retired_m1_or_m5_claim(self) -> None:
+        """AJC-61. The seed field's own prose must state the resolution-derived
+        default and the explicit override — not the conservative-default /
+        M5-owns-it story the field shipped with."""
+        seeds_source = (PRODUCTION_PACKAGE / "seeds.py").read_text(encoding="utf-8")
+        for retired in (
+            "Defaults ``False`` on the design record's conservative ruling",
+            "M5 owns the arithmetic this flag will govern",
+        ):
+            assert retired not in seeds_source, retired
+        assert "PRESUMPTION_DEFAULT_BY_RESOLUTION" in seeds_source
+        assert "always wins" in seeds_source
+
+    def test_claude_medical_history_contract_names_the_m2_truth_projection(self) -> None:
+        """AJC-61. The doc sweep globs ``.py`` only, so the CLAUDE.md contract is
+        asserted directly: the world-truth section must carry the M2 projection
+        and none of the retired publication claims."""
+        claude = (PACKAGE_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+        for retired in (
+            "It is published nowhere, and that is the design.",
+            "M4 gives the ledger a\nscorer-only channel",
+            "M4 gives the ledger a scorer-only channel",
+        ):
+            assert retired not in claude, retired
+        assert "scorer-only projection inside the truth manifest's `assertions` channel" in (
+            claude
+        )
+        assert "The assertion layer (AJC-61, M2)" in claude
 
     def test_quoting_a_retired_number_needs_the_word_that_retires_it(self) -> None:
         """The control for the exemption, so the exemption cannot swallow the rule."""

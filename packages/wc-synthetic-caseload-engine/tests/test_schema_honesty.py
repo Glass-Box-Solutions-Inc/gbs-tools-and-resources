@@ -74,6 +74,15 @@ SCENARIO_CLASSES = (
     # with nothing policing it, which is the failure mode the tuple's own
     # comment warns about, one level up.
     "ApplicantProfile",
+    # The assertion layer (AJC-61, M2). In scope from the day the classes exist,
+    # and — unlike the medical-history block above — none of their fields
+    # carries a "not yet honoured" marker: every field drives the truth
+    # manifest's assertions channel, which is output. A marker here would be
+    # the opposite lie to the one this guard usually catches.
+    "MedicalAssertionsScenario",
+    "ContentionEntry",
+    "MedicalOpinionEntry",
+    "ApportionmentAssertionEntry",
 )
 
 @dataclass(frozen=True)
@@ -180,19 +189,12 @@ INERT_PROBES: dict[str, InertProbe] = {
         lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
         witness=_MEDICAL_WITNESS,
     ),
-    "PriorAwardEntry.conclusively_presumed": InertProbe(
-        plain=_medical(prior_claims=[_PRIOR_CLAIM]),
-        varied=_medical(
-            prior_claims=[
-                {
-                    **_PRIOR_CLAIM,
-                    "award": {**_PRIOR_CLAIM["award"], "conclusively_presumed": True},
-                }
-            ]
-        ),
-        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
-        witness=_MEDICAL_WITNESS,
-    ),
+    # PriorAwardEntry.conclusively_presumed's probe was deleted with its marker
+    # in AJC-61: M2 consumes the field (the resolution-keyed presumption default
+    # plus explicit override feeds assertion eligibility, the validator and the
+    # truth projection), so it is honoured now and the reverse guard would
+    # reject a probe whose marker is gone. No replacement probe — that is the
+    # rule working, not a gap.
     "ApplicantProfile.sex": InertProbe(
         plain=_medical(),
         varied=_medical(),

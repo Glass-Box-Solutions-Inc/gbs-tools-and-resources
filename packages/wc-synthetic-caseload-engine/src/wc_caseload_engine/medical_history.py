@@ -7,22 +7,26 @@ that carries ``scenario.medical_history``. Keeping them apart is what lets "this
 has no medical-history layer" be a single ``None`` the planner can short-circuit on,
 instead of a dozen empty collections on a model that is always there.
 
-**Nothing here is published, and that is the design rather than an unfinished edge.**
-The two-level design this ledger opens depends on it. World truth is the thing an
-assertion is *graded against*; a document that could cite it directly would collapse
-the two levels back into one, because a party's assertion about a history could no
-longer diverge from the history. So M1 derives the ledger, carries it on the plan,
-and writes it nowhere: not into ``case_facts.yaml``, not into the manifest's
-``caseFacts`` block, not into the truth manifest. That is the same discipline
-``case_facts.py`` already applies to ``wpi`` and ``pd`` — "fields the ledger derives
-but nothing renders stay on the model for later phases and out of the output" — one
-layer earlier. M3 gives the conditions a document surface; M4 gives the ledger a
-scorer-only channel and the version bump that goes with it.
+**Nothing here reaches an analyzer-visible artifact, and that is the design rather
+than an unfinished edge.** The two-level design this ledger opens depends on it.
+World truth is the thing an assertion is *graded against*; a document that could
+cite it directly would collapse the two levels back into one, because a party's
+assertion about a history could no longer diverge from the history. So the ledger
+is derived, carried on the plan, and kept out of ``case_facts.yaml``, the
+manifest's ``caseFacts`` block, every rendered document and every warning. That is
+the same discipline ``case_facts.py`` already applies to ``wpi`` and ``pd`` —
+"fields the ledger derives but nothing renders stay on the model for later phases
+and out of the output" — one layer earlier. **M2 (AJC-61) gives the ledger exactly
+one outlet: a redacted, scorer-only projection inside the truth manifest's
+``assertions`` channel** — causal facts only, no demographics, no archetype, no
+identities — which exists so a stated assertion can be graded from the recorded
+truth artifact alone. M3 gives the conditions a document surface.
 
-The consequence worth stating plainly: **every field on every model in this module is
-byte-inert in M1**, and the seed gate that reaches them is marked "not yet honoured"
-so the schema-honesty sweep will force that marker's removal the moment M3 wires a
-surface up.
+The consequence worth stating plainly: every field on every model in this module is
+**document-byte-inert**, and the seed gate that reaches them is marked "not yet
+honoured" so the schema-honesty sweep will force that marker's removal the moment
+M3 wires a rendering surface up. The truth projection is not a rendering surface —
+it lives behind the scorer boundary.
 
 ## The sampler
 
@@ -101,7 +105,7 @@ import random
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
@@ -285,12 +289,13 @@ class PriorAward(BaseModel):
     still_exists_conclusively_presumed: bool = False
     """Section 4664(b)'s presumption, modelled rather than hardcoded.
 
-    Defaults ``False`` on the design record's conservative ruling (§2-Q7): a
-    compromise and release does not straightforwardly carry the same presumption
-    weight as a rated award, so the presumption is opted into per seed rather than
-    assumed. That default is flagged for a counsel check before M5 finalises the
-    maths, and defaulting the *permissive* way now would bake an unreviewed reading of
-    section 4664's reach into every case generated in between.
+    Carries the **resolved** value. The seed field is ``bool | None``; when the
+    author says nothing, :data:`PRESUMPTION_DEFAULT_BY_RESOLUTION` supplies the
+    default from how the award issued — counsel resolved §2-Q7 on 2026-08-10:
+    a stipulated award presumes, a findings-and-award presumes (counsel-assumed,
+    M5 micro-confirm), a compromise and release never does. An explicit seed
+    value always wins. M2's assertion layer consumes this; M5 owns the offset
+    arithmetic.
     """
 
 
@@ -1183,19 +1188,41 @@ def _condition_from_entry(entry: Any, index: int, injured: frozenset[str]) -> Me
     )
 
 
+#: Section 4664(b)'s presumption default, keyed by the *resolved* award
+#: resolution. Counsel resolved §2-Q7 on 2026-08-10: "No - only a stip" — a
+#: compromise and release never presumes; a stipulated award does; a prior
+#: findings-and-award also presumes (counsel-assumed, micro-confirm at M5 spec).
+#: This supplies only the DEFAULT: an explicit seed ``conclusively_presumed``
+#: always wins, including when it differs from its own resolution's default,
+#: because an authored override is an authored fact rather than incoherence.
+PRESUMPTION_DEFAULT_BY_RESOLUTION: Final[dict[str, bool]] = {
+    "c_and_r": False,
+    "findings_and_award": True,
+    "stipulated_award": True,
+}
+
+
 def _claim_from_entry(entry: Any, index: int) -> PriorClaim:
     award = None
     if entry.award is not None:
+        # ``None`` on the seed means "the claim's own", which the seed schema has
+        # already checked is a resolution capable of producing an award. The
+        # ledger carries the resolved value so no consumer has to know that.
+        resolved_award_resolution_type = (
+            entry.award.resolution_type or entry.resolution_type
+        )
+        effective_conclusively_presumed = (
+            entry.award.conclusively_presumed
+            if entry.award.conclusively_presumed is not None
+            else PRESUMPTION_DEFAULT_BY_RESOLUTION[resolved_award_resolution_type]
+        )
         award = PriorAward(
             id=f"prior-{index:02d}-award",
             body_parts=tuple(entry.award.body_parts),
             pd_percent=entry.award.pd_percent,
             award_date=entry.award.award_date,
-            # ``None`` on the seed means "the claim's own", which the seed schema has
-            # already checked is a resolution capable of producing an award. The
-            # ledger carries the resolved value so no consumer has to know that.
-            resolution_type=entry.award.resolution_type or entry.resolution_type,
-            still_exists_conclusively_presumed=entry.award.conclusively_presumed,
+            resolution_type=resolved_award_resolution_type,
+            still_exists_conclusively_presumed=effective_conclusively_presumed,
         )
     return PriorClaim(
         id=f"prior-{index:02d}",
@@ -1444,6 +1471,7 @@ __all__ = [
     "HEALTH_ARCHETYPES",
     "HOOK_GROUNDING",
     "ONSET_YEARS_BEFORE_INJURY",
+    "PRESUMPTION_DEFAULT_BY_RESOLUTION",
     "SEVERITY_WEIGHTS",
     "SIBTF_DISABLING_SEVERITIES",
     "SIBTF_QUALIFYING",

@@ -243,6 +243,35 @@ REGISTRY: dict[str, RegisteredMessage] = {
         resolution={"scenario": {"medical_history": {"sample_conditions": True}}},
         note="AJC-60. The first of the two offered edits; the second removes the archetype.",
     ),
+    "medical-assertions-requires-medical-history": RegisteredMessage(
+        where="ScenarioSpec._assertions_need_a_world_ledger",
+        directives=(
+            "Add a scenario.medical_history block, or remove scenario.medical_assertions",
+        ),
+        trigger={"scenario": {"medical_assertions": {}}},
+        resolution={"scenario": {"medical_history": {}}},
+        note=(
+            "AJC-61. The resolving edit adds a minimal valid scenario.medical_history "
+            "block — the first offered alternative; the comma-separated list survives "
+            "as ONE clause because commas are not clause boundaries."
+        ),
+    ),
+    "medical-assertions-explicit-empty": RegisteredMessage(
+        where="MedicalAssertionsScenario._an_empty_block_decides_nothing",
+        directives=(
+            "Add at least one explicit contention, medical opinion, or apportionment "
+            "assertion, set sample_assertions to true, or remove "
+            "scenario.medical_assertions",
+        ),
+        trigger={
+            "scenario": {
+                "medical_history": {},
+                "medical_assertions": {"sample_assertions": False},
+            }
+        },
+        resolution={"scenario": {"medical_assertions": {"sample_assertions": True}}},
+        note="AJC-61. Follows the second offered edit: sample_assertions back to true.",
+    ),
     "award_outside_its_claim": RegisteredMessage(
         where="PriorClaimEntry._award_overlaps_its_own_claim",
         directives=(

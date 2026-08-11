@@ -540,6 +540,41 @@ Round 10 audited round 9. Three findings, plus a fourth found while reproducing 
 
 ## Changelog
 
+- 2026-08-11 — **AJC-61 (M2, the assertion layer):** `scenario.medical_assertions` opens the
+  second medical-story ledger — contentions / medical opinions / apportionment assertions
+  graded `supported|thin|unsupportable` against the frozen Escobedo v2 rubric, with the
+  polarity rule as the contract (divergence from world truth is case content; only internal
+  incoherence fails, with byte-exact templates). Labels and a redacted world-truth projection
+  export ONLY to the truth manifest's `assertions` channel (envelope unchanged at `1.0.0`,
+  `channelVersion 1.0.0`, canonical `ledgerDigest`; `validate --out` re-validates and
+  re-grades substrate-checkout-free). Hikida rides typed fields, not a fifteenth
+  `DoctrineHook` (AJC-62 owns the enum member and its showcase re-record). The 15-family
+  `medical-assertions:` sampler is semantically keyed behind the gate; the empirical
+  constants are measured over the frozen 6,000-case cohort and pinned, never guessed; the
+  label-position leakage anti-probe (reserved keys + bare `unsupportable`, DOCX `docProps`
+  and PDF metadata included) holds the scorer boundary with positive controls. Anti-criterion
+  held throughout: all four golden corpora byte-identical with the block absent.
+  **Fix round 1** (sol review PR #44; counsel ruling AJC-61/D1, 2026-08-11): condition
+  candidacy reverted to world-truth type (visibility is the B.5 evidence predicate only) and
+  the firefighter evidence override removed; suppression re-keyed on the post-shaping
+  surface with every ID assigned in one final labelling pass; opinions given their own
+  foundation recipe with `OPINION_RECIPE_WEIGHTS` solved against the measured worst-of drag
+  (opinions 0.7704 / assertions 0.7900 supported, in band); the leakage probe extended to
+  parsed docProps property names, the raw PDF Info dictionary, OCR-only pages and decoded
+  EML with a planted control per position and detector mutants m19-20/21; and the
+  re-measured contention supported share — 0.5880 — sits below the ruling's 0.65 floor,
+  pinned exactly and deliberately left RED as an open counsel question.
+  **Fix round 2** (sol): XMP element/attribute NAMES and RAW annotation xref keys enter the
+  reserved-key scan (`.info` cannot see a custom key — live-probe proven; controls + mutants
+  m19-23/24); endorsement grades key on the unique pending reference, never the shareable
+  suppression tuple (m19-22, reproduced RED on cohort-4803 first); post-type draws salt on
+  the full Part-3 stream key — family + rule-6 surface + normalized grounding IDs — with the
+  pre-type reading documented and flagged for spec ratification (m19-25; ratified verbatim
+  in sol round 3). Post-F3 cohort: contentions 0.5857, opinions 0.7698 / assertions 0.7900
+  in band, every pre-type pin byte-identical. **Counsel ruling AJC-61/D1-R2 Option A2
+  (2026-08-11)** closed the floor question: 0.5857 is the modeled behavior, the contention
+  floor is 0.55 with the exact pin retained, opinions/assertions stay 0.75–0.85, psych rules
+  and the 2:1 residual unchanged — the designed RED no longer exists.
 - **conjectured:** same-machine double-run md5 comparison proves generation determinism (Phase B gate design).
   **refuted by:** advisor-demanded clock-shift probe — TZ=Australia/Sydney drifted 55-60 of 289 files (EML Date offsets, PDF/docx timestamp normalization, substrate date.today() content, Faker clock-relative date_of_birth); the CLI-level gate also masked an in-process leak the two-zone test caught.
   **learned:** determinism gates must vary the environment axes the guarantee spans — process, hash seed, timezone, entrypoint — not just repeat the run; a passing gate that shares the leak's precondition proves nothing about the class.

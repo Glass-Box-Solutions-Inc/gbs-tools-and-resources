@@ -48,7 +48,8 @@ package is built on. Flagged and accepted as an explicit stack decision.
 | `manifests.py` | Output tree, manifests, `validate --out`. |
 | `truth_manifest.py` | Versioned scorer-only truth envelopes, lossless money-channel serialization/re-import (including opt-in §4650(d) penalties), and the caseload truth index. |
 | `clinical_grounding.py` | Cited epidemiology as data (AJC-60): nine conditions with age/sex-banded prevalences, each value carrying its source and confidence grade, each knob its provenance tag. NOT-FOUND cells are omitted, never zeroed. |
-| `medical_history.py` | The world-truth ledger and its archetype sampler (AJC-60). Derived only for a seed carrying `scenario.medical_history`; **published nowhere**. |
+| `medical_history.py` | The world-truth ledger and its archetype sampler (AJC-60). Derived only for a seed carrying `scenario.medical_history`; analyzer-invisible, with one scorer-only outlet — M2's redacted projection in the truth manifest's `assertions` channel. |
+| `medical_assertions.py` | The assertion layer (AJC-61, M2): contentions / medical opinions / apportionment assertions with truth-only `supported\|thin\|unsupportable` grades, the §C referential validator (divergence legal, incoherence fails), the Escobedo v2 grading rubric, the Fraction-exact knobs and the 15-family `medical-assertions:` sampler. Labels export ONLY to the truth manifest. |
 | `schema_audit.py` | The "not yet honoured" docstring marker sweep (ISC-137). Parses `seeds.py` from the syntax tree, never from `model_fields`. |
 | `message_audit.py` | The actionable-message sweep (ISC-129). Every message `seeds.py` can raise, one level of helper indirection resolved, classified into *instructs* vs *reports*. |
 | `cli.py` | Click commands. |
@@ -236,6 +237,8 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_truth_manifest.py` | Lossless money round trips, envelope/open-channel versioning, rollup completeness, scorer-only subtree isolation, and the case-tree leakage anti-probe (AJC-48) |
 | `test_golden_corpus.py` | The golden-corpus gate: digest faithfulness and sensitivity, redaction-path staleness, drift-report wording, and the `suite`-tier byte-identity check (AJC-59) |
 | `test_medical_history.py` | The world-truth ledger: grounding-table honesty, the population-weighted calibration solve, the BMI/smoking risk gradients (single-profile and mixture readings), marginal matching against the cited tables, the per-claim-shape anti-fingerprint probes and their pooling control, the two-surface documentation unions, prior-claim ordering, the SIBTF grounding predicate, the seed gate, and byte inertness (AJC-60) |
+| `test_medical_assertions.py` | The assertion layer (AJC-61): frozen byte-exact §C templates, the closed invalid-basis table, per-item Escobedo independence, explicit Hikida forward/inverse fixtures, the 15 divergence-must-pass cases, the absent gate, and the E.8 CLI polarity proofs |
+| `test_medical_assertion_properties.py` | The 6,000-case cohort oracle (AJC-61): pinned empirical constants, the recipe→grade confusion matrix, counsel bands, tagged-family floors and rates, the salt oracle, suppression, and the determinism family |
 
 ### The mutation gate
 
@@ -374,20 +377,25 @@ Rendering is the slow part; the plan carries every subtype, date, track and form
 `scenario.medical_history` opens a second ledger beside `CaseFacts` and `MoneyFacts`, on the
 `money` pattern: derived only when the seed asks, `None` when it does not.
 
-**It is published nowhere, and that is the design.** Not `case_facts.yaml`, not the manifest's
-`caseFacts` block, not the truth manifest. World truth is what an *assertion* is graded
-against, so a document able to cite it would collapse the two-level design the medical-story
-programme is built on — a party's assertion about a history could no longer diverge from the
-history. This is the same discipline `case_facts.py` already applies to `wpi`/`pd`
-("fields the ledger derives but nothing renders stay on the model and out of the output"),
-applied one layer earlier. M3 gives the conditions a document surface; M4 gives the ledger a
-scorer-only channel and the truth-envelope version bump that goes with it.
+**It reaches no analyzer-visible artifact, and that is the design.** Not `case_facts.yaml`,
+not the manifest's `caseFacts` block, not a document, not a warning. World truth is what an
+*assertion* is graded against, so a document able to cite it would collapse the two-level
+design the medical-story programme is built on — a party's assertion about a history could no
+longer diverge from the history. This is the same discipline `case_facts.py` already applies
+to `wpi`/`pd` ("fields the ledger derives but nothing renders stay on the model and out of
+the output"), applied one layer earlier. **M2 (AJC-61) gave the ledger its one outlet: a
+redacted, scorer-only projection inside the truth manifest's `assertions` channel** — causal
+facts only (conditions with severity/trajectory/pre-DOI symptom state, prior claims and
+awards with their effective §4664 presumption), never demographics, archetype or identities —
+so a stated assertion can be graded from the recorded truth artifact alone. M3 gives the
+conditions a document surface.
 
 Consequences worth knowing before touching it:
 
-- **Everything it adds is byte-inert**, so every seed field it adds carries the "not yet
-  honoured" marker and an inertness probe. Wiring any one of them up turns
-  `test_schema_honesty.py` red until the marker goes.
+- **Everything it adds is document-byte-inert**, so every seed field it adds carries the "not
+  yet honoured" marker and an inertness probe against the rendered output. Wiring any one of
+  them up turns `test_schema_honesty.py` red until the marker goes. The scorer-only truth
+  projection is not a rendering surface and does not lift a marker.
 - **`c-calibrated-by-b`, solved over the population and not the cell.** Archetypes carry the
   *correlation* between conditions; a bisection solve calibrates per-archetype probabilities so
   the corpus reproduces `clinical_grounding`'s cited marginals **by construction**. Edit an
@@ -548,6 +556,41 @@ Consequences worth knowing before touching it:
   tests the *list*, and a checker that had stopped flagging anything would have passed it.
 
 ---
+
+## The assertion layer (AJC-61, M2)
+
+`scenario.medical_assertions` opens the second level of the medical story: what the parties
+*say* about the world truth. Requires `scenario.medical_history`; absent, it moves zero bytes
+(the wages-gate pattern, proven by the golden gate).
+
+- **Polarity is the module contract.** Assertion divergence from world truth — a nonindustrial
+  condition asserted industrial, apportionment to a wholly unrelated cancer, an over-applied
+  Hikida refusal — is *legal case content*, graded `supported|thin|unsupportable` under the
+  frozen Escobedo v2 rubric. Only **internal incoherence** fails `validate`: dangling
+  references, contradictory lifecycles, percentages that cannot sum. Every failure message is
+  a frozen byte-exact template.
+- **Quality is truth-only.** No seed model carries a `quality` field (a reserved-field
+  pre-validator rejects one loudly), and the labels appear in exactly one artifact: the truth
+  manifest's `assertions` channel (envelope stays `1.0.0`, `channelVersion 1.0.0`, a
+  `ledgerDigest` over the canonical payload, and a typed `validationContext` that keeps
+  `validate --out` substrate-checkout-free). The label-position leakage probe scans every
+  analyzer-visible surface — parsed DOCX `docProps` (property NAMES included), the raw PDF
+  Info dictionary, the XMP packet parsed so element/attribute NAMES are keys, annotations
+  through both `.info` and the raw xref key enumeration (`.info` cannot see a custom key),
+  decoded EML parts and header names, OCR over image-only pages — for the reserved keys and
+  the bare token `unsupportable`, with a planted positive control per position. The OCR read
+  needs the `tesseract-ocr` binary (CI installs it); an image-only surface with no OCR
+  engine — or an unparseable XMP packet — fails the scan loudly rather than passing silently.
+- **Hikida is typed, not enumerated.** `DoctrineHook` stays at fourteen members (the
+  fifteenth is AJC-62's, with the showcase golden re-record it forces);
+  `claim_type="compensable_consequence"` + `treatment_causation` + `requested_apportionment`
+  state the narrowed *Justice* rule, and both wrong directions grade unsupportable.
+- **Sampling is semantically keyed.** Fifteen frozen rng families under
+  `medical-assertions:` — never `medical:` — keyed by candidate semantics, never by assigned
+  ids or positions; explicit entries are authoritative, sampling appends, collisions suppress
+  without redraw, and ids (`ctn-NN`/`opn-NN`/`app-NN`) are assigned last. The empirical
+  constants in `tests/assertion_cohort.py` are **measured and pinned** from the frozen
+  6,000-case cohort (`.venv/bin/python tests/assertion_cohort.py`), never guessed.
 
 ## Adding a lifecycle path
 
