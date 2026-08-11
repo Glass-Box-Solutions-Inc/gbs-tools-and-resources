@@ -175,10 +175,24 @@ export class StructuralOptionsProjector
       }
     }
 
-    // system
-    if (typeof options.system === "string") {
+    // model is a developer-controlled provider identifier dispatched verbatim; validate it as a
+    // conservative structural identifier so PHI free text can never ride the model slot (L5).
+    if (typeof raw["model"] === "string") {
+      assertStructuralProviderString(raw["model"] as string, "model");
+    }
+
+    // system — a known text carrier: if present it MUST be a string. A non-string value (e.g. an
+    // object that could smuggle PHI text past the `typeof === "string"` classification and egress
+    // RAW via the clone) fails closed rather than passing through unclassified (L5).
+    const systemValue = raw["system"];
+    if (systemValue !== undefined && systemValue !== null) {
+      if (typeof systemValue !== "string") {
+        throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+          malformedTextCarrier: "system",
+        });
+      }
       collected.push({
-        segment: { path: "system", kind: "system", text: options.system },
+        segment: { path: "system", kind: "system", text: systemValue },
         write: (draft, tokenized) => {
           draft.system = tokenized;
         },
@@ -192,10 +206,18 @@ export class StructuralOptionsProjector
       assertAllowedEnum(message.role, ALLOWED_MESSAGE_ROLES, `messages[${i}].role`);
       message.content.forEach((part, j) => {
         assertAllowedEnum(part.type, ALLOWED_CONTENT_TYPES, `messages[${i}].content[${j}].type`);
-        if (typeof part.text === "string") {
+        const partText = (part as unknown as Record<string, unknown>)["text"];
+        // A `text` carrier that is present but NON-string (an object smuggling PHI) fails closed;
+        // it must never bypass tokenization and egress raw via the clone (L5).
+        if (partText !== undefined && partText !== null) {
+          if (typeof partText !== "string") {
+            throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+              malformedTextCarrier: `messages[${i}].content[${j}].text`,
+            });
+          }
           const path = `messages[${i}].content[${j}].text`;
           collected.push({
-            segment: { path, kind: kindForRole(message.role), text: part.text },
+            segment: { path, kind: kindForRole(message.role), text: partText },
             write: (draft, tokenized) => {
               const target = draft.messages?.[i]?.content?.[j];
               if (target !== undefined) target.text = tokenized;
@@ -218,10 +240,16 @@ export class StructuralOptionsProjector
       });
     });
 
-    // embeddingText
-    if (typeof options.embeddingText === "string") {
+    // embeddingText — a known text carrier: present-but-non-string fails closed (L5).
+    const embeddingValue = raw["embeddingText"];
+    if (embeddingValue !== undefined && embeddingValue !== null) {
+      if (typeof embeddingValue !== "string") {
+        throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+          malformedTextCarrier: "embeddingText",
+        });
+      }
       collected.push({
-        segment: { path: "embedding", kind: "embedding", text: options.embeddingText },
+        segment: { path: "embedding", kind: "embedding", text: embeddingValue },
         write: (draft, tokenized) => {
           draft.embeddingText = tokenized;
         },

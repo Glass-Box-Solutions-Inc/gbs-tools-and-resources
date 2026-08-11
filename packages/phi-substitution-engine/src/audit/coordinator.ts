@@ -56,15 +56,27 @@ export class PhiAuditedAttemptCoordinator {
           durability: null,
         };
       }
-      throw error;
+      // §7/N2: an unexpected prepare failure must NEVER surface a raw upstream message/code.
+      // The provider was never invoked; fail closed with a FIXED code.
+      return {
+        outcome: "failed_closed",
+        errorCode: "AUDIT_PREPARE_FAILED",
+        providerInvoked: false,
+        durability: null,
+      };
     }
 
     if (!plan.precondition.ok) {
-      const event = preparedToTerminalEvent(plan.prepared, "failed_closed", plan.precondition.failureCode, this.#clock());
+      // §7/N2: only a RECOGNIZED fixed failure code may be recorded; a caller-supplied precondition
+      // code that is not a known PhiEngineFailureCode (and could carry PHI) is replaced.
+      const safeCode = isPhiEngineFailureCode(plan.precondition.failureCode)
+        ? plan.precondition.failureCode
+        : "PRECONDITION_FAILED";
+      const event = preparedToTerminalEvent(plan.prepared, "failed_closed", safeCode, this.#clock());
       await this.#emitter.finalize(receipt, event);
       return {
         outcome: "failed_closed",
-        errorCode: plan.precondition.failureCode,
+        errorCode: safeCode,
         providerInvoked: false,
         durability: receipt.location,
       };

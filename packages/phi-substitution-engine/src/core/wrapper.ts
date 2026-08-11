@@ -128,7 +128,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       rawOutput = await prepared.provider.generateText(prepared.tokenizedOptions);
     } catch (error) {
       // N3: a provider rejection after send still finalizes exactly one terminal.
-      await this.#finalize(prepared, "unknown_after_send", errorCodeString(error));
+      await this.#finalizeQuietly(prepared, "unknown_after_send", errorCodeString(error));
       throw error instanceof PhiEngineError
         ? error
         : new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), prepared.context.operationId, {});
@@ -138,7 +138,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     try {
       await this.#deps.safeTrace.response(rawOutput);
     } catch (error) {
-      await this.#finalize(prepared, "unknown_after_send", errorCodeString(error));
+      await this.#finalizeQuietly(prepared, "unknown_after_send", errorCodeString(error));
       throw isPhiEngineError(error)
         ? error
         : new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), prepared.context.operationId, {});
@@ -173,7 +173,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         displayChunks.push(safe);
       });
     } catch (error) {
-      await this.#finalize(prepared, "failed_closed", errorCodeString(error));
+      await this.#finalizeQuietly(prepared, "failed_closed", errorCodeString(error));
       throw isPhiEngineError(error)
         ? error
         : new PhiEngineError(
@@ -196,7 +196,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       const code = toFailureCode(error, "REVERSAL_FAILED");
       const outcome: PhiAuditOutcome = code === "REVERSAL_FAILED" ? "reversal_failed" : "unknown_after_send";
       // N3: a push/end failure after send still finalizes exactly one terminal.
-      await this.#finalize(prepared, outcome, code);
+      await this.#finalizeQuietly(prepared, outcome, code);
       throw error instanceof PhiEngineError
         ? error
         : new PhiEngineError(code, prepared.context.operationId, {});
@@ -255,7 +255,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     try {
       await this.#deps.safeTrace.request([{ path: "embedding", text: tokenizedText }]);
     } catch (error) {
-      await this.#finalizeAt(
+      await this.#finalizeAtQuietly(
         receipt,
         this.#preparedRecord(context, substitution, "embedding"),
         "failed_closed",
@@ -274,7 +274,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     try {
       vector = await providerBinding.embedText(tokenizedText, kind);
     } catch (error) {
-      await this.#finalizeAt(
+      await this.#finalizeAtQuietly(
         receipt,
         this.#preparedRecord(context, substitution, "embedding"),
         "unknown_after_send",
@@ -455,7 +455,12 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     purpose: AiOperation,
     error: unknown,
   ): Promise<void> {
-    if (isAuditError(error, "AUDIT_ATTEMPT_ALREADY_FINALIZED")) {
+    // ANY audit-layer error means the durable record path itself is what failed (already finalized,
+    // durability unavailable, or the PREPARE rejected). Preparing a FRESH terminal here would
+    // DOUBLE-PREPARE (or just hit the same failure), so fail closed with no second prepare — nothing
+    // egressed, and N4 permits no terminal when durability is unavailable. A NON-audit pre-egress
+    // failure (policy/routing/substitution) still records exactly one fail-closed terminal.
+    if (isAuditError(error)) {
       return;
     }
     await this.#recordFailedClosedTerminal(context, purpose, errorCodeString(error));
@@ -486,7 +491,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       // §4.1 step 11 / N5: reverse tokens to CURRENT canonical values before display.
       display = await this.#deps.engine.reverse(rawOutput, prepared.substitutionHandle);
     } catch (error) {
-      await this.#finalize(prepared, "reversal_failed", "REVERSAL_FAILED");
+      await this.#finalizeQuietly(prepared, "reversal_failed", "REVERSAL_FAILED");
       throw new PhiEngineError(
         toFailureCode(error, "REVERSAL_FAILED"),
         prepared.context.operationId,
@@ -518,6 +523,37 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
   ): Promise<void> {
     const event: PhiAuditEvent = preparedToTerminalEvent(record, outcome, failureCode, this.#clock());
     await this.#deps.audit.finalize(receipt, event);
+  }
+
+  /**
+   * Best-effort terminal on a FAILURE path (§7/N2). A rejecting finalizer must NEVER override the
+   * fixed, sanitized error being surfaced to the caller — its raw message/code could carry PHI. A
+   * lost terminal under total durability failure is acceptable (N4 fail-closed); the caller still
+   * receives the sanitized fixed-code error.
+   */
+  async #finalizeQuietly(
+    prepared: PreparedEgress<GenerateOptions, EmbeddingKind>,
+    outcome: PhiAuditOutcome,
+    failureCode: PhiEngineFailureCode | string | null,
+  ): Promise<void> {
+    try {
+      await this.#finalize(prepared, outcome, failureCode);
+    } catch {
+      /* durability failure on a failure path; the sanitized error is still thrown by the caller. */
+    }
+  }
+
+  async #finalizeAtQuietly(
+    receipt: AuditPreparationReceipt,
+    record: PhiAuditPreparedRecord,
+    outcome: PhiAuditOutcome,
+    failureCode: string | null,
+  ): Promise<void> {
+    try {
+      await this.#finalizeAt(receipt, record, outcome, failureCode);
+    } catch {
+      /* durability failure on a failure path; the sanitized error is still thrown by the caller. */
+    }
   }
 }
 

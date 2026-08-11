@@ -173,12 +173,6 @@ export interface ComposedSubstitutionEngineDeps {
    * operations' detector-only tokens never collide on the operation-blind reversal key.
    */
   readonly assignmentStore?: InMemoryTokenAssignmentStore;
-  /**
-   * Warm compiled-dictionary cache (L9). Reused across requests so an identical warm call does
-   * NOT recompile the matter dictionary (truth read + variant expansion + automaton build) every
-   * time — a per-request recompile is a latency/availability regression (NEW-B). Tenant-scoped.
-   */
-  readonly cache?: CompiledDictionaryCache;
 }
 
 export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
@@ -214,7 +208,11 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       this.#truthReader,
       () => new TokensLeafAssignmentPort(this.#assignmentStore),
     );
-    this.#cache = deps.cache ?? new InMemoryCompiledDictionaryCache();
+    // NEW-B/L1: the warm cache is INTERNAL and lifecycle-coupled to THIS engine's assignment
+    // store. It is never injectable/shareable, so a compiled dictionary is never served against a
+    // different (fresh) assignment namespace — which would let a detector-only token collide with a
+    // cached real-subject token. Warm reuse still happens across requests on the same engine.
+    this.#cache = new InMemoryCompiledDictionaryCache();
   }
 
   public async substitute(request: SubstitutionRequest): Promise<SubstitutionResult> {
@@ -402,6 +400,12 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       handle instanceof InProcessReversalHandle
         ? handle.restoreEscapedLiterals(String(reversed))
         : String(reversed);
+    // L6/§7: a residual escape sentinel that never completed into a literal is internal machinery
+    // and must NEVER reach the display. Fail closed (as the streaming path does) rather than leak a
+    // provider-generated dangling sentinel through non-stream generation.
+    if (restored.includes(SENTINEL_OPEN) || restored.includes(SENTINEL_CLOSE)) {
+      throw new Error("residual_escape_sentinel_in_reversed_output");
+    }
     return restored as unknown as DisplayText;
   }
 
