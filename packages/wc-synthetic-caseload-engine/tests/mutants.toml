@@ -2487,4 +2487,26 @@ find = '''P_EVIDENCE_DISTRACTOR = AssertionKnob[Fraction](
     value=Fraction(1, 4),'''
 replace = '''P_EVIDENCE_DISTRACTOR = AssertionKnob[Fraction](
     value=Fraction(0, 1),'''
-note = 'AJC-61, round-2 N2. The pinned MEASURED_DISTRACTOR_COUNTS (available 1062, included 275, rate 0.22-0.28, included > 0) makes survival triple-impossible.'
+note = 'AJC-61, round-2 N2. The pinned MEASURED_DISTRACTOR_COUNTS (available 1063, included 274, rate 0.22-0.28, included > 0) makes survival triple-impossible.'
+
+[[mutant]]
+id = 'm19-20'
+title = 'the leakage scan stops reading parsed DOCX property keys'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
+find = '''                            note_reserved(
+                                properties, f"docx-properties:{rel}!{name}"
+                            )'''
+replace = '''                            _ = properties'''
+note = 'AJC-61, fix round 1 (sol H1). The parsed docProps reserved-key read is the detector; the positive control plants a property literally NAMED quality and must stop being found.'
+
+[[mutant]]
+id = 'm19-21'
+title = 'the leakage scan stops reading the raw PDF Info dictionary'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
+find = '''                    surfaces.append(f"{rel}!info")
+                    note_reserved(info, f"pdf-info:{rel}")
+                    note_token(json.dumps(info), f"pdf-info:{rel}")'''
+replace = '''                    surfaces.append(f"{rel}!info")'''
+note = 'AJC-61, fix round 1 (sol H1). document.metadata exposes only standard keys, so a custom Info key is exactly where a label would hide; the positive control plants assertionQuality there and the raw xref read must stop finding it.'

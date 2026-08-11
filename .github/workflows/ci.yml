@@ -404,6 +404,11 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      # The label-position leakage probe (AJC-61) OCRs image-only PDF pages —
+      # an OCR-only surface that cannot be certified without the engine, and
+      # the scan fails loudly rather than skipping when it is missing.
+      - name: Install tesseract (OCR-only leakage surfaces)
+        run: sudo apt-get update -q && sudo apt-get install -y -q tesseract-ocr
       - name: Lint (ruff)
         run: python -m ruff check src/ tests/
       - name: Test

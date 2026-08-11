@@ -1818,31 +1818,55 @@ def _leakage_reserved_key_findings(payload: Any, path: str) -> list[str]:
     return findings
 
 
+def _ocr_png(png: bytes) -> str:
+    """Tesseract over one rasterized page — the OCR-only text surface."""
+    import subprocess
+
+    completed = subprocess.run(
+        ["tesseract", "stdin", "stdout"], input=png, capture_output=True, check=True
+    )
+    return completed.stdout.decode("utf-8", errors="replace")
+
+
 def _scan_assertion_leakage(
     out_dir: Any, cli_streams: tuple[str, str] | None = None
 ) -> tuple[list[str], list[str]]:
     """Every label-position finding + the inventory of surfaces read.
 
     Surfaces: structured keys in seed.yaml / case_facts.yaml / manifest.json /
-    caseload_manifest.json; the bare ``unsupportable`` token in every file's raw
-    bytes, every filename, relpath and directory name; DOCX ``docProps/*.xml``
-    and body XML; PDF metadata and annotations; extracted EML text; and the CLI
-    stdout/stderr when supplied. The truth/ subtree is the ONLY exclusion — it
-    is the scorer boundary the labels are supposed to live behind.
+    caseload_manifest.json; the bare ``unsupportable`` token in every file's
+    raw bytes, every filename, relpath and directory name; DOCX body XML plus
+    ``docProps`` parsed as key/value properties (reserved-key detection on the
+    property NAMES); the PDF Info dictionary raw (custom keys included —
+    ``document.metadata`` exposes only the standard ones), XMP stream,
+    annotations and page text; OCR over image-only pages (an unscannable
+    OCR-only surface fails loudly rather than passing silently); decoded EML
+    parts (a base64 body hides the token from the raw-bytes sweep) and EML
+    header names; and the CLI stdout/stderr when supplied. The truth/ subtree
+    is the ONLY exclusion — it is the scorer boundary the labels are supposed
+    to live behind.
     """
+    import email
+    import email.policy
     import io
+    import shutil
     import zipfile
     from pathlib import Path
+    from xml.etree import ElementTree
 
     import yaml as yaml_module
 
     out = Path(out_dir)
     findings: list[str] = []
     surfaces: list[str] = []
+    tesseract_missing = shutil.which("tesseract") is None
 
     def note_token(text: str, where: str) -> None:
         if _BARE_TOKEN.search(text.lower()) and where not in ASSERTION_LEAKAGE_EXEMPTIONS:
             findings.append(f"bare token at {where}")
+
+    def note_reserved(payload: Any, where: str) -> None:
+        findings.extend(_leakage_reserved_key_findings(payload, where))
 
     for path in sorted(out.rglob("*")):
         rel = path.relative_to(out).as_posix()
@@ -1855,15 +1879,9 @@ def _scan_assertion_leakage(
         raw = path.read_bytes()
         note_token(raw.decode("utf-8", errors="ignore"), f"bytes:{rel}")
         if path.name in ("seed.yaml", "case_facts.yaml"):
-            findings.extend(
-                _leakage_reserved_key_findings(
-                    yaml_module.safe_load(raw.decode("utf-8")), rel
-                )
-            )
+            note_reserved(yaml_module.safe_load(raw.decode("utf-8")), rel)
         elif path.suffix == ".json":
-            findings.extend(
-                _leakage_reserved_key_findings(json.loads(raw.decode("utf-8")), rel)
-            )
+            note_reserved(json.loads(raw.decode("utf-8")), rel)
         elif path.suffix == ".docx":
             with zipfile.ZipFile(io.BytesIO(raw)) as archive:
                 for name in archive.namelist():
@@ -1873,6 +1891,26 @@ def _scan_assertion_leakage(
                             archive.read(name).decode("utf-8", errors="replace"),
                             f"docx:{rel}!{name}",
                         )
+                        if name.startswith("docProps/"):
+                            # Structured read: element local names and custom
+                            # <property name="..."> attributes are KEYS, so
+                            # the reserved-key detection applies to parsed
+                            # DOCX properties, not just their bytes.
+                            properties: dict[str, str] = {}
+                            try:
+                                root = ElementTree.fromstring(archive.read(name))
+                            except ElementTree.ParseError:
+                                root = None
+                            if root is not None:
+                                for element in root.iter():
+                                    local = element.tag.rsplit("}", 1)[-1]
+                                    properties[local] = element.text or ""
+                                    named = element.attrib.get("name")
+                                    if named is not None:
+                                        properties[named] = element.text or ""
+                            note_reserved(
+                                properties, f"docx-properties:{rel}!{name}"
+                            )
         elif path.suffix == ".pdf":
             fitz = pytest.importorskip("fitz")
             with fitz.open(path) as document:
@@ -1880,12 +1918,63 @@ def _scan_assertion_leakage(
                 note_token(
                     json.dumps(document.metadata or {}), f"pdf-metadata:{rel}"
                 )
+                info_type, info_value = document.xref_get_key(-1, "Info")
+                if info_type == "xref":
+                    info_xref = int(info_value.split()[0])
+                    info = {
+                        key: document.xref_get_key(info_xref, key)[1]
+                        for key in document.xref_get_keys(info_xref)
+                    }
+                    surfaces.append(f"{rel}!info")
+                    note_reserved(info, f"pdf-info:{rel}")
+                    note_token(json.dumps(info), f"pdf-info:{rel}")
+                xmp_xref = document.xref_xml_metadata()
+                if xmp_xref:
+                    note_token(
+                        document.xref_stream(xmp_xref).decode(
+                            "utf-8", errors="replace"
+                        ),
+                        f"pdf-xmp:{rel}",
+                    )
                 for page in document:
                     for annotation in page.annots() or ():
+                        note_reserved(
+                            dict(annotation.info), f"pdf-annotation:{rel}"
+                        )
                         note_token(
                             json.dumps(annotation.info), f"pdf-annotation:{rel}"
                         )
-                    note_token(page.get_text(), f"pdf-text:{rel}")
+                    text = page.get_text()
+                    note_token(text, f"pdf-text:{rel}")
+                    if not text.strip() and page.get_images(full=True):
+                        # The page's words are pixels — an OCR-only surface.
+                        where = f"pdf-ocr:{rel}#page{page.number}"
+                        if tesseract_missing:
+                            raise RuntimeError(
+                                f"{where} is image-only and tesseract is not "
+                                "installed; the label-position scan cannot "
+                                "certify OCR-only surfaces without it "
+                                "(apt-get install tesseract-ocr)"
+                            )
+                        surfaces.append(where)
+                        note_token(
+                            _ocr_png(page.get_pixmap(dpi=150).tobytes("png")),
+                            where,
+                        )
+        elif path.suffix == ".eml":
+            message = email.message_from_bytes(raw, policy=email.policy.default)
+            note_reserved(
+                {name: str(value) for name, value in message.items()},
+                f"eml-headers:{rel}",
+            )
+            for index, part in enumerate(message.walk()):
+                payload = part.get_payload(decode=True)
+                if payload is not None:
+                    surfaces.append(f"{rel}!part{index}")
+                    note_token(
+                        payload.decode("utf-8", errors="replace"),
+                        f"eml-part:{rel}!part{index}",
+                    )
 
     if cli_streams is not None:
         stdout, stderr = cli_streams
@@ -1918,10 +2007,10 @@ def leakage_tree(tmp_path_factory: pytest.TempPathFactory):
     root = tmp_path_factory.mktemp("assertion-leakage")
     body = _generate_body("leakage-probe-case", dict(_LEAKAGE_SCENARIO))
     body["documents"] = {
-        "format_mix": {"pdf": 0.5, "docx": 0.3, "eml": 0.2},
-        "global_cap": 12,
+        "format_mix": {"pdf": 0.4, "docx": 0.25, "eml": 0.2, "scanned_pdf": 0.15},
+        "global_cap": 16,
     }
-    body["output"] = {"formats": ["pdf", "docx", "eml"]}
+    body["output"] = {"formats": ["pdf", "docx", "eml", "scanned_pdf"]}
     spec = {"caseload_id": "leakage-probe", "cases": [body]}
     spec_path = root / "spec.yaml"
     spec_path.write_text(yaml_module.safe_dump(spec), encoding="utf-8")
@@ -1993,6 +2082,16 @@ def test_assertion_leakage_probe_covers_docx_properties_and_pdf_metadata(
     assert any(surface.endswith("!metadata") for surface in surfaces), (
         "the probe never read a PDF metadata block"
     )
+    assert any(surface.endswith("!info") for surface in surfaces), (
+        "the probe never read a raw PDF Info dictionary"
+    )
+    assert any(surface.startswith("pdf-ocr:") for surface in surfaces), (
+        "the probe never OCRed an image-only page — the fixture must render "
+        "a scanned_pdf and tesseract must be installed"
+    )
+    assert any("!part" in surface and surface.endswith("part0") for surface in surfaces), (
+        "the probe never decoded an EML part"
+    )
     assert "cli:stdout" in surfaces and "cli:stderr" in surfaces
 
 
@@ -2000,63 +2099,184 @@ def test_assertion_leakage_probe_covers_docx_properties_and_pdf_metadata(
 def test_assertion_leakage_probe_has_positive_controls_for_every_position(
     leakage_tree, tmp_path: Any
 ) -> None:
-    """Plant each position class into a copy of the tree; the scan must fire."""
+    """Plant EVERY enumerated position class into a copy of the tree; the scan
+    must fire on each one. Every format's presence is asserted, never skipped —
+    a control that silently skipped would leave its position unproven."""
+    import base64
     import shutil
     import zipfile
     from pathlib import Path
+
+    fitz = pytest.importorskip("fitz")
 
     out_dir, _streams = leakage_tree
     copy_root = tmp_path / "planted"
     shutil.copytree(out_dir, copy_root)
 
     case_dir = next(p for p in copy_root.iterdir() if (p / "manifest.json").exists())
+    documents = case_dir / "documents"
 
-    # 1. A reserved structured key in an analyzer-visible JSON artifact.
+    # 1. Reserved structured keys in the analyzer-visible JSON artifacts:
+    #    the case manifest and the caseload-level index.
     manifest_path = case_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["assertionQuality"] = ["a", "b"]
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    caseload_path = copy_root / "caseload_manifest.json"
+    caseload = json.loads(caseload_path.read_text(encoding="utf-8"))
+    caseload["medicalAssertions"] = {}
+    caseload_path.write_text(json.dumps(caseload), encoding="utf-8")
 
-    # 2. A reserved key in the copied seed.
+    # 2. Reserved keys in the copied seed and case-facts YAML.
     seed_path = case_dir / "seed.yaml"
     seed_path.write_text(
         seed_path.read_text(encoding="utf-8") + "\nquality: planted\n", encoding="utf-8"
     )
+    facts_path = case_dir / "case_facts.yaml"
+    facts_path.write_text(
+        facts_path.read_text(encoding="utf-8") + "\nrubric: planted\n", encoding="utf-8"
+    )
 
-    # 3. The bare token in a rendered document's bytes.
-    eml = next(iter(sorted((case_dir / "documents").glob("*.eml"))), None)
-    if eml is not None:
-        eml.write_bytes(eml.read_bytes() + b"\nUNSUPPORTABLE\n")
+    # 3. The bare token in a rendered EML's raw bytes.
+    eml = next(iter(sorted(documents.glob("*.eml"))), None)
+    assert eml is not None, "the fixture rendered no EML to plant into"
+    eml.write_bytes(eml.read_bytes() + b"\nUNSUPPORTABLE\n")
 
-    # 4. The bare token inside DOCX docProps.
-    docx = next(iter(sorted((case_dir / "documents").glob("*.docx"))), None)
-    if docx is not None:
-        source = docx.with_suffix(".docx.orig")
-        docx.rename(source)
-        with zipfile.ZipFile(source) as inp, zipfile.ZipFile(docx, "w") as outp:
-            for item in inp.infolist():
-                data = inp.read(item.filename)
-                if item.filename == "docProps/core.xml":
-                    data = data.replace(b"</cp:coreProperties>",
-                                        b"<dc:subject>unsupportable</dc:subject>"
-                                        b"</cp:coreProperties>")
-                outp.writestr(item, data)
-        source.unlink()
+    # 4. A base64-encoded EML part — invisible to the raw-bytes sweep, so
+    #    only the decoded-part scan can find it — plus a reserved header name.
+    encoded = base64.b64encode(b"the finding is unsupportable on this record").decode()
+    (documents / "planted-note.eml").write_text(
+        "MIME-Version: 1.0\n"
+        "Content-Type: text/plain\n"
+        "Content-Transfer-Encoding: base64\n"
+        "assertionQuality: 1\n"
+        "Subject: exhibit index\n"
+        "\n"
+        f"{encoded}\n",
+        encoding="utf-8",
+    )
 
-    # 5. The bare token in a filename.
-    marker = case_dir / "documents" / "unsupportable-note.txt"
-    marker.write_text("planted", encoding="utf-8")
+    # 5. DOCX: the bare token in docProps AND in body XML, plus a reserved
+    #    property NAME the parsed-properties read must catch.
+    docx = next(iter(sorted(documents.glob("*.docx"))), None)
+    assert docx is not None, "the fixture rendered no DOCX to plant into"
+    source = docx.with_suffix(".docx.orig")
+    docx.rename(source)
+    with zipfile.ZipFile(source) as inp, zipfile.ZipFile(docx, "w") as outp:
+        for item in inp.infolist():
+            data = inp.read(item.filename)
+            if item.filename == "docProps/core.xml":
+                data = data.replace(
+                    b"</cp:coreProperties>",
+                    b"<dc:subject>unsupportable</dc:subject>"
+                    b"<quality>planted</quality>"
+                    b"</cp:coreProperties>",
+                )
+            if item.filename == "word/document.xml":
+                data = data.replace(
+                    b"</w:body>",
+                    b"<w:p><w:r><w:t>unsupportable</w:t></w:r></w:p></w:body>",
+                )
+            outp.writestr(item, data)
+    source.unlink()
 
-    findings, _surfaces = _scan_assertion_leakage(copy_root)
+    def _page_zero_text(path: Path) -> str:
+        with fitz.open(path) as probe:
+            return probe[0].get_text().strip()
+
+    # 6. PDF: the token in the metadata block, the token AND a reserved key
+    #    in the raw Info dictionary, a planted annotation, planted page text.
+    text_pdf = next((p for p in sorted(documents.glob("*.pdf")) if _page_zero_text(p)), None)
+    assert text_pdf is not None, "the fixture rendered no text-layer PDF"
+    with fitz.open(text_pdf) as doc:
+        metadata = dict(doc.metadata or {})
+        metadata["subject"] = "unsupportable"
+        doc.set_metadata(metadata)
+        info_type, info_value = doc.xref_get_key(-1, "Info")
+        assert info_type == "xref", "the planted PDF lost its Info dictionary"
+        doc.xref_set_key(int(info_value.split()[0]), "assertionQuality", "(planted)")
+        page = doc[0]
+        page.add_text_annot((72, 72), "unsupportable")
+        page.insert_text((72, 120), "unsupportable")
+        planted_pdf = text_pdf.with_suffix(".planted.pdf")
+        doc.save(planted_pdf)
+    text_pdf.unlink()
+    planted_pdf.rename(text_pdf)
+
+    # 7. The OCR-only position: rasterize the token and stamp it into an
+    #    image-only page as PIXELS — no text layer anywhere on the page.
+    scanned_pdf = next(
+        (p for p in sorted(documents.glob("*.pdf")) if not _page_zero_text(p)), None
+    )
+    assert scanned_pdf is not None, "the fixture rendered no image-only PDF"
+    stamp = fitz.open()
+    stamp_page = stamp.new_page(width=560, height=100)
+    stamp_page.insert_text((20, 60), "the finding is unsupportable here", fontsize=30)
+    png = stamp_page.get_pixmap(dpi=150).tobytes("png")
+    stamp.close()
+    with fitz.open(scanned_pdf) as doc:
+        page = doc[0]
+        assert not page.get_text().strip()
+        page.insert_image(fitz.Rect(40, 40, 460, 115), stream=png)
+        planted_scan = scanned_pdf.with_suffix(".planted.pdf")
+        doc.save(planted_scan)
+    scanned_pdf.unlink()
+    planted_scan.rename(scanned_pdf)
+
+    # 8. The bare token in a filename and in a directory name.
+    (documents / "unsupportable-note.txt").write_text("planted", encoding="utf-8")
+    (documents / "unsupportable-exhibits").mkdir()
+
+    # 9. CLI streams: the bare token on stdout, a reserved key on stderr.
+    findings, _surfaces = _scan_assertion_leakage(
+        copy_root, ("note: this reads unsupportable", '{"quality": "planted"}')
+    )
     joined = "\n".join(findings)
     assert "manifest.json.assertionQuality" in joined
+    assert "caseload_manifest.json.medicalAssertions" in joined
     assert "seed.yaml.quality" in joined
-    assert "path:" in joined and "unsupportable-note.txt" in joined
-    if eml is not None:
-        assert any(f.startswith("bare token at bytes:") and ".eml" in f for f in findings)
-    if docx is not None:
-        assert any("docProps/core.xml" in f for f in findings), (
-            "the planted docProps subject was not detected"
-        )
-
-    Path(marker).unlink()
+    assert "case_facts.yaml.rubric" in joined
+    assert any(
+        f.startswith("bare token at bytes:") and f.endswith(".eml") for f in findings
+    )
+    assert any(
+        f.startswith("bare token at eml-part:") and "planted-note.eml" in f
+        for f in findings
+    ), "the base64-encoded EML part was not decoded and scanned"
+    assert any(
+        f.startswith("reserved key eml-headers:") and ".assertionQuality" in f
+        for f in findings
+    )
+    assert any(
+        f.startswith("bare token at docx:") and "docProps/core.xml" in f
+        for f in findings
+    )
+    assert any(
+        f.startswith("reserved key docx-properties:") and ".quality" in f
+        for f in findings
+    ), "the planted DOCX property NAME was not caught by the parsed-key read"
+    assert any(
+        f.startswith("bare token at docx:") and "word/document.xml" in f
+        for f in findings
+    )
+    assert any(f.startswith("bare token at pdf-metadata:") for f in findings)
+    assert any(f.startswith("bare token at pdf-info:") for f in findings)
+    assert any(
+        f.startswith("reserved key pdf-info:") and ".assertionQuality" in f
+        for f in findings
+    ), "the planted custom Info key was not caught by the raw-dictionary read"
+    assert any(f.startswith("bare token at pdf-annotation:") for f in findings)
+    assert any(f.startswith("bare token at pdf-text:") for f in findings)
+    assert any(f.startswith("bare token at pdf-ocr:") for f in findings), (
+        "the rasterized token was not recovered from the image-only page"
+    )
+    assert any(
+        f.startswith("bare token at path:") and "unsupportable-note.txt" in f
+        for f in findings
+    )
+    assert any(
+        f.startswith("bare token at path:") and "unsupportable-exhibits" in f
+        for f in findings
+    )
+    assert "bare token at cli:stdout" in findings
+    assert "reserved key cli-stream:quality" in findings
