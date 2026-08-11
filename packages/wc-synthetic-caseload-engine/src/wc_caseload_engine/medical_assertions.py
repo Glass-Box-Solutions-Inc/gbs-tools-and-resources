@@ -2915,16 +2915,16 @@ def _append_sampled(
             elif evidence == "supports":
                 supportable.append((ref, contention))
         if supportable:
+            # Grade bookkeeping keys on the UNIQUE pending reference, never
+            # the B.2 suppression tuple: two distinct explicit contentions may
+            # legally share that tuple, and a tuple-keyed dict kept only the
+            # last twin's grade — a thin ctn-02 erased a supported ctn-01's
+            # endorsement (sol fix round 2, F2, proved on cohort-4803).
             would_be = {
-                _contention_semantic_key(c): contention_quality(history, context, c)
-                for _ref, c in supportable
+                ref: contention_quality(history, context, c) for ref, c in supportable
             }
             pick = next(
-                (
-                    (ref, c)
-                    for ref, c in supportable
-                    if would_be[_contention_semantic_key(c)] == "supported"
-                ),
+                ((ref, c) for ref, c in supportable if would_be[ref] == "supported"),
                 supportable[0] if author_role == "ptp" else None,
             )
             if pick is not None:

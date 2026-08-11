@@ -496,6 +496,52 @@ def test_adding_an_explicit_entry_does_not_reroll_unrelated_semantic_candidates(
     assert baseline_awards == explicit_awards
 
 
+def test_two_explicit_contentions_sharing_a_suppression_key_keep_their_own_grades() -> None:
+    """Sol fix round 2, F2 — proved live on cohort-4803: endorsement
+    bookkeeping keyed by the B.2 suppression tuple collapses two DISTINCT
+    explicit contentions that share it (the dict kept only the last twin's
+    grade), so a would-be-supported ctn-01 lost its endorsement the moment a
+    thin ctn-02 with the same key was added. Grade bookkeeping must key on the
+    unique pending reference; the endorsement survives."""
+    explicit = {
+        "medical_assertions": {
+            "contentions": [
+                {
+                    "id": "ctn-01",
+                    "claim_type": "industrial_causation",
+                    "party": "applicant",
+                    "position": "affirm",
+                    "target_condition_id": "cond-00",
+                    "rationale": (
+                        "the industrial lumbar condition arose from the injury"
+                    ),
+                },
+                {
+                    "id": "ctn-02",
+                    "claim_type": "industrial_causation",
+                    "party": "applicant",
+                    "position": "affirm",
+                    "target_condition_id": "cond-00",
+                    # No rationale: same suppression key as ctn-01, would-be
+                    # thin — the collapsing dict kept exactly this grade.
+                },
+            ]
+        }
+    }
+    ledger = _derive(4803, explicit)
+    assert ledger is not None
+    evaluator_opinions = [
+        opinion
+        for opinion in ledger.medical_opinions
+        if opinion.author_role in ("qme", "ame")
+    ]
+    assert evaluator_opinions, "cohort-4803 stopped sampling its evaluator opinion"
+    endorsed = {
+        ref for opinion in evaluator_opinions for ref in opinion.endorses_contention_ids
+    }
+    assert "ctn-01" in endorsed, endorsed
+
+
 def test_explicit_entries_are_preserved_and_sampled_entries_append_without_duplicates() -> None:
     baseline = _derive(COLLISION_INDEX)
     sampled_lc4664 = [

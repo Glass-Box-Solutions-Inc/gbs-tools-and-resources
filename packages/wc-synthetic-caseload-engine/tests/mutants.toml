@@ -2510,3 +2510,29 @@ find = '''                    surfaces.append(f"{rel}!info")
                     note_token(json.dumps(info), f"pdf-info:{rel}")'''
 replace = '''                    surfaces.append(f"{rel}!info")'''
 note = 'AJC-61, fix round 1 (sol H1). document.metadata exposes only standard keys, so a custom Info key is exactly where a label would hide; the positive control plants assertionQuality there and the raw xref read must stop finding it.'
+
+[[mutant]]
+id = 'm19-22'
+title = 'endorsement grades collapse onto the shared suppression tuple'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertion_properties.py::test_two_explicit_contentions_sharing_a_suppression_key_keep_their_own_grades'
+find = '''            would_be = {
+                ref: contention_quality(history, context, c) for ref, c in supportable
+            }
+            pick = next(
+                ((ref, c) for ref, c in supportable if would_be[ref] == "supported"),
+                supportable[0] if author_role == "ptp" else None,
+            )'''
+replace = '''            would_be = {
+                _contention_semantic_key(c): contention_quality(history, context, c)
+                for _ref, c in supportable
+            }
+            pick = next(
+                (
+                    (ref, c)
+                    for ref, c in supportable
+                    if would_be[_contention_semantic_key(c)] == "supported"
+                ),
+                supportable[0] if author_role == "ptp" else None,
+            )'''
+note = 'AJC-61, fix round 2 (sol F2, proved on cohort-4803). Two distinct explicit contentions may legally share the B.2 tuple; keying grades on it keeps only the last twin and the evaluator endorses nothing. The guard reproduces exactly that scenario.'
