@@ -1027,24 +1027,60 @@ def test_restamp_provenance_restores_base_worktree_on_success_and_failure():
     from tests.render_baseline import BASELINE_PATH
 
     recorder = _recorder_module()
+    import subprocess
+
     feature_payload_text = open(BASELINE_PATH, "rb").read().decode("utf-8")
     feature_payload_bytes = feature_payload_text.encode("utf-8")
     base_payload_bytes = _trusted_base_payload_bytes(base_worktree)
+    base_relative_payload_path = os.path.join(
+        "packages", "merus-test-data-generator", "tests", "golden", "render_baseline.json",
+    )
 
     try:
         assert recorder._run_restamp_mode(base_worktree) == 0
         _assert_base_worktree_clean(base_worktree, base_payload_bytes)
 
         _restore_baseline(feature_payload_text)
-        def _raise_after_base_run(_feature_payload, _base_payload):
-            raise SystemExit("forced restamp validation failure")
+        real_run_base_recorder = recorder._run_base_recorder
+
+        def _run_base_recorder_then_corrupt(base_package_root: str) -> dict:
+            payload = real_run_base_recorder(base_package_root)
+            meta = dict(payload.setdefault("_meta", {}))
+            meta["base_commit"] = "0000000000000000000000000000000000000000"
+            payload["_meta"] = meta
+            return payload
 
         with pytest.MonkeyPatch().context() as mp:
-            mp.setattr(recorder, "_rebase_provenance_payload", _raise_after_base_run)
-            with pytest.raises(SystemExit, match="forced restamp validation failure"):
+            mp.setattr(recorder, "_run_base_recorder", _run_base_recorder_then_corrupt)
+            with pytest.raises(SystemExit, match="base payload base_commit is not pinned"):
                 recorder._run_restamp_mode(base_worktree)
 
-        _assert_base_worktree_clean(base_worktree, base_payload_bytes)
+        status = subprocess.run(
+            ["git", "-C", base_worktree, "status", "--porcelain"],
+            capture_output=True, text=True, check=True,
+        )
+        assert not status.stdout, f"base worktree is not clean after failure: {status.stdout.rstrip()}"
+        head_ref = subprocess.run(
+            ["git", "-C", base_worktree, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+        assert head_ref.stdout.strip() == "HEAD", (
+            f"base worktree is not detached after cleanup: {head_ref.stdout.strip()}"
+        )
+        head = subprocess.run(
+            ["git", "-C", base_worktree, "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+        assert head.stdout.strip() == recorder.BASE_COMMIT, (
+            f"base worktree HEAD is {head.stdout.strip()}, expected {recorder.BASE_COMMIT}"
+        )
+        head_blob = subprocess.run(
+            ["git", "-C", base_worktree, "show", f"HEAD:{base_relative_payload_path}"],
+            capture_output=True, check=True,
+        ).stdout
+        assert head_blob == base_payload_bytes, (
+            "base payload changed from its HEAD blob after forced restamp failure"
+        )
         assert open(BASELINE_PATH, "rb").read() == feature_payload_bytes
     finally:
         _restore_baseline(feature_payload_text)
@@ -1204,31 +1240,79 @@ def test_restamp_provenance_never_computes_cases_from_feature_tree():
     with open(path, encoding="utf-8") as fh:
         tree = ast.parse(fh.read(), filename=path)
 
-    restamp_fn = next(
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "_run_restamp_mode"
+    module_functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    restamp_fn = module_functions["_run_restamp_mode"]
+
+    def module_function_calls(func_node: ast.FunctionDef) -> set[str]:
+        called_names = set()
+        for node in ast.walk(func_node):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id in module_functions:
+                    called_names.add(func.id)
+                elif isinstance(func, ast.Attribute) and func.attr in module_functions:
+                    called_names.add(func.attr)
+        return called_names
+
+    reachable: set[str] = set()
+    to_visit = {"_run_restamp_mode"}
+    while to_visit:
+        name = to_visit.pop()
+        if name in reachable:
+            continue
+        if name not in module_functions:
+            continue
+        reachable.add(name)
+        to_visit.update(module_function_calls(module_functions[name]) - reachable)
+
+    assert "_rewrite_restamped_provenance_payload" in reachable, (
+        "restamp mode reachable set does not include _rewrite_restamped_provenance_payload"
     )
-    called_names: set[str] = set()
-    for node in ast.walk(restamp_fn):
-        if isinstance(node, ast.Call):
-            func = node.func
-            if isinstance(func, ast.Name):
-                called_names.add(func.id)
-            elif isinstance(func, ast.Attribute):
-                called_names.add(func.attr)
-    assert "compute_baseline" not in called_names, (
-        "restamp mode reaches compute_baseline from the feature harness"
+    assert "_rebase_provenance_payload" in reachable, (
+        "restamp mode reachable set does not include _rebase_provenance_payload"
     )
-    compute_imports = [
-        alias.name
-        for node in ast.walk(restamp_fn)
-        if isinstance(node, ast.ImportFrom)
-        and node.module in {"tests.render_baseline", "render_baseline"}
-        for alias in node.names
-        if alias.name == "compute_baseline"
-    ]
+
+    compute_imports: list[tuple[str, int]] = []
+    compute_calls: list[int] = []
+    for fn_name in reachable:
+        fn = module_functions[fn_name]
+        imported_compute_names: set[str] = set()
+        imported_baseline_modules: set[str] = set()
+        for node in ast.walk(fn):
+            if isinstance(node, ast.ImportFrom) and node.module in {"tests.render_baseline", "render_baseline"}:
+                for alias in node.names:
+                    if alias.name == "compute_baseline":
+                        import_name = alias.asname or alias.name
+                        imported_compute_names.add(import_name)
+                        compute_imports.append((alias.name, node.lineno))
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in {"tests.render_baseline", "render_baseline"}:
+                        imported_baseline_modules.add(alias.asname or alias.name)
+                        compute_imports.append((alias.name, node.lineno))
+            elif isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    if node.func.id == "compute_baseline" or node.func.id in imported_compute_names:
+                        compute_calls.append(node.lineno)
+                elif (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "compute_baseline"
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in imported_baseline_modules
+                ):
+                    compute_calls.append(node.lineno)
+
     assert not compute_imports, (
-        "restamp mode imports compute_baseline from tests.render_baseline"
+        "restamp mode reachable helpers import compute_baseline: "
+        f"{sorted(compute_imports)}"
+    )
+    assert not compute_calls, (
+        "restamp mode reachable helpers call compute_baseline: "
+        f"{sorted(compute_calls)}"
     )
 
 
@@ -1771,12 +1855,12 @@ def test_an_untampered_harness_passes_verification_in_the_same_sandbox(
 
 
 def test_the_harness_is_verified_before_it_is_imported():
-    """Order is the whole property — a check after the import guards nothing.
+    """Order is the whole property — verification must gate harness imports.
 
-    Importing the harness runs its module body. Verifying afterwards would let
-    the untrusted file execute first and then report on itself, so this asserts
-    statically that the import sits inside ``main`` *after* the verify call,
-    rather than at module scope where it would run before anything.
+    Importing the harness runs its module body. Current shape:
+    ``main()`` verifies the reviewed hash, then dispatches to verified helper
+    functions that may import the harness. This avoids the untrusted module body
+    running before verification.
     """
     import ast
 
