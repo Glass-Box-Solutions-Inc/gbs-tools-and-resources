@@ -512,9 +512,534 @@ def sibtf_grounding_clauses(history: AssertionWorldProjection) -> tuple[str, ...
     )
 
 
+# ---------------------------------------------------------------------------
+# The §C referential validator — divergence is legal, incoherence fails
+# ---------------------------------------------------------------------------
+
+#: Doctrine hooks whose argument a typed grounding can stand behind. An
+#: explicit hook without one WARNS (decision #2 — explicit control wins,
+#: loudly); a grounding for a hook the assertion does not carry FAILS.
+GROUNDABLE_HOOKS: Final[frozenset[str]] = frozenset(
+    {"benson", "sibtf", "lc4664_prior_award", "firefighter_presumption"}
+)
+
+
+class MedicalAssertionError(ValueError):
+    """A ledger whose assertions are internally incoherent. Raised at
+    generation time — divergence from world truth never lands here."""
+
+
+def _award_pairing_problem(
+    label: str,
+    identifier: str,
+    claim_ids: tuple[str, ...],
+    award_ids: tuple[str, ...],
+    history: AssertionWorldProjection,
+) -> list[str]:
+    """The claim/award cross-reference: a cited award must belong to a cited claim."""
+    problems: list[str] = []
+    if not claim_ids:
+        return problems
+    for award_id in award_ids:
+        award = history.prior_award(award_id)
+        if award is None:
+            continue
+        if award.prior_claim_id not in claim_ids:
+            problems.append(
+                f"{label} '{identifier}' pairs prior claim '{claim_ids[0]}' with "
+                f"award '{award_id}', but that award belongs to prior claim "
+                f"'{award.prior_claim_id}'"
+            )
+    return problems
+
+
+def _contention_referential(
+    contention: Contention, history: AssertionWorldProjection
+) -> list[str]:
+    problems: list[str] = []
+    condition_ids = history.condition_ids()
+    if (
+        contention.target_condition_id is not None
+        and contention.target_condition_id not in condition_ids
+    ):
+        problems.append(
+            f"contention '{contention.id}' references unknown condition "
+            f"'{contention.target_condition_id}'"
+        )
+    if (
+        contention.target_prior_claim_id is not None
+        and contention.target_prior_claim_id not in history.prior_claim_ids()
+    ):
+        problems.append(
+            f"contention '{contention.id}' references unknown prior claim "
+            f"'{contention.target_prior_claim_id}'"
+        )
+    if (
+        contention.target_prior_award_id is not None
+        and contention.target_prior_award_id not in history.prior_award_ids()
+    ):
+        problems.append(
+            f"contention '{contention.id}' references unknown prior award "
+            f"'{contention.target_prior_award_id}'"
+        )
+    if (
+        contention.target_prior_claim_id is not None
+        and contention.target_prior_award_id is not None
+    ):
+        problems.extend(
+            _award_pairing_problem(
+                "contention",
+                contention.id,
+                (contention.target_prior_claim_id,),
+                (contention.target_prior_award_id,),
+                history,
+            )
+        )
+    return problems
+
+
+def _opinion_referential(
+    opinion: MedicalOpinion,
+    history: AssertionWorldProjection,
+    contention_ids: frozenset[str],
+) -> list[str]:
+    problems: list[str] = []
+    for ref in opinion.reviewed_condition_ids:
+        if ref not in history.condition_ids():
+            problems.append(
+                f"medical opinion '{opinion.id}' reviews unknown condition '{ref}'"
+            )
+    for ref in opinion.reviewed_prior_claim_ids:
+        if ref not in history.prior_claim_ids():
+            problems.append(
+                f"medical opinion '{opinion.id}' reviews unknown prior claim '{ref}'"
+            )
+    for ref in opinion.reviewed_prior_award_ids:
+        if ref not in history.prior_award_ids():
+            problems.append(
+                f"medical opinion '{opinion.id}' reviews unknown prior award '{ref}'"
+            )
+    for ref in opinion.endorses_contention_ids:
+        if ref not in contention_ids:
+            problems.append(
+                f"medical opinion '{opinion.id}' endorses unknown contention '{ref}'"
+            )
+    for ref in opinion.rejects_contention_ids:
+        if ref not in contention_ids:
+            problems.append(
+                f"medical opinion '{opinion.id}' rejects unknown contention '{ref}'"
+            )
+    for ref in sorted(
+        set(opinion.endorses_contention_ids) & set(opinion.rejects_contention_ids)
+    ):
+        problems.append(
+            f"medical opinion '{opinion.id}' both endorses and rejects contention '{ref}'"
+        )
+    return problems
+
+
+def _assertion_referential(
+    assertion: ApportionmentAssertion,
+    history: AssertionWorldProjection,
+    ledger: MedicalAssertionLedger,
+) -> list[str]:
+    problems: list[str] = []
+    if ledger.opinion(assertion.opinion_id) is None:
+        problems.append(
+            f"apportionment assertion '{assertion.id}' references unknown medical "
+            f"opinion '{assertion.opinion_id}'"
+        )
+    if (
+        assertion.linked_contention_id is not None
+        and ledger.contention(assertion.linked_contention_id) is None
+    ):
+        problems.append(
+            f"apportionment assertion '{assertion.id}' references unknown contention "
+            f"'{assertion.linked_contention_id}'"
+        )
+    for ref in assertion.condition_ids:
+        if ref not in history.condition_ids():
+            problems.append(
+                f"apportionment assertion '{assertion.id}' references unknown "
+                f"condition '{ref}'"
+            )
+    for ref in assertion.prior_claim_ids:
+        if ref not in history.prior_claim_ids():
+            problems.append(
+                f"apportionment assertion '{assertion.id}' references unknown prior "
+                f"claim '{ref}'"
+            )
+    for ref in assertion.prior_award_ids:
+        if ref not in history.prior_award_ids():
+            problems.append(
+                f"apportionment assertion '{assertion.id}' references unknown prior "
+                f"award '{ref}'"
+            )
+    problems.extend(
+        _award_pairing_problem(
+            "apportionment assertion",
+            assertion.id,
+            assertion.prior_claim_ids,
+            assertion.prior_award_ids,
+            history,
+        )
+    )
+    return problems
+
+
+def _opinion_chain(
+    ledger: MedicalAssertionLedger, context: AssertionValidationContext
+) -> list[str]:
+    problems: list[str] = []
+    known = {opinion.id for opinion in ledger.medical_opinions}
+    for opinion in ledger.medical_opinions:
+        if opinion.responds_to_opinion_id == opinion.id:
+            problems.append(f"medical opinion '{opinion.id}' responds to itself")
+        if opinion.supersedes_opinion_id == opinion.id:
+            problems.append(f"medical opinion '{opinion.id}' supersedes itself")
+        if (
+            opinion.responds_to_opinion_id is not None
+            and opinion.responds_to_opinion_id != opinion.id
+            and opinion.responds_to_opinion_id not in known
+        ):
+            problems.append(
+                f"medical opinion '{opinion.id}' responds to unknown opinion "
+                f"'{opinion.responds_to_opinion_id}'"
+            )
+        if (
+            opinion.supersedes_opinion_id is not None
+            and opinion.supersedes_opinion_id != opinion.id
+            and opinion.supersedes_opinion_id not in known
+        ):
+            problems.append(
+                f"medical opinion '{opinion.id}' supersedes unknown opinion "
+                f"'{opinion.supersedes_opinion_id}'"
+            )
+        if opinion.report_date < context.date_of_injury:
+            problems.append(
+                f"medical opinion '{opinion.id}' has report_date "
+                f"{opinion.report_date.isoformat()}, before the current date of "
+                f"injury {context.date_of_injury.isoformat()}"
+            )
+        if opinion.report_date > context.anchor_date:
+            problems.append(
+                f"medical opinion '{opinion.id}' has report_date "
+                f"{opinion.report_date.isoformat()}, after the corpus anchor date "
+                f"{context.anchor_date.isoformat()}"
+            )
+        for ref in (opinion.responds_to_opinion_id, opinion.supersedes_opinion_id):
+            if ref is None or ref == opinion.id:
+                continue
+            target = ledger.opinion(ref)
+            if target is not None and target.report_date >= opinion.report_date:
+                problems.append(
+                    f"medical opinion '{opinion.id}' references later-or-same-date "
+                    f"opinion '{ref}'; response and supersession targets must be "
+                    "strictly earlier"
+                )
+        if opinion.author_role in ("qme", "ame") and (
+            context.eval_type in ("qme", "ame") and opinion.author_role != context.eval_type
+        ):
+            problems.append(
+                f"medical opinion '{opinion.id}' has author_role "
+                f"'{opinion.author_role}', which conflicts with lifecycle.eval_type "
+                f"'{context.eval_type}'"
+            )
+
+    # Cycle detection over the response/supersession graph. Strictly-earlier
+    # dating already forbids a cycle among coherent entries, so this fires only
+    # on chains that are *also* mis-dated — kept as its own error because a
+    # cycle is a different repair from a date.
+    edges = {
+        opinion.id: tuple(
+            ref
+            for ref in (opinion.responds_to_opinion_id, opinion.supersedes_opinion_id)
+            if ref is not None and ref in known
+        )
+        for opinion in ledger.medical_opinions
+    }
+    reported: set[str] = set()
+    for start in edges:
+        path: list[str] = []
+        seen: set[str] = set()
+        node = start
+        while node in edges and node not in seen:
+            seen.add(node)
+            path.append(node)
+            targets = edges[node]
+            if not targets:
+                break
+            node = targets[0]
+        else:
+            if node in seen and node in path:
+                cycle = [*path[path.index(node) :], node]
+                chain = " -> ".join(cycle)
+                if frozenset(cycle) not in {frozenset(c.split(" -> ")) for c in reported}:
+                    reported.add(chain)
+                    problems.append(
+                        f"medical opinion chain contains a cycle: {chain}"
+                    )
+    return problems
+
+
+def _lifecycle(ledger: MedicalAssertionLedger) -> list[str]:
+    problems: list[str] = []
+    for opinion in ledger.medical_opinions:
+        owned_assertions = ledger.assertions_of(opinion.id)
+        if opinion.report_stage == "final" and opinion.apportionment_state == "deferred":
+            problems.append(
+                f"medical opinion '{opinion.id}' is final but apportionment_state "
+                "is 'deferred'"
+            )
+        if opinion.report_stage == "interim" and opinion.apportionment_state == "omitted":
+            problems.append(
+                f"medical opinion '{opinion.id}' is interim but apportionment_state "
+                "is 'omitted'"
+            )
+        if opinion.apportionment_state == "deferred" and owned_assertions:
+            problems.append(
+                f"medical opinion '{opinion.id}' is deferred but owns an "
+                "apportionment assertion"
+            )
+        if opinion.apportionment_state == "omitted" and owned_assertions:
+            problems.append(
+                f"medical opinion '{opinion.id}' is omitted but owns an "
+                "apportionment assertion"
+            )
+        if opinion.apportionment_state == "determined" and opinion.determination_kind is None:
+            problems.append(
+                f"medical opinion '{opinion.id}' is determined but has no "
+                "determination_kind"
+            )
+        if (
+            opinion.determination_kind is not None
+            and opinion.apportionment_state != "determined"
+        ):
+            problems.append(
+                f"medical opinion '{opinion.id}' has determination_kind "
+                f"'{opinion.determination_kind}' but apportionment_state is not "
+                "'determined'"
+            )
+        if opinion.determination_kind == "allocated" and not owned_assertions:
+            problems.append(
+                f"medical opinion '{opinion.id}' has determination_kind 'allocated' "
+                "but owns no apportionment assertion"
+            )
+        if (
+            opinion.determination_kind in ("no_nonindustrial_share", "unable_to_approximate")
+            and owned_assertions
+        ):
+            problems.append(
+                f"medical opinion '{opinion.id}' has determination_kind "
+                f"'{opinion.determination_kind}' but owns an apportionment assertion"
+            )
+    return problems
+
+
+def _grounding_typing(ledger: MedicalAssertionLedger) -> list[str]:
+    problems: list[str] = []
+    for contention in ledger.contentions:
+        hooks = [g.hook for g in contention.groundings]
+        for hook in sorted({h for h in hooks if hooks.count(h) > 1}):
+            problems.append(
+                f"contention '{contention.id}' has more than one grounding for "
+                f"doctrine hook '{hook}'"
+            )
+        for grounding in contention.groundings:
+            if grounding.hook not in contention.doctrine_hooks:
+                problems.append(
+                    f"contention '{contention.id}' supplies grounding for "
+                    f"'{grounding.hook}' but does not carry that doctrine hook"
+                )
+            if isinstance(grounding, SibtfGrounding):
+                sibtf = grounding
+                if not sibtf.preexisting_condition_ids and not sibtf.prior_award_ids:
+                    problems.append(
+                        f"SIBTF grounding on contention '{contention.id}' must "
+                        "reference at least one preexisting condition or prior award"
+                    )
+        if (
+            contention.treatment_causation is not None
+            and contention.claim_type != "compensable_consequence"
+        ):
+            problems.append(
+                f"contention '{contention.id}' sets treatment_causation but "
+                "claim_type is not 'compensable_consequence'"
+            )
+        if (
+            contention.treatment_causation is not None
+            and contention.target_condition_id is None
+        ):
+            problems.append(
+                f"contention '{contention.id}' sets treatment_causation but has no "
+                "target_condition_id"
+            )
+        if (
+            contention.treatment_causation is not None
+            and contention.requested_apportionment is None
+        ):
+            problems.append(
+                f"contention '{contention.id}' sets treatment_causation but has no "
+                "requested_apportionment"
+            )
+        if (
+            contention.requested_apportionment is not None
+            and contention.claim_type != "compensable_consequence"
+        ):
+            problems.append(
+                f"contention '{contention.id}' sets requested_apportionment but "
+                "claim_type is not 'compensable_consequence'"
+            )
+        if (
+            contention.requested_apportionment is not None
+            and contention.treatment_causation is None
+        ):
+            problems.append(
+                f"contention '{contention.id}' sets requested_apportionment but has "
+                "no treatment_causation"
+            )
+    for assertion in ledger.apportionment_assertions:
+        hooks = [g.hook for g in assertion.groundings]
+        for hook in sorted({h for h in hooks if hooks.count(h) > 1}):
+            problems.append(
+                f"apportionment assertion '{assertion.id}' has more than one "
+                f"grounding for doctrine hook '{hook}'"
+            )
+        for grounding in assertion.groundings:
+            basis = HOOK_TO_BASIS.get(grounding.hook)
+            if basis is None or basis not in assertion.basis_kinds:
+                problems.append(
+                    f"apportionment assertion '{assertion.id}' supplies grounding "
+                    f"for '{grounding.hook}' but its basis_kinds do not include the "
+                    "corresponding doctrine basis"
+                )
+    return problems
+
+
+def _apportionment_shape(ledger: MedicalAssertionLedger) -> list[str]:
+    problems: list[str] = []
+    per_opinion_parts: dict[tuple[str, str], int] = {}
+    for assertion in ledger.apportionment_assertions:
+        owner = ledger.opinion(assertion.opinion_id)
+        key = (assertion.opinion_id, assertion.body_part)
+        per_opinion_parts[key] = per_opinion_parts.get(key, 0) + 1
+        if per_opinion_parts[key] == 2:
+            problems.append(
+                f"medical opinion '{assertion.opinion_id}' has more than one "
+                f"apportionment assertion for body part '{assertion.body_part}'"
+            )
+        if owner is not None and owner.determination_kind == "allocated":
+            if assertion.industrial_percent + assertion.nonindustrial_percent != 100:
+                problems.append(
+                    f"apportionment assertion '{assertion.id}' percentages must sum "
+                    f"to 100; got industrial={assertion.industrial_percent} and "
+                    f"nonindustrial={assertion.nonindustrial_percent}"
+                )
+            if assertion.nonindustrial_percent == 0:
+                problems.append(
+                    f"apportionment assertion '{assertion.id}' is allocated but "
+                    "nonindustrial_percent is zero; use determination_kind "
+                    "'no_nonindustrial_share' on the owning opinion"
+                )
+        for label, values in (
+            ("basis kind", assertion.basis_kinds),
+            ("condition id", assertion.condition_ids),
+            ("prior claim id", assertion.prior_claim_ids),
+            ("prior award id", assertion.prior_award_ids),
+        ):
+            listed = list(values)
+            for value in sorted({v for v in listed if listed.count(v) > 1}):
+                problems.append(
+                    f"apportionment assertion '{assertion.id}' repeats {label} '{value}'"
+                )
+        if "lc4664_prior_award" in assertion.basis_kinds and not any(
+            isinstance(g, Lc4664PriorAwardGrounding) for g in assertion.groundings
+        ):
+            problems.append(
+                f"apportionment assertion '{assertion.id}' uses 'lc4664_prior_award' "
+                "without a typed prior-award grounding"
+            )
+        if "benson_successive_injury" in assertion.basis_kinds and not any(
+            isinstance(g, BensonGrounding) for g in assertion.groundings
+        ):
+            problems.append(
+                f"apportionment assertion '{assertion.id}' uses "
+                "'benson_successive_injury' without a typed Benson grounding"
+            )
+        if "industrial_treatment" in assertion.basis_kinds:
+            linked = (
+                ledger.contention(assertion.linked_contention_id)
+                if assertion.linked_contention_id is not None
+                else None
+            )
+            if linked is None or linked.claim_type != "compensable_consequence":
+                problems.append(
+                    f"apportionment assertion '{assertion.id}' uses "
+                    "'industrial_treatment' without a linked compensable-consequence "
+                    "contention"
+                )
+    return problems
+
+
+def validate_medical_assertions(
+    context: AssertionValidationContext,
+    history: AssertionWorldProjection,
+    ledger: MedicalAssertionLedger,
+) -> tuple[str, ...]:
+    """Every internal-incoherence problem in *ledger*, in stable order.
+
+    Empty means coherent. **Divergence from world truth never appears here** —
+    a contention that a nonindustrial condition is industrial, an opinion that
+    endorses against the evidence, a wrong-Hikida refusal: all legal case
+    content, all graded rather than rejected. What fails is a reference that
+    resolves to nothing, a lifecycle that contradicts itself, a percentage pair
+    that cannot sum — an artifact no coherent case file could contain.
+
+    One implementation for both surfaces: the planner calls this with a
+    projection built from the plan's ledger, and the truth-tree validator calls
+    it with a projection parsed back out of the truth channel.
+    """
+    problems: list[str] = []
+    contention_ids = frozenset(c.id for c in ledger.contentions)
+    for contention in ledger.contentions:
+        problems.extend(_contention_referential(contention, history))
+    for opinion in ledger.medical_opinions:
+        problems.extend(_opinion_referential(opinion, history, contention_ids))
+    for assertion in ledger.apportionment_assertions:
+        problems.extend(_assertion_referential(assertion, history, ledger))
+    problems.extend(_opinion_chain(ledger, context))
+    problems.extend(_lifecycle(ledger))
+    problems.extend(_grounding_typing(ledger))
+    problems.extend(_apportionment_shape(ledger))
+    return tuple(problems)
+
+
+def assertion_warnings(
+    history: AssertionWorldProjection, ledger: MedicalAssertionLedger
+) -> tuple[str, ...]:
+    """Nonfatal authoring warnings — the ungrounded-explicit-hook case.
+
+    Warn, never block (decision #2): the hook is kept and the assertion stands;
+    the author is told the argument has nothing typed behind it. One warning
+    per distinct hook, sorted, so the output is stable.
+    """
+    ungrounded: set[str] = set()
+    for contention in ledger.contentions:
+        supplied = {g.hook for g in contention.groundings}
+        for hook in contention.doctrine_hooks:
+            if hook in GROUNDABLE_HOOKS and hook not in supplied:
+                ungrounded.add(hook)
+    return tuple(
+        f"medical_assertions: doctrine hook '{hook}' has no typed MedicalHistory "
+        "grounding; explicit hook retained"
+        for hook in sorted(ungrounded)
+    )
+
+
 __all__ = [
     "APPORTIONMENT_ID_PATTERN",
     "CONTENTION_ID_PATTERN",
+    "GROUNDABLE_HOOKS",
     "HOOK_TO_BASIS",
     "OPINION_ID_PATTERN",
     "REVIEWED_IDS_COMBINED_CAP",
@@ -534,6 +1059,7 @@ __all__ = [
     "EvidenceDisposition",
     "FirefighterPresumptionGrounding",
     "Lc4664PriorAwardGrounding",
+    "MedicalAssertionError",
     "MedicalAssertionLedger",
     "MedicalOpinion",
     "OpinionAuthorRole",
@@ -545,6 +1071,8 @@ __all__ = [
     "RequestedApportionment",
     "SibtfGrounding",
     "TreatmentCausation",
+    "assertion_warnings",
     "project_medical_history",
     "sibtf_grounding_clauses",
+    "validate_medical_assertions",
 ]

@@ -2092,6 +2092,33 @@ class ApportionmentAssertionEntry(_Model):
     groundings: list[DoctrineGrounding] = Field(default_factory=list)
 
 
+#: Structured keys the seed schema reserves for the truth manifest. A seed that
+#: states one is trying to author a grade, and grades are derived, truth-only
+#: values. Ordinary English in free-form rationale is untouched — this scans
+#: mapping *keys*, never prose.
+RESERVED_TRUTH_LABEL_FIELDS: frozenset[str] = frozenset(
+    {"quality", "rubric", "assertionQuality", "medicalAssertions"}
+)
+
+
+def _reserved_field_path(payload: Any, path: str = "scenario.medical_assertions") -> str | None:
+    """The dotted path of the first reserved truth-label key in *payload*."""
+    if isinstance(payload, Mapping):
+        for key in payload:
+            here = f"{path}.{key}"
+            if isinstance(key, str) and key in RESERVED_TRUTH_LABEL_FIELDS:
+                return here
+            found = _reserved_field_path(payload[key], here)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for index, item in enumerate(payload):
+            found = _reserved_field_path(item, f"{path}[{index}]")
+            if found is not None:
+                return found
+    return None
+
+
 class MedicalAssertionsScenario(_Model):
     """The assertion-layer gate: what the parties say about the world truth.
 
@@ -2107,6 +2134,55 @@ class MedicalAssertionsScenario(_Model):
         default_factory=list, max_length=12
     )
     sample_assertions: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_reserved_truth_label_fields(cls, payload: Any) -> Any:
+        """The label-position pre-validator, ahead of pydantic's extra-forbid.
+
+        The copied seed is analyzer-visible, so a structured ``quality`` key
+        anywhere under this block is a truth label in an analyzer artifact —
+        rejected with its own message rather than a generic unknown-field one.
+        """
+        found = _reserved_field_path(payload)
+        if found is not None:
+            token = found.rsplit(".", 1)[-1]
+            raise ValueError(
+                f"scenario.medical_assertions contains reserved truth-label field "
+                f"'{token}' at {found}; quality fields may appear only in the "
+                "truth manifest"
+            )
+        return payload
+
+    @model_validator(mode="after")
+    def _ids_are_unique_per_collection(self) -> MedicalAssertionsScenario:
+        for collection, entries in (
+            ("contentions", self.contentions),
+            ("medical_opinions", self.medical_opinions),
+            ("apportionment_assertions", self.apportionment_assertions),
+        ):
+            seen: set[str] = set()
+            for entry in entries:
+                if entry.id in seen:
+                    raise ValueError(
+                        f"scenario.medical_assertions.{collection}: duplicate id '{entry.id}'"
+                    )
+                seen.add(entry.id)
+        return self
+
+    @model_validator(mode="after")
+    def _an_empty_block_decides_nothing(self) -> MedicalAssertionsScenario:
+        if not self.sample_assertions and not (
+            self.contentions or self.medical_opinions or self.apportionment_assertions
+        ):
+            raise ValueError(
+                "scenario.medical_assertions is present but sample_assertions is "
+                "false and all three explicit assertion collections are empty. Add "
+                "at least one explicit contention, medical opinion, or apportionment "
+                "assertion, set sample_assertions to true, or remove "
+                "scenario.medical_assertions."
+            )
+        return self
 
 
 class ScenarioSpec(_Model):
@@ -2203,6 +2279,24 @@ class ScenarioSpec(_Model):
                 "benefit rate and a settlement both rest on an average weekly wage, and "
                 "without an earnings history this engine would have to assert one. Add a "
                 f"scenario.wages block, or remove scenario.{stated[0]}."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _assertions_need_a_world_ledger(self) -> ScenarioSpec:
+        """The assertion-layer gate: no world truth, nothing to grade against.
+
+        An assertion's references resolve into the medical-history ledger and
+        its quality is graded against that ledger's facts, so a seed opening
+        the assertion layer without the world-truth layer is not a smaller
+        case — it is an unresolvable one.
+        """
+        if self.medical_assertions is not None and self.medical_history is None:
+            raise ValueError(
+                "scenario.medical_assertions requires scenario.medical_history; "
+                "assertion references cannot resolve without the world-truth "
+                "ledger. Add a scenario.medical_history block, or remove "
+                "scenario.medical_assertions."
             )
         return self
 
