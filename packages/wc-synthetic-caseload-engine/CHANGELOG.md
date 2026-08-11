@@ -52,9 +52,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added the label-position leakage anti-probe: the reserved keys (`quality`,
   `rubric`, `assertionQuality`, `medicalAssertions`) and the bare token
   `unsupportable` are absent from every analyzer-visible artifact — seed and
-  facts YAML, manifests, filenames, raw document bytes, DOCX `docProps`, PDF
-  metadata and annotations, and the CLI streams — with positive controls for
-  every position class and an (empty) named exemption ledger.
+  facts YAML, manifests, filenames and directory names, raw document bytes,
+  parsed DOCX `docProps` (property names included), the raw PDF Info
+  dictionary, XMP, annotations and page text, OCR over image-only pages
+  (tesseract; an unscannable OCR-only surface fails loudly), decoded EML
+  parts and header names, and the CLI streams — with a planted positive
+  control for every position and an (empty) named exemption ledger.
+
+### Changed — assertion-layer fix round 1 (sol review PR #44; counsel ruling AJC-61/D1, 2026-08-11)
+
+- Reverted two contract alterations: condition candidacy is world-truth-typed
+  (visibility only conditions the B.5 evidence read), and the firefighter
+  evidence override is gone — a presumption contention on wholly-unrelated
+  oncology grades what the frozen rubric says.
+- Suppression now keys on the post-shaping semantic surface with the same
+  rule-6 function that keys explicit entries, and every ID (`ctn`/`opn`/`app`)
+  is assigned in one labelling pass after the last stochastic draw.
+- Opinions carry their own semantically salted quality-target recipe driving
+  the B.8 foundation surface, with `OPINION_RECIPE_WEIGHTS` derived against
+  the measured worst-of drag (the sanctioned Part 3:659 adjustment). Measured
+  on the re-pinned 6,000-case cohort: opinions 0.7704 and apportionment
+  assertions 0.7900 supported, inside counsel's 0.75–0.85.
+- Contentions measure 0.5880 supported after the reversions — below the
+  counsel ruling's 0.65 floor. The floor assertion is deliberately left
+  failing with the value pinned exactly: an open counsel question, recorded
+  rather than absorbed.
+- The caseload truth rollup allocates its money-channel case list and record
+  dicts independently of the top-level index (byte-identical output).
+- Dangling typed-grounding entity references now warn and survive (no frozen
+  §C literal exists, so existence is an authoring warning, never an error).
+- The seed template and the operator guide document both medical-story
+  ledgers: the requires-history gate, the 12/8/12 and combined-12 caps,
+  truth-only quality, and the typed Hikida fields.
 
 ### Added — the ground-truth export (**AJC-48**, money layer Wave 3)
 
