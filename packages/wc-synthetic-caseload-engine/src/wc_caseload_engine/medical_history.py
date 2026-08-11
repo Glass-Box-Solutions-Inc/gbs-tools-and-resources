@@ -7,22 +7,26 @@ that carries ``scenario.medical_history``. Keeping them apart is what lets "this
 has no medical-history layer" be a single ``None`` the planner can short-circuit on,
 instead of a dozen empty collections on a model that is always there.
 
-**Nothing here is published, and that is the design rather than an unfinished edge.**
-The two-level design this ledger opens depends on it. World truth is the thing an
-assertion is *graded against*; a document that could cite it directly would collapse
-the two levels back into one, because a party's assertion about a history could no
-longer diverge from the history. So M1 derives the ledger, carries it on the plan,
-and writes it nowhere: not into ``case_facts.yaml``, not into the manifest's
-``caseFacts`` block, not into the truth manifest. That is the same discipline
-``case_facts.py`` already applies to ``wpi`` and ``pd`` — "fields the ledger derives
-but nothing renders stay on the model for later phases and out of the output" — one
-layer earlier. M3 gives the conditions a document surface; M4 gives the ledger a
-scorer-only channel and the version bump that goes with it.
+**Nothing here reaches an analyzer-visible artifact, and that is the design rather
+than an unfinished edge.** The two-level design this ledger opens depends on it.
+World truth is the thing an assertion is *graded against*; a document that could
+cite it directly would collapse the two levels back into one, because a party's
+assertion about a history could no longer diverge from the history. So the ledger
+is derived, carried on the plan, and kept out of ``case_facts.yaml``, the
+manifest's ``caseFacts`` block, every rendered document and every warning. That is
+the same discipline ``case_facts.py`` already applies to ``wpi`` and ``pd`` —
+"fields the ledger derives but nothing renders stay on the model for later phases
+and out of the output" — one layer earlier. **M2 (AJC-61) gives the ledger exactly
+one outlet: a redacted, scorer-only projection inside the truth manifest's
+``assertions`` channel** — causal facts only, no demographics, no archetype, no
+identities — which exists so a stated assertion can be graded from the recorded
+truth artifact alone. M3 gives the conditions a document surface.
 
-The consequence worth stating plainly: **every field on every model in this module is
-byte-inert in M1**, and the seed gate that reaches them is marked "not yet honoured"
-so the schema-honesty sweep will force that marker's removal the moment M3 wires a
-surface up.
+The consequence worth stating plainly: every field on every model in this module is
+**document-byte-inert**, and the seed gate that reaches them is marked "not yet
+honoured" so the schema-honesty sweep will force that marker's removal the moment
+M3 wires a rendering surface up. The truth projection is not a rendering surface —
+it lives behind the scorer boundary.
 
 ## The sampler
 

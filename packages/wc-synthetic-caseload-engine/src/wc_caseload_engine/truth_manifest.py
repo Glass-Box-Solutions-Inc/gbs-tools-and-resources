@@ -9,10 +9,12 @@ document analysis.
 
 The envelope and each channel have independent semantic versions.  Consumers
 MUST ignore channel keys they do not recognize and MUST NOT fail because an
-unknown channel is present.  That forward-compatibility rule lets later work
-add ``defects`` (the analyzer testing plan's Phase 3 defect-injection manifest)
-and ``assertions`` (medical-story M4 assertion-quality labels) without breaking
-money-channel consumers.  Neither future channel is implemented here.
+unknown channel is present.  That forward-compatibility rule is what let the
+``assertions`` channel (medical-story M2, AJC-61 — assertion-quality labels,
+the redacted world-truth projection and the ledger digest) arrive at envelope
+``1.0.0`` without breaking money-channel consumers, and it still holds the door
+for ``defects`` (the analyzer testing plan's Phase 3 defect-injection manifest),
+which remains unimplemented.
 
 @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 """

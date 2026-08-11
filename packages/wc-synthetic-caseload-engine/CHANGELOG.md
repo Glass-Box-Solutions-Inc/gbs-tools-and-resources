@@ -9,6 +9,53 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — the assertion layer (**AJC-61**, medical story M2)
+
+- Added `scenario.medical_assertions`: contentions, medical opinions and
+  apportionment assertions over the AJC-60 world-truth ledger, with truth-only
+  `supported | thin | unsupportable` grades derived from the frozen Escobedo v2
+  rubric. Requires `scenario.medical_history`; an absent block moves zero bytes
+  (all four golden corpora byte-identical throughout).
+- Added the §C referential validator with byte-exact templates, failing at
+  generation time, at `validate --spec` and at `validate --out`. Polarity is
+  the contract: assertion divergence from world truth is legal case content and
+  passes; only internal incoherence fails.
+- Typed the narrowed *Justice*/Hikida rule (`claim_type=compensable_consequence`
+  + `treatment_causation` + `requested_apportionment`) instead of adding a
+  fifteenth `DoctrineHook` — the enum member, its doctrine content and the
+  showcase golden re-record are AJC-62's; note that adding the fifteenth hook
+  later changes the auto-derived doctrine pool and re-rolls `auto:` caseloads.
+- Upgraded the four missing-entity doctrine hooks (`benson`, `sibtf`,
+  `lc4664_prior_award`, `firefighter_presumption`) to typed groundings; an
+  explicit hook without one warns and survives (explicit control wins, loudly).
+- Resolved `PriorAwardEntry.conclusively_presumed` (`bool | None`) from the
+  award's own resolution: stipulated award and findings-and-award presume, a
+  compromise and release never does (counsel, 2026-08-10); an explicit seed
+  value always wins.
+- Added the semantically keyed 15-family `medical-assertions:` sampler behind
+  the seed gate: Fraction-exact provenance-bearing knobs, explicit-entry
+  authority with skip-not-redraw suppression, evidence-conditioned QME/AME
+  dispositions, the deliberate final-omission and contradicted-zero-share
+  defects, label-independent evidence budgets and distractors, and IDs
+  (`ctn-NN`/`opn-NN`/`app-NN`) assigned only after every draw.
+- Pinned the 6,000-case measurement cohort (seeds `610000..615999`, frozen
+  6-cell lifecycle schedule, five explicit witness strata meeting three-sigma
+  denominator floors) and froze its empirical constants and recipe→grade
+  confusion matrix as the property oracle.
+- Added the `assertions` truth channel at envelope `1.0.0` /
+  `channelVersion 1.0.0` — the forward-compatibility contract AJC-48 shipped is
+  exactly what let it arrive without a version bump — carrying the graded
+  ledger, a typed `validationContext`, a redacted world-truth projection and a
+  canonical `ledgerDigest`, so `validate --out` re-validates and re-grades from
+  the recorded artifact alone, substrate-checkout-free. A tampered quality,
+  reference or digest fails with an exact template.
+- Added the label-position leakage anti-probe: the reserved keys (`quality`,
+  `rubric`, `assertionQuality`, `medicalAssertions`) and the bare token
+  `unsupportable` are absent from every analyzer-visible artifact — seed and
+  facts YAML, manifests, filenames, raw document bytes, DOCX `docProps`, PDF
+  metadata and annotations, and the CLI streams — with positive controls for
+  every position class and an (empty) named exemption ledger.
+
 ### Added — the ground-truth export (**AJC-48**, money layer Wave 3)
 
 - Added versioned, scorer-only case truth manifests under `truth/` with a

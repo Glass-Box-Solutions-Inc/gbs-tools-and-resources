@@ -15,6 +15,8 @@ microseconds, so the exact-message surface runs on every push at unit speed.
 from __future__ import annotations
 
 import datetime as dt
+import json
+import re
 import typing
 from typing import Any
 
@@ -1705,3 +1707,356 @@ def test_validate_out_rejects_tampered_assertion_incoherence_with_exact_template
     assert not report.ok
     rendered = report.render()
     assert "contention 'ctn-01' references unknown condition 'cond-77'" in rendered
+
+
+# ---------------------------------------------------------------------------
+# E.7 — the label-position leakage anti-probe
+# ---------------------------------------------------------------------------
+
+#: Structured keys that are truth-label positions wherever they appear in an
+#: analyzer-visible mapping.
+RESERVED_LABEL_KEYS = frozenset({"quality", "rubric", "assertionQuality", "medicalAssertions"})
+
+#: The one label token rare enough to sweep bare (case-folded, whole word).
+#: ``supported`` and ``thin`` are ordinary English the shipped corpus already
+#: contains; scanning them bare can only be made green by weakening the probe.
+BARE_LABEL_TOKEN = "unsupportable"
+
+#: Named exemptions for residual bare-token overlap. Every entry must identify
+#: the analyzer-visible surface that makes the occurrence legitimate. Empty —
+#: and the probe's positive controls keep it honest rather than forgotten.
+ASSERTION_LEAKAGE_EXEMPTIONS: dict[str, str] = {}
+
+_BARE_TOKEN = re.compile(r"(?<![a-z])unsupportable(?![a-z])")
+
+_LEAKAGE_SCENARIO: dict[str, Any] = {
+    "medical_history": {
+        "sample_conditions": False,
+        "conditions": [
+            {
+                "label": "nonindustrial lumbar degenerative disease",
+                "origin": "nonindustrial",
+                "body_part": "lumbar_spine",
+                "severity": "moderate",
+                "symptomatic_before_doi": True,
+            },
+            {
+                "label": "undocumented cervical strain history",
+                "origin": "nonindustrial",
+                "body_part": "shoulder",
+                "surfaces_in_file": False,
+            },
+        ],
+    },
+    "medical_assertions": {
+        "sample_assertions": False,
+        "contentions": [
+            # supported: visible nonindustrial overlap argued as apportionment.
+            {
+                "id": "ctn-01",
+                "claim_type": "apportionment_defense",
+                "party": "defense",
+                "position": "affirm",
+                "target_condition_id": "cond-00",
+                "rationale": "a nonindustrial factor contributes to present disability",
+            },
+            # thin: an invisible condition cannot support the aggravation read.
+            {
+                "id": "ctn-02",
+                "claim_type": "apportionment_defense",
+                "party": "defense",
+                "position": "affirm",
+                "target_condition_id": "cond-01",
+                "rationale": "a second contributing factor is asserted",
+            },
+        ],
+        "medical_opinions": [
+            {
+                "id": "opn-01",
+                "author_role": "qme",
+                "report_stage": "final",
+                "report_date": "2022-06-01",
+                "apportionment_state": "determined",
+                "determination_kind": "allocated",
+                "examination_performed": True,
+                "reviewed_condition_ids": ["cond-00"],
+                "rationale": "examined the applicant and reviewed the record",
+            }
+        ],
+        "apportionment_assertions": [
+            # unsupportable: vocational pass-through.
+            {
+                "id": "app-01",
+                "opinion_id": "opn-01",
+                "body_part": "lumbar_spine",
+                "industrial_percent": 60,
+                "nonindustrial_percent": 40,
+                "basis_kinds": ["vocational_apportionment"],
+                "condition_ids": ["cond-00"],
+                "description": "chronic lumbar disability",
+                "disability_causation_stated": True,
+                "reasonable_medical_probability": True,
+                "causal_rationale": "consistent with the vocational assessment",
+                "percentage_rationale": "the split follows the vocational report",
+            }
+        ],
+    },
+}
+
+
+def _leakage_reserved_key_findings(payload: Any, path: str) -> list[str]:
+    findings: list[str] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            here = f"{path}.{key}"
+            if key in RESERVED_LABEL_KEYS:
+                findings.append(f"reserved key {here}")
+            findings.extend(_leakage_reserved_key_findings(value, here))
+    elif isinstance(payload, list):
+        for index, item in enumerate(payload):
+            findings.extend(_leakage_reserved_key_findings(item, f"{path}[{index}]"))
+    return findings
+
+
+def _scan_assertion_leakage(
+    out_dir: Any, cli_streams: tuple[str, str] | None = None
+) -> tuple[list[str], list[str]]:
+    """Every label-position finding + the inventory of surfaces read.
+
+    Surfaces: structured keys in seed.yaml / case_facts.yaml / manifest.json /
+    caseload_manifest.json; the bare ``unsupportable`` token in every file's raw
+    bytes, every filename, relpath and directory name; DOCX ``docProps/*.xml``
+    and body XML; PDF metadata and annotations; extracted EML text; and the CLI
+    stdout/stderr when supplied. The truth/ subtree is the ONLY exclusion — it
+    is the scorer boundary the labels are supposed to live behind.
+    """
+    import io
+    import zipfile
+    from pathlib import Path
+
+    import yaml as yaml_module
+
+    out = Path(out_dir)
+    findings: list[str] = []
+    surfaces: list[str] = []
+
+    def note_token(text: str, where: str) -> None:
+        if _BARE_TOKEN.search(text.lower()) and where not in ASSERTION_LEAKAGE_EXEMPTIONS:
+            findings.append(f"bare token at {where}")
+
+    for path in sorted(out.rglob("*")):
+        rel = path.relative_to(out).as_posix()
+        if rel == "truth" or rel.startswith("truth/"):
+            continue
+        note_token(rel, f"path:{rel}")
+        if path.is_dir():
+            continue
+        surfaces.append(rel)
+        raw = path.read_bytes()
+        note_token(raw.decode("utf-8", errors="ignore"), f"bytes:{rel}")
+        if path.name in ("seed.yaml", "case_facts.yaml"):
+            findings.extend(
+                _leakage_reserved_key_findings(
+                    yaml_module.safe_load(raw.decode("utf-8")), rel
+                )
+            )
+        elif path.suffix == ".json":
+            findings.extend(
+                _leakage_reserved_key_findings(json.loads(raw.decode("utf-8")), rel)
+            )
+        elif path.suffix == ".docx":
+            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                for name in archive.namelist():
+                    if name.startswith("docProps/") or name.endswith(".xml"):
+                        surfaces.append(f"{rel}!{name}")
+                        note_token(
+                            archive.read(name).decode("utf-8", errors="replace"),
+                            f"docx:{rel}!{name}",
+                        )
+        elif path.suffix == ".pdf":
+            fitz = pytest.importorskip("fitz")
+            with fitz.open(path) as document:
+                surfaces.append(f"{rel}!metadata")
+                note_token(
+                    json.dumps(document.metadata or {}), f"pdf-metadata:{rel}"
+                )
+                for page in document:
+                    for annotation in page.annots() or ():
+                        note_token(
+                            json.dumps(annotation.info), f"pdf-annotation:{rel}"
+                        )
+                    note_token(page.get_text(), f"pdf-text:{rel}")
+
+    if cli_streams is not None:
+        stdout, stderr = cli_streams
+        surfaces.extend(["cli:stdout", "cli:stderr"])
+        note_token(stdout, "cli:stdout")
+        note_token(stderr, "cli:stderr")
+        findings.extend(
+            f"reserved key cli-stream:{key}"
+            for key in RESERVED_LABEL_KEYS
+            if f'"{key}"' in stdout or f'"{key}"' in stderr
+        )
+    return findings, surfaces
+
+
+@pytest.fixture(scope="module")
+def leakage_tree(tmp_path_factory: pytest.TempPathFactory):
+    """One assertion-bearing caseload, generated through the shipped CLI so the
+    scan can read stdout/stderr and structured logs as surfaces."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import yaml as yaml_module
+
+    from wc_caseload_engine.substrate import find_substrate
+
+    if find_substrate() is None:
+        pytest.skip("merus-test-data-generator substrate not on disk")
+
+    root = tmp_path_factory.mktemp("assertion-leakage")
+    body = _generate_body("leakage-probe-case", dict(_LEAKAGE_SCENARIO))
+    body["documents"] = {
+        "format_mix": {"pdf": 0.5, "docx": 0.3, "eml": 0.2},
+        "global_cap": 12,
+    }
+    body["output"] = {"formats": ["pdf", "docx", "eml"]}
+    spec = {"caseload_id": "leakage-probe", "cases": [body]}
+    spec_path = root / "spec.yaml"
+    spec_path.write_text(yaml_module.safe_dump(spec), encoding="utf-8")
+    out_dir = root / "out"
+    package_root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "wc_caseload_engine",
+            "generate",
+            "--spec",
+            str(spec_path),
+            "--out",
+            str(out_dir),
+        ],
+        cwd=package_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    return out_dir, (proc.stdout, proc.stderr)
+
+
+@pytest.mark.slow
+def test_assertion_leakage_probe_seed_really_contains_truth_labels(leakage_tree) -> None:
+    out_dir, _streams = leakage_tree
+    truth = json.loads(
+        (out_dir / "truth" / "leakage-probe-case.truth.json").read_text(encoding="utf-8")
+    )
+    qualities = {
+        item["quality"]
+        for collection in ("contentions", "medicalOpinions", "apportionmentAssertions")
+        for item in truth["channels"]["assertions"][collection]
+    }
+    assert qualities == {"supported", "thin", "unsupportable"}
+
+
+@pytest.mark.slow
+def test_assertion_label_positions_are_absent_from_every_analyzer_visible_artifact(
+    leakage_tree,
+) -> None:
+    out_dir, streams = leakage_tree
+    findings, surfaces = _scan_assertion_leakage(out_dir, streams)
+    assert not findings, findings
+    assert any(surface.endswith("seed.yaml") for surface in surfaces)
+    assert any(surface.endswith("manifest.json") for surface in surfaces)
+
+
+@pytest.mark.slow
+def test_bare_unsupportable_is_absent_except_for_named_exemptions(leakage_tree) -> None:
+    out_dir, streams = leakage_tree
+    findings, _surfaces = _scan_assertion_leakage(out_dir, streams)
+    bare = [finding for finding in findings if finding.startswith("bare token")]
+    assert not bare, bare
+    assert ASSERTION_LEAKAGE_EXEMPTIONS == {}
+
+
+@pytest.mark.slow
+def test_assertion_leakage_probe_covers_docx_properties_and_pdf_metadata(
+    leakage_tree,
+) -> None:
+    out_dir, streams = leakage_tree
+    _findings, surfaces = _scan_assertion_leakage(out_dir, streams)
+    assert any("docProps/core.xml" in surface for surface in surfaces), (
+        "the probe never opened a DOCX docProps part"
+    )
+    assert any(surface.endswith("!metadata") for surface in surfaces), (
+        "the probe never read a PDF metadata block"
+    )
+    assert "cli:stdout" in surfaces and "cli:stderr" in surfaces
+
+
+@pytest.mark.slow
+def test_assertion_leakage_probe_has_positive_controls_for_every_position(
+    leakage_tree, tmp_path: Any
+) -> None:
+    """Plant each position class into a copy of the tree; the scan must fire."""
+    import shutil
+    import zipfile
+    from pathlib import Path
+
+    out_dir, _streams = leakage_tree
+    copy_root = tmp_path / "planted"
+    shutil.copytree(out_dir, copy_root)
+
+    case_dir = next(p for p in copy_root.iterdir() if (p / "manifest.json").exists())
+
+    # 1. A reserved structured key in an analyzer-visible JSON artifact.
+    manifest_path = case_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["assertionQuality"] = ["a", "b"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    # 2. A reserved key in the copied seed.
+    seed_path = case_dir / "seed.yaml"
+    seed_path.write_text(
+        seed_path.read_text(encoding="utf-8") + "\nquality: planted\n", encoding="utf-8"
+    )
+
+    # 3. The bare token in a rendered document's bytes.
+    eml = next(iter(sorted((case_dir / "documents").glob("*.eml"))), None)
+    if eml is not None:
+        eml.write_bytes(eml.read_bytes() + b"\nUNSUPPORTABLE\n")
+
+    # 4. The bare token inside DOCX docProps.
+    docx = next(iter(sorted((case_dir / "documents").glob("*.docx"))), None)
+    if docx is not None:
+        source = docx.with_suffix(".docx.orig")
+        docx.rename(source)
+        with zipfile.ZipFile(source) as inp, zipfile.ZipFile(docx, "w") as outp:
+            for item in inp.infolist():
+                data = inp.read(item.filename)
+                if item.filename == "docProps/core.xml":
+                    data = data.replace(b"</cp:coreProperties>",
+                                        b"<dc:subject>unsupportable</dc:subject>"
+                                        b"</cp:coreProperties>")
+                outp.writestr(item, data)
+        source.unlink()
+
+    # 5. The bare token in a filename.
+    marker = case_dir / "documents" / "unsupportable-note.txt"
+    marker.write_text("planted", encoding="utf-8")
+
+    findings, _surfaces = _scan_assertion_leakage(copy_root)
+    joined = "\n".join(findings)
+    assert "manifest.json.assertionQuality" in joined
+    assert "seed.yaml.quality" in joined
+    assert "path:" in joined and "unsupportable-note.txt" in joined
+    if eml is not None:
+        assert any(f.startswith("bare token at bytes:") and ".eml" in f for f in findings)
+    if docx is not None:
+        assert any("docProps/core.xml" in f for f in findings), (
+            "the planted docProps subject was not detected"
+        )
+
+    Path(marker).unlink()

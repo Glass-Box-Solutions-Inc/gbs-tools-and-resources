@@ -540,6 +540,20 @@ Round 10 audited round 9. Three findings, plus a fourth found while reproducing 
 
 ## Changelog
 
+- 2026-08-11 — **AJC-61 (M2, the assertion layer):** `scenario.medical_assertions` opens the
+  second medical-story ledger — contentions / medical opinions / apportionment assertions
+  graded `supported|thin|unsupportable` against the frozen Escobedo v2 rubric, with the
+  polarity rule as the contract (divergence from world truth is case content; only internal
+  incoherence fails, with byte-exact templates). Labels and a redacted world-truth projection
+  export ONLY to the truth manifest's `assertions` channel (envelope unchanged at `1.0.0`,
+  `channelVersion 1.0.0`, canonical `ledgerDigest`; `validate --out` re-validates and
+  re-grades substrate-checkout-free). Hikida rides typed fields, not a fifteenth
+  `DoctrineHook` (AJC-62 owns the enum member and its showcase re-record). The 15-family
+  `medical-assertions:` sampler is semantically keyed behind the gate; the empirical
+  constants are measured over the frozen 6,000-case cohort and pinned, never guessed; the
+  label-position leakage anti-probe (reserved keys + bare `unsupportable`, DOCX `docProps`
+  and PDF metadata included) holds the scorer boundary with positive controls. Anti-criterion
+  held throughout: all four golden corpora byte-identical with the block absent.
 - **conjectured:** same-machine double-run md5 comparison proves generation determinism (Phase B gate design).
   **refuted by:** advisor-demanded clock-shift probe — TZ=Australia/Sydney drifted 55-60 of 289 files (EML Date offsets, PDF/docx timestamp normalization, substrate date.today() content, Faker clock-relative date_of_birth); the CLI-level gate also masked an in-process leak the two-zone test caught.
   **learned:** determinism gates must vary the environment axes the guarantee spans — process, hash seed, timezone, entrypoint — not just repeat the run; a passing gate that shares the leak's precondition proves nothing about the class.

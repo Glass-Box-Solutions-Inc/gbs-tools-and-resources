@@ -161,12 +161,13 @@ class CasePlan:
     ``scenario.medical_history``, so the absence is a value every consumer can
     short-circuit on rather than a dozen empty collections nobody can tell from data.
 
-    **Carried, never published.** Nothing writes it to ``case_facts.yaml``, to the
-    manifest's ``caseFacts`` block or to the truth manifest, and that is deliberate:
-    world truth is what an assertion is graded *against*, so a document able to cite
-    it would collapse the two-level design this ledger opens. Same discipline
-    ``case_facts`` already applies to ``wpi`` and ``pd``. M3 gives the conditions a
-    document surface and M4 gives the ledger a scorer-only channel.
+    **Carried, never analyzer-visible.** Nothing writes it to ``case_facts.yaml``,
+    to the manifest's ``caseFacts`` block, to a document or to a warning, and that
+    is deliberate: world truth is what an assertion is graded *against*, so a
+    document able to cite it would collapse the two-level design this ledger opens.
+    Same discipline ``case_facts`` already applies to ``wpi`` and ``pd``. Its one
+    outlet is M2's redacted scorer-only projection inside the truth manifest's
+    ``assertions`` channel; M3 gives the conditions a document surface.
     """
 
     medical_assertions: MedicalAssertionLedger | None = None
