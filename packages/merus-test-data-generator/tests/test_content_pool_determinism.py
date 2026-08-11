@@ -35,27 +35,20 @@ def _resolve_interpreter(version: str) -> str | None:
     for candidate in candidates:
         if not candidate:
             continue
-        if version == "3.10":
-            if Path(candidate).exists():
-                return str(candidate)
-            resolved = shutil.which(candidate)
-            if resolved:
-                return resolved
-            continue
-
-        if not Path(candidate).exists():
-            candidate = shutil.which(candidate) or ""
-            if not candidate:
+        resolved = Path(candidate)
+        if not resolved.exists():
+            resolved = Path(shutil.which(candidate) or "")
+            if not resolved.exists():
                 continue
 
         dep_probe = subprocess.run(
-            [candidate, "-c", "import reportlab"],
+            [str(resolved), "-c", "import reportlab"],
             capture_output=True,
             text=True,
             check=False,
         )
         if dep_probe.returncode == 0:
-            return str(candidate)
+            return str(resolved)
 
     return None
 
@@ -233,9 +226,12 @@ def test_qme_text_and_pdf_digests_are_identical_on_python_310_and_312() -> None:
         f"{py312} reported {probe_312['python']}; interpreter must be 3.12"
     )
 
-    assert probe_310["deps"]["reportlab"] == probe_312["deps"]["reportlab"], (
-        "dependency drift is not AJC-72 drift"
-    )
+    if probe_310["deps"]["reportlab"] != probe_312["deps"]["reportlab"]:
+        pytest.fail(
+            "dependency moved: reportlab "
+            f"{probe_310['deps']['reportlab']} vs {probe_312['deps']['reportlab']} — "
+            "re-record after review"
+        )
 
     digests_310 = probe_310["digests"]
     digests_312 = probe_312["digests"]
@@ -259,10 +255,6 @@ def test_qme_text_and_pdf_digests_are_identical_on_python_310_and_312() -> None:
 
 def test_mtus_category_dedup_is_sorted_and_content_neutral() -> None:
     import inspect
-
-    source = inspect.getsource(content_pools.get_mtus_citations)
-    assert "categories = sorted(set(" in source, "categories should use sorted(set(...))"
-    assert "categories = list(set(" not in source, "categories must avoid list(set(...))"
 
     cases = (
         ("fallback", []),
@@ -297,9 +289,14 @@ def test_mtus_category_dedup_is_sorted_and_content_neutral() -> None:
         assert len(set(captured_categories)) == expected_count
         assert captured_categories == sorted(captured_categories)
         assert _canonical_json_sha(captured_categories) == entry["sha256_of_canonical_json"]
+    source = inspect.getsource(content_pools.get_mtus_citations)
+    assert "categories = sorted(set(" in source, "categories should use sorted(set(...))"
+    assert "categories = list(set(" not in source, "categories must avoid list(set(...))"
 
 
 def test_future_medical_dedup_is_sorted_and_content_neutral() -> None:
+    import inspect
+
     cases = (
         ("fallback", []),
         ("single:spine", ["lumbar"]),
@@ -333,6 +330,9 @@ def test_future_medical_dedup_is_sorted_and_content_neutral() -> None:
         assert captured_members == expected_items
         assert len(captured_members) == expected_count
         assert captured_members == sorted(captured_members)
+    source = inspect.getsource(content_pools.get_future_medical_items)
+    assert "items = sorted(set(" in source, "items should use sorted(set(...))"
+    assert "items = list(set(" not in source, "items must avoid list(set(...))"
 
 
 def test_data_modules_contain_no_list_set_materialization() -> None:

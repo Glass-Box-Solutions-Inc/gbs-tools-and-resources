@@ -1198,8 +1198,18 @@ def test_record_mode_from_base_worktree_with_base_ref_has_no_whitespace_in_commi
         mp.setattr(recorder, "_PACKAGE_ROOT", base_package_root)
         original_git = recorder._git
 
-        def _git_with_base_root(*args: str, cwd: str | None = None, text: bool = True):
-            return original_git(*args, cwd=cwd or base_package_root, text=text)
+        def _git_with_base_root(
+            *args: str,
+            cwd: str | None = None,
+            text: bool = True,
+            strip: bool = True,
+        ):
+            return original_git(
+                *args,
+                cwd=cwd or base_package_root,
+                text=text,
+                strip=strip,
+            )
 
         mp.setattr(recorder, "_git", _git_with_base_root)
         mp.setattr(recorder.sys, "path", [base_package_root, *(
@@ -1235,7 +1245,7 @@ def test_restamp_provenance_changes_only_meta_note():
     feature_payload = {
         "_meta": {
             "note": "pre-run note",
-            "recorded_utc": "2026-01-01T00:00:00",
+            "recorded_utc": "2026-02-02T00:00:00",
             "source_commit": "1111111111111111111111111111111111111111",
             "base_commit": "2222222222222222222222222222222222222222",
         },
@@ -1254,16 +1264,52 @@ def test_restamp_provenance_changes_only_meta_note():
             },
         },
     }
-
-    candidate = recorder._rebase_provenance_payload(feature_payload, feature_payload)
-    assert sorted(recorder._structural_diff(feature_payload, candidate)) == ["_meta.note"]
+    base_payload = copy.deepcopy(feature_payload)
+    base_payload["_meta"]["note"] = "pre-run base note"
+    base_payload["_meta"]["source_commit"] = "3333333333333333333333333333333333333333"
+    base_payload["_meta"]["base_commit"] = "4444444444444444444444444444444444444444"
+    base_payload["_meta"]["recorded_utc"] = "2026-01-01T00:00:00"
+    candidate = recorder._rebase_provenance_payload(feature_payload, base_payload)
+    assert sorted(recorder._structural_diff(feature_payload, candidate)) == sorted(
+        ["_meta.base_commit", "_meta.note", "_meta.recorded_utc", "_meta.source_commit"]
+    )
     assert candidate["_meta"]["note"] == recorder.PROVENANCE_NOTE
+
 
     bad_candidate = copy.deepcopy(candidate)
     bad_candidate["cases"]["case.alpha"]["text"] = "changed case text"
     with pytest.raises(SystemExit) as exc:
         recorder._assert_restamp_payload_delta_is_meta_note_only(feature_payload, bad_candidate)
     assert "restamp would change more than _meta.note" in str(exc.value)
+
+
+def test_status_paths_preserves_porcelain_path_prefix(tmp_path):
+    import subprocess
+
+    recorder = _recorder_module()
+
+    repo = tmp_path / "status-path-patch"
+    package = repo / "packages" / "x"
+    target = package / "tests" / "golden" / "f.json"
+    target.parent.mkdir(parents=True)
+
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "ci@example.com"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "ci"], check=True)
+    target.write_text("{}", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "packages/x/tests/golden/f.json"],
+        check=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "seed"],
+        check=True,
+        text=True,
+    )
+
+    target.write_text("modified\n", encoding="utf-8")
+    assert recorder._status_paths(str(package)) == ["tests/golden/f.json"]
 
 
 def test_restamp_provenance_refuses_case_drift_without_writing(tmp_path):

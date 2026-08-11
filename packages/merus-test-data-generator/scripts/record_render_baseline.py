@@ -17,8 +17,9 @@ Recording recipes:
   ``--restamp-provenance``; omitted, it uses the canonical package path.
 
 Environment:
-- ``AJC72_BASE_WORKTREE`` can override the base worktree path for
-  ``--restamp-provenance``. This does not affect ``--check``/``--record``.
+- ``AJC72_BASE_WORKTREE`` is a test-fixture override for the e2e tests.
+  The recorder itself reads ``--base-worktree`` for ``--restamp-provenance`` and
+  does not consult this environment variable.
 """
 
 from __future__ import annotations
@@ -77,7 +78,7 @@ _SOURCE_DIRS = ("data/", "pdf_templates/", "tests/", "scripts/", "orchestration/
 _ALLOWED_BASE_PATCHES = frozenset()
 
 
-def _git(*args: str, cwd: str = _PACKAGE_ROOT, text: bool = True) -> str | bytes:
+def _git(*args: str, cwd: str = _PACKAGE_ROOT, text: bool = True, strip: bool = True) -> str | bytes:
     result = subprocess.run(
         ["git", *args],
         cwd=cwd,
@@ -85,7 +86,7 @@ def _git(*args: str, cwd: str = _PACKAGE_ROOT, text: bool = True) -> str | bytes
         text=text,
         check=True,
     )
-    return result.stdout.strip() if text else result.stdout
+    return (result.stdout.strip() if strip else result.stdout) if text else result.stdout
 
 
 def _package_relative(cwd: str, path: str) -> str:
@@ -126,7 +127,7 @@ def _status_paths(cwd: str, include_untracked: bool = False) -> list[str]:
     args = ["status", "--porcelain"]
     if not include_untracked:
         args.append("--untracked-files=no")
-    raw = _git(*args, cwd=cwd).splitlines()
+    raw = _git(*args, cwd=cwd, strip=False).splitlines()
     paths: list[str] = []
     for line in raw:
         path = line[3:].strip()
@@ -202,8 +203,8 @@ def _resolve_base(base_ref: str | None) -> str:
 def _refuse_unless_clean_base_checkout(base_commit: str) -> tuple[str, list[str]]:
     try:
         head = _git("rev-parse", "HEAD")
-        tracked = _git("status", "--porcelain", "--untracked-files=no")
-        untracked = _git("ls-files", "--others", "--exclude-standard")
+        tracked = _git("status", "--porcelain", "--untracked-files=no", strip=False)
+        untracked = _git("ls-files", "--others", "--exclude-standard", strip=False)
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         _exit(f"refusing to record: cannot interrogate git ({exc})")
 
@@ -317,7 +318,15 @@ def _run_base_recorder(base_package_root: str) -> dict:
     return _read_json(baseline_path)
 
 
-def _cleanup_base_worktree(base_worktree: str, base_repo: str, base_package_root: str) -> None:
+def _cleanup_base_worktree(
+    base_worktree: str,
+    base_repo: str,
+    base_package_root: str,
+    original_failure: str | None = None,
+) -> None:
+    failure_suffix = (
+        f" (original failure: {original_failure})" if original_failure is not None else ""
+    )
     try:
         _git(
             "restore",
@@ -329,26 +338,38 @@ def _cleanup_base_worktree(base_worktree: str, base_repo: str, base_package_root
             cwd=base_repo,
         )
     except subprocess.CalledProcessError as exc:
-        _exit(f"refusing to restamp: restore failed during cleanup ({exc})")
+        _exit(
+            f"refusing to restamp: restore failed during cleanup ({exc})"
+            + failure_suffix
+        )
 
     try:
         detached = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=base_worktree).strip()
         if detached != "HEAD":
-            _exit("refusing to restamp: base worktree is not detached after cleanup")
+            _exit(
+                "refusing to restamp: base worktree is not detached after cleanup"
+                + failure_suffix
+            )
 
         head = _git("rev-parse", "HEAD", cwd=base_worktree).strip()
         if head != BASE_COMMIT:
             _exit(
                 f"refusing to restamp: base HEAD is {head[:12]}, expected {BASE_COMMIT[:12]} "
                 "after cleanup"
+                + failure_suffix
             )
 
-        if _git("status", "--porcelain", cwd=base_worktree).strip():
-            _exit("refusing to restamp: base worktree is not clean after cleanup")
+        if _git("status", "--porcelain", cwd=base_worktree):
+            _exit("refusing to restamp: base worktree is not clean after cleanup" + failure_suffix)
 
-        _verify_file_vs_blob(base_repo, base_package_root, "tests/golden/render_baseline.json")
+        try:
+            _verify_file_vs_blob(base_repo, base_package_root, "tests/golden/render_baseline.json")
+        except SystemExit as exc:
+            if original_failure is not None:
+                _exit(str(exc) + failure_suffix)
+            raise
     except subprocess.CalledProcessError as exc:
-        _exit(f"refusing to restamp: post-cleanup validation failed ({exc})")
+        _exit(f"refusing to restamp: post-cleanup validation failed ({exc})" + failure_suffix)
 
 
 def _structural_diff(left: object, right: object, prefix: str = "") -> list[str]:
@@ -475,6 +496,7 @@ def _run_restamp_mode(base_worktree: str, output: str | None = None) -> int:
     feature_baseline_path = output or os.path.join(
         _PACKAGE_ROOT, "tests", "golden", "render_baseline.json"
     )
+    failure: str | None = None
     try:
         fresh_base_payload = _run_base_recorder(base_package_root)
         base_meta = fresh_base_payload.get("_meta", {})
@@ -486,8 +508,14 @@ def _run_restamp_mode(base_worktree: str, output: str | None = None) -> int:
             _exit("base payload reported base patches")
         if base_meta.get("harness_sha256") != HARNESS_FILES:
             _exit("base payload did not carry the expected harness hash map")
+    except SystemExit as exc:
+        failure = str(exc)
+        raise
+    except Exception as exc:
+        failure = f"{type(exc).__name__}: {exc}"
+        raise
     finally:
-        _cleanup_base_worktree(base_worktree, base_repo, base_package_root)
+        _cleanup_base_worktree(base_worktree, base_repo, base_package_root, failure)
 
     _rewrite_restamped_provenance_payload(feature_baseline_path, fresh_base_payload)
     print("Restamped provenance note from the pinned base worktree.")
