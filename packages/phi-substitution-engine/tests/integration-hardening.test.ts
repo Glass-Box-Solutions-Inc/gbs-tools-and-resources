@@ -1259,3 +1259,54 @@ describe("GLY-330 finding 11 R2 (N3/N4): drain is crash-safe across restart and 
     expect(captured[0].dictionaryVersion).toBe(VERSION_BIGINT);
   });
 });
+
+// ---------------------------------------------------------------------------
+// NEW-1 R3 — structured-id separator variants are composed, not just person-name
+// ---------------------------------------------------------------------------
+describe("GLY-330 NEW-1 R3 (N7/L10): structured-id separator variants are substituted through the composed engine", () => {
+  function structuredIdTruth(): any[] {
+    return [
+      {
+        field: {
+          schemaPath: "case.s-claim",
+          substitution: true,
+          identifierClass: "MRN",
+          tokenRole: b<any>("MRN"),
+          expander: "structured-id",
+          // permitted separators encoded as a scalar (field.options is frozen to scalars): "-" and " ".
+          options: { permittedSeparators: "- ", requiredAlphaPrefix: "CLM" },
+        },
+        subjectId: b<any>("s-claim"),
+        canonicalDisplayValue: "CLM-00421",
+        approvedAliases: [],
+      },
+    ];
+  }
+
+  it("substitutes the space-separated variant of a tagged structured id, never egressing it raw", async () => {
+    const { engine } = makeEngine(structuredIdTruth());
+    const result = await engine.substitute({
+      context: ctx(),
+      policy: policy(),
+      // The provider-bound text uses the SPACE variant of canonical `CLM-00421`.
+      segments: [{ path: "m", kind: "user", text: "Claim CLM 00421 is pending." }],
+      purpose: "generation",
+    } as any);
+    const tokenized = String(result.segments[0].text);
+    expect(tokenized).not.toContain("CLM 00421");
+    expect(tokenized).toContain("[[");
+  });
+
+  it("still substitutes the canonical hyphen form (canonical is never dropped by a partial policy)", async () => {
+    const { engine } = makeEngine(structuredIdTruth());
+    const result = await engine.substitute({
+      context: ctx(),
+      policy: policy(),
+      segments: [{ path: "m", kind: "user", text: "Claim CLM-00421 is pending." }],
+      purpose: "generation",
+    } as any);
+    const tokenized = String(result.segments[0].text);
+    expect(tokenized).not.toContain("CLM-00421");
+    expect(tokenized).toContain("[[");
+  });
+});

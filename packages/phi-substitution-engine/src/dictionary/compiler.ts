@@ -32,9 +32,49 @@ import { createAssignmentPort } from "./token-port";
 import {
   expandDateVariants,
   expandPersonNameVariants,
+  expandStructuredIdVariants,
+  type StructuredIdPolicy,
+  type StructuredSeparator,
   type VariantExpansion,
 } from "../variants/index";
 import { dedupeInOrder } from "../variants/support";
+
+const KNOWN_STRUCTURED_SEPARATORS: readonly StructuredSeparator[] = ["-", " ", "/", "."];
+
+/** Parses the permitted-separator scalar (`field.options` is frozen to scalars) — a string whose
+ *  characters are the allowed separators — into the policy's separator list. */
+function parseSeparators(value: unknown): readonly StructuredSeparator[] {
+  if (typeof value !== "string") return [];
+  const out: StructuredSeparator[] = [];
+  for (const ch of value) {
+    if ((KNOWN_STRUCTURED_SEPARATORS as readonly string[]).includes(ch) && !out.includes(ch as StructuredSeparator)) {
+      out.push(ch as StructuredSeparator);
+    }
+  }
+  return out;
+}
+
+/**
+ * Derives a structured-id class policy from the tagged field's frozen scalar `options`. When a
+ * field carries no explicit separator allow-list, the class default is every standard separator:
+ * a bounded, deterministic, NON-lossy set (separator swaps only, never a truncated/fuzzy form),
+ * which is the allow-list L10 intends — not an invented guess.
+ */
+function structuredIdPolicyFromOptions(
+  options: Readonly<Record<string, boolean | number | string>> | undefined,
+): StructuredIdPolicy {
+  const separators = parseSeparators(options?.["permittedSeparators"]);
+  return {
+    requiredAlphaPrefix:
+      typeof options?.["requiredAlphaPrefix"] === "string" ? (options["requiredAlphaPrefix"] as string) : null,
+    permittedSeparators: separators.length > 0 ? separators : KNOWN_STRUCTURED_SEPARATORS,
+    allowCompactForm: options?.["allowCompactForm"] === true,
+    minimumAlphanumericLength:
+      typeof options?.["minimumAlphanumericLength"] === "number"
+        ? (options["minimumAlphanumericLength"] as number)
+        : 0,
+  };
+}
 
 function boundaryModeFor(identifierClass: IdentifierClass): BoundaryMode {
   switch (identifierClass) {
@@ -60,15 +100,27 @@ function expandForms(value: TaggedValue, locale: string): readonly string[] {
     case "date":
       expansion = expandDateVariants({ canonical, locale });
       break;
+    case "structured-id":
+    case "ssn":
+      // Deterministic, allow-listed separator variants of the identifier (e.g. `CLM-00421` →
+      // `CLM 00421`, `CLM/00421`). Previously these expanders were never invoked, so a permitted
+      // separator variant of a tagged identifier egressed RAW to the provider (NEW-1).
+      expansion = expandStructuredIdVariants({
+        canonical,
+        policy: structuredIdPolicyFromOptions(value.field.options),
+      });
+      break;
     default:
       expansion = null;
   }
-  if (expansion !== null && expansion.errorCode === null && expansion.candidates.length > 0) {
-    return expansion.candidates;
-  }
-  // Literal fallback: the exact trusted value plus any approved aliases. This is
-  // still allow-listed and lossless — it never fabricates a partial form.
-  return dedupeInOrder([canonical, ...aliases].filter((form) => form.trim().length > 0));
+  // The canonical value and approved aliases are ALWAYS substitutable — they are the trusted
+  // truth. Expander candidates are ADDITIONAL deterministic forms merged on top; a policy that
+  // omits the canonical's own separator can therefore never drop the canonical itself.
+  const candidates =
+    expansion !== null && expansion.errorCode === null ? expansion.candidates : [];
+  return dedupeInOrder(
+    [canonical, ...aliases, ...candidates].filter((form) => form.trim().length > 0),
+  );
 }
 
 function sourceFor(form: string, value: TaggedValue): VariantSource {
