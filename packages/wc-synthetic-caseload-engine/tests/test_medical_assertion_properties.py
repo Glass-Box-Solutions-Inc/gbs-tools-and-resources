@@ -89,15 +89,20 @@ def test_sampler_cohort_matches_pinned_empirical_metrics() -> None:
     assert result.invalid_ledgers == 0
     assert result.ledger_digests == MEASURED_LEDGER_DIGESTS
 
-    # Supported share per model, per counsel ruling AJC-61/D1 (2026-08-11):
-    # the 0.75-0.85 band governs OPINIONS and ASSERTIONS; contentions carry a
-    # 0.65 floor with the measured value pinned exactly above. The psych
-    # realism rules stand unchanged, and the fix-round-1 reversions (H2:
-    # candidacy is world-truth-typed, the firefighter override is gone) are
-    # part of the measured number. The measured contention share is 0.5880 —
-    # BELOW the ruling's floor. Per the ruling that is a fresh counsel
-    # question, not the sampler's to absorb: the floor stays, the number is
-    # pinned, and the decomposition travels with the fix-round report.
+
+def test_supported_shares_hold_the_counsel_ruling_bands() -> None:
+    """Counsel ruling AJC-61/D1 (2026-08-11): the 0.75-0.85 band governs
+    OPINIONS and ASSERTIONS; contentions carry a 0.65 floor with the measured
+    value pinned exactly in ``MEASURED_ASSERTION_QUALITY_COUNTS``. The psych
+    realism rules stand unchanged, and the fix-round-1 reversions (H2:
+    candidacy is world-truth-typed, the firefighter override is gone) are part
+    of the measured number. The measured contention share is 0.5880 — BELOW
+    the ruling's floor. Per the ruling that is a fresh counsel question, not
+    the sampler's to absorb: the floor stays RED, the number stays pinned,
+    and the decomposition travels with the fix-round report. Deliberately its
+    own test so the pinned-reproduction guard the mutation gate relies on
+    stays green while THIS carries the open ruling question.
+    """
     for model in ("medical_opinions", "apportionment_assertions"):
         counts = MEASURED_ASSERTION_QUALITY_COUNTS[model]
         share = counts["supported"] / sum(counts.values())
