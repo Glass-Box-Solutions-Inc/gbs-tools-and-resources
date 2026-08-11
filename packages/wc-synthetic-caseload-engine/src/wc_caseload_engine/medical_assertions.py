@@ -1935,13 +1935,13 @@ def _contention_semantic_key(entry: object) -> SemanticKey:
     """The B.2 rule-6 suppression key, normalized (sorted hook tuple)."""
     return (
         "contention",
-        getattr(entry, "claim_type"),  # noqa: B009 - uniform getattr over entry/model
-        entry.position,
-        entry.target_condition_id,
-        entry.target_prior_claim_id,
-        entry.target_prior_award_id,
-        entry.target_body_part,
-        tuple(sorted(entry.doctrine_hooks)),
+        entry.claim_type,  # type: ignore[attr-defined]
+        entry.position,  # type: ignore[attr-defined]
+        entry.target_condition_id,  # type: ignore[attr-defined]
+        entry.target_prior_claim_id,  # type: ignore[attr-defined]
+        entry.target_prior_award_id,  # type: ignore[attr-defined]
+        entry.target_body_part,  # type: ignore[attr-defined]
+        tuple(sorted(entry.doctrine_hooks)),  # type: ignore[attr-defined]
     )
 
 
@@ -2065,6 +2065,549 @@ def _assertion_from_entry(entry: object) -> ApportionmentAssertion:
     )
 
 
+#: Canonical (party, position) for each sampled claim type (B.4).
+_CANONICAL_STANCE: Final[dict[str, tuple[str, str]]] = {
+    "industrial_causation": ("applicant", "affirm"),
+    "aggravation": ("applicant", "affirm"),
+    "apportionment_defense": ("defense", "affirm"),
+    "compensable_consequence": ("applicant", "affirm"),
+    "psych_add_on": ("applicant", "affirm"),
+    "denial_of_injury": ("defense", "affirm"),
+}
+
+#: Label-safe rationale registers for sampled entries. Deliberately free of
+#: every reserved token so a rationale can never trip the leakage probe.
+_CONTENTION_RATIONALES: Final[dict[str, str]] = {
+    "industrial_causation": "the condition arose out of and in the course of employment",
+    "aggravation": "the industrial injury aggravated a previously symptomatic condition",
+    "apportionment_defense": "a nonindustrial factor contributes to the present disability",
+    "compensable_consequence": "the condition followed industrially provided treatment",
+    "psych_add_on": "a psychiatric consequence accompanies the physical injury",
+    "denial_of_injury": "the claimed condition did not arise from the employment",
+}
+
+
+def _semantic_salt(key: SemanticKey) -> str:
+    """A stable string form of a semantic key, for stream salts."""
+    parts: list[str] = []
+    for value in key:
+        if value is None:
+            parts.append("~")
+        elif isinstance(value, tuple):
+            parts.append("+".join(str(item) for item in value))
+        else:
+            parts.append(str(value))
+    return "/".join(parts)
+
+
+def _fraction_draw(rng: random.Random, probability: Fraction) -> bool:
+    return rng.random() < float(probability)
+
+
+def _weighted_index(rng: random.Random, weights: Sequence[Fraction]) -> int:
+    draw = rng.random()
+    cumulative = 0.0
+    for index, weight in enumerate(weights):
+        cumulative += float(weight)
+        if draw < cumulative:
+            return index
+    return len(weights) - 1
+
+
+@dataclass(frozen=True, slots=True)
+class _ContentionDraft:
+    semantic_key: SemanticKey
+    candidate_family: str
+    claim_type: str
+    party: str
+    position: str
+    target_condition_id: str | None = None
+    target_prior_claim_id: str | None = None
+    target_prior_award_id: str | None = None
+    target_body_part: str | None = None
+    doctrine_hooks: tuple[str, ...] = ()
+    rationale: str | None = None
+    groundings: tuple[DoctrineGrounding, ...] = ()
+    recipe: str = "supported"
+
+
+def _condition_claim_types(
+    condition: ProjectedCondition, context: AssertionValidationContext
+) -> tuple[str, ...]:
+    """The eligible claim types for one condition candidate, sorted (B.4).
+
+    Overlap is exactly ``not condition.wholly_unrelated`` — never a
+    ``body_part`` conjunction, which excluded diabetes/CTS (finding 3).
+    """
+    eligible: set[str] = set()
+    if condition.causal_ground_truth in ("industrial", "mixed"):
+        eligible.add("industrial_causation")
+    if not condition.wholly_unrelated and condition.causal_ground_truth in (
+        "nonindustrial",
+        "mixed",
+    ):
+        eligible.add("aggravation")
+        eligible.add("apportionment_defense")
+    if condition.wholly_unrelated:
+        eligible.add("industrial_causation")
+        eligible.add("denial_of_injury")
+    if (
+        condition.causal_ground_truth == "industrial"
+        and condition.onset is not None
+        and condition.onset >= context.date_of_injury
+    ):
+        eligible.add("compensable_consequence")
+    return tuple(sorted(eligible))
+
+
+def _condition_target_part(
+    condition: ProjectedCondition, context: AssertionValidationContext
+) -> str | None:
+    overlap = sorted(set(condition.apportionment_targets) & set(context.current_body_parts))
+    if overlap:
+        return overlap[0]
+    return condition.body_part
+
+
+def _contention_candidates(
+    seed: CaseSeed,
+    context: AssertionValidationContext,
+    history: AssertionWorldProjection,
+    trace: AssertionTrace | None,
+) -> list[_ContentionDraft]:
+    """Every drawn contention candidate, in deterministic enumeration order."""
+
+    def note_eligible(family: str) -> None:
+        if trace is not None:
+            trace.eligible_candidates[family] = trace.eligible_candidates.get(family, 0) + 1
+
+    def note_drawn(family: str) -> None:
+        if trace is not None:
+            trace.candidate_families[family] = trace.candidate_families.get(family, 0) + 1
+
+    drafts: list[_ContentionDraft] = []
+    firefighter_hook = "firefighter_presumption" in seed.lifecycle.doctrine_hooks
+
+    for condition in history.conditions:
+        claim_types = _condition_claim_types(condition, context)
+        if claim_types:
+            note_eligible("condition")
+            incidence = _assertion_rng(
+                seed, "contention-incidence", f"condition:{condition.id}"
+            )
+            if _fraction_draw(incidence, P_CONTENTION_GIVEN_CONDITION.value):
+                note_drawn("condition")
+                chooser = _assertion_rng(
+                    seed, "contention-type", f"condition:{condition.id}"
+                )
+                claim_type = claim_types[chooser.randrange(len(claim_types))]
+                party, position = _CANONICAL_STANCE[claim_type]
+                target_part = _condition_target_part(condition, context)
+                key: SemanticKey = (
+                    "contention",
+                    claim_type,
+                    position,
+                    condition.id,
+                    None,
+                    None,
+                    target_part,
+                    (),
+                )
+                drafts.append(
+                    _ContentionDraft(
+                        semantic_key=key,
+                        candidate_family="condition",
+                        claim_type=claim_type,
+                        party=party,
+                        position=position,
+                        target_condition_id=condition.id,
+                        target_body_part=target_part,
+                        rationale=_CONTENTION_RATIONALES[claim_type],
+                    )
+                )
+        if firefighter_hook and condition.body_system == "oncologic":
+            note_eligible("firefighter")
+            incidence = _assertion_rng(
+                seed, "contention-incidence", f"firefighter:{condition.id}"
+            )
+            if _fraction_draw(incidence, P_FIREFIGHTER_CONTENTION.value):
+                note_drawn("firefighter")
+                key = (
+                    "contention",
+                    "industrial_causation",
+                    "affirm",
+                    condition.id,
+                    None,
+                    None,
+                    condition.body_part,
+                    ("firefighter_presumption",),
+                )
+                drafts.append(
+                    _ContentionDraft(
+                        semantic_key=key,
+                        candidate_family="firefighter",
+                        claim_type="industrial_causation",
+                        party="applicant",
+                        position="affirm",
+                        target_condition_id=condition.id,
+                        target_body_part=condition.body_part,
+                        doctrine_hooks=("firefighter_presumption",),
+                        rationale=(
+                            "the presumption attaches to this diagnosis under the "
+                            "safety-member statutes"
+                        ),
+                        groundings=(
+                            FirefighterPresumptionGrounding(condition_id=condition.id),
+                        ),
+                    )
+                )
+
+    for claim in history.prior_claims:
+        if not claim.overlaps_current:
+            continue
+        note_eligible("prior_claim")
+        incidence = _assertion_rng(seed, "contention-incidence", f"prior_claim:{claim.id}")
+        if _fraction_draw(incidence, P_PRIOR_CLAIM_CONTENTION.value):
+            note_drawn("prior_claim")
+            key = (
+                "contention",
+                "apportionment_defense",
+                "affirm",
+                None,
+                claim.id,
+                None,
+                None,
+                ("benson",),
+            )
+            drafts.append(
+                _ContentionDraft(
+                    semantic_key=key,
+                    candidate_family="prior_claim",
+                    claim_type="apportionment_defense",
+                    party="defense",
+                    position="affirm",
+                    target_prior_claim_id=claim.id,
+                    doctrine_hooks=("benson",),
+                    rationale=_CONTENTION_RATIONALES["apportionment_defense"],
+                    groundings=(BensonGrounding(prior_claim_ids=(claim.id,)),),
+                )
+            )
+
+    for claim in history.prior_claims:
+        award = claim.award
+        if award is None or not claim.overlaps_current or not award.conclusively_presumed:
+            continue
+        note_eligible("prior_award")
+        incidence = _assertion_rng(seed, "contention-incidence", f"award:{award.id}")
+        if _fraction_draw(incidence, P_PRIOR_AWARD_CONTENTION.value):
+            note_drawn("prior_award")
+            key = (
+                "contention",
+                "apportionment_defense",
+                "affirm",
+                None,
+                claim.id,
+                award.id,
+                None,
+                ("lc4664_prior_award",),
+            )
+            drafts.append(
+                _ContentionDraft(
+                    semantic_key=key,
+                    candidate_family="prior_award",
+                    claim_type="apportionment_defense",
+                    party="defense",
+                    position="affirm",
+                    target_prior_claim_id=claim.id,
+                    target_prior_award_id=award.id,
+                    doctrine_hooks=("lc4664_prior_award",),
+                    rationale="the prior award conclusively presumes continuing disability",
+                    groundings=(Lc4664PriorAwardGrounding(prior_award_id=award.id),),
+                )
+            )
+
+    sibtf_clauses = sibtf_grounding_clauses(history)
+    if sibtf_clauses:
+        note_eligible("sibtf")
+        incidence = _assertion_rng(seed, "contention-incidence", "sibtf:case")
+        if _fraction_draw(incidence, P_SIBTF_CONTENTION.value):
+            note_drawn("sibtf")
+            qualifying_conditions = tuple(
+                c.id
+                for c in history.conditions
+                if c.symptomatic_before_doi is True
+                and c.severity == "severe"
+                and c.trajectory != "resolved"
+            )
+            award_ids = tuple(a.id for a in history.awards)
+            key = (
+                "contention",
+                "apportionment_defense",
+                "affirm",
+                None,
+                None,
+                None,
+                None,
+                ("sibtf",),
+            )
+            drafts.append(
+                _ContentionDraft(
+                    semantic_key=key,
+                    candidate_family="sibtf",
+                    claim_type="apportionment_defense",
+                    party="applicant",
+                    position="affirm",
+                    doctrine_hooks=("sibtf",),
+                    rationale="a prior permanent disability combines with the new injury",
+                    groundings=(
+                        SibtfGrounding(
+                            preexisting_condition_ids=qualifying_conditions,
+                            prior_award_ids=award_ids,
+                        ),
+                    ),
+                )
+            )
+
+    if context.claim_response == "denied":
+        # A denied current claim carries its denial contention deterministically
+        # rather than entering any rate denominator (Part 3 B.4-B.5).
+        key = ("contention", "denial_of_injury", "affirm", None, None, None, None, ())
+        drafts.append(
+            _ContentionDraft(
+                semantic_key=key,
+                candidate_family="denial",
+                claim_type="denial_of_injury",
+                party="defense",
+                position="affirm",
+                rationale=_CONTENTION_RATIONALES["denial_of_injury"],
+            )
+        )
+
+    psych_component = _fraction_draw(
+        _assertion_rng(seed, "psych-component", "case"), P_PSYCH_COMPONENT.value
+    )
+    if trace is not None and psych_component:
+        trace.candidate_families["psych_component"] = (
+            trace.candidate_families.get("psych_component", 0) + 1
+        )
+    if psych_component and _fraction_draw(
+        _assertion_rng(seed, "psych-add-on-contention", "case"),
+        P_PSYCH_ADD_ON_CONTENTION_GIVEN_COMPONENT.value,
+    ):
+        psych = next((c for c in history.conditions if c.key == "depression_anxiety"), None)
+        key = (
+            "contention",
+            "psych_add_on",
+            "affirm",
+            psych.id if psych is not None else None,
+            None,
+            None,
+            psych.body_part if psych is not None else "psyche",
+            (),
+        )
+        drafts.append(
+            _ContentionDraft(
+                semantic_key=key,
+                candidate_family="psych_add_on",
+                claim_type="psych_add_on",
+                party="applicant",
+                position="affirm",
+                target_condition_id=psych.id if psych is not None else None,
+                target_body_part=psych.body_part if psych is not None else "psyche",
+                rationale=_CONTENTION_RATIONALES["psych_add_on"],
+            )
+        )
+        if trace is not None:
+            trace.candidate_families["psych_add_on"] = (
+                trace.candidate_families.get("psych_add_on", 0) + 1
+            )
+
+    return drafts
+
+
+def _apply_contention_recipe(
+    seed: CaseSeed,
+    history: AssertionWorldProjection,
+    context: AssertionValidationContext,
+    draft: _ContentionDraft,
+) -> _ContentionDraft:
+    """Draw the quality-target recipe and shape the draft's construction.
+
+    The target selects a RECIPE, never a grade: supported keeps the reasoned
+    build; thin drops the rationale; unsupportable rebuilds toward the pole
+    the evidence contradicts (or, for psych, one of the named defense
+    variants). The target is then discarded — the deterministic grader owns
+    the label, and any recipe/grade disagreement is measured, not hidden.
+    """
+    salt = _semantic_salt(draft.semantic_key)
+    target_index = _weighted_index(
+        _assertion_rng(seed, "quality-target", salt), QUALITY_TARGET_WEIGHTS.value
+    )
+    target = ("supported", "thin", "unsupportable")[target_index]
+    shaped = draft
+    if target in ("supported", "thin"):
+        # A supported (or merely thin) BUILD aims at a supportable construction:
+        # a multi-eligible condition candidate steers to an eligible claim type
+        # the evidence actually supports, when one exists. Deterministic — no
+        # draw — and only construction moves; the grade is still rederived.
+        shaped = _steer_to_supported_type(history, context, shaped)
+    if target == "thin":
+        chooser = _assertion_rng(seed, "thin-defect", salt)
+        # One thin lever exists at contention level; the draw stays for
+        # determinism symmetry (and future levers) rather than deciding much.
+        chooser.random()
+        shaped = _replace_draft(draft, rationale=None)
+    elif target == "unsupportable":
+        chooser = _assertion_rng(seed, "unsupportable-defect", salt)
+        psych_eligible = draft.claim_type == "psych_add_on"
+        if psych_eligible:
+            roll = chooser.random()
+            if roll < float(P_PSYCH_PREDOMINANT_CAUSE_DENIAL.value):
+                shaped = _replace_draft(
+                    draft,
+                    claim_type="denial_of_injury",
+                    party="defense",
+                    rationale=(
+                        "actual events of employment were not the predominant cause "
+                        "of the psychiatric injury"
+                    ),
+                )
+            elif roll < float(
+                P_PSYCH_PREDOMINANT_CAUSE_DENIAL.value + P_GFPA_DEFENSE.value
+            ):
+                shaped = _replace_draft(
+                    draft,
+                    claim_type="denial_of_injury",
+                    party="defense",
+                    doctrine_hooks=("gfpa",),
+                    rationale=(
+                        "the psychiatric claim arises from lawful, nondiscriminatory "
+                        "good faith personnel actions"
+                    ),
+                )
+            else:
+                shaped = _contradicted_draft(history, context, draft, chooser)
+        else:
+            shaped = _contradicted_draft(history, context, draft, chooser)
+    return _replace_draft(shaped, recipe=target)
+
+
+def _replace_draft(draft: _ContentionDraft, **updates: object) -> _ContentionDraft:
+    values = {
+        "semantic_key": draft.semantic_key,
+        "candidate_family": draft.candidate_family,
+        "claim_type": draft.claim_type,
+        "party": draft.party,
+        "position": draft.position,
+        "target_condition_id": draft.target_condition_id,
+        "target_prior_claim_id": draft.target_prior_claim_id,
+        "target_prior_award_id": draft.target_prior_award_id,
+        "target_body_part": draft.target_body_part,
+        "doctrine_hooks": draft.doctrine_hooks,
+        "rationale": draft.rationale,
+        "groundings": draft.groundings,
+        "recipe": draft.recipe,
+    }
+    values.update(updates)
+    return _ContentionDraft(**values)  # type: ignore[arg-type]
+
+
+def _draft_evidence(
+    history: AssertionWorldProjection,
+    context: AssertionValidationContext,
+    draft: _ContentionDraft,
+) -> EvidenceDisposition:
+    probe = Contention(
+        id="ctn-99",
+        claim_type=draft.claim_type,  # type: ignore[arg-type]
+        party=draft.party,  # type: ignore[arg-type]
+        position=draft.position,  # type: ignore[arg-type]
+        target_condition_id=draft.target_condition_id,
+        target_prior_claim_id=draft.target_prior_claim_id,
+        target_prior_award_id=draft.target_prior_award_id,
+        target_body_part=draft.target_body_part,
+        quality="supported",
+    )
+    return contention_evidence(history, context, probe)
+
+
+def _steer_to_supported_type(
+    history: AssertionWorldProjection,
+    context: AssertionValidationContext,
+    draft: _ContentionDraft,
+) -> _ContentionDraft:
+    """Steer a condition candidate to an evidence-supported eligible type.
+
+    Only construction moves: same candidate, same targets, first eligible type
+    (sorted) whose canonical-stance evidence reads ``supports``. Candidates
+    with a single fixed type — doctrine, denial, psych — are returned as-is.
+    """
+    if draft.candidate_family != "condition":
+        return draft
+    if _draft_evidence(history, context, draft) == "supports":
+        return draft
+    condition = (
+        history.condition(draft.target_condition_id)
+        if draft.target_condition_id is not None
+        else None
+    )
+    if condition is None:
+        return draft
+    for claim_type in _condition_claim_types(condition, context):
+        party, position = _CANONICAL_STANCE[claim_type]
+        candidate = _replace_draft(
+            draft,
+            claim_type=claim_type,
+            party=party,
+            position=position,
+            rationale=_CONTENTION_RATIONALES[claim_type],
+        )
+        if _draft_evidence(history, context, candidate) == "supports":
+            return candidate
+    return draft
+
+
+def _contradicted_draft(
+    history: AssertionWorldProjection,
+    context: AssertionValidationContext,
+    draft: _ContentionDraft,
+    chooser: random.Random,
+) -> _ContentionDraft:
+    """The generic unsupportable recipe: face the pole the evidence rejects."""
+    chooser.random()
+    probe = Contention(
+        id="ctn-99",
+        claim_type=draft.claim_type,  # type: ignore[arg-type]
+        party=draft.party,  # type: ignore[arg-type]
+        position=draft.position,  # type: ignore[arg-type]
+        target_condition_id=draft.target_condition_id,
+        target_prior_claim_id=draft.target_prior_claim_id,
+        target_prior_award_id=draft.target_prior_award_id,
+        target_body_part=draft.target_body_part,
+        quality="supported",
+    )
+    if contention_evidence(history, context, probe) == "contradicts":
+        return draft
+    flipped = "deny" if draft.position == "affirm" else "affirm"
+    return _replace_draft(draft, position=flipped)
+
+
+def _stage_report_date(context: AssertionValidationContext, stage: str) -> dt.date:
+    offsets = {"interim": 120, "final": 300}
+    proposed = context.date_of_injury + dt.timedelta(days=offsets[stage])
+    return min(proposed, context.anchor_date)
+
+
+def _visible_records(
+    history: AssertionWorldProjection,
+) -> list[tuple[str, str]]:
+    """Every reviewable record as ``(family, id)``, in stable ID order."""
+    records = [("condition", c.id) for c in history.conditions if c.surfaces_in_file]
+    records.extend(("prior_claim", c.id) for c in history.prior_claims)
+    records.extend(("prior_award", a.id) for a in history.awards)
+    return sorted(records, key=lambda item: (item[0], item[1]))
+
+
 def _append_sampled(
     *,
     seed: CaseSeed,
@@ -2075,9 +2618,439 @@ def _append_sampled(
     assertions: list[ApportionmentAssertion],
     trace: AssertionTrace | None,
 ) -> tuple[list[Contention], list[MedicalOpinion], list[ApportionmentAssertion]]:
-    """Append sampled entries — filled in by the sampler step; explicit-only
-    composition is complete without it."""
-    return contentions, opinions, assertions
+    """Sample and append, without ever altering an explicit entry.
+
+    Every stochastic decision draws from its own semantically keyed stream, so
+    an explicit entry's presence changes composition only through suppression —
+    a skip, never a redraw. IDs are assigned last, as a pure labelling pass in
+    semantic-key order, and internal references resolve through the key->ID
+    maps.
+    """
+    explicit_keys = frozenset(_contention_semantic_key(c) for c in contentions)
+
+    drafts = _contention_candidates(seed, context, history, trace)
+    candidates = tuple(
+        AssertionCandidate(
+            semantic_key=draft.semantic_key,
+            candidate_family=draft.candidate_family,
+            payload={"draft": draft},
+        )
+        for draft in drafts
+    )
+    retained, suppression_hits = _suppress_explicit_collisions(candidates, explicit_keys)
+    if trace is not None:
+        trace.suppression_hits += suppression_hits
+
+    shaped = [
+        _apply_contention_recipe(seed, history, context, candidate.payload["draft"])  # type: ignore[arg-type]
+        for candidate in retained
+    ]
+    shaped.sort(key=lambda draft: _semantic_salt(draft.semantic_key))
+
+    # --- assign contention IDs (explicit reserved; first unused suffix) -----
+    used_contention_ids = {c.id for c in contentions}
+    key_to_contention_id: dict[SemanticKey, str] = {}
+    sampled_contentions: list[Contention] = []
+    for draft in shaped:
+        if len(contentions) + len(sampled_contentions) >= 12:
+            break
+        assigned = _first_unused("ctn", used_contention_ids)
+        used_contention_ids.add(assigned)
+        key_to_contention_id[draft.semantic_key] = assigned
+        sampled_contentions.append(
+            Contention(
+                id=assigned,
+                claim_type=draft.claim_type,  # type: ignore[arg-type]
+                party=draft.party,  # type: ignore[arg-type]
+                position=draft.position,  # type: ignore[arg-type]
+                target_condition_id=draft.target_condition_id,
+                target_prior_claim_id=draft.target_prior_claim_id,
+                target_prior_award_id=draft.target_prior_award_id,
+                target_body_part=draft.target_body_part,
+                doctrine_hooks=draft.doctrine_hooks,  # type: ignore[arg-type]
+                rationale=draft.rationale,
+                groundings=draft.groundings,
+                quality="supported",
+            )
+        )
+        if trace is not None:
+            trace.recipes.append((assigned, draft.recipe, ""))
+
+    all_contentions = [*contentions, *sampled_contentions]
+
+    # --- the stage's sampled evaluator opinion (B.6) ------------------------
+    sampled_opinions: list[MedicalOpinion] = []
+    sampled_assertions: list[ApportionmentAssertion] = []
+    stage = context.target_stage
+    if stage != "intake" and len(opinions) < 8:
+        if stage in ("active_treatment", "discovery"):
+            author_role, report_stage, state = "ptp", "interim", "deferred"
+        elif stage == "medical_legal":
+            author_role = context.eval_type if context.eval_type in ("qme", "ame") else "ptp"
+            opinion_salt = f"{author_role}:case"
+            deferred = _fraction_draw(
+                _assertion_rng(seed, "medical-legal-deferral", opinion_salt),
+                P_MEDLEGAL_DEFERRAL.value,
+            )
+            report_stage, state = (
+                ("interim", "deferred") if deferred else ("final", "determined")
+            )
+        else:  # pre_trial | resolved | post_recon
+            author_role = context.eval_type if context.eval_type in ("qme", "ame") else "ptp"
+            report_stage, state = "final", "determined"
+        opinion_salt = f"{author_role}:case"
+
+        determination_kind: str | None = None
+        determination_rationale: str | None = None
+        if report_stage == "final":
+            omitted = _fraction_draw(
+                _assertion_rng(seed, "final-omission", opinion_salt),
+                P_FINAL_REPORT_OMITS_APPORTIONMENT.value,
+            )
+            if omitted:
+                state = "omitted"
+            else:
+                state = "determined"
+                substantial = has_substantial_nonindustrial_evidence(history)
+                if substantial:
+                    nonzero = _fraction_draw(
+                        _assertion_rng(seed, "nonzero-apportionment", opinion_salt),
+                        P_NONZERO_APPORTIONMENT.value,
+                    )
+                    if nonzero:
+                        determination_kind = "allocated"
+                    elif _fraction_draw(
+                        _assertion_rng(seed, "determination-kind", opinion_salt),
+                        P_ZERO_SHARE_DEFECT_GIVEN_NONZERO_MISS.value,
+                    ):
+                        # The deliberate contradicted-zero-share defect.
+                        determination_kind = "no_nonindustrial_share"
+                        determination_rationale = (
+                            "the entire disability is industrial; no other factor "
+                            "requires discussion"
+                        )
+                    else:
+                        determination_kind = "unable_to_approximate"
+                        determination_rationale = (
+                            "the relative contributions cannot be approximated to "
+                            "reasonable medical probability on this record"
+                        )
+                else:
+                    contributor_exists = any(
+                        not c.wholly_unrelated
+                        and c.causal_ground_truth in ("nonindustrial", "mixed")
+                        and c.trajectory != "resolved"
+                        for c in history.conditions
+                    )
+                    if contributor_exists:
+                        determination_kind = "unable_to_approximate"
+                        determination_rationale = (
+                            "the undocumented history precludes approximating the "
+                            "contributions to reasonable medical probability"
+                        )
+                    else:
+                        determination_kind = "no_nonindustrial_share"
+                        determination_rationale = (
+                            "the record affirmatively shows the disability is "
+                            "entirely industrial"
+                        )
+
+        # Dispositions over every contention, explicit and sampled (rule 7).
+        endorses: list[str] = []
+        rejects: list[str] = []
+        for contention in all_contentions:
+            evidence = contention_evidence(history, context, contention)
+            if author_role in ("qme", "ame"):
+                disposition = qme_disposition(evidence)
+            else:
+                endorse_p = {
+                    "supports": P_PTP_ENDORSE_SUPPORTED.value,
+                    "indeterminate": P_PTP_ENDORSE_INDETERMINATE.value,
+                    "contradicts": P_PTP_ENDORSE_CONTRADICTED.value,
+                }[evidence]
+                contention_salt = _semantic_salt(_contention_semantic_key(contention))
+                disposition = (
+                    "endorse"
+                    if _fraction_draw(
+                        _assertion_rng(seed, "ptp-disposition", contention_salt),
+                        endorse_p,
+                    )
+                    else "neither"
+                )
+            if disposition == "endorse":
+                endorses.append(contention.id)
+            elif disposition == "reject":
+                rejects.append(contention.id)
+
+        # Allocated rows: one per targeted body part, register-drawn split.
+        if determination_kind == "allocated":
+            contributors = [
+                c
+                for c in history.conditions
+                if not c.wholly_unrelated
+                and c.causal_ground_truth in ("nonindustrial", "mixed")
+                and c.surfaces_in_file
+                and c.trajectory != "resolved"
+            ]
+            parts = sorted(
+                {
+                    part
+                    for c in contributors
+                    for part in c.apportionment_targets
+                    if part in context.current_body_parts
+                }
+                | {
+                    part
+                    for claim in history.prior_claims
+                    if claim.award is not None
+                    and claim.overlaps_current
+                    and claim.award.conclusively_presumed
+                    for part in claim.award.body_parts
+                    if part in context.current_body_parts
+                }
+            )
+            for part in parts:
+                if len(assertions) + len(sampled_assertions) >= 12:
+                    break
+                assertion_salt = f"{opinion_salt}:{part}"
+                register = _assertion_rng(seed, "percentage-register", assertion_salt)
+                if _fraction_draw(register, P_COMMON_PERCENTAGE_REGISTER.value):
+                    nonindustrial = COMMON_NONINDUSTRIAL_PERCENTAGES[
+                        register.randrange(len(COMMON_NONINDUSTRIAL_PERCENTAGES))
+                    ]
+                else:
+                    granular = [
+                        value
+                        for value in range(1, 100)
+                        if value not in COMMON_NONINDUSTRIAL_PERCENTAGES
+                    ]
+                    nonindustrial = granular[register.randrange(len(granular))]
+                part_conditions = tuple(
+                    c.id for c in contributors if part in c.apportionment_targets
+                )
+                part_awards = tuple(
+                    claim.award.id
+                    for claim in history.prior_claims
+                    if claim.award is not None
+                    and claim.overlaps_current
+                    and claim.award.conclusively_presumed
+                    and part in claim.award.body_parts
+                )
+                basis: list[str] = []
+                for ref in part_conditions:
+                    condition = history.condition(ref)
+                    if condition is None:
+                        continue
+                    if condition.symptomatic_before_doi is True:
+                        kind = "prior_symptomatic_disability"
+                    elif condition.symptomatic_before_doi is False:
+                        kind = "asymptomatic_prior_condition"
+                    else:
+                        kind = "nonindustrial_medical_condition"
+                    if kind not in basis:
+                        basis.append(kind)
+                groundings: list[DoctrineGrounding] = []
+                if part_awards:
+                    basis.append("lc4664_prior_award")
+                    groundings.append(
+                        Lc4664PriorAwardGrounding(prior_award_id=part_awards[0])
+                    )
+                assertion_key: SemanticKey = ("apportionment", author_role, part)
+                target_index = _weighted_index(
+                    _assertion_rng(seed, "quality-target", _semantic_salt(assertion_key)),
+                    QUALITY_TARGET_WEIGHTS.value,
+                )
+                recipe = ("supported", "thin", "unsupportable")[target_index]
+                fields: dict[str, object] = {
+                    "description": (
+                        f"chronic {part} disability limiting sustained activity"
+                    ),
+                    "disability_causation_stated": True,
+                    "reasonable_medical_probability": True,
+                    "causal_rationale": (
+                        "the documented pathology contributes to the present "
+                        "disability by continuing mechanical compromise"
+                    ),
+                    "percentage_rationale": (
+                        "the share reflects the documented severity relative to "
+                        "the industrial mechanism"
+                    ),
+                    "prior_award_analysis": (
+                        "the prior award is treated separately under the "
+                        "conclusive presumption"
+                        if part_awards
+                        else None
+                    ),
+                }
+                if recipe == "thin":
+                    levers = [
+                        "description",
+                        "disability_causation_stated",
+                        "reasonable_medical_probability",
+                        "causal_rationale",
+                        "percentage_rationale",
+                    ]
+                    lever = levers[
+                        _assertion_rng(
+                            seed, "thin-defect", _semantic_salt(assertion_key)
+                        ).randrange(len(levers))
+                    ]
+                    fields[lever] = False if lever == "disability_causation_stated" else None
+                    if lever == "reasonable_medical_probability":
+                        fields[lever] = False
+                elif recipe == "unsupportable":
+                    variants = ["vocational_apportionment", "bare_age", "bare_gender",
+                                "risk_factor_only"]
+                    variant = variants[
+                        _assertion_rng(
+                            seed, "unsupportable-defect", _semantic_salt(assertion_key)
+                        ).randrange(len(variants))
+                    ]
+                    basis.append(variant)
+                sampled_assertions.append(
+                    ApportionmentAssertion(
+                        id="app-99",  # relabelled below
+                        opinion_id="opn-99",
+                        body_part=part,
+                        industrial_percent=100 - nonindustrial,
+                        nonindustrial_percent=nonindustrial,
+                        basis_kinds=tuple(basis),  # type: ignore[arg-type]
+                        condition_ids=part_conditions,
+                        prior_award_ids=part_awards,
+                        groundings=tuple(groundings),
+                        quality="supported",
+                        **fields,  # type: ignore[arg-type]
+                    )
+                )
+                if trace is not None:
+                    trace.recipes.append((f"app@{part}", recipe, ""))
+
+        # Reviewed records: budget, relevant-first, distractor (B.7).
+        budget = 1 + _weighted_index(
+            _assertion_rng(seed, "evidence-budget", opinion_salt),
+            EVIDENCE_BUDGET_MIX.value,
+        )
+        if trace is not None:
+            trace.evidence_budgets.append(budget)
+        relevant: list[tuple[str, str]] = []
+        for assertion in sampled_assertions:
+            relevant.extend(("condition", ref) for ref in assertion.condition_ids)
+            relevant.extend(("prior_award", ref) for ref in assertion.prior_award_ids)
+        for contention in all_contentions:
+            if contention.id in endorses or contention.id in rejects:
+                if contention.target_condition_id is not None:
+                    relevant.append(("condition", contention.target_condition_id))
+                if contention.target_prior_claim_id is not None:
+                    relevant.append(("prior_claim", contention.target_prior_claim_id))
+                if contention.target_prior_award_id is not None:
+                    relevant.append(("prior_award", contention.target_prior_award_id))
+        seen: set[tuple[str, str]] = set()
+        ordered_relevant = [r for r in relevant if not (r in seen or seen.add(r))]
+        reviewed: list[tuple[str, str]] = ordered_relevant[:1]
+        for record in _visible_records(history):
+            if len(reviewed) >= budget:
+                break
+            if record not in reviewed and record in ordered_relevant:
+                reviewed.append(record)
+        for record in _visible_records(history):
+            if len(reviewed) >= budget:
+                break
+            if record not in reviewed:
+                reviewed.append(record)
+        unselected_irrelevant = [
+            record
+            for record in _visible_records(history)
+            if record not in reviewed and record not in ordered_relevant
+        ]
+        if unselected_irrelevant:
+            if trace is not None:
+                trace.distractor_available += 1
+            if _fraction_draw(
+                _assertion_rng(seed, "evidence-distractor", opinion_salt),
+                P_EVIDENCE_DISTRACTOR.value,
+            ):
+                reviewed.append(unselected_irrelevant[0])
+                if trace is not None:
+                    trace.distractor_included += 1
+
+        sampled_opinions.append(
+            MedicalOpinion(
+                id="opn-99",  # relabelled below
+                author_role=author_role,  # type: ignore[arg-type]
+                report_stage=report_stage,  # type: ignore[arg-type]
+                report_date=_stage_report_date(context, report_stage),
+                apportionment_state=state,  # type: ignore[arg-type]
+                determination_kind=determination_kind,  # type: ignore[arg-type]
+                determination_rationale=determination_rationale,
+                examination_performed=True,
+                reviewed_condition_ids=tuple(
+                    ref for family, ref in reviewed if family == "condition"
+                ),
+                reviewed_prior_claim_ids=tuple(
+                    ref for family, ref in reviewed if family == "prior_claim"
+                ),
+                reviewed_prior_award_ids=tuple(
+                    ref for family, ref in reviewed if family == "prior_award"
+                ),
+                endorses_contention_ids=tuple(endorses),
+                rejects_contention_ids=tuple(rejects),
+                rationale=(
+                    "the conclusions rest on the examination and the record reviewed"
+                ),
+                quality="supported",
+            )
+        )
+        if trace is not None:
+            trace.lifecycle.append(f"{author_role}:{report_stage}:{state}")
+
+    # --- assign opinion/assertion IDs and resolve internal references -------
+    used_opinion_ids = {o.id for o in opinions}
+    relabelled_opinions: list[MedicalOpinion] = []
+    opinion_id_map: dict[str, str] = {}
+    for opinion in sampled_opinions:
+        assigned = _first_unused("opn", used_opinion_ids)
+        used_opinion_ids.add(assigned)
+        opinion_id_map[opinion.id] = assigned
+        relabelled_opinions.append(opinion.model_copy(update={"id": assigned}))
+
+    used_assertion_ids = {a.id for a in assertions}
+    relabelled_assertions: list[ApportionmentAssertion] = []
+    for assertion in sampled_assertions:
+        assigned = _first_unused("app", used_assertion_ids)
+        used_assertion_ids.add(assigned)
+        if trace is not None:
+            trace.recipes = [
+                (assigned, recipe, realized)
+                if key == f"app@{assertion.body_part}"
+                else (key, recipe, realized)
+                for key, recipe, realized in trace.recipes
+            ]
+        relabelled_assertions.append(
+            assertion.model_copy(
+                update={
+                    "id": assigned,
+                    "opinion_id": opinion_id_map.get(
+                        assertion.opinion_id, assertion.opinion_id
+                    ),
+                }
+            )
+        )
+
+    return (
+        all_contentions,
+        [*opinions, *relabelled_opinions],
+        [*assertions, *relabelled_assertions],
+    )
+
+
+def _first_unused(prefix: str, used: set[str]) -> str:
+    for suffix in range(1, 100):
+        candidate = f"{prefix}-{suffix:02d}"
+        if candidate not in used:
+            return candidate
+    raise MedicalAssertionError(
+        f"no unused {prefix}- id remains below the two-digit ceiling"
+    )
 
 
 def derive_medical_assertions(
@@ -2130,7 +3103,21 @@ def derive_medical_assertions(
         medical_opinions=tuple(opinions),
         apportionment_assertions=tuple(assertions),
     )
-    return grade_ledger(context, projection, ledger)
+    graded = grade_ledger(context, projection, ledger)
+    if trace is not None:
+        realized: dict[str, str] = {}
+        for collection in (
+            graded.contentions,
+            graded.medical_opinions,
+            graded.apportionment_assertions,
+        ):
+            for item in collection:
+                realized[item.id] = item.quality
+        trace.recipes = [
+            (key, recipe, realized.get(key, ""))
+            for key, recipe, _placeholder in trace.recipes
+        ]
+    return graded
 
 
 __all__ = [
