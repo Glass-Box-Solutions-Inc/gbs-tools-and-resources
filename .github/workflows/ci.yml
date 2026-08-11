@@ -415,10 +415,17 @@ jobs:
       # refreshed from main state after the merge lands (see the pin's header).
       # The unshallow is load-bearing: at fetch-depth 1 the boundary commit
       # claims every path, so `git log -1 -- <substrate>` would return the
-      # checkout tip and the annotation would fire on every run.
+      # checkout tip and the annotation would fire on every run. If the repo
+      # is still shallow after the attempt, the comparison is unevaluable and
+      # saying so is the only honest output — a "stale" verdict computed from
+      # a boundary tip would name a wrong commit (sol review, PR #43 round 1).
       - name: Substrate pin staleness (warn only)
         run: |
           git fetch -q --unshallow origin || true
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            echo "::warning title=substrate pin staleness unevaluable::shallow checkout — could not unshallow; pin comparison skipped"
+            exit 0
+          fi
           python - <<'PY' || true
           from wc_caseload_engine.substrate import (
               UNKNOWN_SHA,

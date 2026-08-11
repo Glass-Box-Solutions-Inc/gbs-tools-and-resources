@@ -92,7 +92,11 @@ def test_pin_mismatch_warns_and_returns_false(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_pin_match_is_silent_and_true(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The WARN must be a signal, not a constant — prove it can stay silent."""
+    """The WARN must be a signal, not a constant — prove it can stay silent.
+
+    Silent means *no events at all*, not merely no mismatch event: a quiet
+    path that grew any chatter would erode the signal just as surely.
+    """
     pinned = bridge.read_substrate_pin()
     assert pinned is not None, "precondition: the committed pin exists"
     monkeypatch.setattr(bridge, "substrate_git_sha", lambda: pinned)
@@ -100,7 +104,7 @@ def test_pin_match_is_silent_and_true(monkeypatch: pytest.MonkeyPatch) -> None:
     with capture_logs() as entries:
         assert bridge.check_substrate_pin() is True
 
-    assert not [e for e in entries if e.get("event") == "substrate.pin_mismatch"]
+    assert entries == []
 
 
 def test_unknown_substrate_sha_is_silent_and_true(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -110,7 +114,11 @@ def test_unknown_substrate_sha_is_silent_and_true(monkeypatch: pytest.MonkeyPatc
     with capture_logs() as entries:
         assert bridge.check_substrate_pin() is True
 
-    assert not [e for e in entries if e.get("event") == "substrate.pin_mismatch"]
+    assert entries == []
+
+
+def _must_not_be_called() -> str:
+    raise AssertionError("substrate_git_sha must not be called when no pin exists")
 
 
 def test_missing_pin_file_is_silent_and_true(
@@ -118,12 +126,14 @@ def test_missing_pin_file_is_silent_and_true(
 ) -> None:
     """No pin means no claim: the checker has nothing to enforce and stays quiet.
 
-    ``check_substrate_pin`` returns before ever computing the live SHA, so this
+    ``check_substrate_pin`` must return before ever computing the live SHA —
+    enforced by making the computation itself raise — so the no-pin path
     holds even where git is unavailable.
     """
     monkeypatch.setattr(bridge, "substrate_pin_path", lambda: tmp_path / "substrate_pin.txt")
+    monkeypatch.setattr(bridge, "substrate_git_sha", _must_not_be_called)
 
     with capture_logs() as entries:
         assert bridge.check_substrate_pin() is True
 
-    assert not [e for e in entries if e.get("event") == "substrate.pin_mismatch"]
+    assert entries == []
