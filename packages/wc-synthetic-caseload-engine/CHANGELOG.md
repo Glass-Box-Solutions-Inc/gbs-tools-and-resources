@@ -100,11 +100,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every post-type contention draw salts on the full Part-3 candidate stream
   key (candidate family + rule-6 surface + normalized grounding IDs),
   distinct from the 8-field suppression tuple; pre-type incidence/type draws
-  keep their family-prefixed entity keys — the documented reading, flagged
-  for the spec author. Cohort re-measured: contentions 0.5857 supported
-  (was 0.5880) — still below the counsel floor, ruling question unchanged;
-  opinions 0.7698 and assertions 0.7900 in band; every pre-type pin
-  byte-identical.
+  keep their family-prefixed entity keys — the documented reading, ratified
+  verbatim by the spec author in round 3. Cohort re-measured: contentions
+  0.5857 supported (was 0.5880); opinions 0.7698 and assertions 0.7900 in
+  band; every pre-type pin byte-identical.
+- **Counsel ruling AJC-61/D1-R2 Option A2 (ratified 2026-08-11) closes the
+  open question**: the measured contention share IS the modeled behavior
+  (invisible-condition, psych add-on and presumption-fight mass), the
+  contention floor is 0.55 with the exact 3,770/6,437 = 0.5857 pin
+  retained, the opinions/assertions band stays 0.75–0.85, and the psych
+  rules and 2:1 residual stand unchanged. The suite carries no designed
+  RED any more.
 - `OPINION_RECIPE_WEIGHTS` states its 0.8267 figure as fix-round-1
   calibration arithmetic and defers realized measurement to the pinned
   cohort constants.

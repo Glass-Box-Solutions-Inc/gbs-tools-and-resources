@@ -91,18 +91,17 @@ def test_sampler_cohort_matches_pinned_empirical_metrics() -> None:
 
 
 def test_supported_shares_hold_the_counsel_ruling_bands() -> None:
-    """Counsel ruling AJC-61/D1 (2026-08-11): the 0.75-0.85 band governs
-    OPINIONS and ASSERTIONS; contentions carry a 0.65 floor with the measured
-    value pinned exactly in ``MEASURED_ASSERTION_QUALITY_COUNTS``. The psych
-    realism rules stand unchanged, and the fix-round-1 reversions (H2:
-    candidacy is world-truth-typed, the firefighter override is gone) are part
-    of the measured number, as is the fix-round-2 F3 stream re-keying. The
-    measured contention share is 0.5857 (3,770/6,437; 0.5880 before F3) —
-    BELOW the ruling's floor. Per the ruling that is a fresh counsel
-    question, not the sampler's to absorb: the floor stays RED, the number
-    stays pinned, and the decomposition travels with the fix-round report.
-    Deliberately its own test so the pinned-reproduction guard the mutation
-    gate relies on stays green while THIS carries the open ruling question.
+    """Counsel ruling AJC-61/D1-R2, Option A2 (ratified 2026-08-11): the
+    0.75-0.85 band governs OPINIONS and ASSERTIONS; contentions carry a 0.55
+    floor with the measured value pinned exactly in
+    ``MEASURED_ASSERTION_QUALITY_COUNTS`` (3,770/6,437 = 0.5857). The ruling
+    closed the round-1/round-2 floor question: the measured share IS the
+    modeled behavior — invisible-condition candidacy, the psych add-on
+    mandate and presumption-fight mass are wanted case content, not sampler
+    defects — so the floor moved from the superseded 0.65 to 0.55 and the
+    psych rules and 2:1 residual stand unchanged. Deliberately its own test
+    so the pinned-reproduction guard the mutation gate relies on asserts
+    exactly the pins while THIS carries the ruling's bands.
     """
     for model in ("medical_opinions", "apportionment_assertions"):
         counts = MEASURED_ASSERTION_QUALITY_COUNTS[model]
@@ -110,7 +109,7 @@ def test_supported_shares_hold_the_counsel_ruling_bands() -> None:
         assert 0.75 <= share <= 0.85, (model, share)
     contention_counts = MEASURED_ASSERTION_QUALITY_COUNTS["contentions"]
     contention_share = contention_counts["supported"] / sum(contention_counts.values())
-    assert contention_share >= 0.65, contention_share
+    assert contention_share >= 0.55, contention_share
 
 
 def test_recipe_to_grade_confusion_matrix_matches_pinned_cohort() -> None:

@@ -569,9 +569,12 @@ Round 10 audited round 9. Three findings, plus a fourth found while reproducing 
   m19-23/24); endorsement grades key on the unique pending reference, never the shareable
   suppression tuple (m19-22, reproduced RED on cohort-4803 first); post-type draws salt on
   the full Part-3 stream key — family + rule-6 surface + normalized grounding IDs — with the
-  pre-type reading documented and flagged for spec ratification (m19-25). Post-F3 cohort:
-  contentions 0.5857 (counsel floor question stands), opinions 0.7698 / assertions 0.7900 in
-  band, every pre-type pin byte-identical.
+  pre-type reading documented and flagged for spec ratification (m19-25; ratified verbatim
+  in sol round 3). Post-F3 cohort: contentions 0.5857, opinions 0.7698 / assertions 0.7900
+  in band, every pre-type pin byte-identical. **Counsel ruling AJC-61/D1-R2 Option A2
+  (2026-08-11)** closed the floor question: 0.5857 is the modeled behavior, the contention
+  floor is 0.55 with the exact pin retained, opinions/assertions stay 0.75–0.85, psych rules
+  and the 2:1 residual unchanged — the designed RED no longer exists.
 - **conjectured:** same-machine double-run md5 comparison proves generation determinism (Phase B gate design).
   **refuted by:** advisor-demanded clock-shift probe — TZ=Australia/Sydney drifted 55-60 of 289 files (EML Date offsets, PDF/docx timestamp normalization, substrate date.today() content, Faker clock-relative date_of_birth); the CLI-level gate also masked an in-process leak the two-zone test caught.
   **learned:** determinism gates must vary the environment axes the guarantee spans — process, hash seed, timezone, entrypoint — not just repeat the run; a passing gate that shares the leak's precondition proves nothing about the class.
