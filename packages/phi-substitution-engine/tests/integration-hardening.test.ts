@@ -3738,4 +3738,51 @@ describe("GLY-330 R14 (§7/N2): structural ingestion hardening at the public bou
     expect(String(thrown?.message ?? "") + String((thrown as any)?.code ?? "")).not.toContain(CANARY);
     expect((thrown as any)?.code).toBe("AUDIT_DURABILITY_UNAVAILABLE");
   });
+
+  // -------------------------------------------------------------------------
+  // Round 19 — the gate's full independent sweep found three more distinct
+  // injected-port / provider-response boundaries.
+  // -------------------------------------------------------------------------
+
+  // R19-1 (gate finding 1) — a throwing injected volume.durable getter must fail closed to
+  // "unavailable" in the PUBLIC health()/durabilityMetrics(), never propagate raw.
+  it("spool.health: a throwing volume.durable getter fails closed, never leaks raw", async () => {
+    const hostileVolume: any = {
+      read: async (): Promise<null> => null, list: async (): Promise<string[]> => [],
+      putAtomic: async (): Promise<any> => ({ flushed: true }), remove: async (): Promise<void> => {},
+      get durable(): never { throw new Error(CANARY); },
+    };
+    const spool = new Aes256GcmAuditSpool(hostileVolume, new FixedKeyProvider() as any, CLOCK);
+    let thrown: any; let health: any;
+    try { health = await spool.health(); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "")).not.toContain(CANARY);
+    expect(health).toBe("unavailable");
+  });
+
+  // R19-2 (gate finding 2) — a throwing injected keyProvider.dataKey() inside #encrypt must surface a
+  // FIXED code from the PUBLIC appendPrepared, never the raw (PHI) rejection.
+  it("spool.appendPrepared: a throwing keyProvider.dataKey fails closed with a fixed code, never leaks raw", async () => {
+    const hostileKeys: any = { keyVersion: "key-v1", dataKey: (): never => { throw new Error(CANARY); } };
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, hostileKeys, CLOCK);
+    const rec = spoolPrepared("att-r19-2");
+    let thrown: any;
+    try { await spool.appendPrepared(rec); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String((thrown as any)?.code ?? "")).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("AUDIT_SPOOL_FLUSH_FAILED");
+  });
+
+  // R19-3 (gate finding 3) — a NON-STRING provider response carrier must NOT be forwarded to the trace
+  // (or reversal); the engine requires a genuine tokenized string and fails closed otherwise.
+  it("wrapper.generateText: a non-string provider response cannot reach the trace raw", async () => {
+    const gate: Gate = { prepared: false };
+    const trace = new FakeSafeTrace();
+    const provider = new FakeRawProvider(gate);
+    provider.generateText = async (): Promise<any> => ({ toString: (): string => CANARY });
+    const built = buildManualWrapper(gate, { provider, trace });
+    let thrown: any; let out: any;
+    try { out = await built.wrapper.generateText({ system: "Maria García" } as any); } catch (e) { thrown = e; }
+    const traced = (built.trace as FakeSafeTrace).payloads.join("|");
+    expect(String(thrown?.message ?? "") + String(out ?? "") + traced).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("PROVIDER_SAFETY_GATE_FAILED");
+  });
 });

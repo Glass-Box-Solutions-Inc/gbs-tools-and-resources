@@ -144,6 +144,13 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       await this.#finalizeQuietly(prepared, "unknown_after_send", errorCodeString(error));
       throw new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), prepared.context.operationId, {});
     }
+    // §7/N2: the provider result is an INJECTED-port return. A NON-STRING carrier (e.g. an object with a
+    // PHI-producing `toJSON`) must NOT be forwarded to the trace or reversal — require a genuine string
+    // (the tokenized output) and fail closed otherwise, so nothing but a tokenized string reaches a sink.
+    if (typeof (rawOutput as unknown) !== "string") {
+      await this.#finalizeQuietly(prepared, "unknown_after_send", "PROVIDER_SAFETY_GATE_FAILED");
+      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", prepared.context.operationId, {});
+    }
     // §4.1 step 11 / N2/N3: tracing the tokenized output is AFTER the single provider call, so a
     // trace failure here still finalizes exactly one terminal (provider already invoked once).
     try {
@@ -194,6 +201,12 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     try {
       // §4.1 step 10 / N1: exactly one PINNED provider call.
       await prepared.provider.generateStream(prepared.tokenizedOptions, async (chunk) => {
+        // §7/N2: each streamed chunk is an INJECTED-port return — a NON-STRING carrier must NOT be
+        // traced or pushed to reversal. Fail closed BEFORE either sink (the catch below latches the
+        // stream and surfaces a fixed code).
+        if (typeof (chunk as unknown) !== "string") {
+          throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", prepared.context.operationId, {});
+        }
         // §4.2 / N2: trace tokenized chunk, then feed it to the reverse stream only.
         await this.#deps.safeTrace.response(chunk);
         await stream.push(chunk);

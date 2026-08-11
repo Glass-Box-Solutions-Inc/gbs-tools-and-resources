@@ -133,7 +133,9 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
   }
 
   public async health(): Promise<"ready" | "unavailable"> {
-    return this.#volume.durable ? "ready" : "unavailable";
+    // §7/N2: `durable` is an injected-volume getter — a throwing getter (its message could carry PHI)
+    // must fail closed to "unavailable", never propagate raw out of this public method.
+    return safeRead(this.#volume, "durable") === true ? "ready" : "unavailable";
   }
 
   public async appendPrepared(record: PhiAuditPreparedRecord): Promise<AuditPreparationReceipt> {
@@ -354,7 +356,8 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
   }
 
   public durabilityMetrics(): Readonly<{ survivesReplicaRestart: boolean }> {
-    return { survivesReplicaRestart: this.#volume.durable && !this.#acknowledgedLoss };
+    // §7/N2: read the injected-volume `durable` getter throw-safe (see health()).
+    return { survivesReplicaRestart: safeRead(this.#volume, "durable") === true && !this.#acknowledgedLoss };
   }
 
   /**
@@ -380,9 +383,17 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
   }
 
   #encrypt(recordId: string, attemptId: OperationAttemptId, plaintext: Uint8Array): EncryptedSpoolEnvelope {
-    const key = this.#keys.dataKey();
-    if (key.length !== KEY_BYTES) {
-      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, { reason: "invalid_key_length" });
+    // §7/N2: `dataKey()` is an INJECTED-port call — a throwing key provider (its error/code could carry
+    // PHI) must fail closed with a FIXED code, never propagate raw out of appendPrepared/finalize. Read
+    // and shape-validate the key INSIDE the guard (a throwing `.length` on a hostile carrier is caught).
+    let key: Uint8Array;
+    try {
+      key = this.#keys.dataKey();
+      if (!(key instanceof Uint8Array) || key.length !== KEY_BYTES) {
+        throw new Error("invalid_key");
+      }
+    } catch {
+      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, { reason: "invalid_key" });
     }
     // §7/N2: `keyVersion` and `createdAt` are INJECTED-port outputs written into the CLEAR (unencrypted)
     // envelope that persists durably. Read them getter-throw-safe and validate their SHAPE — a hostile
@@ -420,7 +431,17 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
   }
 
   #decrypt(envelope: EncryptedSpoolEnvelope): Uint8Array {
-    const key = this.#keys.dataKey();
+    // §7/N2: `dataKey()` is an INJECTED-port call — a throwing key provider must fail closed with a
+    // FIXED code, never propagate raw out of the public decryptForAudit (or a direct rebuild caller).
+    let key: Uint8Array;
+    try {
+      key = this.#keys.dataKey();
+      if (!(key instanceof Uint8Array) || key.length !== KEY_BYTES) {
+        throw new Error("invalid_key");
+      }
+    } catch {
+      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", null, { reason: "invalid_key" });
+    }
     const decipher = createDecipheriv("aes-256-gcm", Buffer.from(key), Buffer.from(envelope.nonce));
     decipher.setAuthTag(Buffer.from(envelope.authenticationTag));
     const plaintext = Buffer.concat([decipher.update(Buffer.from(envelope.ciphertext)), decipher.final()]);
