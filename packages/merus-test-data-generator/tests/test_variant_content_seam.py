@@ -833,73 +833,88 @@ def test_the_baseline_records_where_it_came_from():
 @pytest.fixture(scope="session")
 def base_worktree(tmp_path_factory):
     import subprocess
-
     from tests.render_baseline import _PACKAGE_ROOT
 
     recorder = _recorder_module()
     requested = os.environ.get("AJC72_BASE_WORKTREE")
-    removed = False
 
-    if requested and os.path.isdir(requested):
+    if requested:
+        if not os.path.isdir(requested):
+            pytest.fail(
+                "AJC72_BASE_WORKTREE is set but does not point to an existing directory: "
+                f"{requested!r}"
+            )
         try:
             recorder._validate_base_worktree(requested)
-        except SystemExit:
-            pass
-        else:
-            yield requested
-            return
+        except SystemExit as exc:
+            pytest.fail(f"AJC72_BASE_WORKTREE is set but invalid: {exc}")
+        yield requested
+        return
 
     worktree = str(tmp_path_factory.mktemp("ajc72-worktrees") / "ajc72-base")
-    removed = True
-    try:
-        try:
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    _PACKAGE_ROOT,
-                    "worktree",
-                    "add",
-                    "--detach",
-                    worktree,
-                    recorder.BASE_COMMIT,
-                ],
-                capture_output=True,
-                check=True,
-                text=True,
+    created = False
+
+    def _worktree_add() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "git",
+                "-C",
+                _PACKAGE_ROOT,
+                "worktree",
+                "add",
+                "--detach",
+                worktree,
+                recorder.BASE_COMMIT,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    def _is_shallow_missing(output: str) -> bool:
+        lower = output.lower()
+        return any(
+            needle in lower
+            for needle in (
+                "not a valid object",
+                "invalid object name",
+                "couldn't find",
+                "does not exist",
+                "unknown revision",
+                "bad revision",
             )
-        except subprocess.CalledProcessError:
+        )
+
+    try:
+        add = _worktree_add()
+        if add.returncode != 0:
             fetch = subprocess.run(
                 ["git", "-C", _PACKAGE_ROOT, "fetch", "origin", recorder.BASE_COMMIT],
                 capture_output=True,
                 text=True,
             )
             if fetch.returncode != 0:
-                pytest.skip("base commit unavailable; shallow clone likely omitted it")
-            try:
-                subprocess.run(
-                    [
-                        "git",
-                        "-C",
-                        _PACKAGE_ROOT,
-                        "worktree",
-                        "add",
-                        "--detach",
-                        worktree,
-                        recorder.BASE_COMMIT,
-                    ],
-                    capture_output=True,
-                    check=True,
-                    text=True,
+                pytest.fail(
+                    "failed to create fixture base worktree: git worktree add failed and fetch retry failed\n"
+                    f"add stderr: {add.stderr.rstrip()}\nfetch stderr: {fetch.stderr.rstrip()}"
                 )
-            except subprocess.CalledProcessError as exc:
-                pytest.skip(
-                    "base commit unavailable after fetch; shallow clone omits the BASE_COMMIT object"
+
+            retry = _worktree_add()
+            if retry.returncode != 0:
+                if _is_shallow_missing(retry.stderr):
+                    pytest.skip(
+                        "base commit unavailable in shallow clone; fetch did not supply "
+                        f"{recorder.BASE_COMMIT}"
+                    )
+                pytest.fail(
+                    "failed to create fixture base worktree after fetch retry:\n"
+                    f"{retry.stdout.rstrip()}\n{retry.stderr.rstrip()}"
                 )
+
+        created = True
         recorder._validate_base_worktree(worktree)
         yield worktree
     finally:
-        if removed:
+        if created:
             subprocess.run(["git", "-C", _PACKAGE_ROOT, "worktree", "remove", "--force", worktree], check=False)
             subprocess.run(["git", "-C", _PACKAGE_ROOT, "worktree", "prune"], check=False)
 
@@ -929,20 +944,19 @@ def _run_restamp_provenance(base_worktree: str, output_path: str | None = None) 
 
     _, base_package_root = _base_worktree_roots(base_worktree)
     from tests.render_baseline import _PACKAGE_ROOT as feature_package_root
-    env = os.environ.copy()
+    args = [
+        _sys.executable,
+        os.path.join(feature_package_root, "scripts", "record_render_baseline.py"),
+        "--restamp-provenance",
+        "--base-worktree",
+        base_worktree,
+    ]
     if output_path is not None:
-        env["AJC72_RESTAMP_OUTPUT"] = output_path
+        args.extend(["--output", output_path])
 
     result = subprocess.run(
-        [
-            _sys.executable,
-            os.path.join(feature_package_root, "scripts", "record_render_baseline.py"),
-            "--restamp-provenance",
-            "--base-worktree",
-            base_worktree,
-        ],
+        args,
         cwd=base_package_root, capture_output=True, text=True,
-        env=env,
     )
     return result.returncode, result.stdout + result.stderr
 
@@ -1172,29 +1186,43 @@ def test_restamp_provenance_restores_base_worktree_on_success_and_failure(base_w
         _assert_base_worktree_clean(base_worktree, base_payload_bytes)
 
 
-def test_record_mode_from_base_worktree_with_base_ref_has_no_whitespace_in_commits(base_worktree):
+def test_record_mode_from_base_worktree_with_base_ref_has_no_whitespace_in_commits(
+    base_worktree,
+    tmp_path,
+):
     import json
-    import subprocess
-    import sys as _sys
-
     recorder = _recorder_module()
-    from tests.render_baseline import _PACKAGE_ROOT as feature_package_root
     _, base_package_root = _base_worktree_roots(base_worktree)
-    baseline_path = os.path.join(base_package_root, _BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE)
-    result = subprocess.run(
-        [
-            _sys.executable,
-            os.path.join(feature_package_root, "scripts", "record_render_baseline.py"),
-            "--record",
-            "--base-ref",
-            recorder.BASE_COMMIT,
-        ],
-        cwd=base_package_root,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    with open(baseline_path, encoding="utf-8") as fh:
+    baseline_output = str(tmp_path / "recorded-with-base-ref.json")
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(recorder, "_PACKAGE_ROOT", base_package_root)
+        original_git = recorder._git
+
+        def _git_with_base_root(*args: str, cwd: str | None = None, text: bool = True):
+            return original_git(*args, cwd=cwd or base_package_root, text=text)
+
+        mp.setattr(recorder, "_git", _git_with_base_root)
+        mp.setattr(recorder.sys, "path", [base_package_root, *(
+            p for p in recorder.sys.path if p != base_package_root
+        )])
+        for name in list(recorder.sys.modules):
+            if name == "tests" or name.startswith("tests."):
+                mp.delitem(recorder.sys.modules, name, raising=False)
+
+        assert (
+            recorder.main(
+                [
+                    "--record",
+                    "--base-ref",
+                    recorder.BASE_COMMIT,
+                    "--output",
+                    baseline_output,
+                ]
+            )
+            == 0
+        )
+
+    with open(baseline_output, encoding="utf-8") as fh:
         recorded = json.load(fh)
     assert recorded["_meta"]["base_commit"] == recorded["_meta"]["base_commit"].strip() == recorder.BASE_COMMIT
     assert recorded["_meta"]["source_commit"] == recorded["_meta"]["source_commit"].strip() == recorder.BASE_COMMIT

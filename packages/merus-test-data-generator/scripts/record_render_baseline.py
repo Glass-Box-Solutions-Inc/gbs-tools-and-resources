@@ -4,15 +4,17 @@
 Modes:
 - --check validates live renders against the recorded payload.
 - --record refreshes the entire payload from the current worktree.
-- --restamp-provenance replays a detached trunk recorder at ``BASE_COMMIT`` and
-  replaces the feature payload with the pinned-base payload after verifying byte-identical
-  cases. ``recorded_utc`` is regenerated, so restamping is not byte-identical.
+- --restamp-provenance replays the detached pinned trunk recorder at ``BASE_COMMIT`` and
+  replaces the feature payload with the pinned-base recording after verifying byte-identical
+  cases. This updates more than ``_meta.note``: ``recorded_utc`` is regenerated each run.
 
 Recording recipes:
 - Run ``--record --base-ref <sha>`` from a clean detached worktree checked out at
   ``<sha>``.
 - Run ``--restamp-provenance --base-worktree <path>`` with a detached base worktree
   pinned at ``BASE_COMMIT``.
+- Use ``--output <path>`` to direct the output payload for ``--record`` and
+  ``--restamp-provenance``; omitted, it uses the canonical package path.
 
 Environment:
 - ``AJC72_BASE_WORKTREE`` can override the base worktree path for
@@ -435,11 +437,17 @@ def _run_check_mode() -> int:
     return 0
 
 
-def _run_record_mode(base_ref: str | None, harness: dict[str, str]) -> int:
+def _run_record_mode(
+    base_ref: str | None,
+    harness: dict[str, str],
+    output: str | None = None,
+) -> int:
     base_commit = _resolve_base(base_ref)
     source_commit, base_patches = _refuse_unless_clean_base_checkout(base_commit)
 
     from tests.render_baseline import ANCHOR_DATE, BASELINE_PATH, CASE_SEED, RENDER_SEED, compute_baseline
+
+    baseline_path = output or BASELINE_PATH
     payload = {
         "_meta": {
             "source_commit": source_commit,
@@ -454,19 +462,18 @@ def _run_record_mode(base_ref: str | None, harness: dict[str, str]) -> int:
         },
         "cases": compute_baseline(),
     }
-    _write_json_atomically(payload, BASELINE_PATH)
-    print(f"Recorded {len(payload['cases'])} cases from {source_commit[:12]} to {BASELINE_PATH}")
+    _write_json_atomically(payload, baseline_path)
+    print(f"Recorded {len(payload['cases'])} cases from {source_commit[:12]} to {baseline_path}")
     return 0
 
 
-def _run_restamp_mode(base_worktree: str) -> int:
+def _run_restamp_mode(base_worktree: str, output: str | None = None) -> int:
     if _status_paths(_PACKAGE_ROOT, include_untracked=True):
         _exit("refusing to restamp: feature worktree is not clean")
 
     base_repo, base_package_root = _validate_base_worktree(base_worktree)
-    feature_baseline_path = os.environ.get(
-        "AJC72_RESTAMP_OUTPUT",
-        os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json"),
+    feature_baseline_path = output or os.path.join(
+        _PACKAGE_ROOT, "tests", "golden", "render_baseline.json"
     )
     try:
         fresh_base_payload = _run_base_recorder(base_package_root)
@@ -487,7 +494,7 @@ def _run_restamp_mode(base_worktree: str) -> int:
     return 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--check", action="store_true", help="Verify against recorded baseline.")
@@ -499,8 +506,9 @@ def main() -> int:
     )
     parser.add_argument("--base-ref", default=None, help="Override base commit for --record only.")
     parser.add_argument("--base-worktree", default=None, help="Detached base worktree.")
+    parser.add_argument("--output", default=None, help="Destination payload path for --record and --restamp-provenance.")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     harness = _verify_harness()
 
@@ -514,8 +522,8 @@ def main() -> int:
     if args.restamp_provenance:
         if not args.base_worktree:
             _exit("must pass --base-worktree with --restamp-provenance")
-        return _run_restamp_mode(args.base_worktree)
-    return _run_record_mode(args.base_ref, harness)
+        return _run_restamp_mode(args.base_worktree, args.output)
+    return _run_record_mode(args.base_ref, harness, args.output)
 
 
 if __name__ == "__main__":
