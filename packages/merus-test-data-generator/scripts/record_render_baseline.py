@@ -3,9 +3,20 @@
 
 Modes:
 - --check validates live renders against the recorded payload.
-- --record refreshes the entire payload from this worktree.
-- --restamp-provenance replays a detached trunk recorder at BASE_COMMIT and updates
-  only _meta.note in the feature payload.
+- --record refreshes the entire payload from the current worktree.
+- --restamp-provenance replays a detached trunk recorder at ``BASE_COMMIT`` and
+  replaces the feature payload with the pinned-base payload after verifying byte-identical
+  cases. ``recorded_utc`` is regenerated, so restamping is not byte-identical.
+
+Recording recipes:
+- Run ``--record --base-ref <sha>`` from a clean detached worktree checked out at
+  ``<sha>``.
+- Run ``--restamp-provenance --base-worktree <path>`` with a detached base worktree
+  pinned at ``BASE_COMMIT``.
+
+Environment:
+- ``AJC72_BASE_WORKTREE`` can override the base worktree path for
+  ``--restamp-provenance``. This does not affect ``--check``/``--record``.
 """
 
 from __future__ import annotations
@@ -72,7 +83,7 @@ def _git(*args: str, cwd: str = _PACKAGE_ROOT, text: bool = True) -> str | bytes
         text=text,
         check=True,
     )
-    return result.stdout if text else result.stdout
+    return result.stdout.strip() if text else result.stdout
 
 
 def _package_relative(cwd: str, path: str) -> str:
@@ -313,7 +324,7 @@ def _cleanup_base_worktree(base_worktree: str, base_repo: str, base_package_root
             "--worktree",
             "--",
             _BASE_GOLDEN_PAYLOAD,
-            cwd=base_worktree,
+            cwd=base_repo,
         )
     except subprocess.CalledProcessError as exc:
         _exit(f"refusing to restamp: restore failed during cleanup ({exc})")
@@ -453,7 +464,10 @@ def _run_restamp_mode(base_worktree: str) -> int:
         _exit("refusing to restamp: feature worktree is not clean")
 
     base_repo, base_package_root = _validate_base_worktree(base_worktree)
-    feature_baseline_path = os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json")
+    feature_baseline_path = os.environ.get(
+        "AJC72_RESTAMP_OUTPUT",
+        os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json"),
+    )
     try:
         fresh_base_payload = _run_base_recorder(base_package_root)
         base_meta = fresh_base_payload.get("_meta", {})
@@ -481,7 +495,7 @@ def main() -> int:
     modes.add_argument(
         "--restamp-provenance",
         action="store_true",
-        help="Replay the pinned base tree and refresh only provenance note.",
+        help="Replay the pinned base tree and replace provenance with the pinned tree payload.",
     )
     parser.add_argument("--base-ref", default=None, help="Override base commit for --record only.")
     parser.add_argument("--base-worktree", default=None, help="Detached base worktree.")

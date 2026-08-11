@@ -830,22 +830,119 @@ def test_the_baseline_records_where_it_came_from():
     assert "before the AJC-66" not in meta["note"]
 
 
-def _trusted_base_worktree() -> str | None:
-    candidate = os.environ.get(
-        "AJC72_BASE_WORKTREE",
-        "/home/vncuser/projects/gbs-tools-and-resources/.claude/worktrees/ajc72-recorder",
-    )
-    return candidate if os.path.isdir(candidate) else None
-
-
-def _run_restamp_provenance(base_worktree: str) -> tuple[int, str]:
+@pytest.fixture(scope="session")
+def base_worktree(tmp_path_factory):
     import subprocess
-    import sys as _sys
+
     from tests.render_baseline import _PACKAGE_ROOT
 
+    recorder = _recorder_module()
+    requested = os.environ.get("AJC72_BASE_WORKTREE")
+    removed = False
+
+    if requested and os.path.isdir(requested):
+        try:
+            recorder._validate_base_worktree(requested)
+        except SystemExit:
+            pass
+        else:
+            yield requested
+            return
+
+    worktree = str(tmp_path_factory.mktemp("ajc72-worktrees") / "ajc72-base")
+    removed = True
+    try:
+        try:
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    _PACKAGE_ROOT,
+                    "worktree",
+                    "add",
+                    "--detach",
+                    worktree,
+                    recorder.BASE_COMMIT,
+                ],
+                capture_output=True,
+                check=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError:
+            fetch = subprocess.run(
+                ["git", "-C", _PACKAGE_ROOT, "fetch", "origin", recorder.BASE_COMMIT],
+                capture_output=True,
+                text=True,
+            )
+            if fetch.returncode != 0:
+                pytest.skip("base commit unavailable; shallow clone likely omitted it")
+            try:
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        _PACKAGE_ROOT,
+                        "worktree",
+                        "add",
+                        "--detach",
+                        worktree,
+                        recorder.BASE_COMMIT,
+                    ],
+                    capture_output=True,
+                    check=True,
+                    text=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                pytest.skip(
+                    "base commit unavailable after fetch; shallow clone omits the BASE_COMMIT object"
+                )
+        recorder._validate_base_worktree(worktree)
+        yield worktree
+    finally:
+        if removed:
+            subprocess.run(["git", "-C", _PACKAGE_ROOT, "worktree", "remove", "--force", worktree], check=False)
+            subprocess.run(["git", "-C", _PACKAGE_ROOT, "worktree", "prune"], check=False)
+
+
+_BASE_RENDER_GOLDEN_PAYLOAD = os.path.join(
+    "packages",
+    "merus-test-data-generator",
+    "tests",
+    "golden",
+    "render_baseline.json",
+)
+_BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE = os.path.join(
+    "tests",
+    "golden",
+    "render_baseline.json",
+)
+
+
+def _base_worktree_roots(base_worktree: str) -> tuple[str, str]:
+    recorder = _recorder_module()
+    return recorder._validate_base_worktree(base_worktree)
+
+
+def _run_restamp_provenance(base_worktree: str, output_path: str | None = None) -> tuple[int, str]:
+    import subprocess
+    import sys as _sys
+
+    _, base_package_root = _base_worktree_roots(base_worktree)
+    from tests.render_baseline import _PACKAGE_ROOT as feature_package_root
+    env = os.environ.copy()
+    if output_path is not None:
+        env["AJC72_RESTAMP_OUTPUT"] = output_path
+
     result = subprocess.run(
-        [_sys.executable, "scripts/record_render_baseline.py", "--restamp-provenance", "--base-worktree", base_worktree],
-        cwd=_PACKAGE_ROOT, capture_output=True, text=True,
+        [
+            _sys.executable,
+            os.path.join(feature_package_root, "scripts", "record_render_baseline.py"),
+            "--restamp-provenance",
+            "--base-worktree",
+            base_worktree,
+        ],
+        cwd=base_package_root, capture_output=True, text=True,
+        env=env,
     )
     return result.returncode, result.stdout + result.stderr
 
@@ -855,14 +952,8 @@ def _trusted_base_payload(base_worktree: str) -> tuple[dict, dict]:
 
     from tests.render_baseline import _PACKAGE_ROOT
 
-    path = os.path.join(
-        base_worktree,
-        "packages",
-        "merus-test-data-generator",
-        "tests",
-        "golden",
-        "render_baseline.json",
-    )
+    _, base_package_root = _base_worktree_roots(base_worktree)
+    path = os.path.join(base_package_root, _BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE)
     with open(os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json"), encoding="utf-8") as fh:
         feature_payload = json.load(fh)
     with open(path, encoding="utf-8") as fh:
@@ -871,14 +962,8 @@ def _trusted_base_payload(base_worktree: str) -> tuple[dict, dict]:
 
 
 def _trusted_base_baseline_path(base_worktree: str) -> str:
-    return os.path.join(
-        base_worktree,
-        "packages",
-        "merus-test-data-generator",
-        "tests",
-        "golden",
-        "render_baseline.json",
-    )
+    _, base_package_root = _base_worktree_roots(base_worktree)
+    return os.path.join(base_package_root, _BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE)
 
 
 def _trusted_base_payload_bytes(base_worktree: str) -> bytes:
@@ -889,21 +974,18 @@ def _trusted_base_payload_bytes(base_worktree: str) -> bytes:
 def _assert_base_worktree_clean(base_worktree: str, expected_payload_bytes: bytes) -> None:
     import subprocess
 
-    base_payload_path = _trusted_base_baseline_path(base_worktree)
+    base_repo, base_package_root = _base_worktree_roots(base_worktree)
+    base_payload_path = os.path.join(base_package_root, _BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE)
     recorder = _recorder_module()
 
-    relative_blob = os.path.join(
-        "packages",
-        "merus-test-data-generator",
-        "tests",
-        "golden",
-        "render_baseline.json",
-    )
+    relative_blob = _BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE
+    relative_blob_in_repo = os.path.join(os.path.relpath(base_package_root, base_repo), relative_blob)
     status = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=base_worktree,
+        ["git", "status", "--porcelain", "--untracked-files=no", "--", _BASE_RENDER_GOLDEN_PAYLOAD],
+        cwd=base_repo,
         capture_output=True, text=True, check=True,
     )
-    assert not status.stdout, f"base worktree is not clean: {status.stdout.rstrip()}"
+    assert not status.stdout, f"base worktree golden is not clean: {status.stdout.rstrip()}"
     head_ref = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=base_worktree,
         capture_output=True, text=True, check=True,
@@ -912,7 +994,7 @@ def _assert_base_worktree_clean(base_worktree: str, expected_payload_bytes: byte
         f"base worktree is not detached: {head_ref.stdout.strip()}"
     )
     head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=base_worktree,
+        ["git", "rev-parse", "HEAD"], cwd=base_repo,
         capture_output=True, text=True, check=True,
     )
     assert head.stdout.strip() == recorder.BASE_COMMIT, (
@@ -921,7 +1003,7 @@ def _assert_base_worktree_clean(base_worktree: str, expected_payload_bytes: byte
 
     expected = expected_payload_bytes
     current = subprocess.run(
-        ["git", "show", f"{recorder.BASE_COMMIT}:{relative_blob}"], cwd=base_worktree,
+        ["git", "show", f"{recorder.BASE_COMMIT}:{relative_blob_in_repo}"], cwd=base_repo,
         capture_output=True, text=False, check=True,
     ).stdout
     assert current == expected, "base baseline does not match the committed blob"
@@ -981,24 +1063,25 @@ def test_record_mode_refuses_a_tree_that_is_not_the_base_ref():
     assert "refusing to record" in (result.stdout + result.stderr)
 
 
-def test_restamp_provenance_uses_only_fresh_pinned_base_cases():
+def test_restamp_provenance_uses_only_fresh_pinned_base_cases(base_worktree, tmp_path):
     import json
     import subprocess
 
     from tests.render_baseline import BASELINE_PATH, _PACKAGE_ROOT
 
-    base_worktree = _trusted_base_worktree()
-    if base_worktree is None:
-        pytest.skip("ajc72-recorder worktree is not available")
-
     recorder = _recorder_module()
     feature_before, base_payload = _trusted_base_payload(base_worktree)
     base_payload_bytes = _trusted_base_payload_bytes(base_worktree)
     baseline_text = open(BASELINE_PATH, encoding="utf-8").read()
+    output = tmp_path / "render_baseline-test-restamp.json"
+    _write_baseline(feature_before, output)
+
     try:
-        code, out = _run_restamp_provenance(base_worktree)
+        code, out = _run_restamp_provenance(
+            base_worktree, output_path=str(output),
+        )
         assert code == 0, f"restamp-provenance did not succeed:\n{out}"
-        with open(BASELINE_PATH, encoding="utf-8") as fh:
+        with open(output, encoding="utf-8") as fh:
             after = json.load(fh)
         assert after["cases"] == base_payload["cases"]
         assert after["cases"] == feature_before["cases"]
@@ -1011,19 +1094,24 @@ def test_restamp_provenance_uses_only_fresh_pinned_base_cases():
         _assert_base_worktree_clean(base_worktree, base_payload_bytes)
         _restore_baseline(baseline_text)
         status = subprocess.run(
-            ["git", "status", "--porcelain"],
+            [
+                "git",
+                "status",
+                "--porcelain",
+                "--untracked-files=no",
+                "--",
+                "packages/merus-test-data-generator/tests/golden/render_baseline.json",
+            ],
             cwd=_PACKAGE_ROOT,
             capture_output=True,
             text=True,
         )
         assert not status.stdout, f"post-restamp dirty tree: {status.stdout.rstrip()}"
+        if os.path.exists(output):
+            os.unlink(output)
 
 
-def test_restamp_provenance_restores_base_worktree_on_success_and_failure():
-    base_worktree = _trusted_base_worktree()
-    if base_worktree is None:
-        pytest.skip("ajc72-recorder worktree is not available")
-
+def test_restamp_provenance_restores_base_worktree_on_success_and_failure(base_worktree):
     from tests.render_baseline import BASELINE_PATH
 
     recorder = _recorder_module()
@@ -1032,8 +1120,9 @@ def test_restamp_provenance_restores_base_worktree_on_success_and_failure():
     feature_payload_text = open(BASELINE_PATH, "rb").read().decode("utf-8")
     feature_payload_bytes = feature_payload_text.encode("utf-8")
     base_payload_bytes = _trusted_base_payload_bytes(base_worktree)
+    _, base_package_root = _base_worktree_roots(base_worktree)
     base_relative_payload_path = os.path.join(
-        "packages", "merus-test-data-generator", "tests", "golden", "render_baseline.json",
+        os.path.relpath(base_package_root, base_worktree), _BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE
     )
 
     try:
@@ -1055,11 +1144,7 @@ def test_restamp_provenance_restores_base_worktree_on_success_and_failure():
             with pytest.raises(SystemExit, match="base payload base_commit is not pinned"):
                 recorder._run_restamp_mode(base_worktree)
 
-        status = subprocess.run(
-            ["git", "-C", base_worktree, "status", "--porcelain"],
-            capture_output=True, text=True, check=True,
-        )
-        assert not status.stdout, f"base worktree is not clean after failure: {status.stdout.rstrip()}"
+        _assert_base_worktree_clean(base_worktree, base_payload_bytes)
         head_ref = subprocess.run(
             ["git", "-C", base_worktree, "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True, text=True, check=True,
@@ -1085,6 +1170,34 @@ def test_restamp_provenance_restores_base_worktree_on_success_and_failure():
     finally:
         _restore_baseline(feature_payload_text)
         _assert_base_worktree_clean(base_worktree, base_payload_bytes)
+
+
+def test_record_mode_from_base_worktree_with_base_ref_has_no_whitespace_in_commits(base_worktree):
+    import json
+    import subprocess
+    import sys as _sys
+
+    recorder = _recorder_module()
+    from tests.render_baseline import _PACKAGE_ROOT as feature_package_root
+    _, base_package_root = _base_worktree_roots(base_worktree)
+    baseline_path = os.path.join(base_package_root, _BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE)
+    result = subprocess.run(
+        [
+            _sys.executable,
+            os.path.join(feature_package_root, "scripts", "record_render_baseline.py"),
+            "--record",
+            "--base-ref",
+            recorder.BASE_COMMIT,
+        ],
+        cwd=base_package_root,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    with open(baseline_path, encoding="utf-8") as fh:
+        recorded = json.load(fh)
+    assert recorded["_meta"]["base_commit"] == recorded["_meta"]["base_commit"].strip() == recorder.BASE_COMMIT
+    assert recorded["_meta"]["source_commit"] == recorded["_meta"]["source_commit"].strip() == recorder.BASE_COMMIT
 
 
 def test_restamp_provenance_changes_only_meta_note():
@@ -1162,12 +1275,8 @@ def test_restamp_provenance_refuses_case_drift_without_writing(tmp_path):
     assert destination.read_text(encoding="utf-8") == destination_text
 
 
-def test_restamp_provenance_refuses_untrusted_base_worktree(tmp_path):
+def test_restamp_provenance_refuses_untrusted_base_worktree(base_worktree, tmp_path):
     recorder = _recorder_module()
-    base_worktree = _trusted_base_worktree()
-    if base_worktree is None:
-        pytest.skip("ajc72-recorder worktree is not available")
-
     recorder._validate_base_worktree(base_worktree)
 
     # wrong SHA: alter BASE_COMMIT inside the same process and assert that
