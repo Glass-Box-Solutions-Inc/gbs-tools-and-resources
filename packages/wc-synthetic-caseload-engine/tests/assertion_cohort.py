@@ -320,25 +320,25 @@ def build_cohort(sample: int | None = None) -> CohortResult:
 # ---------------------------------------------------------------------------
 
 MEASURED_RECIPE_GRADE_COUNTS: dict[tuple[str, str], int] = {
-    ("supported", "supported"): 8625,
-    ("supported", "thin"): 1331,
-    ("supported", "unsupportable"): 874,
-    ("thin", "thin"): 1188,
-    ("thin", "unsupportable"): 100,
-    ("unsupportable", "supported"): 9,
-    ("unsupportable", "thin"): 111,
-    ("unsupportable", "unsupportable"): 461,
+    ("supported", "supported"): 8613,
+    ("supported", "thin"): 1370,
+    ("supported", "unsupportable"): 878,
+    ("thin", "thin"): 1165,
+    ("thin", "unsupportable"): 110,
+    ("unsupportable", "supported"): 3,
+    ("unsupportable", "thin"): 98,
+    ("unsupportable", "unsupportable"): 462,
 }
 """The recipe->grade confusion matrix, pooled over contentions, opinions and
 apportionment rows (opinions carry their own foundation recipe since fix
 round 1). Off-diagonal mass is the proof quality is rederived rather than
-copied: 1,331 supported-recipe builds graded thin, 9 unsupportable-recipe
+copied: 1,370 supported-recipe builds graded thin, 3 unsupportable-recipe
 builds graded supported, and so on. There is no ('thin', 'supported') cell —
 a dropped rationale never grades supported."""
 
 MEASURED_ASSERTION_QUALITY_COUNTS: dict[str, dict[str, int]] = {
-    "contentions": {"supported": 3785, "thin": 1893, "unsupportable": 759},
-    "medical_opinions": {"supported": 3852, "thin": 542, "unsupportable": 606},
+    "contentions": {"supported": 3770, "thin": 1896, "unsupportable": 771},
+    "medical_opinions": {"supported": 3849, "thin": 542, "unsupportable": 609},
     "apportionment_assertions": {"supported": 997, "thin": 195, "unsupportable": 70},
 }
 
@@ -377,7 +377,7 @@ MEASURED_LIFECYCLE_COUNTS: dict[str, int] = {
 
 MEASURED_EVIDENCE_BUDGET_COUNTS: dict[int, int] = {1: 1723, 2: 2053, 3: 1224}
 
-MEASURED_DISTRACTOR_COUNTS: dict[str, int] = {"available": 1063, "included": 274}
+MEASURED_DISTRACTOR_COUNTS: dict[str, int] = {"available": 1066, "included": 276}
 
 MEASURED_ELIGIBLE_COUNTS: dict[str, int] = {
     "condition": 14056,
@@ -400,13 +400,13 @@ MEASURED_LEDGER_DIGESTS: dict[int, str] = {
     2: "7cca22aa5a73a70bd857334ac189fd733d71bc3621a1d48013fb4796ac902c8b",
     3: "e2c883cb04f28372a9ed3201d28b03002667ea5f04236c858f83a0e5e3aaa11f",
     4: "ea63d1e28821028c5d1d69d31d39b457121d8a8e5d750f24f2ed6af11e505071",
-    5: "395409c2308c3b9221fbc4bdae08b70ea149195658c434ff61ae315a911bea75",
+    5: "fa027b6d3ad3c4efce41daf070e4485d457ef391edd449052f6a3066ab486a0e",
     4800: "87072051147e435c8eed12f521ce472bd1226eeef03bddfc97869fb656ab29a6",
     5040: "9aef89d1d0fa1960577934d3bcf759e57790a2939bfcf8b6f998e20a384033a4",
     5280: "80c42649922691ba8e3b04cf7f29ced015a934d9685850e27c6b61613ff087f7",
-    5520: "bd76d7573b109b8655dd5abdea76f0c02a42fdeba32438efa42f451a838b5899",
-    5760: "355ba49a3313a8dd71529546cf3bb48bd3ef65848c81b29d30c6d909d81724ea",
-    5999: "699eb80b3f8d8fee66d0170c079cf54e86319c5ff07d1a30e9ed6ae7948a11a1",
+    5520: "1fc8f633a9195f60fe2e7158fb3c359416a30be876c9e65db6e1f640203ea0dd",
+    5760: "20b945e58d4a281eab0b0aebb90a4e93e228783275cb6e13c8c5fe17df1e7cba",
+    5999: "e5e151df3ffe3ea78b6b8bf9d06ac5b21f0f9a2a5722123a20e2741574f3a708",
 }
 """Spot digests: one per cell plus each witness stratum's first case and the
 last case. Indexes 0 and 5040 legitimately coincide — both are intake cases

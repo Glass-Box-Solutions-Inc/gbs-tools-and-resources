@@ -96,12 +96,13 @@ def test_supported_shares_hold_the_counsel_ruling_bands() -> None:
     value pinned exactly in ``MEASURED_ASSERTION_QUALITY_COUNTS``. The psych
     realism rules stand unchanged, and the fix-round-1 reversions (H2:
     candidacy is world-truth-typed, the firefighter override is gone) are part
-    of the measured number. The measured contention share is 0.5880 — BELOW
-    the ruling's floor. Per the ruling that is a fresh counsel question, not
-    the sampler's to absorb: the floor stays RED, the number stays pinned,
-    and the decomposition travels with the fix-round report. Deliberately its
-    own test so the pinned-reproduction guard the mutation gate relies on
-    stays green while THIS carries the open ruling question.
+    of the measured number, as is the fix-round-2 F3 stream re-keying. The
+    measured contention share is 0.5857 (3,770/6,437; 0.5880 before F3) —
+    BELOW the ruling's floor. Per the ruling that is a fresh counsel
+    question, not the sampler's to absorb: the floor stays RED, the number
+    stays pinned, and the decomposition travels with the fix-round report.
+    Deliberately its own test so the pinned-reproduction guard the mutation
+    gate relies on stays green while THIS carries the open ruling question.
     """
     for model in ("medical_opinions", "apportionment_assertions"):
         counts = MEASURED_ASSERTION_QUALITY_COUNTS[model]

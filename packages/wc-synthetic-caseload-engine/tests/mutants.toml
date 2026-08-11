@@ -2562,3 +2562,14 @@ find = '''                        surfaces.append(f"{rel}!annot{annotation.xref}
                         )'''
 replace = '''                        surfaces.append(f"{rel}!annot{annotation.xref}")'''
 note = 'AJC-61, fix round 2 (sol F1, live-probe proven). annotation.info cannot see a custom /assertionQuality key on the annot object; only the xref enumeration can, and the positive control plants exactly that key.'
+
+[[mutant]]
+id = 'm19-25'
+title = 'post-type contention draws fall back to the 8-field suppression key'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertion_properties.py::test_sampler_cohort_matches_pinned_empirical_metrics'
+find = '''    salt = _rng_candidate_key(draft)
+    target_index = _weighted_index('''
+replace = '''    salt = _semantic_salt(draft.semantic_key)
+    target_index = _weighted_index('''
+note = 'AJC-61, fix round 2 (sol F3). Part 3 B.2-B.3 keys every post-type candidate stream on family + rule-6 surface + normalized grounding IDs; re-salting onto the bare suppression tuple moves the recipe/defect draws and the pinned cohort counts and digests redden.'

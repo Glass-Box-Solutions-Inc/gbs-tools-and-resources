@@ -1132,16 +1132,20 @@ OPINION_RECIPE_WEIGHTS = AssertionKnob[tuple[Fraction, Fraction, Fraction]](
         "opinion's grade is the worst of everything it stands behind: the "
         "B.6 lifecycle knobs (final omission, the zero-share defect) and the "
         "worst-of endorsement/row drag land on top of whatever the "
-        "foundation recipe builds — the measured supported-recipe "
-        "conditional is 0.8267, and a thin or unsupportable foundation "
+        "foundation recipe builds, and a thin or unsupportable foundation "
         "recipe never grades supported. This mix is the sanctioned "
-        "construction adjustment (Part 3:659) solved against that drag so "
-        "the realized share lands mid-band: 15/16 x 0.8267 = 0.775. The "
+        "construction adjustment (Part 3:659): the CALIBRATION solve used "
+        "the fix-round-1 cohort's supported-recipe conditional rounded to "
+        "0.8267 (15/16 x 0.8267 = 0.775, mid-band) — calibration "
+        "arithmetic, not a claim about any later cohort. The REALIZED "
+        "finite-cohort measurements are pinned exactly in "
+        "tests/assertion_cohort.py and asserted by the property suite; the "
         "thin:unsupportable residual keeps counsel's 2:1 split."
     ),
     source=(
         "Derived from QUALITY_TARGET_WEIGHTS and the measured 6,000-case "
-        "cohort drag (fix round 1, PR #44)."
+        "cohort drag (fix round 1, PR #44); realized values pinned in "
+        "tests/assertion_cohort.py."
     ),
 )
 
@@ -2170,6 +2174,76 @@ def _semantic_salt(key: SemanticKey) -> str:
     return "/".join(parts)
 
 
+def _normalized_grounding_ids(
+    groundings: tuple[DoctrineGrounding, ...],
+) -> tuple[tuple[str, ...], ...]:
+    """Every grounding as a sorted ``(hook, *entity_ids)`` tuple, sorted."""
+    normalized: list[tuple[str, ...]] = []
+    for grounding in groundings:
+        if isinstance(grounding, BensonGrounding):
+            normalized.append(("benson", *sorted(grounding.prior_claim_ids)))
+        elif isinstance(grounding, SibtfGrounding):
+            normalized.append(
+                (
+                    "sibtf",
+                    *sorted(grounding.preexisting_condition_ids),
+                    *sorted(grounding.prior_award_ids),
+                )
+            )
+        elif isinstance(grounding, Lc4664PriorAwardGrounding):
+            normalized.append(("lc4664_prior_award", grounding.prior_award_id))
+        elif isinstance(grounding, FirefighterPresumptionGrounding):
+            normalized.append(("firefighter_presumption", grounding.condition_id))
+    return tuple(sorted(normalized))
+
+
+def _full_stream_key(candidate_family: str, entry: object) -> str:
+    """The full Part 3 B.2-B.3 candidate STREAM key, as a salt string.
+
+    ``(candidate_family, claim_type, position, target_condition_id,
+    target_prior_claim_id, target_prior_award_id, target_body_part,
+    sorted(doctrine_hooks), normalized_grounding_ids)`` — DISTINCT from the
+    8-field rule-6 tuple, which stays the suppression-equality instrument
+    (sol fix round 2, F3: stream identity and suppression equality are
+    different instruments).
+
+    The implemented reading of Part 3's "every stochastic family uses this
+    key", flagged for the spec author to ratify (sol open question 2):
+
+    - PRE-type draws — ``contention-incidence`` and ``contention-type`` —
+      keep their family-prefixed entity keys (``condition:cond-01``): the
+      claim type, stance and groundings this key requires do not exist
+      before the type is chosen.
+    - Every POST-type contention draw — the quality-target recipe, the
+      thin/unsupportable defect draws, the ptp-disposition draw — uses this
+      full key.
+    - An EXPLICIT contention entering a disposition stream is not a sampled
+      candidate, so its family slot carries the literal ``explicit`` — an
+      honest, collision-free value (no sampled family is named that).
+    - Apportionment-row and opinion streams keep their own assertion/opinion
+      keys: the Part 3 clause defines the *candidate* key, and those streams
+      are not contention candidates.
+    """
+    return _semantic_salt(
+        (
+            candidate_family,
+            entry.claim_type,  # type: ignore[attr-defined]
+            entry.position,  # type: ignore[attr-defined]
+            entry.target_condition_id,  # type: ignore[attr-defined]
+            entry.target_prior_claim_id,  # type: ignore[attr-defined]
+            entry.target_prior_award_id,  # type: ignore[attr-defined]
+            entry.target_body_part,  # type: ignore[attr-defined]
+            tuple(sorted(entry.doctrine_hooks)),  # type: ignore[attr-defined]
+            _normalized_grounding_ids(entry.groundings),  # type: ignore[attr-defined]
+        )
+    )
+
+
+def _rng_candidate_key(draft: _ContentionDraft) -> str:
+    """The full stream key of one sampled candidate draft."""
+    return _full_stream_key(draft.candidate_family, draft)
+
+
 def _fraction_draw(rng: random.Random, probability: Fraction) -> bool:
     return rng.random() < float(probability)
 
@@ -2530,7 +2604,7 @@ def _apply_contention_recipe(
     variants). The target is then discarded — the deterministic grader owns
     the label, and any recipe/grade disagreement is measured, not hidden.
     """
-    salt = _semantic_salt(draft.semantic_key)
+    salt = _rng_candidate_key(draft)
     target_index = _weighted_index(
         _assertion_rng(seed, "quality-target", salt), QUALITY_TARGET_WEIGHTS.value
     )
@@ -2760,11 +2834,13 @@ def _append_sampled(
     ordered = ordered[: max(0, 12 - len(contentions))]
 
     # Every contention the opinion machinery may read: explicit entries under
-    # their real IDs, sampled drafts under their final semantic keys. The
+    # their real IDs, sampled drafts under their final semantic keys, each
+    # carrying its full Part-3 stream key for the disposition draws. The
     # probe objects carry the exact final fields; only the ID is a
     # placeholder, and nothing below reads it.
-    pending: list[tuple[str | SemanticKey, Contention]] = [
-        (contention.id, contention) for contention in contentions
+    pending: list[tuple[str | SemanticKey, Contention, str]] = [
+        (contention.id, contention, _full_stream_key("explicit", contention))
+        for contention in contentions
     ]
     for draft in ordered:
         pending.append(
@@ -2784,6 +2860,7 @@ def _append_sampled(
                     groundings=draft.groundings,
                     quality="supported",
                 ),
+                _rng_candidate_key(draft),
             )
         )
 
@@ -2906,14 +2983,14 @@ def _append_sampled(
         # still grades it through the worst-of rubric.
         endorses: list[str | SemanticKey] = []
         rejects: list[str | SemanticKey] = []
-        supportable: list[tuple[str | SemanticKey, Contention]] = []
-        for ref, contention in pending:
+        supportable: list[tuple[str | SemanticKey, Contention, str]] = []
+        for ref, contention, stream_key in pending:
             evidence = contention_evidence(history, context, contention)
             if evidence == "contradicts" and author_role in ("qme", "ame"):
                 if qme_disposition(evidence) == "reject":
                     rejects.append(ref)
             elif evidence == "supports":
-                supportable.append((ref, contention))
+                supportable.append((ref, contention, stream_key))
         if supportable:
             # Grade bookkeeping keys on the UNIQUE pending reference, never
             # the B.2 suppression tuple: two distinct explicit contentions may
@@ -2921,39 +2998,36 @@ def _append_sampled(
             # last twin's grade — a thin ctn-02 erased a supported ctn-01's
             # endorsement (sol fix round 2, F2, proved on cohort-4803).
             would_be = {
-                ref: contention_quality(history, context, c) for ref, c in supportable
+                ref: contention_quality(history, context, c)
+                for ref, c, _key in supportable
             }
             pick = next(
-                ((ref, c) for ref, c in supportable if would_be[ref] == "supported"),
+                (item for item in supportable if would_be[item[0]] == "supported"),
                 supportable[0] if author_role == "ptp" else None,
             )
             if pick is not None:
-                pick_ref, pick_contention = pick
+                pick_ref, _pick_contention, pick_stream_key = pick
                 if author_role in ("qme", "ame"):
                     if qme_disposition("supports") == "endorse":
                         endorses.append(pick_ref)
                 else:
-                    contention_salt = _semantic_salt(
-                        _contention_semantic_key(pick_contention)
-                    )
                     if _fraction_draw(
-                        _assertion_rng(seed, "ptp-disposition", contention_salt),
+                        _assertion_rng(seed, "ptp-disposition", pick_stream_key),
                         P_PTP_ENDORSE_SUPPORTED.value,
                     ):
                         endorses.append(pick_ref)
         elif author_role == "ptp" and pending:
             # The treater's occasional adoption of a weaker claim keeps the
             # indeterminate/contradicted PTP policies live decision families.
-            candidate_ref, candidate = pending[0]
+            candidate_ref, candidate, candidate_stream_key = pending[0]
             evidence = contention_evidence(history, context, candidate)
             endorse_p = {
                 "supports": P_PTP_ENDORSE_SUPPORTED.value,
                 "indeterminate": P_PTP_ENDORSE_INDETERMINATE.value,
                 "contradicts": P_PTP_ENDORSE_CONTRADICTED.value,
             }[evidence]
-            contention_salt = _semantic_salt(_contention_semantic_key(candidate))
             if _fraction_draw(
-                _assertion_rng(seed, "ptp-disposition", contention_salt), endorse_p
+                _assertion_rng(seed, "ptp-disposition", candidate_stream_key), endorse_p
             ):
                 endorses.append(candidate_ref)
 
@@ -2978,7 +3052,7 @@ def _append_sampled(
                     and claim.award.conclusively_presumed
                 ):
                     pool.append(("prior_award", claim.award.id))
-            for ref, contention in pending:
+            for ref, contention, _stream_key in pending:
                 if ref in endorses or ref in rejects:
                     if contention.target_condition_id is not None:
                         condition = history.condition(contention.target_condition_id)
@@ -3258,7 +3332,7 @@ def _append_sampled(
     used_contention_ids = {c.id for c in contentions}
     key_to_contention_id: dict[SemanticKey, str] = {}
     sampled_contentions: list[Contention] = []
-    for draft, (_ref, probe) in zip(
+    for draft, (_ref, probe, _stream_key) in zip(
         ordered, pending[len(contentions) :], strict=True
     ):
         assigned = _first_unused("ctn", used_contention_ids)
