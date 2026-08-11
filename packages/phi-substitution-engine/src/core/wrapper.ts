@@ -277,6 +277,39 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       throw new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), context.operationId, {});
     }
 
+    // §7/N2: the raw provider's embedding is a boundary result. Validate it is a genuine array of
+    // FINITE numbers and copy it by OWN index/length into a fresh array — a NON-array carrier, a
+    // throwing/mutating index getter, or a non-numeric element must fail closed, never reach the
+    // caller as an object that could carry PHI (e.g. a PHI-throwing `get 0()`), and never egress raw.
+    const safeVector: number[] = [];
+    let vectorOk = Array.isArray(vector);
+    if (vectorOk) {
+      const len = (vector as { length: number }).length;
+      for (let i = 0; i < len; i += 1) {
+        let element: unknown;
+        try {
+          element = vector[i];
+        } catch {
+          vectorOk = false;
+          break;
+        }
+        if (typeof element !== "number" || !Number.isFinite(element)) {
+          vectorOk = false;
+          break;
+        }
+        safeVector[safeVector.length] = element;
+      }
+    }
+    if (!vectorOk) {
+      await this.#finalizeAtQuietly(
+        receipt,
+        this.#preparedRecord(context, substitution, "embedding"),
+        "unknown_after_send",
+        "PROVIDER_SAFETY_GATE_FAILED",
+      );
+      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", context.operationId, {});
+    }
+
     await this.#finalizeAtStrict(
       receipt,
       this.#preparedRecord(context, substitution, "embedding"),
@@ -284,7 +317,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       null,
       context.operationId,
     );
-    return vector;
+    return safeVector;
   }
 
   /** Steps 3–9: everything that must succeed before the provider may be invoked. */
@@ -401,9 +434,26 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
   }
 
   async #requireContext(): Promise<MatterAiContext> {
+    let raw: MatterAiContext;
     try {
-      return await this.#deps.context.require();
-    } catch (error) {
+      raw = await this.#deps.context.require();
+    } catch {
+      throw new PhiEngineError("MISSING_TRUSTED_CONTEXT");
+    }
+    // §7/N2: the injected context port's result is UNTRUSTED. Read every scalar EXACTLY ONCE into an
+    // inert snapshot here — downstream code reads these fields many times (prepared records, fixed-
+    // code error ids, finalize), so a throwing/mutating getter on `operationId`/`attemptId`/… would
+    // otherwise leak raw PHI (or throw a raw message) at any of those LATER reads, several of which
+    // sit outside a guard. A throw on this single read set fails closed with MISSING_TRUSTED_CONTEXT.
+    try {
+      return {
+        tenantId: raw.tenantId,
+        matterId: raw.matterId,
+        actorId: raw.actorId,
+        operationId: raw.operationId,
+        attemptId: raw.attemptId,
+      };
+    } catch {
       throw new PhiEngineError("MISSING_TRUSTED_CONTEXT");
     }
   }

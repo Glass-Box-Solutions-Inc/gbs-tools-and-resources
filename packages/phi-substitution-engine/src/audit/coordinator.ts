@@ -62,9 +62,24 @@ export class PhiAuditedAttemptCoordinator {
   }
 
   public async run(plan: AttemptPlan): Promise<AttemptResult> {
+    // §7/N2: `plan.prepared` is an injected-plan getter — read it EXACTLY ONCE into a local. A getter
+    // that returns a valid record for `prepare()` and then THROWS (or mutates) on the terminal-event
+    // reads below would otherwise leak raw PHI out of `run()`. A throw on this single read fails
+    // closed with a fixed code; nothing was prepared or egressed.
+    let prepared: AttemptPlan["prepared"];
+    try {
+      prepared = plan.prepared;
+    } catch {
+      return {
+        outcome: "failed_closed",
+        errorCode: "AUDIT_PREPARE_FAILED",
+        providerInvoked: false,
+        durability: null,
+      };
+    }
     let receipt;
     try {
-      receipt = await this.#emitter.prepare(plan.prepared);
+      receipt = await this.#emitter.prepare(prepared);
     } catch (error) {
       if (isAuditError(error, "AUDIT_DURABILITY_UNAVAILABLE")) {
         return {
@@ -108,7 +123,7 @@ export class PhiAuditedAttemptCoordinator {
       // Only a RECOGNIZED fixed failure code may be recorded; a caller-supplied code that is not a
       // known PhiEngineFailureCode (and could carry PHI) is replaced with the fixed fallback.
       const safeCode = isPhiEngineFailureCode(rawPreconditionCode) ? rawPreconditionCode : "PRECONDITION_FAILED";
-      const event = preparedToTerminalEvent(plan.prepared, "failed_closed", safeCode, this.#clock());
+      const event = preparedToTerminalEvent(prepared, "failed_closed", safeCode, this.#clock());
       await this.#finalizeQuietly(receipt, event);
       return {
         outcome: "failed_closed",
@@ -129,7 +144,7 @@ export class PhiAuditedAttemptCoordinator {
       const rawCode = safeCodeString(error);
       const failureCode =
         rawCode !== undefined && isPhiEngineFailureCode(rawCode) ? rawCode : "PROVIDER_INVOCATION_FAILED";
-      const failedEvent = preparedToTerminalEvent(plan.prepared, "unknown_after_send", failureCode, this.#clock());
+      const failedEvent = preparedToTerminalEvent(prepared, "unknown_after_send", failureCode, this.#clock());
       await this.#finalizeQuietly(receipt, failedEvent);
       return {
         outcome: "unknown_after_send",
@@ -138,7 +153,7 @@ export class PhiAuditedAttemptCoordinator {
         durability,
       };
     }
-    const event = preparedToTerminalEvent(plan.prepared, "completed", null, this.#clock());
+    const event = preparedToTerminalEvent(prepared, "completed", null, this.#clock());
     await this.#finalizeQuietly(receipt, event);
     return { outcome: "completed", errorCode: null, providerInvoked: true, durability };
   }

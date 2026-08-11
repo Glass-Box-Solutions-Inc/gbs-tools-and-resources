@@ -51,6 +51,7 @@ type FieldSpec =
   | { readonly kind: "enumOrNull"; readonly values: readonly string[] }
   | { readonly kind: "timestamp" }
   | { readonly kind: "versionOrNull" }
+  | { readonly kind: "slug" }
   | { readonly kind: "slugOrNull" }
   | { readonly kind: "totalCounts" }
   | { readonly kind: "exactObject"; readonly fields: ObjectSchema };
@@ -73,7 +74,7 @@ const EVENT_SCHEMA: ObjectSchema = {
   actorId: { kind: "string" },
   operation: { kind: "enum", values: AI_OPERATIONS },
   dictionaryVersion: { kind: "versionOrNull" },
-  engineVersion: { kind: "string" },
+  engineVersion: { kind: "slug" },
   counts: { kind: "totalCounts" },
   ambiguityCount: { kind: "number" },
   detectorName: { kind: "slugOrNull" },
@@ -93,7 +94,7 @@ const PREPARED_SCHEMA: ObjectSchema = {
   actorId: { kind: "string" },
   operation: { kind: "enum", values: AI_OPERATIONS },
   dictionaryVersion: { kind: "bigintOrNull" },
-  engineVersion: { kind: "string" },
+  engineVersion: { kind: "slug" },
   counts: { kind: "totalCounts" },
   ambiguityCount: { kind: "number" },
   detectorName: { kind: "slugOrNull" },
@@ -180,6 +181,9 @@ function validateField(root: unknown, value: unknown, spec: FieldSpec, path: str
     case "slugOrNull":
       if (value !== null && (typeof value !== "string" || !SAFE_SLUG.test(value))) reject(root, path);
       return;
+    case "slug":
+      if (typeof value !== "string" || !SAFE_SLUG.test(value)) reject(root, path);
+      return;
     case "totalCounts":
       validateTotalCounts(root, value, path);
       return;
@@ -224,9 +228,11 @@ function validateObject(root: unknown, value: unknown, schema: ObjectSchema, pat
     }
   }
   // 2. Extra keys (recursive exact allow-list) — sensitive fields are rejected here. Membership is
-  // override-proof (no `Set.prototype.has`).
+  // override-proof (no `Set.prototype.has`). §7/N2: the UNEXPECTED key is attacker-controlled and
+  // could ITSELF be the PHI, so it is NEVER echoed into the rejection's `.path` (which reaches the
+  // caller) — only the fixed parent location is reported.
   for (const key of Object.keys(record)) {
-    if (!listIncludes(allowed, key)) reject(root, path === "" ? key : `${path}.${key}`);
+    if (!listIncludes(allowed, key)) reject(root, path === "" ? "<unexpected>" : `${path}.<unexpected>`);
   }
   // 3. Per-field types / nested shapes.
   for (const [key, spec] of Object.entries(schema)) {
@@ -338,6 +344,11 @@ export class ExactAllowListAuditSerializer implements PhiAuditSerializer {
   }
 
   public validatePrepared(record: PhiAuditPreparedRecord): void {
-    validateObject(record, record, PREPARED_SCHEMA, "");
+    // §7/N2: validate a READ-ONCE, throw-safe snapshot — a hostile throwing/mutating field getter
+    // yields the reject sentinel via `materialize`, so validation fails closed with
+    // AUDIT_SCHEMA_REJECTED instead of propagating the getter's raw (PHI) throw to the caller. (The
+    // emitter already hands this an inert snapshot; this keeps the EXPORTED port safe on its own.)
+    const snapshot = materialize(record, PREPARED_SCHEMA);
+    validateObject(snapshot, snapshot, PREPARED_SCHEMA, "");
   }
 }

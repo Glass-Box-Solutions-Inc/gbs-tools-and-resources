@@ -250,13 +250,21 @@ export function isInProcessReversalHandle(value: unknown): value is InProcessRev
 /** A fixed placeholder id used when a hostile handle's `operationId` getter itself throws (§7/N2). */
 const UNKNOWN_OPERATION_ID = "op-unknown" as unknown as OperationId;
 
-/** Reads a reversal handle's `operationId` ONCE, getter-throw-safe — every fixed-code failure below
- *  carries only this id, so a getter that throws/mutates can't turn a fixed failure into a raw PHI
- *  throw. Absent / non-string / throwing → a fixed placeholder. */
+/** A conservative operation-id shape (§7/N2): engine/caller operation ids are UUID/ULID/`op-…`
+ *  slugs (no whitespace, no underscores, no free text), so a hostile handle cannot smuggle a raw
+ *  (PHI) string into a fixed-code error's public `operationId` and out through a trace/log sink. */
+const SAFE_OPERATION_ID = /^[A-Za-z0-9.:-]{1,128}$/;
+
+/** Reads a reversal handle's `operationId` ONCE, getter-throw-safe AND shape-restricted — every
+ *  fixed-code failure below carries only this id, so a getter that throws/mutates, or a hostile
+ *  handle carrying free-text PHI as its `operationId`, can't turn a fixed failure into a PHI leak.
+ *  Absent / non-string / non-slug / throwing → a fixed placeholder. */
 function safeHandleOperationId(handle: ReversalHandle): OperationId {
   try {
     const id = (handle as { operationId?: unknown }).operationId;
-    return typeof id === "string" ? (id as unknown as OperationId) : UNKNOWN_OPERATION_ID;
+    return typeof id === "string" && SAFE_OPERATION_ID.test(id)
+      ? (id as unknown as OperationId)
+      : UNKNOWN_OPERATION_ID;
   } catch {
     return UNKNOWN_OPERATION_ID;
   }

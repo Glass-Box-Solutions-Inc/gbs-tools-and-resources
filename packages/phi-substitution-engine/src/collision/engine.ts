@@ -149,7 +149,14 @@ export function runCollision(input: CollisionInput): CollisionResult {
   const dictionaryCandidates: DictionaryMatchCandidate[] = [];
   const canonicalByKey = new Map<string, string>();
 
-  for (const known of input.knownValues) {
+  // §7/N2 / L12: `knownValues` is caller-controlled boundary data — a NON-array carrier or a REAL
+  // array with an OWN poisoned `Symbol.iterator` must NOT silently drop a known value (which would
+  // then egress RAW). Iterate by OWN index/length so a poisoned iterator is never consulted.
+  if (!Array.isArray(input.knownValues)) {
+    throw new Error("known_values_not_an_array");
+  }
+  for (let ki = 0; ki < (input.knownValues as { length: number }).length; ki += 1) {
+    const known = input.knownValues[ki]!;
     const rawKey = known.literal ?? known.normalizedForm;
     if (rawKey === undefined) continue;
     const foldedKey = fold(rawKey, locale);

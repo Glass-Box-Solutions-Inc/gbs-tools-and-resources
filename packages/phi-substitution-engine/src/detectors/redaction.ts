@@ -20,7 +20,17 @@ export function applyReplacementPlan(
   instructions: readonly RedactionInstruction[],
 ): ReplacementPlanResult {
   const length = originalText.length;
-  const ordered = [...instructions].sort((a, b) => a.startUtf16 - b.startUtf16);
+  // §7/N2: `instructions` is boundary data. A NON-array carrier, or a REAL array with an OWN poisoned
+  // `Symbol.iterator`, must NOT silently yield an EMPTY plan — that would echo the ORIGINAL text back
+  // branded as TokenizedText (a fail-OPEN redaction). Copy by OWN index/length, then sort the copy.
+  if (!Array.isArray(instructions)) {
+    return { ok: false, reason: "OUT_OF_RANGE" };
+  }
+  const copied: RedactionInstruction[] = [];
+  for (let i = 0; i < (instructions as { length: number }).length; i += 1) {
+    copied[copied.length] = instructions[i]!;
+  }
+  const ordered = copied.sort((a, b) => a.startUtf16 - b.startUtf16);
 
   let cursor = 0;
   let out = "";

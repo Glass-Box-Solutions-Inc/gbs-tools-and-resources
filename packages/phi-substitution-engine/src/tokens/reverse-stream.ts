@@ -174,7 +174,15 @@ class HoldbackReverseStream implements ReverseStream {
       throw new ReversalFailedError(this.keys.operationId);
     }
     this.buffer = "";
-    const restored = this.restore(reversed);
+    let restored: string;
+    try {
+      restored = this.restore(reversed);
+    } catch {
+      // §7/N2: the captured `restore` capability could throw a raw (PHI) message on a hostile REAL
+      // handle — fail closed with a fixed-code error, never forward the raw throw to the display.
+      this.failed = true;
+      throw new ReversalFailedError(this.keys.operationId);
+    }
     if (hasResidualSentinel(restored)) {
       // L6: a dangling/partial escape sentinel never completed into a literal — fail closed
       // rather than leak internal sentinel machinery to the display.
@@ -205,7 +213,16 @@ class HoldbackReverseStream implements ReverseStream {
       throw new ReversalFailedError(this.keys.operationId);
     }
     this.buffer = this.buffer.slice(cut);
-    const restored = this.restore(reversed);
+    let restored: string;
+    try {
+      restored = this.restore(reversed);
+    } catch {
+      // §7/N2: a throw from the captured `restore` capability (hostile REAL handle) fails closed with
+      // a fixed-code error, never a raw (PHI) message to the display.
+      this.failed = true;
+      this.buffer = "";
+      throw new ReversalFailedError(this.keys.operationId);
+    }
     if (hasResidualSentinel(restored)) {
       // L6: never emit a partial/dangling escape sentinel (defensive — settledBoundary already
       // withholds unclosed sentinels, but a mid-emit residual must still fail closed).

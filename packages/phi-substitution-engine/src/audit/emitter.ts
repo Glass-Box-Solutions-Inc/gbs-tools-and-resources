@@ -55,7 +55,22 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     // to a durable store (§7/N2) — so the store can never re-read a getter into a PHI value.
     const durableRecord = sanitizePreparedRecord(record);
     // Injected-serializer allow-list runs on the INERT snapshot (never a re-read of a live getter).
-    this.#serializer.validatePrepared(durableRecord);
+    // §7/N2: the serializer is an INJECTED port — a rejection could itself carry PHI, so it is caught
+    // and re-thrown as a FRESH fixed-code error (a recognized audit code is preserved; anything else
+    // becomes AUDIT_SCHEMA_REJECTED). The original instance is never forwarded.
+    try {
+      this.#serializer.validatePrepared(durableRecord);
+    } catch (error) {
+      if (isAuditError(error)) {
+        const code = safeCodeString(error);
+        if (code !== undefined && isAuditFailureCode(code)) {
+          throw new PhiAuditError(code, durableRecord.operationId, { attemptId: durableRecord.attemptId });
+        }
+      }
+      throw new PhiAuditError("AUDIT_SCHEMA_REJECTED", durableRecord.operationId, {
+        attemptId: durableRecord.attemptId,
+      });
+    }
 
     // N3 idempotency: an attempt id that already has a terminal in this process must
     // not be re-prepared — that would permit a second provider egress and a second
@@ -127,7 +142,19 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     // mutating getter (valid on the check read, PHI on the persistence read) can no longer land a
     // canary in the durable record, because the store only ever sees inert data.
     const durable = sanitizeTerminalEvent(event);
-    this.#serializer.serialize(durable);
+    // §7/N2: the injected serializer is a port — a `serialize` rejection could carry PHI, so it is
+    // caught and re-thrown as a FRESH fixed-code error, never forwarded raw.
+    try {
+      this.#serializer.serialize(durable);
+    } catch (error) {
+      if (isAuditError(error)) {
+        const code = safeCodeString(error);
+        if (code !== undefined && isAuditFailureCode(code)) {
+          throw new PhiAuditError(code, null, {});
+        }
+      }
+      throw new PhiAuditError("AUDIT_SCHEMA_REJECTED", null, {});
+    }
     try {
       if (receipt.location === "PRIMARY_STORE") {
         await this.#primary.finalize(durable);

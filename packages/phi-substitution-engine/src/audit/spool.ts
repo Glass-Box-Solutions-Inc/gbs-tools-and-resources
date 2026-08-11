@@ -245,7 +245,14 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
    */
   public async rebuildFromVolume(): Promise<void> {
     const ids = await this.#volume.list();
-    for (const recordId of ids) {
+    // §7/N2: `list()` is an injected-volume result — a NON-array carrier or a REAL array with an OWN
+    // poisoned `Symbol.iterator` must not throw a raw (PHI) value out of this PUBLIC method (the
+    // guarded `drainTo` already tolerates it; this sibling must too). Iterate by OWN index/length.
+    if (!Array.isArray(ids)) {
+      return;
+    }
+    for (let i = 0; i < (ids as { length: number }).length; i += 1) {
+      const recordId = ids[i]!;
       if (recordId.endsWith(".final") || recordId.endsWith(".primed")) {
         continue;
       }

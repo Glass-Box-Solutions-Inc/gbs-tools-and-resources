@@ -403,10 +403,18 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     // L6/§7: restore any escaped source token literals onto the reversed output via the
     // handle's BOUNDED capability (never via raw literal data) so a source literal like
     // `[[Claimant]]` round-trips to itself, never a sentinel.
-    const restored =
-      isInProcessReversalHandle(handle)
-        ? handle.restoreEscapedLiterals(String(reversed))
-        : String(reversed);
+    let restored: string;
+    try {
+      restored =
+        isInProcessReversalHandle(handle)
+          ? handle.restoreEscapedLiterals(String(reversed))
+          : String(reversed);
+    } catch {
+      // §7/N2: `restoreEscapedLiterals` is a BOUNDED capability but still injected — a throw from it
+      // (even on a REAL handle whose method was replaced) must fail closed with a FIXED message, never
+      // propagate a raw (PHI) message/code to the caller.
+      throw new Error("reversal_restore_failed");
+    }
     // L6/§7: a residual escape sentinel that never completed into a literal is internal machinery
     // and must NEVER reach the display. Fail closed (as the streaming path does) rather than leak a
     // provider-generated dangling sentinel through non-stream generation.

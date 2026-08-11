@@ -46,6 +46,9 @@ import {
   tokenize,
 } from "../src/dictionary/index";
 import { isPhiEngineError, PhiEngineError } from "../src/core/errors";
+import { applyReplacementPlan } from "../src/detectors/redaction";
+import { runCollision } from "../src/collision/index";
+import { gateClasses } from "../src/eval/index";
 
 // ---------------------------------------------------------------------------
 // Shared brand casters (runtime identity) + fixtures
@@ -2958,5 +2961,278 @@ describe("GLY-330 R12 (§7/N2): per-field getter TOCTOU, poisoned iterators, ung
     }
     expect(thrown).toBeInstanceOf(ReversalFailedError);
     expect(String(thrown?.message ?? "")).not.toContain(CANARY);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R13 — the §7/N2 hostile-object leak class swept onto the LAST boundary-data
+// consumers (compiler / collision / redaction / embeddings / context / spool /
+// eval / reverse-stream): own poisoned iterators, per-element double-read TOCTOU,
+// unguarded injected-port calls, and shape-unrestricted metadata fields.
+// ---------------------------------------------------------------------------
+describe("GLY-330 R13 (§7/N2): hostile-object leak class swept onto the last boundary consumers", () => {
+  const CANARY = "ALICE_SMITH_DOB_1970";
+
+  // R13-1 (F1) — a poisoned CaseTruthReader.readTaggedValues iterator must not compile an EMPTY
+  // dictionary (which egresses every known value RAW to the provider).
+  it("compiler: a poisoned readTaggedValues iterator cannot compile an empty dictionary", async () => {
+    const values: any[] = [tagged("s-alice", "PERSON_NAME", "Alice Smith", "Claimant")];
+    Object.defineProperty(values, Symbol.iterator, { configurable: true, value: function* (): any {} });
+    const reader: any = { readTaggedValues: async (): Promise<any> => values };
+    const compiler = new MatterDictionaryCompiler(reader);
+    const compiled: any = await compiler.compile({
+      tenantId: TENANT, matterId: MATTER, policy: { locale: LOCALE } as any,
+      dictionaryVersion: VERSION, engineVersion: ENGINE, schemaVersion: SCHEMA, sourceTruthRevision: REVISION,
+    } as any);
+    expect(compiled.patternCount).toBeGreaterThan(0);
+    expect(compiled.match("Alice Smith").length).toBeGreaterThan(0);
+  });
+
+  // R13-2 (F2) — a detectorSpans index getter that mutates between the candidate pass and the token
+  // pass cannot splice a raw (untokenized) token into the egress text (read-once snapshot).
+  it("tokenize: a detectorSpans index getter that mutates between passes cannot inject a raw token", () => {
+    const compiled: any = { match: (): any[] => [], canonicalForToken: (): undefined => undefined };
+    const email = `${CANARY}@example.com`;
+    const benign = { startUtf16: 0, endUtf16: email.length, identifierClass: "EMAIL", confidence: 1, token: "[[Detected_Email_1]]" };
+    const spans: any = [benign];
+    let reads = 0;
+    Object.defineProperty(spans, "0", {
+      configurable: true,
+      get: (): any => { reads += 1; return reads === 1 ? benign : { ...benign, token: CANARY }; },
+    });
+    const result: any = tokenize(compiled, email, LOCALE, spans);
+    expect(String(result.tokenizedText)).not.toContain(CANARY);
+  });
+
+  // R13-3 (F3) — a poisoned `instructions` iterator must not echo the ORIGINAL text back branded as
+  // TokenizedText (a fail-OPEN redaction).
+  it("applyReplacementPlan: a poisoned instructions iterator fails closed, never echoes original raw", () => {
+    const instructions: any = [{ detectedSpanId: "s1", startUtf16: b<any>(0), endUtf16: b<any>(CANARY.length), replacement: b<any>("[[X]]") }];
+    Object.defineProperty(instructions, Symbol.iterator, { configurable: true, value: function* (): any {} });
+    const plan: any = applyReplacementPlan(CANARY, instructions);
+    // Either fail closed, or (never) return the raw original text as the "redacted" output.
+    expect(plan.ok === false || !String(plan.text ?? "").includes(CANARY)).toBe(true);
+  });
+
+  // R13-4 (F4) — a poisoned `knownValues` iterator must not drop a known value (raw egress).
+  it("runCollision: a poisoned knownValues iterator cannot drop a known value (raw egress)", () => {
+    const known: any = { literal: "Alice Smith", identifierClass: "PERSON_NAME", subjectId: "s-alice", canonicalDisplayValue: "Alice Smith" };
+    const knownValues: any = [known];
+    Object.defineProperty(knownValues, Symbol.iterator, { configurable: true, value: function* (): any {} });
+    const result: any = runCollision({ originalText: "Alice Smith", locale: LOCALE, knownValues } as any);
+    expect(String(result.tokenizedText)).not.toContain("Alice Smith");
+  });
+
+  // R13-5 (F5) — a free-text engineVersion (PHI) is rejected before it reaches the durable record.
+  it("serializer: a free-text engineVersion (PHI) is rejected", () => {
+    const serializer = new ExactAllowListAuditSerializer();
+    const bad: any = preparedToTerminalEvent(spoolPrepared("att-r13-5"), "completed", null, CLOCK());
+    bad.engineVersion = `${CANARY} lives here`;
+    let t: any;
+    try { serializer.serialize(bad); } catch (e) { t = e; }
+    expect(String((t as any)?.code ?? "")).toBe("AUDIT_SCHEMA_REJECTED");
+  });
+
+  // R13-6a (F6) — an UNEXPECTED property NAME (attacker-controlled, could BE the PHI) is never echoed
+  // into the rejection's caller-visible `safeDetails.path`.
+  it("serializer: an unexpected property name (PHI) is not echoed into the rejection details", () => {
+    const serializer = new ExactAllowListAuditSerializer();
+    const ev: any = preparedToTerminalEvent(spoolPrepared("att-r13-6a"), "completed", null, CLOCK());
+    Object.defineProperty(ev, `${CANARY}_secret`, { enumerable: true, configurable: true, value: 0 });
+    let t: any;
+    try { serializer.serialize(ev); } catch (e) { t = e; }
+    expect(String((t as any)?.code ?? "")).toBe("AUDIT_SCHEMA_REJECTED");
+    expect(JSON.stringify((t as any)?.safeDetails ?? {})).not.toContain(CANARY);
+  });
+
+  // R13-6b (F6) — exported validatePrepared reads a throw-safe snapshot; a throwing preparedAt getter
+  // fails closed with a fixed code, never propagates the raw (PHI) throw.
+  it("serializer.validatePrepared: a throwing preparedAt getter fails closed, never leaks raw", () => {
+    const serializer = new ExactAllowListAuditSerializer();
+    const rec: any = spoolPrepared("att-r13-6b");
+    Object.defineProperty(rec, "preparedAt", { configurable: true, get: (): never => { throw new Error(CANARY); } });
+    let t: any;
+    try { serializer.validatePrepared(rec); } catch (e) { t = e; }
+    expect(String((t as any)?.message ?? "") + String((t as any)?.code ?? "")).not.toContain(CANARY);
+  });
+
+  // R13-7 (F7) — a hostile provider embedding (non-array carrier with a PHI-throwing index getter)
+  // must fail closed, never reach the caller as an object that leaks on read.
+  it("wrapper.embedText: a hostile provider embedding cannot reach the caller", async () => {
+    const rig = makeWrapperRig({ matterIsPhiTagged: false });
+    const hostile: any = { length: 1 };
+    Object.defineProperty(hostile, "0", { configurable: true, get: (): never => { throw new Error(CANARY); } });
+    rig.provider.embedText = async (): Promise<any> => hostile;
+    let thrown: any; let out: any; let readErr = "";
+    try { out = await rig.wrapper.embedText("Maria García", "default"); } catch (e) { thrown = e; }
+    // The caller must receive a clean number[]; reading element 0 must NOT trigger a PHI-throwing
+    // index getter (the pre-fix leak returned the hostile carrier object verbatim).
+    try {
+      if (out !== undefined) {
+        void (out as any)[0];
+        void JSON.stringify(Array.from(out as any));
+      }
+    } catch (e: any) { readErr = String(e?.message ?? ""); }
+    expect(String(thrown?.message ?? "") + readErr).not.toContain(CANARY);
+  });
+
+  // R13-8 (F8) — the injected context is snapshotted read-once; a mutating operationId getter cannot
+  // leak raw PHI at any of the many LATER reads on a failure path.
+  it("wrapper: a mutating context.operationId getter cannot leak raw PHI on a failure path", async () => {
+    const gate: Gate = { prepared: false };
+    const { engine } = makeEngine(DEFAULT_TRUTH);
+    const provider = new FakeRawProvider(gate, { rejects: true });
+    const trace = new FakeSafeTrace();
+    const primary = new RecordingPrimaryStore(gate);
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
+    const emitter = new DurablePhiAuditEmitter(primary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
+    const router = new OriginalContentBaaRouter({
+      extractOriginalText, rawProvider: provider, baaProviderId: "azure-openai-baa",
+      nonBaaProviderId: "openai", claudeBaaEnabled: true, matterIsPhiTagged: true,
+    } as any);
+    let n = 0;
+    const hostileCtx: any = {
+      tenantId: TENANT, matterId: MATTER, actorId: b<any>("actor-1"), attemptId: b<any>("att-r13-8"),
+      get operationId(): any { n += 1; if (n === 1) return b<any>("op-1"); throw new Error(CANARY); },
+    };
+    const wrapper = new ComposedProtectedAiProvider({
+      engine, context: { require: (): Promise<any> => Promise.resolve(hostileCtx) },
+      policy: { require: (): Promise<any> => Promise.resolve(policy()) },
+      options: new StructuralOptionsProjector(), router, safeTrace: trace, audit: emitter,
+      invokeRaw: provider, engineVersion: ENGINE, clock: CLOCK,
+    } as any);
+    let thrown: any; let out: any;
+    try { out = await wrapper.generateText({ system: "Maria García" } as any); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
+  });
+
+  // R13-9 (F9) — plan.prepared read ONCE; a getter valid for prepare() then throwing on the
+  // terminal-event read cannot leak raw PHI out of run().
+  it("coordinator: a plan.prepared getter that throws after prepare cannot leak raw PHI", async () => {
+    const rec = spoolPrepared("att-r13-9");
+    const emitter: any = {
+      prepare: async (): Promise<any> => ({ attemptId: rec.attemptId, location: "PRIMARY_STORE", durableRecordId: "d1" }),
+      finalize: async (): Promise<void> => {},
+    };
+    const coordinator = new PhiAuditedAttemptCoordinator(emitter, CLOCK);
+    let reads = 0;
+    const plan: any = {
+      get prepared(): any { reads += 1; if (reads === 1) return rec; throw new Error(CANARY); },
+      precondition: { ok: false, failureCode: "PRECONDITION_FAILED" },
+      invokeProvider: async (): Promise<void> => {},
+    };
+    let thrown: any; let result: any;
+    try { result = await coordinator.run(plan); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(result ?? {})).not.toContain(CANARY);
+  });
+
+  // R13-10 (F10) — port.descriptor read ONCE inside the guard; a getter valid then throwing on the
+  // (unguarded) return cannot leak raw PHI out of the detector belt.
+  it("detector belt: a port.descriptor getter that throws on re-read cannot leak raw PHI", async () => {
+    const runner = new SharedDeadlineDetectorRunner();
+    let reads = 0;
+    const port: any = {
+      get descriptor(): any { reads += 1; if (reads === 1) return { engineVersion: ENGINE }; throw new Error(CANARY); },
+      health: async (): Promise<string> => "ready",
+      detect: async (): Promise<any[]> => [],
+    };
+    const normalizer: any = { normalize: (): any => ({ ok: true, spans: [] }) };
+    let thrown: any; let result: any;
+    try {
+      result = await runner.detectWithin({ primary: port, fallback: null, request: { text: "x" } as any, deadlineMs: 1000, normalizer });
+    } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(result ?? {})).not.toContain(CANARY);
+  });
+
+  // R13-11a (F11) — engine.reverse: a REAL handle whose own restoreEscapedLiterals throws PHI fails
+  // closed (R12-M only covered the low-level AtomicTokenReverser).
+  it("engine.reverse: a real handle whose own restoreEscapedLiterals throws PHI fails closed", async () => {
+    const { engine } = makeEngine();
+    const result: any = await engine.substitute({
+      context: ctx(), policy: policy(),
+      segments: [{ path: "system", kind: "system", text: "Maria García" }], purpose: "generation",
+    });
+    const handle: any = result.reversalHandle;
+    Object.defineProperty(handle, "restoreEscapedLiterals", { configurable: true, value: (): never => { throw new Error(CANARY); } });
+    const tokenized = result.segments[0].text;
+    let thrown: any; let display: any;
+    try { display = await engine.reverse(tokenized, handle); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String(display ?? "")).not.toContain(CANARY);
+  });
+
+  // R13-11b (F11) — the streaming reverser's captured restore is likewise guarded.
+  it("reverse-stream: a handle whose own restoreEscapedLiterals throws PHI fails closed", async () => {
+    const factory = new HoldbackReverseStreamFactory();
+    const store = new InMemoryReversalStore();
+    store.record({ tenantId: TENANT, matterId: MATTER, dictionaryVersion: VERSION, token: b<any>("[[Claimant]]"), canonical: "Alice" });
+    const h: any = new InProcessReversalHandle({
+      tenantId: TENANT, matterId: MATTER, dictionaryVersion: VERSION, operationId: b<any>("op-1"), attemptId: b<any>("att-1"),
+    });
+    Object.defineProperty(h, "restoreEscapedLiterals", { configurable: true, value: (): never => { throw new Error(CANARY); } });
+    const emitted: string[] = [];
+    const stream: any = factory.create({
+      handle: h, store, grammar: new BracketTokenGrammar(), policy: BOUNDARY_TOKEN_GRAMMAR_POLICY,
+      sink: (safe: any) => { emitted.push(String(safe)); },
+    });
+    let thrown: any;
+    try { await stream.push("[[Claimant]]" as any); await stream.end(); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + emitted.join("")).not.toContain(CANARY);
+  });
+
+  // R13-12 (F12) — a hostile handle carrying free-text PHI as its operationId cannot smuggle it into a
+  // fixed-code error's public `operationId`.
+  it("AtomicTokenReverser: a free-text operationId (PHI) never reaches a fixed-code error", async () => {
+    const store: any = { maximumEncounteredTokenBatch: 8, resolveEncounteredTokens: async (): Promise<never> => { throw new Error("boom"); } };
+    const reverser = new AtomicTokenReverser(store, new BracketTokenGrammar(), BOUNDARY_TOKEN_GRAMMAR_POLICY);
+    const handle: any = { tenantId: TENANT, matterId: MATTER, dictionaryVersion: VERSION, operationId: `${CANARY} extra`, attemptId: b<any>("att-1") };
+    let thrown: any;
+    try { await reverser.reverse(b<any>("[[TOKEN_1]]"), handle); } catch (e) { thrown = e; }
+    expect(thrown).toBeInstanceOf(ReversalFailedError);
+    expect(JSON.stringify({ code: (thrown as any)?.code, op: (thrown as any)?.operationId })).not.toContain(CANARY);
+  });
+
+  // R13-13 (F13) — a mutating identifierClass getter cannot put PHI into caller-visible failedClasses /
+  // diagnostics (read-once + index iteration).
+  it("gateClasses: a mutating identifierClass getter cannot leak PHI into the release evidence", () => {
+    let reads = 0;
+    const evidence: any = {
+      recallWilsonLower95: 0.1, // below floor -> failed -> named in failedClasses/diagnostics
+      get identifierClass(): any { reads += 1; return reads === 1 ? "SSN" : CANARY; },
+    };
+    const result: any = gateClasses([evidence]);
+    expect(JSON.stringify(result.failedClasses) + JSON.stringify(result.diagnostics)).not.toContain(CANARY);
+  });
+
+  // R13-14 (F14) — the PUBLIC rebuildFromVolume tolerates a poisoned volume.list iterator (drainTo
+  // already did); a poisoned iterator cannot leak raw PHI to the caller.
+  it("spool.rebuildFromVolume: a poisoned volume.list iterator cannot leak raw PHI to the caller", async () => {
+    const ids: any = ["rec-1"];
+    Object.defineProperty(ids, Symbol.iterator, { configurable: true, value: (): never => { throw new Error(CANARY); } });
+    const volume: any = {
+      list: async (): Promise<any> => ids,
+      read: async (): Promise<any> => null,
+      putAtomic: async (): Promise<void> => {},
+      delete: async (): Promise<void> => {},
+    };
+    const spool = new Aes256GcmAuditSpool(volume, new FixedKeyProvider() as any, CLOCK);
+    let thrown: any;
+    try { await spool.rebuildFromVolume(); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "")).not.toContain(CANARY);
+  });
+
+  // R13-15 (F15) — a hostile INJECTED serializer port rejection (could carry PHI) is sanitized to a
+  // fixed code, never escapes prepare()/finalize() raw.
+  it("emitter: a hostile serializer.validatePrepared rejection is sanitized, never escapes raw", async () => {
+    const primary: any = { prepare: async (): Promise<any> => ({ status: "stored", durableRecordId: "d1" }), finalize: async (): Promise<void> => {} };
+    const spool: any = { health: async (): Promise<string> => "ready", appendPrepared: async (): Promise<any> => ({}), finalize: async (): Promise<void> => {} };
+    const hostileSerializer: any = {
+      validatePrepared: (): never => { throw new Error(CANARY); },
+      serialize: (): Uint8Array => new Uint8Array(),
+    };
+    const emitter = new DurablePhiAuditEmitter(primary, spool, hostileSerializer, CLOCK);
+    let thrown: any;
+    try { await emitter.prepare(spoolPrepared("att-r13-15")); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String((thrown as any)?.code ?? "")).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("AUDIT_SCHEMA_REJECTED");
   });
 });

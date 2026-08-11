@@ -91,7 +91,14 @@ function boundaryModeFor(identifierClass: IdentifierClass): BoundaryMode {
 /** Only staff-approved and structurally-deterministic forms; never a guess. */
 function expandForms(value: TaggedValue, locale: string): readonly string[] {
   const canonical = value.canonicalDisplayValue;
-  const aliases = value.approvedAliases;
+  // §7/N2 / L12: `approvedAliases` is boundary data — copy it by OWN index/length so a REAL array
+  // with an OWN poisoned `Symbol.iterator` cannot drop an approved alias that would then egress raw.
+  const aliases: string[] = [];
+  if (Array.isArray(value.approvedAliases)) {
+    for (let i = 0; i < (value.approvedAliases as { length: number }).length; i += 1) {
+      aliases[aliases.length] = value.approvedAliases[i]!;
+    }
+  }
   let expansion: VariantExpansion | null = null;
   switch (value.field.expander) {
     case "person-name":
@@ -153,9 +160,21 @@ export class MatterDictionaryCompiler implements DictionaryCompiler {
       sourceTruthRevision: input.sourceTruthRevision,
     });
 
+    // §7/N2 / L12: the CaseTruthReader is an injected port — its result is UNTRUSTED. A NON-array
+    // carrier or a REAL array with an OWN poisoned `Symbol.iterator` must NOT silently compile an
+    // EMPTY dictionary (which would egress every known value RAW to the provider). Fail closed on a
+    // non-array, and defeat a poisoned iterator by copying the real elements by OWN index/length.
+    if (!Array.isArray(values)) {
+      throw new Error("case_truth_values_not_an_array");
+    }
+    const materializedValues: TaggedValue[] = [];
+    for (let i = 0; i < (values as { length: number }).length; i += 1) {
+      materializedValues[materializedValues.length] = values[i]!;
+    }
+
     // L3 determinism: allocate ordinals in a canonical subject order so a fresh
     // rebuild is byte-identical regardless of the case-truth read order.
-    const orderedValues = [...values].sort(compareBySubject);
+    const orderedValues = materializedValues.sort(compareBySubject);
 
     const assignmentPort = this.assignmentPortFactory();
     const builder = new AhoCorasickBuilder();

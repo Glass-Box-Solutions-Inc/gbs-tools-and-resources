@@ -91,15 +91,38 @@ export function tokenize(
 ): TokenizeResult {
   // The compiled Aho–Corasick matcher is the sole source of dictionary spans.
   const dictionaryCandidates = dictionary.match(originalText);
-  // Intrinsic index iteration (own-index + own-`length`), NEVER `Array.prototype.map` (§7/N2 / L12):
-  // a hostile `map` override that dropped detector candidates would make a detected structured
-  // identifier (e.g. an email) pass through untokenized and egress raw.
-  const detectorCandidates: DetectorCollisionSpan[] = [];
+  // §7/N2 / L12: `detectorSpans` is boundary data. Read EACH span's fields EXACTLY ONCE into an inert
+  // snapshot here — a NON-array carrier or an OWN poisoned `Symbol.iterator` cannot hide spans, and a
+  // mutating own-index/own-field getter cannot show a benign span to the collision resolver (the
+  // candidate set) while feeding a DIFFERENT `token` to the splice map below. BOTH consumers read
+  // only this snapshot, never the live `detectorSpans` array again.
+  if (!Array.isArray(detectorSpans)) {
+    throw new DictionaryError(AMBIGUOUS_KNOWN_IDENTIFIER, { ambiguityCount: 0 });
+  }
+  const detectorSpanSnapshot: {
+    startUtf16: Utf16Offset;
+    endUtf16: Utf16Offset;
+    identifierClass: DetectorCollisionSpan["identifierClass"];
+    confidence: DetectorCollisionSpan["confidence"];
+    token: string;
+  }[] = [];
   for (let i = 0; i < (detectorSpans as { length: number }).length; i += 1) {
     const span = detectorSpans[i]!;
-    detectorCandidates[detectorCandidates.length] = {
+    detectorSpanSnapshot[detectorSpanSnapshot.length] = {
       startUtf16: span.startUtf16 as Utf16Offset,
       endUtf16: span.endUtf16 as Utf16Offset,
+      identifierClass: span.identifierClass,
+      confidence: span.confidence,
+      token: span.token as unknown as string,
+    };
+  }
+
+  const detectorCandidates: DetectorCollisionSpan[] = [];
+  for (let i = 0; i < detectorSpanSnapshot.length; i += 1) {
+    const span = detectorSpanSnapshot[i]!;
+    detectorCandidates[detectorCandidates.length] = {
+      startUtf16: span.startUtf16,
+      endUtf16: span.endUtf16,
       identifierClass: span.identifierClass,
       confidence: span.confidence,
     };
@@ -119,13 +142,11 @@ export function tokenize(
     });
   }
 
-  // Intrinsic index iteration (own-index + own-`length`), NEVER `for..of` (§7/N2 / L12): a boundary
-  // `detectorSpans` array with an OWN poisoned `Symbol.iterator` could otherwise yield a different
-  // `token` here than the indexed span the detector-candidate loop used, so the splice would replace
-  // a real span with a raw (untokenized) value.
+  // The token map is built from the SAME inert snapshot the candidate set used, so the offsets and
+  // the token can never diverge under a mutating boundary getter (§7/N2 / L12).
   const detectorTokenBySpan = new Map<string, string>();
-  for (let i = 0; i < (detectorSpans as { length: number }).length; i += 1) {
-    const span = detectorSpans[i]!;
+  for (let i = 0; i < detectorSpanSnapshot.length; i += 1) {
+    const span = detectorSpanSnapshot[i]!;
     detectorTokenBySpan.set(`${span.startUtf16}:${span.endUtf16}`, span.token);
   }
 

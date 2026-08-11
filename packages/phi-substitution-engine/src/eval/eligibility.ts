@@ -57,14 +57,20 @@ export function gateClasses(
   const diagnostics: string[] = [];
   let lowerSum = 0;
 
-  for (const evidence of classes) {
+  // §7/N2: `classes` is boundary evidence — index-iterate (a poisoned own `Symbol.iterator` can't
+  // hide a class) and read each `identifierClass`/`recallWilsonLower95` EXACTLY ONCE, so a mutating
+  // getter can't put a benign label in `perClass` and PHI in `failedClasses`/diagnostics.
+  const classList = Array.isArray(classes) ? classes : [];
+  for (let ci = 0; ci < (classList as { length: number }).length; ci += 1) {
+    const evidence = classList[ci]!;
+    const identifierClass = evidence.identifierClass;
     const recallLower = evidence.recallWilsonLower95;
     const eligible = isClearing(recallLower, threshold);
-    perClass.push({ identifierClass: evidence.identifierClass, recallLower, eligible });
+    perClass.push({ identifierClass, recallLower, eligible });
     lowerSum += Number.isFinite(recallLower) ? recallLower : 0;
     if (!eligible) {
-      failedClasses.push(evidence.identifierClass);
-      diagnostics.push(`CLASS_GATE_FAILED:${evidence.identifierClass}`);
+      failedClasses.push(identifierClass);
+      diagnostics.push(`CLASS_GATE_FAILED:${identifierClass}`);
     }
   }
 

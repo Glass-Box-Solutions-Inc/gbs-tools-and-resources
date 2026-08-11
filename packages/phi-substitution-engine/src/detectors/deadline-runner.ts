@@ -92,8 +92,13 @@ export class SharedDeadlineDetectorRunner implements DetectorDeadlineRunner {
     // (return null) — never throw a PHI canary out of the detector belt (detectWithin has no catch,
     // only a finally).
     let spans: readonly DetectedSpan[];
+    let descriptor: DetectorArtifactDescriptor;
     try {
-      const normalized = normalizer.normalize(request.text, port.descriptor.engineVersion, raw);
+      // §7/N2: `port.descriptor` is an injected-port getter — read it ONCE here, inside the guard. A
+      // getter that returns a valid descriptor now and THROWS on a re-read would otherwise leak raw
+      // PHI at the (unguarded) return below; `detectWithin` has no catch there, only a `finally`.
+      descriptor = port.descriptor;
+      const normalized = normalizer.normalize(request.text, descriptor.engineVersion, raw);
       if (normalized.ok !== true) {
         return null;
       }
@@ -101,6 +106,6 @@ export class SharedDeadlineDetectorRunner implements DetectorDeadlineRunner {
     } catch {
       return null;
     }
-    return { descriptor: port.descriptor, spans };
+    return { descriptor, spans };
   }
 }

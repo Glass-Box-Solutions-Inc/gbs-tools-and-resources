@@ -96,18 +96,26 @@ export class PhileasHttpAdapter implements DetectorRedactorPort {
       throw new Error("INVALID_DETECTOR_OFFSET");
     }
 
+    // §7/N2: build the wire replacements by OWN index/length, NEVER `instructions.map` — an OWN `.map`
+    // override could return [] so the sidecar echoes the ORIGINAL text. The authoritative `plan` above
+    // is computed the same intrinsic way, so any divergence still fails closed at the echo check below.
+    const wireReplacements: { spanId: string; startUtf16: number; endUtf16: number; token: string }[] = [];
+    for (let i = 0; i < (input.instructions as { length: number }).length; i += 1) {
+      const instruction = input.instructions[i]!;
+      wireReplacements[wireReplacements.length] = {
+        spanId: instruction.detectedSpanId,
+        startUtf16: instruction.startUtf16 as number,
+        endUtf16: instruction.endUtf16 as number,
+        token: instruction.replacement as string,
+      };
+    }
     const body = {
       kind: "APPLY_REPLACEMENTS" as const,
       operationId: String(input.operationId),
       attemptId: String(input.attemptId),
       preparedPolicyId: input.preparedPolicy ? input.preparedPolicy.id : null,
       text: input.text,
-      replacements: input.instructions.map((instruction) => ({
-        spanId: instruction.detectedSpanId,
-        startUtf16: instruction.startUtf16 as number,
-        endUtf16: instruction.endUtf16 as number,
-        token: instruction.replacement as string,
-      })),
+      replacements: wireReplacements,
     };
     this.observe({
       path: "/internal/v1/apply-replacements",
