@@ -33,7 +33,10 @@ cause of the disability).
 from __future__ import annotations
 
 import datetime as dt
+import random
+from collections.abc import Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -43,7 +46,9 @@ from wc_caseload_engine.medical_history import (
     MedicalHistory,
 )
 from wc_caseload_engine.seeds import (
+    ANCHOR_DATE,
     BensonGrounding,
+    CaseSeed,
     ClaimResponse,
     DoctrineGrounding,
     DoctrineHook,
@@ -52,6 +57,7 @@ from wc_caseload_engine.seeds import (
     Lc4664PriorAwardGrounding,
     SibtfGrounding,
     TargetStage,
+    derive_seed,
 )
 
 # ---------------------------------------------------------------------------
@@ -1015,6 +1021,359 @@ def validate_medical_assertions(
 
 
 # ---------------------------------------------------------------------------
+# Derivation knobs — Fraction-exact, provenance-bearing (note F v1 + sme deltas)
+# ---------------------------------------------------------------------------
+
+type AssertionProvenance = Literal[
+    "counsel_estimate",
+    "counsel_qualitative",
+    "counsel_confirmed",
+    "counsel_assumed",
+    "invented",
+    "derived",
+]
+"""The M2+ assertion-knob provenance vocabulary. Supersedes the clinical
+``Tag`` for every new assertion knob (N12/finding 26): the clinical enum lacks
+the counsel gradations this layer's calibration ledger uses, and there is no
+implicit mapping between the two — shared ``counsel_confirmed`` means the same
+thing; ``counsel_unconfirmed`` maps to nothing here."""
+
+
+@dataclass(frozen=True, slots=True)
+class AssertionKnob[T]:
+    """One assertion-layer design choice, stating exactly what it rests on.
+
+    Unlike the clinical ``Knob`` (a bare float), the value may be a scalar,
+    range, distribution, mapping, set or policy — and every probability-valued
+    component is an exact :class:`fractions.Fraction`; floats are forbidden so
+    two draws can never disagree about the third decimal of a rate.
+    """
+
+    value: T
+    provenance: AssertionProvenance
+    rationale: str
+    source: str
+
+    def __post_init__(self) -> None:
+        if not self.rationale.strip() or not self.source.strip():
+            raise ValueError(
+                f"assertion knob {self.value!r} has an empty rationale or source — "
+                "a value with no provenance is the thing this type exists to make "
+                "impossible"
+            )
+
+
+CONTENTION_RATE_RANGE = AssertionKnob[tuple[Fraction, Fraction]](
+    value=(Fraction(1, 10), Fraction(1, 4)),
+    provenance="counsel_estimate",
+    rationale="Counsel: contentions are fact-driven, arising 'when the facts dictate it, 10-25%'.",
+    source="sme-answers.md q5 (2026-08-10).",
+)
+
+P_CONTENTION_GIVEN_CONDITION = AssertionKnob[Fraction](
+    value=Fraction(7, 40),
+    provenance="derived",
+    rationale="Midpoint of counsel's 0.10-0.25 band, per eligible condition candidate only.",
+    source="Derived from CONTENTION_RATE_RANGE; restriction per spec-check finding 16.",
+)
+
+P_PRIOR_CLAIM_CONTENTION = AssertionKnob[Fraction](
+    value=Fraction(3, 20),
+    provenance="invented",
+    rationale="Overlapping prior claims are argued somewhat less often than live conditions.",
+    source="AJC-61 design calibration; no counsel rate supplied.",
+)
+
+P_PRIOR_AWARD_CONTENTION = AssertionKnob[Fraction](
+    value=Fraction(1, 5),
+    provenance="invented",
+    rationale="A conclusively presumed overlapping award is close to a free defense argument.",
+    source="AJC-61 design calibration; no counsel rate supplied.",
+)
+
+P_SIBTF_CONTENTION = AssertionKnob[Fraction](
+    value=Fraction(1, 10),
+    provenance="invented",
+    rationale="SIBTF claims are rare relative to their qualifying evidence.",
+    source="AJC-61 design calibration; no counsel rate supplied.",
+)
+
+P_FIREFIGHTER_CONTENTION = AssertionKnob[Fraction](
+    value=Fraction(1, 5),
+    provenance="invented",
+    rationale="An oncology diagnosis under an explicit presumption hook is usually argued.",
+    source="AJC-61 design calibration; no counsel rate supplied.",
+)
+
+QUALITY_TARGET_WEIGHTS = AssertionKnob[tuple[Fraction, Fraction, Fraction]](
+    value=(
+        Fraction(4, 5),
+        Fraction(2, 15),
+        Fraction(1, 15),
+    ),
+    provenance="counsel_estimate",
+    rationale=(
+        "Counsel: ~80% of real opinions read as supported; the thin:unsupportable "
+        "2:1 residual split is invented. A target selects a construction RECIPE — "
+        "the grade itself is always rederived, never copied."
+    ),
+    source="sme-answers.md q7 (supported mass); residual split AJC-61 design calibration.",
+)
+
+P_PSYCH_COMPONENT = AssertionKnob[Fraction](
+    value=Fraction(9, 20),
+    provenance="counsel_estimate",
+    rationale="Counsel: 40-50% of the caseload carries a psych component, primary or add-on.",
+    source="sme-answers.md q9 (2026-08-10).",
+)
+
+P_PSYCH_ADD_ON_CONTENTION_GIVEN_COMPONENT = AssertionKnob[Fraction](
+    value=Fraction(1, 5),
+    provenance="invented",
+    rationale=(
+        "The barred 4660.1(c) add-on CONTENTION is much rarer than the psych "
+        "component itself; split per spec-check finding 17."
+    ),
+    source="AJC-61 design calibration; no counsel rate supplied.",
+)
+
+P_NONZERO_APPORTIONMENT = AssertionKnob[Fraction](
+    value=Fraction(3, 4),
+    provenance="counsel_estimate",
+    rationale="Counsel: '75%ish. apportionment is evidence based' for litigated QME/AME evals.",
+    source="sme-answers.md q2 (2026-08-10) — the modern datapoint that officially does not exist.",
+)
+
+P_MEDLEGAL_DEFERRAL = AssertionKnob[Fraction](
+    value=Fraction(1, 5),
+    provenance="invented",
+    rationale="A medical-legal-stage evaluator still occasionally defers to a final report.",
+    source="AJC-61 design calibration; no counsel rate supplied.",
+)
+
+P_FINAL_REPORT_OMITS_APPORTIONMENT = AssertionKnob[Fraction](
+    value=Fraction(1, 10),
+    provenance="counsel_estimate",
+    rationale=(
+        "Counsel: final PD reports include the 4663(c) determination 'most of the "
+        "time' — the omission is the small plantable defect, not the norm."
+    ),
+    source="sme-answers.md ruling 2 / q-final-omission (2026-08-10).",
+)
+
+P_COMMON_PERCENTAGE_REGISTER = AssertionKnob[Fraction](
+    value=Fraction(17, 20),
+    provenance="counsel_estimate",
+    rationale=(
+        "Counsel: percentages sit 'normally on the fives... or a third'; roundness "
+        "is NOT a tell, excess granularity is. Direction counsel's; the exact mass "
+        "is invented. Percentage roundness never affects quality."
+    ),
+    source="sme-answers.md q4; anti-clamp rule per frequency-priors-calibration.md.",
+)
+
+P_EVIDENCE_DISTRACTOR = AssertionKnob[Fraction](
+    value=Fraction(1, 4),
+    provenance="invented",
+    rationale=(
+        "One irrelevant-but-visible reviewed record at a label-independent rate, so "
+        "record composition cannot separate the quality classes."
+    ),
+    source="AJC-61 design calibration; no counsel rate supplied.",
+)
+
+P_PTP_ENDORSE_SUPPORTED = AssertionKnob[Fraction](
+    value=Fraction(3, 5),
+    provenance="counsel_qualitative",
+    rationale="Treaters lean toward their patient's supported claims without being evaluators.",
+    source="Operationalization of counsel's qualitative PTP-adoption answer (sme-answers.md q6).",
+)
+
+P_PTP_ENDORSE_INDETERMINATE = AssertionKnob[Fraction](
+    value=Fraction(7, 20),
+    provenance="invented",
+    rationale="A treater sometimes adopts an indeterminate claim a med-legal evaluator would not.",
+    source="AJC-61 design calibration; no counsel rate supplied.",
+)
+
+P_PTP_ENDORSE_CONTRADICTED = AssertionKnob[Fraction](
+    value=Fraction(1, 10),
+    provenance="invented",
+    rationale="Rarely, a treater endorses against the record — realistic, and graded down.",
+    source="AJC-61 design calibration; no counsel rate supplied.",
+)
+
+P_PSYCH_PREDOMINANT_CAUSE_DENIAL = AssertionKnob[Fraction](
+    value=Fraction(3, 20),
+    provenance="invented",
+    rationale="Interpretation of counsel's 'low' share for predominant-cause psych denials.",
+    source="sme-answers.md q10 direction; rate AJC-61 design calibration.",
+)
+
+P_GFPA_DEFENSE = AssertionKnob[Fraction](
+    value=Fraction(1, 10),
+    provenance="invented",
+    rationale="Interpretation of counsel's 'low' share for good-faith-personnel-action defenses.",
+    source="sme-answers.md q11 direction; rate AJC-61 design calibration.",
+)
+
+P_ZERO_SHARE_DEFECT_GIVEN_NONZERO_MISS = AssertionKnob[Fraction](
+    value=Fraction(1, 2),
+    provenance="invented",
+    rationale=(
+        "When substantial nonindustrial evidence exists and the nonzero draw misses, "
+        "half the misses become the deliberate contradicted-zero-share defect and "
+        "half a graded unable-to-approximate."
+    ),
+    source="AJC-61 design calibration per Part 4 N10 disposition.",
+)
+
+EVIDENCE_BUDGET_MIX = AssertionKnob[tuple[Fraction, Fraction, Fraction]](
+    value=(Fraction(7, 20), Fraction(2, 5), Fraction(1, 4)),
+    provenance="invented",
+    rationale="Vary evidence coverage without making reviewed-record count a quality-label proxy.",
+    source="AJC-61 design calibration; no counsel rate supplied.",
+)
+"""Weights for evidence budgets ``(1, 2, 3)`` reviewed records."""
+
+COMMON_NONINDUSTRIAL_PERCENTAGES: Final[tuple[int, ...]] = (
+    5, 10, 15, 20, 25, 30, 33, 35, 40, 45, 50,
+    55, 60, 65, 67, 70, 75, 80, 85, 90, 95,
+)
+"""The register real percentages cluster on — fives, thirds, quarters. Drawn at
+:data:`P_COMMON_PERCENTAGE_REGISTER`; the remaining mass draws from 1..99
+excluding this tuple, so granular values exist and never clamp to a folk set."""
+
+ASSERTION_KNOBS: Final[dict[str, AssertionKnob]] = {
+    "CONTENTION_RATE_RANGE": CONTENTION_RATE_RANGE,
+    "P_CONTENTION_GIVEN_CONDITION": P_CONTENTION_GIVEN_CONDITION,
+    "P_PRIOR_CLAIM_CONTENTION": P_PRIOR_CLAIM_CONTENTION,
+    "P_PRIOR_AWARD_CONTENTION": P_PRIOR_AWARD_CONTENTION,
+    "P_SIBTF_CONTENTION": P_SIBTF_CONTENTION,
+    "P_FIREFIGHTER_CONTENTION": P_FIREFIGHTER_CONTENTION,
+    "QUALITY_TARGET_WEIGHTS": QUALITY_TARGET_WEIGHTS,
+    "P_PSYCH_COMPONENT": P_PSYCH_COMPONENT,
+    "P_PSYCH_ADD_ON_CONTENTION_GIVEN_COMPONENT": P_PSYCH_ADD_ON_CONTENTION_GIVEN_COMPONENT,
+    "P_NONZERO_APPORTIONMENT": P_NONZERO_APPORTIONMENT,
+    "P_MEDLEGAL_DEFERRAL": P_MEDLEGAL_DEFERRAL,
+    "P_FINAL_REPORT_OMITS_APPORTIONMENT": P_FINAL_REPORT_OMITS_APPORTIONMENT,
+    "P_COMMON_PERCENTAGE_REGISTER": P_COMMON_PERCENTAGE_REGISTER,
+    "P_EVIDENCE_DISTRACTOR": P_EVIDENCE_DISTRACTOR,
+    "P_PTP_ENDORSE_SUPPORTED": P_PTP_ENDORSE_SUPPORTED,
+    "P_PTP_ENDORSE_INDETERMINATE": P_PTP_ENDORSE_INDETERMINATE,
+    "P_PTP_ENDORSE_CONTRADICTED": P_PTP_ENDORSE_CONTRADICTED,
+    "P_PSYCH_PREDOMINANT_CAUSE_DENIAL": P_PSYCH_PREDOMINANT_CAUSE_DENIAL,
+    "P_GFPA_DEFENSE": P_GFPA_DEFENSE,
+    "P_ZERO_SHARE_DEFECT_GIVEN_NONZERO_MISS": P_ZERO_SHARE_DEFECT_GIVEN_NONZERO_MISS,
+    "EVIDENCE_BUDGET_MIX": EVIDENCE_BUDGET_MIX,
+}
+"""Every assertion knob, by name — the completeness surface the oracle sweeps.
+
+Explicit deferrals (named milestones, not omissions): ``p_defense_escalation``
+rides AJC-62's surface chain with M5 finalizing its WPI conditioning;
+``p_serious_unrelated_dx_during_claim`` (~0.025) needs an AJC-60 follow-up
+before AJC-62, because M2 may not invent a condition after ``MedicalHistory``
+is derived. ``SIBTF_DISABLING_SEVERITIES`` is deliberately NOT restated here —
+:func:`~wc_caseload_engine.medical_history.sibtf_grounding` stays the single
+SIBTF policy source."""
+
+
+# ---------------------------------------------------------------------------
+# RNG streams — new namespace, semantic keys, independent seeding
+# ---------------------------------------------------------------------------
+
+ASSERTION_RNG_NAMESPACE: Final[str] = "medical-assertions"
+"""Never ``medical:`` — that namespace is M1's, and reusing it would re-roll
+draws that already ship. Independent seeding per family/key means new families
+and knobs cannot shift existing draws."""
+
+ASSERTION_RNG_FAMILIES: Final[tuple[str, ...]] = (
+    "contention-incidence",
+    "contention-type",
+    "quality-target",
+    "psych-component",
+    "psych-add-on-contention",
+    "medical-legal-deferral",
+    "final-omission",
+    "nonzero-apportionment",
+    "determination-kind",
+    "evidence-budget",
+    "evidence-distractor",
+    "percentage-register",
+    "ptp-disposition",
+    "thin-defect",
+    "unsupportable-defect",
+)
+"""The frozen 15-family registry (Part 4 B.2-B.3). QME/AME disposition has NO
+stream on purpose — it is completely evidence-conditioned. The salt oracle
+asserts the constructed set equals exactly this tuple."""
+
+type SemanticKey = tuple[object, ...]
+
+
+def _assertion_rng(seed: CaseSeed, family: str, stable_key: str) -> random.Random:
+    """A fresh stream under ``medical-assertions:<family>:<key>``.
+
+    ``stable_key`` is always a *semantic* candidate key — a condition id, an
+    award id, ``case`` — never an assigned ``ctn-NN`` id, a list position or a
+    counter, so adding an explicit entry cannot re-roll an unrelated
+    candidate's draws. Callers go through the module namespace
+    (``medical_assertions._assertion_rng``) so the absent-gate probe can
+    monkeypatch the attribute.
+    """
+    if family not in ASSERTION_RNG_FAMILIES:
+        raise ValueError(
+            f"unknown assertion rng family {family!r}; register it in "
+            "ASSERTION_RNG_FAMILIES so the salt oracle can see it"
+        )
+    return random.Random(
+        derive_seed(seed.rng_seed, f"{ASSERTION_RNG_NAMESPACE}:{family}:{stable_key}")
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class AssertionCandidate:
+    """One sampled-candidate decision, keyed semantically for suppression."""
+
+    semantic_key: SemanticKey
+    candidate_family: str
+    payload: dict[str, object]
+
+
+def _suppress_explicit_collisions(
+    sampled_candidates: Sequence[AssertionCandidate],
+    explicit_semantic_keys: frozenset[SemanticKey],
+) -> tuple[tuple[AssertionCandidate, ...], int]:
+    suppression_hits = 0
+    retained: list[AssertionCandidate] = []
+    for candidate in sampled_candidates:
+        semantic_key = candidate.semantic_key
+        if semantic_key in explicit_semantic_keys:
+            suppression_hits += 1
+            continue
+        retained.append(candidate)
+    return tuple(retained), suppression_hits
+
+
+def assertion_context(seed: CaseSeed, timeline: object = None) -> AssertionValidationContext:
+    """Build the one validation context from the seed (and the planner's timeline).
+
+    The timeline's injury date wins where one exists, mirroring
+    ``derive_medical_history`` — the ledger, the assertions and the documents
+    must not reach two different injury dates for one case.
+    """
+    injury_date = getattr(timeline, "injury_date", None) or seed.injury.onset_date
+    return AssertionValidationContext(
+        date_of_injury=injury_date,
+        anchor_date=ANCHOR_DATE,
+        current_body_parts=tuple(part.part for part in seed.injury.body_parts),
+        target_stage=seed.lifecycle.target_stage,
+        claim_response=seed.lifecycle.claim_response,
+        eval_type=seed.lifecycle.eval_type,
+    )
+
+
+# ---------------------------------------------------------------------------
 # The evidence predicate and the frozen quality rubric (Escobedo v2)
 # ---------------------------------------------------------------------------
 
@@ -1536,10 +1895,253 @@ def assertion_warnings(
     )
 
 
+# ---------------------------------------------------------------------------
+# Composition — explicit entries authoritative, sampling appends, IDs last
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class AssertionTrace:
+    """Private cohort diagnostics. Test-only; never serialized anywhere.
+
+    ``suppression_hits`` and the budget/distractor counters exist so the
+    frozen oracle can assert composition behaviour positively instead of
+    inferring it from absence. Nothing here may enter a ledger, warning,
+    manifest or document.
+    """
+
+    suppression_hits: int = 0
+    recipes: list[tuple[str, str, str]] = None  # type: ignore[assignment]
+    evidence_budgets: list[int] = None  # type: ignore[assignment]
+    distractor_available: int = 0
+    distractor_included: int = 0
+    candidate_families: dict[str, int] = None  # type: ignore[assignment]
+    eligible_candidates: dict[str, int] = None  # type: ignore[assignment]
+    lifecycle: list[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        self.recipes = [] if self.recipes is None else self.recipes
+        self.evidence_budgets = [] if self.evidence_budgets is None else self.evidence_budgets
+        self.candidate_families = (
+            {} if self.candidate_families is None else self.candidate_families
+        )
+        self.eligible_candidates = (
+            {} if self.eligible_candidates is None else self.eligible_candidates
+        )
+        self.lifecycle = [] if self.lifecycle is None else self.lifecycle
+
+
+def _contention_semantic_key(entry: object) -> SemanticKey:
+    """The B.2 rule-6 suppression key, normalized (sorted hook tuple)."""
+    return (
+        "contention",
+        getattr(entry, "claim_type"),  # noqa: B009 - uniform getattr over entry/model
+        entry.position,
+        entry.target_condition_id,
+        entry.target_prior_claim_id,
+        entry.target_prior_award_id,
+        entry.target_body_part,
+        tuple(sorted(entry.doctrine_hooks)),
+    )
+
+
+def _explicit_reference_problems(scenario: object) -> list[str]:
+    """B.2 rule 3 — explicit references may target only explicit IDs.
+
+    Enforced before sampling because a sampled entry can legitimately claim the
+    first unused numeric suffix: an explicit reference to ``ctn-02`` must not
+    silently start resolving to whatever the sampler happened to draw there.
+    Same templates as the ledger validator, raised at the same generation-time
+    boundary.
+    """
+    contention_ids = {e.id for e in scenario.contentions}  # type: ignore[attr-defined]
+    opinion_ids = {e.id for e in scenario.medical_opinions}  # type: ignore[attr-defined]
+    problems: list[str] = []
+    for opinion in scenario.medical_opinions:  # type: ignore[attr-defined]
+        for ref in opinion.endorses_contention_ids:
+            if ref not in contention_ids:
+                problems.append(
+                    f"medical opinion '{opinion.id}' endorses unknown contention '{ref}'"
+                )
+        for ref in opinion.rejects_contention_ids:
+            if ref not in contention_ids:
+                problems.append(
+                    f"medical opinion '{opinion.id}' rejects unknown contention '{ref}'"
+                )
+        for verb, ref in (
+            ("responds to", opinion.responds_to_opinion_id),
+            ("supersedes", opinion.supersedes_opinion_id),
+        ):
+            if ref is not None and ref != opinion.id and ref not in opinion_ids:
+                problems.append(
+                    f"medical opinion '{opinion.id}' {verb} unknown opinion '{ref}'"
+                )
+    for assertion in scenario.apportionment_assertions:  # type: ignore[attr-defined]
+        if assertion.opinion_id not in opinion_ids:
+            problems.append(
+                f"apportionment assertion '{assertion.id}' references unknown "
+                f"medical opinion '{assertion.opinion_id}'"
+            )
+        if (
+            assertion.linked_contention_id is not None
+            and assertion.linked_contention_id not in contention_ids
+        ):
+            problems.append(
+                f"apportionment assertion '{assertion.id}' references unknown "
+                f"contention '{assertion.linked_contention_id}'"
+            )
+    return problems
+
+
+def _groundings_tuple(entry: object) -> tuple[DoctrineGrounding, ...]:
+    return tuple(getattr(entry, "groundings", ()) or ())
+
+
+def _contention_from_entry(entry: object) -> Contention:
+    return Contention(
+        id=entry.id,  # type: ignore[attr-defined]
+        claim_type=entry.claim_type,  # type: ignore[attr-defined]
+        party=entry.party,  # type: ignore[attr-defined]
+        position=entry.position,  # type: ignore[attr-defined]
+        target_condition_id=entry.target_condition_id,  # type: ignore[attr-defined]
+        target_prior_claim_id=entry.target_prior_claim_id,  # type: ignore[attr-defined]
+        target_prior_award_id=entry.target_prior_award_id,  # type: ignore[attr-defined]
+        target_body_part=entry.target_body_part,  # type: ignore[attr-defined]
+        doctrine_hooks=tuple(entry.doctrine_hooks),  # type: ignore[attr-defined]
+        rationale=entry.rationale,  # type: ignore[attr-defined]
+        treatment_causation=entry.treatment_causation,  # type: ignore[attr-defined]
+        requested_apportionment=entry.requested_apportionment,  # type: ignore[attr-defined]
+        groundings=_groundings_tuple(entry),
+        quality="supported",
+    )
+
+
+def _opinion_from_entry(entry: object) -> MedicalOpinion:
+    return MedicalOpinion(
+        id=entry.id,  # type: ignore[attr-defined]
+        author_role=entry.author_role,  # type: ignore[attr-defined]
+        report_stage=entry.report_stage,  # type: ignore[attr-defined]
+        report_date=entry.report_date,  # type: ignore[attr-defined]
+        apportionment_state=entry.apportionment_state,  # type: ignore[attr-defined]
+        determination_kind=entry.determination_kind,  # type: ignore[attr-defined]
+        determination_rationale=entry.determination_rationale,  # type: ignore[attr-defined]
+        examination_performed=entry.examination_performed,  # type: ignore[attr-defined]
+        reviewed_condition_ids=tuple(entry.reviewed_condition_ids),  # type: ignore[attr-defined]
+        reviewed_prior_claim_ids=tuple(entry.reviewed_prior_claim_ids),  # type: ignore[attr-defined]
+        reviewed_prior_award_ids=tuple(entry.reviewed_prior_award_ids),  # type: ignore[attr-defined]
+        endorses_contention_ids=tuple(entry.endorses_contention_ids),  # type: ignore[attr-defined]
+        rejects_contention_ids=tuple(entry.rejects_contention_ids),  # type: ignore[attr-defined]
+        responds_to_opinion_id=entry.responds_to_opinion_id,  # type: ignore[attr-defined]
+        supersedes_opinion_id=entry.supersedes_opinion_id,  # type: ignore[attr-defined]
+        rationale=entry.rationale,  # type: ignore[attr-defined]
+        revision_rationale=entry.revision_rationale,  # type: ignore[attr-defined]
+        quality="supported",
+    )
+
+
+def _assertion_from_entry(entry: object) -> ApportionmentAssertion:
+    return ApportionmentAssertion(
+        id=entry.id,  # type: ignore[attr-defined]
+        opinion_id=entry.opinion_id,  # type: ignore[attr-defined]
+        body_part=entry.body_part,  # type: ignore[attr-defined]
+        industrial_percent=entry.industrial_percent,  # type: ignore[attr-defined]
+        nonindustrial_percent=entry.nonindustrial_percent,  # type: ignore[attr-defined]
+        basis_kinds=tuple(entry.basis_kinds),  # type: ignore[attr-defined]
+        condition_ids=tuple(entry.condition_ids),  # type: ignore[attr-defined]
+        prior_claim_ids=tuple(entry.prior_claim_ids),  # type: ignore[attr-defined]
+        prior_award_ids=tuple(entry.prior_award_ids),  # type: ignore[attr-defined]
+        description=entry.description,  # type: ignore[attr-defined]
+        disability_causation_stated=entry.disability_causation_stated,  # type: ignore[attr-defined]
+        reasonable_medical_probability=entry.reasonable_medical_probability,  # type: ignore[attr-defined]
+        causal_rationale=entry.causal_rationale,  # type: ignore[attr-defined]
+        percentage_rationale=entry.percentage_rationale,  # type: ignore[attr-defined]
+        prior_award_analysis=entry.prior_award_analysis,  # type: ignore[attr-defined]
+        revised_from_percent=entry.revised_from_percent,  # type: ignore[attr-defined]
+        revision_rationale=entry.revision_rationale,  # type: ignore[attr-defined]
+        psych_exception_analysis=entry.psych_exception_analysis,  # type: ignore[attr-defined]
+        linked_contention_id=entry.linked_contention_id,  # type: ignore[attr-defined]
+        groundings=_groundings_tuple(entry),
+        quality="supported",
+    )
+
+
+def _append_sampled(
+    *,
+    seed: CaseSeed,
+    context: AssertionValidationContext,
+    history: AssertionWorldProjection,
+    contentions: list[Contention],
+    opinions: list[MedicalOpinion],
+    assertions: list[ApportionmentAssertion],
+    trace: AssertionTrace | None,
+) -> tuple[list[Contention], list[MedicalOpinion], list[ApportionmentAssertion]]:
+    """Append sampled entries — filled in by the sampler step; explicit-only
+    composition is complete without it."""
+    return contentions, opinions, assertions
+
+
+def derive_medical_assertions(
+    seed: CaseSeed,
+    history: MedicalHistory | None,
+    timeline: object = None,
+    trace: AssertionTrace | None = None,
+) -> MedicalAssertionLedger | None:
+    """The assertion ledger for one case, or ``None`` when the seed asked for none.
+
+    The gate is the first observable and nothing precedes it: no assertion rng,
+    no ID allocation, no quality derivation, no warning may run before the
+    ``None`` return. That is the whole byte-identity instrument — an absent
+    block constructs nothing, so every golden byte stays where it was.
+    """
+    scenario = seed.scenario.medical_assertions
+    if scenario is None:
+        return None
+    if history is None:
+        raise MedicalAssertionError(
+            "scenario.medical_assertions requires scenario.medical_history; "
+            "assertion references cannot resolve without the world-truth ledger. "
+            "Add a scenario.medical_history block, or remove "
+            "scenario.medical_assertions."
+        )
+    context = assertion_context(seed, timeline)
+    projection = project_medical_history(history, context.current_body_parts)
+
+    reference_problems = _explicit_reference_problems(scenario)
+    if reference_problems:
+        raise MedicalAssertionError("\n".join(reference_problems))
+
+    contentions = [_contention_from_entry(entry) for entry in scenario.contentions]
+    opinions = [_opinion_from_entry(entry) for entry in scenario.medical_opinions]
+    assertions = [_assertion_from_entry(entry) for entry in scenario.apportionment_assertions]
+
+    if scenario.sample_assertions:
+        contentions, opinions, assertions = _append_sampled(
+            seed=seed,
+            context=context,
+            history=projection,
+            contentions=contentions,
+            opinions=opinions,
+            assertions=assertions,
+            trace=trace,
+        )
+
+    ledger = MedicalAssertionLedger(
+        contentions=tuple(contentions),
+        medical_opinions=tuple(opinions),
+        apportionment_assertions=tuple(assertions),
+    )
+    return grade_ledger(context, projection, ledger)
+
+
 __all__ = [
     "APPORTIONMENT_ID_PATTERN",
+    "ASSERTION_KNOBS",
+    "ASSERTION_RNG_FAMILIES",
+    "ASSERTION_RNG_NAMESPACE",
     "BASIS_RULE_CONFIDENCE",
+    "COMMON_NONINDUSTRIAL_PERCENTAGES",
     "CONTENTION_ID_PATTERN",
+    "EVIDENCE_BUDGET_MIX",
     "GROUNDABLE_HOOKS",
     "HOOK_TO_BASIS",
     "OPINION_ID_PATTERN",
@@ -1549,7 +2151,10 @@ __all__ = [
     "ApportionmentBasisKind",
     "ApportionmentDeterminationKind",
     "ApportionmentState",
+    "AssertionKnob",
+    "AssertionProvenance",
     "AssertionQuality",
+    "AssertionTrace",
     "AssertionValidationContext",
     "AssertionWorldProjection",
     "BensonGrounding",
@@ -1574,9 +2179,11 @@ __all__ = [
     "SibtfGrounding",
     "TreatmentCausation",
     "apportionment_quality",
+    "assertion_context",
     "assertion_warnings",
     "contention_evidence",
     "contention_quality",
+    "derive_medical_assertions",
     "escobedo_misses",
     "grade_ledger",
     "has_substantial_nonindustrial_evidence",

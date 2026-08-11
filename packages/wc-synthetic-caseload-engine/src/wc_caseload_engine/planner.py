@@ -61,6 +61,15 @@ from wc_caseload_engine.lifecycle_bridge import (
     fit_dates,
     to_document_candidates,
 )
+from wc_caseload_engine.medical_assertions import (
+    MedicalAssertionError,
+    MedicalAssertionLedger,
+    assertion_context,
+    assertion_warnings,
+    derive_medical_assertions,
+    project_medical_history,
+    validate_medical_assertions,
+)
 from wc_caseload_engine.medical_history import (
     MedicalHistory,
     derive_medical_history,
@@ -158,6 +167,17 @@ class CasePlan:
     it would collapse the two-level design this ledger opens. Same discipline
     ``case_facts`` already applies to ``wpi`` and ``pd``. M3 gives the conditions a
     document surface and M4 gives the ledger a scorer-only channel.
+    """
+
+    medical_assertions: MedicalAssertionLedger | None = None
+    """The assertion layer, when the seed asked for one. ``None`` when it did not.
+
+    Fourth sibling beside ``case_facts``, ``money_facts`` and
+    ``medical_history``, derived only for a seed carrying
+    ``scenario.medical_assertions``. Carried for exactly one publication
+    surface: the truth manifest's ``assertions`` channel — its ``quality``
+    grades never reach ``case_facts.yaml``, ``manifest.json``, a rendered
+    document, a warning, a filename or a log.
     """
 
     money_facts: MoneyFacts | None = None
@@ -1992,6 +2012,22 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     medical_history = derive_medical_history(
         seed, timeline, date_of_birth=cast.case.applicant.date_of_birth
     )
+    # The assertion layer, immediately after the world truth it is graded
+    # against and before any document candidate exists. Internal incoherence
+    # fails HERE, at generation time — a dangling reference must never survive
+    # into a rendered corpus — while divergence from world truth passes through
+    # to be graded. The nonfatal grounding warnings land beside M1's.
+    medical_assertions = derive_medical_assertions(seed, medical_history, timeline)
+    medical_assertion_warnings: tuple[str, ...] = ()
+    if medical_assertions is not None and medical_history is not None:
+        context = assertion_context(seed, timeline)
+        projection = project_medical_history(
+            medical_history, context.current_body_parts
+        )
+        problems = validate_medical_assertions(context, projection, medical_assertions)
+        if problems:
+            raise MedicalAssertionError("\n".join(problems))
+        medical_assertion_warnings = assertion_warnings(projection, medical_assertions)
     # …and the substrate's own wage field follows the published one, before any
     # template reads it. Three document families derive money from
     # ``employer.hourly_rate``; none of them were fact-aware.
@@ -2179,6 +2215,9 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         # medical_history.HOOK_GROUNDING for why a warning cannot be allowed to fire
         # on a seed that never asked for the layer at all.
         *grounding_warnings(seed, medical_history),
+        # Same discipline one layer up: silent unless the seed opened the
+        # assertion layer, because a warning is a manifest byte.
+        *medical_assertion_warnings,
     )
 
     log.debug(
@@ -2206,6 +2245,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         case_facts=case_facts,
         money_facts=money_facts,
         medical_history=medical_history,
+        medical_assertions=medical_assertions,
     )
 
 

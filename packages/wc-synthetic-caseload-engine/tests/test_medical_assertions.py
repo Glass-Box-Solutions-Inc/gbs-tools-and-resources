@@ -1441,6 +1441,50 @@ def test_ungrounded_entity_hook_warns_and_survives() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# E.4 — the absent gate: nothing constructs behind a missing block
+# ---------------------------------------------------------------------------
+
+
+def test_absent_gate_returns_before_any_assertion_rng_is_constructed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate is the first observable. A monkeypatched rng that fails the
+    test on construction proves the return happens before ANY stream exists."""
+    from typing import NoReturn
+
+    from wc_caseload_engine import medical_assertions as module
+    from wc_caseload_engine.medical_history import derive_medical_history
+
+    def fail_if_called(*args: object, **kwargs: object) -> NoReturn:
+        pytest.fail("assertion RNG constructed while medical_assertions gate was absent")
+
+    monkeypatch.setattr(module, "_assertion_rng", fail_if_called)
+
+    bare = parse_case_seed(_seed_body({}))
+    assert module.derive_medical_assertions(bare, None) is None
+
+    with_history = parse_case_seed(_seed_body({"medical_history": {}}))
+    history = derive_medical_history(with_history)
+    assert module.derive_medical_assertions(with_history, history) is None
+
+
+def test_absent_gate_plan_has_no_assertion_ledger_warning_or_truth_channel() -> None:
+    from conftest import requires_substrate  # noqa: F401 - marker applied below
+    from wc_caseload_engine.planner import build_case_plan
+    from wc_caseload_engine.substrate import find_substrate
+    from wc_caseload_engine.truth_manifest import build_case_truth_manifest
+
+    if find_substrate() is None:
+        pytest.skip("merus-test-data-generator substrate not on disk")
+
+    plan = build_case_plan(parse_case_seed(_seed_body({"medical_history": {}})))
+    assert plan.medical_assertions is None
+    assert not any("medical_assertions" in warning for warning in plan.warnings)
+    truth = build_case_truth_manifest(plan)
+    assert "assertions" not in truth["channels"]
+
+
 def test_reasoned_revision_chain_is_valid() -> None:
     first = _opinion(
         report_stage="interim",
