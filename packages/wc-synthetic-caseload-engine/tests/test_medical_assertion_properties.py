@@ -89,20 +89,22 @@ def test_sampler_cohort_matches_pinned_empirical_metrics() -> None:
     assert result.invalid_ledgers == 0
     assert result.ledger_digests == MEASURED_LEDGER_DIGESTS
 
-    # Supported share per model. Counsel's 0.75-0.85 band holds for the two
-    # models counsel's estimate speaks to. The contention share is pinned at
-    # its measured value and asserted against a structural floor: the frozen
-    # psych rules (B.4-B.5 items 4-7) mandate an indeterminate — therefore
-    # thin — psych add-on in every no-psych-condition case, which caps the
-    # realized contention share below the counsel band. Flagged as a contract
-    # tension for review rather than silently tuned around.
+    # Supported share per model, per counsel ruling AJC-61/D1 (2026-08-11):
+    # the 0.75-0.85 band governs OPINIONS and ASSERTIONS; contentions carry a
+    # 0.65 floor with the measured value pinned exactly above. The psych
+    # realism rules stand unchanged, and the fix-round-1 reversions (H2:
+    # candidacy is world-truth-typed, the firefighter override is gone) are
+    # part of the measured number. The measured contention share is 0.5880 —
+    # BELOW the ruling's floor. Per the ruling that is a fresh counsel
+    # question, not the sampler's to absorb: the floor stays, the number is
+    # pinned, and the decomposition travels with the fix-round report.
     for model in ("medical_opinions", "apportionment_assertions"):
         counts = MEASURED_ASSERTION_QUALITY_COUNTS[model]
         share = counts["supported"] / sum(counts.values())
         assert 0.75 <= share <= 0.85, (model, share)
     contention_counts = MEASURED_ASSERTION_QUALITY_COUNTS["contentions"]
     contention_share = contention_counts["supported"] / sum(contention_counts.values())
-    assert 0.65 <= contention_share <= 0.85, contention_share
+    assert contention_share >= 0.65, contention_share
 
 
 def test_recipe_to_grade_confusion_matrix_matches_pinned_cohort() -> None:

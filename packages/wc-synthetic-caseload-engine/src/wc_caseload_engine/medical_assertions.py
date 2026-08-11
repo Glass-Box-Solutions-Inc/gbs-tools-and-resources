@@ -1120,6 +1120,31 @@ QUALITY_TARGET_WEIGHTS = AssertionKnob[tuple[Fraction, Fraction, Fraction]](
     source="sme-answers.md q7 (supported mass); residual split AJC-61 design calibration.",
 )
 
+OPINION_RECIPE_WEIGHTS = AssertionKnob[tuple[Fraction, Fraction, Fraction]](
+    value=(
+        Fraction(15, 16),
+        Fraction(1, 24),
+        Fraction(1, 48),
+    ),
+    provenance="derived",
+    rationale=(
+        "Counsel's ~80% figure (q7) describes REALIZED opinions, and an "
+        "opinion's grade is the worst of everything it stands behind: the "
+        "B.6 lifecycle knobs (final omission, the zero-share defect) and the "
+        "worst-of endorsement/row drag land on top of whatever the "
+        "foundation recipe builds — the measured supported-recipe "
+        "conditional is 0.8267, and a thin or unsupportable foundation "
+        "recipe never grades supported. This mix is the sanctioned "
+        "construction adjustment (Part 3:659) solved against that drag so "
+        "the realized share lands mid-band: 15/16 x 0.8267 = 0.775. The "
+        "thin:unsupportable residual keeps counsel's 2:1 split."
+    ),
+    source=(
+        "Derived from QUALITY_TARGET_WEIGHTS and the measured 6,000-case "
+        "cohort drag (fix round 1, PR #44)."
+    ),
+)
+
 P_PSYCH_COMPONENT = AssertionKnob[Fraction](
     value=Fraction(9, 20),
     provenance="counsel_estimate",
@@ -1251,6 +1276,7 @@ ASSERTION_KNOBS: Final[dict[str, AssertionKnob]] = {
     "P_PRIOR_AWARD_CONTENTION": P_PRIOR_AWARD_CONTENTION,
     "P_SIBTF_CONTENTION": P_SIBTF_CONTENTION,
     "P_FIREFIGHTER_CONTENTION": P_FIREFIGHTER_CONTENTION,
+    "OPINION_RECIPE_WEIGHTS": OPINION_RECIPE_WEIGHTS,
     "QUALITY_TARGET_WEIGHTS": QUALITY_TARGET_WEIGHTS,
     "P_PSYCH_COMPONENT": P_PSYCH_COMPONENT,
     "P_PSYCH_ADD_ON_CONTENTION_GIVEN_COMPONENT": P_PSYCH_ADD_ON_CONTENTION_GIVEN_COMPONENT,
@@ -2720,6 +2746,7 @@ def _append_sampled(
     # --- the stage's sampled evaluator opinion (B.6) ------------------------
     sampled_opinions: list[MedicalOpinion] = []
     pending_dispositions: list[tuple[list[str | SemanticKey], list[str | SemanticKey]]] = []
+    pending_opinion_recipes: list[str] = []
     sampled_assertions: list[ApportionmentAssertion] = []
     stage = context.target_stage
     if stage != "intake" and len(opinions) < 8:
@@ -2739,6 +2766,22 @@ def _append_sampled(
             author_role = context.eval_type if context.eval_type in ("qme", "ame") else "ptp"
             report_stage, state = "final", "determined"
         opinion_salt = f"{author_role}:case"
+
+        # The opinion's own quality-target recipe. Counsel's q7 figure was
+        # stated about OPINIONS, and it describes realized output, so the
+        # construction mix is OPINION_RECIPE_WEIGHTS — the counsel target
+        # solved against the measured worst-of drag. Semantically salted like
+        # every other stream; the target drives only the opinion's OWN
+        # foundation construction (B.8's exam / relevant-review / rationale
+        # row) and is then discarded — the worst-of grader owns the label,
+        # and B.6's omission, deferral and zero-share machinery keep their
+        # independent counsel-knobbed draws.
+        opinion_recipe = ("supported", "thin", "unsupportable")[
+            _weighted_index(
+                _assertion_rng(seed, "quality-target", opinion_salt),
+                OPINION_RECIPE_WEIGHTS.value,
+            )
+        ]
 
         determination_kind: str | None = None
         determination_rationale: str | None = None
@@ -2813,10 +2856,10 @@ def _append_sampled(
         # Dispositions. The evidence policy is absolute — an evaluator never
         # endorses what the record contradicts and always rejects it — while
         # WHICH supported claims the report takes up is construction: a real
-        # report addresses the disputed issue, not the docket. The opinion has
-        # no quality-target recipe of its own: B.6's omission, deferral and
-        # zero-share machinery are its deliberate defects, and everything else
-        # it stands behind grades it through the worst-of rubric.
+        # report addresses the disputed issue, not the docket. The opinion's
+        # quality-target recipe never touches dispositions; it drives the
+        # foundation surface alone, and everything the opinion stands behind
+        # still grades it through the worst-of rubric.
         endorses: list[str | SemanticKey] = []
         rejects: list[str | SemanticKey] = []
         supportable: list[tuple[str | SemanticKey, Contention]] = []
@@ -3119,6 +3162,15 @@ def _append_sampled(
                 if trace is not None:
                     trace.distractor_included += 1
 
+        # The recipe's foundation levers (B.8's own-foundation row). thin:
+        # drop the rationale — exam and review stand, missing-one grades thin.
+        # unsupportable: no exam, no rationale, and — only when the opinion
+        # carries no allocated rows — no review either, so the foundation is
+        # empty without planting an accidental item-5b gap under every owned
+        # assertion. With rows present the review survives and the build
+        # grades thin: recipe/grade disagreement is measured, never hidden.
+        if opinion_recipe == "unsupportable" and not sampled_assertions:
+            reviewed = []
         sampled_opinions.append(
             MedicalOpinion(
                 id="opn-99",  # relabelled below
@@ -3128,7 +3180,7 @@ def _append_sampled(
                 apportionment_state=state,  # type: ignore[arg-type]
                 determination_kind=determination_kind,  # type: ignore[arg-type]
                 determination_rationale=determination_rationale,
-                examination_performed=True,
+                examination_performed=opinion_recipe != "unsupportable",
                 reviewed_condition_ids=tuple(
                     ref for family, ref in reviewed if family == "condition"
                 ),
@@ -3142,11 +3194,14 @@ def _append_sampled(
                 rejects_contention_ids=(),
                 rationale=(
                     "the conclusions rest on the examination and the record reviewed"
+                    if opinion_recipe == "supported"
+                    else None
                 ),
                 quality="supported",
             )
         )
         pending_dispositions.append((list(endorses), list(rejects)))
+        pending_opinion_recipes.append(opinion_recipe)
         if trace is not None:
             trace.lifecycle.append(
                 f"{author_role}:{report_stage}:{state}:{determination_kind or '-'}:{branch}"
@@ -3176,8 +3231,8 @@ def _append_sampled(
     used_opinion_ids = {o.id for o in opinions}
     relabelled_opinions: list[MedicalOpinion] = []
     opinion_id_map: dict[str, str] = {}
-    for opinion, (endorse_refs, reject_refs) in zip(
-        sampled_opinions, pending_dispositions, strict=True
+    for opinion, (endorse_refs, reject_refs), opinion_recipe in zip(
+        sampled_opinions, pending_dispositions, pending_opinion_recipes, strict=True
     ):
         assigned = _first_unused("opn", used_opinion_ids)
         used_opinion_ids.add(assigned)
@@ -3195,6 +3250,8 @@ def _append_sampled(
                 }
             )
         )
+        if trace is not None:
+            trace.recipes.append((assigned, opinion_recipe, ""))
 
     used_assertion_ids = {a.id for a in assertions}
     relabelled_assertions: list[ApportionmentAssertion] = []

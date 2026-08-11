@@ -320,28 +320,30 @@ def build_cohort(sample: int | None = None) -> CohortResult:
 # ---------------------------------------------------------------------------
 
 MEASURED_RECIPE_GRADE_COUNTS: dict[tuple[str, str], int] = {
-    ("supported", "supported"): 4631,
-    ("supported", "thin"): 336,
-    ("supported", "unsupportable"): 126,
-    ("thin", "thin"): 823,
-    ("thin", "unsupportable"): 60,
-    ("unsupportable", "supported"): 29,
-    ("unsupportable", "thin"): 38,
-    ("unsupportable", "unsupportable"): 317,
+    ("supported", "supported"): 8625,
+    ("supported", "thin"): 1331,
+    ("supported", "unsupportable"): 874,
+    ("thin", "thin"): 1188,
+    ("thin", "unsupportable"): 100,
+    ("unsupportable", "supported"): 9,
+    ("unsupportable", "thin"): 111,
+    ("unsupportable", "unsupportable"): 461,
 }
-"""The recipe->grade confusion matrix. Off-diagonal mass is the proof quality
-is rederived rather than copied: 336 supported-recipe builds graded thin, 29
-unsupportable-recipe builds graded supported, and so on. There is no
-('thin', 'supported') cell — a dropped rationale never grades supported."""
+"""The recipe->grade confusion matrix, pooled over contentions, opinions and
+apportionment rows (opinions carry their own foundation recipe since fix
+round 1). Off-diagonal mass is the proof quality is rederived rather than
+copied: 1,331 supported-recipe builds graded thin, 9 unsupportable-recipe
+builds graded supported, and so on. There is no ('thin', 'supported') cell —
+a dropped rationale never grades supported."""
 
 MEASURED_ASSERTION_QUALITY_COUNTS: dict[str, dict[str, int]] = {
-    "contentions": {"supported": 3642, "thin": 1023, "unsupportable": 433},
-    "medical_opinions": {"supported": 4143, "thin": 327, "unsupportable": 530},
-    "apportionment_assertions": {"supported": 1018, "thin": 174, "unsupportable": 70},
+    "contentions": {"supported": 3785, "thin": 1893, "unsupportable": 759},
+    "medical_opinions": {"supported": 3852, "thin": 542, "unsupportable": 606},
+    "apportionment_assertions": {"supported": 997, "thin": 195, "unsupportable": 70},
 }
 
 MEASURED_CONTENTION_FAMILY_COUNTS: dict[str, int] = {
-    "condition": 1176,
+    "condition": 2515,
     "firefighter": 333,
     "prior_award": 480,
     "prior_claim": 348,
@@ -375,22 +377,26 @@ MEASURED_LIFECYCLE_COUNTS: dict[str, int] = {
 
 MEASURED_EVIDENCE_BUDGET_COUNTS: dict[int, int] = {1: 1723, 2: 2053, 3: 1224}
 
-MEASURED_DISTRACTOR_COUNTS: dict[str, int] = {"available": 1062, "included": 275}
+MEASURED_DISTRACTOR_COUNTS: dict[str, int] = {"available": 1063, "included": 274}
 
 MEASURED_ELIGIBLE_COUNTS: dict[str, int] = {
-    "condition": 6673,
+    "condition": 14056,
     "firefighter": 1680,
     "prior_award": 2400,
     "prior_claim": 2400,
     "sibtf": 1674,
 }
+"""Condition eligibility counts EVERY world-truth condition (fix round 1, H2):
+the B.4 table keys candidacy on type alone, and visibility only conditions the
+B.5 evidence read — so the denominator includes conditions the file never
+shows."""
 
 MEASURED_PSYCH_COMPONENT_CASES: int = 2754
 MEASURED_PSYCH_ADD_ON_CASES: int = 571
 
 MEASURED_LEDGER_DIGESTS: dict[int, str] = {
     0: "9aef89d1d0fa1960577934d3bcf759e57790a2939bfcf8b6f998e20a384033a4",
-    1: "6133b2c2cd8243bd93877ea39a7e65ae14ac80a1f0266404f2a28f0255a95da6",
+    1: "f941da1ed756daf22d69722dc9deb91fb6d06c12b2ef62483a0967ce18748cd6",
     2: "7cca22aa5a73a70bd857334ac189fd733d71bc3621a1d48013fb4796ac902c8b",
     3: "e2c883cb04f28372a9ed3201d28b03002667ea5f04236c858f83a0e5e3aaa11f",
     4: "ea63d1e28821028c5d1d69d31d39b457121d8a8e5d750f24f2ed6af11e505071",
@@ -399,8 +405,8 @@ MEASURED_LEDGER_DIGESTS: dict[int, str] = {
     5040: "9aef89d1d0fa1960577934d3bcf759e57790a2939bfcf8b6f998e20a384033a4",
     5280: "80c42649922691ba8e3b04cf7f29ced015a934d9685850e27c6b61613ff087f7",
     5520: "bd76d7573b109b8655dd5abdea76f0c02a42fdeba32438efa42f451a838b5899",
-    5760: "3075e9b091d5cb9933532f39366c2d67650b9bf912e10cbac23358e1cb025940",
-    5999: "66714452795d9c0e56d138c5bb8294ff35d30f4b034da209d740e1f91f5e7c40",
+    5760: "355ba49a3313a8dd71529546cf3bb48bd3ef65848c81b29d30c6d909d81724ea",
+    5999: "699eb80b3f8d8fee66d0170c079cf54e86319c5ff07d1a30e9ed6ae7948a11a1",
 }
 """Spot digests: one per cell plus each witness stratum's first case and the
 last case. Indexes 0 and 5040 legitimately coincide — both are intake cases
