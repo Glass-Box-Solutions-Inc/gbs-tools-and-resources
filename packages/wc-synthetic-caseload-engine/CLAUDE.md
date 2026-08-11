@@ -112,6 +112,25 @@ If an import breaks, fix the bridge — not by copying files.
   pools (`mtus_citations` and `future_medical_items`) by forcing deterministic ordering at
   the boundaries, and that behavior is part of the package contract.
 
+### Substrate pin (AJC-73)
+
+`substrate_pin.txt` at the package root records the substrate commit the determinism gates
+(the full suite plus `tools/golden_gate.py --check`) were last verified against.
+`check_substrate_pin()` WARNs on drift and never fails — `substrate.py`'s docstrings carry
+the rationale, and it holds for CI too, where the engine job surfaces a mismatch as a
+non-blocking `::warning` annotation. A blocking check would force every substrate-touching
+PR into a rubber-stamp pin bump; accordingly `tests/test_substrate_pin.py` enforces only
+that the pin exists and is well-formed, never that it matches the checkout.
+
+**Refresh from main state only, after a substrate-changing merge lands — never from a
+branch.** Squash-merges rewrite the merged commits, so a SHA recorded on a branch names a
+commit main's history will never contain. The demo golden's `recordedWith.substrateSha` is
+exactly such a commit — recording-time provenance from the AJC-72 branch, lawful because
+`recordedWith` is never enforced — and it is not this pin. To refresh: on main after the
+merge, re-run the gates, then write the output of
+`git -C packages/merus-test-data-generator log -1 --format=%H -- .` as the pin's value
+(step-by-step in the pin file's own header).
+
 ---
 
 ## Determinism rules (non-negotiable)
@@ -197,6 +216,7 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_doc_controls.py` | The precedence matrix in isolation |
 | `test_taxonomy_sync.py` | 353-subtype parity and drift detection |
 | `test_substrate_bridge.py` | The bridge imports cleanly (fail fast, clear message) |
+| `test_substrate_pin.py` | The pin file is committed and well-formed, and `check_substrate_pin`'s WARN-on-mismatch and silent paths (AJC-73) |
 | `test_cli_surface.py` | Command surface, exit codes, templates |
 | `test_lifecycle_paths.py` | Lien resolutions, recon outcomes, statutory windows, dates |
 | `test_date_spine.py` | Runway validation, timeline invariants, ordering-preserving track fitting |
