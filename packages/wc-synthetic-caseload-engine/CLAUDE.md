@@ -574,8 +574,11 @@ Consequences worth knowing before touching it:
   manifest's `assertions` channel (envelope stays `1.0.0`, `channelVersion 1.0.0`, a
   `ledgerDigest` over the canonical payload, and a typed `validationContext` that keeps
   `validate --out` substrate-checkout-free). The label-position leakage probe scans every
-  analyzer-visible surface — including DOCX `docProps` and PDF metadata — for the reserved
-  keys and the bare token `unsupportable`.
+  analyzer-visible surface — parsed DOCX `docProps` (property NAMES included), the raw PDF
+  Info dictionary and annotations, decoded EML parts and header names, OCR over image-only
+  pages — for the reserved keys and the bare token `unsupportable`, with a planted positive
+  control per position. The OCR read needs the `tesseract-ocr` binary (CI installs it); an
+  image-only surface with no OCR engine fails the scan loudly rather than passing silently.
 - **Hikida is typed, not enumerated.** `DoctrineHook` stays at fourteen members (the
   fifteenth is AJC-62's, with the showcase golden re-record it forces);
   `claim_type="compensable_consequence"` + `treatment_causation` + `requested_apportionment`
