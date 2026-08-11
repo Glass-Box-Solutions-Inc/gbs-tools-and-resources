@@ -37,6 +37,7 @@ jobs:
       mcp-servers-gbs-voice: ${{ steps.filter.outputs.mcp-servers-gbs-voice }}
       merus-expert: ${{ steps.filter.outputs.merus-expert }}
       merus-test-data-generator: ${{ steps.filter.outputs.merus-test-data-generator }}
+      phi-substitution-engine: ${{ steps.filter.outputs.phi-substitution-engine }}
       phileas: ${{ steps.filter.outputs.phileas }}
       spectacles: ${{ steps.filter.outputs.spectacles }}
       squeegee: ${{ steps.filter.outputs.squeegee }}
@@ -74,6 +75,8 @@ jobs:
               - 'packages/merus-expert/**'
             merus-test-data-generator:
               - 'packages/merus-test-data-generator/**'
+            phi-substitution-engine:
+              - 'packages/phi-substitution-engine/**'
             phileas:
               - 'packages/phileas/**'
             spectacles:
@@ -200,6 +203,27 @@ jobs:
           cache: npm
           cache-dependency-path: packages/squeegee/package-lock.json
       - run: npm ci
+      - run: npm test
+
+  phi-substitution-engine:
+    name: "phi-substitution-engine"
+    needs: changes
+    if: needs.changes.outputs.phi-substitution-engine == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/phi-substitution-engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: packages/phi-substitution-engine/package-lock.json
+      - run: npm ci
+      # No lint script; tsc --noEmit is the type gate for this strict, framework-free
+      # engine, and the frozen-oracle test suites are the behavioural gate.
+      - run: npm run typecheck
       - run: npm test
 
   # ── Python packages ─────────────────────────────────────────────────────────
@@ -551,6 +575,7 @@ jobs:
       - mcp-servers-gbs-voice
       - merus-expert
       - merus-test-data-generator
+      - phi-substitution-engine
       - phileas
       - spectacles
       - squeegee
@@ -573,6 +598,7 @@ jobs:
             "${{ needs.mcp-servers-gbs-voice.result }}"
             "${{ needs.merus-expert.result }}"
             "${{ needs.merus-test-data-generator.result }}"
+            "${{ needs.phi-substitution-engine.result }}"
             "${{ needs.phileas.result }}"
             "${{ needs.spectacles.result }}"
             "${{ needs.squeegee.result }}"
