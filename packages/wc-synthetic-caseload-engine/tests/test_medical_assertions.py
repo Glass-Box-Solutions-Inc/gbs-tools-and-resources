@@ -1443,6 +1443,25 @@ def test_ungrounded_entity_hook_warns_and_survives() -> None:
     )
 
 
+def test_dangling_grounding_reference_warns_and_survives() -> None:
+    """A typed grounding whose entity ID resolves to no world-truth record
+    WARNS and the assertion stands — the frozen §C catalog carries no literal
+    for grounding-ID existence, so it is an authoring warning, never a
+    validation error (sol open question 3, fix round 1)."""
+    contention = _contention(
+        doctrine_hooks=("firefighter_presumption",),
+        groundings=(FirefighterPresumptionGrounding(condition_id="cond-77"),),
+    )
+    ledger = _ledger(contentions=(contention,))
+    assert not _problems(ledger)
+    warnings = assertion_warnings(_world(), ledger)
+    assert warnings == (
+        "medical_assertions: contention 'ctn-01' grounding for hook "
+        "'firefighter_presumption' references unknown condition 'cond-77'; "
+        "assertion retained",
+    )
+
+
 # ---------------------------------------------------------------------------
 # E.4 — the absent gate: nothing constructs behind a missing block
 # ---------------------------------------------------------------------------

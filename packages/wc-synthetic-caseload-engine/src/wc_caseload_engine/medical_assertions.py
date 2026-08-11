@@ -1902,11 +1902,14 @@ def grade_ledger(
 def assertion_warnings(
     history: AssertionWorldProjection, ledger: MedicalAssertionLedger
 ) -> tuple[str, ...]:
-    """Nonfatal authoring warnings — the ungrounded-explicit-hook case.
+    """Nonfatal authoring warnings — ungrounded hooks and dangling groundings.
 
     Warn, never block (decision #2): the hook is kept and the assertion stands;
-    the author is told the argument has nothing typed behind it. One warning
-    per distinct hook, sorted, so the output is stable.
+    the author is told the argument has nothing typed behind it. Grounding IDs
+    that resolve to no world-truth entity warn the same way — the frozen §C
+    catalog carries no literal for them, so existence is an authoring warning
+    rather than a validation error (sol open question 3, fix round 1). One
+    warning per distinct finding, sorted, so the output is stable.
     """
     ungrounded: set[str] = set()
     for contention in ledger.contentions:
@@ -1914,10 +1917,51 @@ def assertion_warnings(
         for hook in contention.doctrine_hooks:
             if hook in GROUNDABLE_HOOKS and hook not in supplied:
                 ungrounded.add(hook)
+
+    condition_ids = {condition.id for condition in history.conditions}
+    claim_ids = {claim.id for claim in history.prior_claims}
+    award_ids = {award.id for award in history.awards}
+    dangling: set[tuple[str, str, str, str, str]] = set()
+    for kind, items in (
+        ("contention", ledger.contentions),
+        ("apportionment assertion", ledger.apportionment_assertions),
+    ):
+        for item in items:
+            for grounding in item.groundings:
+                refs: list[tuple[str, str, set[str]]] = []
+                if isinstance(grounding, BensonGrounding):
+                    refs = [
+                        ("prior claim", ref, claim_ids)
+                        for ref in grounding.prior_claim_ids
+                    ]
+                elif isinstance(grounding, SibtfGrounding):
+                    refs = [
+                        ("condition", ref, condition_ids)
+                        for ref in grounding.preexisting_condition_ids
+                    ]
+                    refs.extend(
+                        ("prior award", ref, award_ids)
+                        for ref in grounding.prior_award_ids
+                    )
+                elif isinstance(grounding, Lc4664PriorAwardGrounding):
+                    refs = [("prior award", grounding.prior_award_id, award_ids)]
+                elif isinstance(grounding, FirefighterPresumptionGrounding):
+                    refs = [("condition", grounding.condition_id, condition_ids)]
+                for entity, ref, known in refs:
+                    if ref not in known:
+                        dangling.add((kind, item.id, grounding.hook, entity, ref))
+
     return tuple(
-        f"medical_assertions: doctrine hook '{hook}' has no typed MedicalHistory "
-        "grounding; explicit hook retained"
-        for hook in sorted(ungrounded)
+        [
+            f"medical_assertions: doctrine hook '{hook}' has no typed MedicalHistory "
+            "grounding; explicit hook retained"
+            for hook in sorted(ungrounded)
+        ]
+        + [
+            f"medical_assertions: {kind} '{item_id}' grounding for hook '{hook}' "
+            f"references unknown {entity} '{ref}'; assertion retained"
+            for kind, item_id, hook, entity, ref in sorted(dangling)
+        ]
     )
 
 
