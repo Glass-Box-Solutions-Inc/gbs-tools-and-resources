@@ -10,7 +10,7 @@ import type {
 } from "./ports";
 import { isAuditError, isAuditFailureCode, PhiAuditError } from "./errors";
 import { safeCodeString } from "../core/errors";
-import { preparedToTerminalEvent } from "./event-factory";
+import { preparedToTerminalEvent, safeClockNow } from "./event-factory";
 import { sanitizePreparedRecord, sanitizeTerminalEvent } from "./serializer";
 import { safeRead, safeString } from "../core/boundary-snapshot";
 
@@ -205,7 +205,7 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       // No in-process PREPARED record: a sweeper drains the durable spool/primary record instead.
       return;
     }
-    const event = preparedToTerminalEvent(inFlight.prepared, "unknown_after_send", null, occurredAt || this.#clock());
+    const event = preparedToTerminalEvent(inFlight.prepared, "unknown_after_send", null, occurredAt || safeClockNow(this.#clock));
     await this.finalize(inFlight.receipt, event);
   }
 

@@ -11,7 +11,7 @@ import type {
 } from "./ports";
 import type { SpoolKeyProvider, SpoolVolume } from "./spool-ports";
 import { PhiAuditError } from "./errors";
-import { preparedToTerminalEvent } from "./event-factory";
+import { preparedToTerminalEvent, safeClockNow } from "./event-factory";
 import { intrinsicCopy, safeString } from "../core/boundary-snapshot";
 
 /** Cleartext-envelope `createdAt` must be an ISO-8601 UTC instant (never injected free text). */
@@ -229,7 +229,7 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
           remaining += 1;
           continue;
         }
-        const event = entry.event ?? preparedToTerminalEvent(entry.prepared, "unknown_after_send", null, this.#clock());
+        const event = entry.event ?? preparedToTerminalEvent(entry.prepared, "unknown_after_send", null, safeClockNow(this.#clock));
         await primary.finalize(event);
         // Discard BEFORE counting `delivered` so a discard failure keeps the entry (idempotent retry).
         await this.#discard(entry.recordId);

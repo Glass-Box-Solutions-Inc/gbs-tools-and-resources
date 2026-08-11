@@ -92,13 +92,30 @@ function boundaryModeFor(identifierClass: IdentifierClass): BoundaryMode {
 /** Only staff-approved and structurally-deterministic forms; never a guess. */
 function expandForms(value: TaggedValue, locale: string): readonly string[] {
   const canonical = value.canonicalDisplayValue;
-  // §7/N2 / L12: `approvedAliases` is boundary data — read the PARENT getter ONCE getter-throw-safe,
-  // THEN copy by OWN index/length, so a throwing `approvedAliases` getter, a mutating getter (a real
-  // array on the `Array.isArray` read, then `[]` for the length), or an OWN poisoned iterator cannot
-  // drop an approved alias that would then egress raw. (compile() itself runs inside the orchestrator's
-  // fixed-closed try/catch, so any throw here already becomes DICTIONARY_UNAVAILABLE — this is
-  // defense-in-depth for direct compiler callers.)
-  const aliases = intrinsicCopy<string>(safeRead(value, "approvedAliases")) ?? [];
+  // §7/N2 / L12: `approvedAliases` is boundary data (an injected CaseTruthReader's return). Read the
+  // PARENT getter ONCE and DISTINGUISH three cases: GENUINELY-ABSENT (undefined/null → this subject has
+  // no aliases → []), UNREADABLE (a throwing getter), and MALFORMED (a non-array, or an array with a
+  // throwing own-index getter). Unreadable/malformed MUST FAIL CLOSED — silently defaulting to `[]`
+  // would compile an INCOMPLETE dictionary and egress the omitted alias RAW to the trace/provider (a
+  // fail-OPEN; this is exactly the regression an earlier `safeRead(...) ?? []` introduced). The throw
+  // carries a FIXED, PHI-free message and is caught by the orchestrator's fail-closed try/catch
+  // (→ DICTIONARY_UNAVAILABLE); a direct compiler caller likewise sees only the fixed message.
+  let rawAliases: unknown;
+  try {
+    rawAliases = (value as { approvedAliases?: unknown }).approvedAliases;
+  } catch {
+    throw new Error("approved_aliases_unreadable");
+  }
+  let aliases: string[];
+  if (rawAliases === undefined || rawAliases === null) {
+    aliases = [];
+  } else {
+    const copied = intrinsicCopy<string>(rawAliases);
+    if (copied === null) {
+      throw new Error("approved_aliases_not_an_array");
+    }
+    aliases = copied;
+  }
   let expansion: VariantExpansion | null = null;
   switch (value.field.expander) {
     case "person-name":

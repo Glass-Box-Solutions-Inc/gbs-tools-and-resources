@@ -8,7 +8,7 @@ import type {
 } from "./ports";
 import { isAuditError } from "./errors";
 import { isPhiEngineFailureCode, safeCodeString } from "../core/errors";
-import { preparedToTerminalEvent } from "./event-factory";
+import { preparedToTerminalEvent, safeClockNow } from "./event-factory";
 
 /** Performs the single provider egress for an attempt. Called at most once, only after durability. */
 export type ProviderInvoker = () => Promise<void>;
@@ -123,7 +123,7 @@ export class PhiAuditedAttemptCoordinator {
       // Only a RECOGNIZED fixed failure code may be recorded; a caller-supplied code that is not a
       // known PhiEngineFailureCode (and could carry PHI) is replaced with the fixed fallback.
       const safeCode = isPhiEngineFailureCode(rawPreconditionCode) ? rawPreconditionCode : "PRECONDITION_FAILED";
-      const event = preparedToTerminalEvent(prepared, "failed_closed", safeCode, this.#clock());
+      const event = preparedToTerminalEvent(prepared, "failed_closed", safeCode, safeClockNow(this.#clock));
       await this.#finalizeQuietly(receipt, event);
       return {
         outcome: "failed_closed",
@@ -144,7 +144,7 @@ export class PhiAuditedAttemptCoordinator {
       const rawCode = safeCodeString(error);
       const failureCode =
         rawCode !== undefined && isPhiEngineFailureCode(rawCode) ? rawCode : "PROVIDER_INVOCATION_FAILED";
-      const failedEvent = preparedToTerminalEvent(prepared, "unknown_after_send", failureCode, this.#clock());
+      const failedEvent = preparedToTerminalEvent(prepared, "unknown_after_send", failureCode, safeClockNow(this.#clock));
       await this.#finalizeQuietly(receipt, failedEvent);
       return {
         outcome: "unknown_after_send",
@@ -153,7 +153,7 @@ export class PhiAuditedAttemptCoordinator {
         durability,
       };
     }
-    const event = preparedToTerminalEvent(prepared, "completed", null, this.#clock());
+    const event = preparedToTerminalEvent(prepared, "completed", null, safeClockNow(this.#clock));
     await this.#finalizeQuietly(receipt, event);
     return { outcome: "completed", errorCode: null, providerInvoked: true, durability };
   }

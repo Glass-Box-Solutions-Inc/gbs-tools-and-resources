@@ -1,6 +1,25 @@
 import type { PhiAuditEvent, PhiAuditOutcome, PhiAuditPreparedRecord } from "./ports";
 import { safeRead } from "../core/boundary-snapshot";
 
+/** Fixed, PHI-free ISO-8601 instant substituted when an injected clock throws (§7/N2). */
+const SAFE_FALLBACK_INSTANT = "1970-01-01T00:00:00.000Z";
+
+/**
+ * Calls an INJECTED clock getter-throw-safe (§7/N2). A broken/hostile clock that throws — its message
+ * could carry PHI — must never propagate out of a terminal-event build (which the coordinator/emitter/
+ * spool/wrapper run OUTSIDE a guard on their fail-closed paths); it falls back to a fixed safe instant
+ * so the terminal is still recorded. A non-throwing but non-ISO return is left as-is and separately
+ * rejected by the serializer's ISO-8601 allow-list downstream.
+ */
+export function safeClockNow(clock: () => string): string {
+  try {
+    const now = clock();
+    return typeof now === "string" ? now : SAFE_FALLBACK_INSTANT;
+  } catch {
+    return SAFE_FALLBACK_INSTANT;
+  }
+}
+
 /**
  * Builds a terminal audit event from a durable PREPARED record. It copies only counts/IDs/versions/
  * latency metadata and adds the terminal `outcome`/`failureCode`/`occurredAt`. The bigint dictionary

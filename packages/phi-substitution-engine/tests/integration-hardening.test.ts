@@ -3590,4 +3590,58 @@ describe("GLY-330 R14 (§7/N2): structural ingestion hardening at the public bou
     }
     expect(String(thrown?.message ?? "") + leaked).not.toContain(CANARY);
   });
+
+  // -------------------------------------------------------------------------
+  // Round 16 — the gate caught two REAL in-scope leaks that R15 left/introduced.
+  // -------------------------------------------------------------------------
+
+  // R16-1 (gate finding 1) — an injected CaseTruthReader whose approvedAliases getter THROWS must FAIL
+  // CLOSED, not silently compile an INCOMPLETE dictionary. (R15 regressed this to fail-OPEN by reading
+  // the getter with `safeRead(...) ?? []`, which converts "unreadable trusted truth" into "no aliases"
+  // and egresses an omitted alias RAW to the trace/provider.)
+  it("engine.substitute: an unreadable approvedAliases getter fails closed, never compiles incomplete", async () => {
+    const hostileTagged: any = tagged("s-alias", "PERSON_NAME", "Alice Canonical", "Claimant");
+    Object.defineProperty(hostileTagged, "approvedAliases", { configurable: true, get: (): never => { throw new Error(CANARY); } });
+    const { engine } = makeEngine([hostileTagged]);
+    let thrown: any; let out: any;
+    try {
+      out = await engine.substitute({
+        context: ctx("att-r16-1"), policy: policy(),
+        segments: [{ path: "system", kind: "system", text: "Zebediah Aliasson needs help" }], purpose: "generation",
+      } as any);
+    } catch (e) { thrown = e; }
+    expect(out).toBeUndefined();
+    expect((thrown as any)?.code).toBe("DICTIONARY_UNAVAILABLE");
+    expect(String(thrown?.message ?? "")).not.toContain(CANARY);
+  });
+
+  // R16-2 (gate finding 2) — the injected clock is UNTRUSTED: a throwing clock in the fail-closed
+  // record BUILD (which runs OUTSIDE #recordFailedClosedTerminal's try/catch) must not propagate a raw
+  // (PHI) throw out of the public embedText API. The missing-factory path exercises exactly this.
+  it("wrapper.embedText: a throwing injected clock cannot escape the fail-closed path raw", async () => {
+    const gate: Gate = { prepared: false };
+    const { engine } = makeEngine(DEFAULT_TRUTH);
+    const provider = new FakeRawProvider(gate);
+    const trace = new FakeSafeTrace();
+    const primary = new RecordingPrimaryStore(gate);
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
+    const emitter = new DurablePhiAuditEmitter(primary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
+    const router = new OriginalContentBaaRouter({
+      extractOriginalText, rawProvider: provider, baaProviderId: "azure-openai-baa",
+      nonBaaProviderId: "openai", claudeBaaEnabled: true, matterIsPhiTagged: true,
+    } as any);
+    const wrapper = new ComposedProtectedAiProvider({
+      engine, context: { require: (): Promise<any> => Promise.resolve(ctx("att-r16-2")) },
+      policy: { require: (): Promise<any> => Promise.resolve(policy()) },
+      options: new StructuralOptionsProjector(), router, safeTrace: trace, audit: emitter,
+      invokeRaw: provider, engineVersion: ENGINE,
+      clock: (): string => { throw new Error(CANARY); },
+      // NO embeddingOptionsFactory -> the missing-factory path records a fail-closed terminal, whose
+      // record build calls the (throwing) clock.
+    } as any);
+    let thrown: any; let out: any;
+    try { out = await wrapper.embedText("Maria García", "default"); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("PROVIDER_SAFETY_GATE_FAILED");
+  });
 });

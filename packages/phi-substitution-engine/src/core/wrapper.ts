@@ -42,7 +42,7 @@ import type {
   PhiAuditOutcome,
   PhiAuditPreparedRecord,
 } from "../audit/ports";
-import { isAuditError, preparedToTerminalEvent, toTotalIdentifierCounts } from "../audit/index";
+import { isAuditError, preparedToTerminalEvent, safeClockNow, toTotalIdentifierCounts } from "../audit/index";
 import { isPhiEngineFailureCode, PhiEngineError, safeCodeString, toFailureCode } from "./errors";
 import { safeRead, safeString, intrinsicCopy } from "./boundary-snapshot";
 
@@ -78,6 +78,7 @@ function errorCodeString(error: unknown): string {
   const code = safeCodeString(error);
   return code !== undefined && isPhiEngineFailureCode(code) ? code : "FAILED_CLOSED";
 }
+
 
 export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string>
   implements
@@ -510,6 +511,15 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     };
   }
 
+  /**
+   * §7/N2: the injected clock is UNTRUSTED — a throwing clock must never propagate a raw (PHI) throw
+   * out of a record/event build (which runs OUTSIDE the fail-closed try/catch of the recording paths).
+   * Delegates to the shared getter-throw-safe clock accessor (single chokepoint with the audit layer).
+   */
+  #safeNow(): string {
+    return safeClockNow(this.#clock);
+  }
+
   #preparedRecord(
     context: MatterAiContext,
     substitution: SubstitutionResult,
@@ -530,7 +540,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       detectorName: substitution.detector?.name ?? null,
       detectorVersion: substitution.detector?.version ?? null,
       latencyMs: substitution.latencyMs,
-      preparedAt: this.#clock(),
+      preparedAt: this.#safeNow(),
     };
   }
 
@@ -551,7 +561,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       detectorName: null,
       detectorVersion: null,
       latencyMs: { dictionary: 0, detector: 0, total: 0 },
-      preparedAt: this.#clock(),
+      preparedAt: this.#safeNow(),
     };
   }
 
@@ -630,7 +640,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     outcome: PhiAuditOutcome,
     failureCode: string | null,
   ): Promise<void> {
-    const event: PhiAuditEvent = preparedToTerminalEvent(record, outcome, failureCode, this.#clock());
+    const event: PhiAuditEvent = preparedToTerminalEvent(record, outcome, failureCode, this.#safeNow());
     await this.#deps.audit.finalize(receipt, event);
   }
 
