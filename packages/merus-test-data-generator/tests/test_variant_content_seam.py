@@ -1128,6 +1128,50 @@ def test_restamp_provenance_uses_only_fresh_pinned_base_cases(base_worktree, tmp
             os.unlink(output)
 
 
+def test_restamp_provenance_refuses_output_inside_base_worktree(base_worktree, monkeypatch):
+    import subprocess
+
+    from tests.render_baseline import BASELINE_PATH, _PACKAGE_ROOT
+
+    recorder = _recorder_module()
+    base_payload_bytes = _trusted_base_payload_bytes(base_worktree)
+    feature_payload_bytes = open(BASELINE_PATH, "rb").read()
+    destination = os.path.join(base_worktree, "restamp-output-inside-base.json")
+    assert not os.path.exists(destination)
+
+    base_recorder_ran = False
+
+    def forbidden_base_recorder(_base_package_root: str) -> dict:
+        nonlocal base_recorder_ran
+        base_recorder_ran = True
+        pytest.fail("base recorder ran before --output base-worktree containment refusal")
+
+    monkeypatch.setattr(recorder, "_run_base_recorder", forbidden_base_recorder)
+    with pytest.raises(SystemExit) as exc:
+        recorder._run_restamp_mode(base_worktree, output=destination)
+
+    assert "refusing to write --output inside the detached base worktree" in str(exc.value)
+    assert not base_recorder_ran
+    assert not os.path.exists(destination)
+    _assert_base_worktree_clean(base_worktree, base_payload_bytes)
+    assert open(BASELINE_PATH, "rb").read() == feature_payload_bytes
+    status = subprocess.run(
+        [
+            "git",
+            "status",
+            "--porcelain",
+            "--untracked-files=no",
+            "--",
+            "tests/golden/render_baseline.json",
+        ],
+        cwd=_PACKAGE_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert not status.stdout, f"feature baseline is not clean: {status.stdout.rstrip()}"
+
+
 def test_restamp_provenance_restores_base_worktree_on_success_and_failure(base_worktree):
     from tests.render_baseline import BASELINE_PATH
 
@@ -1284,6 +1328,29 @@ def test_restamp_provenance_changes_only_meta_note():
         recorder._assert_restamp_payload_delta_is_meta_note_only(base_payload, bad_candidate)
     assert "restamp would change more than _meta.note" in str(exc.value)
     assert "cases.case.alpha.text" in str(exc.value)
+
+
+def test_check_mode_refuses_output(tmp_path):
+    recorder = _recorder_module()
+    output = tmp_path / "check-output.json"
+
+    with pytest.raises(SystemExit) as exc:
+        recorder.main(["--check", "--output", str(output)])
+
+    assert "--output is supported only with --record and --restamp-provenance" in str(exc.value)
+    assert not output.exists()
+
+
+def test_output_destination_resolves_relative_to_invoking_cwd(tmp_path, monkeypatch):
+    recorder = _recorder_module()
+    monkeypatch.chdir(tmp_path)
+
+    destination = recorder._resolve_output_destination(
+        "result.json",
+        os.path.join(recorder._PACKAGE_ROOT, "tests", "golden", "render_baseline.json"),
+    )
+
+    assert destination == str(tmp_path / "result.json")
 
 
 def test_status_paths_preserves_porcelain_path_prefix(tmp_path):
