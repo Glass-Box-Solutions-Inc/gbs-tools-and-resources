@@ -31,17 +31,20 @@ export interface ReversalKeys {
  * cache payload.
  */
 export class InProcessReversalHandle implements ReversalHandle {
-  readonly tenantId: TenantId;
-  readonly matterId: MatterId;
-  readonly dictionaryVersion: DictionaryVersion;
-  readonly operationId: OperationId;
-  readonly attemptId: OperationAttemptId;
   /**
-   * §7 / NEW-2: reserved token-shaped source literals escaped before matching are held
-   * as a PRIVATE in-process capability. They are never exposed via a public property or
-   * object spread; the only way to use them is the bounded `restoreEscapedLiterals`
-   * method, which applies them to reversed text and never hands the raw literals back.
+   * §7 / NEW-2: the handle is an OPAQUE in-process capability. EVERY field — the scoping ids,
+   * the branded bigint version, AND the escaped source literals — is held in a PRIVATE field.
+   * The `ReversalHandle` shape is exposed only through prototype GETTERS, never own-enumerable
+   * data properties, so an object spread `{ ...handle }` copies NOTHING: no branded id, no
+   * bigint version, and above all no raw token-shaped source literal. The literals are usable
+   * solely through the bounded `restoreEscapedLiterals` method (which never hands them back),
+   * and the only serialization path, `toJSON`, always throws.
    */
+  readonly #tenantId: TenantId;
+  readonly #matterId: MatterId;
+  readonly #dictionaryVersion: DictionaryVersion;
+  readonly #operationId: OperationId;
+  readonly #attemptId: OperationAttemptId;
   readonly #literals: readonly EscapedTokenLiteral[];
 
   constructor(keys: {
@@ -52,12 +55,32 @@ export class InProcessReversalHandle implements ReversalHandle {
     attemptId: OperationAttemptId;
     literals?: readonly EscapedTokenLiteral[];
   }) {
-    this.tenantId = keys.tenantId;
-    this.matterId = keys.matterId;
-    this.dictionaryVersion = keys.dictionaryVersion;
-    this.operationId = keys.operationId;
-    this.attemptId = keys.attemptId;
+    this.#tenantId = keys.tenantId;
+    this.#matterId = keys.matterId;
+    this.#dictionaryVersion = keys.dictionaryVersion;
+    this.#operationId = keys.operationId;
+    this.#attemptId = keys.attemptId;
     this.#literals = keys.literals ?? [];
+  }
+
+  get tenantId(): TenantId {
+    return this.#tenantId;
+  }
+
+  get matterId(): MatterId {
+    return this.#matterId;
+  }
+
+  get dictionaryVersion(): DictionaryVersion {
+    return this.#dictionaryVersion;
+  }
+
+  get operationId(): OperationId {
+    return this.#operationId;
+  }
+
+  get attemptId(): OperationAttemptId {
+    return this.#attemptId;
   }
 
   /**
