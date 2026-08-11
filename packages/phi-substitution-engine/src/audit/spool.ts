@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import type { Ciphertext, OperationAttemptId } from "../core/brands";
+import type { Ciphertext, DictionaryVersion, OperationAttemptId } from "../core/brands";
 import type {
   AuditPreparationReceipt,
   AuditPrimaryStore,
@@ -78,6 +78,23 @@ function recordIdFor(attemptId: OperationAttemptId): string {
   return `spool:${attemptId}`;
 }
 
+/** Durable prepare-success/finalize-pending marker byte written alongside a record. */
+const PRIMED_MARKER = new TextEncoder().encode("1");
+
+/**
+ * A PREPARED record read back from the volume carries its bigint identifiers as JSON strings
+ * (see `toWireBytes`). Restore the branded `dictionaryVersion` bigint so a drained record is
+ * byte-for-type identical to the one that was prepared — the primary store must never receive
+ * a string where a branded version bigint is contracted (CONTRACT §5 N3/N4, L2).
+ */
+function rehydratePrepared(value: unknown): PhiAuditPreparedRecord {
+  const record = value as PhiAuditPreparedRecord & { dictionaryVersion: unknown };
+  return {
+    ...record,
+    dictionaryVersion: BigInt(record.dictionaryVersion as string | number | bigint) as unknown as DictionaryVersion,
+  };
+}
+
 /**
  * Local AES-256-GCM encrypted spool. Plaintext is accepted only at this boundary and is never
  * written to disk: only authenticated ciphertext envelopes reach the volume. Draining is
@@ -107,6 +124,14 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
 
   public async appendPrepared(record: PhiAuditPreparedRecord): Promise<AuditPreparationReceipt> {
     const recordId = recordIdFor(record.attemptId);
+    // N3 durable idempotency: after a restart the in-process finalized-set is empty, so the
+    // durable `.final` marker on the volume is the only source of truth. A fresh append for an
+    // attempt already finalized on the volume must be refused — never permit a second egress.
+    if ((await this.#volume.read(`${recordId}.final`)) !== null) {
+      throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", record.operationId, {
+        attemptId: record.attemptId,
+      });
+    }
     const envelope = this.#encrypt(recordId, record.attemptId, toWireBytes(record));
     const { flushed } = await this.#volume.putAtomic(recordId, encodeEnvelope(envelope));
     if (!flushed) {
@@ -167,6 +192,14 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
       // prior drain whose finalize failed (a partial). Deliver the terminal, and only
       // discard after finalize succeeds so a partial retry can never drop it.
       entry.preparedInPrimary = true;
+      // Persist prepare-success/finalize-pending durably BEFORE finalize. After a restart the
+      // in-memory `preparedInPrimary` is lost; without this marker an `already_exists` from
+      // primary would be misread as an unrelated duplicate and the terminal dropped. If the
+      // durable flush fails, keep the entry and retry on a later drain rather than proceed.
+      if (!(await this.#persistPrimedMarker(entry))) {
+        remaining += 1;
+        continue;
+      }
       const event = entry.event ?? preparedToTerminalEvent(entry.prepared, "unknown_after_send", null, this.#clock());
       try {
         await primary.finalize(event);
@@ -190,7 +223,7 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
   public async rebuildFromVolume(): Promise<void> {
     const ids = await this.#volume.list();
     for (const recordId of ids) {
-      if (recordId.endsWith(".final")) {
+      if (recordId.endsWith(".final") || recordId.endsWith(".primed")) {
         continue;
       }
       if (this.#entries.has(recordId)) {
@@ -201,7 +234,7 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
         continue;
       }
       const preparedEnvelope = decodeEnvelope(preparedBytes);
-      const prepared = fromWireBytes(this.#decrypt(preparedEnvelope)) as PhiAuditPreparedRecord;
+      const prepared = rehydratePrepared(fromWireBytes(this.#decrypt(preparedEnvelope)));
       const finalBytes = await this.#volume.read(`${recordId}.final`);
       let event: PhiAuditEvent | null = null;
       let eventEnvelope: EncryptedSpoolEnvelope | null = null;
@@ -209,6 +242,10 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
         eventEnvelope = decodeEnvelope(finalBytes);
         event = fromWireBytes(this.#decrypt(eventEnvelope)) as PhiAuditEvent;
       }
+      // Restore the durable prepare-success/finalize-pending flag so a partial (prepared in
+      // primary, finalize failed) drained on a PRIOR replica is recognised as OUR own attempt
+      // after restart — its terminal is still owed and must not be dropped as a duplicate.
+      const preparedInPrimary = (await this.#volume.read(`${recordId}.primed`)) !== null;
       this.#entries.set(recordId, {
         recordId,
         attemptId: preparedEnvelope.attemptId,
@@ -216,7 +253,7 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
         event,
         preparedEnvelope,
         eventEnvelope,
-        preparedInPrimary: false,
+        preparedInPrimary,
       });
     }
   }
@@ -243,10 +280,23 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
     return { survivesReplicaRestart: this.#volume.durable && !this.#acknowledgedLoss };
   }
 
+  /**
+   * Persist the prepare-success/finalize-pending marker durably BEFORE finalize is attempted.
+   * After a restart the in-memory `preparedInPrimary` flag is gone; `rebuildFromVolume` reads
+   * this marker to restore it, so an `already_exists` from primary is recognised as OUR partial
+   * (terminal still owed) rather than misread as an unrelated external duplicate and dropped.
+   * Returns false on flush failure so the caller keeps the entry for a later retry.
+   */
+  async #persistPrimedMarker(entry: SpoolEntry): Promise<boolean> {
+    const { flushed } = await this.#volume.putAtomic(`${entry.recordId}.primed`, PRIMED_MARKER);
+    return flushed;
+  }
+
   async #discard(recordId: string): Promise<void> {
     const entry = this.#entries.get(recordId);
     this.#entries.delete(recordId);
     await this.#volume.remove(recordId);
+    await this.#volume.remove(`${recordId}.primed`);
     if (entry?.eventEnvelope) {
       await this.#volume.remove(`${recordId}.final`);
     }
