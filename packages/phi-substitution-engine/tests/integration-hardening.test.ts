@@ -3644,4 +3644,59 @@ describe("GLY-330 R14 (§7/N2): structural ingestion hardening at the public bou
     expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
     expect((thrown as any)?.code).toBe("PROVIDER_SAFETY_GATE_FAILED");
   });
+
+  // -------------------------------------------------------------------------
+  // Round 17 — the gate caught two ADJACENT variations of the R16 classes on
+  // exotic trusted-boundary carriers.
+  // -------------------------------------------------------------------------
+
+  // R17-1 (gate finding 1) — intrinsicCopy trusted a Proxy `length` trap: a truncating length (0 while
+  // element 0 exists) silently copied `[]`, so the omitted approvedAlias compiled away and egressed
+  // raw. intrinsicCopy now rejects a length-inconsistent carrier -> FAIL CLOSED (DICTIONARY_UNAVAILABLE).
+  it("engine.substitute: a length-trap Proxy on approvedAliases fails closed, never compiles incomplete", async () => {
+    const hostileTagged: any = tagged("s-alias", "PERSON_NAME", "Alice Canonical", "Claimant");
+    hostileTagged.approvedAliases = new Proxy(["Zebediah Aliasson"], {
+      get(t: any, p: any, r: any): any { return p === "length" ? 0 : Reflect.get(t, p, r); },
+    });
+    const { engine } = makeEngine([hostileTagged]);
+    let thrown: any; let out: any;
+    try {
+      out = await engine.substitute({
+        context: ctx("att-r17-1"), policy: policy(),
+        segments: [{ path: "system", kind: "system", text: "Zebediah Aliasson needs help" }], purpose: "generation",
+      } as any);
+    } catch (e) { thrown = e; }
+    expect(out).toBeUndefined();
+    expect((thrown as any)?.code).toBe("DICTIONARY_UNAVAILABLE");
+  });
+
+  // R17-2 (gate finding 2) — the injected clock is read EAGERLY at construction; a throwing `clock`
+  // GETTER on the deps object must not propagate a raw (PHI) throw out of the public constructor.
+  it("wrapper constructor: a throwing injected clock getter cannot escape construction raw", async () => {
+    const gate: Gate = { prepared: false };
+    const { engine } = makeEngine(DEFAULT_TRUTH);
+    const provider = new FakeRawProvider(gate);
+    const trace = new FakeSafeTrace();
+    const primary = new RecordingPrimaryStore(gate);
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
+    const emitter = new DurablePhiAuditEmitter(primary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
+    const router = new OriginalContentBaaRouter({
+      extractOriginalText, rawProvider: provider, baaProviderId: "azure-openai-baa",
+      nonBaaProviderId: "openai", claudeBaaEnabled: true, matterIsPhiTagged: true,
+    } as any);
+    const deps: any = {
+      engine, context: { require: (): Promise<any> => Promise.resolve(ctx("att-r17-2")) },
+      policy: { require: (): Promise<any> => Promise.resolve(policy()) },
+      options: new StructuralOptionsProjector(), router, safeTrace: trace, audit: emitter,
+      invokeRaw: provider, engineVersion: ENGINE,
+      get clock(): never { throw new Error(CANARY); },
+    };
+    let ctorErr: any; let wrapper: any;
+    try { wrapper = new ComposedProtectedAiProvider(deps); } catch (e) { ctorErr = e; }
+    let opErr: any; let out: any;
+    if (wrapper !== undefined) {
+      try { out = await wrapper.embedText("Maria García", "default"); } catch (e) { opErr = e; }
+    }
+    expect(String(ctorErr?.message ?? "") + String(opErr?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
+  });
 });

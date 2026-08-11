@@ -95,7 +95,20 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
 
   public constructor(deps: ComposedProtectedAiProviderDeps<GenerateOptions, EmbeddingKind>) {
     this.#deps = deps;
-    this.#clock = deps.clock ?? ((): string => new Date().toISOString());
+    // §7/N2: `deps.clock` is the ONE dependency read EAGERLY at construction; a throwing `clock` getter
+    // must not propagate a raw (PHI) throw out of the public constructor. Read it getter-throw-safe and
+    // fall back to the default clock. (Every OTHER dependency is read lazily inside a guarded request
+    // path, so a throwing getter there is already sanitized to a fixed code.)
+    let injectedClock: unknown;
+    try {
+      injectedClock = deps.clock;
+    } catch {
+      injectedClock = undefined;
+    }
+    this.#clock =
+      typeof injectedClock === "function"
+        ? (injectedClock as () => string)
+        : ((): string => new Date().toISOString());
   }
 
   public async generateText(options: GenerateOptions): Promise<DisplayText> {

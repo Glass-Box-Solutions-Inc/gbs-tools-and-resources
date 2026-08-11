@@ -54,8 +54,22 @@ export function intrinsicCopy<T>(input: unknown): T[] | null {
   const out: T[] = [];
   try {
     const len = (input as { length: number }).length;
+    // A genuine array's `length` is always a non-negative integer. A Proxy-over-array whose `length`
+    // trap returns anything else is not a faithful carrier — fail closed.
+    if (!Number.isInteger(len) || len < 0) {
+      return null;
+    }
     for (let i = 0; i < len; i += 1) {
       out[out.length] = (input as T[])[i] as T;
+    }
+    // §7/N2: a Proxy-over-array whose `length` UNDER-reports (hides trailing elements) would silently
+    // TRUNCATE this copy — a fail-OPEN when the copy feeds a REQUIRED set (e.g. approved surface forms,
+    // whose omission egresses the value RAW). Reject if an OWN element exists AT the claimed length: the
+    // carrier is then not a faithful array. (A Proxy that ALSO traps getOwnPropertyDescriptor/has to
+    // fully conceal that element is indistinguishable from the source simply OMITTING it — a trusted-
+    // source concealment no boundary read can detect, out of scope per the accepted threat line.)
+    if (Object.prototype.hasOwnProperty.call(input, len)) {
+      return null;
     }
   } catch {
     return null;
