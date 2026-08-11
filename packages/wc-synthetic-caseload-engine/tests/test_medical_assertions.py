@@ -1857,13 +1857,15 @@ def _scan_assertion_leakage(
     raw bytes, every filename, relpath and directory name; DOCX body XML plus
     ``docProps`` parsed as key/value properties (reserved-key detection on the
     property NAMES); the PDF Info dictionary raw (custom keys included —
-    ``document.metadata`` exposes only the standard ones), XMP stream,
-    annotations and page text; OCR over image-only pages (an unscannable
-    OCR-only surface fails loudly rather than passing silently); decoded EML
-    parts (a base64 body hides the token from the raw-bytes sweep) and EML
-    header names; and the CLI stdout/stderr when supplied. The truth/ subtree
-    is the ONLY exclusion — it is the scorer boundary the labels are supposed
-    to live behind.
+    ``document.metadata`` exposes only the standard ones), the XMP packet
+    parsed so element and attribute NAMES are keys (an unparseable packet
+    fails loudly), annotations through BOTH ``annotation.info`` and the raw
+    xref key enumeration (``.info`` cannot see a custom key), and page text;
+    OCR over image-only pages (an unscannable OCR-only surface fails loudly
+    rather than passing silently); decoded EML parts (a base64 body hides the
+    token from the raw-bytes sweep) and EML header names; and the CLI
+    stdout/stderr when supplied. The truth/ subtree is the ONLY exclusion —
+    it is the scorer boundary the labels are supposed to live behind.
     """
     import email
     import email.policy
@@ -1949,12 +1951,31 @@ def _scan_assertion_leakage(
                     note_token(json.dumps(info), f"pdf-info:{rel}")
                 xmp_xref = document.xref_xml_metadata()
                 if xmp_xref:
-                    note_token(
-                        document.xref_stream(xmp_xref).decode(
-                            "utf-8", errors="replace"
-                        ),
-                        f"pdf-xmp:{rel}",
+                    xmp_text = document.xref_stream(xmp_xref).decode(
+                        "utf-8", errors="replace"
                     )
+                    note_token(xmp_text, f"pdf-xmp:{rel}")
+                    # Structured read: XMP element and attribute NAMES are
+                    # keys — a property named assertionQuality is exactly as
+                    # loud as one valued unsupportable. An XMP packet the
+                    # parser cannot read fails the scan rather than passing
+                    # silently (same discipline as the OCR surface).
+                    try:
+                        xmp_root = ElementTree.fromstring(xmp_text)
+                    except ElementTree.ParseError as error:
+                        raise RuntimeError(
+                            f"pdf-xmp:{rel} carries an XMP packet that does "
+                            f"not parse ({error}); the reserved-key scan "
+                            "cannot certify element and attribute names it "
+                            "cannot read"
+                        ) from error
+                    xmp_keys: dict[str, str] = {}
+                    for element in xmp_root.iter():
+                        xmp_keys[element.tag.rsplit("}", 1)[-1]] = element.text or ""
+                        for attribute, value in element.attrib.items():
+                            xmp_keys[attribute.rsplit("}", 1)[-1]] = value
+                    surfaces.append(f"{rel}!xmp")
+                    note_reserved(xmp_keys, f"pdf-xmp:{rel}")
                 for page in document:
                     for annotation in page.annots() or ():
                         note_reserved(
@@ -1962,6 +1983,24 @@ def _scan_assertion_leakage(
                         )
                         note_token(
                             json.dumps(annotation.info), f"pdf-annotation:{rel}"
+                        )
+                        # The RAW annotation dictionary. ``annotation.info``
+                        # surfaces only the standard fields — a custom
+                        # /assertionQuality key on the annot object is
+                        # invisible to it (sol proved with a live PyMuPDF
+                        # probe, fix round 2 F1) — so the keys are enumerated
+                        # through the xref like the Info dictionary's.
+                        raw_annotation = {
+                            key: document.xref_get_key(annotation.xref, key)[1]
+                            for key in document.xref_get_keys(annotation.xref)
+                        }
+                        surfaces.append(f"{rel}!annot{annotation.xref}")
+                        note_reserved(
+                            raw_annotation, f"pdf-annotation-raw:{rel}"
+                        )
+                        note_token(
+                            json.dumps(raw_annotation),
+                            f"pdf-annotation-raw:{rel}",
                         )
                     text = page.get_text()
                     note_token(text, f"pdf-text:{rel}")
@@ -2215,8 +2254,18 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
         assert info_type == "xref", "the planted PDF lost its Info dictionary"
         doc.xref_set_key(int(info_value.split()[0]), "assertionQuality", "(planted)")
         page = doc[0]
-        page.add_text_annot((72, 72), "unsupportable")
+        annot = page.add_text_annot((72, 72), "unsupportable")
+        # A custom key on the RAW annotation dictionary — invisible to
+        # annotation.info, visible only to the xref enumeration (sol F1).
+        doc.xref_set_key(annot.xref, "assertionQuality", "(planted)")
         page.insert_text((72, 120), "unsupportable")
+        # An XMP packet whose reserved key is an attribute NAME, not a value.
+        doc.set_xml_metadata(
+            '<x:xmpmeta xmlns:x="adobe:ns:meta/">'
+            '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+            '<rdf:Description assertionQuality="planted"/>'
+            "</rdf:RDF></x:xmpmeta>"
+        )
         planted_pdf = text_pdf.with_suffix(".planted.pdf")
         doc.save(planted_pdf)
     text_pdf.unlink()
@@ -2285,6 +2334,14 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
         for f in findings
     ), "the planted custom Info key was not caught by the raw-dictionary read"
     assert any(f.startswith("bare token at pdf-annotation:") for f in findings)
+    assert any(
+        f.startswith("reserved key pdf-annotation-raw:") and ".assertionQuality" in f
+        for f in findings
+    ), "the planted raw annotation key was not caught by the xref enumeration"
+    assert any(
+        f.startswith("reserved key pdf-xmp:") and ".assertionQuality" in f
+        for f in findings
+    ), "the planted XMP attribute NAME was not caught by the parsed packet read"
     assert any(f.startswith("bare token at pdf-text:") for f in findings)
     assert any(f.startswith("bare token at pdf-ocr:") for f in findings), (
         "the rasterized token was not recovered from the image-only page"

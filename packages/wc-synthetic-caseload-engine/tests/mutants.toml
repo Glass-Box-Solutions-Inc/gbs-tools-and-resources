@@ -2536,3 +2536,29 @@ replace = '''            would_be = {
                 supportable[0] if author_role == "ptp" else None,
             )'''
 note = 'AJC-61, fix round 2 (sol F2, proved on cohort-4803). Two distinct explicit contentions may legally share the B.2 tuple; keying grades on it keeps only the last twin and the evaluator endorses nothing. The guard reproduces exactly that scenario.'
+
+[[mutant]]
+id = 'm19-23'
+title = 'the leakage scan stops reading parsed XMP element and attribute names'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
+find = '''                    surfaces.append(f"{rel}!xmp")
+                    note_reserved(xmp_keys, f"pdf-xmp:{rel}")'''
+replace = '''                    surfaces.append(f"{rel}!xmp")'''
+note = 'AJC-61, fix round 2 (sol F1). The token sweep alone cannot see a reserved key that is an XMP element or attribute NAME; the positive control plants assertionQuality as an attribute name and must stop being found.'
+
+[[mutant]]
+id = 'm19-24'
+title = 'the leakage scan stops enumerating raw annotation dictionary keys'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
+find = '''                        surfaces.append(f"{rel}!annot{annotation.xref}")
+                        note_reserved(
+                            raw_annotation, f"pdf-annotation-raw:{rel}"
+                        )
+                        note_token(
+                            json.dumps(raw_annotation),
+                            f"pdf-annotation-raw:{rel}",
+                        )'''
+replace = '''                        surfaces.append(f"{rel}!annot{annotation.xref}")'''
+note = 'AJC-61, fix round 2 (sol F1, live-probe proven). annotation.info cannot see a custom /assertionQuality key on the annot object; only the xref enumeration can, and the positive control plants exactly that key.'
