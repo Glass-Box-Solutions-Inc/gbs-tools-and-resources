@@ -1,0 +1,5 @@
+# src/coverage/ is a SOURCE module (N7 coverage-registry contracts), NOT test-coverage output.
+# The monorepo-root .gitignore's un-anchored `coverage/` rule wrongly matches it, which left
+# src/coverage/contracts.ts (imported by the frozen src/index.ts) untracked and broke fresh
+# checkouts / CI. Re-include the directory here so it and future N7 files are tracked.
+!/src/coverage/

@@ -1,0 +1,68 @@
+{
+  "name": "@glass-box-solutions-inc/phi-substitution-engine",
+  "version": "0.1.0",
+  "description": "Deterministic PHI substitution engine (phase-1 frozen contract). Framework-free core with opt-in adapters.",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./adapters/nestjs": {
+      "types": "./dist/adapters/nestjs/index.d.ts",
+      "import": "./dist/adapters/nestjs/index.js"
+    },
+    "./adapters/prisma": {
+      "types": "./dist/adapters/prisma/index.d.ts",
+      "import": "./dist/adapters/prisma/index.js"
+    },
+    "./adapters/provider-sdk": {
+      "types": "./dist/adapters/provider-sdk/index.d.ts",
+      "import": "./dist/adapters/provider-sdk/index.js"
+    },
+    "./adapters/langfuse": {
+      "types": "./dist/adapters/langfuse/index.d.ts",
+      "import": "./dist/adapters/langfuse/index.js"
+    },
+    "./adapters/sentry": {
+      "types": "./dist/adapters/sentry/index.d.ts",
+      "import": "./dist/adapters/sentry/index.js"
+    },
+    "./adapters/azure": {
+      "types": "./dist/adapters/azure/index.d.ts",
+      "import": "./dist/adapters/azure/index.js"
+    },
+    "./adapters/http": {
+      "types": "./dist/adapters/http/index.d.ts",
+      "import": "./dist/adapters/http/index.js"
+    },
+    "./adapters/phileas-wire": {
+      "types": "./dist/adapters/phileas-wire/index.d.ts",
+      "import": "./dist/adapters/phileas-wire/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "CONTRACT"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
