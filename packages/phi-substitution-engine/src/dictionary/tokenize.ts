@@ -91,12 +91,19 @@ export function tokenize(
 ): TokenizeResult {
   // The compiled Aho–Corasick matcher is the sole source of dictionary spans.
   const dictionaryCandidates = dictionary.match(originalText);
-  const detectorCandidates: DetectorCollisionSpan[] = detectorSpans.map((span) => ({
-    startUtf16: span.startUtf16 as Utf16Offset,
-    endUtf16: span.endUtf16 as Utf16Offset,
-    identifierClass: span.identifierClass,
-    confidence: span.confidence,
-  }));
+  // Intrinsic index iteration (own-index + own-`length`), NEVER `Array.prototype.map` (§7/N2 / L12):
+  // a hostile `map` override that dropped detector candidates would make a detected structured
+  // identifier (e.g. an email) pass through untokenized and egress raw.
+  const detectorCandidates: DetectorCollisionSpan[] = [];
+  for (let i = 0; i < (detectorSpans as { length: number }).length; i += 1) {
+    const span = detectorSpans[i]!;
+    detectorCandidates[detectorCandidates.length] = {
+      startUtf16: span.startUtf16 as Utf16Offset,
+      endUtf16: span.endUtf16 as Utf16Offset,
+      identifierClass: span.identifierClass,
+      confidence: span.confidence,
+    };
+  }
 
   // L3/L12: the collision leaf applies C1–C8 and dictionary-over-detector
   // precedence over BOTH candidate sets in a fixed, order-independent way.

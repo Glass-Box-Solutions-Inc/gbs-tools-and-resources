@@ -341,12 +341,16 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
    */
   async #traceTokenizedRequest(prepared: PreparedEgress<GenerateOptions, EmbeddingKind>): Promise<void> {
     try {
-      await this.#deps.safeTrace.request(
-        prepared.substitution.segments.map((segment: TokenizedTextSegment) => ({
-          path: segment.path,
-          text: segment.text,
-        })),
-      );
+      // Intrinsic index iteration (never `Array.prototype.map`): the substitution result comes from
+      // an injected engine, so a hostile own/overridden `map` must not be able to swap the TOKENIZED
+      // segments for a raw-PHI payload that then reaches the trace sink (§7/N2 / N2-observability).
+      const segments = prepared.substitution.segments;
+      const traced: { path: string; text: TokenizedText }[] = [];
+      for (let i = 0; i < (segments as { length: number }).length; i += 1) {
+        const segment = segments[i] as TokenizedTextSegment;
+        traced[traced.length] = { path: segment.path, text: segment.text };
+      }
+      await this.#deps.safeTrace.request(traced);
     } catch (error) {
       await this.#finalizeQuietly(prepared, "failed_closed", errorCodeString(error));
       throw new PhiEngineError(

@@ -17,6 +17,7 @@ export {
   AtomicTokenReverser,
   InMemoryReversalStore,
   InProcessReversalHandle,
+  isInProcessReversalHandle,
   reverseText,
   type ReversalKeys,
 } from "./reversal";

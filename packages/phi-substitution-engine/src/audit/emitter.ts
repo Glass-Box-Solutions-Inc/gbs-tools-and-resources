@@ -11,6 +11,7 @@ import type {
 import { isAuditError, isAuditFailureCode, PhiAuditError } from "./errors";
 import { safeCodeString } from "../core/errors";
 import { preparedToTerminalEvent } from "./event-factory";
+import { sanitizeTerminalEvent } from "./serializer";
 
 interface InFlight {
   readonly receipt: AuditPreparationReceipt;
@@ -117,11 +118,15 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     }
     // Validate the exact allow-list before anything is published as a terminal event.
     this.#serializer.serialize(event);
+    // §7/N2: persist a READ-ONCE, validated, inert snapshot — NOT the live event object. A store that
+    // re-read a mutating getter (valid on the validation read, PHI on the persistence read) would
+    // otherwise land a canary in the durable record; the snapshot has only plain data.
+    const durable = sanitizeTerminalEvent(event);
     try {
       if (receipt.location === "PRIMARY_STORE") {
-        await this.#primary.finalize(event);
+        await this.#primary.finalize(durable);
       } else {
-        await this.#spool.finalize(receipt, event);
+        await this.#spool.finalize(receipt, durable);
       }
     } catch (error) {
       // §7/N2: a RAW store/spool finalize rejection must never surface an upstream message/code to

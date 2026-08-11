@@ -64,6 +64,7 @@ import {
   InMemoryReversalStore,
   InMemoryTokenAssignmentStore,
   InProcessReversalHandle,
+  isInProcessReversalHandle,
   SentinelSourceTokenEscaper,
   SENTINEL_OPEN,
   SENTINEL_CLOSE,
@@ -403,7 +404,7 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     // handle's BOUNDED capability (never via raw literal data) so a source literal like
     // `[[Claimant]]` round-trips to itself, never a sentinel.
     const restored =
-      handle instanceof InProcessReversalHandle
+      isInProcessReversalHandle(handle)
         ? handle.restoreEscapedLiterals(String(reversed))
         : String(reversed);
     // L6/§7: a residual escape sentinel that never completed into a literal is internal machinery

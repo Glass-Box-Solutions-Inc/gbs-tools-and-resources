@@ -234,6 +234,19 @@ export async function reverseText(
   return out;
 }
 
+/**
+ * Guarded `instanceof InProcessReversalHandle` (§7/N2): a hostile Proxy `getPrototypeOf` /
+ * `Symbol.hasInstance` trap could throw a PHI canary during the prototype-chain walk. An
+ * unclassifiable handle is simply treated as not-in-process (identity restore), never a throw.
+ */
+export function isInProcessReversalHandle(value: unknown): value is InProcessReversalHandle {
+  try {
+    return value instanceof InProcessReversalHandle;
+  } catch {
+    return false;
+  }
+}
+
 /** Adapts the shared `reverseText` to the frozen `TokenReverser` port. */
 export class AtomicTokenReverser implements TokenReverser {
   constructor(
@@ -243,24 +256,33 @@ export class AtomicTokenReverser implements TokenReverser {
   ) {}
 
   async reverse(text: TokenizedText, handle: ReversalHandle): Promise<DisplayText> {
-    const reversed = await reverseText(
-      text,
-      {
-        tenantId: handle.tenantId,
-        matterId: handle.matterId,
-        dictionaryVersion: handle.dictionaryVersion,
-        operationId: handle.operationId,
-      },
-      this.store,
-      this.grammar,
-      this.policy,
-    );
+    let reversed: string;
+    try {
+      reversed = await reverseText(
+        text,
+        {
+          tenantId: handle.tenantId,
+          matterId: handle.matterId,
+          dictionaryVersion: handle.dictionaryVersion,
+          operationId: handle.operationId,
+        },
+        this.store,
+        this.grammar,
+        this.policy,
+      );
+    } catch {
+      // §7/N2: a raw store rejection (its message/`.code` could carry PHI) is NEVER forwarded — fail
+      // closed with a fixed-code error carrying only the operation id, exactly as the streaming
+      // reverser does. `reverseText` itself only throws fixed-code ReversalFailedErrors, but an
+      // injected store's `resolveEncounteredTokens` rejection would otherwise propagate raw.
+      throw new ReversalFailedError(handle.operationId);
+    }
     // L6/§7: restore escaped source-token literals via the handle's bounded capability, then FAIL
     // CLOSED on any residual escape sentinel — identical to the non-stream orchestrator path and the
     // streaming reverser — so a provider-generated dangling sentinel can never reach the display
     // through this port either.
     const restored =
-      handle instanceof InProcessReversalHandle
+      isInProcessReversalHandle(handle)
         ? handle.restoreEscapedLiterals(String(reversed))
         : String(reversed);
     if (restored.includes(SENTINEL_OPEN) || restored.includes(SENTINEL_CLOSE)) {

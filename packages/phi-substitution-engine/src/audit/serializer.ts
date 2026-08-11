@@ -49,6 +49,7 @@ type FieldSpec =
   | { readonly kind: "number" }
   | { readonly kind: "enum"; readonly values: readonly string[] }
   | { readonly kind: "enumOrNull"; readonly values: readonly string[] }
+  | { readonly kind: "timestamp" }
   | { readonly kind: "totalCounts" }
   | { readonly kind: "exactObject"; readonly fields: ObjectSchema };
 
@@ -78,7 +79,7 @@ const EVENT_SCHEMA: ObjectSchema = {
   latencyMs: { kind: "exactObject", fields: LATENCY_SCHEMA },
   outcome: { kind: "enum", values: AUDIT_OUTCOMES },
   failureCode: { kind: "enumOrNull", values: TERMINAL_FAILURE_CODES },
-  occurredAt: { kind: "string" },
+  occurredAt: { kind: "timestamp" },
 };
 
 const PREPARED_SCHEMA: ObjectSchema = {
@@ -96,12 +97,32 @@ const PREPARED_SCHEMA: ObjectSchema = {
   detectorName: { kind: "stringOrNull" },
   detectorVersion: { kind: "stringOrNull" },
   latencyMs: { kind: "exactObject", fields: LATENCY_SCHEMA },
-  preparedAt: { kind: "string" },
+  preparedAt: { kind: "timestamp" },
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+/**
+ * Membership test that touches NO `Array.prototype`/`Set.prototype` method (§7/N2): an in-scope
+ * single-method override (`Array.prototype.includes = () => true`) must not be able to approve a
+ * value that is NOT in the fixed allow-list — e.g. a raw/PHI `failureCode`. Own-index + own-`length`
+ * + `===` only.
+ */
+function listIncludes(values: readonly string[], value: string): boolean {
+  const len = (values as { length: number }).length;
+  for (let i = 0; i < len; i += 1) {
+    if (values[i] === value) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Strict ISO-8601 UTC instant — the ONLY shape a timestamp field may take. A caller-supplied
+ *  `occurredAt` (via `reconcileUnknownAfterSend`) is otherwise free text that would persist raw. */
+const ISO_8601_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
 function safeOperationId(candidate: unknown): OperationId | null {
   if (isPlainObject(candidate) && typeof candidate["operationId"] === "string") {
@@ -136,10 +157,13 @@ function validateField(root: unknown, value: unknown, spec: FieldSpec, path: str
       if (typeof value !== "number" || !Number.isFinite(value)) reject(root, path);
       return;
     case "enum":
-      if (typeof value !== "string" || !spec.values.includes(value)) reject(root, path);
+      if (typeof value !== "string" || !listIncludes(spec.values, value)) reject(root, path);
       return;
     case "enumOrNull":
-      if (value !== null && (typeof value !== "string" || !spec.values.includes(value))) reject(root, path);
+      if (value !== null && (typeof value !== "string" || !listIncludes(spec.values, value))) reject(root, path);
+      return;
+    case "timestamp":
+      if (typeof value !== "string" || !ISO_8601_UTC.test(value)) reject(root, path);
       return;
     case "totalCounts":
       validateTotalCounts(root, value, path);
@@ -157,16 +181,16 @@ function validateField(root: unknown, value: unknown, spec: FieldSpec, path: str
 function validateTotalCounts(root: unknown, value: unknown, path: string): void {
   if (!isPlainObject(value)) reject(root, path);
   const record = value as Record<string, unknown>;
-  const allowed = new Set<string>(IDENTIFIER_CLASSES);
   // Missing-required first: every identifier class must be present (explicit zeroes).
   for (const identifierClass of IDENTIFIER_CLASSES) {
     if (!Object.prototype.hasOwnProperty.call(record, identifierClass)) {
       missing(root, `${path}.${identifierClass}`);
     }
   }
-  // Extra keys are rejected even when nested (CONTRACT §7 recursive allow-list).
+  // Extra keys are rejected even when nested (CONTRACT §7 recursive allow-list). Membership is
+  // override-proof (no `Set.prototype.has`), so a hostile `has` cannot approve a sensitive key.
   for (const key of Object.keys(record)) {
-    if (!allowed.has(key)) reject(root, `${path}.${key}`);
+    if (!listIncludes(IDENTIFIER_CLASSES, key)) reject(root, `${path}.${key}`);
   }
   for (const identifierClass of IDENTIFIER_CLASSES) {
     const count = record[identifierClass];
@@ -177,16 +201,17 @@ function validateTotalCounts(root: unknown, value: unknown, path: string): void 
 function validateObject(root: unknown, value: unknown, schema: ObjectSchema, path: string): void {
   if (!isPlainObject(value)) reject(root, path);
   const record = value as Record<string, unknown>;
-  const allowed = new Set<string>(Object.keys(schema));
+  const allowed = Object.keys(schema);
   // 1. Missing-required.
-  for (const key of Object.keys(schema)) {
+  for (const key of allowed) {
     if (!Object.prototype.hasOwnProperty.call(record, key)) {
       missing(root, path === "" ? key : `${path}.${key}`);
     }
   }
-  // 2. Extra keys (recursive exact allow-list) — sensitive fields are rejected here.
+  // 2. Extra keys (recursive exact allow-list) — sensitive fields are rejected here. Membership is
+  // override-proof (no `Set.prototype.has`).
   for (const key of Object.keys(record)) {
-    if (!allowed.has(key)) reject(root, path === "" ? key : `${path}.${key}`);
+    if (!listIncludes(allowed, key)) reject(root, path === "" ? key : `${path}.${key}`);
   }
   // 3. Per-field types / nested shapes.
   for (const [key, spec] of Object.entries(schema)) {
@@ -214,6 +239,54 @@ function canonicalize(value: unknown, schema: ObjectSchema): Record<string, unkn
   return ordered;
 }
 
+function materializeShallow(value: unknown): unknown {
+  if (!isPlainObject(value)) {
+    return value;
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value)) {
+    out[key] = value[key]; // single read
+  }
+  return out;
+}
+
+/**
+ * Reads every own field of `value` EXACTLY ONCE into a plain snapshot (recursively for the schema's
+ * nested objects), so the subsequent validate + canonicalize passes read inert data (§7/N2 TOCTOU):
+ * a getter that returns a valid value on the validation read and a PHI value on the canonicalization
+ * / persistence read cannot get a validated-but-different value into the durable bytes. Extra keys
+ * are preserved so the exact-allow-list rejection still fires on them.
+ */
+function materialize(value: unknown, schema: ObjectSchema): unknown {
+  if (!isPlainObject(value)) {
+    return value;
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value)) {
+    const spec = schema[key];
+    const raw = value[key]; // single read of a possibly-getter field
+    if (spec !== undefined && spec.kind === "exactObject") {
+      out[key] = materialize(raw, spec.fields);
+    } else if (spec !== undefined && spec.kind === "totalCounts") {
+      out[key] = materializeShallow(raw);
+    } else {
+      out[key] = raw;
+    }
+  }
+  return out;
+}
+
+/**
+ * Read-once, validated, plain-object projection of a terminal event (§7/N2). Every field is read a
+ * SINGLE time, validated against the exact allow-list, and returned as inert data — so a store that
+ * persists the returned event can never re-read a mutating getter into a PHI value.
+ */
+export function sanitizeTerminalEvent(event: PhiAuditEvent): PhiAuditEvent {
+  const snapshot = materialize(event, EVENT_SCHEMA);
+  validateObject(snapshot, snapshot, EVENT_SCHEMA, "");
+  return canonicalize(snapshot, EVENT_SCHEMA) as unknown as PhiAuditEvent;
+}
+
 /**
  * Enforces the exact, recursive metadata-only allow-list for audit records and produces a
  * deterministic canonical byte form. Any extra property (sensitive or otherwise), at any nesting
@@ -221,9 +294,8 @@ function canonicalize(value: unknown, schema: ObjectSchema): Record<string, unkn
  */
 export class ExactAllowListAuditSerializer implements PhiAuditSerializer {
   public serialize(event: PhiAuditEvent): Uint8Array {
-    validateObject(event, event, EVENT_SCHEMA, "");
-    const canonical = canonicalize(event, EVENT_SCHEMA);
-    return new TextEncoder().encode(JSON.stringify(canonical));
+    // Read-once snapshot → validate → canonical bytes (§7/N2 TOCTOU-safe).
+    return new TextEncoder().encode(JSON.stringify(sanitizeTerminalEvent(event)));
   }
 
   public validatePrepared(record: PhiAuditPreparedRecord): void {

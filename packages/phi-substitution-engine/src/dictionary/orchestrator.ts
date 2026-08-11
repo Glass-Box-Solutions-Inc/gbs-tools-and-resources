@@ -22,12 +22,26 @@ import type {
 import type { DetectorSpanInput } from "./tokenize";
 import { getOrCompile, tokenize } from "./tokenize";
 import {
+  AMBIGUOUS_KNOWN_IDENTIFIER,
   DICTIONARY_UNAVAILABLE,
   MISSING_TRUSTED_CONTEXT,
   isDictionaryError,
   type DictionaryFailureCode,
 } from "./errors";
+import type { AhoCorasickCompiledDictionary } from "./compiled-dictionary";
 import { isPhiEngineFailureCode, safeCodeString } from "../core/errors";
+
+/**
+ * Maps a caught error on the dictionary egress path to a fixed-code FAILED_CLOSED decision (§7/N2):
+ * a raw cache/compiler/tokenize rejection must NEVER surface its message/code. A recognized
+ * DictionaryError code is preserved (getter-throw-safe); anything else → the fixed fallback.
+ */
+function dictionaryFailClosed(error: unknown, fallback: DictionaryFailureCode): EgressDecision {
+  const rawCode = isDictionaryError(error) ? safeCodeString(error) : undefined;
+  const code: DictionaryFailureCode =
+    rawCode !== undefined && isPhiEngineFailureCode(rawCode) ? (rawCode as DictionaryFailureCode) : fallback;
+  return { kind: "FAILED_CLOSED", code, dictionaryVersion: null };
+}
 
 export type EgressDecision =
   | {
@@ -113,13 +127,27 @@ export async function decideEgress(req: EgressRequest, deps: EgressDeps): Promis
     schemaVersion: req.policy.schemaVersion,
     sourceTruthRevision: req.sourceTruthRevision,
   };
-  const compiled = await getOrCompile(deps.cache, deps.compiler, compileInput);
-  const { tokenizedText, reversedText } = tokenize(
-    compiled,
-    req.text,
-    req.policy.locale as unknown as string,
-    req.detectorSpans ?? [],
-  );
+  // §7/N2: the cache/compiler are injected adapters — a raw rejection (message/`.code` could carry
+  // PHI) must never propagate out of decideEgress; fail closed with a fixed code.
+  let compiled: AhoCorasickCompiledDictionary;
+  try {
+    compiled = await getOrCompile(deps.cache, deps.compiler, compileInput);
+  } catch (error) {
+    return dictionaryFailClosed(error, DICTIONARY_UNAVAILABLE);
+  }
+  let tokenizedText: string;
+  let reversedText: string;
+  try {
+    ({ tokenizedText, reversedText } = tokenize(
+      compiled,
+      req.text,
+      req.policy.locale as unknown as string,
+      req.detectorSpans ?? [],
+    ));
+  } catch (error) {
+    // C6 ambiguity (and any other tokenize failure) fails closed; a known value is never guessed.
+    return dictionaryFailClosed(error, AMBIGUOUS_KNOWN_IDENTIFIER);
+  }
   // Only the tokenized text ever egresses; the raw provider is never invoked.
   return {
     kind: "SUBSTITUTED",

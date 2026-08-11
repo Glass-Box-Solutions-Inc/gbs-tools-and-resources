@@ -6,7 +6,7 @@ import type {
   TokenGrammarPolicy,
 } from "./ports";
 import { ReversalFailedError } from "./errors";
-import { reverseText, type ReversalKeys, InProcessReversalHandle } from "./reversal";
+import { reverseText, type ReversalKeys, InProcessReversalHandle, isInProcessReversalHandle } from "./reversal";
 import { SENTINEL_OPEN, SENTINEL_CLOSE } from "./escaper";
 
 const OPEN = "[[";
@@ -244,7 +244,7 @@ export class HoldbackReverseStreamFactory implements ReverseStreamFactory {
     // L6: pull the escaped-literal restore off the handle (bounded capability, never raw
     // literal data) so streamed output restores source literals just like non-stream reversal.
     const restore =
-      input.handle instanceof InProcessReversalHandle
+      isInProcessReversalHandle(input.handle)
         ? (text: string): string => (input.handle as InProcessReversalHandle).restoreEscapedLiterals(text)
         : IDENTITY_RESTORE;
     return new HoldbackReverseStream(keys, input.store, input.grammar, input.policy, input.sink, restore);

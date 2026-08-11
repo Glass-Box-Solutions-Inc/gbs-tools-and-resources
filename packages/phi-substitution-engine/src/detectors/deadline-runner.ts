@@ -88,9 +88,19 @@ export class SharedDeadlineDetectorRunner implements DetectorDeadlineRunner {
     }
 
     const normalized = normalizer.normalize(request.text, port.descriptor.engineVersion, raw);
-    if (!normalized.ok) {
+    // §7/N2: the normalizer is an injected adapter, so its result is UNTRUSTED. Read `.ok` (and
+    // `.spans`) behind a getter-throw guard — a hostile Proxy/getter trap must not throw a PHI canary
+    // out of the detector belt (detectWithin has no catch, only a finally). Fail closed on any read
+    // failure or non-ok result.
+    let spans: readonly DetectedSpan[];
+    try {
+      if (normalized.ok !== true) {
+        return null;
+      }
+      spans = normalized.spans;
+    } catch {
       return null;
     }
-    return { descriptor: port.descriptor, spans: normalized.spans };
+    return { descriptor: port.descriptor, spans };
   }
 }

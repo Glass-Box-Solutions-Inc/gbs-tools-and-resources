@@ -19,10 +19,12 @@ import {
   HoldbackReverseStreamFactory,
   InMemoryReversalStore,
   InProcessReversalHandle,
+  isInProcessReversalHandle,
   ReversalFailedError,
   reverseText,
   SENTINEL_OPEN,
 } from "../src/tokens/index";
+import { SharedDeadlineDetectorRunner } from "../src/detectors/deadline-runner";
 import {
   Aes256GcmAuditSpool,
   DurablePhiAuditEmitter,
@@ -36,8 +38,10 @@ import {
   decideEgress,
   DictionaryError,
   InMemoryCaseTruthReader,
+  InMemoryCompiledDictionaryCache,
   InMemoryDictionaryVersionCoordinator,
   isDictionaryError,
+  tokenize,
 } from "../src/dictionary/index";
 import { isPhiEngineError, PhiEngineError } from "../src/core/errors";
 
@@ -2436,5 +2440,212 @@ describe("GLY-330 R10 (§7/N2): hostile-object leak class swept across sibling m
       (Array.prototype as any).forEach = original;
     }
     expect(found).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R11 (§7/N2): the same hostile-object leak classes swept onto the REMAINING
+// twins the round-10 sweep missed — the non-streaming reverser, the dictionary
+// compile/cache path, the detector belt, the audit serializer's other fields,
+// and the last raw handle instanceof checks.
+// ---------------------------------------------------------------------------
+describe("GLY-330 R11 (§7/N2): hostile-object leak class swept onto remaining twins", () => {
+  const CANARY = "ALICE_SMITH_DOB_1970";
+  const boom = (): never => {
+    throw Object.assign(new Error(CANARY), { code: CANARY });
+  };
+
+  // R11-A — decideEgress: a raw cache/compiler rejection fails closed (real-adapter grade).
+  it("decideEgress: a raw compiler rejection fails closed, never forwarded", async () => {
+    const coordinator: any = { requireActiveReady: async (): Promise<any> => VERSION };
+    const cache = new InMemoryCompiledDictionaryCache();
+    const compiler: any = { compile: async (): Promise<never> => boom() };
+    let decision: any;
+    let thrown: any;
+    try {
+      decision = await decideEgress(
+        {
+          context: { tenantId: TENANT, matterId: MATTER } as any,
+          dictionaryHealth: "available",
+          text: "Maria García",
+          policy: { schemaVersion: SCHEMA, locale: LOCALE } as any,
+          engineVersion: ENGINE,
+          sourceTruthRevision: REVISION,
+        },
+        { coordinator, cache: cache as any, compiler },
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    const surfaced = JSON.stringify(decision ?? {}) + String(thrown?.message ?? "");
+    expect(surfaced).not.toContain(CANARY);
+    expect(decision?.kind).toBe("FAILED_CLOSED");
+  });
+
+  // R11-B — the NON-streaming reverser sanitizes a store rejection (twin of R10-B).
+  it("AtomicTokenReverser: a store rejection carrying PHI is sanitized to ReversalFailedError", async () => {
+    const hostileStore: any = { maximumEncounteredTokenBatch: 8, resolveEncounteredTokens: async (): Promise<never> => boom() };
+    const reverser = new AtomicTokenReverser(hostileStore, new BracketTokenGrammar(), BOUNDARY_TOKEN_GRAMMAR_POLICY);
+    const handle: any = { tenantId: TENANT, matterId: MATTER, dictionaryVersion: VERSION, operationId: b<any>("op-1") };
+    let thrown: any;
+    try {
+      await reverser.reverse(b<any>("[[Claimant]]"), handle);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ReversalFailedError);
+    expect(String(thrown?.message ?? "")).not.toContain(CANARY);
+    expect(String(thrown?.code ?? "")).not.toContain(CANARY);
+  });
+
+  // R11-C — the detector belt reads the normalizer result behind a getter-throw guard.
+  it("detector belt: a hostile normalizer .ok getter trap fails closed, never surfaces PHI", async () => {
+    const runner = new SharedDeadlineDetectorRunner();
+    const port: any = {
+      descriptor: { engineVersion: ENGINE },
+      health: async (): Promise<string> => "ready",
+      detect: async (): Promise<any[]> => [],
+    };
+    const normalizer: any = {
+      normalize: (): unknown =>
+        new Proxy({}, {
+          get(_t, key): unknown {
+            if (key === "ok") throw new Error(CANARY);
+            return undefined;
+          },
+        }),
+    };
+    let thrown: any;
+    let result: any;
+    try {
+      result = await runner.detectWithin({
+        primary: port,
+        fallback: null,
+        request: { text: "Maria García" } as any,
+        deadlineMs: 1000,
+        normalizer,
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    const surfaced = String(thrown?.message ?? "") + JSON.stringify(result ?? {});
+    expect(surfaced).not.toContain(CANARY);
+  });
+
+  // R11-D — the serializer validates occurredAt as an ISO timestamp; free text is rejected.
+  it("serializer: a non-timestamp occurredAt (free text) is rejected before persistence", () => {
+    const serializer = new ExactAllowListAuditSerializer();
+    const event = preparedToTerminalEvent(spoolPrepared("att-r11d"), "completed", null, CANARY);
+    let thrown: any;
+    try {
+      serializer.serialize(event);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PhiAuditError);
+    expect(String((thrown as any)?.code ?? "")).toBe("AUDIT_SCHEMA_REJECTED");
+    expect(JSON.stringify({ m: thrown?.message, d: (thrown as any)?.safeDetails })).not.toContain(CANARY);
+  });
+
+  // R11-E — read-once: a failureCode getter that mutates after validation cannot persist PHI.
+  it("serializer: a failureCode getter that mutates after validation cannot leak (read-once)", () => {
+    const serializer = new ExactAllowListAuditSerializer();
+    const event = preparedToTerminalEvent(spoolPrepared("att-r11e"), "failed_closed", "REVERSAL_FAILED", CLOCK());
+    let reads = 0;
+    Object.defineProperty(event, "failureCode", {
+      configurable: true,
+      get(): string {
+        reads += 1;
+        return reads === 1 ? "REVERSAL_FAILED" : CANARY;
+      },
+    });
+    const text = new TextDecoder().decode(serializer.serialize(event));
+    expect(text).not.toContain(CANARY);
+    expect(text).toContain("REVERSAL_FAILED");
+  });
+
+  // R11-F — the failureCode allow-list is override-proof (no Array.prototype.includes).
+  it("serializer: a hostile Array.prototype.includes override cannot approve an unlisted failureCode", () => {
+    const serializer = new ExactAllowListAuditSerializer();
+    const event = preparedToTerminalEvent(spoolPrepared("att-r11f"), "failed_closed", CANARY, CLOCK());
+    const original = Array.prototype.includes;
+    let thrown: any;
+    try {
+      // eslint-disable-next-line no-extend-native
+      (Array.prototype as any).includes = (): boolean => true;
+      try {
+        serializer.serialize(event);
+      } catch (e) {
+        thrown = e;
+      }
+    } finally {
+      (Array.prototype as any).includes = original;
+    }
+    expect(thrown).toBeInstanceOf(PhiAuditError);
+    expect(String((thrown as any)?.code ?? "")).toBe("AUDIT_SCHEMA_REJECTED");
+  });
+
+  // R11-G — tokenize uses intrinsic iteration for detector spans (a map override can't drop them).
+  it("tokenize: an Array.prototype.map override cannot drop detector spans (structured PHI stays tokenized)", () => {
+    const compiled: any = { match: (): any[] => [], canonicalForToken: (): undefined => undefined };
+    const email = `${CANARY}@example.com`;
+    const detectorSpans: any[] = [
+      { startUtf16: 0, endUtf16: email.length, identifierClass: "EMAIL", confidence: 1, token: "[[Detected_Email_1]]" },
+    ];
+    const original = Array.prototype.map;
+    let result: any;
+    try {
+      // Narrow sabotage: only the detector-span array's own `.map` returns []; everything else delegates.
+      // eslint-disable-next-line no-extend-native
+      (Array.prototype as any).map = function (this: any, ...a: any[]): any {
+        if (this === detectorSpans) return [];
+        return (original as any).apply(this, a);
+      };
+      result = tokenize(compiled, email, LOCALE, detectorSpans as any);
+    } finally {
+      (Array.prototype as any).map = original;
+    }
+    expect(String(result.tokenizedText)).not.toContain(CANARY);
+  });
+
+  // R11-H — the trace path uses intrinsic iteration over segments (a hostile map can't swap payload).
+  it("wrapper trace: a hostile segments.map cannot swap the tokenized payload for raw PHI", async () => {
+    const gate: Gate = { prepared: false };
+    const recordingTrace = new FakeSafeTrace();
+    // Drive the REAL substitution (so rebuild/prepare succeed and the flow reaches the trace), but an
+    // injected engine poisons the result's own `segments.map`. rebuild iterates with for-of, so only
+    // #traceTokenizedRequest's iteration is exercised by the poison.
+    const engineWrap = (real: any): any =>
+      new Proxy(real, {
+        get(target, prop, recv): unknown {
+          if (prop === "substitute") {
+            return async (req: any): Promise<any> => {
+              const result = await target.substitute(req);
+              (result.segments as any).map = (): any => [{ path: result.segments[0].path, text: CANARY }];
+              return result;
+            };
+          }
+          const v = Reflect.get(target, prop, recv);
+          return typeof v === "function" ? v.bind(target) : v;
+        },
+      });
+    const built = buildManualWrapper(gate, { trace: recordingTrace, engineWrap });
+    try {
+      await built.wrapper.generateText({ messages: [{ role: "user", content: [{ type: "text", text: "Maria García" }] }] });
+    } catch {
+      /* only what reached the trace sink matters */
+    }
+    expect(JSON.stringify(recordingTrace.payloads)).not.toContain(CANARY);
+  });
+
+  // R11-I — the reversal-handle instanceof checks are getPrototypeOf-trap safe.
+  it("isInProcessReversalHandle never throws on a hostile getPrototypeOf Proxy (fails closed to false)", () => {
+    const evil = new Proxy({}, {
+      getPrototypeOf(): never {
+        throw new Error(CANARY);
+      },
+    });
+    expect(() => isInProcessReversalHandle(evil)).not.toThrow();
+    expect(isInProcessReversalHandle(evil)).toBe(false);
   });
 });
