@@ -3,15 +3,21 @@
 # substrate, so a caseload is only reproducible against a known substrate.
 #
 # Read by wc_caseload_engine.substrate.check_substrate_pin(), which logs a
-# WARN (never a failure) when the substrate has moved: generating against a
-# newer substrate is normal when deliberate and alarming when accidental, and
-# only the operator can tell those apart.
+# WARN (never a failure) when the substrate has moved off this commit; see
+# that function's docstring for why the check can never fail a build.
 #
-# The value is the last commit that touched packages/merus-test-data-generator,
-# not the monorepo HEAD -- HEAD moves on every unrelated commit, and a pin that
-# warns constantly is a pin nobody reads.
-#
-# To update: re-run the determinism gates (demo double-run + TZ probe), confirm
-# the output is correct, then replace the SHA below with
+# Maintenance: refresh from MAIN state only, after a substrate-changing merge
+# has landed -- never from a feature branch. Squash-merges rewrite the merged
+# commits, so a SHA recorded on a branch names a commit main's history will
+# never contain. Before updating, re-run the determinism gates against the
+# new substrate (the full test suite plus tools/golden_gate.py --check), then
+# write the value of
 #   git -C packages/merus-test-data-generator log -1 --format=%H -- .
-cb485354f16164ca2d422804fe9d40f9a2250920
+# as run from a checkout of main. That is the last commit touching the
+# substrate directory, not the monorepo HEAD -- HEAD moves on every unrelated
+# commit, and a pin that warns constantly is a pin nobody reads.
+#
+# The goldens' recordedWith.substrateSha is recording-time provenance, never
+# enforced, and may lawfully name a commit outside main's history (a since-
+# squashed branch). It is not this pin and does not need to match it.
+2168d066120c57f7585a2f674629979432ef674a
