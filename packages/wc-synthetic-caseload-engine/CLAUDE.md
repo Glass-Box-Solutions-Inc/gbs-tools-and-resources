@@ -84,6 +84,7 @@ If an import breaks, fix the bridge — not by copying files.
 | `get_template_for_subtype` returns `GenericDocumentTemplate` for keys it does not know, so "missing" and "generic" are the same answer | `RenderResult.template` / `.fallback` record which ran; `renderer.OVERLAY_TEMPLATES` resolves the three overlay subtypes the substrate enum lacks |
 | **Four** `data/wc_constants.py` pools name real organizations — `INSURANCE_CARRIERS`, `DEFENSE_FIRMS`, `ALL_EMPLOYERS` (Safeway, Costco, Kaiser, UPS, City of LA), `MEDICAL_FACILITIES` | `case_context._replace_real_organizations` substitutes coined names on every one whenever the seed does not name its own, and rebuilds the derived adjuster/defense emails. `name_denylist.substrate_organization_pools()` reads the pools **live** so the sweep cannot go stale |
 | Templates draw from the **global** `random` module | Re-seeded per document from `rng_seed` + index |
+| Four substrate sites compute rendered content from `date.today()` | `determinism.pin_substrate_clock()` rebinds those names to `ANCHOR_DATE`; new substrate clock readers must be added to `CLOCK_PINNED_ATTRIBUTES` / `CLOCK_PINNED_CALLABLES` |
 
 ### Known substrate limitations (documented, not worked around)
 
@@ -92,15 +93,6 @@ If an import breaks, fix the bridge — not by copying files.
   but does not change the rendered letterhead. Patching a substrate module's private constant
   at runtime would be shared mutable state across cases; a documented limitation is cheaper
   and honest.
-- **`list(set(...))` in `data/content_pools.py`** (lines ~1043 and ~1136) makes substrate
-  output non-reproducible across processes. Worked around here with `PYTHONHASHSEED=0`; the
-  proper fix is `sorted(...)` upstream.
-- **Substrate `date.today()` in rendered content.** Four sites (`fake_data_generator`,
-  `qme_ame_report`, `settlement_memo`, `deposition_exchanges`) compute ages and hire dates from
-  the *local* wall clock. Rebound at runtime by `determinism.pin_substrate_clock()` — a
-  deliberate exception to the no-patching rule, and a narrow one: the anchor is a process-wide
-  constant, so it carries none of the shared-mutable-state risk that keeps the letterhead
-  unpatched. The proper fix is an injectable clock upstream.
 - **Faker's `date_of_birth` is clock-relative.** A seeded Faker is still not deterministic for
   age-relative draws: the window ends at `datetime.now()`. Faker is *not* patched — rebinding
   its `datetime` breaks the `isinstance` checks in its own date parser — so
@@ -112,6 +104,12 @@ If an import breaks, fix the bridge — not by copying files.
   `ORDER_ON_RECONSIDERATION` and `AMENDED_FINDINGS_AWARD` through `MinutesOrders`. Real
   templates, correct-looking documents, but the two lien resolution flavours differ only by
   variant string.
+
+### AJC-72 fixed substrate-ordering surface
+
+- Set-ordering leakage from content pools has been fixed for the two AJC-72 canonicalized
+  pools (`mtus_citations` and `future_medical_items`) by forcing deterministic ordering at
+  the boundaries, and that behavior is part of the package contract.
 
 ---
 
