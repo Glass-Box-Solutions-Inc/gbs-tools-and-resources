@@ -2265,3 +2265,226 @@ test = '../merus-test-data-generator/tests/test_content_pool_determinism.py::tes
 find = '''    items = sorted(set(items))'''
 replace = '''    items = list(set(items))'''
 note = 'AJC-72: restores the QME/WCCE byte-instability defect while preserving the item set; the named guard must redden.'
+
+[[mutant]]
+id = 'm19-1'
+title = 'the assertion sampler constructs rng before the absent gate'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_absent_gate_returns_before_any_assertion_rng_is_constructed'
+find = '''    scenario = seed.scenario.medical_assertions
+    if scenario is None:'''
+replace = '''    scenario = seed.scenario.medical_assertions
+    _assertion_rng(seed, "gate-probe", "case")
+    if scenario is None:'''
+note = 'AJC-61. The gate is the byte-identity instrument: any rng constructed above it runs for every assertion-absent case. The guard monkeypatches the module attribute with pytest.fail, so the reintroduced construction fails RED rather than ERROR.'
+
+[[mutant]]
+id = 'm19-2'
+title = 'assertion quality labels are published into the analyzer manifest'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_medical_assertions.py::test_assertion_label_positions_are_absent_from_every_analyzer_visible_artifact'
+find = '''    ordered.update(manifest)
+    if plan.warnings:'''
+replace = '''    ordered.update(manifest)
+    ordered["assertionQuality"] = ["supported", "thin", "unsupportable"]
+    if plan.warnings:'''
+note = 'AJC-61. A concrete JSON-serializable payload of the real label strings (round-3 finding 4 killed the Ellipsis/TypeError shape); the label-position probe generates through the shipped CLI subprocess, so the mutated module is imported fresh and manifest.json carries the reserved key.'
+
+[[mutant]]
+id = 'm19-3'
+title = 'the assertions-require-history gate stops firing'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_medical_assertions.py::test_gate_and_identity_error_templates_are_exact'
+find = '''        if self.medical_assertions is not None and self.medical_history is None:'''
+replace = '''        if False:'''
+note = 'AJC-61. An assertion block with no world ledger loads cleanly again; the exact-template guard expects the frozen actionable literal and pytest.raises reports Failed when nothing raises.'
+
+[[mutant]]
+id = 'm19-4'
+title = 'a contention may reference a condition the world ledger never held'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_referential_error_templates_are_exact'
+find = '''    if (
+        contention.target_condition_id is not None
+        and contention.target_condition_id not in condition_ids
+    ):'''
+replace = '''    if False:'''
+note = 'AJC-61. The unknown-condition referential branch, exactly as the spec mandates it.'
+
+[[mutant]]
+id = 'm19-5'
+title = 'an opinion may respond to a later-or-same-date opinion'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_opinion_chain_error_templates_are_exact'
+find = '''            target = ledger.opinion(ref)
+            if target is not None and target.report_date >= opinion.report_date:'''
+replace = '''            target = ledger.opinion(ref)
+            if False:'''
+note = 'AJC-61. Response/supersession targets must be strictly earlier; the chain templates guard the exact message.'
+
+[[mutant]]
+id = 'm19-6'
+title = 'an allocated determination may own no apportionment assertion'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_lifecycle_error_templates_are_exact'
+find = '''        if opinion.determination_kind == "allocated" and not owned_assertions:'''
+replace = '''        if False:'''
+note = 'AJC-61. The silent-completion hole the lifecycle rules exist to shut: an explicit allocated opinion with no explicit row must FAIL, never be repaired.'
+
+[[mutant]]
+id = 'm19-7'
+title = 'an empty SIBTF grounding stands'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_doctrine_grounding_and_treatment_typing_messages_are_exact'
+find = '''                if not sibtf.preexisting_condition_ids and not sibtf.prior_award_ids:'''
+replace = '''                if False:'''
+note = 'AJC-61. A SIBTF grounding must reference at least one preexisting condition or prior award.'
+
+[[mutant]]
+id = 'm19-8'
+title = 'allocated percentages stop summing to one hundred'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_apportionment_shape_error_templates_are_exact'
+find = '''            if assertion.industrial_percent + assertion.nonindustrial_percent != 100:'''
+replace = '''            if False:'''
+note = 'AJC-61. The percent-sum rule applies exactly to rows owned by an allocated determination.'
+
+[[mutant]]
+id = 'm19-9'
+title = 'a compromise and release conclusively presumes again'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_medical_assertions.py::test_prior_award_presumption_defaults_and_explicit_overrides_are_honored'
+find = '''PRESUMPTION_DEFAULT_BY_RESOLUTION: Final[dict[str, bool]] = {
+    "c_and_r": False,
+    "findings_and_award": True,
+    "stipulated_award": True,
+}'''
+replace = '''PRESUMPTION_DEFAULT_BY_RESOLUTION: Final[dict[str, bool]] = {
+    "c_and_r": True,
+    "findings_and_award": True,
+    "stipulated_award": True,
+}'''
+note = 'AJC-61. Counsel resolved section 2-Q7 the other way: "No - only a stip" (and F&A). Flipping the C&R default is the exact unreviewed reading the map exists to prevent.'
+
+[[mutant]]
+id = 'm19-10'
+title = 'a hard-invalid basis grades supported'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_closed_invalid_basis_decision_table_is_exact'
+find = '''    if hard_invalid:
+        return "unsupportable"'''
+replace = '''    if hard_invalid:
+        return "supported"'''
+note = 'AJC-61. The closed invalid-basis terminal, exactly as the spec mandates it.'
+
+[[mutant]]
+id = 'm19-11'
+title = 'the assertions channel ships without its channelVersion'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_assertion_bearing_case_keeps_envelope_1_and_uses_assertions_channel_1'
+find = '''    channel: dict[str, Any] = {
+        "channelVersion": ASSERTIONS_CHANNEL_VERSION,
+        "kind": "case",'''
+replace = '''    channel: dict[str, Any] = {
+        "kind": "case",'''
+note = 'AJC-61. The guard asserts on raw-JSON .get("channelVersion"), not through a reader, so the missing key yields RED rather than an ERROR-KeyError/TruthManifestError verdict (round-3 finding 4).'
+
+[[mutant]]
+id = 'm19-12'
+title = 'the sampled evaluator endorses unconditionally'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertion_properties.py::test_qme_disposition_is_completely_conditioned_on_ledger_evidence'
+find = '''    if evidence == "supports":
+        disposition = "endorse"
+    elif evidence == "contradicts":
+        disposition = "reject"
+    else:
+        disposition = "neither"'''
+replace = '''    disposition = "endorse"'''
+note = 'AJC-61. QME/AME disposition is a pure function of the ledger evidence — no draw, no flat endorsement rate. The guard asserts the tri-state mapping directly and then the wiring over a deterministic cohort slice.'
+
+[[mutant]]
+id = 'm19-13'
+title = 'requested_apportionment escapes the compensable-consequence typing'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_doctrine_grounding_and_treatment_typing_messages_are_exact'
+find = '''        if (
+            contention.requested_apportionment is not None
+            and contention.claim_type != "compensable_consequence"
+        ):'''
+replace = '''        if False:'''
+note = 'AJC-61. The typed Hikida fields are structural typing, not legal judgment; this branch is one of the four paired typing rules.'
+
+[[mutant]]
+id = 'm19-14'
+title = 'the assertion streams fold back into the medical: namespace'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertion_properties.py::test_every_assertion_stream_uses_literal_namespace_exact_family_set_and_disjoint_m1_salts'
+find = '''ASSERTION_RNG_NAMESPACE: Final[str] = "medical-assertions"'''
+replace = '''ASSERTION_RNG_NAMESPACE: Final[str] = "medical"'''
+note = 'AJC-61, round-2 N3. "medical:<family>:<key>" collides with none of M1 seven salts, so a uniqueness-or-disjointness-only guard stays green; the literal startswith("medical-assertions:") clause is what catches this.'
+
+[[mutant]]
+id = 'm19-15'
+title = 'the quality-target mix inflates its supported mass'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertion_properties.py::test_sampler_cohort_matches_pinned_empirical_metrics'
+find = '''QUALITY_TARGET_WEIGHTS = AssertionKnob[tuple[Fraction, Fraction, Fraction]](
+    value=(
+        Fraction(4, 5),
+        Fraction(2, 15),
+        Fraction(1, 15),
+    ),'''
+replace = '''QUALITY_TARGET_WEIGHTS = AssertionKnob[tuple[Fraction, Fraction, Fraction]](
+    value=(
+        Fraction(19, 20),
+        Fraction(1, 30),
+        Fraction(1, 60),
+    ),'''
+note = 'AJC-61. The pinned recipe->grade confusion matrix and quality counts reproduce the cohort exactly; an inflated supported mass moves both.'
+
+[[mutant]]
+id = 'm19-16'
+title = 'explicit suppression stops firing and sampled duplicates append'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertion_properties.py::test_explicit_entries_are_preserved_and_sampled_entries_append_without_duplicates'
+find = '''        if semantic_key in explicit_semantic_keys:
+            suppression_hits += 1
+            continue'''
+replace = '''        if False:
+            suppression_hits += 1
+            continue'''
+note = 'AJC-61. The guard uses the pinned collision seed (cohort index 5760, an lc4664 defense draw) and positively asserts suppression_hits == 1 plus no duplicate — the vacuous-pass shape round-1 finding 21 named.'
+
+[[mutant]]
+id = 'm19-17'
+title = 'final reports stop omitting their apportionment determination'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertion_properties.py::test_sampler_cohort_matches_pinned_empirical_metrics'
+find = '''P_FINAL_REPORT_OMITS_APPORTIONMENT = AssertionKnob[Fraction](
+    value=Fraction(1, 10),'''
+replace = '''P_FINAL_REPORT_OMITS_APPORTIONMENT = AssertionKnob[Fraction](
+    value=Fraction(0, 1),'''
+note = 'AJC-61. The plantable final-omission defect at zero moves the pinned lifecycle counts (291 omitted finals) and the quality counts.'
+
+[[mutant]]
+id = 'm19-18'
+title = 'the psych component rate collapses'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertion_properties.py::test_sampler_cohort_matches_pinned_empirical_metrics'
+find = '''P_PSYCH_COMPONENT = AssertionKnob[Fraction](
+    value=Fraction(9, 20),'''
+replace = '''P_PSYCH_COMPONENT = AssertionKnob[Fraction](
+    value=Fraction(1, 10),'''
+note = 'AJC-61. Counsel: 40-50% of the caseload carries a psych component; the pinned 2754 component cases redden at 1/10.'
+
+[[mutant]]
+id = 'm19-19'
+title = 'the evidence distractor disappears'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_assertion_properties.py::test_evidence_budget_and_distractor_counts_match_pinned_cohort'
+find = '''P_EVIDENCE_DISTRACTOR = AssertionKnob[Fraction](
+    value=Fraction(1, 4),'''
+replace = '''P_EVIDENCE_DISTRACTOR = AssertionKnob[Fraction](
+    value=Fraction(0, 1),'''
+note = 'AJC-61, round-2 N2. The pinned MEASURED_DISTRACTOR_COUNTS (available 1062, included 275, rate 0.22-0.28, included > 0) makes survival triple-impossible.'
