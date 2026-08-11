@@ -21,17 +21,23 @@ function isLowSurrogate(unit: number): boolean {
 }
 
 /**
- * Index up to which `buffer` can be safely reversed and emitted right now.
+ * Index up to which `buffer` can be safely reversed and emitted right now (L4).
  *
- * Everything from the first still-open `[[` (or a trailing lone `[` that could
- * begin one) is withheld, because a token — at most `maximumTokenUtf16Length`
- * units, so the retained tail is `<= M-1` once closed — may still complete in a
- * later chunk. The cut is then pulled back so it never splits a surrogate pair
- * and never emits a lone leading high surrogate.
+ * Two constraints are combined and the smaller cut wins:
+ *   1. M-1 holdback: at least `maximumTokenUtf16Length - 1` UTF-16 units are always
+ *      retained at the tail, because a token that STARTS in this chunk may only
+ *      finish in a later one. This makes emission chunk-independent.
+ *   2. Open-token withholding: everything from the first still-open `[[` (or a
+ *      trailing lone `[` that could begin one) is withheld.
+ * The cut is finally pulled back so it never splits a surrogate pair and never
+ * emits a lone leading high surrogate.
  */
-function settledBoundary(buffer: string, _policy: TokenGrammarPolicy): number {
+function settledBoundary(buffer: string, policy: TokenGrammarPolicy): number {
   const length = buffer.length;
-  let cut = length;
+  const holdback = Math.max(0, policy.maximumTokenUtf16Length - 1);
+  // 1. M-1 UTF-16 holdback at the tail.
+  let cut = Math.max(0, length - holdback);
+  // 2. Withhold from the first still-open `[[`.
   let i = 0;
   while (i < length) {
     const open = buffer.indexOf(OPEN, i);
@@ -40,14 +46,14 @@ function settledBoundary(buffer: string, _policy: TokenGrammarPolicy): number {
     }
     const close = buffer.indexOf(CLOSE, open + OPEN.length);
     if (close < 0) {
-      cut = open; // open token pending; withhold from here.
+      cut = Math.min(cut, open); // open token pending; withhold from here.
       return avoidSurrogateSplit(buffer, cut);
     }
     i = close + CLOSE.length;
   }
-  // No open token. A trailing single "[" could still grow into "[[".
+  // A trailing single "[" could still grow into "[[".
   if (length > 0 && buffer.charCodeAt(length - 1) === OPEN_BRACKET) {
-    cut = length - 1;
+    cut = Math.min(cut, length - 1);
   }
   return avoidSurrogateSplit(buffer, cut);
 }
@@ -123,6 +129,8 @@ class HoldbackReverseStream implements ReverseStream {
     try {
       reversed = await reverseText(this.buffer, this.keys, this.store, this.grammar, this.policy);
     } catch (error) {
+      // L4: latch — no later push/end may resume or complete after a reversal failure.
+      this.failed = true;
       this.buffer = "";
       throw error instanceof Error ? error : new ReversalFailedError(this.keys.operationId);
     }
@@ -144,6 +152,8 @@ class HoldbackReverseStream implements ReverseStream {
     try {
       reversed = await reverseText(settled, this.keys, this.store, this.grammar, this.policy);
     } catch (error) {
+      // L4: latch — a reversal failure on an emitted prefix stops the stream for good.
+      this.failed = true;
       this.buffer = "";
       throw error instanceof Error ? error : new ReversalFailedError(this.keys.operationId);
     }
@@ -154,6 +164,8 @@ class HoldbackReverseStream implements ReverseStream {
   }
 
   private async fail(): Promise<never> {
+    // L4: latch — an overlong open token permanently stops the stream.
+    this.failed = true;
     this.buffer = "";
     throw new ReversalFailedError(this.keys.operationId);
   }

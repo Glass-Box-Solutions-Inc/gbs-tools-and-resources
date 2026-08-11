@@ -69,7 +69,27 @@ export class PhiAuditedAttemptCoordinator {
       };
     }
 
-    await plan.invokeProvider();
+    try {
+      await plan.invokeProvider();
+    } catch (error) {
+      // N3: a provider rejection after send still finalizes exactly one terminal
+      // (never a stuck PREPARED record).
+      const failureCode =
+        error !== null &&
+        typeof error === "object" &&
+        "code" in error &&
+        typeof (error as { code?: unknown }).code === "string"
+          ? (error as { code: string }).code
+          : "PROVIDER_INVOCATION_FAILED";
+      const failedEvent = preparedToTerminalEvent(plan.prepared, "unknown_after_send", failureCode, this.#clock());
+      await this.#emitter.finalize(receipt, failedEvent);
+      return {
+        outcome: "unknown_after_send",
+        errorCode: failureCode,
+        providerInvoked: true,
+        durability: receipt.location,
+      };
+    }
     const event = preparedToTerminalEvent(plan.prepared, "completed", null, this.#clock());
     await this.#emitter.finalize(receipt, event);
     return { outcome: "completed", errorCode: null, providerInvoked: true, durability: receipt.location };

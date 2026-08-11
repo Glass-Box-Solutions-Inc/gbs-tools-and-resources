@@ -12,7 +12,7 @@ import { HoldbackReverseStreamFactory } from "./reverse-stream";
 
 export { BracketTokenGrammar, type TokenSpanParse } from "./grammar";
 export { InMemoryTokenAssignmentStore } from "./assignment-store";
-export { SentinelSourceTokenEscaper } from "./escaper";
+export { SentinelSourceTokenEscaper, SENTINEL_OPEN, SENTINEL_CLOSE } from "./escaper";
 export {
   AtomicTokenReverser,
   InMemoryReversalStore,

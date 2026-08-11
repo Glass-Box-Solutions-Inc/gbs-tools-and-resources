@@ -116,10 +116,12 @@ export class StructuralOptionsProjector
       });
     }
 
-    // messages[i].content[j].text (text parts only)
+    // messages[i].content[j].text — EVERY text-bearing part, regardless of `type`.
+    // A non-"text" part (e.g. `tool_result`) that still carries a `text` string must
+    // be classified and tokenized, never egressed raw (L5 / fail-closed).
     (options.messages ?? []).forEach((message, i) => {
       message.content.forEach((part, j) => {
-        if (part.type === "text") {
+        if (typeof part.text === "string") {
           const path = `messages[${i}].content[${j}].text`;
           collected.push({
             segment: { path, kind: kindForRole(message.role), text: part.text },
@@ -156,19 +158,37 @@ export class StructuralOptionsProjector
 
     const segments = collected.map((entry) => entry.segment);
 
+    const expectedPaths = new Set(collected.map((entry) => entry.segment.path));
+
     return {
       segments,
       rebuild: (tokenized: readonly TokenizedTextSegment[]): BoundaryGenerateOptions => {
+        // L5 / fail-closed: rebuild requires an EXACT 1:1 mapping between the classified
+        // paths and the tokenized segments. A missing segment (which would leave the raw
+        // original value in place), an unexpected path, or a duplicate path all fail
+        // closed before egress rather than silently egressing an unprotected value.
         const byPath = new Map<string, string>();
         for (const seg of tokenized) {
+          if (!expectedPaths.has(seg.path)) {
+            throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+              unexpectedTokenizedPath: seg.path,
+            });
+          }
+          if (byPath.has(seg.path)) {
+            throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+              duplicateTokenizedPath: seg.path,
+            });
+          }
           byPath.set(seg.path, seg.text as unknown as string);
+        }
+        if (byPath.size !== collected.length) {
+          throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+            missingTokenizedSegments: collected.length - byPath.size,
+          });
         }
         const draft: MutableOptions = structuredCloneOptions(options);
         for (const entry of collected) {
-          const value = byPath.get(entry.segment.path);
-          if (value !== undefined) {
-            entry.write(draft, value);
-          }
+          entry.write(draft, byPath.get(entry.segment.path) as string);
         }
         return draft as BoundaryGenerateOptions;
       },

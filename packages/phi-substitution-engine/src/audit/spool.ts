@@ -25,6 +25,12 @@ interface SpoolEntry {
   event: PhiAuditEvent | null;
   preparedEnvelope: EncryptedSpoolEnvelope;
   eventEnvelope: EncryptedSpoolEnvelope | null;
+  /**
+   * True once this drain has PREPARED the record in the primary store. A subsequent
+   * `already_exists` from primary for an entry the spool itself prepared means a prior
+   * finalize failed (partial) and the terminal must still be delivered — never dropped.
+   */
+  preparedInPrimary: boolean;
 }
 
 /** JSON-safe wire form: bigint identifiers (dictionary version) become strings. */
@@ -50,6 +56,22 @@ function encodeEnvelope(envelope: EncryptedSpoolEnvelope): Uint8Array {
     createdAt: envelope.createdAt,
   };
   return new TextEncoder().encode(JSON.stringify(onDisk));
+}
+
+/** Inverse of `encodeEnvelope`: reconstructs an envelope read back from the durable volume. */
+function decodeEnvelope(bytes: Uint8Array): EncryptedSpoolEnvelope {
+  const onDisk = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+  return {
+    envelopeVersion: onDisk["envelopeVersion"] as 1,
+    recordId: onDisk["recordId"] as string,
+    attemptId: onDisk["attemptId"] as OperationAttemptId,
+    keyVersion: onDisk["keyVersion"] as string,
+    cipherSuite: onDisk["cipherSuite"] as "AES-256-GCM",
+    nonce: Uint8Array.from(Buffer.from(onDisk["nonce"] as string, "base64")),
+    authenticationTag: Uint8Array.from(Buffer.from(onDisk["authenticationTag"] as string, "base64")),
+    ciphertext: Uint8Array.from(Buffer.from(onDisk["ciphertext"] as string, "base64")) as Ciphertext,
+    createdAt: onDisk["createdAt"] as string,
+  };
 }
 
 function recordIdFor(attemptId: OperationAttemptId): string {
@@ -97,6 +119,7 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
       event: null,
       preparedEnvelope: envelope,
       eventEnvelope: null,
+      preparedInPrimary: false,
     });
     return { attemptId: record.attemptId, location: "ENCRYPTED_LOCAL_SPOOL", durableRecordId: recordId };
   }
@@ -117,6 +140,10 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
   }
 
   public async drainTo(primary: AuditPrimaryStore): Promise<SpoolDrainReport> {
+    // N3/N4: drain reads the DURABLE volume so records survive a replica restart —
+    // never only the in-memory index.
+    await this.rebuildFromVolume();
+
     let examined = 0;
     let delivered = 0;
     let duplicates = 0;
@@ -129,19 +156,69 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
         remaining += 1;
         continue;
       }
-      if (outcome.status === "already_exists") {
-        // Idempotent: the attempt is already durable in primary — never publish it twice.
+      if (outcome.status === "already_exists" && !entry.preparedInPrimary) {
+        // The attempt is already durable in primary from ELSEWHERE (not this spool's
+        // own prior prepare). Idempotent: never publish a second terminal.
         duplicates += 1;
         await this.#discard(entry.recordId);
         continue;
       }
+      // Either freshly `stored`, or `already_exists` after this spool prepared it on a
+      // prior drain whose finalize failed (a partial). Deliver the terminal, and only
+      // discard after finalize succeeds so a partial retry can never drop it.
+      entry.preparedInPrimary = true;
       const event = entry.event ?? preparedToTerminalEvent(entry.prepared, "unknown_after_send", null, this.#clock());
-      await primary.finalize(event);
+      try {
+        await primary.finalize(event);
+      } catch {
+        // Prepared ok but finalize failed: keep the durable entry for a future retry.
+        remaining += 1;
+        continue;
+      }
       delivered += 1;
       await this.#discard(entry.recordId);
     }
 
     return { examined, delivered, duplicates, remaining };
+  }
+
+  /**
+   * Rebuilds the in-memory index from the durable volume so acknowledged records survive a
+   * replica restart / scale-in (CONTRACT §6). Decrypts each stored PREPARED envelope (and its
+   * terminal, if present) that is not already tracked in-process.
+   */
+  public async rebuildFromVolume(): Promise<void> {
+    const ids = await this.#volume.list();
+    for (const recordId of ids) {
+      if (recordId.endsWith(".final")) {
+        continue;
+      }
+      if (this.#entries.has(recordId)) {
+        continue;
+      }
+      const preparedBytes = await this.#volume.read(recordId);
+      if (preparedBytes === null) {
+        continue;
+      }
+      const preparedEnvelope = decodeEnvelope(preparedBytes);
+      const prepared = fromWireBytes(this.#decrypt(preparedEnvelope)) as PhiAuditPreparedRecord;
+      const finalBytes = await this.#volume.read(`${recordId}.final`);
+      let event: PhiAuditEvent | null = null;
+      let eventEnvelope: EncryptedSpoolEnvelope | null = null;
+      if (finalBytes !== null) {
+        eventEnvelope = decodeEnvelope(finalBytes);
+        event = fromWireBytes(this.#decrypt(eventEnvelope)) as PhiAuditEvent;
+      }
+      this.#entries.set(recordId, {
+        recordId,
+        attemptId: preparedEnvelope.attemptId,
+        prepared,
+        event,
+        preparedEnvelope,
+        eventEnvelope,
+        preparedInPrimary: false,
+      });
+    }
   }
 
   public async inspectEnvelope(recordId: string): Promise<EncryptedSpoolEnvelope> {

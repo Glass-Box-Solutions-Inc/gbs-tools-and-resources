@@ -31,6 +31,8 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
   readonly #serializer: PhiAuditSerializer;
   readonly #clock: () => string;
   readonly #inFlight = new Map<string, InFlight>();
+  /** Attempt ids whose single terminal has already been finalized (N3 one-shot). */
+  readonly #finalized = new Set<string>();
 
   public constructor(
     primary: AuditPrimaryStore,
@@ -48,8 +50,17 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     // The PREPARED record must itself be metadata-only; reject any leaked value before durability.
     this.#serializer.validatePrepared(record);
 
+    // N3 idempotency: an attempt id that already has a terminal in this process must
+    // not be re-prepared — that would permit a second provider egress and a second
+    // terminal event for the same logical attempt.
+    if (this.#finalized.has(this.#key(record.attemptId))) {
+      throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", record.operationId, {
+        attemptId: record.attemptId,
+      });
+    }
+
     const primaryResult = await this.#primary.prepare(record);
-    if (primaryResult.status === "stored" || primaryResult.status === "already_exists") {
+    if (primaryResult.status === "stored") {
       const receipt: AuditPreparationReceipt = {
         attemptId: record.attemptId,
         location: "PRIMARY_STORE",
@@ -57,6 +68,13 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       };
       this.#remember(receipt, record);
       return receipt;
+    }
+    if (primaryResult.status === "already_exists") {
+      // A durable record for this attempt already exists — never egress or finalize a
+      // second time for the same attempt id (N3 exactly-one-terminal / idempotency).
+      throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", record.operationId, {
+        attemptId: record.attemptId,
+      });
     }
 
     // Primary outage alone proceeds through the spool.
@@ -71,6 +89,11 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
   }
 
   public async finalize(receipt: AuditPreparationReceipt, event: PhiAuditEvent): Promise<void> {
+    // N3 one-shot: at most one terminal per attempt. A concurrent reconcile racing a
+    // normal completion (or a duplicate finalize) is a no-op after the first terminal.
+    if (this.#finalized.has(this.#key(receipt.attemptId))) {
+      return;
+    }
     // Validate the exact allow-list before anything is published as a terminal event.
     this.#serializer.serialize(event);
     if (receipt.location === "PRIMARY_STORE") {
@@ -78,6 +101,7 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     } else {
       await this.#spool.finalize(receipt, event);
     }
+    this.#finalized.add(this.#key(receipt.attemptId));
     this.#inFlight.delete(this.#key(receipt.attemptId));
   }
 

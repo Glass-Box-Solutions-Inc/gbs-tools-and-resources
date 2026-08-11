@@ -9,7 +9,7 @@ import type {
   TokenizedText,
 } from "../core/brands";
 import type { ReversalHandle, ReversalStore } from "../core/contracts";
-import type { TokenGrammar, TokenGrammarPolicy, TokenReverser } from "./ports";
+import type { EscapedTokenLiteral, TokenGrammar, TokenGrammarPolicy, TokenReverser } from "./ports";
 import { ReversalFailedError, ReversalHandleNotSerializableError } from "./errors";
 
 const SEP = String.fromCharCode(0);
@@ -35,6 +35,11 @@ export class InProcessReversalHandle implements ReversalHandle {
   readonly dictionaryVersion: DictionaryVersion;
   readonly operationId: OperationId;
   readonly attemptId: OperationAttemptId;
+  /**
+   * L6: reserved token-shaped source literals escaped before matching, carried in-process
+   * (references only) so the wrapper can restore them onto the reversed output. Never a map.
+   */
+  readonly literals: readonly EscapedTokenLiteral[];
 
   constructor(keys: {
     tenantId: TenantId;
@@ -42,12 +47,14 @@ export class InProcessReversalHandle implements ReversalHandle {
     dictionaryVersion: DictionaryVersion;
     operationId: OperationId;
     attemptId: OperationAttemptId;
+    literals?: readonly EscapedTokenLiteral[];
   }) {
     this.tenantId = keys.tenantId;
     this.matterId = keys.matterId;
     this.dictionaryVersion = keys.dictionaryVersion;
     this.operationId = keys.operationId;
     this.attemptId = keys.attemptId;
+    this.literals = keys.literals ?? [];
   }
 
   toJSON(): never {

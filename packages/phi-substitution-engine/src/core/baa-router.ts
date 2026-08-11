@@ -10,8 +10,16 @@
  *
  * Inspecting substituted (tokenized) text here would defeat L11 — the tokens
  * carry no PHI, so a naive router would wrongly downgrade a PHI matter to a
- * non-BAA provider. `onInspect` reports exactly the text the router saw, so a
- * "route after substitute" regression is observable.
+ * non-BAA provider.
+ *
+ * N2: the router does NOT expose the original pre-substitution content to any
+ * observability callback. The only consumer of the extracted text is the
+ * routing decision itself; there is no `onInspect`/log hook that could persist
+ * raw content into a trace, error, job, or cache payload.
+ *
+ * L11: the returned decision PINS the actual provider object selected for the
+ * route (BAA vs non-BAA vs forced), so the wrapper invokes the routed provider
+ * rather than a fixed adapter.
  */
 import type { OriginalContentProviderRouter } from "./protected-ai-provider";
 
@@ -25,10 +33,17 @@ export const DEFAULT_PHI_PATTERNS: readonly RegExp[] = [
 export interface BaaRouterConfig<GenerateOptions, RawProvider> {
   /** Reads the text the router inspects; the wrapper passes the ORIGINAL options. */
   readonly extractOriginalText: (options: GenerateOptions) => string;
-  /** The single private raw provider binding (N1). */
+  /** The single private raw provider binding (N1); the default when no route-specific
+   *  provider is supplied. */
   readonly rawProvider: RawProvider;
   readonly baaProviderId: string;
   readonly nonBaaProviderId: string;
+  /** The concrete provider object bound to the BAA route. Defaults to `rawProvider`. */
+  readonly baaProvider?: RawProvider;
+  /** The concrete provider object bound to the non-BAA route. Defaults to `rawProvider`. */
+  readonly nonBaaProvider?: RawProvider;
+  /** The concrete provider object bound to the forced route. Defaults to `rawProvider`. */
+  readonly forcedProvider?: RawProvider;
   /** When set, forces a specific provider (e.g. the Anthropic path) for its gate. */
   readonly forcedProviderId?: string;
   /** Whether the forced provider itself carries a BAA (Anthropic: false). */
@@ -39,7 +54,6 @@ export interface BaaRouterConfig<GenerateOptions, RawProvider> {
   readonly forcedProductionSafe?: boolean;
   readonly matterIsPhiTagged: boolean;
   readonly phiPatterns?: readonly RegExp[];
-  readonly onInspect?: (originalText: string) => void;
 }
 
 export interface ProviderRoutingDecision<RawProvider> {
@@ -57,9 +71,10 @@ export class OriginalContentBaaRouter<GenerateOptions, RawProvider>
   public async selectUsingOriginalContent(
     options: GenerateOptions,
   ): Promise<ProviderRoutingDecision<RawProvider>> {
-    // L11: the decision is derived from the ORIGINAL content only.
+    // L11: the decision is derived from the ORIGINAL content only. The extracted
+    // text is used solely to compute the route; it is never handed to an
+    // observability callback (N2).
     const originalText = this.config.extractOriginalText(options);
-    this.config.onInspect?.(originalText);
 
     const patterns = this.config.phiPatterns ?? DEFAULT_PHI_PATTERNS;
     const phiPresent =
@@ -72,7 +87,8 @@ export class OriginalContentBaaRouter<GenerateOptions, RawProvider>
     if (this.config.forcedProviderId !== undefined) {
       const baaCovered = this.config.forcedProviderBaaCovered ?? false;
       return {
-        provider: this.config.rawProvider,
+        // L11: pin the concrete provider bound to the forced route.
+        provider: this.config.forcedProvider ?? this.config.rawProvider,
         providerId: this.config.forcedProviderId,
         isProductionSafe: this.config.forcedProductionSafe ?? true,
         // Conjunctive Anthropic gate: BAA is satisfied only when CLAUDE_BAA_ENABLED.
@@ -82,7 +98,8 @@ export class OriginalContentBaaRouter<GenerateOptions, RawProvider>
 
     if (phiPresent) {
       return {
-        provider: this.config.rawProvider,
+        // L11: pin the concrete provider bound to the BAA route.
+        provider: this.config.baaProvider ?? this.config.rawProvider,
         providerId: this.config.baaProviderId,
         isProductionSafe: true,
         baaSatisfied: true,
@@ -90,7 +107,8 @@ export class OriginalContentBaaRouter<GenerateOptions, RawProvider>
     }
 
     return {
-      provider: this.config.rawProvider,
+      // L11: pin the concrete provider bound to the non-BAA route.
+      provider: this.config.nonBaaProvider ?? this.config.rawProvider,
       providerId: this.config.nonBaaProviderId,
       isProductionSafe: true,
       baaSatisfied: true,

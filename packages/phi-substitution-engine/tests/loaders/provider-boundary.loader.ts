@@ -423,15 +423,19 @@ function makeRig(opts: RigOptions): Rig {
     BoundaryGenerateOptions,
     RawProviderPort<BoundaryGenerateOptions, string>
   > = {
-    extractOriginalText,
+    // The router's required content-extraction seam is the only place the ORIGINAL
+    // text is read; capturing it here (not via a removed observability callback)
+    // keeps the L11 "route on original content" property observable to the oracle.
+    extractOriginalText: (options): string => {
+      const text = extractOriginalText(options);
+      routerInputHolder.value = text;
+      return text;
+    },
     rawProvider: provider,
     baaProviderId: "azure-openai-baa",
     nonBaaProviderId: "openai",
     claudeBaaEnabled: opts.claudeBaaEnabled ?? true,
     matterIsPhiTagged: opts.matterIsPhiTagged ?? true,
-    onInspect: (text): void => {
-      routerInputHolder.value = text;
-    },
     ...(opts.forcedProviderId !== undefined ? { forcedProviderId: opts.forcedProviderId } : {}),
     ...(opts.forcedProviderBaaCovered !== undefined
       ? { forcedProviderBaaCovered: opts.forcedProviderBaaCovered }

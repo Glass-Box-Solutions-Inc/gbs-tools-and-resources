@@ -11,8 +11,8 @@ import type {
  * bracket-shaped, so they can never be re-parsed as a reversible token, and
  * they carry the literal's index so restoration is offset-independent.
  */
-const SENTINEL_OPEN = "";
-const SENTINEL_CLOSE = "";
+export const SENTINEL_OPEN = "";
+export const SENTINEL_CLOSE = "";
 const SENTINEL_PATTERN = /(\d+)/g;
 
 /**

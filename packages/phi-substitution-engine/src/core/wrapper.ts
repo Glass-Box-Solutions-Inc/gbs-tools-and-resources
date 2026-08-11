@@ -13,11 +13,11 @@
  *      field before egress (L5);
  *   5-8. substitute every segment and build a non-serializable reversal handle;
  *   9. durably PREPARE exactly one metadata-only audit record BEFORE egress (N3);
- *   10. trace tokenized input (N2) and invoke the provider EXACTLY ONCE (N1);
+ *   10. trace tokenized input (N2) and invoke the PINNED provider EXACTLY ONCE (N1);
  *   11. trace tokenized output (N2), then atomically reverse to current canonical
  *       values before display (N5) and finalize the audit event;
- *   12. on ANY precondition failure, invoke the provider ZERO times and surface a
- *       visible fixed-code fail-closed result (N4).
+ *   12. on ANY precondition or post-send failure, invoke the provider ZERO extra
+ *       times and finalize EXACTLY ONE terminal audit event (N3/N4).
  *
  * The phase-1 detector belt is never invoked for a customer claim.
  */
@@ -35,9 +35,14 @@ import type {
   AiProvider,
   ProtectedAiProviderDependencies,
 } from "./protected-ai-provider";
-import type { PhiAuditPreparedRecord, AuditPreparationReceipt } from "../audit/ports";
-import { preparedToTerminalEvent } from "../audit/index";
-import { PhiEngineError, toFailureCode } from "./errors";
+import type {
+  AuditPreparationReceipt,
+  PhiAuditEvent,
+  PhiAuditOutcome,
+  PhiAuditPreparedRecord,
+} from "../audit/ports";
+import { isAuditError, preparedToTerminalEvent, toTotalIdentifierCounts } from "../audit/index";
+import { isPhiEngineError, PhiEngineError, toFailureCode } from "./errors";
 
 /** The single private raw-provider port. It is never exported as an application binding. */
 export interface RawProviderPort<GenerateOptions, EmbeddingKind = string> {
@@ -61,6 +66,20 @@ export interface ComposedProtectedAiProviderDeps<GenerateOptions, EmbeddingKind 
   readonly embeddingOptionsFactory?: (text: string) => GenerateOptions;
 }
 
+/** Extracts a safe fixed error-code string for a terminal audit event's failureCode. */
+function errorCodeString(error: unknown): string {
+  if (isPhiEngineError(error)) return error.code;
+  if (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+  ) {
+    return (error as { code: string }).code;
+  }
+  return "FAILED_CLOSED";
+}
+
 export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string>
   implements
     AiProvider<
@@ -80,36 +99,69 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
   }
 
   public async generateText(options: GenerateOptions): Promise<DisplayText> {
-    const prepared = await this.#prepareForEgress(options, "generation");
-    // §4.1 step 10 / N1: invoke the provider EXACTLY ONCE with tokenized options.
-    const rawOutput = await this.#deps.invokeRaw.generateText(prepared.tokenizedOptions);
+    const context = await this.#requireContext();
+    const policy = await this.#deps.policy.require(context);
+
+    let prepared: PreparedEgress<GenerateOptions, EmbeddingKind>;
+    try {
+      prepared = await this.#prepareForEgress(options, "generation", context, policy);
+    } catch (error) {
+      // §4.1 step 12 / N3: any pre-egress failure finalizes exactly one terminal.
+      await this.#recordPreEgressFailure(context, "generation", error);
+      throw error;
+    }
+
+    let rawOutput: TokenizedText;
+    try {
+      // §4.1 step 10 / N1: invoke the PINNED provider EXACTLY ONCE with tokenized options.
+      rawOutput = await prepared.provider.generateText(prepared.tokenizedOptions);
+    } catch (error) {
+      // N3: a provider rejection after send still finalizes exactly one terminal.
+      await this.#finalize(prepared, "unknown_after_send", errorCodeString(error));
+      throw error instanceof PhiEngineError
+        ? error
+        : new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), prepared.context.operationId, {});
+    }
     // §4.1 step 11 / N2: trace tokenized output BEFORE reversal.
     await this.#deps.safeTrace.response(rawOutput);
     return this.#reverseAndFinalize(rawOutput, prepared);
   }
 
   public async generateStream(options: GenerateOptions): Promise<ProtectedStreamResult> {
-    const prepared = await this.#prepareForEgress(options, "stream");
+    const context = await this.#requireContext();
+    const policy = await this.#deps.policy.require(context);
+
+    let prepared: PreparedEgress<GenerateOptions, EmbeddingKind>;
+    try {
+      prepared = await this.#prepareForEgress(options, "stream", context, policy);
+    } catch (error) {
+      await this.#recordPreEgressFailure(context, "stream", error);
+      throw error;
+    }
+
     const displayChunks: DisplayText[] = [];
     // §4.2 / L4: the reverse stream holds back M-1 units; raw chunks never reach display.
     const stream = this.#deps.engine.createReverseStream(prepared.substitutionHandle, (safe) => {
       displayChunks.push(safe);
     });
-    // §4.1 step 10 / N1: exactly one provider call.
-    await this.#deps.invokeRaw.generateStream(prepared.tokenizedOptions, async (chunk) => {
-      // §4.2 / N2: trace tokenized chunk, then feed it to the reverse stream only.
-      await this.#deps.safeTrace.response(chunk);
-      await stream.push(chunk);
-    });
     try {
+      // §4.1 step 10 / N1: exactly one PINNED provider call.
+      await prepared.provider.generateStream(prepared.tokenizedOptions, async (chunk) => {
+        // §4.2 / N2: trace tokenized chunk, then feed it to the reverse stream only.
+        await this.#deps.safeTrace.response(chunk);
+        await stream.push(chunk);
+      });
       await stream.end();
     } catch (error) {
-      await this.#finalize(prepared, "reversal_failed", "REVERSAL_FAILED");
-      throw new PhiEngineError(
-        toFailureCode(error, "REVERSAL_FAILED"),
-        prepared.context.operationId,
-        {},
-      );
+      // L4: latch the reverse stream so no later chunk can resume/complete.
+      await stream.abort(error);
+      const code = toFailureCode(error, "REVERSAL_FAILED");
+      const outcome: PhiAuditOutcome = code === "REVERSAL_FAILED" ? "reversal_failed" : "unknown_after_send";
+      // N3: a push/end failure after send still finalizes exactly one terminal.
+      await this.#finalize(prepared, outcome, code);
+      throw error instanceof PhiEngineError
+        ? error
+        : new PhiEngineError(code, prepared.context.operationId, {});
     }
     await this.#finalize(prepared, "completed", null);
     return { displayChunks };
@@ -119,53 +171,77 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     const context = await this.#requireContext();
     const policy = await this.#deps.policy.require(context);
 
-    // §4.3: provider choice + safety gate still use ORIGINAL content.
-    const routingOptions =
-      this.#deps.embeddingOptionsFactory !== undefined
-        ? this.#deps.embeddingOptionsFactory(text)
-        : (undefined as unknown as GenerateOptions);
-    if (routingOptions !== undefined) {
-      const decision = await this.#deps.router.selectUsingOriginalContent(routingOptions);
-      this.#enforceSafetyGate(decision, context);
+    // §4.3 / L11: embedding MUST route on ORIGINAL content and enforce the conjunctive
+    // safety/BAA gate. Without a factory we cannot inspect original content, so we FAIL
+    // CLOSED with zero egress rather than skipping routing.
+    if (this.#deps.embeddingOptionsFactory === undefined) {
+      await this.#recordFailedClosedTerminal(context, "embedding", "PROVIDER_SAFETY_GATE_FAILED");
+      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", context.operationId, {});
     }
 
-    // §4.3: substitute the embedding text; tokenized-only, NO output reversal.
-    const substitution = await this.#deps.engine.substitute({
-      context,
-      policy,
-      segments: [{ path: "embedding", kind: "embedding", text }],
-      purpose: "embedding",
-    });
-    const tokenizedText =
-      substitution.segments[0]?.text ?? ("" as unknown as TokenizedText);
+    const routingOptions = this.#deps.embeddingOptionsFactory(text);
+    let providerBinding: RawProviderPort<GenerateOptions, EmbeddingKind>;
+    try {
+      const decision = await this.#deps.router.selectUsingOriginalContent(routingOptions);
+      this.#enforceSafetyGate(decision, context);
+      providerBinding = decision.provider;
+    } catch (error) {
+      await this.#recordPreEgressFailure(context, "embedding", error);
+      throw error;
+    }
 
-    const receipt = await this.#prepareAudit(context, policy, substitution, "embedding");
+    let substitution: SubstitutionResult;
+    let receipt: AuditPreparationReceipt;
+    let tokenizedText: TokenizedText;
+    try {
+      // §4.3: substitute the embedding text; tokenized-only, NO output reversal.
+      substitution = await this.#deps.engine.substitute({
+        context,
+        policy,
+        segments: [{ path: "embedding", kind: "embedding", text }],
+        purpose: "embedding",
+      });
+      tokenizedText = substitution.segments[0]?.text ?? ("" as unknown as TokenizedText);
+      receipt = await this.#prepareAudit(context, policy, substitution, "embedding");
+    } catch (error) {
+      await this.#recordPreEgressFailure(context, "embedding", error);
+      throw error;
+    }
 
     // §4.3 / N2: only tokenized text is vectorized or traced.
     await this.#deps.safeTrace.request([{ path: "embedding", text: tokenizedText }]);
-    const vector = await this.#deps.invokeRaw.embedText(tokenizedText, kind);
+    let vector: readonly number[];
+    try {
+      vector = await providerBinding.embedText(tokenizedText, kind);
+    } catch (error) {
+      await this.#finalizeAt(
+        receipt,
+        this.#preparedRecord(context, substitution, "embedding"),
+        "unknown_after_send",
+        errorCodeString(error),
+      );
+      throw error instanceof PhiEngineError
+        ? error
+        : new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), context.operationId, {});
+    }
 
-    const event = preparedToTerminalEvent(
+    await this.#finalizeAt(
+      receipt,
       this.#preparedRecord(context, substitution, "embedding"),
       "completed",
       null,
-      this.#clock(),
     );
-    await this.#deps.audit.finalize(receipt, event);
     return vector;
   }
 
-  /** Steps 1–9: everything that must succeed before the provider may be invoked. */
+  /** Steps 3–9: everything that must succeed before the provider may be invoked. */
   async #prepareForEgress(
     options: GenerateOptions,
     purpose: Exclude<AiOperation, "graph_extraction">,
-  ): Promise<PreparedEgress<GenerateOptions>> {
-    // §4.1 step 1 / N4: require trusted context.
-    const context = await this.#requireContext();
-    // §4.1 step 2: load trusted matter policy.
-    const policy = await this.#deps.policy.require(context);
-
-    // §4.1 step 3 / L11: route on ORIGINAL content and pin the decision, then gate.
+    context: MatterAiContext,
+    policy: TrustedMatterAiPolicy,
+  ): Promise<PreparedEgress<GenerateOptions, EmbeddingKind>> {
+    // §4.1 step 3 / L11: route on ORIGINAL content and PIN the decision, then gate.
     const decision = await this.#deps.router.selectUsingOriginalContent(options);
     this.#enforceSafetyGate(decision, context);
 
@@ -179,6 +255,8 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       segments: classified.segments,
       purpose,
     });
+    // §4.1 step 4 / L5: rebuild asserts a 1:1 path↔tokenized-segment mapping; a missing
+    // or unexpected path fails closed here, before egress.
     const tokenizedOptions = classified.rebuild(substitution.segments);
 
     // §4.1 step 9 / N3: durably PREPARE the metadata-only record BEFORE egress.
@@ -199,6 +277,8 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       substitutionHandle: substitution.reversalHandle,
       tokenizedOptions,
       receipt,
+      // L11: the PINNED provider object selected for the routed+gated decision.
+      provider: decision.provider,
     };
   }
 
@@ -271,9 +351,61 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     };
   }
 
+  /** A metadata-only PREPARED record for a fail-closed terminal recorded before substitution. */
+  #minimalPreparedRecord(context: MatterAiContext, purpose: AiOperation): PhiAuditPreparedRecord {
+    return {
+      state: "PREPARED",
+      attemptId: context.attemptId,
+      operationId: context.operationId,
+      tenantId: context.tenantId,
+      matterId: context.matterId,
+      actorId: context.actorId,
+      operation: purpose,
+      dictionaryVersion: null,
+      engineVersion: this.#deps.engineVersion,
+      counts: toTotalIdentifierCounts({}),
+      ambiguityCount: 0,
+      detectorName: null,
+      detectorVersion: null,
+      latencyMs: { dictionary: 0, detector: 0, total: 0 },
+      preparedAt: this.#clock(),
+    };
+  }
+
+  /**
+   * Finalizes exactly one terminal for a pre-egress failure. An idempotency signal
+   * (the attempt already has its single terminal) records nothing further.
+   */
+  async #recordPreEgressFailure(
+    context: MatterAiContext,
+    purpose: AiOperation,
+    error: unknown,
+  ): Promise<void> {
+    if (isAuditError(error, "AUDIT_ATTEMPT_ALREADY_FINALIZED")) {
+      return;
+    }
+    await this.#recordFailedClosedTerminal(context, purpose, errorCodeString(error));
+  }
+
+  /** Prepares + finalizes a single failed-closed terminal; never egresses (N3/N4). */
+  async #recordFailedClosedTerminal(
+    context: MatterAiContext,
+    purpose: AiOperation,
+    failureCode: string,
+  ): Promise<void> {
+    const record = this.#minimalPreparedRecord(context, purpose);
+    try {
+      const receipt = await this.#deps.audit.prepare(record);
+      await this.#finalizeAt(receipt, record, "failed_closed", failureCode);
+    } catch {
+      // Durability unavailable (or terminal already exists): the fail-closed outcome is
+      // still surfaced via the thrown original error, and nothing egressed.
+    }
+  }
+
   async #reverseAndFinalize(
     rawOutput: TokenizedText,
-    prepared: PreparedEgress<GenerateOptions>,
+    prepared: PreparedEgress<GenerateOptions, EmbeddingKind>,
   ): Promise<DisplayText> {
     let display: DisplayText;
     try {
@@ -292,25 +424,35 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
   }
 
   async #finalize(
-    prepared: PreparedEgress<GenerateOptions>,
-    outcome: "completed" | "reversal_failed",
-    failureCode: PhiEngineFailureCode | null,
+    prepared: PreparedEgress<GenerateOptions, EmbeddingKind>,
+    outcome: PhiAuditOutcome,
+    failureCode: PhiEngineFailureCode | string | null,
   ): Promise<void> {
-    const event = preparedToTerminalEvent(
+    await this.#finalizeAt(
+      prepared.receipt,
       this.#preparedRecord(prepared.context, prepared.substitution, prepared.purpose),
       outcome,
       failureCode,
-      this.#clock(),
     );
-    await this.#deps.audit.finalize(prepared.receipt, event);
+  }
+
+  async #finalizeAt(
+    receipt: AuditPreparationReceipt,
+    record: PhiAuditPreparedRecord,
+    outcome: PhiAuditOutcome,
+    failureCode: string | null,
+  ): Promise<void> {
+    const event: PhiAuditEvent = preparedToTerminalEvent(record, outcome, failureCode, this.#clock());
+    await this.#deps.audit.finalize(receipt, event);
   }
 }
 
-interface PreparedEgress<GenerateOptions> {
+interface PreparedEgress<GenerateOptions, EmbeddingKind> {
   readonly context: MatterAiContext;
   readonly purpose: AiOperation;
   readonly substitution: SubstitutionResult;
   readonly substitutionHandle: ReversalHandle;
   readonly tokenizedOptions: GenerateOptions;
   readonly receipt: AuditPreparationReceipt;
+  readonly provider: RawProviderPort<GenerateOptions, EmbeddingKind>;
 }

@@ -9,7 +9,9 @@ export type AuditFailureCode =
   | "AUDIT_SCHEMA_REJECTED"
   | "AUDIT_REQUIRED_FIELD_MISSING"
   | "AUDIT_DURABILITY_UNAVAILABLE"
-  | "AUDIT_SPOOL_FLUSH_FAILED";
+  | "AUDIT_SPOOL_FLUSH_FAILED"
+  /** The attempt already has a durable PREPARED/terminal record; re-egress is refused (N3). */
+  | "AUDIT_ATTEMPT_ALREADY_FINALIZED";
 
 /**
  * The audit module's error type. It carries only the operation id and fixed safe metadata,
