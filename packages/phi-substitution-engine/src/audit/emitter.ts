@@ -9,6 +9,7 @@ import type {
   PhiAuditSerializer,
 } from "./ports";
 import { isAuditFailureCode, PhiAuditError } from "./errors";
+import { safeCodeString } from "../core/errors";
 import { preparedToTerminalEvent } from "./event-factory";
 
 interface InFlight {
@@ -94,8 +95,8 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       // check read and a PHI value on the caller's read). A store that throws
       // `new PhiAuditError(rawValue as any)` is thus never trusted for being an instance (§7/N2).
       if (error instanceof PhiAuditError) {
-        const code = error.code; // read ONCE
-        if (isAuditFailureCode(code)) {
+        const code = safeCodeString(error); // read ONCE, getter-throw-safe
+        if (code !== undefined && isAuditFailureCode(code)) {
           throw new PhiAuditError(code, record.operationId, { attemptId: record.attemptId });
         }
       }
@@ -129,8 +130,8 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       // recognized code is preserved by throwing a FRESH error carrying the ONCE-read, validated
       // code — never the original instance (its `.code` getter could change between reads).
       if (error instanceof PhiAuditError) {
-        const code = error.code; // read ONCE
-        if (isAuditFailureCode(code)) {
+        const code = safeCodeString(error); // read ONCE, getter-throw-safe
+        if (code !== undefined && isAuditFailureCode(code)) {
           throw new PhiAuditError(code, null, {});
         }
       }

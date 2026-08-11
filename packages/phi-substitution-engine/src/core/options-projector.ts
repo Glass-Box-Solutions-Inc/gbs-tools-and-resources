@@ -212,6 +212,15 @@ export class StructuralOptionsProjector
     // be classified and tokenized, never egressed raw (L5 / fail-closed).
     (snap.messages ?? []).forEach((message, i) => {
       assertAllowedEnum(message.role, ALLOWED_MESSAGE_ROLES, `messages[${i}].role`);
+      // L5 fail-closed: `content` MUST be a genuine array. A non-array (e.g. an object with a no-op
+      // `forEach` that skips classification and a `map` that later emits raw PHI through the clone)
+      // is rejected BEFORE any of its own methods are invoked. The snapshot preserves a non-array
+      // value verbatim, so this is the single place it is vetted.
+      if (!Array.isArray(message.content)) {
+        throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+          malformedTextCarrier: `messages[${i}].content`,
+        });
+      }
       message.content.forEach((part, j) => {
         assertAllowedEnum(part.type, ALLOWED_CONTENT_TYPES, `messages[${i}].content[${j}].type`);
         const partText = (part as unknown as Record<string, unknown>)["text"];

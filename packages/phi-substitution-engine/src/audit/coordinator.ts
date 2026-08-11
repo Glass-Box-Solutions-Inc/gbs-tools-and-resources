@@ -7,7 +7,7 @@ import type {
   PhiAuditPreparedRecord,
 } from "./ports";
 import { isAuditError } from "./errors";
-import { isPhiEngineFailureCode } from "../core/errors";
+import { isPhiEngineFailureCode, safeCodeString } from "../core/errors";
 import { preparedToTerminalEvent } from "./event-factory";
 
 /** Performs the single provider egress for an attempt. Called at most once, only after durability. */
@@ -75,10 +75,15 @@ export class PhiAuditedAttemptCoordinator {
 
     if (!plan.precondition.ok) {
       // §7/N2: only a RECOGNIZED fixed failure code may be recorded; a caller-supplied precondition
-      // code that is not a known PhiEngineFailureCode (and could carry PHI) is replaced. The value
-      // is read EXACTLY ONCE into a local — a getter that returns a valid code on one read and a PHI
-      // value on the next cannot be validated-then-recorded differently.
-      const rawPreconditionCode: unknown = plan.precondition.failureCode;
+      // code that is not a known PhiEngineFailureCode (and could carry PHI) is replaced. The value is
+      // read EXACTLY ONCE behind a getter-throw guard — a getter that returns a valid code on one
+      // read and a PHI value on the next, or throws PHI, cannot be validated-then-recorded.
+      let rawPreconditionCode: unknown;
+      try {
+        rawPreconditionCode = plan.precondition.failureCode;
+      } catch {
+        rawPreconditionCode = undefined;
+      }
       const safeCode = isPhiEngineFailureCode(rawPreconditionCode) ? rawPreconditionCode : "PRECONDITION_FAILED";
       const event = preparedToTerminalEvent(plan.prepared, "failed_closed", safeCode, this.#clock());
       await this.#finalizeQuietly(receipt, event);
@@ -95,15 +100,12 @@ export class PhiAuditedAttemptCoordinator {
     } catch (error) {
       // N3: a provider rejection after send still finalizes exactly one terminal
       // (never a stuck PREPARED record). §7/N2: only a RECOGNIZED fixed failure code may be
-      // recorded — an arbitrary upstream `.code` (which can carry PHI) is never copied. The code is
-      // read EXACTLY ONCE into a local so a getter cannot be validated on one read and recorded on
-      // another (TOCTOU on `.code`).
-      const rawCode: unknown =
-        error !== null && typeof error === "object" && "code" in error
-          ? (error as { code?: unknown }).code
-          : undefined;
+      // recorded — an arbitrary upstream `.code` (which can carry PHI) is never copied. `.code` is
+      // read EXACTLY ONCE behind a getter-throw guard, so a getter that validates on one read and
+      // yields PHI on another, or throws PHI, cannot leak.
+      const rawCode = safeCodeString(error);
       const failureCode =
-        typeof rawCode === "string" && isPhiEngineFailureCode(rawCode) ? rawCode : "PROVIDER_INVOCATION_FAILED";
+        rawCode !== undefined && isPhiEngineFailureCode(rawCode) ? rawCode : "PROVIDER_INVOCATION_FAILED";
       const failedEvent = preparedToTerminalEvent(plan.prepared, "unknown_after_send", failureCode, this.#clock());
       await this.#finalizeQuietly(receipt, failedEvent);
       return {

@@ -184,51 +184,48 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
 
     for (const entry of [...this.#entries.values()]) {
       examined += 1;
-      let status: unknown;
       try {
+        // §7/N2: EVERYTHING that touches the untrusted primary store or the volume adapter lives
+        // inside this guard, so ANY raw rejection — a store/volume error, a throwing/mutating
+        // `status` getter, a `.primed` marker flush failure — is caught below and NEVER propagated
+        // from this background drain (it could carry an upstream message/code). The durable entry is
+        // kept and re-driven idempotently on a later drain.
         const outcome = await primary.prepare(entry.prepared);
-        status = outcome.status; // read the untrusted status EXACTLY ONCE, inside the guarded region
-      } catch {
-        // §7/N2: a RAW primary.prepare rejection — OR a throwing/mutating `status` getter — must
-        // never surface from a background drain (it could carry an upstream message/code). Treat it
-        // as a transient outage — keep the durable entry and retry on a later drain rather than
-        // propagate, and never branch on an un-captured getter (TOCTOU).
-        remaining += 1;
-        continue;
-      }
-      if (status === "unavailable") {
-        remaining += 1;
-        continue;
-      }
-      if (status === "already_exists" && !entry.preparedInPrimary) {
-        // The attempt is already durable in primary from ELSEWHERE (not this spool's
-        // own prior prepare). Idempotent: never publish a second terminal.
-        duplicates += 1;
-        await this.#discard(entry.recordId);
-        continue;
-      }
-      // Either freshly `stored`, or `already_exists` after this spool prepared it on a
-      // prior drain whose finalize failed (a partial). Deliver the terminal, and only
-      // discard after finalize succeeds so a partial retry can never drop it.
-      entry.preparedInPrimary = true;
-      // Persist prepare-success/finalize-pending durably BEFORE finalize. After a restart the
-      // in-memory `preparedInPrimary` is lost; without this marker an `already_exists` from
-      // primary would be misread as an unrelated duplicate and the terminal dropped. If the
-      // durable flush fails, keep the entry and retry on a later drain rather than proceed.
-      if (!(await this.#persistPrimedMarker(entry))) {
-        remaining += 1;
-        continue;
-      }
-      const event = entry.event ?? preparedToTerminalEvent(entry.prepared, "unknown_after_send", null, this.#clock());
-      try {
+        const status: unknown = outcome.status; // read the untrusted status EXACTLY ONCE
+        if (status === "unavailable") {
+          remaining += 1;
+          continue;
+        }
+        if (status === "already_exists" && !entry.preparedInPrimary) {
+          // The attempt is already durable in primary from ELSEWHERE (not this spool's own prior
+          // prepare). Idempotent: never publish a second terminal. Discard first so a discard
+          // failure keeps the entry (re-driven, deduped) rather than dropping it.
+          await this.#discard(entry.recordId);
+          duplicates += 1;
+          continue;
+        }
+        // Either freshly `stored`, or `already_exists` after this spool prepared it on a prior drain
+        // whose finalize failed (a partial). Deliver the terminal, and only discard after finalize
+        // succeeds so a partial retry can never drop it.
+        entry.preparedInPrimary = true;
+        // Persist prepare-success/finalize-pending durably BEFORE finalize. After a restart the
+        // in-memory `preparedInPrimary` is lost; without this marker an `already_exists` from primary
+        // would be misread as an unrelated duplicate and the terminal dropped. If the durable flush
+        // fails, keep the entry and retry on a later drain rather than proceed.
+        if (!(await this.#persistPrimedMarker(entry))) {
+          remaining += 1;
+          continue;
+        }
+        const event = entry.event ?? preparedToTerminalEvent(entry.prepared, "unknown_after_send", null, this.#clock());
         await primary.finalize(event);
+        // Discard BEFORE counting `delivered` so a discard failure keeps the entry (idempotent retry).
+        await this.#discard(entry.recordId);
+        delivered += 1;
       } catch {
-        // Prepared ok but finalize failed: keep the durable entry for a future retry.
+        // A store/volume/finalize/status failure on this entry keeps it for a future retry; a raw
+        // message/code is NEVER surfaced from the drain.
         remaining += 1;
-        continue;
       }
-      delivered += 1;
-      await this.#discard(entry.recordId);
     }
 
     return { examined, delivered, duplicates, remaining };

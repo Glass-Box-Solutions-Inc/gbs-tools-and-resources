@@ -43,7 +43,7 @@ import type {
   PhiAuditPreparedRecord,
 } from "../audit/ports";
 import { isAuditError, preparedToTerminalEvent, toTotalIdentifierCounts } from "../audit/index";
-import { isPhiEngineFailureCode, PhiEngineError, toFailureCode } from "./errors";
+import { isPhiEngineFailureCode, PhiEngineError, safeCodeString, toFailureCode } from "./errors";
 
 /** The single private raw-provider port. It is never exported as an application binding. */
 export interface RawProviderPort<GenerateOptions, EmbeddingKind = string> {
@@ -74,11 +74,8 @@ export interface ComposedProtectedAiProviderDeps<GenerateOptions, EmbeddingKind 
  * code), so nothing PHI-laden can land in the durable audit trail (§7/N2).
  */
 function errorCodeString(error: unknown): string {
-  const code =
-    error !== null && typeof error === "object" && "code" in error
-      ? (error as { code?: unknown }).code
-      : undefined;
-  return typeof code === "string" && isPhiEngineFailureCode(code) ? code : "FAILED_CLOSED";
+  const code = safeCodeString(error);
+  return code !== undefined && isPhiEngineFailureCode(code) ? code : "FAILED_CLOSED";
 }
 
 export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string>

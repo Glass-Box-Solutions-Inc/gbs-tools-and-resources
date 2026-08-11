@@ -2013,3 +2013,84 @@ describe("GLY-330 NEW-R6-A R7 (§7/N2): spool.drainTo tolerates a throwing statu
     expect(report.remaining).toBeGreaterThanOrEqual(1);
   });
 });
+
+// ===========================================================================
+// R8 — the round-8 gate found SIBLING paths: a THROWING .code getter, a non-array
+// message.content whose own forEach/map run, and unguarded volume I/O in drainTo.
+// Discipline: read untrusted members behind a getter-throw guard, fail closed on a
+// non-array carrier, guard every drain I/O. Each is mutation-proven.
+// ===========================================================================
+describe("GLY-330 finding 3 R8 (§7/N2): a THROWING error.code getter cannot leak PHI", () => {
+  it("never surfaces a throwing-getter PHI message to the caller or the audit terminal", async () => {
+    const gate: Gate = { prepared: false };
+    const evil: any = {};
+    Object.defineProperty(evil, "code", {
+      get() {
+        throw new Error("ALICE_SMITH_DOB_1970");
+      },
+    });
+    const built = buildManualWrapper(gate, { policyFn: (): Promise<any> => Promise.reject(evil) });
+    let thrown: any;
+    try {
+      await built.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(String(thrown?.message ?? "")).not.toContain("ALICE_SMITH_DOB_1970");
+    expect(String(thrown?.code ?? "")).not.toContain("ALICE_SMITH_DOB_1970");
+    expect(JSON.stringify(built.primary.finalizedEvents)).not.toContain("ALICE_SMITH_DOB_1970");
+  });
+});
+
+describe("GLY-330 finding 4 R8 (L5): a non-array message.content fails closed", () => {
+  it("rejects an object 'content' before its own forEach/map can run", () => {
+    const projector = new StructuralOptionsProjector();
+    const content: any = {
+      forEach(): void {
+        /* no-op: would skip classification */
+      },
+      map(): any {
+        return [{ type: "text", text: "ALICE_CANARY" }]; // would egress raw via the clone
+      },
+    };
+    expect(() =>
+      projector.classify({ messages: [{ role: "user", content }] } as any),
+    ).toThrow(PhiEngineError);
+  });
+});
+
+describe("GLY-330 NEW-R6-A R8 (§7/N2): drainTo guards ALL volume/store I/O", () => {
+  it("tolerates a volume putAtomic rejection carrying PHI on the primed-marker path", async () => {
+    const base = new InMemorySpoolVolume();
+    const volume: any = {
+      async putAtomic(recordId: string, bytes: Uint8Array): Promise<any> {
+        if (recordId.endsWith(".primed")) {
+          throw new Error("ALICE_SMITH_DOB_1970"); // adversarial volume: PHI in the rejection
+        }
+        return base.putAtomic(recordId, bytes);
+      },
+      read: (id: string): Promise<any> => base.read(id),
+      list: (): Promise<any> => base.list(),
+      remove: (id: string): Promise<any> => base.remove(id),
+    };
+    const spool = new Aes256GcmAuditSpool(volume as any, new FixedKeyProvider() as any, CLOCK);
+    await spool.appendPrepared(spoolPrepared("att-primed"));
+    const primary = {
+      async prepare(r: any): Promise<any> {
+        return { status: "stored", durableRecordId: `p:${String(r.attemptId)}` };
+      },
+      async finalize(): Promise<void> {},
+    };
+    let thrown: any;
+    let report: any;
+    try {
+      report = await spool.drainTo(primary as any);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeUndefined();
+    expect(report.remaining).toBeGreaterThanOrEqual(1);
+  });
+});

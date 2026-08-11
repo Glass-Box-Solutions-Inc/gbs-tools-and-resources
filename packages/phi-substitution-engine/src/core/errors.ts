@@ -52,15 +52,30 @@ export function isPhiEngineFailureCode(value: unknown): value is PhiEngineFailur
 }
 
 /**
+ * Reads a thrown value's `code` WITHOUT letting a hostile member escape (§7/N2): a `code` getter (or
+ * a Proxy trap) that THROWS — its message could carry PHI — is swallowed and treated as "no code".
+ * Returns the code only when it is a plain string; absent / non-string / throwing → undefined.
+ */
+export function safeCodeString(value: unknown): string | undefined {
+  try {
+    if (value === null || typeof value !== "object") {
+      return undefined;
+    }
+    const code = (value as { code?: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Maps a thrown value to a fixed, allow-listed failure code, defaulting to a safe generic code.
- * A `code` field is honored ONLY if it is a recognized `PhiEngineFailureCode` — being a
- * `PhiEngineError` instance is NOT sufficient, because an injected component can construct one with
- * an arbitrary (PHI-laden) code via an `as any` cast (§7/N2). Any unrecognized code → the fallback.
+ * A `code` is honored ONLY if it is a recognized `PhiEngineFailureCode` — being a `PhiEngineError`
+ * instance is NOT sufficient, because an injected component can construct one with an arbitrary
+ * (PHI-laden) code via an `as any` cast, or expose it through a throwing getter (§7/N2). Any
+ * unrecognized, throwing, or non-string code → the fallback.
  */
 export function toFailureCode(value: unknown, fallback: PhiEngineFailureCode): PhiEngineFailureCode {
-  const code =
-    value !== null && typeof value === "object" && "code" in value
-      ? (value as { code?: unknown }).code
-      : undefined;
-  return typeof code === "string" && isPhiEngineFailureCode(code) ? code : fallback;
+  const code = safeCodeString(value);
+  return code !== undefined && isPhiEngineFailureCode(code) ? code : fallback;
 }
