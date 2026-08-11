@@ -14,7 +14,9 @@ Recording recipes:
 - Run ``--restamp-provenance --base-worktree <path>`` with a detached base worktree
   pinned at ``BASE_COMMIT``.
 - Use ``--output <path>`` to direct the output payload for ``--record`` and
-  ``--restamp-provenance``; omitted, it uses the canonical package path.
+  ``--restamp-provenance``; omitted, it uses the canonical package path. In
+  ``--restamp-provenance`` the canonical tracked baseline is always the input
+  authority; ``--output`` only changes the write destination.
 
 Environment:
 - ``AJC72_BASE_WORKTREE`` is a test-fixture override for the e2e tests.
@@ -121,6 +123,36 @@ def _write_json_atomically(payload: object, destination: str) -> None:
     except Exception:
         os.unlink(tmp_path)
         raise
+
+
+def _canonical_baseline_path() -> str:
+    return os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json")
+
+
+def _path_is_inside(path: str, root: str) -> bool:
+    path_real = os.path.realpath(path)
+    root_real = os.path.realpath(root)
+    try:
+        return os.path.commonpath([path_real, root_real]) == root_real
+    except ValueError:
+        return False
+
+
+def _resolve_output_destination(
+    output: str | None,
+    default_path: str,
+    forbidden_worktree: str | None = None,
+) -> str:
+    if output is None:
+        return default_path
+
+    destination = output if os.path.isabs(output) else os.path.abspath(output)
+    if forbidden_worktree is not None and _path_is_inside(destination, forbidden_worktree):
+        _exit(
+            "refusing to write --output inside the detached base worktree: "
+            + destination
+        )
+    return destination
 
 
 def _status_paths(cwd: str, include_untracked: bool = False) -> list[str]:
@@ -430,11 +462,12 @@ def _assert_restamp_payload_delta_is_meta_note_only(
 
 def _rewrite_restamped_provenance_payload(
     feature_baseline_path: str,
+    destination_path: str,
     fresh_base_payload: dict,
 ) -> None:
     fresh_feature_payload = _read_json(feature_baseline_path)
     candidate = _rebase_provenance_payload(fresh_feature_payload, fresh_base_payload)
-    _write_json_atomically(candidate, feature_baseline_path)
+    _write_json_atomically(candidate, destination_path)
 
 
 def _run_check_mode() -> int:
@@ -468,7 +501,10 @@ def _run_record_mode(
 
     from tests.render_baseline import ANCHOR_DATE, BASELINE_PATH, CASE_SEED, RENDER_SEED, compute_baseline
 
-    baseline_path = output or BASELINE_PATH
+    forbidden_worktree = None
+    if output is not None and _git("rev-parse", "--abbrev-ref", "HEAD") == "HEAD":
+        forbidden_worktree = _git("rev-parse", "--show-toplevel")
+    baseline_path = _resolve_output_destination(output, BASELINE_PATH, forbidden_worktree)
     payload = {
         "_meta": {
             "source_commit": source_commit,
@@ -493,8 +529,11 @@ def _run_restamp_mode(base_worktree: str, output: str | None = None) -> int:
         _exit("refusing to restamp: feature worktree is not clean")
 
     base_repo, base_package_root = _validate_base_worktree(base_worktree)
-    feature_baseline_path = output or os.path.join(
-        _PACKAGE_ROOT, "tests", "golden", "render_baseline.json"
+    feature_baseline_path = _canonical_baseline_path()
+    destination_path = _resolve_output_destination(
+        output,
+        feature_baseline_path,
+        forbidden_worktree=base_repo,
     )
     failure: str | None = None
     try:
@@ -517,7 +556,11 @@ def _run_restamp_mode(base_worktree: str, output: str | None = None) -> int:
     finally:
         _cleanup_base_worktree(base_worktree, base_repo, base_package_root, failure)
 
-    _rewrite_restamped_provenance_payload(feature_baseline_path, fresh_base_payload)
+    _rewrite_restamped_provenance_payload(
+        feature_baseline_path,
+        destination_path,
+        fresh_base_payload,
+    )
     print("Restamped provenance note from the pinned base worktree.")
     return 0
 
@@ -538,12 +581,14 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    harness = _verify_harness()
-
     if args.restamp_provenance and args.base_ref is not None:
         _exit("--base-ref is forbidden with --restamp-provenance")
     if args.base_worktree is not None and not args.restamp_provenance:
         _exit("--base-worktree is supported only with --restamp-provenance")
+    if args.check and args.output is not None:
+        _exit("--output is supported only with --record and --restamp-provenance")
+
+    harness = _verify_harness()
 
     if args.check:
         return _run_check_mode()

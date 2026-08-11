@@ -1086,15 +1086,17 @@ def test_restamp_provenance_uses_only_fresh_pinned_base_cases(base_worktree, tmp
     recorder = _recorder_module()
     feature_before, base_payload = _trusted_base_payload(base_worktree)
     base_payload_bytes = _trusted_base_payload_bytes(base_worktree)
-    baseline_text = open(BASELINE_PATH, encoding="utf-8").read()
+    baseline_bytes = open(BASELINE_PATH, "rb").read()
+    baseline_text = baseline_bytes.decode("utf-8")
     output = tmp_path / "render_baseline-test-restamp.json"
-    _write_baseline(feature_before, output)
+    assert not output.exists()
 
     try:
         code, out = _run_restamp_provenance(
             base_worktree, output_path=str(output),
         )
         assert code == 0, f"restamp-provenance did not succeed:\n{out}"
+        assert output.exists(), "--output destination was not created"
         with open(output, encoding="utf-8") as fh:
             after = json.load(fh)
         assert after["cases"] == base_payload["cases"]
@@ -1104,6 +1106,7 @@ def test_restamp_provenance_uses_only_fresh_pinned_base_cases(base_worktree, tmp
             f"restamp changed non-provenance leaves: {changed}"
         )
         assert after["_meta"]["note"] == recorder.PROVENANCE_NOTE
+        assert open(BASELINE_PATH, "rb").read() == baseline_bytes
     finally:
         _assert_base_worktree_clean(base_worktree, base_payload_bytes)
         _restore_baseline(baseline_text)
@@ -1275,12 +1278,12 @@ def test_restamp_provenance_changes_only_meta_note():
     )
     assert candidate["_meta"]["note"] == recorder.PROVENANCE_NOTE
 
-
     bad_candidate = copy.deepcopy(candidate)
     bad_candidate["cases"]["case.alpha"]["text"] = "changed case text"
     with pytest.raises(SystemExit) as exc:
-        recorder._assert_restamp_payload_delta_is_meta_note_only(feature_payload, bad_candidate)
+        recorder._assert_restamp_payload_delta_is_meta_note_only(base_payload, bad_candidate)
     assert "restamp would change more than _meta.note" in str(exc.value)
+    assert "cases.case.alpha.text" in str(exc.value)
 
 
 def test_status_paths_preserves_porcelain_path_prefix(tmp_path):
@@ -1344,7 +1347,11 @@ def test_restamp_provenance_refuses_case_drift_without_writing(tmp_path):
     destination_text = json.dumps(feature_payload, sort_keys=True, indent=2) + "\n"
     destination.write_text(destination_text, encoding="utf-8")
     with pytest.raises(SystemExit) as exc:
-        recorder._rewrite_restamped_provenance_payload(str(destination), drifted_base)
+        recorder._rewrite_restamped_provenance_payload(
+            str(destination),
+            str(destination),
+            drifted_base,
+        )
     assert "base recorder cases do not match feature baseline pre-restamp cases" in str(exc.value)
     assert destination.read_text(encoding="utf-8") == destination_text
 

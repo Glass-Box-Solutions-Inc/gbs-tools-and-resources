@@ -35,22 +35,30 @@ def _resolve_interpreter(version: str) -> str | None:
     for candidate in candidates:
         if not candidate:
             continue
-        resolved = Path(candidate)
-        if not resolved.exists():
-            resolved = Path(shutil.which(candidate) or "")
-            if not resolved.exists():
+        resolved = candidate
+        if not Path(resolved).exists():
+            resolved = shutil.which(candidate)
+            if not resolved:
                 continue
 
         dep_probe = subprocess.run(
-            [str(resolved), "-c", "import reportlab"],
+            [resolved, "-c", "import reportlab"],
             capture_output=True,
             text=True,
             check=False,
         )
         if dep_probe.returncode == 0:
-            return str(resolved)
+            return resolved
 
     return None
+
+
+def test_python310_resolution_skips_when_which_returns_none(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AJC72_PYTHON310", str(tmp_path / "missing-python3.10"))
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(shutil, "which", lambda _candidate: None)
+
+    assert _resolve_interpreter("3.10") is None
 
 
 def _run_probe(interpreter: str) -> dict:
