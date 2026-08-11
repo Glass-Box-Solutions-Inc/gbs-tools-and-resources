@@ -1459,16 +1459,6 @@ def _affirmative_evidence(
     if claim_type == "industrial_causation":
         if target is None:
             return "indeterminate"
-        if (
-            "firefighter_presumption" in contention.doctrine_hooks
-            and target.body_system == "oncologic"
-            and target.surfaces_in_file
-        ):
-            # The presumption IS the evidence theory: a diagnosed cancer that
-            # looks wholly unrelated is exactly what the safety-member statutes
-            # presume industrial. Rebuttal is the defense's burden, not a
-            # contradiction on the face of the record.
-            return "supports"
         if target.causal_ground_truth in ("industrial", "mixed") and target.surfaces_in_file:
             return "supports"
         if target.causal_ground_truth == "nonindustrial" or target.wholly_unrelated:
@@ -2199,14 +2189,11 @@ def _contention_candidates(
     firefighter_hook = "firefighter_presumption" in seed.lifecycle.doctrine_hooks
 
     for condition in history.conditions:
-        # An EVIDENCE candidate (B.4): a condition the file never shows is not
-        # something a party can hang a contention on — prior claims and awards
-        # are litigated events and are on the record by nature.
-        claim_types = (
-            _condition_claim_types(condition, context)
-            if condition.surfaces_in_file
-            else ()
-        )
+        # Eligibility is the world-truth TYPE — the B.4 table row, nothing
+        # more. Visibility is B.5's business: a contention on a condition the
+        # file never shows is perfectly draftable, its evidence just reads
+        # indeterminate rather than supports.
+        claim_types = _condition_claim_types(condition, context)
         if claim_types:
             note_eligible("condition")
             incidence = _assertion_rng(
