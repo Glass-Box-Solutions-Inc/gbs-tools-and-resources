@@ -70,7 +70,7 @@ import {
   reverseText,
 } from "../tokens/index";
 import { toTotalIdentifierCounts } from "../audit/index";
-import { PhiEngineError } from "./errors";
+import { PhiEngineError, safeCodeString } from "./errors";
 
 /** Token role → identifier class, used to tally per-class counts from tokenized output. */
 const ROLE_CLASS: Readonly<Record<string, IdentifierClass>> = {
@@ -228,9 +228,13 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       });
     } catch (error) {
       if (isDictionaryError(error)) {
-        throw new PhiEngineError(mapDictionaryFailure(error.code), context.operationId, {});
+        // §7/N2: read the code getter-throw-safe; `mapDictionaryFailure` already collapses any
+        // unrecognized value to a fixed code, so a hostile `.code` can never ride the failure.
+        throw new PhiEngineError(mapDictionaryFailure(safeCodeString(error) ?? ""), context.operationId, {});
       }
-      throw error;
+      // §7/N2: an unexpected non-DictionaryError (or a hostile Proxy `isDictionaryError` rejected)
+      // must never surface a raw message/code — fail closed with a fixed code.
+      throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
     }
 
     // N4: phase-1 has no detection belt wired. A policy that REQUIRES it cannot be
@@ -257,9 +261,10 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       });
     } catch (error) {
       if (isDictionaryError(error)) {
-        throw new PhiEngineError(mapDictionaryFailure(error.code), context.operationId, {});
+        throw new PhiEngineError(mapDictionaryFailure(safeCodeString(error) ?? ""), context.operationId, {});
       }
-      throw error;
+      // §7/N2: an unexpected non-DictionaryError must never surface a raw message/code — fail closed.
+      throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
     }
 
     const started = performance.now();
@@ -317,7 +322,8 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
           // C6 ambiguity → fail closed; a known value is never guessed.
           throw new PhiEngineError("AMBIGUOUS_KNOWN_IDENTIFIER", context.operationId, {});
         }
-        throw error;
+        // §7/N2: an unexpected non-DictionaryError must never surface a raw message/code — fail closed.
+        throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
       }
 
       // §4.1 step 8 / N5: record each output token → its CURRENT canonical value, and tally

@@ -32,6 +32,15 @@ export class DictionaryError extends Error {
   }
 }
 
+/**
+ * Narrow an unknown thrown value to a DictionaryError — SAFELY. The `instanceof` test is guarded
+ * because a hostile Proxy `getPrototypeOf` / `Symbol.hasInstance` trap could throw a PHI canary
+ * during the prototype-chain walk; an unclassifiable value is simply not one of our errors (§7/N2).
+ */
 export function isDictionaryError(value: unknown): value is DictionaryError {
-  return value instanceof DictionaryError;
+  try {
+    return value instanceof DictionaryError;
+  } catch {
+    return false;
+  }
 }

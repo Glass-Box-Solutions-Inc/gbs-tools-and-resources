@@ -73,17 +73,25 @@ export class PhiAuditedAttemptCoordinator {
       };
     }
 
-    if (!plan.precondition.ok) {
-      // §7/N2: only a RECOGNIZED fixed failure code may be recorded; a caller-supplied precondition
-      // code that is not a known PhiEngineFailureCode (and could carry PHI) is replaced. The value is
-      // read EXACTLY ONCE behind a getter-throw guard — a getter that returns a valid code on one
-      // read and a PHI value on the next, or throws PHI, cannot be validated-then-recorded.
-      let rawPreconditionCode: unknown;
-      try {
-        rawPreconditionCode = plan.precondition.failureCode;
-      } catch {
-        rawPreconditionCode = undefined;
-      }
+    // §7/N2: the precondition is UNTRUSTED input. BOTH `ok` and `failureCode` are read EXACTLY ONCE
+    // behind a getter-throw guard — a hostile Proxy/getter on `.ok` (not just `.failureCode`) must
+    // not throw a PHI canary out of `run()` uncaught. Any read failure, and any non-`true` `ok`, is
+    // treated as a precondition failure and fails closed with a fixed code (stricter than `!ok`,
+    // which a non-boolean truthy value would slip past into egress).
+    let preconditionOk: boolean;
+    let rawPreconditionCode: unknown;
+    try {
+      preconditionOk = plan.precondition.ok === true;
+      rawPreconditionCode = preconditionOk
+        ? undefined
+        : (plan.precondition as { readonly failureCode?: unknown }).failureCode;
+    } catch {
+      preconditionOk = false;
+      rawPreconditionCode = undefined;
+    }
+    if (!preconditionOk) {
+      // Only a RECOGNIZED fixed failure code may be recorded; a caller-supplied code that is not a
+      // known PhiEngineFailureCode (and could carry PHI) is replaced with the fixed fallback.
       const safeCode = isPhiEngineFailureCode(rawPreconditionCode) ? rawPreconditionCode : "PRECONDITION_FAILED";
       const event = preparedToTerminalEvent(plan.prepared, "failed_closed", safeCode, this.#clock());
       await this.#finalizeQuietly(receipt, event);

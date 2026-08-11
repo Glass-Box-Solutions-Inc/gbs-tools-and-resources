@@ -27,6 +27,7 @@ import {
   isDictionaryError,
   type DictionaryFailureCode,
 } from "./errors";
+import { isPhiEngineFailureCode, safeCodeString } from "../core/errors";
 
 export type EgressDecision =
   | {
@@ -78,14 +79,29 @@ export async function decideEgress(req: EgressRequest, deps: EgressDeps): Promis
     });
   } catch (error) {
     if (isDictionaryError(error)) {
-      const reported = error.safeDetails.activeVersion;
-      return {
-        kind: "FAILED_CLOSED",
-        code: error.code,
-        dictionaryVersion: typeof reported === "string" ? reported : null,
-      };
+      // §7/N2: a DictionaryError's `.code` is UNTRUSTED here — an injected coordinator can construct
+      // one with a raw (PHI-laden) code via an `as any` cast or expose it through a throwing getter.
+      // Read it through the getter-throw guard and honor it ONLY as a recognized fixed failure code;
+      // otherwise fail closed with a fixed code. `safeDetails.activeVersion` is forwarded only when it
+      // has the safe decimal-version shape, never as an arbitrary attacker-supplied string.
+      const rawCode = safeCodeString(error);
+      const code: DictionaryFailureCode =
+        rawCode !== undefined && isPhiEngineFailureCode(rawCode)
+          ? (rawCode as DictionaryFailureCode)
+          : DICTIONARY_UNAVAILABLE;
+      let dictionaryVersion: string | null = null;
+      try {
+        const reported: unknown = error.safeDetails?.activeVersion;
+        if (typeof reported === "string" && /^\d{1,20}$/.test(reported)) {
+          dictionaryVersion = reported;
+        }
+      } catch {
+        /* a hostile safeDetails getter cannot leak — drop the version and keep the fixed code. */
+      }
+      return { kind: "FAILED_CLOSED", code, dictionaryVersion };
     }
-    throw error;
+    // §7/N2: an unexpected non-DictionaryError must never surface a raw message/code — fail closed.
+    return { kind: "FAILED_CLOSED", code: DICTIONARY_UNAVAILABLE, dictionaryVersion: null };
   }
 
   const compileInput: CompileInput = {

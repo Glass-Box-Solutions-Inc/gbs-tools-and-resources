@@ -19,6 +19,7 @@ import {
   HoldbackReverseStreamFactory,
   InMemoryReversalStore,
   InProcessReversalHandle,
+  ReversalFailedError,
   reverseText,
   SENTINEL_OPEN,
 } from "../src/tokens/index";
@@ -29,10 +30,14 @@ import {
   isAuditError,
   PhiAuditedAttemptCoordinator,
   PhiAuditError,
+  preparedToTerminalEvent,
 } from "../src/audit/index";
 import {
+  decideEgress,
+  DictionaryError,
   InMemoryCaseTruthReader,
   InMemoryDictionaryVersionCoordinator,
+  isDictionaryError,
 } from "../src/dictionary/index";
 import { isPhiEngineError, PhiEngineError } from "../src/core/errors";
 
@@ -2237,5 +2242,199 @@ describe("GLY-330 R9 (§7/N2): hostile-object error classification cannot surfac
     expect(thrown).toBeInstanceOf(PhiAuditError);
     expect(String(thrown?.message ?? "")).not.toContain("ALICE_SMITH_DOB_1970");
     expect(String(thrown?.code ?? "")).not.toContain("ALICE_SMITH_DOB_1970");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R10 (§7/N2): the SAME hostile-object leak classes, swept across the sibling
+// modules the earlier rounds had not hardened — the dictionary orchestrator,
+// the streaming reverser, the audit serializer, and two remaining scalar reads.
+// A deliberately hostile thrown value / carrier must never surface PHI to a
+// caller, a trace, an error, or a durable audit record.
+// ---------------------------------------------------------------------------
+describe("GLY-330 R10 (§7/N2): hostile-object leak class swept across sibling modules", () => {
+  const CANARY = "ALICE_SMITH_DOB_1970";
+  const substReq = (text: string): any => ({
+    context: ctx(),
+    policy: { locale: LOCALE, detectorRequirement: "OPTIONAL", schemaVersion: SCHEMA },
+    segments: [{ text }],
+  });
+
+  // R10-A — a non-DictionaryError from the dictionary path is sanitized, never forwarded.
+  it("orchestrator: a raw non-DictionaryError from requireActiveReady fails closed (never forwarded)", async () => {
+    const coordinator: any = {
+      requireActiveReady: async (): Promise<never> => {
+        throw Object.assign(new Error(CANARY), { code: CANARY });
+      },
+    };
+    const engine = new ComposedSubstitutionEngine({
+      coordinator,
+      truthReader: new InMemoryCaseTruthReader() as any,
+      sourceTruthRevision: REVISION,
+      reversalStore: new InMemoryReversalStore(),
+      engineVersion: ENGINE,
+    } as any);
+    let thrown: any;
+    try {
+      await engine.substitute(substReq("Maria García"));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PhiEngineError);
+    expect(String(thrown?.message ?? "")).not.toContain(CANARY);
+    expect(String(thrown?.code ?? "")).not.toContain(CANARY);
+  });
+
+  // R10-G — a hostile getPrototypeOf Proxy cannot escape isDictionaryError's instanceof.
+  it("isDictionaryError never throws on a hostile getPrototypeOf Proxy (fails closed to false)", () => {
+    const evil = new Proxy(new DictionaryError("DICTIONARY_NOT_READY"), {
+      getPrototypeOf(): never {
+        throw new Error(CANARY);
+      },
+    });
+    expect(() => isDictionaryError(evil)).not.toThrow();
+    expect(isDictionaryError(evil)).toBe(false);
+  });
+
+  // R10-D — decideEgress copies no hostile `.code`; a throwing getter yields a fixed code.
+  it("decideEgress: a DictionaryError with a THROWING .code getter yields a fixed code, no PHI", async () => {
+    const evil = new DictionaryError("DICTIONARY_NOT_READY");
+    Object.defineProperty(evil, "code", {
+      configurable: true,
+      get(): string {
+        throw new Error(CANARY);
+      },
+    });
+    const coordinator: any = {
+      requireActiveReady: async (): Promise<never> => {
+        throw evil;
+      },
+    };
+    let decision: any;
+    let thrown: any;
+    try {
+      decision = await decideEgress(
+        {
+          context: { tenantId: TENANT, matterId: MATTER } as any,
+          dictionaryHealth: "available",
+          text: "Maria García",
+          policy: {} as any,
+          engineVersion: ENGINE,
+          sourceTruthRevision: REVISION,
+        },
+        { coordinator, cache: {} as any, compiler: {} as any },
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    const surfaced = JSON.stringify(decision ?? {}) + String(thrown?.message ?? "");
+    expect(surfaced).not.toContain(CANARY);
+    expect(decision?.kind).toBe("FAILED_CLOSED");
+  });
+
+  // R10-B — the streaming reverser sanitizes a store rejection, never forwards the instance.
+  it("streaming reverser: a store rejection carrying PHI is sanitized to ReversalFailedError", async () => {
+    const factory = new HoldbackReverseStreamFactory();
+    const hostileStore: any = {
+      maximumEncounteredTokenBatch: 8,
+      resolveEncounteredTokens: async (): Promise<never> => {
+        throw Object.assign(new Error(CANARY), { code: CANARY });
+      },
+    };
+    const handle: any = {
+      tenantId: TENANT,
+      matterId: MATTER,
+      dictionaryVersion: VERSION,
+      operationId: b<any>("op-1"),
+    };
+    const stream = factory.create({
+      handle,
+      store: hostileStore,
+      grammar: new BracketTokenGrammar(),
+      policy: BOUNDARY_TOKEN_GRAMMAR_POLICY,
+      sink: (): void => {},
+    });
+    let thrown: any;
+    try {
+      await stream.push(b<any>("[[Claimant]]"));
+      await stream.end();
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ReversalFailedError);
+    expect(String(thrown?.message ?? "")).not.toContain(CANARY);
+    expect(String(thrown?.code ?? "")).not.toContain(CANARY);
+  });
+
+  // R10-C — the serializer's failureCode is value-allow-listed: a canary is rejected pre-persist.
+  it("serializer: a terminal event whose failureCode is an unrecognized (PHI) string is rejected", () => {
+    const serializer = new ExactAllowListAuditSerializer();
+    const event = preparedToTerminalEvent(spoolPrepared("att-r10c"), "failed_closed", CANARY, CLOCK());
+    let thrown: any;
+    try {
+      serializer.serialize(event);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PhiAuditError);
+    expect(String((thrown as any)?.code ?? "")).toBe("AUDIT_SCHEMA_REJECTED");
+    expect(JSON.stringify({ m: thrown?.message, c: (thrown as any)?.code, d: (thrown as any)?.safeDetails })).not.toContain(CANARY);
+    // A legitimate fixed code still serializes (guard against over-restriction).
+    expect(() => serializer.serialize(preparedToTerminalEvent(spoolPrepared("att-r10c2"), "failed_closed", "PRECONDITION_FAILED", CLOCK()))).not.toThrow();
+  });
+
+  // R10-E — the coordinator reads precondition.ok behind a getter-throw guard.
+  it("coordinator: a hostile precondition.ok getter trap fails closed, never surfaces PHI", async () => {
+    const okThrows = new Proxy({}, {
+      get(_t, key): unknown {
+        if (key === "ok") throw new Error(CANARY);
+        return undefined;
+      },
+    });
+    const emitter = {
+      prepare: async (): Promise<any> => ({ attemptId: b<any>("att-r10e"), location: "PRIMARY_STORE", durableRecordId: "d" }),
+      finalize: async (): Promise<void> => {},
+      reconcileUnknownAfterSend: async (): Promise<void> => {},
+    };
+    const coordinator = new PhiAuditedAttemptCoordinator(emitter as any, CLOCK);
+    const plan = {
+      prepared: spoolPrepared("att-r10e"),
+      precondition: okThrows,
+      invokeProvider: async (): Promise<void> => {},
+    };
+    let thrown: any;
+    let result: any;
+    try {
+      result = await coordinator.run(plan as any);
+    } catch (e) {
+      thrown = e;
+    }
+    const surfaced = String(thrown?.message ?? "") + JSON.stringify(result ?? {});
+    expect(surfaced).not.toContain(CANARY);
+    expect(result?.outcome).toBe("failed_closed");
+    expect(result?.providerInvoked).toBe(false);
+  });
+
+  // R10-F — a hostile Array.prototype.forEach override cannot make classification skip a carrier.
+  it("projector: an overridden Array.prototype.forEach cannot skip classification (no raw egress)", () => {
+    const projector = new StructuralOptionsProjector();
+    const original = Array.prototype.forEach;
+    let found = false;
+    try {
+      // eslint-disable-next-line no-extend-native
+      (Array.prototype as any).forEach = function (): void {
+        /* no-op: a `.forEach`-based classification pass would visit nothing */
+      };
+      const classified: any = projector.classify({
+        messages: [{ role: "user", content: [{ type: "text", text: CANARY }] }],
+      } as any);
+      // Index-walk (not .some/.find — those are unaffected, but keep the assertion self-contained).
+      for (let i = 0; i < classified.segments.length; i += 1) {
+        if (String(classified.segments[i].text).includes(CANARY)) found = true;
+      }
+    } finally {
+      (Array.prototype as any).forEach = original;
+    }
+    expect(found).toBe(true);
   });
 });

@@ -164,11 +164,14 @@ class HoldbackReverseStream implements ReverseStream {
     let reversed: string;
     try {
       reversed = await reverseText(this.buffer, this.keys, this.store, this.grammar, this.policy);
-    } catch (error) {
-      // L4: latch — no later push/end may resume or complete after a reversal failure.
+    } catch {
+      // L4: latch — no later push/end may resume or complete after a reversal failure. §7/N2: the
+      // rejected error is NEVER forwarded (a raw store rejection's message/`.code` could carry PHI,
+      // and `error instanceof Error` would happily pass a hostile carrier through); a fresh
+      // fixed-code error carrying only the operation id is thrown instead.
       this.failed = true;
       this.buffer = "";
-      throw error instanceof Error ? error : new ReversalFailedError(this.keys.operationId);
+      throw new ReversalFailedError(this.keys.operationId);
     }
     this.buffer = "";
     const restored = this.restore(reversed);
@@ -194,11 +197,12 @@ class HoldbackReverseStream implements ReverseStream {
     let reversed: string;
     try {
       reversed = await reverseText(settled, this.keys, this.store, this.grammar, this.policy);
-    } catch (error) {
-      // L4: latch — a reversal failure on an emitted prefix stops the stream for good.
+    } catch {
+      // L4: latch — a reversal failure on an emitted prefix stops the stream for good. §7/N2: the
+      // rejected error is NEVER forwarded (see end()); a fresh fixed-code error is thrown instead.
       this.failed = true;
       this.buffer = "";
-      throw error instanceof Error ? error : new ReversalFailedError(this.keys.operationId);
+      throw new ReversalFailedError(this.keys.operationId);
     }
     this.buffer = this.buffer.slice(cut);
     const restored = this.restore(reversed);

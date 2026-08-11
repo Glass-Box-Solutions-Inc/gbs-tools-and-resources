@@ -13,6 +13,33 @@ const AUDIT_OUTCOMES: readonly PhiAuditOutcome[] = [
   "unknown_after_send",
 ];
 
+/**
+ * The ONLY non-null strings a terminal `failureCode` may carry (§7/N2). Without this value
+ * allow-list a terminal event constructed with `preparedToTerminalEvent(prepared, outcome, <raw>, …)`
+ * would persist an arbitrary — possibly PHI-laden — string into the durable audit record. This is
+ * the last gate before persistence, so it must enumerate EVERY fixed code the coordinator/wrapper
+ * legitimately record: the 11 `PhiEngineFailureCode`s plus the three fixed fallbacks
+ * (`FAILED_CLOSED` from the wrapper's `errorCodeString`, `PRECONDITION_FAILED` /
+ * `PROVIDER_INVOCATION_FAILED` from the coordinator). Keep in sync with `core/errors.ts` and those
+ * two call sites; a missing entry fails a legitimate terminal closed rather than leaking.
+ */
+const TERMINAL_FAILURE_CODES: readonly string[] = [
+  "MISSING_TRUSTED_CONTEXT",
+  "MISSING_TRUSTED_POLICY",
+  "DICTIONARY_NOT_READY",
+  "DICTIONARY_UNAVAILABLE",
+  "AMBIGUOUS_KNOWN_IDENTIFIER",
+  "DETECTOR_UNAVAILABLE",
+  "INVALID_DETECTOR_OFFSET",
+  "UNCLASSIFIED_PROVIDER_FIELD",
+  "AUDIT_DURABILITY_UNAVAILABLE",
+  "REVERSAL_FAILED",
+  "PROVIDER_SAFETY_GATE_FAILED",
+  "FAILED_CLOSED",
+  "PRECONDITION_FAILED",
+  "PROVIDER_INVOCATION_FAILED",
+];
+
 /** A single field's expected shape. The allow-list is exact and recursive. */
 type FieldSpec =
   | { readonly kind: "literal"; readonly value: string }
@@ -21,6 +48,7 @@ type FieldSpec =
   | { readonly kind: "bigintOrNull" }
   | { readonly kind: "number" }
   | { readonly kind: "enum"; readonly values: readonly string[] }
+  | { readonly kind: "enumOrNull"; readonly values: readonly string[] }
   | { readonly kind: "totalCounts" }
   | { readonly kind: "exactObject"; readonly fields: ObjectSchema };
 
@@ -49,7 +77,7 @@ const EVENT_SCHEMA: ObjectSchema = {
   detectorVersion: { kind: "stringOrNull" },
   latencyMs: { kind: "exactObject", fields: LATENCY_SCHEMA },
   outcome: { kind: "enum", values: AUDIT_OUTCOMES },
-  failureCode: { kind: "stringOrNull" },
+  failureCode: { kind: "enumOrNull", values: TERMINAL_FAILURE_CODES },
   occurredAt: { kind: "string" },
 };
 
@@ -109,6 +137,9 @@ function validateField(root: unknown, value: unknown, spec: FieldSpec, path: str
       return;
     case "enum":
       if (typeof value !== "string" || !spec.values.includes(value)) reject(root, path);
+      return;
+    case "enumOrNull":
+      if (value !== null && (typeof value !== "string" || !spec.values.includes(value))) reject(root, path);
       return;
     case "totalCounts":
       validateTotalCounts(root, value, path);

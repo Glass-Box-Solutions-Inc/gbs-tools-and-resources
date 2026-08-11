@@ -157,6 +157,11 @@ export class StructuralOptionsProjector
     const snap = snapshotBoundaryOptions(options);
     const raw = snap as unknown as Record<string, unknown>;
     const collected: CollectedSegment[] = [];
+    // Append via own-index assignment, never `Array.prototype.push` — a hostile `push` override must
+    // not be able to silently drop a collected text carrier (§7/N2 / L5).
+    const add = (entry: CollectedSegment): void => {
+      collected[collected.length] = entry;
+    };
 
     // L5: fail closed on ANY unknown, potentially text-bearing top-level field.
     for (const key of Object.keys(raw)) {
@@ -212,7 +217,7 @@ export class StructuralOptionsProjector
           malformedTextCarrier: "system",
         });
       }
-      collected.push({
+      add({
         segment: { path: "system", kind: "system", text: systemValue },
         write: (draft, tokenized) => {
           draft.system = tokenized;
@@ -223,7 +228,20 @@ export class StructuralOptionsProjector
     // messages[i].content[j].text — EVERY text-bearing part, regardless of `type`.
     // A non-"text" part (e.g. `tool_result`) that still carries a `text` string must
     // be classified and tokenized, never egressed raw (L5 / fail-closed).
-    (snap.messages ?? []).forEach((message, i) => {
+    // Intrinsic index iteration (own-index + own-`length`), NEVER `Array.prototype.forEach`: a
+    // hostile `forEach` override must not be able to silently skip classification and let the clone
+    // egress raw PHI (§7/N2 / L5). See intrinsicMap.
+    const messagesArr = snap.messages ?? [];
+    for (let i = 0; i < (messagesArr as { length: number }).length; i += 1) {
+      const message = messagesArr[i];
+      // A hole/absent element (sparse array-like) carries no classifiable structure — fail closed
+      // rather than skip it (L5); the snapshot builder produces dense arrays, so this never fires
+      // for a well-formed request.
+      if (message === undefined || message === null) {
+        throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+          malformedTextCarrier: `messages[${i}]`,
+        });
+      }
       assertAllowedEnum(message.role, ALLOWED_MESSAGE_ROLES, `messages[${i}].role`);
       // L5 fail-closed: `content` MUST be a genuine array. A non-array (e.g. an object with a no-op
       // `forEach` that skips classification and a `map` that later emits raw PHI through the clone)
@@ -234,7 +252,14 @@ export class StructuralOptionsProjector
           malformedTextCarrier: `messages[${i}].content`,
         });
       }
-      message.content.forEach((part, j) => {
+      const content = message.content;
+      for (let j = 0; j < (content as { length: number }).length; j += 1) {
+        const part = content[j];
+        if (part === undefined || part === null) {
+          throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+            malformedTextCarrier: `messages[${i}].content[${j}]`,
+          });
+        }
         assertAllowedEnum(part.type, ALLOWED_CONTENT_TYPES, `messages[${i}].content[${j}].type`);
         const partText = (part as unknown as Record<string, unknown>)["text"];
         // A `text` carrier that is present but NON-string (an object smuggling PHI) fails closed;
@@ -246,7 +271,7 @@ export class StructuralOptionsProjector
             });
           }
           const path = `messages[${i}].content[${j}].text`;
-          collected.push({
+          add({
             segment: { path, kind: kindForRole(message.role), text: partText },
             write: (draft, tokenized) => {
               const target = draft.messages?.[i]?.content?.[j];
@@ -254,11 +279,18 @@ export class StructuralOptionsProjector
             },
           });
         }
-      });
-    });
+      }
+    }
 
-    // tools[k].description
-    (snap.tools ?? []).forEach((tool, k) => {
+    // tools[k].description — intrinsic index iteration (never `Array.prototype.forEach`).
+    const toolsArr = snap.tools ?? [];
+    for (let k = 0; k < (toolsArr as { length: number }).length; k += 1) {
+      const tool = toolsArr[k];
+      if (tool === undefined || tool === null) {
+        throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+          malformedTextCarrier: `tools[${k}]`,
+        });
+      }
       assertStructuralProviderString(tool.name, `tools[${k}].name`);
       // A tool description is a known text carrier and MUST be a string. A present-but-non-string
       // value (an object smuggling PHI text past the segment's `text` typing, then egressed RAW via
@@ -270,14 +302,14 @@ export class StructuralOptionsProjector
         });
       }
       const path = `tools[${k}].description`;
-      collected.push({
+      add({
         segment: { path, kind: "tool", text: descriptionValue },
         write: (draft, tokenized) => {
           const target = draft.tools?.[k];
           if (target !== undefined) target.description = tokenized;
         },
       });
-    });
+    }
 
     // embeddingText — a known text carrier: present-but-non-string fails closed (L5).
     const embeddingValue = raw["embeddingText"];
@@ -287,7 +319,7 @@ export class StructuralOptionsProjector
           malformedTextCarrier: "embeddingText",
         });
       }
-      collected.push({
+      add({
         segment: { path: "embedding", kind: "embedding", text: embeddingValue },
         write: (draft, tokenized) => {
           draft.embeddingText = tokenized;
@@ -295,9 +327,9 @@ export class StructuralOptionsProjector
       });
     }
 
-    const segments = collected.map((entry) => entry.segment);
+    const segments = intrinsicMap(collected, (entry) => entry.segment);
 
-    const expectedPaths = new Set(collected.map((entry) => entry.segment.path));
+    const expectedPaths = new Set(intrinsicMap(collected, (entry) => entry.segment.path));
 
     return {
       segments,
@@ -349,11 +381,19 @@ export class StructuralOptionsProjector
  * array whose `length` is a non-configurable data property, so the index walk reads each slot
  * exactly once into a FRESH literal array via the intrinsic push.
  */
+/**
+ * Index-walk map that touches NO `Array.prototype` method (§7/N2 / L5): a hostile in-process
+ * component that overrides `Array.prototype.forEach`/`map`/`push` must not be able to silently make
+ * classification or cloning skip a text carrier — which would leave raw PHI in the cloned request
+ * and egress it. Only own-index access and own-`length` (immune to prototype-method override, and
+ * to index-getter traps for a genuine dense array) are used. Full intrinsic replacement (Object,
+ * Reflect) is out of the in-process threat model — an attacker at that level already has ACE.
+ */
 function intrinsicMap<T, U>(arr: readonly T[], fn: (item: T, index: number) => U): U[] {
   const out: U[] = [];
   const len = (arr as { length: number }).length;
   for (let i = 0; i < len; i += 1) {
-    out.push(fn(arr[i] as T, i));
+    out[out.length] = fn(arr[i] as T, i);
   }
   return out;
 }
@@ -395,16 +435,18 @@ function snapshotBoundaryOptions(options: BoundaryGenerateOptions): MutableOptio
 function cloneSnapshot(snap: MutableOptions): MutableOptions {
   const draft: MutableOptions = { ...(snap as unknown as Record<string, unknown>) };
   if (Array.isArray(snap.messages)) {
-    draft.messages = snap.messages.map((message) => ({
+    // Intrinsic map (never `Array.prototype.map`): a hostile `map` override must not be able to make
+    // the clone drop or corrupt a carrier and egress raw, un-tokenized text (§7/N2 / L5).
+    draft.messages = intrinsicMap(snap.messages, (message) => ({
       role: message.role,
-      content: (message.content as { type: string; text: string }[]).map((part) => ({
+      content: intrinsicMap(message.content as { type: string; text: string }[], (part) => ({
         type: part.type,
         text: part.text,
       })),
     }));
   }
   if (Array.isArray(snap.tools)) {
-    draft.tools = snap.tools.map((tool) => ({ name: tool.name, description: tool.description }));
+    draft.tools = intrinsicMap(snap.tools, (tool) => ({ name: tool.name, description: tool.description }));
   }
   return draft;
 }
