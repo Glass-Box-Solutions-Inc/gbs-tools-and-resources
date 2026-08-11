@@ -38,7 +38,7 @@ import {
   type VariantExpansion,
 } from "../variants/index";
 import { dedupeInOrder } from "../variants/support";
-import { intrinsicCopy } from "../core/boundary-snapshot";
+import { intrinsicCopy, safeRead } from "../core/boundary-snapshot";
 
 const KNOWN_STRUCTURED_SEPARATORS: readonly StructuredSeparator[] = ["-", " ", "/", "."];
 
@@ -92,10 +92,13 @@ function boundaryModeFor(identifierClass: IdentifierClass): BoundaryMode {
 /** Only staff-approved and structurally-deterministic forms; never a guess. */
 function expandForms(value: TaggedValue, locale: string): readonly string[] {
   const canonical = value.canonicalDisplayValue;
-  // §7/N2 / L12: `approvedAliases` is boundary data — read it EXACTLY ONCE and copy by OWN index/
-  // length, so a mutating getter (a real array on the `Array.isArray` read, then `[]` for the length)
-  // or an OWN poisoned iterator cannot drop an approved alias that would then egress raw.
-  const aliases = intrinsicCopy<string>(value.approvedAliases) ?? [];
+  // §7/N2 / L12: `approvedAliases` is boundary data — read the PARENT getter ONCE getter-throw-safe,
+  // THEN copy by OWN index/length, so a throwing `approvedAliases` getter, a mutating getter (a real
+  // array on the `Array.isArray` read, then `[]` for the length), or an OWN poisoned iterator cannot
+  // drop an approved alias that would then egress raw. (compile() itself runs inside the orchestrator's
+  // fixed-closed try/catch, so any throw here already becomes DICTIONARY_UNAVAILABLE — this is
+  // defense-in-depth for direct compiler callers.)
+  const aliases = intrinsicCopy<string>(safeRead(value, "approvedAliases")) ?? [];
   let expansion: VariantExpansion | null = null;
   switch (value.field.expander) {
     case "person-name":
@@ -129,7 +132,14 @@ function expandForms(value: TaggedValue, locale: string): readonly string[] {
 
 function sourceFor(form: string, value: TaggedValue): VariantSource {
   if (form === value.canonicalDisplayValue) return "canonical";
-  if (value.approvedAliases.includes(form)) return "approved_alias";
+  // §7/N2: read `approvedAliases` getter-throw-safe and match by OWN index (never `Array.prototype`
+  // methods, which are ACE-overridable), so a throwing getter cannot propagate raw out of this label.
+  const aliases = intrinsicCopy<string>(safeRead(value, "approvedAliases"));
+  if (aliases !== null) {
+    for (let i = 0; i < aliases.length; i += 1) {
+      if (aliases[i] === form) return "approved_alias";
+    }
+  }
   return "expanded";
 }
 

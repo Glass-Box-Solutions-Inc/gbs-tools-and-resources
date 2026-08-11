@@ -44,7 +44,7 @@ import type {
 } from "../audit/ports";
 import { isAuditError, preparedToTerminalEvent, toTotalIdentifierCounts } from "../audit/index";
 import { isPhiEngineFailureCode, PhiEngineError, safeCodeString, toFailureCode } from "./errors";
-import { safeRead, safeString } from "./boundary-snapshot";
+import { safeRead, safeString, intrinsicCopy } from "./boundary-snapshot";
 
 /** The single private raw-provider port. It is never exported as an application binding. */
 export interface RawProviderPort<GenerateOptions, EmbeddingKind = string> {
@@ -284,18 +284,15 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     // FINITE numbers and copy it by OWN index/length into a fresh array — a NON-array carrier, a
     // throwing/mutating index getter, or a non-numeric element must fail closed, never reach the
     // caller as an object that could carry PHI (e.g. a PHI-throwing `get 0()`), and never egress raw.
+    // `intrinsicCopy` reads `.length` AND every element INSIDE its own try (Array.isArray sees through
+    // a Proxy to an array target, so a Proxy `get length`/`get 0` trap that throws must not escape the
+    // guard) — a non-array carrier or any throwing read yields null → fail closed.
+    const rawVector = intrinsicCopy<unknown>(vector);
     const safeVector: number[] = [];
-    let vectorOk = Array.isArray(vector);
-    if (vectorOk) {
-      const len = (vector as { length: number }).length;
-      for (let i = 0; i < len; i += 1) {
-        let element: unknown;
-        try {
-          element = vector[i];
-        } catch {
-          vectorOk = false;
-          break;
-        }
+    let vectorOk = rawVector !== null;
+    if (rawVector !== null) {
+      for (let i = 0; i < rawVector.length; i += 1) {
+        const element = rawVector[i];
         if (typeof element !== "number" || !Number.isFinite(element)) {
           vectorOk = false;
           break;

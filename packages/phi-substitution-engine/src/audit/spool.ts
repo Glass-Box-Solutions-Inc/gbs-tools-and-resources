@@ -12,7 +12,12 @@ import type {
 import type { SpoolKeyProvider, SpoolVolume } from "./spool-ports";
 import { PhiAuditError } from "./errors";
 import { preparedToTerminalEvent } from "./event-factory";
-import { intrinsicCopy } from "../core/boundary-snapshot";
+import { intrinsicCopy, safeString } from "../core/boundary-snapshot";
+
+/** Cleartext-envelope `createdAt` must be an ISO-8601 UTC instant (never injected free text). */
+const ENVELOPE_ISO_8601_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+/** Cleartext-envelope `keyVersion` is a conservative slug — never injected free text. */
+const SAFE_KEY_VERSION = /^[A-Za-z0-9._:-]{1,128}$/;
 
 const CIPHER_SUITE = "AES-256-GCM" as const;
 const NONCE_BYTES = 12;
@@ -254,39 +259,50 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
       return;
     }
     for (let i = 0; i < idList.length; i += 1) {
-      const recordId = idList[i]!;
+      const recordId = idList[i];
+      // §7/N2: the volume's ids are boundary data — a NON-string element (or one whose `endsWith` is a
+      // hostile member) must be skipped, never throw a raw TypeError out of this rebuild.
+      if (typeof recordId !== "string") {
+        continue;
+      }
       if (recordId.endsWith(".final") || recordId.endsWith(".primed")) {
         continue;
       }
       if (this.#entries.has(recordId)) {
         continue;
       }
-      const preparedBytes = await this.#volume.read(recordId);
-      if (preparedBytes === null) {
+      // §7/N2: an injected-volume read/decrypt/decode that throws (raw, possibly PHI) for ONE record
+      // must not abort the whole rebuild nor propagate out of this public method — skip that record.
+      try {
+        const preparedBytes = await this.#volume.read(recordId);
+        if (preparedBytes === null) {
+          continue;
+        }
+        const preparedEnvelope = decodeEnvelope(preparedBytes);
+        const prepared = rehydratePrepared(fromWireBytes(this.#decrypt(preparedEnvelope)));
+        const finalBytes = await this.#volume.read(`${recordId}.final`);
+        let event: PhiAuditEvent | null = null;
+        let eventEnvelope: EncryptedSpoolEnvelope | null = null;
+        if (finalBytes !== null) {
+          eventEnvelope = decodeEnvelope(finalBytes);
+          event = fromWireBytes(this.#decrypt(eventEnvelope)) as PhiAuditEvent;
+        }
+        // Restore the durable prepare-success/finalize-pending flag so a partial (prepared in
+        // primary, finalize failed) drained on a PRIOR replica is recognised as OUR own attempt
+        // after restart — its terminal is still owed and must not be dropped as a duplicate.
+        const preparedInPrimary = (await this.#volume.read(`${recordId}.primed`)) !== null;
+        this.#entries.set(recordId, {
+          recordId,
+          attemptId: preparedEnvelope.attemptId,
+          prepared,
+          event,
+          preparedEnvelope,
+          eventEnvelope,
+          preparedInPrimary,
+        });
+      } catch {
         continue;
       }
-      const preparedEnvelope = decodeEnvelope(preparedBytes);
-      const prepared = rehydratePrepared(fromWireBytes(this.#decrypt(preparedEnvelope)));
-      const finalBytes = await this.#volume.read(`${recordId}.final`);
-      let event: PhiAuditEvent | null = null;
-      let eventEnvelope: EncryptedSpoolEnvelope | null = null;
-      if (finalBytes !== null) {
-        eventEnvelope = decodeEnvelope(finalBytes);
-        event = fromWireBytes(this.#decrypt(eventEnvelope)) as PhiAuditEvent;
-      }
-      // Restore the durable prepare-success/finalize-pending flag so a partial (prepared in
-      // primary, finalize failed) drained on a PRIOR replica is recognised as OUR own attempt
-      // after restart — its terminal is still owed and must not be dropped as a duplicate.
-      const preparedInPrimary = (await this.#volume.read(`${recordId}.primed`)) !== null;
-      this.#entries.set(recordId, {
-        recordId,
-        attemptId: preparedEnvelope.attemptId,
-        prepared,
-        event,
-        preparedEnvelope,
-        eventEnvelope,
-        preparedInPrimary,
-      });
     }
   }
 
@@ -339,6 +355,24 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
     if (key.length !== KEY_BYTES) {
       throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, { reason: "invalid_key_length" });
     }
+    // §7/N2: `keyVersion` and `createdAt` are INJECTED-port outputs written into the CLEAR (unencrypted)
+    // envelope that persists durably. Read them getter-throw-safe and validate their SHAPE — a hostile
+    // or buggy key provider / clock returning a free-text (PHI) value must fail closed, never land raw
+    // in a durable cleartext field. (The other `#clock()` use flows through the serializer's own
+    // ISO-8601 allow-list; this direct write has no such downstream guard.)
+    const keyVersion = safeString(this.#keys, "keyVersion");
+    let createdAt: string | undefined;
+    try {
+      createdAt = this.#clock();
+    } catch {
+      createdAt = undefined;
+    }
+    if (
+      keyVersion === undefined || !SAFE_KEY_VERSION.test(keyVersion) ||
+      typeof createdAt !== "string" || !ENVELOPE_ISO_8601_UTC.test(createdAt)
+    ) {
+      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, { reason: "invalid_envelope_metadata" });
+    }
     const nonce = randomBytes(NONCE_BYTES);
     const cipher = createCipheriv("aes-256-gcm", Buffer.from(key), nonce);
     const ciphertext = Buffer.concat([cipher.update(Buffer.from(plaintext)), cipher.final()]);
@@ -347,12 +381,12 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
       envelopeVersion: 1,
       recordId,
       attemptId,
-      keyVersion: this.#keys.keyVersion,
+      keyVersion,
       cipherSuite: CIPHER_SUITE,
       nonce: Uint8Array.from(nonce),
       authenticationTag: Uint8Array.from(authenticationTag),
       ciphertext: Uint8Array.from(ciphertext) as Ciphertext,
-      createdAt: this.#clock(),
+      createdAt,
     };
   }
 

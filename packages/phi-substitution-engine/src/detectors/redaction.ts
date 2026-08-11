@@ -1,7 +1,7 @@
 import type { TokenizedText } from "../core/brands";
 import type { RedactionInstruction } from "./ports";
 import { splitsSurrogatePair } from "./offsets";
-import { safeRead, safeString } from "../core/boundary-snapshot";
+import { safeRead, safeString, intrinsicCopy } from "../core/boundary-snapshot";
 
 export type ReplacementPlanResult =
   | Readonly<{ ok: true; text: TokenizedText; appliedSpanIds: readonly string[] }>
@@ -24,15 +24,20 @@ export function applyReplacementPlan(
   // §7/N2: `instructions` is boundary data. A NON-array carrier, or a REAL array with an OWN poisoned
   // `Symbol.iterator`, must NOT silently yield an EMPTY plan — that would echo the ORIGINAL text back
   // branded as TokenizedText (a fail-OPEN redaction). Copy by OWN index/length, then sort the copy.
-  if (!Array.isArray(instructions)) {
+  // Copy by OWN index/length FIRST: a NON-array carrier, an OWN poisoned `Symbol.iterator`, OR an own
+  // index getter that THROWS (a genuine array can still carry `Object.defineProperty(arr, 0, {get})`)
+  // must NOT silently yield an EMPTY plan (which would echo the ORIGINAL text back branded as
+  // TokenizedText — a fail-OPEN redaction) or throw raw out of this exported boundary. Fail closed.
+  const rawInstructions = intrinsicCopy<unknown>(instructions);
+  if (rawInstructions === null) {
     return { ok: false, reason: "OUT_OF_RANGE" };
   }
   // Read EVERY field of EVERY instruction ONCE, getter-throw-safe, into inert plain data. A throwing/
   // mutating field getter (e.g. a `replacement` getter that throws PHI) fails closed here rather than
   // propagating raw out of this exported boundary; nothing downstream ever touches a live getter.
   const copied: { startUtf16: number; endUtf16: number; replacement: string; detectedSpanId: string }[] = [];
-  for (let i = 0; i < (instructions as { length: number }).length; i += 1) {
-    const raw = instructions[i];
+  for (let i = 0; i < rawInstructions.length; i += 1) {
+    const raw = rawInstructions[i];
     const startUtf16 = safeRead(raw, "startUtf16");
     const endUtf16 = safeRead(raw, "endUtf16");
     const replacement = safeString(raw, "replacement");

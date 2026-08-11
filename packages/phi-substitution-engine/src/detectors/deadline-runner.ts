@@ -7,7 +7,7 @@ import type {
   DetectorSpanNormalizer,
   RawDetectedSpan,
 } from "./ports";
-import { safeRead, safeString } from "../core/boundary-snapshot";
+import { safeRead, safeString, intrinsicCopy } from "../core/boundary-snapshot";
 
 /** Fail-closed marker for an exhausted detector belt (maps to `DETECTOR_UNAVAILABLE`). */
 export class DetectorDeadlineExceededError extends Error {
@@ -119,7 +119,14 @@ export class SharedDeadlineDetectorRunner implements DetectorDeadlineRunner {
       if (normalized.ok !== true) {
         return null;
       }
-      spans = normalized.spans;
+      // §7/N2: the normalizer's `spans` is an injected-adapter result — copy it by OWN index/length so
+      // a NON-array carrier, an OWN poisoned iterator, or a throwing own-index getter fails closed here
+      // rather than returning a live array whose getters could throw raw PHI at the caller's read.
+      const copiedSpans = intrinsicCopy<DetectedSpan>(safeRead(normalized, "spans"));
+      if (copiedSpans === null) {
+        return null;
+      }
+      spans = copiedSpans;
     } catch {
       return null;
     }

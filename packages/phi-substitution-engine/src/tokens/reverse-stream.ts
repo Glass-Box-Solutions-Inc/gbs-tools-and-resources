@@ -8,6 +8,7 @@ import type {
 import { ReversalFailedError } from "./errors";
 import { reverseText, type ReversalKeys, InProcessReversalHandle, isInProcessReversalHandle, safeHandleOperationId } from "./reversal";
 import { SENTINEL_OPEN, SENTINEL_CLOSE } from "./escaper";
+import { safeRead } from "../core/boundary-snapshot";
 
 const OPEN = "[[";
 const CLOSE = "]]";
@@ -253,9 +254,12 @@ export class HoldbackReverseStreamFactory implements ReverseStreamFactory {
     sink: (safe: DisplayText) => void | Promise<void>;
   }): ReverseStream {
     const keys: ReversalKeys = {
-      tenantId: input.handle.tenantId,
-      matterId: input.handle.matterId,
-      dictionaryVersion: input.handle.dictionaryVersion,
+      // §7/N2: read the handle routing scalars ONCE, getter-throw-safe. A hostile handle scalar getter
+      // yields `undefined` (a store miss → fail-closed reversal) instead of throwing raw (PHI) out of
+      // this synchronous factory. Cast preserves the branded key shape for the store lookup.
+      tenantId: safeRead(input.handle, "tenantId") as ReversalKeys["tenantId"],
+      matterId: safeRead(input.handle, "matterId") as ReversalKeys["matterId"],
+      dictionaryVersion: safeRead(input.handle, "dictionaryVersion") as ReversalKeys["dictionaryVersion"],
       // §7/N2: shape-restrict the operation id at capture (same as AtomicTokenReverser) so a hostile
       // handle cannot smuggle free-text PHI into the fixed-code ReversalFailedError.operationId this
       // stream throws on failure — a non-slug id becomes a fixed placeholder.

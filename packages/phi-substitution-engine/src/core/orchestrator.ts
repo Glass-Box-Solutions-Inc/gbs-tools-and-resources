@@ -38,6 +38,10 @@ import type {
   SubstitutionToken,
   TokenizedText,
   TokenRole,
+  TenantId,
+  MatterId,
+  OperationId,
+  OperationAttemptId,
 } from "./brands";
 import type {
   IdentifierClass,
@@ -47,6 +51,7 @@ import type {
   ReverseStream,
   SubstitutionRequest,
   SubstitutionResult,
+  TextSegmentKind,
   TokenizedTextSegment,
 } from "./contracts";
 import type { CaseTruthReader, CompiledDictionaryCache, DictionaryVersionCoordinator } from "../dictionary/contracts";
@@ -72,6 +77,7 @@ import {
 } from "../tokens/index";
 import { toTotalIdentifierCounts } from "../audit/index";
 import { PhiEngineError, safeCodeString } from "./errors";
+import { safeRead, safeString, intrinsicCopy } from "./boundary-snapshot";
 
 /** Token role → identifier class, used to tally per-class counts from tokenized output. */
 const ROLE_CLASS: Readonly<Record<string, IdentifierClass>> = {
@@ -216,8 +222,71 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     this.#cache = new InMemoryCompiledDictionaryCache();
   }
 
+  /**
+   * §7/N2: read the request's caller-derived CONTEXT scalars EXACTLY ONCE, getter-throw-safe, into an
+   * inert record. This runs BEFORE any error can be constructed, so a hostile `operationId` getter (or
+   * any of the four) cannot re-throw a raw (PHI) message out of the fail-closed path — an invalid
+   * envelope fails closed with a FIXED code and NO caller-supplied operation id.
+   */
+  #ingestContext(request: SubstitutionRequest): {
+    tenantId: TenantId;
+    matterId: MatterId;
+    operationId: OperationId;
+    attemptId: OperationAttemptId;
+  } {
+    const context = safeRead(request, "context");
+    const tenantId = safeString(context, "tenantId");
+    const matterId = safeString(context, "matterId");
+    const operationId = safeString(context, "operationId");
+    const attemptId = safeString(context, "attemptId");
+    if (
+      tenantId === undefined || matterId === undefined ||
+      operationId === undefined || attemptId === undefined
+    ) {
+      throw new PhiEngineError("MISSING_TRUSTED_CONTEXT");
+    }
+    return {
+      tenantId: tenantId as unknown as TenantId,
+      matterId: matterId as unknown as MatterId,
+      operationId: operationId as unknown as OperationId,
+      attemptId: attemptId as unknown as OperationAttemptId,
+    };
+  }
+
+  /**
+   * §7/N2: copy the request's `segments` by OWN index/length and read each segment's `text`/`path`/
+   * `kind` field EXACTLY ONCE, getter-throw-safe, into inert plain data. A NON-array carrier, an OWN
+   * poisoned `Symbol.iterator`, a throwing/mutating field getter, or a non-string field fails closed
+   * here rather than iterating live getters downstream (which could show one value to the matcher and
+   * a raw PHI value to a later read, or throw raw out of this method).
+   */
+  #ingestSegments(
+    request: SubstitutionRequest,
+    operationId: OperationId,
+  ): { text: string; path: string; kind: TextSegmentKind }[] {
+    const rawSegments = intrinsicCopy<unknown>(safeRead(request, "segments"));
+    if (rawSegments === null) {
+      throw new PhiEngineError("MISSING_TRUSTED_CONTEXT", operationId);
+    }
+    const segments: { text: string; path: string; kind: TextSegmentKind }[] = [];
+    for (let i = 0; i < rawSegments.length; i += 1) {
+      const raw = rawSegments[i];
+      const text = safeString(raw, "text");
+      const path = safeString(raw, "path");
+      const kind = safeString(raw, "kind");
+      if (text === undefined || path === undefined || kind === undefined) {
+        throw new PhiEngineError("MISSING_TRUSTED_CONTEXT", operationId);
+      }
+      segments[segments.length] = { text, path, kind: kind as TextSegmentKind };
+    }
+    return segments;
+  }
+
   public async substitute(request: SubstitutionRequest): Promise<SubstitutionResult> {
-    const context = request.context;
+    // §7/N2: snapshot the caller-derived context + segments ONCE at ingestion so nothing downstream
+    // ever touches a live (possibly PHI-throwing / mutating) getter on the request envelope.
+    const context = this.#ingestContext(request);
+    const segments = this.#ingestSegments(request, context.operationId);
     const locale = request.policy.locale as unknown as string;
 
     // §4.1 step 2 / L2 / N4: require an active READY dictionary version.
@@ -276,7 +345,7 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     // spans in one operation never share a synthetic subject.
     let detectorOrdinal = 0;
 
-    for (const segment of request.segments) {
+    for (const segment of segments) {
       // §4.1 step 5 / L6: escape reserved token-shaped source text BEFORE matching, so a
       // caller cannot inject a `[[Role]]` shape and have it reversed to a value. Sentinel
       // indices are re-based to GLOBAL positions so a single restore pass on the reversed
@@ -386,15 +455,29 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
   }
 
   public async reverse(text: TokenizedText, handle: ReversalHandle): Promise<DisplayText> {
+    // §7/N2: read the handle's routing scalars ONCE, getter-throw-safe, into inert locals. A hostile
+    // handle scalar getter must fail closed with a FIXED message here, never propagate a raw (PHI)
+    // throw out of this public method. The BOUNDED `restoreEscapedLiterals` capability below stays on
+    // the live handle (it cannot be snapshotted) and is already guarded by its own try/catch.
+    const tenantId = safeRead(handle, "tenantId");
+    const matterId = safeRead(handle, "matterId");
+    const dictionaryVersion = safeRead(handle, "dictionaryVersion");
+    const operationId = safeRead(handle, "operationId");
+    if (
+      tenantId === undefined || matterId === undefined ||
+      dictionaryVersion === undefined || operationId === undefined
+    ) {
+      throw new Error("reversal_failed");
+    }
     // §4.1 step 11 / N5: atomic reversal to CURRENT canonical values; an unknown
     // or malformed token fails the whole reversal with no partial display text.
     const reversed = await reverseText(
       text as unknown as string,
       {
-        tenantId: handle.tenantId,
-        matterId: handle.matterId,
-        dictionaryVersion: handle.dictionaryVersion,
-        operationId: handle.operationId,
+        tenantId: tenantId as TenantId,
+        matterId: matterId as MatterId,
+        dictionaryVersion: dictionaryVersion as DictionaryVersion,
+        operationId: operationId as OperationId,
       },
       this.#reversalStore,
       this.#grammar,

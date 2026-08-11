@@ -12,7 +12,7 @@ import { isAuditError, isAuditFailureCode, PhiAuditError } from "./errors";
 import { safeCodeString } from "../core/errors";
 import { preparedToTerminalEvent } from "./event-factory";
 import { sanitizePreparedRecord, sanitizeTerminalEvent } from "./serializer";
-import { safeString } from "../core/boundary-snapshot";
+import { safeRead, safeString } from "../core/boundary-snapshot";
 
 interface InFlight {
   readonly receipt: AuditPreparationReceipt;
@@ -141,9 +141,19 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
   }
 
   public async finalize(receipt: AuditPreparationReceipt, event: PhiAuditEvent): Promise<void> {
+    // §7/N2: read the receipt's routing scalars ONCE, getter-throw-safe. finalize receives the receipt
+    // THIS emitter returned from prepare(), but reading its members live would let a fabricated receipt
+    // throw raw out of this method — snapshot `attemptId`/`location` into inert locals. A receipt with
+    // no usable attempt id / location cannot be finalized against, so fail closed silently (the durable
+    // record can still be drained/reconciled) rather than propagate a raw throw.
+    const attemptId = safeRead(receipt, "attemptId") as OperationAttemptId | undefined;
+    const location = safeString(receipt, "location");
+    if (attemptId === undefined || location === undefined) {
+      return;
+    }
     // N3 one-shot: at most one terminal per attempt. A concurrent reconcile racing a
     // normal completion (or a duplicate finalize) is a no-op after the first terminal.
-    if (this.#finalized.has(this.#key(receipt.attemptId))) {
+    if (this.#finalized.has(this.#key(attemptId))) {
       return;
     }
     // §7/N2: read the live event EXACTLY ONCE into a validated, inert snapshot, then run the injected
@@ -166,7 +176,7 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       throw new PhiAuditError("AUDIT_SCHEMA_REJECTED", null, {});
     }
     try {
-      if (receipt.location === "PRIMARY_STORE") {
+      if (location === "PRIMARY_STORE") {
         await this.#primary.finalize(durable);
       } else {
         await this.#spool.finalize(receipt, durable);
@@ -185,8 +195,8 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       }
       throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, {});
     }
-    this.#finalized.add(this.#key(receipt.attemptId));
-    this.#inFlight.delete(this.#key(receipt.attemptId));
+    this.#finalized.add(this.#key(attemptId));
+    this.#inFlight.delete(this.#key(attemptId));
   }
 
   public async reconcileUnknownAfterSend(attemptId: OperationAttemptId, occurredAt: string): Promise<void> {

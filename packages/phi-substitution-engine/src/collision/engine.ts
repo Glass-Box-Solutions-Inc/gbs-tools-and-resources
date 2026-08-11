@@ -25,7 +25,7 @@ import {
   Phase1DistinctivenessRule,
 } from "./rules";
 import { Phase1CollisionResolver } from "./resolver";
-import { intrinsicCopy } from "../core/boundary-snapshot";
+import { intrinsicCopy, safeRead, safeString } from "../core/boundary-snapshot";
 
 const AMBIGUOUS_KNOWN_IDENTIFIER = "AMBIGUOUS_KNOWN_IDENTIFIER";
 
@@ -150,16 +150,19 @@ export function runCollision(input: CollisionInput): CollisionResult {
   const dictionaryCandidates: DictionaryMatchCandidate[] = [];
   const canonicalByKey = new Map<string, string>();
 
-  // §7/N2 / L12: `knownValues` is caller-controlled boundary data — read it EXACTLY ONCE and copy by
-  // OWN index/length. A NON-array carrier, an OWN poisoned iterator, or a mutating getter (real array
-  // on the check read, then `[]`) must NOT silently drop a known value that would then egress RAW.
-  const knownValues = intrinsicCopy<KnownValue>(input.knownValues);
+  // §7/N2 / L12: `knownValues` is caller-controlled boundary data — read the PARENT getter ONCE
+  // getter-throw-safe, THEN copy by OWN index/length. A throwing `knownValues` getter, a NON-array
+  // carrier, an OWN poisoned iterator, or a mutating getter (real array on the check read, then `[]`)
+  // must NOT silently drop a known value that would then egress RAW, nor throw raw out of here.
+  const knownValues = intrinsicCopy<KnownValue>(safeRead(input, "knownValues"));
   if (knownValues === null) {
     throw new Error("known_values_not_an_array");
   }
   for (let ki = 0; ki < knownValues.length; ki += 1) {
     const known = knownValues[ki]!;
-    const rawKey = known.literal ?? known.normalizedForm;
+    // §7/N2: read each element's key fields getter-throw-safe (a throwing `literal`/`normalizedForm`
+    // getter must not propagate raw out of this boundary).
+    const rawKey = safeString(known, "literal") ?? safeString(known, "normalizedForm");
     if (rawKey === undefined) continue;
     const foldedKey = fold(rawKey, locale);
     for (const normalizedStart of findAll(normalizedText, foldedKey)) {

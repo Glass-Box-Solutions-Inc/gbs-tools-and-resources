@@ -22,6 +22,19 @@ export function safeRead(obj: unknown, key: string): unknown {
   }
 }
 
+/**
+ * Own enumerable keys of a boundary object, trap-safe. A hostile `Proxy` with an `ownKeys`/
+ * `getOwnPropertyDescriptor` trap that throws yields `[]` rather than propagating the raw (PHI) throw
+ * out of a sanitizer (`Object.keys` would otherwise re-throw the trap).
+ */
+export function safeOwnKeys(obj: unknown): string[] {
+  try {
+    return Object.keys(obj as object);
+  } catch {
+    return [];
+  }
+}
+
 /** Getter-safe read of a property that MUST be a string; `undefined` on throw or non-string. */
 export function safeString(obj: unknown, key: string): string | undefined {
   const value = safeRead(obj, key);

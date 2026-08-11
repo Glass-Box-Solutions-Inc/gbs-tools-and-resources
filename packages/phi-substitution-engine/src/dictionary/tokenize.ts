@@ -24,7 +24,7 @@ import {
 } from "../collision/index";
 import { AhoCorasickCompiledDictionary } from "./compiled-dictionary";
 import { AMBIGUOUS_KNOWN_IDENTIFIER, DictionaryError } from "./errors";
-import { safeRead, safeString } from "../core/boundary-snapshot";
+import { safeRead, safeString, intrinsicCopy } from "../core/boundary-snapshot";
 
 const resolver = new Phase1CollisionResolver(
   new Phase1BoundaryRule(),
@@ -97,7 +97,11 @@ export function tokenize(
   // mutating own-index/own-field getter cannot show a benign span to the collision resolver (the
   // candidate set) while feeding a DIFFERENT `token` to the splice map below. BOTH consumers read
   // only this snapshot, never the live `detectorSpans` array again.
-  if (!Array.isArray(detectorSpans)) {
+  // Copy by OWN index/length FIRST: a NON-array carrier, an OWN poisoned `Symbol.iterator`, OR an own
+  // index getter that THROWS (a genuine array can still carry `Object.defineProperty(arr, 0, {get})`)
+  // all fail closed here rather than throwing raw out of this exported boundary.
+  const rawSpans = intrinsicCopy<unknown>(detectorSpans);
+  if (rawSpans === null) {
     throw new DictionaryError(AMBIGUOUS_KNOWN_IDENTIFIER, { ambiguityCount: 0 });
   }
   const detectorSpanSnapshot: {
@@ -107,8 +111,8 @@ export function tokenize(
     confidence: DetectorCollisionSpan["confidence"];
     token: string;
   }[] = [];
-  for (let i = 0; i < (detectorSpans as { length: number }).length; i += 1) {
-    const span = detectorSpans[i];
+  for (let i = 0; i < rawSpans.length; i += 1) {
+    const span = rawSpans[i];
     // Every field is read ONCE, getter-throw-safe. A throwing/mutating field getter (e.g. a `token`
     // getter that throws PHI) fails closed with a fixed code here rather than propagating raw out of
     // this exported boundary; a non-numeric offset or non-string token is likewise rejected.

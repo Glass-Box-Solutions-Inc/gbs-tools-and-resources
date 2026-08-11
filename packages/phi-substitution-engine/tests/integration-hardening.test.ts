@@ -3457,4 +3457,137 @@ describe("GLY-330 R14 (§7/N2): structural ingestion hardening at the public bou
     try { projector.classify(options); } catch (e) { thrown = e; }
     expect(JSON.stringify((thrown as any)?.safeDetails ?? {})).not.toContain(CANARY);
   });
+
+  // -------------------------------------------------------------------------
+  // Round 15 — completing the structural ingestion snapshot at every public
+  // engine boundary (Alex's "structural + bound scope" approach): the engine's
+  // own public methods snapshot their args, Proxy traps can't re-throw raw out
+  // of a sanitizer, and injected-port RETURNS are shape-validated before they
+  // land in a durable/clear field.
+  // -------------------------------------------------------------------------
+
+  // R15-4a (finding 4) — engine.substitute snapshots its context ONCE; a throwing context.tenantId
+  // getter fails closed with a FIXED code, never propagates the raw (PHI) throw out of the method.
+  it("engine.substitute: a throwing context.tenantId getter fails closed, never leaks raw", async () => {
+    const { engine } = makeEngine();
+    const hostileCtx: any = {
+      get tenantId(): never { throw new Error(CANARY); },
+      matterId: MATTER, actorId: b<any>("actor-1"), operationId: b<any>("op-1"), attemptId: b<any>("att-r15-4a"),
+    };
+    let thrown: any; let out: any;
+    try {
+      out = await engine.substitute({
+        context: hostileCtx, policy: policy(),
+        segments: [{ path: "system", kind: "system", text: "hi" }], purpose: "generation",
+      } as any);
+    } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("MISSING_TRUSTED_CONTEXT");
+  });
+
+  // R15-4b (finding 4) — engine.substitute copies its segments by OWN index BEFORE iterating; a real
+  // array with a throwing own-index getter fails closed, never throws raw out of the live for-of.
+  it("engine.substitute: a throwing segments[0] index getter fails closed, never leaks raw", async () => {
+    const { engine } = makeEngine();
+    const segs: any = [{ path: "system", kind: "system", text: "hi" }];
+    Object.defineProperty(segs, "0", { configurable: true, get: (): never => { throw new Error(CANARY); } });
+    let thrown: any; let out: any;
+    try {
+      out = await engine.substitute({ context: ctx("att-r15-4b"), policy: policy(), segments: segs, purpose: "generation" } as any);
+    } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("MISSING_TRUSTED_CONTEXT");
+  });
+
+  // R15-4c (finding 4) — engine.reverse reads the handle's routing scalars ONCE getter-safe; a
+  // throwing handle.tenantId getter fails closed with a FIXED message, never propagates raw.
+  it("engine.reverse: a throwing handle.tenantId getter fails closed, never leaks raw", async () => {
+    const { engine } = makeEngine();
+    const result: any = await engine.substitute({
+      context: ctx("att-r15-4c"), policy: policy(),
+      segments: [{ path: "system", kind: "system", text: "Maria García" }], purpose: "generation",
+    } as any);
+    const handle: any = result.reversalHandle;
+    Object.defineProperty(handle, "tenantId", { configurable: true, get: (): never => { throw new Error(CANARY); } });
+    let thrown: any; let display: any;
+    try { display = await engine.reverse(result.segments[0].text, handle); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String(display ?? "")).not.toContain(CANARY);
+  });
+
+  // R15-5 (finding 5) — embedText reads the provider vector's `.length` INSIDE the guard; a Proxy over
+  // an array (Array.isArray sees the target) whose `get length` throws fails closed, never raw.
+  it("wrapper.embedText: a Proxy vector whose length getter throws fails closed, never leaks raw", async () => {
+    const rig = makeWrapperRig({ matterIsPhiTagged: false });
+    const hostile: any = new Proxy([1, 2, 3], {
+      get(t: any, p: any, r: any): any { if (p === "length") { throw new Error(CANARY); } return Reflect.get(t, p, r); },
+    });
+    rig.provider.embedText = async (): Promise<any> => hostile;
+    let thrown: any; let out: any; let readErr = "";
+    try { out = await rig.wrapper.embedText("Maria García", "default"); } catch (e) { thrown = e; }
+    try {
+      if (out !== undefined) { void (out as any).length; void JSON.stringify(Array.from(out as any)); }
+    } catch (e: any) { readErr = String(e?.message ?? ""); }
+    expect(String(thrown?.message ?? "") + readErr).not.toContain(CANARY);
+  });
+
+  // R15-6 (finding 6) — runCollision reads the `knownValues` PARENT getter getter-safe BEFORE copying;
+  // a throwing knownValues getter fails closed, never propagates raw out of the boundary.
+  it("runCollision: a throwing knownValues parent getter fails closed, never leaks raw", () => {
+    const input: any = { originalText: "Alice Smith", locale: LOCALE, get knownValues(): never { throw new Error(CANARY); } };
+    let thrown: any; let result: any;
+    try { result = runCollision(input); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(result ?? {})).not.toContain(CANARY);
+  });
+
+  // R15-6b (finding 6) — applyReplacementPlan copies instructions by OWN index; a real array with a
+  // throwing own-index getter fails closed (never echoes original raw), never throws raw.
+  it("applyReplacementPlan: a throwing instructions[0] index getter fails closed, never leaks raw", () => {
+    const instrs: any = [{ detectedSpanId: "s1", startUtf16: 0, endUtf16: 3, replacement: "[[X]]" }];
+    Object.defineProperty(instrs, "0", { configurable: true, get: (): never => { throw new Error(CANARY); } });
+    let thrown: any; let plan: any;
+    try { plan = applyReplacementPlan("abcdef", instrs); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(plan ?? {})).not.toContain(CANARY);
+    expect(plan?.ok).toBe(false);
+  });
+
+  // R15-7 (finding 7) — the serializer's materialize enumerates keys trap-safe; a Proxy event whose
+  // `ownKeys` trap throws fails closed with a FIXED audit code, never re-throws the raw (PHI) trap.
+  it("serializer: a Proxy event with a throwing ownKeys trap fails closed, never leaks raw", () => {
+    const serializer = new ExactAllowListAuditSerializer();
+    const base: any = preparedToTerminalEvent(spoolPrepared("att-r15-7"), "completed", null, CLOCK());
+    const hostile: any = new Proxy(base, { ownKeys(): never { throw new Error(CANARY); } });
+    let thrown: any;
+    try { serializer.serialize(hostile); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String((thrown as any)?.code ?? "")).not.toContain(CANARY);
+  });
+
+  // R15-10 (finding 10) — rebuildFromVolume skips a NON-string volume id; a hostile element whose
+  // `endsWith` throws is never called, so the rebuild neither aborts nor propagates raw.
+  it("spool.rebuildFromVolume: a non-string volume id is skipped, never leaks raw", async () => {
+    const hostileVolume: any = {
+      read: async (): Promise<null> => null,
+      list: async (): Promise<any[]> => ["real.primed", { endsWith: (): never => { throw new Error(CANARY); } }],
+      putAtomic: async (): Promise<any> => ({ flushed: true }),
+      remove: async (): Promise<void> => {},
+    };
+    const spool = new Aes256GcmAuditSpool(hostileVolume, new FixedKeyProvider() as any, CLOCK);
+    let thrown: any;
+    try { await spool.rebuildFromVolume(); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "")).not.toContain(CANARY);
+    expect(thrown).toBeUndefined();
+  });
+
+  // R15-3 (finding 3) — a hostile injected clock returning free-text (PHI) is rejected before it lands
+  // in the CLEAR durable envelope `createdAt`; the append fails closed and nothing persists.
+  it("spool: a hostile clock returning free-text (PHI) never reaches the clear envelope", async () => {
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, (): string => CANARY);
+    const rec = spoolPrepared("att-r15-3");
+    let thrown: any; let leaked = "";
+    try { await spool.appendPrepared(rec); } catch (e) { thrown = e; }
+    for (const id of spool.recordIds()) {
+      const env: any = await spool.inspectEnvelope(id);
+      leaked += String(env?.createdAt ?? "");
+    }
+    expect(String(thrown?.message ?? "") + leaked).not.toContain(CANARY);
+  });
 });

@@ -3,6 +3,7 @@ import type { AiOperation } from "../core/contracts";
 import type { PhiAuditEvent, PhiAuditOutcome, PhiAuditPreparedRecord, PhiAuditSerializer } from "./ports";
 import { IDENTIFIER_CLASSES } from "./counts";
 import { PhiAuditError } from "./errors";
+import { safeOwnKeys } from "../core/boundary-snapshot";
 
 const AI_OPERATIONS: readonly AiOperation[] = ["generation", "stream", "embedding", "graph_extraction"];
 const AUDIT_OUTCOMES: readonly PhiAuditOutcome[] = [
@@ -280,7 +281,9 @@ function materializeShallow(value: unknown): unknown {
     return value;
   }
   const out: Record<string, unknown> = {};
-  for (const key of Object.keys(value)) {
+  // §7/N2: `value` is boundary data — a hostile `Proxy` `ownKeys`/`getOwnPropertyDescriptor` trap must
+  // yield NO keys, never re-throw a raw (PHI) error out of this sanitizer (`Object.keys` would).
+  for (const key of safeOwnKeys(value)) {
     out[key] = readOnceSafe(value, key); // single, throw-safe read
   }
   return out;
@@ -298,7 +301,9 @@ function materialize(value: unknown, schema: ObjectSchema): unknown {
     return value;
   }
   const out: Record<string, unknown> = {};
-  for (const key of Object.keys(value)) {
+  // §7/N2: `value` is boundary data — a hostile `Proxy` `ownKeys` trap must yield NO keys, never
+  // re-throw a raw (PHI) error out of this sanitizer (`Object.keys` would).
+  for (const key of safeOwnKeys(value)) {
     const spec = schema[key];
     const raw = readOnceSafe(value, key); // single, throw-safe read of a possibly-getter field
     if (spec !== undefined && spec.kind === "exactObject") {
