@@ -3785,4 +3785,102 @@ describe("GLY-330 R14 (§7/N2): structural ingestion hardening at the public bou
     expect(String(thrown?.message ?? "") + String(out ?? "") + traced).not.toContain(CANARY);
     expect((thrown as any)?.code).toBe("PROVIDER_SAFETY_GATE_FAILED");
   });
+
+  // -------------------------------------------------------------------------
+  // Round 20 — the gate's full sweep found four more injected-port-RETURN sites
+  // consumed without shape-validation/snapshot. One systematic pass over the
+  // whole injected-return surface (key / engine outputs / store resolution /
+  // receipt).
+  // -------------------------------------------------------------------------
+
+  // R20-1 (finding 1) — a keyProvider.dataKey() returning a real Uint8Array with a MUTATING own length
+  // getter (valid on the check, throwing on the Buffer.from reread) must fail closed with a fixed code;
+  // the crypto now copies the key into an inert buffer INSIDE the guard.
+  it("spool.appendPrepared: a key with a mutating length getter fails closed, never leaks raw", async () => {
+    const hostileKey = new Uint8Array(32).fill(7);
+    let reads = 0;
+    Object.defineProperty(hostileKey, "length", {
+      configurable: true, get(): number { reads += 1; if (reads > 1) { throw new Error(CANARY); } return 32; },
+    });
+    const hostileKeys: any = { keyVersion: "key-v1", dataKey: (): any => hostileKey };
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, hostileKeys, CLOCK);
+    let thrown: any;
+    try { await spool.appendPrepared(spoolPrepared("att-r20-1")); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String((thrown as any)?.code ?? "")).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("AUDIT_SPOOL_FLUSH_FAILED");
+  });
+
+  // R20-2a (finding 2) — a non-string engine segment.text carrier must NOT reach safeTrace.request; the
+  // wrapper deep-validates the injected engine's segments and fails closed.
+  it("wrapper.generateText: a non-string engine segment.text cannot reach the trace raw", async () => {
+    const gate: Gate = { prepared: false };
+    const trace = new FakeSafeTrace();
+    const engineWrap = (e: any): any => ({
+      substitute: async (req: any): Promise<any> => {
+        const real = await e.substitute(req);
+        return { ...real, segments: [{ path: "system", kind: "system", text: { toString: (): string => CANARY } }] };
+      },
+      reverse: (t: any, h: any): any => e.reverse(t, h),
+      createReverseStream: (h: any, s: any): any => e.createReverseStream(h, s),
+    });
+    const built = buildManualWrapper(gate, { engineWrap, trace });
+    let thrown: any; let out: any;
+    try { out = await built.wrapper.generateText({ system: "Maria García" } as any); } catch (e) { thrown = e; }
+    const traced = (built.trace as FakeSafeTrace).payloads.map((p: any) => String(p)).join("|");
+    expect(String(thrown?.message ?? "") + String(out ?? "") + traced).not.toContain(CANARY);
+  });
+
+  // R20-2b (finding 2) — a non-string engine.reverse() result must NOT be returned to the caller.
+  it("wrapper.generateText: a non-string engine.reverse result cannot reach the caller raw", async () => {
+    const gate: Gate = { prepared: false };
+    const engineWrap = (e: any): any => ({
+      substitute: (req: any): any => e.substitute(req),
+      reverse: async (): Promise<any> => ({ toString: (): string => CANARY }),
+      createReverseStream: (h: any, s: any): any => e.createReverseStream(h, s),
+    });
+    const built = buildManualWrapper(gate, { engineWrap });
+    let thrown: any; let out: any;
+    try { out = await built.wrapper.generateText({ system: "Maria García" } as any); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String(out ?? "")).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("REVERSAL_FAILED");
+  });
+
+  // R20-3 (finding 3) — an injected reversal store resolving a token to a NON-STRING carrier (whose
+  // toString/toPrimitive yields PHI) must fail closed, never be coerced into DisplayText.
+  it("reversal: a non-string store canonical fails closed, never coerced into the display", async () => {
+    const hostileStore: any = {
+      maximumEncounteredTokenBatch: 8,
+      resolveEncounteredTokens: async (): Promise<Map<any, any>> =>
+        new Map([[b<any>("[[Claimant]]"), { toString: (): string => CANARY }]]),
+    };
+    const reverser = new AtomicTokenReverser(hostileStore, new BracketTokenGrammar(), BOUNDARY_TOKEN_GRAMMAR_POLICY);
+    const handle: any = { tenantId: TENANT, matterId: MATTER, dictionaryVersion: VERSION, operationId: b<any>("op-1"), attemptId: b<any>("att-1") };
+    let thrown: any; let display: any;
+    try { display = await reverser.reverse(b<any>("[[Claimant]]"), handle); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String(display ?? "")).not.toContain(CANARY);
+  });
+
+  // R20-4 (finding 4) — the injected spool's appendPrepared receipt is snapshotted; a receipt with a
+  // PHI-throwing `location` getter must not be remembered or returned to the public prepare() caller.
+  it("emitter.prepare: a hostile spool receipt getter cannot reach the caller raw", async () => {
+    const primary: any = {
+      prepare: async (): Promise<any> => ({ status: "unavailable", fixedFailureCode: "AUDIT_PRIMARY_UNAVAILABLE" }),
+      finalize: async (): Promise<void> => {},
+    };
+    const hostileReceipt: any = {
+      attemptId: b<any>("att-r20-4"), durableRecordId: "spool:att-r20-4",
+      get location(): never { throw new Error(CANARY); },
+    };
+    const hostileSpool: any = {
+      health: async (): Promise<string> => "ready",
+      appendPrepared: async (): Promise<any> => hostileReceipt,
+      finalize: async (): Promise<void> => {},
+    };
+    const emitter = new DurablePhiAuditEmitter(primary, hostileSpool, new ExactAllowListAuditSerializer(), CLOCK);
+    let thrown: any; let receipt: any; let readErr = "";
+    try { receipt = await emitter.prepare(spoolPrepared("att-r20-4")); } catch (e) { thrown = e; }
+    try { if (receipt) { void (receipt as any).location; } } catch (e: any) { readErr = String(e?.message ?? ""); }
+    expect(String(thrown?.message ?? "") + readErr).not.toContain(CANARY);
+    expect((thrown as any)?.code).toBe("AUDIT_DURABILITY_UNAVAILABLE");
+  });
 });

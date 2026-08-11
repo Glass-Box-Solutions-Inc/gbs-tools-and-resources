@@ -188,7 +188,11 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       // §4.2 / N3: the reverse-stream factory runs BEFORE egress; a factory throw finalizes a
       // fail-closed terminal with zero provider calls.
       stream = this.#deps.engine.createReverseStream(prepared.substitutionHandle, (safe) => {
-        displayChunks.push(safe);
+        // §7/N2: the injected engine drives this sink — a NON-STRING carrier must NOT be placed in the
+        // caller-visible displayChunks. Drop anything that is not a genuine string (fail closed).
+        if (typeof (safe as unknown) === "string") {
+          displayChunks.push(safe);
+        }
       });
     } catch (error) {
       await this.#finalizeQuietly(prepared, "failed_closed", errorCodeString(error));
@@ -521,8 +525,31 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         : { name: safeString(detector, "name") ?? "", version: safeString(detector, "version") ?? "" };
     const latency = safeRead(s, "latencyMs");
     const ambiguityCount = safeRead(s, "ambiguityCount");
+    // §7/N2: the injected engine's `segments` are UNTRUSTED. Deep-copy by own index and require each
+    // path/kind/text to be a genuine STRING — a non-string `text` carrier (e.g. { toJSON: () => PHI })
+    // would otherwise reach safeTrace.request (via rebuild) and the caller. Fail closed on any
+    // non-string, non-array carrier, or throwing own-index getter.
+    const rawSegments = intrinsicCopy<TokenizedTextSegment>(safeRead(s, "segments"));
+    if (rawSegments === null) {
+      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED");
+    }
+    const segments: TokenizedTextSegment[] = [];
+    for (let i = 0; i < rawSegments.length; i += 1) {
+      const seg = rawSegments[i];
+      const path = safeString(seg, "path");
+      const kind = safeString(seg, "kind");
+      const textValue = safeString(seg, "text");
+      if (path === undefined || kind === undefined || textValue === undefined) {
+        throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED");
+      }
+      segments[segments.length] = {
+        path,
+        kind: kind as TokenizedTextSegment["kind"],
+        text: textValue as unknown as TokenizedText,
+      };
+    }
     return {
-      segments: safeRead(s, "segments") as SubstitutionResult["segments"],
+      segments,
       dictionaryVersion: safeRead(s, "dictionaryVersion") as SubstitutionResult["dictionaryVersion"],
       engineVersion: safeRead(s, "engineVersion") as SubstitutionResult["engineVersion"],
       counts: safeRead(s, "counts") as SubstitutionResult["counts"],
@@ -642,6 +669,12 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         prepared.context.operationId,
         {},
       );
+    }
+    // §7/N2: the injected engine's reverse() result is UNTRUSTED — a NON-STRING carrier (e.g. an object
+    // whose toString/toJSON yields PHI) must NOT be returned to the caller. Require a genuine string.
+    if (typeof (display as unknown) !== "string") {
+      await this.#finalizeQuietly(prepared, "reversal_failed", "REVERSAL_FAILED");
+      throw new PhiEngineError("REVERSAL_FAILED", prepared.context.operationId, {});
     }
     await this.#finalizeStrict(prepared, "completed", null);
     return display;

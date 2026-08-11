@@ -386,10 +386,17 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
     // §7/N2: `dataKey()` is an INJECTED-port call — a throwing key provider (its error/code could carry
     // PHI) must fail closed with a FIXED code, never propagate raw out of appendPrepared/finalize. Read
     // and shape-validate the key INSIDE the guard (a throwing `.length` on a hostile carrier is caught).
-    let key: Uint8Array;
+    let keyBytes: Buffer;
     try {
-      key = this.#keys.dataKey();
+      const key = this.#keys.dataKey();
       if (!(key instanceof Uint8Array) || key.length !== KEY_BYTES) {
+        throw new Error("invalid_key");
+      }
+      // Copy into an INERT buffer INSIDE the guard: a MUTATING own `length` getter (valid on the check,
+      // throwing on a later reread) or a hostile index getter can no longer surface raw PHI at a reread
+      // OUTSIDE the guard — the crypto below uses only this inert copy, never the hostile key again.
+      keyBytes = Buffer.from(key);
+      if (keyBytes.length !== KEY_BYTES) {
         throw new Error("invalid_key");
       }
     } catch {
@@ -414,7 +421,7 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
       throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, { reason: "invalid_envelope_metadata" });
     }
     const nonce = randomBytes(NONCE_BYTES);
-    const cipher = createCipheriv("aes-256-gcm", Buffer.from(key), nonce);
+    const cipher = createCipheriv("aes-256-gcm", keyBytes, nonce);
     const ciphertext = Buffer.concat([cipher.update(Buffer.from(plaintext)), cipher.final()]);
     const authenticationTag = cipher.getAuthTag();
     return {
@@ -433,16 +440,22 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
   #decrypt(envelope: EncryptedSpoolEnvelope): Uint8Array {
     // §7/N2: `dataKey()` is an INJECTED-port call — a throwing key provider must fail closed with a
     // FIXED code, never propagate raw out of the public decryptForAudit (or a direct rebuild caller).
-    let key: Uint8Array;
+    let keyBytes: Buffer;
     try {
-      key = this.#keys.dataKey();
+      const key = this.#keys.dataKey();
       if (!(key instanceof Uint8Array) || key.length !== KEY_BYTES) {
+        throw new Error("invalid_key");
+      }
+      // Copy into an INERT buffer INSIDE the guard (see #encrypt): a mutating key `length`/index getter
+      // can no longer surface raw PHI at a reread outside the guard.
+      keyBytes = Buffer.from(key);
+      if (keyBytes.length !== KEY_BYTES) {
         throw new Error("invalid_key");
       }
     } catch {
       throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", null, { reason: "invalid_key" });
     }
-    const decipher = createDecipheriv("aes-256-gcm", Buffer.from(key), Buffer.from(envelope.nonce));
+    const decipher = createDecipheriv("aes-256-gcm", keyBytes, Buffer.from(envelope.nonce));
     decipher.setAuthTag(Buffer.from(envelope.authenticationTag));
     const plaintext = Buffer.concat([decipher.update(Buffer.from(envelope.ciphertext)), decipher.final()]);
     return Uint8Array.from(plaintext);

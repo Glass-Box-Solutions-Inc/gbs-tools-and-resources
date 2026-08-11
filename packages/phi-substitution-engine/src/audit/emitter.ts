@@ -1,4 +1,4 @@
-import type { OperationAttemptId } from "../core/brands";
+import type { OperationAttemptId, OperationId } from "../core/brands";
 import type {
   AuditPreparationReceipt,
   AuditPrimaryStore,
@@ -116,7 +116,11 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
           attemptId: durableRecord.attemptId,
         });
       }
-      const receipt = await this.#spool.appendPrepared(durableRecord);
+      const receipt = this.#snapshotReceipt(
+        await this.#spool.appendPrepared(durableRecord),
+        durableRecord.operationId,
+        durableRecord.attemptId,
+      );
       this.#remember(receipt, durableRecord);
       return receipt;
     } catch (error) {
@@ -207,6 +211,28 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     }
     const event = preparedToTerminalEvent(inFlight.prepared, "unknown_after_send", null, occurredAt || safeClockNow(this.#clock));
     await this.finalize(inFlight.receipt, event);
+  }
+
+  /**
+   * §7/N2: snapshot an INJECTED store's receipt into an inert receipt. The durable store is untrusted —
+   * a receipt with a throwing/mutating/non-string `location` or `durableRecordId` getter must not be
+   * remembered or returned to the public prepare() caller (a later read would leak raw PHI). The
+   * attempt id is taken from OUR trusted durable record, never the store's echo.
+   */
+  #snapshotReceipt(
+    receipt: unknown,
+    operationId: OperationId,
+    attemptId: OperationAttemptId,
+  ): AuditPreparationReceipt {
+    const location = safeString(receipt, "location");
+    const durableRecordId = safeString(receipt, "durableRecordId");
+    if (
+      (location !== "PRIMARY_STORE" && location !== "ENCRYPTED_LOCAL_SPOOL") ||
+      durableRecordId === undefined
+    ) {
+      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", operationId, { attemptId });
+    }
+    return { attemptId, location, durableRecordId };
   }
 
   #remember(receipt: AuditPreparationReceipt, prepared: PhiAuditPreparedRecord): void {

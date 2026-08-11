@@ -226,8 +226,15 @@ export async function reverseText(
     if (span.parsed.kind !== "valid") {
       continue;
     }
+    // §7/N2: `resolved` is the INJECTED reversal store's return. A canonical value that is NOT a genuine
+    // string (e.g. an object whose `Symbol.toPrimitive`/`toString` returns PHI) must NOT be coerced by
+    // `out +=` and emitted as DisplayText — fail closed with a fixed-code error rather than leak raw.
+    const canonical = resolved.get(span.parsed.token);
+    if (typeof canonical !== "string") {
+      throw new ReversalFailedError(keys.operationId);
+    }
     out += text.slice(cursor, span.startUtf16);
-    out += resolved.get(span.parsed.token) as string;
+    out += canonical;
     cursor = span.endUtf16;
   }
   out += text.slice(cursor);
