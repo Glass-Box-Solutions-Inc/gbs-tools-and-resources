@@ -422,7 +422,7 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       // tokenized text (dictionary identity overrides overlapping detector spans).
       let tokenizedText: string;
       try {
-        tokenizedText = tokenize(compiled, sourceText, locale, detectorSpans).tokenizedText;
+        tokenizedText = tokenize(compiled, sourceText, locale, detectorSpans, this.#grammar, this.#policy).tokenizedText;
       } catch (error) {
         if (isDictionaryError(error)) {
           // C6 ambiguity → fail closed; a known value is never guessed.
@@ -536,10 +536,17 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     // `[[Claimant]]` round-trips to itself, never a sentinel.
     let restored: string;
     try {
-      restored =
+      const candidate =
         isInProcessReversalHandle(handle)
           ? handle.restoreEscapedLiterals(String(reversed))
           : String(reversed);
+      // §7/N2: the catch wraps only the CALL. A hostile handle's `restoreEscapedLiterals` can
+      // SUCCESSFULLY return a NON-STRING carrier whose `.includes` (the residual-sentinel check below)
+      // throws a raw (PHI) message — require a genuine string so that check runs only on a string.
+      if (typeof candidate !== "string") {
+        throw new Error("reversal_restore_failed");
+      }
+      restored = candidate;
     } catch {
       // §7/N2: `restoreEscapedLiterals` is a BOUNDED capability but still injected — a throw from it
       // (even on a REAL handle whose method was replaced) must fail closed with a FIXED message, never
@@ -561,13 +568,21 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
   ): ReverseStream {
     // §4.2 / L4: M-1 UTF-16 holdback; raw chunks never reach the display sink. The factory
     // pulls the escaped-literal restore off the handle so streamed output round-trips too.
-    return this.#streamFactory.create({
-      handle,
-      store: this.#reversalStore,
-      grammar: this.#grammar,
-      policy: this.#policy,
-      sink,
-    });
+    // §7/N2: the stream factory is an INJECTED port — a SYNCHRONOUS throw from create() (its message
+    // could carry PHI) must fail closed with a FIXED message, never propagate raw out of this public
+    // API. The wrapper has its own catch, but a DIRECT engine caller of createReverseStream would
+    // otherwise receive the raw throw.
+    try {
+      return this.#streamFactory.create({
+        handle,
+        store: this.#reversalStore,
+        grammar: this.#grammar,
+        policy: this.#policy,
+        sink,
+      });
+    } catch {
+      throw new Error("reverse_stream_unavailable");
+    }
   }
 
   /** Rebases escaped-literal sentinel indices by `base` so global indices are unique. */

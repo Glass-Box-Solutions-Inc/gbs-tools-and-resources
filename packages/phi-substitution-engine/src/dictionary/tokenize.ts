@@ -11,7 +11,7 @@
  * splice order is by ascending original offset, so output is independent of
  * candidate discovery order (L3).
  */
-import type { Utf16Offset } from "../core/brands";
+import type { TokenRole, Utf16Offset } from "../core/brands";
 import type { IdentifierClass } from "../core/contracts";
 import type { CompiledDictionaryCache, CompileInput, DictionaryCompiler } from "./contracts";
 import type { DetectorCollisionSpan } from "../collision/index";
@@ -25,6 +25,8 @@ import {
 import { AhoCorasickCompiledDictionary } from "./compiled-dictionary";
 import { AMBIGUOUS_KNOWN_IDENTIFIER, DictionaryError } from "./errors";
 import { safeRead, safeString, intrinsicCopy } from "../core/boundary-snapshot";
+import { BracketTokenGrammar } from "../tokens/grammar";
+import type { TokenGrammar, TokenGrammarPolicy } from "../tokens/ports";
 
 const resolver = new Phase1CollisionResolver(
   new Phase1BoundaryRule(),
@@ -70,6 +72,46 @@ interface SelectedSpan {
 
 const num = (value: Utf16Offset): number => value as unknown as number;
 
+/**
+ * §7/N2 (sink a): the SUPERSET of every token role a legitimate allocator can emit — the detector
+ * class roles (DETECTOR_ROLE) plus the person/role tokens. Every token about to be spliced into the
+ * egressed output is validated against this policy (or a caller-supplied, equally-or-more-restrictive
+ * one) BEFORE it can reach the output; a raw-PHI string, a non-string carrier, or a crafted non-role
+ * bracket shape is never a "valid" token, so it can never egress. Deliberately a SUPERSET so a token
+ * formatted under a NARROWER allocator policy (e.g. the 5-role person default) still validates. This
+ * mirrors the boundary role registry; it MUST remain a superset of every role any allocator formats.
+ */
+const TOKENIZE_VALIDATION_POLICY: TokenGrammarPolicy = {
+  allowedRoles: new Set<TokenRole>(
+    [
+      "Claimant",
+      "Witness",
+      "Treating_Physician",
+      "Adjuster",
+      "Employer",
+      "Person",
+      "DOB",
+      "SSN",
+      "MRN",
+      "DEA",
+      "EMAIL",
+      "PHONE",
+      "ADDRESS",
+      "Address",
+      "CLAIM",
+      "POLICY",
+      "ACCOUNT",
+      "OTHER",
+    ].map((r) => r as unknown as TokenRole),
+  ),
+  maximumTokenUtf16Length: 64,
+  maximumRoleUtf16Length: 48,
+  maximumSequence: 9999,
+};
+
+/** Trusted engine-internal grammar used to validate spliced tokens when a caller supplies none. */
+const DEFAULT_VALIDATION_GRAMMAR: TokenGrammar = new BracketTokenGrammar();
+
 function splice(
   originalText: string,
   ordered: readonly SelectedSpan[],
@@ -89,6 +131,8 @@ export function tokenize(
   originalText: string,
   locale: string,
   detectorSpans: readonly DetectorSpanInput[] = [],
+  grammar: TokenGrammar = DEFAULT_VALIDATION_GRAMMAR,
+  policy: TokenGrammarPolicy = TOKENIZE_VALIDATION_POLICY,
 ): TokenizeResult {
   // The compiled Aho–Corasick matcher is the sole source of dictionary spans.
   const dictionaryCandidates = dictionary.match(originalText);
@@ -181,6 +225,21 @@ export function tokenize(
     const token =
       detectorTokenBySpan.get(`${start}:${end}`) ?? `[[${DETECTOR_ROLE[span.identifierClass]}]]`;
     spans.push({ start, end, token, canonical: canonicalize(originalText.slice(start, end)) });
+  }
+
+  // §7/N2 (sink a): EVERY token about to be spliced into the egressed `tokenizedText` must be a
+  // genuine, grammar-VALID token. All three sources feeding `span.token` above are UNTRUSTED at this
+  // boundary — a `detectorSpans[].token` from a direct caller, a `candidate.token` from an INJECTED
+  // compiled dictionary's `match()` (a fabricated cache/compiler result), or the class fallback — so a
+  // raw-PHI string, a non-string carrier, or a crafted non-role bracket shape that reached `span.token`
+  // would otherwise splice straight into the output (and out through SubstitutionResult.segments[].text
+  // / decideEgress egressText). A bracketed token can only carry an allow-listed role + numeric
+  // sequence, structurally incapable of holding raw PHI. Validate at this single splice chokepoint;
+  // anything not grammar-valid fails closed (contained by both callers as a fixed-code failure).
+  for (const span of spans) {
+    if (typeof span.token !== "string" || grammar.parse(span.token, policy).kind !== "valid") {
+      throw new DictionaryError(AMBIGUOUS_KNOWN_IDENTIFIER, { ambiguityCount: 0 });
+    }
   }
 
   // Deterministic splice: ascending original offset, independent of entry order.

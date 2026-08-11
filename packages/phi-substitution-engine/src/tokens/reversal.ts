@@ -343,9 +343,16 @@ export class AtomicTokenReverser implements TokenReverser {
     // propagate a raw PHI message/code (the residual-sentinel check is likewise fail-closed).
     let restored: string;
     try {
-      restored = isInProcessReversalHandle(handle)
+      const candidate = isInProcessReversalHandle(handle)
         ? handle.restoreEscapedLiterals(String(reversed))
         : String(reversed);
+      // §7/N2: the guard above wraps only the CALL. A hostile handle whose `restoreEscapedLiterals`
+      // was replaced can SUCCESSFULLY return a NON-STRING carrier whose `.includes` (below) throws a
+      // raw (PHI) message — require a genuine string so the residual-sentinel check runs only on one.
+      if (typeof candidate !== "string") {
+        throw new ReversalFailedError(opId);
+      }
+      restored = candidate;
     } catch {
       throw new ReversalFailedError(opId);
     }

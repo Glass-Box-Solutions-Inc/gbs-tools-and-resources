@@ -183,7 +183,14 @@ class HoldbackReverseStream implements ReverseStream {
     this.buffer = "";
     let restored: string;
     try {
-      restored = this.restore(reversed);
+      const candidate = this.restore(reversed);
+      // §7/N2: the catch wraps only the CALL. `restore` (a bounded handle capability, replaceable on a
+      // hostile REAL handle) can SUCCESSFULLY return a NON-STRING whose `.includes` in hasResidualSentinel
+      // below throws raw (PHI) — require a genuine string, fail closed otherwise.
+      if (typeof candidate !== "string") {
+        throw new ReversalFailedError(this.keys.operationId);
+      }
+      restored = candidate;
     } catch {
       // §7/N2: the captured `restore` capability could throw a raw (PHI) message on a hostile REAL
       // handle — fail closed with a fixed-code error, never forward the raw throw to the display.
@@ -222,7 +229,13 @@ class HoldbackReverseStream implements ReverseStream {
     this.buffer = this.buffer.slice(cut);
     let restored: string;
     try {
-      restored = this.restore(reversed);
+      const candidate = this.restore(reversed);
+      // §7/N2: the catch wraps only the CALL. A SUCCESSFUL non-string return whose `.includes` in
+      // hasResidualSentinel below throws raw (PHI) must fail closed here — require a genuine string.
+      if (typeof candidate !== "string") {
+        throw new ReversalFailedError(this.keys.operationId);
+      }
+      restored = candidate;
     } catch {
       // §7/N2: a throw from the captured `restore` capability (hostile REAL handle) fails closed with
       // a fixed-code error, never a raw (PHI) message to the display.

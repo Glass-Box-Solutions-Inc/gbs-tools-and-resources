@@ -2597,7 +2597,7 @@ describe("GLY-330 R11 (§7/N2): hostile-object leak class swept onto remaining t
     const compiled: any = { match: (): any[] => [], canonicalForToken: (): undefined => undefined };
     const email = `${CANARY}@example.com`;
     const detectorSpans: any[] = [
-      { startUtf16: 0, endUtf16: email.length, identifierClass: "EMAIL", confidence: 1, token: "[[Detected_Email_1]]" },
+      { startUtf16: 0, endUtf16: email.length, identifierClass: "EMAIL", confidence: 1, token: "[[EMAIL]]" },
     ];
     const original = Array.prototype.map;
     let result: any;
@@ -2786,7 +2786,7 @@ describe("GLY-330 R12 (§7/N2): per-field getter TOCTOU, poisoned iterators, ung
   it("tokenize: a poisoned detectorSpans Symbol.iterator cannot inject a raw token replacement", () => {
     const compiled: any = { match: (): any[] => [], canonicalForToken: (): undefined => undefined };
     const email = `${CANARY}@example.com`;
-    const spans: any = [{ startUtf16: 0, endUtf16: email.length, identifierClass: "EMAIL", confidence: 1, token: "[[Detected_Email_1]]" }];
+    const spans: any = [{ startUtf16: 0, endUtf16: email.length, identifierClass: "EMAIL", confidence: 1, token: "[[EMAIL]]" }];
     spans[Symbol.iterator] = function* (): any {
       yield { startUtf16: 0, endUtf16: email.length, identifierClass: "EMAIL", confidence: 1, token: CANARY };
     };
@@ -2995,7 +2995,7 @@ describe("GLY-330 R13 (§7/N2): hostile-object leak class swept onto the last bo
   it("tokenize: a detectorSpans index getter that mutates between passes cannot inject a raw token", () => {
     const compiled: any = { match: (): any[] => [], canonicalForToken: (): undefined => undefined };
     const email = `${CANARY}@example.com`;
-    const benign = { startUtf16: 0, endUtf16: email.length, identifierClass: "EMAIL", confidence: 1, token: "[[Detected_Email_1]]" };
+    const benign = { startUtf16: 0, endUtf16: email.length, identifierClass: "EMAIL", confidence: 1, token: "[[EMAIL]]" };
     const spans: any = [benign];
     let reads = 0;
     Object.defineProperty(spans, "0", {
@@ -4022,5 +4022,101 @@ describe("GLY-330 R14 (§7/N2): structural ingestion hardening at the public bou
     expect(out).toBeUndefined();
     expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
     expect((thrown as any)?.code).toBe("DICTIONARY_UNAVAILABLE");
+  });
+
+  // R23 — full-engine sweep of the SAME injected-port meta-class R22 fixed at the orchestrator's
+  // detector site, on the paths that site's guard does not cover. Group A = raw-PHI-string tokens on
+  // the dictionary/tokenize splice; Group B = a hostile handle's restoreEscapedLiterals SUCCESS return
+  // (a non-string whose `.includes` throws); Group C = an injected streamFactory.create() that throws.
+
+  // R23-A1 (compiler.ts:214 + tokenize candidate.token) — a compiler-path getOrAllocate returning a raw
+  // PHI string becomes entry.token, is served as a compiled-dictionary match candidate.token, and would
+  // splice into segments[].text. The tokenize splice chokepoint grammar-validates it → fail closed.
+  it("engine.substitute: a compiler-path getOrAllocate returning a raw PHI string fails closed, never spliced", async () => {
+    const coordinator: any = { requireActiveReady: async (): Promise<any> => VERSION_BIGINT };
+    const truthReader: any = { readTaggedValues: async (): Promise<any[]> => [tagged("s-maria", "PERSON_NAME", "Maria García", "Claimant")] };
+    const hostileAssign: any = { getOrAllocate: async (): Promise<any> => CANARY };
+    const engine = new ComposedSubstitutionEngine({ coordinator, truthReader, sourceTruthRevision: REVISION, reversalStore: new InMemoryReversalStore(), engineVersion: ENGINE, assignmentStore: hostileAssign } as any);
+    let thrown: any; let out: any;
+    try {
+      out = await engine.substitute({ context: ctx("att-r23-a1"), policy: policy(), segments: [{ path: "system", kind: "system", text: "Maria García" }], purpose: "generation" } as any);
+    } catch (e) { thrown = e; }
+    expect(out).toBeUndefined();
+    expect(String(thrown?.message ?? "") + JSON.stringify(out ?? {})).not.toContain(CANARY);
+  });
+
+  // R23-A2 (tokenize.ts:123) — a direct tokenize caller (decideEgress boundary) supplying a hostile
+  // detectorSpans[].token that is a raw PHI string: it passes safeString but is not grammar-valid, so
+  // the splice chokepoint fails closed rather than splice it into the egressed tokenizedText.
+  it("tokenize: a detectorSpans token that is a raw PHI string fails closed, never spliced", () => {
+    const compiled: any = { match: (): any[] => [], canonicalForToken: (): undefined => undefined };
+    const text = "SSN 111 here";
+    const spans: any = [{ startUtf16: 0, endUtf16: 3, identifierClass: "SSN", confidence: 1, token: CANARY }];
+    let thrown: any; let result: any;
+    try { result = tokenize(compiled, text, LOCALE, spans); } catch (e) { thrown = e; }
+    expect(thrown).toBeDefined();
+    expect(String((result as any)?.tokenizedText ?? "")).not.toContain(CANARY);
+  });
+
+  // R23-B1 (orchestrator.ts:540) — a REAL handle whose restoreEscapedLiterals is overridden to
+  // SUCCESSFULLY return a non-string carrier whose `.includes` throws raw PHI. The call is guarded, but
+  // the non-string is consumed by the residual-sentinel `.includes` check; require a genuine string.
+  it("engine.reverse: a restoreEscapedLiterals returning a non-string with a throwing includes fails closed", async () => {
+    const { engine } = makeEngine();
+    const result: any = await engine.substitute({ context: ctx("att-r23-b1"), policy: policy(), segments: [{ path: "system", kind: "system", text: "Maria García" }], purpose: "generation" } as any);
+    const handle: any = result.reversalHandle;
+    Object.defineProperty(handle, "restoreEscapedLiterals", {
+      configurable: true,
+      value: (_r: string): any => ({ get includes(): never { throw new Error(CANARY); } }),
+    });
+    let thrown: any; let display: any;
+    try { display = await engine.reverse(result.segments[0].text, handle); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String(display ?? "")).not.toContain(CANARY);
+  });
+
+  // R23-B2 (reverse-stream.ts:186) — the same hostile restore return on the STREAMING path: end()'s
+  // reversal restores via the handle capability, then hasResidualSentinel consumes `.includes`.
+  it("engine.createReverseStream: a restoreEscapedLiterals returning a non-string fails closed", async () => {
+    const { engine } = makeEngine();
+    const result: any = await engine.substitute({ context: ctx("att-r23-b2"), policy: policy(), segments: [{ path: "system", kind: "system", text: "Maria García" }], purpose: "generation" } as any);
+    const handle: any = result.reversalHandle;
+    Object.defineProperty(handle, "restoreEscapedLiterals", {
+      configurable: true,
+      value: (_r: string): any => ({ get includes(): never { throw new Error(CANARY); } }),
+    });
+    const emitted: string[] = [];
+    const stream: any = engine.createReverseStream(handle, (safe: any) => { emitted.push(String(safe)); });
+    let thrown: any;
+    try { await stream.push(result.segments[0].text); await stream.end(); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + emitted.join("")).not.toContain(CANARY);
+  });
+
+  // R23-B3 (reversal.ts:346) — the AtomicTokenReverser adapter has the same success-return gap.
+  it("AtomicTokenReverser.reverse: a restoreEscapedLiterals returning a non-string fails closed", async () => {
+    const store = new InMemoryReversalStore();
+    const grammar = new BracketTokenGrammar();
+    store.record({ tenantId: TENANT, matterId: MATTER, dictionaryVersion: VERSION as any, token: "[[Claimant]]" as any, canonical: "Maria García" });
+    const handle: any = new InProcessReversalHandle({ tenantId: TENANT, matterId: MATTER, dictionaryVersion: VERSION as any, operationId: "op-r23-b3" as any, attemptId: "att-r23-b3" as any, literals: [] } as any);
+    Object.defineProperty(handle, "restoreEscapedLiterals", {
+      configurable: true,
+      value: (_r: string): any => ({ get includes(): never { throw new Error(CANARY); } }),
+    });
+    const reverser = new AtomicTokenReverser(store, grammar, BOUNDARY_TOKEN_GRAMMAR_POLICY);
+    let thrown: any; let display: any;
+    try { display = await reverser.reverse("[[Claimant]]" as any, handle); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + String(display ?? "")).not.toContain(CANARY);
+  });
+
+  // R23-C1 (orchestrator.ts:564) — an injected streamFactory.create() that throws raw PHI synchronously
+  // must fail closed with a fixed message out of the public createReverseStream (no wrapper to catch it).
+  it("engine.createReverseStream: an injected streamFactory.create that throws fails closed, never raw", () => {
+    const coordinator: any = { requireActiveReady: async (): Promise<any> => VERSION_BIGINT };
+    const truthReader: any = { readTaggedValues: async (): Promise<any[]> => [] };
+    const hostileFactory: any = { create: (): never => { throw new Error(CANARY); } };
+    const engine = new ComposedSubstitutionEngine({ coordinator, truthReader, sourceTruthRevision: REVISION, reversalStore: new InMemoryReversalStore(), engineVersion: ENGINE, streamFactory: hostileFactory } as any);
+    const handle: any = new InProcessReversalHandle({ tenantId: TENANT, matterId: MATTER, dictionaryVersion: VERSION as any, operationId: "op-r23-c1" as any, attemptId: "att-r23-c1" as any, literals: [] } as any);
+    let thrown: any; let stream: any;
+    try { stream = engine.createReverseStream(handle, (): void => {}); } catch (e) { thrown = e; }
+    expect(String(thrown?.message ?? "") + JSON.stringify(stream ?? {})).not.toContain(CANARY);
   });
 });
