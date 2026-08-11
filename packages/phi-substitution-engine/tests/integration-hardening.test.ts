@@ -2012,6 +2012,35 @@ describe("GLY-330 NEW-R6-A R7 (§7/N2): spool.drainTo tolerates a throwing statu
     expect(thrown).toBeUndefined();
     expect(report.remaining).toBeGreaterThanOrEqual(1);
   });
+
+  it("tolerates a volume list() rejection carrying PHI during rebuild", async () => {
+    const volume: any = {
+      async list(): Promise<any> {
+        throw new Error("ALICE_SMITH_DOB_1970");
+      },
+      async putAtomic(): Promise<any> {
+        return { flushed: true };
+      },
+      async read(): Promise<any> {
+        return null;
+      },
+      async remove(): Promise<void> {},
+    };
+    const spool = new Aes256GcmAuditSpool(volume as any, new FixedKeyProvider() as any, CLOCK);
+    const primary = {
+      async prepare(r: any): Promise<any> {
+        return { status: "stored", durableRecordId: `p:${String(r.attemptId)}` };
+      },
+      async finalize(): Promise<void> {},
+    };
+    let thrown: any;
+    try {
+      await spool.drainTo(primary as any);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeUndefined();
+  });
 });
 
 // ===========================================================================
@@ -2058,6 +2087,30 @@ describe("GLY-330 finding 4 R8 (L5): a non-array message.content fails closed", 
     expect(() =>
       projector.classify({ messages: [{ role: "user", content }] } as any),
     ).toThrow(PhiEngineError);
+  });
+
+  it("rejects a non-array 'messages' before its own forEach runs", () => {
+    const projector = new StructuralOptionsProjector();
+    const messages: any = {
+      length: 1,
+      0: { role: "user", content: [{ type: "text", text: "ALICE_CANARY" }] },
+      forEach(): void {
+        /* no-op: would skip all message classification */
+      },
+    };
+    expect(() => projector.classify({ messages } as any)).toThrow(PhiEngineError);
+  });
+
+  it("rejects a non-array 'tools' before its own forEach runs", () => {
+    const projector = new StructuralOptionsProjector();
+    const tools: any = {
+      length: 1,
+      0: { name: "x", description: "ALICE_CANARY" },
+      forEach(): void {
+        /* no-op */
+      },
+    };
+    expect(() => projector.classify({ tools } as any)).toThrow(PhiEngineError);
   });
 });
 

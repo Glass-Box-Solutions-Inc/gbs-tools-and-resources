@@ -174,8 +174,15 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
 
   public async drainTo(primary: AuditPrimaryStore): Promise<SpoolDrainReport> {
     // N3/N4: drain reads the DURABLE volume so records survive a replica restart —
-    // never only the in-memory index.
-    await this.rebuildFromVolume();
+    // never only the in-memory index. §7/N2: a RAW volume rejection during rebuild (a hostile or
+    // failing `list`/`read` adapter whose message could carry PHI) must never surface from this
+    // background drain — proceed best-effort with whatever the index already holds and re-drive on a
+    // later drain.
+    try {
+      await this.rebuildFromVolume();
+    } catch {
+      /* volume outage during rebuild; drain what is already indexed, retry the rest later. */
+    }
 
     let examined = 0;
     let delivered = 0;

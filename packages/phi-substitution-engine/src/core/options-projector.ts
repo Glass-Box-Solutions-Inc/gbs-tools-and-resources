@@ -189,6 +189,19 @@ export class StructuralOptionsProjector
       assertStructuralProviderString(raw["model"] as string, "model");
     }
 
+    // L5 fail-closed: `messages`/`tools`, if present, MUST be genuine arrays. A non-array (e.g. an
+    // array-like object whose no-op `forEach` skips classification while its indices carry raw PHI
+    // the clone would then egress) is rejected here, BEFORE any of its own iteration methods run —
+    // the same non-array hazard the per-message `content` guard closes one level down.
+    for (const arrayKey of ["messages", "tools"] as const) {
+      const arrayValue = raw[arrayKey];
+      if (arrayValue !== undefined && arrayValue !== null && !Array.isArray(arrayValue)) {
+        throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+          malformedTextCarrier: arrayKey,
+        });
+      }
+    }
+
     // system — a known text carrier: if present it MUST be a string. A non-string value (e.g. an
     // object that could smuggle PHI text past the `typeof === "string"` classification and egress
     // RAW via the clone) fails closed rather than passing through unclassified (L5).
