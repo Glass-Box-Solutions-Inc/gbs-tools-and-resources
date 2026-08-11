@@ -24,6 +24,7 @@ import {
 } from "../collision/index";
 import { AhoCorasickCompiledDictionary } from "./compiled-dictionary";
 import { AMBIGUOUS_KNOWN_IDENTIFIER, DictionaryError } from "./errors";
+import { safeRead, safeString } from "../core/boundary-snapshot";
 
 const resolver = new Phase1CollisionResolver(
   new Phase1BoundaryRule(),
@@ -107,13 +108,24 @@ export function tokenize(
     token: string;
   }[] = [];
   for (let i = 0; i < (detectorSpans as { length: number }).length; i += 1) {
-    const span = detectorSpans[i]!;
+    const span = detectorSpans[i];
+    // Every field is read ONCE, getter-throw-safe. A throwing/mutating field getter (e.g. a `token`
+    // getter that throws PHI) fails closed with a fixed code here rather than propagating raw out of
+    // this exported boundary; a non-numeric offset or non-string token is likewise rejected.
+    const startUtf16 = safeRead(span, "startUtf16");
+    const endUtf16 = safeRead(span, "endUtf16");
+    const identifierClass = safeRead(span, "identifierClass");
+    const confidence = safeRead(span, "confidence");
+    const token = safeString(span, "token");
+    if (typeof startUtf16 !== "number" || typeof endUtf16 !== "number" || token === undefined) {
+      throw new DictionaryError(AMBIGUOUS_KNOWN_IDENTIFIER, { ambiguityCount: 0 });
+    }
     detectorSpanSnapshot[detectorSpanSnapshot.length] = {
-      startUtf16: span.startUtf16 as Utf16Offset,
-      endUtf16: span.endUtf16 as Utf16Offset,
-      identifierClass: span.identifierClass,
-      confidence: span.confidence,
-      token: span.token as unknown as string,
+      startUtf16: startUtf16 as Utf16Offset,
+      endUtf16: endUtf16 as Utf16Offset,
+      identifierClass: identifierClass as DetectorCollisionSpan["identifierClass"],
+      confidence: confidence as DetectorCollisionSpan["confidence"],
+      token,
     };
   }
 

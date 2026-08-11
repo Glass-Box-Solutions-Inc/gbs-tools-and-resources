@@ -12,6 +12,7 @@ import { isAuditError, isAuditFailureCode, PhiAuditError } from "./errors";
 import { safeCodeString } from "../core/errors";
 import { preparedToTerminalEvent } from "./event-factory";
 import { sanitizePreparedRecord, sanitizeTerminalEvent } from "./serializer";
+import { safeString } from "../core/boundary-snapshot";
 
 interface InFlight {
   readonly receipt: AuditPreparationReceipt;
@@ -84,10 +85,19 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     try {
       const primaryResult = await this.#primary.prepare(durableRecord);
       if (primaryResult.status === "stored") {
+        // §7/N2: the injected primary store is UNTRUSTED — read `durableRecordId` getter-throw-safe and
+        // require a genuine string; a throwing/non-string carrier fails closed (durability unavailable)
+        // rather than placing a raw (PHI) value onto the returned receipt.
+        const durableRecordId = safeString(primaryResult, "durableRecordId");
+        if (durableRecordId === undefined) {
+          throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", durableRecord.operationId, {
+            attemptId: durableRecord.attemptId,
+          });
+        }
         const receipt: AuditPreparationReceipt = {
           attemptId: durableRecord.attemptId,
           location: "PRIMARY_STORE",
-          durableRecordId: primaryResult.durableRecordId,
+          durableRecordId,
         };
         this.#remember(receipt, durableRecord);
         return receipt;

@@ -1,6 +1,7 @@
 import type { TokenizedText } from "../core/brands";
 import type { RedactionInstruction } from "./ports";
 import { splitsSurrogatePair } from "./offsets";
+import { safeRead, safeString } from "../core/boundary-snapshot";
 
 export type ReplacementPlanResult =
   | Readonly<{ ok: true; text: TokenizedText; appliedSpanIds: readonly string[] }>
@@ -26,9 +27,23 @@ export function applyReplacementPlan(
   if (!Array.isArray(instructions)) {
     return { ok: false, reason: "OUT_OF_RANGE" };
   }
-  const copied: RedactionInstruction[] = [];
+  // Read EVERY field of EVERY instruction ONCE, getter-throw-safe, into inert plain data. A throwing/
+  // mutating field getter (e.g. a `replacement` getter that throws PHI) fails closed here rather than
+  // propagating raw out of this exported boundary; nothing downstream ever touches a live getter.
+  const copied: { startUtf16: number; endUtf16: number; replacement: string; detectedSpanId: string }[] = [];
   for (let i = 0; i < (instructions as { length: number }).length; i += 1) {
-    copied[copied.length] = instructions[i]!;
+    const raw = instructions[i];
+    const startUtf16 = safeRead(raw, "startUtf16");
+    const endUtf16 = safeRead(raw, "endUtf16");
+    const replacement = safeString(raw, "replacement");
+    const detectedSpanId = safeString(raw, "detectedSpanId");
+    if (
+      typeof startUtf16 !== "number" || typeof endUtf16 !== "number" ||
+      replacement === undefined || detectedSpanId === undefined
+    ) {
+      return { ok: false, reason: "OUT_OF_RANGE" };
+    }
+    copied[copied.length] = { startUtf16, endUtf16, replacement, detectedSpanId };
   }
   const ordered = copied.sort((a, b) => a.startUtf16 - b.startUtf16);
 

@@ -44,6 +44,7 @@ import type {
 } from "../audit/ports";
 import { isAuditError, preparedToTerminalEvent, toTotalIdentifierCounts } from "../audit/index";
 import { isPhiEngineFailureCode, PhiEngineError, safeCodeString, toFailureCode } from "./errors";
+import { safeRead, safeString } from "./boundary-snapshot";
 
 /** The single private raw-provider port. It is never exported as an application binding. */
 export interface RawProviderPort<GenerateOptions, EmbeddingKind = string> {
@@ -228,12 +229,14 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       this.#enforceSafetyGate(decision, context);
       providerBinding = decision.provider;
       // §4.3: substitute the embedding text; tokenized-only, NO output reversal.
-      substitution = await this.#deps.engine.substitute({
-        context,
-        policy,
-        segments: [{ path: "embedding", kind: "embedding", text }],
-        purpose: "embedding",
-      });
+      substitution = this.#snapshotSubstitution(
+        await this.#deps.engine.substitute({
+          context,
+          policy,
+          segments: [{ path: "embedding", kind: "embedding", text }],
+          purpose: "embedding",
+        }),
+      );
       tokenizedText = substitution.segments[0]?.text ?? ("" as unknown as TokenizedText);
       receipt = await this.#prepareAudit(context, policy, substitution, "embedding");
     } catch (error) {
@@ -334,13 +337,17 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     // §4.1 step 4 / L5: exhaustive, fail-closed projection of all text fields.
     const classified = this.#classify(options, context);
 
-    // §4.1 steps 5–8: substitute + build the non-serializable reversal handle.
-    const substitution = await this.#deps.engine.substitute({
-      context,
-      policy,
-      segments: classified.segments,
-      purpose,
-    });
+    // §4.1 steps 5–8: substitute + build the non-serializable reversal handle. The injected engine's
+    // result is snapshotted read-once (§7/N2) so no later prepared-record build re-reads a hostile
+    // metadata getter.
+    const substitution = this.#snapshotSubstitution(
+      await this.#deps.engine.substitute({
+        context,
+        policy,
+        segments: classified.segments,
+        purpose,
+      }),
+    );
     // §7/N2: snapshot the injected engine's segments ONCE (path/text read a single time, by index)
     // so rebuild and the later trace see identical values — a mutating own getter cannot show a
     // tokenized value to rebuild and raw PHI to the trace, and a poisoned own iterator cannot slip a
@@ -441,21 +448,29 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       throw new PhiEngineError("MISSING_TRUSTED_CONTEXT");
     }
     // §7/N2: the injected context port's result is UNTRUSTED. Read every scalar EXACTLY ONCE into an
-    // inert snapshot here — downstream code reads these fields many times (prepared records, fixed-
-    // code error ids, finalize), so a throwing/mutating getter on `operationId`/`attemptId`/… would
-    // otherwise leak raw PHI (or throw a raw message) at any of those LATER reads, several of which
-    // sit outside a guard. A throw on this single read set fails closed with MISSING_TRUSTED_CONTEXT.
-    try {
-      return {
-        tenantId: raw.tenantId,
-        matterId: raw.matterId,
-        actorId: raw.actorId,
-        operationId: raw.operationId,
-        attemptId: raw.attemptId,
-      };
-    } catch {
+    // inert snapshot AND validate it is a genuine string — downstream code reads these fields many
+    // times (prepared records, fixed-code error ids, finalize), so a throwing/mutating getter, OR a
+    // non-string carrier (e.g. `operationId:{toString(){throw PHI}}` that later gets coerced onto an
+    // error), would otherwise leak raw PHI at any of those LATER reads, several of which sit outside a
+    // guard. A throw or a non-string field fails closed here with MISSING_TRUSTED_CONTEXT.
+    const tenantId = safeString(raw, "tenantId");
+    const matterId = safeString(raw, "matterId");
+    const actorId = safeString(raw, "actorId");
+    const operationId = safeString(raw, "operationId");
+    const attemptId = safeString(raw, "attemptId");
+    if (
+      tenantId === undefined || matterId === undefined || actorId === undefined ||
+      operationId === undefined || attemptId === undefined
+    ) {
       throw new PhiEngineError("MISSING_TRUSTED_CONTEXT");
     }
+    return {
+      tenantId: tenantId as MatterAiContext["tenantId"],
+      matterId: matterId as MatterAiContext["matterId"],
+      actorId: actorId as MatterAiContext["actorId"],
+      operationId: operationId as MatterAiContext["operationId"],
+      attemptId: attemptId as MatterAiContext["attemptId"],
+    };
   }
 
   async #prepareAudit(
@@ -465,6 +480,37 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     purpose: AiOperation,
   ): Promise<AuditPreparationReceipt> {
     return this.#deps.audit.prepare(this.#preparedRecord(context, substitution, purpose));
+  }
+
+  /**
+   * §7/N2: the injected engine's `SubstitutionResult` is UNTRUSTED. Read its METADATA fields EXACTLY
+   * ONCE into inert values here, so the (repeated) prepared-record construction — on the durable
+   * PREPARE and on EVERY finalize path, several outside a guard — never re-reads a getter that is
+   * valid for PREPARED and throws PHI after provider invocation. `segments` and `reversalHandle` flow
+   * on to their own hardened consumers (segment snapshot / guarded reversal).
+   */
+  #snapshotSubstitution(s: SubstitutionResult): SubstitutionResult {
+    const detector = safeRead(s, "detector") as SubstitutionResult["detector"];
+    const detectorSnapshot =
+      detector == null
+        ? null
+        : { name: safeString(detector, "name") ?? "", version: safeString(detector, "version") ?? "" };
+    const latency = safeRead(s, "latencyMs");
+    const ambiguityCount = safeRead(s, "ambiguityCount");
+    return {
+      segments: safeRead(s, "segments") as SubstitutionResult["segments"],
+      dictionaryVersion: safeRead(s, "dictionaryVersion") as SubstitutionResult["dictionaryVersion"],
+      engineVersion: safeRead(s, "engineVersion") as SubstitutionResult["engineVersion"],
+      counts: safeRead(s, "counts") as SubstitutionResult["counts"],
+      ambiguityCount: typeof ambiguityCount === "number" ? ambiguityCount : 0,
+      detector: detectorSnapshot,
+      latencyMs: {
+        dictionary: Number(safeRead(latency, "dictionary")) || 0,
+        detector: Number(safeRead(latency, "detector")) || 0,
+        total: Number(safeRead(latency, "total")) || 0,
+      },
+      reversalHandle: safeRead(s, "reversalHandle") as SubstitutionResult["reversalHandle"],
+    };
   }
 
   #preparedRecord(

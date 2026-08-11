@@ -6,7 +6,7 @@ import type {
   TokenGrammarPolicy,
 } from "./ports";
 import { ReversalFailedError } from "./errors";
-import { reverseText, type ReversalKeys, InProcessReversalHandle, isInProcessReversalHandle } from "./reversal";
+import { reverseText, type ReversalKeys, InProcessReversalHandle, isInProcessReversalHandle, safeHandleOperationId } from "./reversal";
 import { SENTINEL_OPEN, SENTINEL_CLOSE } from "./escaper";
 
 const OPEN = "[[";
@@ -256,7 +256,10 @@ export class HoldbackReverseStreamFactory implements ReverseStreamFactory {
       tenantId: input.handle.tenantId,
       matterId: input.handle.matterId,
       dictionaryVersion: input.handle.dictionaryVersion,
-      operationId: input.handle.operationId,
+      // §7/N2: shape-restrict the operation id at capture (same as AtomicTokenReverser) so a hostile
+      // handle cannot smuggle free-text PHI into the fixed-code ReversalFailedError.operationId this
+      // stream throws on failure — a non-slug id becomes a fixed placeholder.
+      operationId: safeHandleOperationId(input.handle),
     };
     // L6: pull the escaped-literal restore off the handle (bounded capability, never raw
     // literal data) so streamed output restores source literals just like non-stream reversal.

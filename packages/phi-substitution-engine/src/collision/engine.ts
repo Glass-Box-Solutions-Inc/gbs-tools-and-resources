@@ -25,6 +25,7 @@ import {
   Phase1DistinctivenessRule,
 } from "./rules";
 import { Phase1CollisionResolver } from "./resolver";
+import { intrinsicCopy } from "../core/boundary-snapshot";
 
 const AMBIGUOUS_KNOWN_IDENTIFIER = "AMBIGUOUS_KNOWN_IDENTIFIER";
 
@@ -149,14 +150,15 @@ export function runCollision(input: CollisionInput): CollisionResult {
   const dictionaryCandidates: DictionaryMatchCandidate[] = [];
   const canonicalByKey = new Map<string, string>();
 
-  // §7/N2 / L12: `knownValues` is caller-controlled boundary data — a NON-array carrier or a REAL
-  // array with an OWN poisoned `Symbol.iterator` must NOT silently drop a known value (which would
-  // then egress RAW). Iterate by OWN index/length so a poisoned iterator is never consulted.
-  if (!Array.isArray(input.knownValues)) {
+  // §7/N2 / L12: `knownValues` is caller-controlled boundary data — read it EXACTLY ONCE and copy by
+  // OWN index/length. A NON-array carrier, an OWN poisoned iterator, or a mutating getter (real array
+  // on the check read, then `[]`) must NOT silently drop a known value that would then egress RAW.
+  const knownValues = intrinsicCopy<KnownValue>(input.knownValues);
+  if (knownValues === null) {
     throw new Error("known_values_not_an_array");
   }
-  for (let ki = 0; ki < (input.knownValues as { length: number }).length; ki += 1) {
-    const known = input.knownValues[ki]!;
+  for (let ki = 0; ki < knownValues.length; ki += 1) {
+    const known = knownValues[ki]!;
     const rawKey = known.literal ?? known.normalizedForm;
     if (rawKey === undefined) continue;
     const foldedKey = fold(rawKey, locale);

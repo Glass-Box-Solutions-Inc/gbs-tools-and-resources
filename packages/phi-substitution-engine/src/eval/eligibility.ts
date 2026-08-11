@@ -7,6 +7,7 @@
  * Each failing class emits a `CLASS_GATE_FAILED:<CLASS>` diagnostic so the
  * blocked class is named in the release evidence, not silently averaged away.
  */
+import { intrinsicCopy } from "../core/boundary-snapshot";
 
 /**
  * Minimum acceptable per-class recall Wilson lower bound (95%).
@@ -60,8 +61,8 @@ export function gateClasses(
   // §7/N2: `classes` is boundary evidence — index-iterate (a poisoned own `Symbol.iterator` can't
   // hide a class) and read each `identifierClass`/`recallWilsonLower95` EXACTLY ONCE, so a mutating
   // getter can't put a benign label in `perClass` and PHI in `failedClasses`/diagnostics.
-  const classList = Array.isArray(classes) ? classes : [];
-  for (let ci = 0; ci < (classList as { length: number }).length; ci += 1) {
+  const classList = intrinsicCopy<ClassRecallEvidence>(classes) ?? [];
+  for (let ci = 0; ci < classList.length; ci += 1) {
     const evidence = classList[ci]!;
     const identifierClass = evidence.identifierClass;
     const recallLower = evidence.recallWilsonLower95;
@@ -76,8 +77,11 @@ export function gateClasses(
 
   // L7 decision line: conjunctive over classes. A macro-average CANNOT hide a
   // weak class — one failing class forces the aggregate to false.
-  const eligible = classes.length > 0 && failedClasses.length === 0;
-  const macroRecallLower = classes.length > 0 ? lowerSum / classes.length : 0;
+  // §7/N2: decide on the inert COPY's length, never the live `classes.length` (a non-array carrier
+  // like `{length:1}` would otherwise report eligible with zero evaluated classes; a throwing length
+  // getter would leak raw).
+  const eligible = classList.length > 0 && failedClasses.length === 0;
+  const macroRecallLower = classList.length > 0 ? lowerSum / classList.length : 0;
 
   return { eligible, perClass, failedClasses, diagnostics, macroRecallLower };
 }

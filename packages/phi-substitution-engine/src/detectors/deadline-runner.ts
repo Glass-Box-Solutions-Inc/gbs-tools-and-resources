@@ -7,6 +7,7 @@ import type {
   DetectorSpanNormalizer,
   RawDetectedSpan,
 } from "./ports";
+import { safeRead, safeString } from "../core/boundary-snapshot";
 
 /** Fail-closed marker for an exhausted detector belt (maps to `DETECTOR_UNAVAILABLE`). */
 export class DetectorDeadlineExceededError extends Error {
@@ -94,11 +95,27 @@ export class SharedDeadlineDetectorRunner implements DetectorDeadlineRunner {
     let spans: readonly DetectedSpan[];
     let descriptor: DetectorArtifactDescriptor;
     try {
-      // §7/N2: `port.descriptor` is an injected-port getter — read it ONCE here, inside the guard. A
-      // getter that returns a valid descriptor now and THROWS on a re-read would otherwise leak raw
-      // PHI at the (unguarded) return below; `detectWithin` has no catch there, only a `finally`.
-      descriptor = port.descriptor;
-      const normalized = normalizer.normalize(request.text, descriptor.engineVersion, raw);
+      // §7/N2: `port.descriptor` is an injected-port getter — read every FIELD ONCE here, inside the
+      // guard, into an INERT snapshot. Returning the LIVE descriptor would let a field getter that is
+      // valid now and THROWS on the caller's next read leak raw PHI at the (unguarded) return below;
+      // `detectWithin` has no catch there, only a `finally`. A throwing/missing engineVersion fails
+      // closed (return null).
+      const d = port.descriptor;
+      const engineVersion = safeString(d, "engineVersion");
+      if (engineVersion === undefined) {
+        return null;
+      }
+      descriptor = {
+        name: (safeString(d, "name") ?? "") as DetectorArtifactDescriptor["name"],
+        serviceVersion: safeString(d, "serviceVersion") ?? "",
+        engineVersion,
+        modelVersion: safeString(d, "modelVersion") ?? "",
+        recognizerVersion: safeString(d, "recognizerVersion") ?? "",
+        configurationDigest: safeString(d, "configurationDigest") ?? "",
+        residency: safeString(d, "residency") ?? "",
+        localProcessing: safeRead(d, "localProcessing") === true,
+      };
+      const normalized = normalizer.normalize(request.text, engineVersion, raw);
       if (normalized.ok !== true) {
         return null;
       }

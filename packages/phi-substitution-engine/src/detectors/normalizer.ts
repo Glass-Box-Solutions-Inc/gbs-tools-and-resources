@@ -6,6 +6,7 @@ import type {
   SpanNormalizationResult,
 } from "./ports";
 import { splitsSurrogatePair } from "./offsets";
+import { intrinsicCopy, safeRead, safeString } from "../core/boundary-snapshot";
 
 /**
  * Validates raw detector spans against the ORIGINAL UTF-16 text (CONTRACT-phase1 §3.3, L12).
@@ -25,37 +26,58 @@ export class Utf16SpanNormalizer implements DetectorSpanNormalizer {
     const seenIds = new Set<string>();
     const spans: DetectedSpan[] = [];
 
-    for (const span of raw) {
-      if (span.detectorVersion !== expectedDetectorVersion) {
+    // §7/N2 / L12: `raw` comes from an INJECTED detector port — read it ONCE by own index/length and
+    // read EACH field ONCE, getter-throw-safe, into inert data. An OWN poisoned `Symbol.iterator`
+    // must NOT be able to yield ZERO spans (a REQUIRED detector would then "succeed" with nothing and
+    // its PHI would egress — a fail-OPEN); a non-array carrier and a throwing/mutating field getter
+    // likewise fail closed here rather than pass through.
+    const rawSpans = intrinsicCopy<RawDetectedSpan>(raw);
+    if (rawSpans === null) {
+      return { ok: false, reason: "OUT_OF_RANGE" };
+    }
+    for (let i = 0; i < rawSpans.length; i += 1) {
+      const span = rawSpans[i];
+      const detectorVersion = safeString(span, "detectorVersion");
+      const id = safeString(span, "id");
+      const offsetEncoding = safeString(span, "offsetEncoding");
+      const start = safeRead(span, "start");
+      const end = safeRead(span, "end");
+      const identifierClass = safeRead(span, "identifierClass");
+      const confidence = safeRead(span, "confidence");
+
+      if (detectorVersion === undefined || detectorVersion !== expectedDetectorVersion) {
         return { ok: false, reason: "VERSION_MISMATCH" };
       }
-      if (seenIds.has(span.id)) {
+      if (id === undefined) {
+        return { ok: false, reason: "OUT_OF_RANGE" };
+      }
+      if (seenIds.has(id)) {
         return { ok: false, reason: "DUPLICATE_SPAN_ID" };
       }
-      seenIds.add(span.id);
+      seenIds.add(id);
 
       // Only pre-normalized UTF-16 offsets are trusted here; any other encoding must have been
       // converted upstream. An unconverted encoding is treated as an invalid offset, not guessed.
-      if (span.offsetEncoding !== "UTF16") {
+      if (offsetEncoding !== "UTF16") {
         return { ok: false, reason: "OUT_OF_RANGE" };
       }
-      if (!Number.isInteger(span.start) || !Number.isInteger(span.end)) {
+      if (typeof start !== "number" || typeof end !== "number" || !Number.isInteger(start) || !Number.isInteger(end)) {
         return { ok: false, reason: "OUT_OF_RANGE" };
       }
-      if (span.start < 0 || span.end > length || span.start >= span.end) {
+      if (start < 0 || end > length || start >= end) {
         return { ok: false, reason: "OUT_OF_RANGE" };
       }
-      if (splitsSurrogatePair(originalText, span.start) || splitsSurrogatePair(originalText, span.end)) {
+      if (splitsSurrogatePair(originalText, start) || splitsSurrogatePair(originalText, end)) {
         return { ok: false, reason: "INVALID_BOUNDARY" };
       }
 
       spans.push({
-        id: span.id,
-        startUtf16: span.start as Utf16Offset,
-        endUtf16: span.end as Utf16Offset,
-        identifierClass: span.identifierClass,
-        confidence: span.confidence,
-        detectorVersion: span.detectorVersion,
+        id,
+        startUtf16: start as Utf16Offset,
+        endUtf16: end as Utf16Offset,
+        identifierClass: identifierClass as DetectedSpan["identifierClass"],
+        confidence: confidence as DetectedSpan["confidence"],
+        detectorVersion,
       });
     }
 

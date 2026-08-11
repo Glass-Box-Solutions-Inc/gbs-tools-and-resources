@@ -1,4 +1,5 @@
 import type { IdentifierClass, IdentifierCounts } from "../core/contracts";
+import { safeRead } from "../core/boundary-snapshot";
 
 /**
  * The canonical, ordered list of every identifier class. An audit `counts` record is a
@@ -44,8 +45,11 @@ export function toTotalIdentifierCounts(
     ACCOUNT_NUMBER: 0,
     OTHER_TAGGED: 0,
   };
+  // §7/N2: `partial` is boundary data — read each FIXED, known class key getter-throw-safe (a hostile
+  // `get SSN(){ throw PHI }` must not propagate raw out of this exported projector). Only the fixed
+  // IDENTIFIER_CLASSES keys are ever read, so no attacker-chosen property name is touched or echoed.
   for (const identifierClass of IDENTIFIER_CLASSES) {
-    const raw = partial[identifierClass];
+    const raw = safeRead(partial, identifierClass);
     if (typeof raw === "number" && Number.isFinite(raw)) {
       result[identifierClass] = Math.max(0, Math.trunc(raw));
     }

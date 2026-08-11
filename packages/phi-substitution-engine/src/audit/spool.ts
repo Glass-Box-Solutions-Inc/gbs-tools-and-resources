@@ -12,6 +12,7 @@ import type {
 import type { SpoolKeyProvider, SpoolVolume } from "./spool-ports";
 import { PhiAuditError } from "./errors";
 import { preparedToTerminalEvent } from "./event-factory";
+import { intrinsicCopy } from "../core/boundary-snapshot";
 
 const CIPHER_SUITE = "AES-256-GCM" as const;
 const NONCE_BYTES = 12;
@@ -244,15 +245,16 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
    * terminal, if present) that is not already tracked in-process.
    */
   public async rebuildFromVolume(): Promise<void> {
-    const ids = await this.#volume.list();
-    // §7/N2: `list()` is an injected-volume result — a NON-array carrier or a REAL array with an OWN
-    // poisoned `Symbol.iterator` must not throw a raw (PHI) value out of this PUBLIC method (the
-    // guarded `drainTo` already tolerates it; this sibling must too). Iterate by OWN index/length.
-    if (!Array.isArray(ids)) {
+    // §7/N2: `list()` is an injected-volume result — a NON-array carrier, an OWN poisoned
+    // `Symbol.iterator`, or a throwing own-index getter must not throw a raw (PHI) value out of this
+    // PUBLIC method (the guarded `drainTo` already tolerates it; this sibling must too). `intrinsicCopy`
+    // reads it ONCE by own index/length, getter-throw-safe; a hostile carrier fails closed to no-op.
+    const idList = intrinsicCopy<string>(await this.#volume.list());
+    if (idList === null) {
       return;
     }
-    for (let i = 0; i < (ids as { length: number }).length; i += 1) {
-      const recordId = ids[i]!;
+    for (let i = 0; i < idList.length; i += 1) {
+      const recordId = idList[i]!;
       if (recordId.endsWith(".final") || recordId.endsWith(".primed")) {
         continue;
       }

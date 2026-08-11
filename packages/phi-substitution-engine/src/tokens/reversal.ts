@@ -259,7 +259,7 @@ const SAFE_OPERATION_ID = /^[A-Za-z0-9.:-]{1,128}$/;
  *  fixed-code failure below carries only this id, so a getter that throws/mutates, or a hostile
  *  handle carrying free-text PHI as its `operationId`, can't turn a fixed failure into a PHI leak.
  *  Absent / non-string / non-slug / throwing → a fixed placeholder. */
-function safeHandleOperationId(handle: ReversalHandle): OperationId {
+export function safeHandleOperationId(handle: ReversalHandle): OperationId {
   try {
     const id = (handle as { operationId?: unknown }).operationId;
     return typeof id === "string" && SAFE_OPERATION_ID.test(id)

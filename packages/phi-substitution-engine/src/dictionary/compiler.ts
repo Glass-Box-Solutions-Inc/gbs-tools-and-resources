@@ -38,6 +38,7 @@ import {
   type VariantExpansion,
 } from "../variants/index";
 import { dedupeInOrder } from "../variants/support";
+import { intrinsicCopy } from "../core/boundary-snapshot";
 
 const KNOWN_STRUCTURED_SEPARATORS: readonly StructuredSeparator[] = ["-", " ", "/", "."];
 
@@ -91,14 +92,10 @@ function boundaryModeFor(identifierClass: IdentifierClass): BoundaryMode {
 /** Only staff-approved and structurally-deterministic forms; never a guess. */
 function expandForms(value: TaggedValue, locale: string): readonly string[] {
   const canonical = value.canonicalDisplayValue;
-  // §7/N2 / L12: `approvedAliases` is boundary data — copy it by OWN index/length so a REAL array
-  // with an OWN poisoned `Symbol.iterator` cannot drop an approved alias that would then egress raw.
-  const aliases: string[] = [];
-  if (Array.isArray(value.approvedAliases)) {
-    for (let i = 0; i < (value.approvedAliases as { length: number }).length; i += 1) {
-      aliases[aliases.length] = value.approvedAliases[i]!;
-    }
-  }
+  // §7/N2 / L12: `approvedAliases` is boundary data — read it EXACTLY ONCE and copy by OWN index/
+  // length, so a mutating getter (a real array on the `Array.isArray` read, then `[]` for the length)
+  // or an OWN poisoned iterator cannot drop an approved alias that would then egress raw.
+  const aliases = intrinsicCopy<string>(value.approvedAliases) ?? [];
   let expansion: VariantExpansion | null = null;
   switch (value.field.expander) {
     case "person-name":
@@ -161,15 +158,13 @@ export class MatterDictionaryCompiler implements DictionaryCompiler {
     });
 
     // §7/N2 / L12: the CaseTruthReader is an injected port — its result is UNTRUSTED. A NON-array
-    // carrier or a REAL array with an OWN poisoned `Symbol.iterator` must NOT silently compile an
-    // EMPTY dictionary (which would egress every known value RAW to the provider). Fail closed on a
-    // non-array, and defeat a poisoned iterator by copying the real elements by OWN index/length.
-    if (!Array.isArray(values)) {
+    // carrier, a REAL array with an OWN poisoned `Symbol.iterator`, or a throwing element getter must
+    // NOT silently compile an EMPTY dictionary (which would egress every known value RAW). `intrinsicCopy`
+    // reads the array ONCE by own index/length, getter-throw-safe; a non-array or throwing element
+    // fails closed here (caught upstream as DICTIONARY_UNAVAILABLE / zero egress).
+    const materializedValues = intrinsicCopy<TaggedValue>(values);
+    if (materializedValues === null) {
       throw new Error("case_truth_values_not_an_array");
-    }
-    const materializedValues: TaggedValue[] = [];
-    for (let i = 0; i < (values as { length: number }).length; i += 1) {
-      materializedValues[materializedValues.length] = values[i]!;
     }
 
     // L3 determinism: allocate ordinals in a canonical subject order so a fresh

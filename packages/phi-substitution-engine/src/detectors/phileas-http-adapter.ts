@@ -9,8 +9,10 @@ import type {
   DetectorRedactionResult,
   DetectorRedactorPort,
   RawDetectedSpan,
+  RedactionInstruction,
 } from "./ports";
 import { applyReplacementPlan } from "./redaction";
+import { intrinsicCopy, safeRead, safeString } from "../core/boundary-snapshot";
 
 /**
  * Metadata-only observability event. There is intentionally NO `body`, `headers`, or `text`
@@ -56,12 +58,27 @@ export class PhileasHttpAdapter implements DetectorRedactorPort {
   }
 
   async detect(input: DetectorInput, signal: AbortSignal): Promise<readonly RawDetectedSpan[]> {
+    // §7/N2: `classes` is boundary data — read it ONCE by own index/length (never `.map`, which an OWN
+    // override could empty so the sidecar detects nothing and required PHI passes undetected). A
+    // non-array carrier or a non-string class fails closed here rather than fail-OPEN detection.
+    const rawClasses = intrinsicCopy<unknown>(input.classes);
+    if (rawClasses === null) {
+      throw new Error("DETECTOR_PROTOCOL_ERROR");
+    }
+    const classes: string[] = [];
+    for (let i = 0; i < rawClasses.length; i += 1) {
+      const identifierClass = rawClasses[i];
+      if (typeof identifierClass !== "string") {
+        throw new Error("DETECTOR_PROTOCOL_ERROR");
+      }
+      classes[classes.length] = identifierClass;
+    }
     const body = {
       kind: "DETECT" as const,
       operationId: String(input.operationId),
       attemptId: String(input.attemptId),
       locale: input.locale,
-      classes: input.classes.map((identifierClass) => String(identifierClass)),
+      classes,
       preparedPolicyId: input.preparedPolicy ? input.preparedPolicy.id : null,
       text: input.text,
     };
@@ -91,22 +108,37 @@ export class PhileasHttpAdapter implements DetectorRedactorPort {
     // The protected reversal boundary owns substitution. Compute the authoritative tokenized text
     // in TS from the explicit plan; the sidecar echo is validated against it, never trusted to
     // invent replacements.
-    const plan = applyReplacementPlan(input.text, input.instructions);
+    // §7/N2: snapshot the boundary instructions ONCE, getter-throw-safe, into inert plain data, so the
+    // authoritative `plan` AND the wire body read the SAME values — a mutating index/field getter (or
+    // an OWN `.map`) cannot show a valid instruction to the plan and a throwing/PHI one to the wire.
+    const rawInstr = intrinsicCopy<unknown>(input.instructions);
+    if (rawInstr === null) {
+      throw new Error("INVALID_DETECTOR_OFFSET");
+    }
+    const instr: { detectedSpanId: string; startUtf16: number; endUtf16: number; replacement: string }[] = [];
+    for (let i = 0; i < rawInstr.length; i += 1) {
+      const r = rawInstr[i];
+      const detectedSpanId = safeString(r, "detectedSpanId");
+      const startUtf16 = safeRead(r, "startUtf16");
+      const endUtf16 = safeRead(r, "endUtf16");
+      const replacement = safeString(r, "replacement");
+      if (
+        detectedSpanId === undefined || typeof startUtf16 !== "number" ||
+        typeof endUtf16 !== "number" || replacement === undefined
+      ) {
+        throw new Error("INVALID_DETECTOR_OFFSET");
+      }
+      instr[instr.length] = { detectedSpanId, startUtf16, endUtf16, replacement };
+    }
+    const plan = applyReplacementPlan(input.text, instr as unknown as readonly RedactionInstruction[]);
     if (!plan.ok) {
       throw new Error("INVALID_DETECTOR_OFFSET");
     }
-
-    // §7/N2: build the wire replacements by OWN index/length, NEVER `instructions.map` — an OWN `.map`
-    // override could return [] so the sidecar echoes the ORIGINAL text. The authoritative `plan` above
-    // is computed the same intrinsic way, so any divergence still fails closed at the echo check below.
     const wireReplacements: { spanId: string; startUtf16: number; endUtf16: number; token: string }[] = [];
-    for (let i = 0; i < (input.instructions as { length: number }).length; i += 1) {
-      const instruction = input.instructions[i]!;
+    for (let i = 0; i < instr.length; i += 1) {
+      const r = instr[i]!;
       wireReplacements[wireReplacements.length] = {
-        spanId: instruction.detectedSpanId,
-        startUtf16: instruction.startUtf16 as number,
-        endUtf16: instruction.endUtf16 as number,
-        token: instruction.replacement as string,
+        spanId: r.detectedSpanId, startUtf16: r.startUtf16, endUtf16: r.endUtf16, token: r.replacement,
       };
     }
     const body = {

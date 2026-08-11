@@ -170,8 +170,10 @@ export class StructuralOptionsProjector
         const textBearing =
           typeof value === "string" || (typeof value === "object" && value !== null);
         if (textBearing) {
+          // §7/N2: the UNEXPECTED option KEY is caller-controlled and could ITSELF be PHI — never
+          // echo it into the caller-visible error details; report only a fixed marker.
           throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
-            unclassifiedField: key,
+            unclassifiedField: "<unexpected>",
           });
         }
       }

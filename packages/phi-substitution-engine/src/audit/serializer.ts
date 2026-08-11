@@ -207,9 +207,11 @@ function validateTotalCounts(root: unknown, value: unknown, path: string): void 
     }
   }
   // Extra keys are rejected even when nested (CONTRACT §7 recursive allow-list). Membership is
-  // override-proof (no `Set.prototype.has`), so a hostile `has` cannot approve a sensitive key.
+  // override-proof (no `Set.prototype.has`), so a hostile `has` cannot approve a sensitive key. §7/N2:
+  // the unexpected key itself is attacker-controlled and could BE the PHI, so it is NEVER echoed into
+  // the rejection's caller-visible `.path` — only the fixed nested location is reported.
   for (const key of Object.keys(record)) {
-    if (!listIncludes(IDENTIFIER_CLASSES, key)) reject(root, `${path}.${key}`);
+    if (!listIncludes(IDENTIFIER_CLASSES, key)) reject(root, `${path}.<unexpected>`);
   }
   for (const identifierClass of IDENTIFIER_CLASSES) {
     const count = record[identifierClass];
