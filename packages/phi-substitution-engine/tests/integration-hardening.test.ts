@@ -14,6 +14,7 @@ import { ComposedProtectedAiProvider } from "../src/core/wrapper";
 import { StructuralOptionsProjector } from "../src/core/options-projector";
 import { OriginalContentBaaRouter } from "../src/core/baa-router";
 import {
+  AtomicTokenReverser,
   BracketTokenGrammar,
   HoldbackReverseStreamFactory,
   InMemoryReversalStore,
@@ -25,6 +26,8 @@ import {
   Aes256GcmAuditSpool,
   DurablePhiAuditEmitter,
   ExactAllowListAuditSerializer,
+  PhiAuditedAttemptCoordinator,
+  PhiAuditError,
 } from "../src/audit/index";
 import {
   InMemoryCaseTruthReader,
@@ -788,14 +791,18 @@ function buildManualWrapper(
     trace?: any;
     sharedPrimary?: RecordingPrimaryStore;
     engineWrap?: (e: any) => any;
+    audit?: any;
+    provider?: FakeRawProvider;
   } = {},
 ): { wrapper: ComposedProtectedAiProvider<any, string>; provider: FakeRawProvider; primary: RecordingPrimaryStore; trace: any } {
   const { engine } = makeEngine(over.truth ?? DEFAULT_TRUTH);
-  const provider = new FakeRawProvider(gate);
+  const provider = over.provider ?? new FakeRawProvider(gate);
   const trace = over.trace ?? new FakeSafeTrace();
   const primary = over.sharedPrimary ?? new RecordingPrimaryStore(gate);
   const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
-  const emitter = new DurablePhiAuditEmitter(primary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
+  // A test may inject its own emitter (e.g. one whose finalize rejects, or a permissive emitter
+  // with no idempotency short-circuit) to probe the wrapper's sanitize/no-double-prepare invariants.
+  const emitter = over.audit ?? new DurablePhiAuditEmitter(primary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
   const router =
     over.router ??
     new OriginalContentBaaRouter({
@@ -1308,5 +1315,324 @@ describe("GLY-330 NEW-1 R3 (N7/L10): structured-id separator variants are substi
     const tokenized = String(result.segments[0].text);
     expect(tokenized).not.toContain("CLM-00421");
     expect(tokenized).toContain("[[");
+  });
+});
+
+// ===========================================================================
+// R5 — the round-5 gate found the round-4 fixes STILL-BROKEN on PARALLEL paths
+// (the recurring failure mode). These lock every parallel path at the chokepoint
+// level. Each was authored red against the pre-fix code (revert the cited line →
+// the naming test goes red).
+// ===========================================================================
+
+// -- audit fakes for the R5 sanitize / no-double-prepare probes ---------------
+
+/** PREPARE succeeds (arming the provider gate); FINALIZE rejects with a RAW, PHI-carrying error.
+ *  Probes that no caller surfaces that raw message/code on a SUCCESS path (#3). */
+class FinalizeRejectingAudit {
+  public prepareCalls = 0;
+  public finalizeCalls = 0;
+  public constructor(private readonly gate: Gate) {}
+  public async prepare(record: any): Promise<any> {
+    this.prepareCalls += 1;
+    this.gate.prepared = true;
+    return { attemptId: record.attemptId, location: "PRIMARY_STORE", durableRecordId: "r-1" };
+  }
+  public async finalize(): Promise<void> {
+    this.finalizeCalls += 1;
+    const raw: any = new Error("RAW_FINALIZER_ALICE");
+    raw.code = "RAW_FINALIZER_CODE";
+    throw raw;
+  }
+}
+
+/** Primary store whose PREPARE always throws a RAW (non-audit) error — probes that the emitter
+ *  sanitizes it to a PhiAuditError so the wrapper never re-prepares (#9 no-double-prepare). */
+class ThrowingPrimaryStore {
+  public prepareCalls = 0;
+  public async prepare(_record: any): Promise<any> {
+    this.prepareCalls += 1;
+    const raw: any = new Error("RAW_PREPARE_ALICE");
+    raw.code = "RAW_PREPARE_CODE";
+    throw raw;
+  }
+  public async finalize(): Promise<void> {
+    /* not reached */
+  }
+}
+
+/** Permissive emitter: stores every prepare and counts terminals, with NO N3 idempotency
+ *  short-circuit — so a wrapper that STRUCTURALLY double-prepares is caught (a real emitter's
+ *  short-circuit would otherwise mask it). */
+class PermissiveAudit {
+  public prepareCalls = 0;
+  public finalizeCalls = 0;
+  public constructor(private readonly gate: Gate) {}
+  public async prepare(record: any): Promise<any> {
+    this.prepareCalls += 1;
+    this.gate.prepared = true;
+    return { attemptId: record.attemptId, location: "PRIMARY_STORE", durableRecordId: `r-${this.prepareCalls}` };
+  }
+  public async finalize(): Promise<void> {
+    this.finalizeCalls += 1;
+  }
+}
+
+const rawFinalizeEmitter = (): any => ({
+  async prepare(record: any): Promise<any> {
+    return { attemptId: record.attemptId, location: "PRIMARY_STORE", durableRecordId: "r" };
+  },
+  async finalize(): Promise<void> {
+    const raw: any = new Error("RAW_PHI_ALICE");
+    raw.code = "RAW_PHI_CODE";
+    throw raw;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// #3 R5 — a rejecting finalizer never surfaces a raw message/code on ANY path
+// (emitter root, wrapper SUCCESS paths, and the standalone coordinator).
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 3 R5 (§7/N2): a rejecting finalizer never leaks a raw message/code", () => {
+  it("emitter.finalize sanitizes a RAW store rejection to a PhiAuditError (root chokepoint)", async () => {
+    const rawPrimary = {
+      async prepare(r: any): Promise<any> {
+        return { status: "stored", durableRecordId: `p:${String(r.attemptId)}` };
+      },
+      async finalize(): Promise<void> {
+        const raw: any = new Error("RAW_STORE_ALICE");
+        raw.code = "RAW_STORE_CODE";
+        throw raw;
+      },
+    };
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
+    const emitter = new DurablePhiAuditEmitter(rawPrimary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
+    const rec = spoolPrepared("att-raw-fin");
+    const receipt = await emitter.prepare(rec);
+    let thrown: any;
+    try {
+      await emitter.finalize(receipt, spoolTerminal(rec));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PhiAuditError);
+    expect(String(thrown?.message ?? "")).not.toContain("RAW_STORE_ALICE");
+    expect(String(thrown?.code ?? "")).not.toContain("RAW_STORE_CODE");
+  });
+
+  it("generateText SUCCESS: a rejecting finalizer is sanitized to a PhiEngineError, never raw", async () => {
+    const gate: Gate = { prepared: false };
+    const audit = new FinalizeRejectingAudit(gate);
+    const provider = new FakeRawProvider(gate, { responseText: "done" });
+    const built = buildManualWrapper(gate, { audit, provider });
+    let thrown: any;
+    try {
+      await built.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PhiEngineError);
+    expect(String(thrown?.message ?? "")).not.toContain("RAW_FINALIZER_ALICE");
+    expect(String(thrown?.code ?? "")).not.toContain("RAW_FINALIZER_CODE");
+    expect(built.provider.calls).toBe(1); // egress happened; only the terminal write failed
+    expect(audit.finalizeCalls).toBe(1);
+  });
+
+  it("generateStream SUCCESS: a rejecting finalizer is sanitized to a PhiEngineError, never raw", async () => {
+    const gate: Gate = { prepared: false };
+    const audit = new FinalizeRejectingAudit(gate);
+    const provider = new FakeRawProvider(gate, { streamChunks: ["done"] });
+    const built = buildManualWrapper(gate, { audit, provider });
+    let thrown: any;
+    try {
+      await built.wrapper.generateStream({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PhiEngineError);
+    expect(String(thrown?.message ?? "")).not.toContain("RAW_FINALIZER_ALICE");
+    expect(audit.finalizeCalls).toBe(1);
+  });
+
+  it("embedText SUCCESS: a rejecting finalizer is sanitized to a PhiEngineError, never raw", async () => {
+    const gate: Gate = { prepared: false };
+    const audit = new FinalizeRejectingAudit(gate);
+    const provider = new FakeRawProvider(gate, {});
+    const built = buildManualWrapper(gate, { audit, provider });
+    let thrown: any;
+    try {
+      await built.wrapper.embedText("Maria García", "search" as any);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(PhiEngineError);
+    expect(String(thrown?.message ?? "")).not.toContain("RAW_FINALIZER_ALICE");
+    expect(audit.finalizeCalls).toBe(1);
+  });
+
+  it("coordinator PRECONDITION path: a rejecting finalizer never surfaces raw", async () => {
+    const coordinator = new PhiAuditedAttemptCoordinator(rawFinalizeEmitter(), CLOCK);
+    let invoked = 0;
+    const plan = {
+      prepared: spoolPrepared("att-c1"),
+      precondition: { ok: false, failureCode: "PRECONDITION_FAILED" },
+      invokeProvider: async (): Promise<void> => {
+        invoked += 1;
+      },
+    };
+    let thrown: any;
+    let result: any;
+    try {
+      result = await coordinator.run(plan as any);
+    } catch (e) {
+      thrown = e;
+    }
+    const surfaced = String(thrown?.message ?? "") + JSON.stringify(result ?? {});
+    expect(surfaced).not.toContain("RAW_PHI_ALICE");
+    expect(surfaced).not.toContain("RAW_PHI_CODE");
+    expect(invoked).toBe(0);
+  });
+
+  it("coordinator PROVIDER-REJECTION path: a rejecting finalizer never surfaces raw", async () => {
+    const coordinator = new PhiAuditedAttemptCoordinator(rawFinalizeEmitter(), CLOCK);
+    const plan = {
+      prepared: spoolPrepared("att-c2"),
+      precondition: { ok: true },
+      invokeProvider: async (): Promise<void> => {
+        throw new Error("provider boom after send");
+      },
+    };
+    let thrown: any;
+    let result: any;
+    try {
+      result = await coordinator.run(plan as any);
+    } catch (e) {
+      thrown = e;
+    }
+    const surfaced = String(thrown?.message ?? "") + JSON.stringify(result ?? {});
+    expect(surfaced).not.toContain("RAW_PHI_ALICE");
+    expect(surfaced).not.toContain("RAW_PHI_CODE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #9 R5 — no double-prepare, on the ordinary-prepare-rejection AND the
+// request-trace-after-prepare parallel paths (probed with a permissive emitter).
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 9 R5 (N3): a failed attempt is prepared at most once (no double-prepare)", () => {
+  it("an ordinary prepare rejection is sanitized to an audit error, so the wrapper never re-prepares", async () => {
+    const gate: Gate = { prepared: false };
+    const throwingPrimary = new ThrowingPrimaryStore();
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
+    const audit = new DurablePhiAuditEmitter(throwingPrimary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
+    const built = buildManualWrapper(gate, { audit });
+    let thrown: any;
+    try {
+      await built.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeTruthy();
+    expect(built.provider.calls).toBe(0); // fail closed, no egress
+    expect(throwingPrimary.prepareCalls).toBe(1); // NO second prepare
+    expect(String(thrown?.message ?? "")).not.toContain("RAW_PREPARE_ALICE");
+    expect(String(thrown?.code ?? "")).not.toContain("RAW_PREPARE_CODE");
+  });
+
+  it("a request-trace failure AFTER prepare finalizes exactly one terminal with no re-prepare (permissive emitter)", async () => {
+    const gate: Gate = { prepared: false };
+    const audit = new PermissiveAudit(gate);
+    const trace = {
+      request: async (): Promise<void> => {
+        throw new Error("request trace boom");
+      },
+      response: async (): Promise<void> => undefined,
+      metadata: async (): Promise<void> => undefined,
+    };
+    const built = buildManualWrapper(gate, { audit, trace });
+    let threw = false;
+    try {
+      await built.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+    expect(built.provider.calls).toBe(0);
+    expect(audit.prepareCalls).toBe(1);
+    expect(audit.finalizeCalls).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #4 R5 — tools[].name / tools[].description parallel carriers fail closed.
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 4 R5 (L5): tool name/description carriers fail closed on non-strings", () => {
+  it("projector fails closed on a tool NAME object with a benign toString()", () => {
+    const projector = new StructuralOptionsProjector();
+    const maliciousName: any = { phi: "ALICE_CANARY" };
+    maliciousName.toString = (): string => "safe_tool";
+    expect(() =>
+      projector.classify({ tools: [{ name: maliciousName, description: "ok" }] } as any),
+    ).toThrow(PhiEngineError);
+  });
+
+  it("projector fails closed on a non-string tool DESCRIPTION", () => {
+    const projector = new StructuralOptionsProjector();
+    expect(() =>
+      projector.classify({ tools: [{ name: "lookup", description: { phi: "BOB_CANARY" } }] } as any),
+    ).toThrow(PhiEngineError);
+  });
+
+  it("end-to-end: a tool NAME object never egresses its canary to the provider", async () => {
+    const rig = makeWrapperRig({});
+    const maliciousName: any = { phi: "ALICE_CANARY" };
+    maliciousName.toString = (): string => "safe_tool";
+    let threw = false;
+    try {
+      await rig.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        tools: [{ name: maliciousName, description: "Look things up." }],
+      } as any);
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+    expect(rig.provider.calls).toBe(0);
+    expect(joined(rig.provider.payloads)).not.toContain("ALICE_CANARY");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #7 R5 — the low-level token reverser also fails closed on a residual sentinel.
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 7 R5 (L6): the low-level AtomicTokenReverser fails closed on a residual sentinel", () => {
+  function handle(): any {
+    return new InProcessReversalHandle({
+      tenantId: TENANT,
+      matterId: MATTER,
+      dictionaryVersion: VERSION,
+      operationId: b<any>("op-1"),
+      attemptId: b<any>("att-1"),
+    });
+  }
+
+  it("rejects a dangling escape sentinel instead of returning it as display text", async () => {
+    const reverser = new AtomicTokenReverser(new InMemoryReversalStore(), new BracketTokenGrammar(), BOUNDARY_TOKEN_GRAMMAR_POLICY);
+    const dangling = `Answer ${SENTINEL_OPEN} here` as any; // malformed sentinel, no matching close
+    await expect(reverser.reverse(dangling, handle())).rejects.toThrow();
+  });
+
+  it("still reverses ordinary sentinel-free text unchanged", async () => {
+    const reverser = new AtomicTokenReverser(new InMemoryReversalStore(), new BracketTokenGrammar(), BOUNDARY_TOKEN_GRAMMAR_POLICY);
+    const out = await reverser.reverse("plain text no tokens" as any, handle());
+    expect(String(out)).toBe("plain text no tokens");
   });
 });

@@ -11,7 +11,7 @@ import type {
 import type { ReversalHandle, ReversalStore } from "../core/contracts";
 import type { EscapedTokenLiteral, TokenGrammar, TokenGrammarPolicy, TokenReverser } from "./ports";
 import { ReversalFailedError, ReversalHandleNotSerializableError } from "./errors";
-import { restoreSentinelLiterals } from "./escaper";
+import { restoreSentinelLiterals, SENTINEL_CLOSE, SENTINEL_OPEN } from "./escaper";
 
 const SEP = String.fromCharCode(0);
 
@@ -255,6 +255,17 @@ export class AtomicTokenReverser implements TokenReverser {
       this.grammar,
       this.policy,
     );
-    return reversed as DisplayText;
+    // L6/§7: restore escaped source-token literals via the handle's bounded capability, then FAIL
+    // CLOSED on any residual escape sentinel — identical to the non-stream orchestrator path and the
+    // streaming reverser — so a provider-generated dangling sentinel can never reach the display
+    // through this port either.
+    const restored =
+      handle instanceof InProcessReversalHandle
+        ? handle.restoreEscapedLiterals(String(reversed))
+        : String(reversed);
+    if (restored.includes(SENTINEL_OPEN) || restored.includes(SENTINEL_CLOSE)) {
+      throw new ReversalFailedError(handle.operationId);
+    }
+    return restored as DisplayText;
   }
 }

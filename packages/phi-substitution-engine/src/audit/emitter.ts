@@ -59,33 +59,46 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       });
     }
 
-    const primaryResult = await this.#primary.prepare(record);
-    if (primaryResult.status === "stored") {
-      const receipt: AuditPreparationReceipt = {
-        attemptId: record.attemptId,
-        location: "PRIMARY_STORE",
-        durableRecordId: primaryResult.durableRecordId,
-      };
+    try {
+      const primaryResult = await this.#primary.prepare(record);
+      if (primaryResult.status === "stored") {
+        const receipt: AuditPreparationReceipt = {
+          attemptId: record.attemptId,
+          location: "PRIMARY_STORE",
+          durableRecordId: primaryResult.durableRecordId,
+        };
+        this.#remember(receipt, record);
+        return receipt;
+      }
+      if (primaryResult.status === "already_exists") {
+        // A durable record for this attempt already exists — never egress or finalize a
+        // second time for the same attempt id (N3 exactly-one-terminal / idempotency).
+        throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", record.operationId, {
+          attemptId: record.attemptId,
+        });
+      }
+
+      // Primary outage alone proceeds through the spool.
+      if ((await this.#spool.health()) !== "ready") {
+        throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", record.operationId, {
+          attemptId: record.attemptId,
+        });
+      }
+      const receipt = await this.#spool.appendPrepared(record);
       this.#remember(receipt, record);
       return receipt;
-    }
-    if (primaryResult.status === "already_exists") {
-      // A durable record for this attempt already exists — never egress or finalize a
-      // second time for the same attempt id (N3 exactly-one-terminal / idempotency).
-      throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", record.operationId, {
-        attemptId: record.attemptId,
-      });
-    }
-
-    // Primary outage alone proceeds through the spool.
-    if ((await this.#spool.health()) !== "ready") {
+    } catch (error) {
+      // The fixed-code audit failures above are re-thrown verbatim.
+      if (error instanceof PhiAuditError) {
+        throw error;
+      }
+      // §7/N2 + N3: a RAW store/spool rejection must never surface an upstream message/code, and it
+      // must be recognizable to the caller as an audit-layer failure (a `PhiAuditError`) so a failed
+      // PREPARE is never re-attempted into a second durable record (no double-prepare).
       throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", record.operationId, {
         attemptId: record.attemptId,
       });
     }
-    const receipt = await this.#spool.appendPrepared(record);
-    this.#remember(receipt, record);
-    return receipt;
   }
 
   public async finalize(receipt: AuditPreparationReceipt, event: PhiAuditEvent): Promise<void> {
@@ -96,10 +109,20 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     }
     // Validate the exact allow-list before anything is published as a terminal event.
     this.#serializer.serialize(event);
-    if (receipt.location === "PRIMARY_STORE") {
-      await this.#primary.finalize(event);
-    } else {
-      await this.#spool.finalize(receipt, event);
+    try {
+      if (receipt.location === "PRIMARY_STORE") {
+        await this.#primary.finalize(event);
+      } else {
+        await this.#spool.finalize(receipt, event);
+      }
+    } catch (error) {
+      // §7/N2: a RAW store/spool finalize rejection must never surface an upstream message/code to
+      // any caller (a rejecting finalizer could carry PHI). The terminal is NOT marked written, so a
+      // later drain/reconcile can still deliver it; the caller sees only this fixed, safe code.
+      if (error instanceof PhiAuditError) {
+        throw error;
+      }
+      throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, {});
     }
     this.#finalized.add(this.#key(receipt.attemptId));
     this.#inFlight.delete(this.#key(receipt.attemptId));

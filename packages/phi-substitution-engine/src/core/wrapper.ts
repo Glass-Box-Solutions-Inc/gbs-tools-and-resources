@@ -21,7 +21,7 @@
  *
  * The phase-1 detector belt is never invoked for a customer claim.
  */
-import type { DisplayText, EngineVersion, TokenizedText } from "./brands";
+import type { DisplayText, EngineVersion, OperationId, TokenizedText } from "./brands";
 import type {
   AiOperation,
   MatterAiContext,
@@ -122,6 +122,10 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
           );
     }
 
+    // §4.1 step 10 / N2/N3: trace the tokenized input AFTER prepare; a failure here finalizes
+    // exactly one terminal against the receipt and never re-prepares.
+    await this.#traceTokenizedRequest(prepared);
+
     let rawOutput: TokenizedText;
     try {
       // §4.1 step 10 / N1: invoke the PINNED provider EXACTLY ONCE with tokenized options.
@@ -164,6 +168,10 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
           );
     }
 
+    // §4.2 / N2/N3: trace the tokenized input AFTER prepare; a failure finalizes exactly one
+    // terminal against the receipt and never re-prepares.
+    await this.#traceTokenizedRequest(prepared);
+
     const displayChunks: DisplayText[] = [];
     let stream: ReturnType<PhiSubstitutionEngine["createReverseStream"]>;
     try {
@@ -201,7 +209,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         ? error
         : new PhiEngineError(code, prepared.context.operationId, {});
     }
-    await this.#finalize(prepared, "completed", null);
+    await this.#finalizeStrict(prepared, "completed", null);
     return { displayChunks };
   }
 
@@ -285,11 +293,12 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         : new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), context.operationId, {});
     }
 
-    await this.#finalizeAt(
+    await this.#finalizeAtStrict(
       receipt,
       this.#preparedRecord(context, substitution, "embedding"),
       "completed",
       null,
+      context.operationId,
     );
     return vector;
   }
@@ -333,27 +342,37 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       provider: decision.provider,
     };
 
-    // §4.1 step 10 / N2/N3: tracing the tokenized input is AFTER the durable prepare. A failure
-    // here MUST finalize against THIS receipt (exactly one terminal, no second prepare).
+    // §4.1 step 10 tracing of the tokenized input happens in the CALLER (after this returns), not
+    // here: a post-prepare failure must be finalized against THIS receipt WITHOUT ever reaching the
+    // pre-egress handler, which would otherwise prepare a SECOND durable record (no double-prepare).
+    return prepared;
+  }
+
+  /**
+   * §4.1 step 10 / N2/N3: trace the TOKENIZED request input AFTER the durable prepare. A trace
+   * failure finalizes against THIS receipt (exactly one terminal, no second prepare) and surfaces
+   * only a fixed, PHI-free code. Deliberately called by the egress methods rather than inside
+   * `#prepareForEgress`, so its failure propagates straight to the caller and never re-enters
+   * `#recordPreEgressFailure` (which would prepare again).
+   */
+  async #traceTokenizedRequest(prepared: PreparedEgress<GenerateOptions, EmbeddingKind>): Promise<void> {
     try {
       await this.#deps.safeTrace.request(
-        substitution.segments.map((segment: TokenizedTextSegment) => ({
+        prepared.substitution.segments.map((segment: TokenizedTextSegment) => ({
           path: segment.path,
           text: segment.text,
         })),
       );
     } catch (error) {
-      await this.#finalize(prepared, "failed_closed", errorCodeString(error));
+      await this.#finalizeQuietly(prepared, "failed_closed", errorCodeString(error));
       throw isPhiEngineError(error)
         ? error
         : new PhiEngineError(
             toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
-            context.operationId,
+            prepared.context.operationId,
             {},
           );
     }
-
-    return prepared;
   }
 
   #classify(options: GenerateOptions, context: MatterAiContext) {
@@ -498,7 +517,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         {},
       );
     }
-    await this.#finalize(prepared, "completed", null);
+    await this.#finalizeStrict(prepared, "completed", null);
     return display;
   }
 
@@ -553,6 +572,47 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       await this.#finalizeAt(receipt, record, outcome, failureCode);
     } catch {
       /* durability failure on a failure path; the sanitized error is still thrown by the caller. */
+    }
+  }
+
+  /**
+   * Finalize the SUCCESS ("completed") terminal, failing closed with a fixed, PHI-free code if the
+   * terminal write rejects. A rejecting finalizer must NEVER surface a raw message/code to the
+   * caller (§7/N2) — its rejection could carry PHI — and a completed egress whose durable terminal
+   * could not be written fails closed (N3/N4) rather than returning an unaudited result.
+   */
+  async #finalizeStrict(
+    prepared: PreparedEgress<GenerateOptions, EmbeddingKind>,
+    outcome: PhiAuditOutcome,
+    failureCode: PhiEngineFailureCode | string | null,
+  ): Promise<void> {
+    try {
+      await this.#finalize(prepared, outcome, failureCode);
+    } catch (error) {
+      throw new PhiEngineError(
+        isPhiEngineError(error) ? error.code : "AUDIT_DURABILITY_UNAVAILABLE",
+        prepared.context.operationId,
+        {},
+      );
+    }
+  }
+
+  /** As {@link #finalizeStrict}, for the receipt-scoped success terminal (embedding). */
+  async #finalizeAtStrict(
+    receipt: AuditPreparationReceipt,
+    record: PhiAuditPreparedRecord,
+    outcome: PhiAuditOutcome,
+    failureCode: string | null,
+    operationId: OperationId,
+  ): Promise<void> {
+    try {
+      await this.#finalizeAt(receipt, record, outcome, failureCode);
+    } catch (error) {
+      throw new PhiEngineError(
+        isPhiEngineError(error) ? error.code : "AUDIT_DURABILITY_UNAVAILABLE",
+        operationId,
+        {},
+      );
     }
   }
 }

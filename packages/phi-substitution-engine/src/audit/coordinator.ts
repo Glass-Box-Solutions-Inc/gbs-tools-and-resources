@@ -1,4 +1,11 @@
-import type { AuditDurabilityLocation, PhiAuditEmitter, PhiAuditOutcome, PhiAuditPreparedRecord } from "./ports";
+import type {
+  AuditDurabilityLocation,
+  AuditPreparationReceipt,
+  PhiAuditEmitter,
+  PhiAuditEvent,
+  PhiAuditOutcome,
+  PhiAuditPreparedRecord,
+} from "./ports";
 import { isAuditError } from "./errors";
 import { isPhiEngineFailureCode } from "../core/errors";
 import { preparedToTerminalEvent } from "./event-factory";
@@ -73,7 +80,7 @@ export class PhiAuditedAttemptCoordinator {
         ? plan.precondition.failureCode
         : "PRECONDITION_FAILED";
       const event = preparedToTerminalEvent(plan.prepared, "failed_closed", safeCode, this.#clock());
-      await this.#emitter.finalize(receipt, event);
+      await this.#finalizeQuietly(receipt, event);
       return {
         outcome: "failed_closed",
         errorCode: safeCode,
@@ -97,7 +104,7 @@ export class PhiAuditedAttemptCoordinator {
           ? (error as { code: string }).code
           : "PROVIDER_INVOCATION_FAILED";
       const failedEvent = preparedToTerminalEvent(plan.prepared, "unknown_after_send", failureCode, this.#clock());
-      await this.#emitter.finalize(receipt, failedEvent);
+      await this.#finalizeQuietly(receipt, failedEvent);
       return {
         outcome: "unknown_after_send",
         errorCode: failureCode,
@@ -106,7 +113,21 @@ export class PhiAuditedAttemptCoordinator {
       };
     }
     const event = preparedToTerminalEvent(plan.prepared, "completed", null, this.#clock());
-    await this.#emitter.finalize(receipt, event);
+    await this.#finalizeQuietly(receipt, event);
     return { outcome: "completed", errorCode: null, providerInvoked: true, durability: receipt.location };
+  }
+
+  /**
+   * §7/N2: a rejecting emitter `finalize` must NEVER surface a raw upstream message/code to the
+   * caller — a rejecting finalizer could carry PHI. A lost terminal under total durability failure
+   * is N4-acceptable (a later drain/reconcile can still deliver it); the fixed-code `AttemptResult`
+   * is still returned, and nothing raw escapes.
+   */
+  async #finalizeQuietly(receipt: AuditPreparationReceipt, event: PhiAuditEvent): Promise<void> {
+    try {
+      await this.#emitter.finalize(receipt, event);
+    } catch {
+      /* durability failure on the terminal write; the fixed-code result is still returned. */
+    }
   }
 }

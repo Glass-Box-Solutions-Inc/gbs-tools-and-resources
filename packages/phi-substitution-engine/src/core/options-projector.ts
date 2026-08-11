@@ -109,8 +109,12 @@ function assertAllowedEnum(value: string, allowed: ReadonlySet<string>, path: st
   }
 }
 
-function assertStructuralProviderString(value: string, path: string): void {
-  if (!PROVIDER_VISIBLE_STRUCTURAL_STRING.test(value)) {
+function assertStructuralProviderString(value: unknown, path: string): void {
+  // A non-string value must fail closed BEFORE the regex: `RegExp.test` coerces via `toString`, so
+  // an object whose `toString()` returns a benign token (e.g. `"safe_tool"`) would pass the pattern
+  // and then be copied RAW to the provider (L5). Only a genuine string is a valid provider-visible
+  // structural identifier.
+  if (typeof value !== "string" || !PROVIDER_VISIBLE_STRUCTURAL_STRING.test(value)) {
     throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
       unvalidatedProviderString: path,
     });
@@ -230,9 +234,18 @@ export class StructuralOptionsProjector
     // tools[k].description
     (options.tools ?? []).forEach((tool, k) => {
       assertStructuralProviderString(tool.name, `tools[${k}].name`);
+      // A tool description is a known text carrier and MUST be a string. A present-but-non-string
+      // value (an object smuggling PHI text past the segment's `text` typing, then egressed RAW via
+      // the clone) fails closed rather than passing through unclassified (L5).
+      const descriptionValue = (tool as unknown as Record<string, unknown>)["description"];
+      if (typeof descriptionValue !== "string") {
+        throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
+          malformedTextCarrier: `tools[${k}].description`,
+        });
+      }
       const path = `tools[${k}].description`;
       collected.push({
-        segment: { path, kind: "tool", text: tool.description },
+        segment: { path, kind: "tool", text: descriptionValue },
         write: (draft, tokenized) => {
           const target = draft.tools?.[k];
           if (target !== undefined) target.description = tokenized;
