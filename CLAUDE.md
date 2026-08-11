@@ -50,6 +50,7 @@ This monorepo consolidates 17 Glass Box packages into a single discoverable loca
 | [`packages/hindsight/`](packages/hindsight/) | Python/FastAPI, Next.js, pgvector, Rust | Agent memory system (retain/recall/reflect) |
 | [`packages/mcp-servers/`](packages/mcp-servers/) | Python, Node.js, MCP SDK | MCP server collection (kb-api, kb-db, wc-paralegal, social-media) |
 | [`packages/phileas/`](packages/phileas/) | Java 11+, Maven | PII/PHI redaction library (30+ entity types) |
+| [`packages/phi-substitution-engine/`](packages/phi-substitution-engine/) | TypeScript, Vitest (framework-free) | Reversible PHI/PII substitution at the LLM-egress chokepoint — trusted client identifiers replaced with `[[Role]]` tokens before AI processing and reversed server-side after; fail-closed §7/N2 invariants, tenant-scoped encrypted reversal, metadata-only audit (GLY-330) |
 | [`packages/yevrah_terminal/`](packages/yevrah_terminal/) | Python 3.x, Groq, Cohere | Terminal legal research (keyword + semantic search) |
 | [`packages/merus-test-data-generator/`](packages/merus-test-data-generator/) | Python 3.12, reportlab, Faker | WC test case generator (10,000+ templated PDFs across 97+ subtypes; AMA Guides 5th Ed. impairment content, 30 edge case scenarios, Browserless MerusCase batch integration) |
 | [`packages/wc-synthetic-caseload-engine/`](packages/wc-synthetic-caseload-engine/) | Python 3.12, Pydantic, Click | Seed-driven synthetic CA WC attorney case files — per-case YAML seed, lien tracks through executed resolution, reconsideration round-trips, 353-subtype classifier taxonomy, byte-reproducible output (consumes `merus-test-data-generator` as a library) |
@@ -106,6 +107,9 @@ cd packages/yevrah_terminal && pytest
 # phileas (Java/Maven)
 cd packages/phileas && mvn test
 
+# phi-substitution-engine (TypeScript)
+cd packages/phi-substitution-engine && npm ci && npm run typecheck && npm test
+
 # mcp-servers (varies by server)
 cd packages/mcp-servers/servers/[server-name] && npm test
 ```
@@ -135,6 +139,7 @@ gbs-tools-and-resources/
     │       ├── social-media-mcp/
     │       └── wc-paralegal-mcp/
     ├── phileas/                      # PII/PHI redaction library (Java/Maven)
+    ├── phi-substitution-engine/      # Reversible PHI/PII substitution at LLM egress (TypeScript, framework-free)
     ├── yevrah_terminal/              # Terminal legal research (Python)
     ├── merus-test-data-generator/    # WC test case PDF generator (Python)
     ├── wc-synthetic-caseload-engine/ # Seed-driven synthetic WC attorney case files (Python)
@@ -162,6 +167,7 @@ gbs-tools-and-resources/
 | invoice-reconciliation-tester | 5500–5599 | Fastify: 5520 |
 | compliance-auditor | 5500–5599 | Fastify: 5530 |
 | wc-synthetic-caseload-engine | — | CLI only |
+| phi-substitution-engine | — | Framework-free library (consumed by product repos; no server) |
 
 ---
 
@@ -195,6 +201,7 @@ See each package's own `.env.example` or `CLAUDE.md` for required environment va
 | 2026-03-08 | Made all 4 agent packages canonical standalone — monorepo is deployment source |
 | 2026-03-09 | Added 3 operations audit packages (compliance-auditor, gbs-integration-validator, invoice-reconciliation-tester) |
 | 2026-03-09 | Added 2 reference packages (awesome-claude-code, ui-ux-pro-max-skill) |
+| 2026-08-11 | Added phi-substitution-engine — reversible PHI/PII substitution at the LLM-egress chokepoint (GLY-330, PR #45) |
 
 ---
 
