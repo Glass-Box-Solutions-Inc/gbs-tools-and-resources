@@ -682,17 +682,19 @@ def build_caseload_truth_manifest(
 
     channels: dict[str, Any] = {}
     if money_case_count:
+        # An independent list of independent record dicts — the top-level
+        # index, channels.money.cases and channels.assertions.cases must
+        # never share structure, or a later mutation of one channel moves
+        # another channel's bytes (sol review, PR #44 M2 / Part 4:141).
         channels["money"] = {
             "channelVersion": MONEY_CHANNEL_VERSION,
             "caseCount": len(results),
             "moneyCaseCount": money_case_count,
-            "cases": cases,
+            "cases": [dict(entry) for entry in cases],
         }
 
-    # The assertions rollup uses NEWLY ALLOCATED lists and case dictionaries —
-    # the shipped money rollup aliases the top-level list, and extending that
-    # aliasing here would let a later mutation of one channel move another
-    # channel's bytes (L16).
+    # The assertions rollup allocates its own list and case dictionaries for
+    # the same reason (L16).
     assertion_cases: list[dict[str, Any]] = []
     quality_counts = {"supported": 0, "thin": 0, "unsupportable": 0}
     state_counts = {"deferred": 0, "determined": 0, "omitted": 0}

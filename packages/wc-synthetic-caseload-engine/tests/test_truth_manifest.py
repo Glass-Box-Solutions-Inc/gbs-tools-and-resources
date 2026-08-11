@@ -1115,14 +1115,20 @@ def test_assertion_rollup_uses_independent_case_records(tmp_path: Path) -> None:
     assertion_cases = rollup["channels"]["assertions"]["cases"]
     assert assertion_cases is not top_cases
     assert assertion_cases is not money_cases
-    assert all(
-        entry is not other
-        for entry in assertion_cases
-        for other in top_cases
-    )
+    assert top_cases is not money_cases
+    for one, other in (
+        (assertion_cases, top_cases),
+        (assertion_cases, money_cases),
+        (money_cases, top_cases),
+    ):
+        assert all(entry is not record for entry in one for record in other)
     before = json.dumps(money_cases, sort_keys=True)
     assertion_cases[0]["contentionCount"] = 99
     assert json.dumps(money_cases, sort_keys=True) == before
+    # Record-level: mutating a money record must not move the top-level index.
+    top_before = json.dumps(top_cases, sort_keys=True)
+    money_cases[0]["averageWeeklyWage"] = "0.01"
+    assert json.dumps(top_cases, sort_keys=True) == top_before
 
 
 def test_output_validator_rejects_tampered_assertion_quality_after_digest_recomputed() -> None:
