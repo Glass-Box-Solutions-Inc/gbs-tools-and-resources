@@ -876,3 +876,378 @@ def test_truth_subtree_is_outside_case_and_does_not_confuse_validator(
     assert truth_path.is_file()
     assert not (case_dir / TRUTH_DIR).exists()
     assert validate_output_tree(generated_penalty_tree).ok
+
+
+# ---------------------------------------------------------------------------
+# AJC-61 (M2) — the assertions channel (E.6)
+# ---------------------------------------------------------------------------
+
+from wc_caseload_engine.truth_manifest import (
+    ASSERTIONS_CHANNEL_VERSION,
+    LEDGER_DIGEST_MISMATCH,
+    assertion_ledger_digest,
+    medical_assertions_from_truth,
+)
+
+#: A deterministic assertion-bearing seed: explicit world truth, explicit
+#: divergent assertions, sampling on — the writer-side witness for E.6.
+_ASSERTION_SCENARIO: dict[str, Any] = {
+    "medical_history": {
+        "sample_conditions": False,
+        "conditions": [
+            {
+                "label": "nonindustrial lumbar degenerative disease",
+                "origin": "nonindustrial",
+                "body_part": "lumbar_spine",
+                "severity": "moderate",
+                "symptomatic_before_doi": True,
+            },
+            {
+                "label": "invasive ductal carcinoma, right breast",
+                "body_system": "oncologic",
+                "body_part": "breast",
+                "wholly_unrelated": True,
+                "severity": "severe",
+            },
+        ],
+        "prior_claims": [
+            {
+                "body_parts": ["lumbar_spine"],
+                "date_of_injury": "2015-01-05",
+                "resolution_type": "stipulated_award",
+                "award": {
+                    "body_parts": ["lumbar_spine"],
+                    "pd_percent": 12,
+                    "award_date": "2016-02-01",
+                },
+            }
+        ],
+    },
+    "medical_assertions": {
+        "sample_assertions": False,
+        "contentions": [
+            {
+                "id": "ctn-01",
+                "claim_type": "industrial_causation",
+                "party": "applicant",
+                "position": "affirm",
+                "target_condition_id": "cond-00",
+                "rationale": "the lumbar condition arose from the industrial injury",
+            }
+        ],
+        "medical_opinions": [
+            {
+                "id": "opn-01",
+                "author_role": "qme",
+                "report_stage": "final",
+                "report_date": "2022-06-01",
+                "apportionment_state": "determined",
+                "determination_kind": "allocated",
+                "examination_performed": True,
+                "reviewed_condition_ids": ["cond-00"],
+                "rationale": "examined the applicant and reviewed the record",
+            }
+        ],
+        "apportionment_assertions": [
+            {
+                "id": "app-01",
+                "opinion_id": "opn-01",
+                "body_part": "lumbar_spine",
+                "industrial_percent": 80,
+                "nonindustrial_percent": 20,
+                "basis_kinds": ["preexisting_degenerative_pathology"],
+                "condition_ids": ["cond-00"],
+                "description": "chronic lumbar disability limiting weight-bearing",
+                "disability_causation_stated": True,
+                "reasonable_medical_probability": True,
+                "causal_rationale": "degenerative pathology contributes to disability",
+                "percentage_rationale": "the share reflects the imaging severity",
+            }
+        ],
+    },
+}
+
+
+def _assertion_plan(case_id: str = "assertions-truth") -> Any:
+    return _plan(case_id, scenario=copy.deepcopy(_ASSERTION_SCENARIO), doi="2021-06-14")
+
+
+def _assertion_truth(case_id: str = "assertions-truth") -> dict[str, Any]:
+    return json.loads(json.dumps(build_case_truth_manifest(_assertion_plan(case_id))))
+
+
+def test_assertions_channel_round_trips_the_complete_ledger() -> None:
+    plan = _assertion_plan()
+    truth = json.loads(json.dumps(build_case_truth_manifest(plan)))
+    parsed = medical_assertions_from_truth(truth)
+    assert parsed is not None
+    _context, _projection, ledger = parsed
+    assert ledger.model_dump() == plan.medical_assertions.model_dump()
+
+
+def test_assertion_bearing_case_keeps_envelope_1_and_uses_assertions_channel_1() -> None:
+    payload = _assertion_truth()
+    assert payload["schemaVersion"] == "1.0.0"
+    assert payload["channels"]["assertions"].get("channelVersion") == "1.0.0"
+    assert ASSERTIONS_CHANNEL_VERSION == "1.0.0"
+
+
+def test_assertion_absent_case_remains_byte_identical_envelope_1() -> None:
+    """No assertions block, no assertions channel, envelope unchanged — the
+    byte-identity half is carried by the golden gate over all four corpora."""
+    plan = _plan("assertions-absent", scenario={"medical_history": {}})
+    truth = build_case_truth_manifest(plan)
+    assert truth["schemaVersion"] == "1.0.0"
+    assert "assertions" not in truth["channels"]
+
+
+def test_read_truth_manifest_accepts_every_writer_emitted_shape(tmp_path: Path) -> None:
+    bearing = tmp_path / "bearing.truth.json"
+    bearing.write_text(json.dumps(_assertion_truth()), encoding="utf-8")
+    assert read_truth_manifest(bearing)["channels"]["assertions"]
+
+    absent_plan = _plan("assertions-absent", scenario={"medical_history": {}})
+    absent = tmp_path / "absent.truth.json"
+    absent.write_text(json.dumps(build_case_truth_manifest(absent_plan)), encoding="utf-8")
+    assert "assertions" not in read_truth_manifest(absent)["channels"]
+
+
+def test_money_facts_from_truth_accepts_every_writer_emitted_shape() -> None:
+    scenario = copy.deepcopy(_ASSERTION_SCENARIO)
+    scenario["wages"] = {"pattern": "regular", "base_weekly_wage": 1500.0}
+    plan = _plan("assertions-money", scenario=scenario)
+    truth = json.loads(json.dumps(build_case_truth_manifest(plan)))
+    facts = money_facts_from_truth(truth)
+    assert facts is not None
+    assert money_facts_from_truth(_assertion_truth()) is None
+
+
+def test_legacy_v1_without_assertions_remains_valid() -> None:
+    legacy = {
+        "schemaVersion": "1.0.0",
+        "kind": "case",
+        "audience": "analyzer-scorer",
+        "leakageRule": (
+            "Scorer-only ground truth; never use this artifact as an input to "
+            "document analysis."
+        ),
+        "caseId": "legacy",
+        "provenance": {"generator": "wc-synthetic-caseload-engine@0.0.0"},
+        "channels": {},
+    }
+    assert medical_assertions_from_truth(legacy) is None
+    assert money_facts_from_truth(legacy) is None
+
+
+def test_assertions_channel_rejects_an_unknown_major(tmp_path: Path) -> None:
+    payload = _assertion_truth()
+    payload["channels"]["assertions"]["channelVersion"] = "2.0.0"
+    with pytest.raises(TruthManifestError, match="unsupported assertions channel"):
+        medical_assertions_from_truth(payload)
+    path = tmp_path / "major.truth.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(TruthManifestError, match="unsupported assertions channel"):
+        read_truth_manifest(path)
+
+
+def _fake_result(case_id: str, plan: Any, tmp_path: Path) -> Any:
+    truth_dir = tmp_path / TRUTH_DIR
+    truth_dir.mkdir(parents=True, exist_ok=True)
+    truth_path = truth_dir / f"{case_id}.truth.json"
+    truth_path.write_text(json.dumps(build_case_truth_manifest(plan)), encoding="utf-8")
+    return SimpleNamespace(case_id=case_id, plan=plan, truth_path=truth_path)
+
+
+def test_mixed_caseload_keeps_every_envelope_at_1_and_indexes_assertions(
+    tmp_path: Path,
+) -> None:
+    from wc_caseload_engine.truth_manifest import build_caseload_truth_manifest
+
+    bearing = _fake_result("bearing", _assertion_plan("bearing"), tmp_path)
+    absent = _fake_result(
+        "absent", _plan("absent", scenario={"medical_history": {}}), tmp_path
+    )
+    rollup = build_caseload_truth_manifest("mixed", [bearing, absent])
+    assert rollup["schemaVersion"] == "1.0.0"
+    channel = rollup["channels"]["assertions"]
+    assert channel["channelVersion"] == "1.0.0"
+    assert channel["caseCount"] == 2
+    assert channel["assertionCaseCount"] == 1
+    assert [entry["caseId"] for entry in channel["cases"]] == ["bearing"]
+    # The absent case keeps its v1 shape: no assertions channel in its file.
+    absent_payload = json.loads(absent.truth_path.read_text(encoding="utf-8"))
+    assert "assertions" not in absent_payload["channels"]
+
+
+def test_assertion_rollup_counts_match_case_channels(tmp_path: Path) -> None:
+    from wc_caseload_engine.truth_manifest import build_caseload_truth_manifest
+
+    bearing = _fake_result("bearing", _assertion_plan("bearing"), tmp_path)
+    rollup = build_caseload_truth_manifest("counted", [bearing])
+    channel = rollup["channels"]["assertions"]
+    ledger = bearing.plan.medical_assertions
+    assert channel["counts"] == {
+        "contentions": len(ledger.contentions),
+        "medicalOpinions": len(ledger.medical_opinions),
+        "apportionmentAssertions": len(ledger.apportionment_assertions),
+    }
+    assert channel["qualityCounts"] == ledger.quality_counts()
+    assert (
+        sum(channel["apportionmentStateCounts"].values())
+        == len(ledger.medical_opinions)
+    )
+    assert set(channel["determinationKindCounts"]) == {
+        "allocated",
+        "noNonindustrialShare",
+        "unableToApproximate",
+    }
+
+
+def test_assertion_rollup_uses_independent_case_records(tmp_path: Path) -> None:
+    from wc_caseload_engine.truth_manifest import build_caseload_truth_manifest
+
+    scenario = copy.deepcopy(_ASSERTION_SCENARIO)
+    scenario["wages"] = {"pattern": "regular", "base_weekly_wage": 1500.0}
+    bearing = _fake_result("bearing", _plan("bearing", scenario=scenario), tmp_path)
+    rollup = build_caseload_truth_manifest("aliasing", [bearing])
+    top_cases = rollup["cases"]
+    money_cases = rollup["channels"]["money"]["cases"]
+    assertion_cases = rollup["channels"]["assertions"]["cases"]
+    assert assertion_cases is not top_cases
+    assert assertion_cases is not money_cases
+    assert all(
+        entry is not other
+        for entry in assertion_cases
+        for other in top_cases
+    )
+    before = json.dumps(money_cases, sort_keys=True)
+    assertion_cases[0]["contentionCount"] = 99
+    assert json.dumps(money_cases, sort_keys=True) == before
+
+
+def test_output_validator_rejects_tampered_assertion_quality_after_digest_recomputed() -> None:
+    payload = _assertion_truth()
+    channel = payload["channels"]["assertions"]
+    original = channel["contentions"][0]["quality"]
+    channel["contentions"][0]["quality"] = (
+        "supported" if original != "supported" else "thin"
+    )
+    channel["ledgerDigest"] = assertion_ledger_digest(channel)
+    with pytest.raises(TruthManifestError, match="does not match the rederived grade"):
+        medical_assertions_from_truth(payload)
+
+
+def test_output_validator_rejects_tampered_assertion_reference_after_digest_recomputed() -> None:
+    payload = _assertion_truth()
+    channel = payload["channels"]["assertions"]
+    channel["contentions"][0]["targetConditionId"] = "cond-77"
+    channel["ledgerDigest"] = assertion_ledger_digest(channel)
+    with pytest.raises(
+        TruthManifestError, match="references unknown condition 'cond-77'"
+    ):
+        medical_assertions_from_truth(payload)
+
+
+def test_output_validator_rejects_tampered_assertion_digest_with_exact_literal() -> None:
+    payload = _assertion_truth()
+    payload["channels"]["assertions"]["contentions"][0]["rationale"] = "edited later"
+    with pytest.raises(TruthManifestError) as raised:
+        medical_assertions_from_truth(payload)
+    assert str(raised.value) == LEDGER_DIGEST_MISMATCH
+
+
+def test_assertions_ledger_digest_covers_canonical_channel_payload() -> None:
+    payload = _assertion_truth()
+    channel = payload["channels"]["assertions"]
+    baseline = assertion_ledger_digest(channel)
+    # The two excluded keys move nothing.
+    variant = dict(channel)
+    variant["channelVersion"] = "9.9.9"
+    variant["ledgerDigest"] = "0" * 64
+    assert assertion_ledger_digest(variant) == baseline
+    # Every covered surface moves it: context, projection, semantics, quality.
+    for mutate in (
+        lambda c: c["validationContext"].__setitem__("targetStage", "intake"),
+        lambda c: c["medicalHistory"]["conditions"][0].__setitem__("severity", "severe"),
+        lambda c: c["contentions"][0].__setitem__("rationale", "different"),
+        lambda c: c["contentions"][0].__setitem__("quality", "thin"),
+    ):
+        variant = json.loads(json.dumps(channel))
+        mutate(variant)
+        assert assertion_ledger_digest(variant) != baseline
+
+
+def test_truth_assertion_projection_omits_redacted_identity_fields() -> None:
+    channel_text = json.dumps(_assertion_truth()["channels"]["assertions"])
+    for token in (
+        "archetype",
+        "bmiBand",
+        "smokingStatus",
+        '"sex"',
+        "employer",
+        '"age"',
+        "billingCoded",
+        "icd10",
+    ):
+        assert token not in channel_text, token
+
+
+def test_truth_projection_round_trips_every_evidence_and_quality_input() -> None:
+    from wc_caseload_engine.medical_assertions import (
+        assertion_context,
+        project_medical_history,
+    )
+
+    plan = _assertion_plan()
+    context = assertion_context(plan.seed, plan.timeline)
+    plan_projection = project_medical_history(
+        plan.medical_history, context.current_body_parts
+    )
+    parsed = medical_assertions_from_truth(_assertion_truth())
+    assert parsed is not None
+    truth_context, truth_projection, _ledger = parsed
+    assert truth_context == context
+    assert truth_projection == plan_projection
+
+
+def test_plan_and_truth_paths_use_one_assertion_validation_context_and_rule_implementation() -> None:  # noqa: E501
+    import wc_caseload_engine.medical_assertions as assertion_module
+    import wc_caseload_engine.planner as planner_module
+    import wc_caseload_engine.truth_manifest as truth_module
+
+    assert (
+        truth_module.validate_medical_assertions
+        is assertion_module.validate_medical_assertions
+    )
+    assert (
+        planner_module.validate_medical_assertions
+        is assertion_module.validate_medical_assertions
+    )
+    assert truth_module.grade_ledger is assertion_module.grade_ledger
+    assert (
+        truth_module.AssertionValidationContext
+        is assertion_module.AssertionValidationContext
+    )
+
+
+def test_validate_out_assertions_path_requires_no_substrate_checkout_or_import_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The recorded payload carries every input the rules need: the assertions
+    validation path runs with the substrate checkout absent and every
+    substrate-access seam trapped."""
+    payload = _assertion_truth()  # built once, while the substrate exists
+
+    import wc_caseload_engine.substrate as substrate_module
+
+    def fail_access(*args: object, **kwargs: object):
+        pytest.fail("assertions truth validation reached a substrate-access call")
+
+    monkeypatch.setattr(substrate_module, "find_substrate", lambda *a, **k: None)
+    monkeypatch.setattr(substrate_module, "substrate_available", lambda *a, **k: False)
+    for name in ("import_substrate", "ensure_substrate"):
+        if hasattr(substrate_module, name):
+            monkeypatch.setattr(substrate_module, name, fail_access)
+
+    parsed = medical_assertions_from_truth(payload)
+    assert parsed is not None

@@ -19,7 +19,10 @@ money-channel consumers.  Neither future channel is implemented here.
 
 from __future__ import annotations
 
+import datetime as dt
+import hashlib
 import json
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -27,6 +30,16 @@ from typing import TYPE_CHECKING, Any, Protocol
 from pydantic import ValidationError
 
 from wc_caseload_engine import __version__
+from wc_caseload_engine.medical_assertions import (
+    AssertionValidationContext,
+    AssertionWorldProjection,
+    MedicalAssertionLedger,
+    ProjectedCondition,
+    ProjectedPriorAward,
+    ProjectedPriorClaim,
+    grade_ledger,
+    validate_medical_assertions,
+)
 from wc_caseload_engine.money import (
     AwwComputation,
     BenefitGap,
@@ -59,6 +72,14 @@ TRUTH_DIR = "truth"
 CASELOAD_TRUTH_NAME = "caseload.truth.json"
 SCHEMA_VERSION = "1.0.0"
 MONEY_CHANNEL_VERSION = "1.1.0"
+ASSERTIONS_CHANNEL_VERSION = "1.0.0"
+"""The assertions channel (AJC-61, M2). The ENVELOPE stays at 1.0.0 — the
+module contract above exists precisely so a new channel can arrive without
+breaking money-channel consumers, and this is that channel arriving."""
+
+LEDGER_DIGEST_MISMATCH = (
+    "channels.assertions.ledgerDigest does not match the canonical assertions payload"
+)
 AUDIENCE = "analyzer-scorer"
 LEAKAGE_RULE = "Scorer-only ground truth; never use this artifact as an input to document analysis."
 GENERATOR = f"wc-synthetic-caseload-engine@{__version__}"
@@ -314,11 +335,301 @@ TRUTH_PROVENANCE_KEYS: frozenset[str] = frozenset({"generator", "seedHash", "rng
 CASELOAD_TRUTH_PROVENANCE_KEYS: frozenset[str] = frozenset({"generator"})
 
 
+_CAMEL_BOUNDARY = re.compile(r"_([a-z0-9])")
+
+
+def _camel(name: str) -> str:
+    return _CAMEL_BOUNDARY.sub(lambda match: match.group(1).upper(), name)
+
+
+_SNAKE_BOUNDARY = re.compile(r"([A-Z])")
+
+
+def _snake(name: str) -> str:
+    return _SNAKE_BOUNDARY.sub(lambda match: f"_{match.group(1).lower()}", name)
+
+
+def _camelize(value: Any) -> Any:
+    """Recursively camelCase mapping keys; values (enum strings, ids) untouched."""
+    if isinstance(value, Mapping):
+        return {
+            _camel(str(key)): _camelize(item)
+            for key, item in value.items()
+            if item is not None and item != [] and item != ()
+        }
+    if isinstance(value, list | tuple):
+        return [_camelize(item) for item in value]
+    return value
+
+
+def _snakeize(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {_snake(str(key)): _snakeize(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_snakeize(item) for item in value]
+    return value
+
+
+def assertion_ledger_digest(channel: Mapping[str, Any]) -> str:
+    """SHA-256 over the canonical assertions payload.
+
+    Canonical means compact separators, sorted keys, UTF-8, with
+    ``channelVersion`` and ``ledgerDigest`` removed — the digest covers the
+    validation context, the redacted history projection, every semantic
+    assertion field, every lifecycle state and every truth-only quality.
+    """
+    payload = {
+        key: value
+        for key, value in channel.items()
+        if key not in ("channelVersion", "ledgerDigest")
+    }
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _assertions_channel(plan: CasePlan) -> dict[str, Any]:
+    """The complete assertions channel for one plan — the ONLY quality surface."""
+    from wc_caseload_engine.medical_assertions import (
+        assertion_context,
+        project_medical_history,
+    )
+
+    ledger = plan.medical_assertions
+    assert ledger is not None
+    context = assertion_context(plan.seed, plan.timeline)
+    projection = project_medical_history(
+        plan.medical_history, context.current_body_parts
+    )
+
+    validation_context: dict[str, Any] = {
+        "dateOfInjury": context.date_of_injury.isoformat(),
+        "anchorDate": context.anchor_date.isoformat(),
+        "currentBodyParts": list(context.current_body_parts),
+        "targetStage": context.target_stage,
+        "claimResponse": context.claim_response,
+    }
+    if context.eval_type != "none":
+        validation_context["evalType"] = context.eval_type
+
+    medical_history = {
+        "conditions": [
+            _camelize(
+                {
+                    "id": c.id,
+                    "key": c.key,
+                    "label": c.label,
+                    "causal_ground_truth": c.causal_ground_truth,
+                    "onset": c.onset.isoformat() if c.onset is not None else None,
+                    "body_system": c.body_system,
+                    "body_part": c.body_part,
+                    "apportionment_targets": list(c.apportionment_targets),
+                    "wholly_unrelated": c.wholly_unrelated,
+                    "severity": c.severity,
+                    "trajectory": c.trajectory,
+                    "symptomatic_before_doi": c.symptomatic_before_doi,
+                    "surfaces_in_file": c.surfaces_in_file,
+                }
+            )
+            for c in projection.conditions
+        ],
+        "priorClaims": [
+            _camelize(
+                {
+                    "id": claim.id,
+                    "date_of_injury": claim.date_of_injury.isoformat(),
+                    "body_parts": list(claim.body_parts),
+                    "resolution_type": claim.resolution_type,
+                    "overlaps_current": claim.overlaps_current,
+                    "award": (
+                        {
+                            "id": claim.award.id,
+                            "prior_claim_id": claim.award.prior_claim_id,
+                            "body_parts": list(claim.award.body_parts),
+                            "pd_percent": claim.award.pd_percent,
+                            "award_date": claim.award.award_date.isoformat(),
+                            "resolution_type": claim.award.resolution_type,
+                            "conclusively_presumed": claim.award.conclusively_presumed,
+                        }
+                        if claim.award is not None
+                        else None
+                    ),
+                }
+            )
+            for claim in projection.prior_claims
+        ],
+    }
+
+    channel: dict[str, Any] = {
+        "channelVersion": ASSERTIONS_CHANNEL_VERSION,
+        "kind": "case",
+        "audience": AUDIENCE,
+        "leakageRule": LEAKAGE_RULE,
+        "validationContext": validation_context,
+        "medicalHistory": medical_history,
+        "contentions": [
+            _camelize(c.model_dump(mode="json", exclude_none=True))
+            for c in ledger.contentions
+        ],
+        "medicalOpinions": [
+            _camelize(o.model_dump(mode="json", exclude_none=True))
+            for o in ledger.medical_opinions
+        ],
+        "apportionmentAssertions": [
+            _camelize(a.model_dump(mode="json", exclude_none=True))
+            for a in ledger.apportionment_assertions
+        ],
+    }
+    channel["ledgerDigest"] = assertion_ledger_digest(channel)
+    return channel
+
+
+def _context_from_truth(document: Mapping[str, Any]) -> AssertionValidationContext:
+    return AssertionValidationContext(
+        date_of_injury=dt.date.fromisoformat(
+            _required(document, "dateOfInjury", "channels.assertions.validationContext")
+        ),
+        anchor_date=dt.date.fromisoformat(
+            _required(document, "anchorDate", "channels.assertions.validationContext")
+        ),
+        current_body_parts=tuple(
+            _required(
+                document, "currentBodyParts", "channels.assertions.validationContext"
+            )
+        ),
+        target_stage=_required(
+            document, "targetStage", "channels.assertions.validationContext"
+        ),
+        claim_response=_required(
+            document, "claimResponse", "channels.assertions.validationContext"
+        ),
+        eval_type=document.get("evalType", "none"),
+    )
+
+
+def _projection_from_truth(document: Mapping[str, Any]) -> AssertionWorldProjection:
+    conditions = []
+    for item in document.get("conditions", []):
+        data = _snakeize(item)
+        data["onset"] = (
+            dt.date.fromisoformat(data["onset"]) if data.get("onset") else None
+        )
+        data.setdefault("body_part", None)
+        data.setdefault("symptomatic_before_doi", None)
+        data["apportionment_targets"] = tuple(data.get("apportionment_targets", ()))
+        conditions.append(ProjectedCondition(**data))
+    claims = []
+    for item in document.get("priorClaims", []):
+        data = _snakeize(item)
+        award_data = data.pop("award", None)
+        award = None
+        if award_data is not None:
+            award_data["award_date"] = dt.date.fromisoformat(award_data["award_date"])
+            award_data["body_parts"] = tuple(award_data["body_parts"])
+            award = ProjectedPriorAward(**award_data)
+        data["date_of_injury"] = dt.date.fromisoformat(data["date_of_injury"])
+        data["body_parts"] = tuple(data["body_parts"])
+        claims.append(ProjectedPriorClaim(award=award, **data))
+    return AssertionWorldProjection(
+        conditions=tuple(conditions), prior_claims=tuple(claims)
+    )
+
+
+def _ledger_from_truth(channel: Mapping[str, Any]) -> MedicalAssertionLedger:
+    def entries(key: str) -> list[dict[str, Any]]:
+        return [_snakeize(item) for item in channel.get(key, [])]
+
+    return MedicalAssertionLedger.model_validate(
+        {
+            "contentions": entries("contentions"),
+            "medical_opinions": entries("medicalOpinions"),
+            "apportionment_assertions": entries("apportionmentAssertions"),
+        }
+    )
+
+
+def medical_assertions_from_truth(
+    document: Mapping[str, Any],
+) -> tuple[AssertionValidationContext, AssertionWorldProjection, MedicalAssertionLedger] | None:
+    """Validate and reconstruct the assertions channel, or ``None`` when absent.
+
+    The order is the contract (Part 4 §D): check the channel major, recompute
+    the digest against the canonical payload, parse the typed context /
+    projection / ledger, run the §C incoherence validator, then rederive every
+    ``quality`` under the frozen rubric — a tampered label is artifact
+    incoherence even when the digest was recomputed to match.
+
+    Requires no substrate checkout and performs no substrate-access call: every
+    input the rules need rides in the recorded payload.
+    """
+    _require_compatible_version(
+        document,
+        key="schemaVersion",
+        path="$",
+        supported=SCHEMA_VERSION,
+        label="truth manifest envelope",
+    )
+    channels = _mapping(_required(document, "channels", "$"), "channels")
+    if "assertions" not in channels:
+        return None
+    channel = _mapping(channels["assertions"], "channels.assertions")
+    _require_compatible_version(
+        channel,
+        key="channelVersion",
+        path="channels.assertions",
+        supported=ASSERTIONS_CHANNEL_VERSION,
+        label="assertions channel",
+    )
+    stated_digest = channel.get("ledgerDigest")
+    if stated_digest != assertion_ledger_digest(channel):
+        raise TruthManifestError(LEDGER_DIGEST_MISMATCH)
+    try:
+        context = _context_from_truth(
+            _mapping(
+                _required(channel, "validationContext", "channels.assertions"),
+                "channels.assertions.validationContext",
+            )
+        )
+        projection = _projection_from_truth(
+            _mapping(
+                _required(channel, "medicalHistory", "channels.assertions"),
+                "channels.assertions.medicalHistory",
+            )
+        )
+        ledger = _ledger_from_truth(channel)
+    except TruthManifestError:
+        raise
+    except (TypeError, ValueError, KeyError, ValidationError) as exc:
+        raise TruthManifestError(f"malformed assertions channel: {exc}") from exc
+
+    problems = validate_medical_assertions(context, projection, ledger)
+    if problems:
+        raise TruthManifestError("\n".join(problems))
+
+    rederived = grade_ledger(context, projection, ledger)
+    for stated_collection, derived_collection in (
+        (ledger.contentions, rederived.contentions),
+        (ledger.medical_opinions, rederived.medical_opinions),
+        (ledger.apportionment_assertions, rederived.apportionment_assertions),
+    ):
+        for stated, derived in zip(stated_collection, derived_collection, strict=True):
+            if stated.quality != derived.quality:
+                raise TruthManifestError(
+                    f"channels.assertions: quality '{stated.quality}' on "
+                    f"'{stated.id}' does not match the rederived grade "
+                    f"'{derived.quality}'"
+                )
+    return context, projection, ledger
+
+
 def build_case_truth_manifest(plan: CasePlan) -> dict[str, Any]:
     """Build one versioned scorer envelope without reading any wall clock."""
     channels: dict[str, Any] = {}
     if plan.money_facts is not None:
         channels["money"] = _money_channel(plan.money_facts)
+    if plan.medical_assertions is not None:
+        channels["assertions"] = _assertions_channel(plan)
     return {
         "schemaVersion": SCHEMA_VERSION,
         "kind": "case",
@@ -374,6 +685,52 @@ def build_caseload_truth_manifest(
             "caseCount": len(results),
             "moneyCaseCount": money_case_count,
             "cases": cases,
+        }
+
+    # The assertions rollup uses NEWLY ALLOCATED lists and case dictionaries —
+    # the shipped money rollup aliases the top-level list, and extending that
+    # aliasing here would let a later mutation of one channel move another
+    # channel's bytes (L16).
+    assertion_cases: list[dict[str, Any]] = []
+    quality_counts = {"supported": 0, "thin": 0, "unsupportable": 0}
+    state_counts = {"deferred": 0, "determined": 0, "omitted": 0}
+    determination_kind_counts = {
+        "allocated": 0,
+        "noNonindustrialShare": 0,
+        "unableToApproximate": 0,
+    }
+    totals = {"contentions": 0, "medicalOpinions": 0, "apportionmentAssertions": 0}
+    for result in results:
+        ledger = result.plan.medical_assertions
+        if ledger is None:
+            continue
+        entry = {
+            "caseId": result.case_id,
+            "truthFile": f"{result.truth_path.parent.name}/{result.truth_path.name}",
+            "contentionCount": len(ledger.contentions),
+            "medicalOpinionCount": len(ledger.medical_opinions),
+            "apportionmentAssertionCount": len(ledger.apportionment_assertions),
+        }
+        assertion_cases.append(entry)
+        for quality, count in ledger.quality_counts().items():
+            quality_counts[quality] += count
+        totals["contentions"] += len(ledger.contentions)
+        totals["medicalOpinions"] += len(ledger.medical_opinions)
+        totals["apportionmentAssertions"] += len(ledger.apportionment_assertions)
+        for opinion in ledger.medical_opinions:
+            state_counts[opinion.apportionment_state] += 1
+            if opinion.determination_kind is not None:
+                determination_kind_counts[_camel(opinion.determination_kind)] += 1
+    if assertion_cases:
+        channels["assertions"] = {
+            "channelVersion": ASSERTIONS_CHANNEL_VERSION,
+            "caseCount": len(results),
+            "assertionCaseCount": len(assertion_cases),
+            "counts": totals,
+            "qualityCounts": quality_counts,
+            "apportionmentStateCounts": state_counts,
+            "determinationKindCounts": determination_kind_counts,
+            "cases": assertion_cases,
         }
     return {
         "schemaVersion": SCHEMA_VERSION,
@@ -434,6 +791,15 @@ def read_truth_manifest(path: Path) -> dict[str, Any]:
             path="channels.money",
             supported=MONEY_CHANNEL_VERSION,
             label="money channel",
+        )
+    if "assertions" in channels:
+        assertions_channel = _mapping(channels["assertions"], "channels.assertions")
+        _require_compatible_version(
+            assertions_channel,
+            key="channelVersion",
+            path="channels.assertions",
+            supported=ASSERTIONS_CHANNEL_VERSION,
+            label="assertions channel",
         )
     return payload
 
@@ -849,17 +1215,21 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
 
 
 __all__ = [
+    "ASSERTIONS_CHANNEL_VERSION",
     "CASELOAD_TRUTH_NAME",
     "CASELOAD_TRUTH_PROVENANCE_KEYS",
+    "LEDGER_DIGEST_MISMATCH",
     "PENALTY_ASSESSMENT_KEY_NAMES",
     "SCORER_ONLY_ENVELOPE_KEY_NAMES",
     "TRUTH_DIR",
     "TRUTH_PROVENANCE_KEYS",
     "TruthManifestError",
+    "assertion_ledger_digest",
     "build_case_truth_manifest",
     "build_caseload_truth_manifest",
     "case_truth_name",
     "check_truth_dir_is_isolated",
+    "medical_assertions_from_truth",
     "money_facts_from_truth",
     "read_truth_manifest",
     "write_case_truth_manifest",

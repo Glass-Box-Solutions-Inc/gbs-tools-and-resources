@@ -1506,3 +1506,202 @@ def test_reasoned_revision_chain_is_valid() -> None:
     ledger = _ledger(opinions=(first, revised), assertions=(assertion,))
     assert not _problems(ledger)
     assert apportionment_quality(_world(), _context(), ledger, assertion) == "supported"
+
+
+# ---------------------------------------------------------------------------
+# E.8 — validator polarity through the shipped CLI surfaces
+# ---------------------------------------------------------------------------
+
+_DIVERGENT_SCENARIO: dict[str, Any] = {
+    "medical_history": {
+        "sample_conditions": False,
+        "conditions": [
+            {
+                "label": "nonindustrial lumbar degenerative disease",
+                "origin": "nonindustrial",
+                "body_part": "lumbar_spine",
+                "severity": "moderate",
+                "symptomatic_before_doi": True,
+            },
+            {
+                "label": "invasive ductal carcinoma, right breast",
+                "body_system": "oncologic",
+                "body_part": "breast",
+                "wholly_unrelated": True,
+                "severity": "severe",
+            },
+        ],
+        "prior_claims": [
+            {
+                "body_parts": ["lumbar_spine"],
+                "date_of_injury": "2015-01-05",
+                "resolution_type": "c_and_r",
+                "award": {
+                    "body_parts": ["lumbar_spine"],
+                    "pd_percent": 12,
+                    "award_date": "2016-02-01",
+                },
+            }
+        ],
+    },
+    "medical_assertions": {
+        "sample_assertions": False,
+        "contentions": [
+            # Divergence 1: nonindustrial world condition asserted industrial.
+            {
+                "id": "ctn-01",
+                "claim_type": "industrial_causation",
+                "party": "applicant",
+                "position": "affirm",
+                "target_condition_id": "cond-00",
+                "rationale": "the lumbar condition arose from the industrial injury",
+            },
+            # Divergence 2: a false C&R-presumption legal assertion.
+            {
+                "id": "ctn-02",
+                "claim_type": "apportionment_defense",
+                "party": "defense",
+                "position": "affirm",
+                "target_prior_claim_id": "prior-00",
+                "target_prior_award_id": "prior-00-award",
+                "doctrine_hooks": ["lc4664_prior_award"],
+                "rationale": "the prior compromise and release conclusively presumes",
+                "groundings": [
+                    {"hook": "lc4664_prior_award", "prior_award_id": "prior-00-award"}
+                ],
+            },
+        ],
+        "medical_opinions": [
+            {
+                "id": "opn-01",
+                "author_role": "qme",
+                "report_stage": "final",
+                "report_date": "2022-06-01",
+                "apportionment_state": "determined",
+                "determination_kind": "allocated",
+                "examination_performed": True,
+                "reviewed_condition_ids": ["cond-00", "cond-01"],
+                "endorses_contention_ids": ["ctn-01"],
+                "rationale": "examined the applicant and reviewed the record",
+            }
+        ],
+        "apportionment_assertions": [
+            # Divergence 3: apportioning to the wholly unrelated condition.
+            {
+                "id": "app-01",
+                "opinion_id": "opn-01",
+                "body_part": "lumbar_spine",
+                "industrial_percent": 70,
+                "nonindustrial_percent": 30,
+                "basis_kinds": ["nonindustrial_medical_condition"],
+                "condition_ids": ["cond-01"],
+                "description": "chronic lumbar disability",
+                "disability_causation_stated": True,
+                "reasonable_medical_probability": True,
+                "causal_rationale": "the oncology history is noted in the record",
+                "percentage_rationale": "thirty percent reflects the noted history",
+            }
+        ],
+    },
+}
+
+
+def _generate_body(case_id: str, scenario: dict[str, Any]) -> dict[str, Any]:
+    body = _seed_body(scenario)
+    body["case_id"] = case_id
+    body["documents"] = {"format_mix": {"pdf": 1.0}, "global_cap": 6}
+    body["output"] = {"formats": ["pdf"]}
+    return body
+
+
+@pytest.mark.slow
+def test_validate_out_accepts_every_planted_world_truth_divergence(tmp_path: Any) -> None:
+    """A corpus full of legal divergence — false industrial claims, wrong-way
+    apportionment, misapplied C&R presumptions — validates clean end to end."""
+    from conftest import requires_substrate  # noqa: F401
+    from wc_caseload_engine.manifests import generate_caseload, validate_output_tree
+    from wc_caseload_engine.substrate import find_substrate
+
+    if find_substrate() is None:
+        pytest.skip("merus-test-data-generator substrate not on disk")
+
+    seed = parse_case_seed(_generate_body("divergent-case", dict(_DIVERGENT_SCENARIO)))
+    out_dir = tmp_path / "divergent"
+    generate_caseload("divergent", [seed], out_dir)
+    report = validate_output_tree(out_dir)
+    assert report.ok, report.render()
+    assert report.truth_manifests == 1
+
+
+def test_validate_spec_rejects_each_planted_internal_incoherence_with_exact_template(
+    tmp_path: Any,
+) -> None:
+    import yaml
+    from click.testing import CliRunner
+
+    from wc_caseload_engine.cli import cli
+    from wc_caseload_engine.substrate import find_substrate
+
+    if find_substrate() is None:
+        pytest.skip("merus-test-data-generator substrate not on disk")
+
+    incoherent = {
+        "caseload_id": "incoherent",
+        "cases": [
+            {
+                **_generate_body("incoherent-case", dict(_DIVERGENT_SCENARIO)),
+            }
+        ],
+    }
+    incoherent["cases"][0]["scenario"] = {
+        "medical_history": {"sample_conditions": False, "conditions": [
+            {"label": "hypertension", "key": "hypertension"},
+        ]},
+        "medical_assertions": {
+            "sample_assertions": False,
+            "contentions": [
+                {
+                    "id": "ctn-01",
+                    "claim_type": "industrial_causation",
+                    "party": "applicant",
+                    "position": "affirm",
+                    "target_condition_id": "cond-99",
+                    "rationale": "targets a condition the world ledger never held",
+                }
+            ],
+        },
+    }
+    spec_path = tmp_path / "incoherent.yaml"
+    spec_path.write_text(yaml.safe_dump(incoherent), encoding="utf-8")
+    result = CliRunner().invoke(cli, ["validate", "--spec", str(spec_path)])
+    assert result.exit_code != 0
+    assert "contention 'ctn-01' references unknown condition 'cond-99'" in result.output
+
+
+@pytest.mark.slow
+def test_validate_out_rejects_tampered_assertion_incoherence_with_exact_template(
+    tmp_path: Any,
+) -> None:
+    import json
+
+    from wc_caseload_engine.manifests import generate_caseload, validate_output_tree
+    from wc_caseload_engine.substrate import find_substrate
+    from wc_caseload_engine.truth_manifest import TRUTH_DIR, assertion_ledger_digest
+
+    if find_substrate() is None:
+        pytest.skip("merus-test-data-generator substrate not on disk")
+
+    seed = parse_case_seed(_generate_body("tampered-case", dict(_DIVERGENT_SCENARIO)))
+    out_dir = tmp_path / "tampered"
+    generate_caseload("tampered", [seed], out_dir)
+    truth_path = out_dir / TRUTH_DIR / "tampered-case.truth.json"
+    payload = json.loads(truth_path.read_text(encoding="utf-8"))
+    channel = payload["channels"]["assertions"]
+    channel["contentions"][0]["targetConditionId"] = "cond-77"
+    channel["ledgerDigest"] = assertion_ledger_digest(channel)
+    truth_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = validate_output_tree(out_dir)
+    assert not report.ok
+    rendered = report.render()
+    assert "contention 'ctn-01' references unknown condition 'cond-77'" in rendered

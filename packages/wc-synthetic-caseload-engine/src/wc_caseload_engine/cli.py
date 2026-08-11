@@ -252,6 +252,14 @@ def validate(spec_path: Path | None, out_dir: Path | None, allow_fallback: bool)
                 f"{len(problems)} document control key(s) are not valid taxonomy keys"
             )
         click.echo("controls : OK (all document control keys are valid taxonomy keys)")
+        assertion_problems = _validate_assertion_coherence(seeds)
+        if assertion_problems:
+            for problem in assertion_problems:
+                click.echo(f"  {problem}", err=True)
+            raise click.ClickException(
+                f"{len(assertion_problems)} medical-assertion incoherence problem(s); "
+                "divergence from world truth is legal — these are internal contradictions"
+            )
 
     if out_dir is not None:
         try:
@@ -261,6 +269,55 @@ def validate(spec_path: Path | None, out_dir: Path | None, allow_fallback: bool)
         click.echo(report.render())
         if not report.ok:
             sys.exit(1)
+
+
+def _validate_assertion_coherence(seeds: list[CaseSeed]) -> list[str]:
+    """Run the §C referential validator for every assertion-bearing seed.
+
+    The polarity rule applies here exactly as at generation time: assertion
+    divergence from world truth is case content and passes; only internal
+    incoherence — dangling references, contradictory lifecycles, impossible
+    percentages — is reported. Skips cleanly without the substrate, which the
+    world-truth derivation needs for the applicant's date of birth.
+    """
+    bearing = [seed for seed in seeds if seed.scenario.medical_assertions is not None]
+    if not bearing:
+        return []
+    if not substrate_available():
+        click.echo(
+            "asserts  : SKIPPED (substrate unavailable — cannot derive the "
+            "world-truth ledger)",
+            err=True,
+        )
+        return []
+    from wc_caseload_engine.medical_assertions import (
+        MedicalAssertionError,
+        assertion_context,
+        derive_medical_assertions,
+        project_medical_history,
+        validate_medical_assertions,
+    )
+    from wc_caseload_engine.medical_history import derive_medical_history
+
+    problems: list[str] = []
+    for seed in bearing:
+        try:
+            history = derive_medical_history(seed)
+            ledger = derive_medical_assertions(seed, history)
+        except MedicalAssertionError as exc:
+            problems.extend(f"{seed.case_id}: {line}" for line in str(exc).splitlines())
+            continue
+        context = assertion_context(seed)
+        projection = project_medical_history(history, context.current_body_parts)
+        problems.extend(
+            f"{seed.case_id}: {problem}"
+            for problem in validate_medical_assertions(context, projection, ledger)
+        )
+    if not problems:
+        click.echo(
+            f"asserts  : OK ({len(bearing)} assertion-bearing case(s) internally coherent)"
+        )
+    return problems
 
 
 def _validate_control_keys(seeds: list[CaseSeed]) -> list[str]:
