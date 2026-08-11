@@ -575,10 +575,12 @@ Consequences worth knowing before touching it:
   `ledgerDigest` over the canonical payload, and a typed `validationContext` that keeps
   `validate --out` substrate-checkout-free). The label-position leakage probe scans every
   analyzer-visible surface — parsed DOCX `docProps` (property NAMES included), the raw PDF
-  Info dictionary and annotations, decoded EML parts and header names, OCR over image-only
-  pages — for the reserved keys and the bare token `unsupportable`, with a planted positive
-  control per position. The OCR read needs the `tesseract-ocr` binary (CI installs it); an
-  image-only surface with no OCR engine fails the scan loudly rather than passing silently.
+  Info dictionary, the XMP packet parsed so element/attribute NAMES are keys, annotations
+  through both `.info` and the raw xref key enumeration (`.info` cannot see a custom key),
+  decoded EML parts and header names, OCR over image-only pages — for the reserved keys and
+  the bare token `unsupportable`, with a planted positive control per position. The OCR read
+  needs the `tesseract-ocr` binary (CI installs it); an image-only surface with no OCR
+  engine — or an unparseable XMP packet — fails the scan loudly rather than passing silently.
 - **Hikida is typed, not enumerated.** `DoctrineHook` stays at fourteen members (the
   fifteenth is AJC-62's, with the showcase golden re-record it forces);
   `claim_type="compensable_consequence"` + `treatment_causation` + `requested_apportionment`

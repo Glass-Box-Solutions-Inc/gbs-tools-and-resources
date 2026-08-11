@@ -564,6 +564,14 @@ Round 10 audited round 9. Three findings, plus a fourth found while reproducing 
   EML with a planted control per position and detector mutants m19-20/21; and the
   re-measured contention supported share — 0.5880 — sits below the ruling's 0.65 floor,
   pinned exactly and deliberately left RED as an open counsel question.
+  **Fix round 2** (sol): XMP element/attribute NAMES and RAW annotation xref keys enter the
+  reserved-key scan (`.info` cannot see a custom key — live-probe proven; controls + mutants
+  m19-23/24); endorsement grades key on the unique pending reference, never the shareable
+  suppression tuple (m19-22, reproduced RED on cohort-4803 first); post-type draws salt on
+  the full Part-3 stream key — family + rule-6 surface + normalized grounding IDs — with the
+  pre-type reading documented and flagged for spec ratification (m19-25). Post-F3 cohort:
+  contentions 0.5857 (counsel floor question stands), opinions 0.7698 / assertions 0.7900 in
+  band, every pre-type pin byte-identical.
 - **conjectured:** same-machine double-run md5 comparison proves generation determinism (Phase B gate design).
   **refuted by:** advisor-demanded clock-shift probe — TZ=Australia/Sydney drifted 55-60 of 289 files (EML Date offsets, PDF/docx timestamp normalization, substrate date.today() content, Faker clock-relative date_of_birth); the CLI-level gate also masked an in-process leak the two-zone test caught.
   **learned:** determinism gates must vary the environment axes the guarantee spans — process, hash seed, timezone, entrypoint — not just repeat the run; a passing gate that shares the leak's precondition proves nothing about the class.

@@ -85,6 +85,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ledgers: the requires-history gate, the 12/8/12 and combined-12 caps,
   truth-only quality, and the typed Hikida fields.
 
+### Changed — assertion-layer fix round 2 (sol review PR #44 round 2)
+
+- The leakage scan parses the XMP packet so element and attribute NAMES are
+  reserved keys (an unparseable packet fails loudly) and enumerates RAW
+  annotation dictionary keys through the xref — `annotation.info` cannot see
+  a custom key, proved with a live PyMuPDF probe. A planted positive control
+  and a detector mutant cover each new direction.
+- Endorsement grade bookkeeping keys on the unique pending reference: two
+  distinct explicit contentions may legally share the B.2 suppression tuple,
+  and the tuple-keyed dict kept only the last twin's grade (an evaluator
+  endorsed nothing where it endorsed ctn-01 alone; reproduced RED before
+  fixing).
+- Every post-type contention draw salts on the full Part-3 candidate stream
+  key (candidate family + rule-6 surface + normalized grounding IDs),
+  distinct from the 8-field suppression tuple; pre-type incidence/type draws
+  keep their family-prefixed entity keys — the documented reading, flagged
+  for the spec author. Cohort re-measured: contentions 0.5857 supported
+  (was 0.5880) — still below the counsel floor, ruling question unchanged;
+  opinions 0.7698 and assertions 0.7900 in band; every pre-type pin
+  byte-identical.
+- `OPINION_RECIPE_WEIGHTS` states its 0.8267 figure as fix-round-1
+  calibration arithmetic and defers realized measurement to the pinned
+  cohort constants.
+
 ### Added — the ground-truth export (**AJC-48**, money layer Wave 3)
 
 - Added versioned, scorer-only case truth manifests under `truth/` with a
