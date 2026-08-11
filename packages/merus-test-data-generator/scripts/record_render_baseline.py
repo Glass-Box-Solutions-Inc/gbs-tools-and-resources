@@ -223,7 +223,13 @@ def _resolve_base(base_ref: str | None) -> str:
 
     try:
         _git("merge-base", "--is-ancestor", resolved, "origin/main")
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as exc:
+        if exc.returncode != 1:
+            _exit(
+                "refusing to record: cannot evaluate trunk ancestry: origin/main is not "
+                "available in this checkout (git fetch origin main and retry)\n"
+                f"git stderr: {exc.stderr.strip() or '(empty)'}"
+            )
         _exit(
             f"refusing to record: {base_ref} ({resolved[:12]}) is not an ancestor of "
             "origin/main, so it is not a point in the trunk's history"

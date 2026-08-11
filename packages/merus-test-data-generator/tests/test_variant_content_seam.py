@@ -838,12 +838,57 @@ def base_worktree(tmp_path_factory):
     recorder = _recorder_module()
     requested = os.environ.get("AJC72_BASE_WORKTREE")
 
+    def _ensure_origin_main() -> None:
+        verify = subprocess.run(
+            ["git", "-C", _PACKAGE_ROOT, "rev-parse", "--verify", "--quiet", "origin/main"],
+            capture_output=True,
+            text=True,
+        )
+        if verify.returncode == 0:
+            return
+        if verify.returncode != 1:
+            pytest.fail(
+                "failed to verify origin/main before fixture restamp e2es:\n"
+                f"{verify.stdout.rstrip()}\n{verify.stderr.rstrip()}"
+            )
+
+        fetch = subprocess.run(
+            [
+                "git",
+                "-C",
+                _PACKAGE_ROOT,
+                "fetch",
+                "origin",
+                "+refs/heads/main:refs/remotes/origin/main",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        retry = subprocess.run(
+            ["git", "-C", _PACKAGE_ROOT, "rev-parse", "--verify", "--quiet", "origin/main"],
+            capture_output=True,
+            text=True,
+        )
+        if retry.returncode == 0:
+            return
+        if retry.returncode != 1:
+            pytest.fail(
+                "failed to verify origin/main after fixture fetch:\n"
+                f"{retry.stdout.rstrip()}\n{retry.stderr.rstrip()}"
+            )
+        pytest.skip(
+            "origin/main is unavailable for restamp fixture ancestry checks; "
+            "git fetch origin main did not provide refs/remotes/origin/main\n"
+            f"fetch stdout: {fetch.stdout.rstrip()}\nfetch stderr: {fetch.stderr.rstrip()}"
+        )
+
     if requested:
         if not os.path.isdir(requested):
             pytest.fail(
                 "AJC72_BASE_WORKTREE is set but does not point to an existing directory: "
                 f"{requested!r}"
             )
+        _ensure_origin_main()
         try:
             recorder._validate_base_worktree(requested)
         except SystemExit as exc:
@@ -911,6 +956,7 @@ def base_worktree(tmp_path_factory):
                 )
 
         created = True
+        _ensure_origin_main()
         recorder._validate_base_worktree(worktree)
         yield worktree
     finally:
@@ -1283,6 +1329,47 @@ def test_record_mode_from_base_worktree_with_base_ref_has_no_whitespace_in_commi
         recorded = json.load(fh)
     assert recorded["_meta"]["base_commit"] == recorded["_meta"]["base_commit"].strip() == recorder.BASE_COMMIT
     assert recorded["_meta"]["source_commit"] == recorded["_meta"]["source_commit"].strip() == recorder.BASE_COMMIT
+
+
+def test_resolve_base_reports_unavailable_origin_main_truthfully(tmp_path):
+    import subprocess
+
+    recorder = _recorder_module()
+    repo = tmp_path / "repo-without-origin-main"
+    repo.mkdir()
+
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "ci@example.com"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "ci"], check=True)
+    (repo / "f.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "f.txt"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "seed"], check=True)
+    commit = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(recorder, "_PACKAGE_ROOT", str(repo))
+        original_git = recorder._git
+
+        def _git_in_scratch(
+            *args: str,
+            cwd: str | None = None,
+            text: bool = True,
+            strip: bool = True,
+        ):
+            return original_git(*args, cwd=cwd or str(repo), text=text, strip=strip)
+
+        mp.setattr(recorder, "_git", _git_in_scratch)
+        with pytest.raises(SystemExit) as exc:
+            recorder._resolve_base(commit)
+
+    message = str(exc.value)
+    assert "cannot evaluate trunk ancestry" in message
+    assert "is not an ancestor" not in message
 
 
 def test_restamp_provenance_changes_only_meta_note():
