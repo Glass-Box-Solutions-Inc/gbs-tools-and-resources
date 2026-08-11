@@ -101,7 +101,7 @@ import random
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
@@ -285,12 +285,13 @@ class PriorAward(BaseModel):
     still_exists_conclusively_presumed: bool = False
     """Section 4664(b)'s presumption, modelled rather than hardcoded.
 
-    Defaults ``False`` on the design record's conservative ruling (§2-Q7): a
-    compromise and release does not straightforwardly carry the same presumption
-    weight as a rated award, so the presumption is opted into per seed rather than
-    assumed. That default is flagged for a counsel check before M5 finalises the
-    maths, and defaulting the *permissive* way now would bake an unreviewed reading of
-    section 4664's reach into every case generated in between.
+    Carries the **resolved** value. The seed field is ``bool | None``; when the
+    author says nothing, :data:`PRESUMPTION_DEFAULT_BY_RESOLUTION` supplies the
+    default from how the award issued — counsel resolved §2-Q7 on 2026-08-10:
+    a stipulated award presumes, a findings-and-award presumes (counsel-assumed,
+    M5 micro-confirm), a compromise and release never does. An explicit seed
+    value always wins. M2's assertion layer consumes this; M5 owns the offset
+    arithmetic.
     """
 
 
@@ -1183,19 +1184,41 @@ def _condition_from_entry(entry: Any, index: int, injured: frozenset[str]) -> Me
     )
 
 
+#: Section 4664(b)'s presumption default, keyed by the *resolved* award
+#: resolution. Counsel resolved §2-Q7 on 2026-08-10: "No - only a stip" — a
+#: compromise and release never presumes; a stipulated award does; a prior
+#: findings-and-award also presumes (counsel-assumed, micro-confirm at M5 spec).
+#: This supplies only the DEFAULT: an explicit seed ``conclusively_presumed``
+#: always wins, including when it differs from its own resolution's default,
+#: because an authored override is an authored fact rather than incoherence.
+PRESUMPTION_DEFAULT_BY_RESOLUTION: Final[dict[str, bool]] = {
+    "c_and_r": False,
+    "findings_and_award": True,
+    "stipulated_award": True,
+}
+
+
 def _claim_from_entry(entry: Any, index: int) -> PriorClaim:
     award = None
     if entry.award is not None:
+        # ``None`` on the seed means "the claim's own", which the seed schema has
+        # already checked is a resolution capable of producing an award. The
+        # ledger carries the resolved value so no consumer has to know that.
+        resolved_award_resolution_type = (
+            entry.award.resolution_type or entry.resolution_type
+        )
+        effective_conclusively_presumed = (
+            entry.award.conclusively_presumed
+            if entry.award.conclusively_presumed is not None
+            else PRESUMPTION_DEFAULT_BY_RESOLUTION[resolved_award_resolution_type]
+        )
         award = PriorAward(
             id=f"prior-{index:02d}-award",
             body_parts=tuple(entry.award.body_parts),
             pd_percent=entry.award.pd_percent,
             award_date=entry.award.award_date,
-            # ``None`` on the seed means "the claim's own", which the seed schema has
-            # already checked is a resolution capable of producing an award. The
-            # ledger carries the resolved value so no consumer has to know that.
-            resolution_type=entry.award.resolution_type or entry.resolution_type,
-            still_exists_conclusively_presumed=entry.award.conclusively_presumed,
+            resolution_type=resolved_award_resolution_type,
+            still_exists_conclusively_presumed=effective_conclusively_presumed,
         )
     return PriorClaim(
         id=f"prior-{index:02d}",
@@ -1444,6 +1467,7 @@ __all__ = [
     "HEALTH_ARCHETYPES",
     "HOOK_GROUNDING",
     "ONSET_YEARS_BEFORE_INJURY",
+    "PRESUMPTION_DEFAULT_BY_RESOLUTION",
     "SEVERITY_WEIGHTS",
     "SIBTF_DISABLING_SEVERITIES",
     "SIBTF_QUALIFYING",

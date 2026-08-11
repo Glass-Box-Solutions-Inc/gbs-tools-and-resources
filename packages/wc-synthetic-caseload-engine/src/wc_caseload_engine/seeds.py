@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 import structlog
 import yaml
@@ -1758,13 +1758,18 @@ class PriorAwardEntry(_Model):
     then checks the two agree.
     """
 
-    conclusively_presumed: bool = False
+    conclusively_presumed: bool | None = None
     """Whether section 4664(b)'s presumption is taken to apply.
 
-    Defaults ``False`` on the design record's conservative ruling: a compromise and
-    release does not straightforwardly carry the same weight as a rated award, so the
-    presumption is opted into rather than assumed. Not yet honoured — M5 owns the
-    arithmetic this flag will govern.
+    ``None`` — the default — means *derive it from how the award issued*:
+    counsel's resolution-keyed rule in
+    :data:`~wc_caseload_engine.medical_history.PRESUMPTION_DEFAULT_BY_RESOLUTION`
+    (a stipulated award and findings-and-award presume; a compromise and release
+    never does — "No - only a stip", counsel 2026-08-10). An explicit ``true``
+    or ``false`` always wins, including against the default for its own
+    resolution, because an authored override is an authored fact rather than
+    internal incoherence. M2 consumes the resolved value: the assertion layer's
+    §4664 eligibility, validator and truth projection all read it.
     """
 
 
@@ -1915,6 +1920,195 @@ class MedicalHistoryScenario(_Model):
         return self
 
 
+# ---------------------------------------------------------------------------
+# The assertion layer (AJC-61, M2) — typed doctrine groundings + seed mirrors
+# ---------------------------------------------------------------------------
+
+
+class BensonGrounding(_Model):
+    """Typed grounding for a ``benson`` hook: the earlier injuries it separates."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    hook: Literal["benson"] = "benson"
+    prior_claim_ids: tuple[str, ...] = Field(min_length=1)
+
+
+class SibtfGrounding(_Model):
+    """Typed grounding for a ``sibtf`` hook: the §4751 disability it stands on.
+
+    Deliberately permissive at the model layer — the assertion validator owns
+    the "must reference at least one" rule and its exact message, so an empty
+    grounding parses and then fails validation with actionable text.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    hook: Literal["sibtf"] = "sibtf"
+    preexisting_condition_ids: tuple[str, ...] = ()
+    prior_award_ids: tuple[str, ...] = ()
+
+
+class Lc4664PriorAwardGrounding(_Model):
+    """Typed grounding for an ``lc4664_prior_award`` hook: *the* award."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    hook: Literal["lc4664_prior_award"] = "lc4664_prior_award"
+    prior_award_id: str
+
+
+class FirefighterPresumptionGrounding(_Model):
+    """Typed grounding for a ``firefighter_presumption`` hook: the condition."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    hook: Literal["firefighter_presumption"] = "firefighter_presumption"
+    condition_id: str
+
+
+type DoctrineGrounding = Annotated[
+    BensonGrounding
+    | SibtfGrounding
+    | Lc4664PriorAwardGrounding
+    | FirefighterPresumptionGrounding,
+    Field(discriminator="hook"),
+]
+"""The four missing-entity hooks, upgraded from prose approximation to typed
+interpolation (M0 decision #3) now that ``PriorClaim``/``PriorAward`` exist.
+Absent grounding on an explicit hook WARNS rather than blocks (decision #2)."""
+
+
+class ContentionEntry(_Model):
+    """One explicitly authored contention — every semantic field, **no quality**.
+
+    The seed schema is analyzer-visible (``seed.yaml`` is copied into the case
+    tree), so no seed model anywhere may carry a quality field; the grade is
+    derived and lives only in the truth manifest's assertions channel.
+    """
+
+    id: str = Field(pattern=r"^ctn-(0[1-9]|[1-9][0-9])$")
+    claim_type: Literal[
+        "industrial_causation",
+        "aggravation",
+        "apportionment_defense",
+        "compensable_consequence",
+        "psych_add_on",
+        "denial_of_injury",
+    ]
+    party: Literal["applicant", "defense"]
+    position: Literal["affirm", "deny"] = "affirm"
+    target_condition_id: str | None = None
+    target_prior_claim_id: str | None = None
+    target_prior_award_id: str | None = None
+    target_body_part: str | None = None
+    doctrine_hooks: list[DoctrineHook] = Field(default_factory=list)
+    rationale: str | None = None
+    treatment_causation: Literal["sole_cause", "contributing_cause"] | None = None
+    requested_apportionment: Literal["apply", "refuse"] | None = None
+    groundings: list[DoctrineGrounding] = Field(default_factory=list)
+
+
+class MedicalOpinionEntry(_Model):
+    """One explicitly authored medical opinion — semantic fields, no quality."""
+
+    id: str = Field(pattern=r"^opn-(0[1-9]|[1-9][0-9])$")
+    author_role: Literal["ptp", "qme", "ame"]
+    report_stage: Literal["interim", "final"]
+    report_date: date
+    apportionment_state: Literal["deferred", "determined", "omitted"]
+    determination_kind: (
+        Literal["allocated", "no_nonindustrial_share", "unable_to_approximate"] | None
+    ) = None
+    determination_rationale: str | None = None
+    examination_performed: bool = False
+    reviewed_condition_ids: list[str] = Field(default_factory=list, max_length=8)
+    reviewed_prior_claim_ids: list[str] = Field(default_factory=list, max_length=5)
+    reviewed_prior_award_ids: list[str] = Field(default_factory=list, max_length=5)
+    endorses_contention_ids: list[str] = Field(default_factory=list)
+    rejects_contention_ids: list[str] = Field(default_factory=list)
+    responds_to_opinion_id: str | None = None
+    supersedes_opinion_id: str | None = None
+    rationale: str | None = None
+    revision_rationale: str | None = None
+
+    @model_validator(mode="after")
+    def _combined_review_cap(self) -> MedicalOpinionEntry:
+        combined = (
+            len(self.reviewed_condition_ids)
+            + len(self.reviewed_prior_claim_ids)
+            + len(self.reviewed_prior_award_ids)
+        )
+        if combined > 12:
+            raise ValueError(
+                f"scenario.medical_assertions.medical_opinions[] entry '{self.id}' "
+                f"reviews {combined} records combined; the combined cap is 12"
+            )
+        return self
+
+
+class ApportionmentAssertionEntry(_Model):
+    """One explicitly authored apportionment assertion — no quality field."""
+
+    id: str = Field(pattern=r"^app-(0[1-9]|[1-9][0-9])$")
+    opinion_id: str
+    body_part: str
+    industrial_percent: int = Field(ge=0, le=100)
+    nonindustrial_percent: int = Field(ge=0, le=100)
+    basis_kinds: list[
+        Literal[
+            "preexisting_degenerative_pathology",
+            "asymptomatic_prior_condition",
+            "nonindustrial_medical_condition",
+            "prior_symptomatic_disability",
+            "genetics_heredity_pathology",
+            "lc4664_prior_award",
+            "benson_successive_injury",
+            "industrial_treatment",
+            "vocational_apportionment",
+            "psych_impairment_add_on",
+            "lc3208_3_threshold_misuse",
+            "bare_age",
+            "bare_gender",
+            "risk_factor_only",
+        ]
+    ] = Field(default_factory=list)
+    condition_ids: list[str] = Field(default_factory=list)
+    prior_claim_ids: list[str] = Field(default_factory=list)
+    prior_award_ids: list[str] = Field(default_factory=list)
+    description: str | None = None
+    disability_causation_stated: bool = False
+    reasonable_medical_probability: bool = False
+    causal_rationale: str | None = None
+    percentage_rationale: str | None = None
+    prior_award_analysis: str | None = None
+    revised_from_percent: int | None = Field(default=None, ge=0, le=100)
+    revision_rationale: str | None = None
+    psych_exception_analysis: (
+        Literal["violent_act", "direct_exposure", "catastrophic_injury", "none_applies"]
+        | None
+    ) = None
+    linked_contention_id: str | None = None
+    groundings: list[DoctrineGrounding] = Field(default_factory=list)
+
+
+class MedicalAssertionsScenario(_Model):
+    """The assertion-layer gate: what the parties say about the world truth.
+
+    Requires ``scenario.medical_history`` — an assertion has to have a world
+    ledger to be graded against. Explicit entries are authoritative and are
+    never altered or "repaired" by sampling; ``sample_assertions`` appends
+    drawn assertions on top of them.
+    """
+
+    contentions: list[ContentionEntry] = Field(default_factory=list, max_length=12)
+    medical_opinions: list[MedicalOpinionEntry] = Field(default_factory=list, max_length=8)
+    apportionment_assertions: list[ApportionmentAssertionEntry] = Field(
+        default_factory=list, max_length=12
+    )
+    sample_assertions: bool = True
+
+
 class ScenarioSpec(_Model):
     """Seed-surfaced case facts.
 
@@ -1962,6 +2156,18 @@ class ScenarioSpec(_Model):
 
     So this follows ``wages``: an absent block moves zero bytes, and that is the
     instrument the whole milestone's back-compat claim is measured with.
+    """
+
+    medical_assertions: MedicalAssertionsScenario | None = None
+    """The assertion-layer gate (AJC-61, M2). ``None`` — the default — means no
+    assertion layer: no contentions, no medical opinions, no apportionment
+    assertions, no truth-manifest assertions channel.
+
+    Requires ``scenario.medical_history``: an assertion is graded *against* the
+    world-truth ledger, so it cannot exist without one. Same ``None``-gate
+    discipline as ``wages`` and ``medical_history`` — an absent block moves
+    zero bytes, and the sampler constructs no assertion rng behind an absent
+    gate.
     """
 
     surgery: Literal["none", "performed", "recommended", "denied_by_ur"] | None = None
