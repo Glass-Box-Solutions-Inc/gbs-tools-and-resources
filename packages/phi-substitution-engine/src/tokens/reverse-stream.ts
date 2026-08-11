@@ -6,11 +6,15 @@ import type {
   TokenGrammarPolicy,
 } from "./ports";
 import { ReversalFailedError } from "./errors";
-import { reverseText, type ReversalKeys } from "./reversal";
+import { reverseText, type ReversalKeys, InProcessReversalHandle } from "./reversal";
+import { SENTINEL_OPEN, SENTINEL_CLOSE } from "./escaper";
 
 const OPEN = "[[";
 const CLOSE = "]]";
 const OPEN_BRACKET = 0x5b; // "["
+
+/** Identity restore used when the handle carries no escaped source literals. */
+const IDENTITY_RESTORE = (text: string): string => text;
 
 function isHighSurrogate(unit: number): boolean {
   return unit >= 0xd800 && unit <= 0xdbff;
@@ -37,25 +41,45 @@ function settledBoundary(buffer: string, policy: TokenGrammarPolicy): number {
   const holdback = Math.max(0, policy.maximumTokenUtf16Length - 1);
   // 1. M-1 UTF-16 holdback at the tail.
   let cut = Math.max(0, length - holdback);
-  // 2. Withhold from the first still-open `[[`.
-  let i = 0;
-  while (i < length) {
-    const open = buffer.indexOf(OPEN, i);
-    if (open < 0) {
-      break;
-    }
-    const close = buffer.indexOf(CLOSE, open + OPEN.length);
-    if (close < 0) {
-      cut = Math.min(cut, open); // open token pending; withhold from here.
-      return avoidSurrogateSplit(buffer, cut);
-    }
-    i = close + CLOSE.length;
-  }
-  // A trailing single "[" could still grow into "[[".
+  // 2. Never split a token: withhold from a still-open `[[`, and never let the M-1 cut
+  //    fall INSIDE a complete `[[...]]` token (that would emit a malformed prefix and
+  //    abort a perfectly valid stream). Pull the cut back to the token's start instead.
+  cut = withholdFromSpans(buffer, cut, OPEN, CLOSE);
+  // 3. Escaped source literals are self-delimiting sentinels; the same rule applies so a
+  //    sentinel is never split across an emit boundary and its restore stays reliable.
+  cut = withholdFromSpans(buffer, cut, SENTINEL_OPEN, SENTINEL_CLOSE);
+  // 4. A trailing single "[" could still grow into "[[".
   if (length > 0 && buffer.charCodeAt(length - 1) === OPEN_BRACKET) {
     cut = Math.min(cut, length - 1);
   }
   return avoidSurrogateSplit(buffer, cut);
+}
+
+/**
+ * Pulls `cut` back so it never lands strictly inside a delimited span (`open`...`close`).
+ * An unclosed span withholds everything from its opener; a complete span is never split.
+ */
+function withholdFromSpans(buffer: string, cut: number, open: string, close: string): number {
+  const length = buffer.length;
+  let i = 0;
+  while (i < length) {
+    const start = buffer.indexOf(open, i);
+    if (start < 0) {
+      break;
+    }
+    const closeAt = buffer.indexOf(close, start + open.length);
+    if (closeAt < 0) {
+      // Unclosed span pending: withhold from its opener until the closer arrives.
+      return Math.min(cut, start);
+    }
+    const end = closeAt + close.length;
+    if (cut > start && cut < end) {
+      // The cut fell inside a COMPLETE span; retain the whole span for a later flush.
+      cut = Math.min(cut, start);
+    }
+    i = end;
+  }
+  return cut;
 }
 
 function avoidSurrogateSplit(buffer: string, cut: number): number {
@@ -98,6 +122,9 @@ class HoldbackReverseStream implements ReverseStream {
     private readonly grammar: TokenGrammar,
     private readonly policy: TokenGrammarPolicy,
     private readonly sink: (safe: DisplayText) => void | Promise<void>,
+    // L6: restores escaped source literals onto the reversed output so a streamed echo of
+    // an escaped `[[Role]]` literal round-trips to itself, never leaking the escape sentinel.
+    private readonly restore: (text: string) => string = IDENTITY_RESTORE,
   ) {}
 
   async push(chunk: TokenizedText): Promise<void> {
@@ -135,8 +162,9 @@ class HoldbackReverseStream implements ReverseStream {
       throw error instanceof Error ? error : new ReversalFailedError(this.keys.operationId);
     }
     this.buffer = "";
-    if (reversed.length > 0) {
-      await this.sink(reversed as DisplayText);
+    const restored = this.restore(reversed);
+    if (restored.length > 0) {
+      await this.sink(restored as DisplayText);
     }
   }
 
@@ -158,8 +186,9 @@ class HoldbackReverseStream implements ReverseStream {
       throw error instanceof Error ? error : new ReversalFailedError(this.keys.operationId);
     }
     this.buffer = this.buffer.slice(cut);
-    if (reversed.length > 0) {
-      await this.sink(reversed as DisplayText);
+    const restored = this.restore(reversed);
+    if (restored.length > 0) {
+      await this.sink(restored as DisplayText);
     }
   }
 
@@ -186,6 +215,12 @@ export class HoldbackReverseStreamFactory implements ReverseStreamFactory {
       dictionaryVersion: input.handle.dictionaryVersion,
       operationId: input.handle.operationId,
     };
-    return new HoldbackReverseStream(keys, input.store, input.grammar, input.policy, input.sink);
+    // L6: pull the escaped-literal restore off the handle (bounded capability, never raw
+    // literal data) so streamed output restores source literals just like non-stream reversal.
+    const restore =
+      input.handle instanceof InProcessReversalHandle
+        ? (text: string): string => (input.handle as InProcessReversalHandle).restoreEscapedLiterals(text)
+        : IDENTITY_RESTORE;
+    return new HoldbackReverseStream(keys, input.store, input.grammar, input.policy, input.sink, restore);
   }
 }

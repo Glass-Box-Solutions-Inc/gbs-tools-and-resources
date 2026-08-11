@@ -11,6 +11,7 @@ import type {
 import type { ReversalHandle, ReversalStore } from "../core/contracts";
 import type { EscapedTokenLiteral, TokenGrammar, TokenGrammarPolicy, TokenReverser } from "./ports";
 import { ReversalFailedError, ReversalHandleNotSerializableError } from "./errors";
+import { restoreSentinelLiterals } from "./escaper";
 
 const SEP = String.fromCharCode(0);
 
@@ -36,10 +37,12 @@ export class InProcessReversalHandle implements ReversalHandle {
   readonly operationId: OperationId;
   readonly attemptId: OperationAttemptId;
   /**
-   * L6: reserved token-shaped source literals escaped before matching, carried in-process
-   * (references only) so the wrapper can restore them onto the reversed output. Never a map.
+   * §7 / NEW-2: reserved token-shaped source literals escaped before matching are held
+   * as a PRIVATE in-process capability. They are never exposed via a public property or
+   * object spread; the only way to use them is the bounded `restoreEscapedLiterals`
+   * method, which applies them to reversed text and never hands the raw literals back.
    */
-  readonly literals: readonly EscapedTokenLiteral[];
+  readonly #literals: readonly EscapedTokenLiteral[];
 
   constructor(keys: {
     tenantId: TenantId;
@@ -54,7 +57,16 @@ export class InProcessReversalHandle implements ReversalHandle {
     this.dictionaryVersion = keys.dictionaryVersion;
     this.operationId = keys.operationId;
     this.attemptId = keys.attemptId;
-    this.literals = keys.literals ?? [];
+    this.#literals = keys.literals ?? [];
+  }
+
+  /**
+   * Bounded capability (§7): restores escaped source literals onto already-reversed
+   * text. It applies the private literals in place and never returns them, so no raw
+   * token-shaped source data can be read off the handle.
+   */
+  restoreEscapedLiterals(reversed: string): string {
+    return restoreSentinelLiterals(reversed, this.#literals);
   }
 
   toJSON(): never {

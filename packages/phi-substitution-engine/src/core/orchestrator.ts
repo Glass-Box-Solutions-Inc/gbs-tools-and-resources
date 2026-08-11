@@ -1,32 +1,34 @@
 /**
  * Composed substitution orchestrator (CONTRACT-phase1 §4.1 steps 2/5/6/8/11,
- * invariants N4/N5/L1/L2/L3/L6/L8).
+ * invariants N4/N5/L1/L2/L3/L6/L8/L10).
  *
  * This is the `PhiSubstitutionEngine` the protected wrapper drives. It COMPOSES
  * the already-frozen leaves and never re-invents them:
- *   - `../dictionary` : the READY-version coordinator (L2/N4 readiness gate) and
- *                       the tagged-truth reader (schema-tagged case truth);
- *   - `../collision`  : `runCollision` — NFKC normalization, C1–C8 resolution,
- *                       deterministic structured-identifier detection, and the
- *                       original-offset splice that produces the tokenized text;
+ *   - `../dictionary` : the READY-version coordinator (L2/N4 readiness gate), the
+ *                       tagged-truth reader, the matter-dictionary COMPILER
+ *                       (variant expansion + subject-scoped tokens + Aho–Corasick,
+ *                       L1/L3/L10), and `tokenize` (C1–C8 match-time resolution);
+ *   - `../collision`  : deterministic structured-identifier detection + canonical
+ *                       normalization;
  *   - `../tokens`     : the source-token escaper (L6), the SUBJECT-scoped token
  *                       assignment store (L1), the tenant-scoped reversal store
  *                       (L8/N5), the atomic reverser, and the M-1 holdback
- *                       reverse stream (L4);
- *   - `../variants`   : reached transitively through the tagged truth expanded
- *                       into `runCollision` known values (allow-listed only, L10).
+ *                       reverse stream (L4).
  *
- * Token identity (L1): the class-level tokens `runCollision` splices in are
- * re-tokenized into SUBJECT-scoped tokens (`tenant+matter+subject+role → [[Role_N]]`)
- * via the assignment store, so two distinct subjects of one class receive distinct
- * tokens and each reverses to its OWN canonical value. Detector-only spans (no
- * trusted subject) are allocated OPERATION-scoped tokens so one operation's
- * `[[SSN]]` cannot surface in another.
+ * Matching + substitution (NEW-1): the orchestrator matches and substitutes using
+ * the compiler's COMPILED, variant-expanded, Aho–Corasick output — so an approved
+ * surface form such as `Smith, Alice` for canonical `Alice Smith` is substituted,
+ * never egressed raw. Class-blind `runCollision` is no longer on the egress path.
+ *
+ * Token identity (L1, #6): the compiler assigns a stable SUBJECT-scoped token for
+ * every tagged subject of EVERY class (person AND structured id) via the shared
+ * token assignment store. Detector-only structured spans (no trusted subject) are
+ * allocated tokens through the SAME store under an OPERATION-scoped SYNTHETIC
+ * subject in a reserved namespace that can never collide with a real subject id,
+ * so a real subject and a synthetic detector span never share a reversal key.
  *
  * The phase-1 detector belt (`../detectors`) is DISABLED and is never called for
- * a customer claim. A policy that nonetheless REQUIRES the belt fails closed (N4),
- * because branding untagged text as safe and egressing it is exactly the leak the
- * requirement is meant to prevent.
+ * a customer claim. A policy that nonetheless REQUIRES the belt fails closed (N4).
  */
 import type {
   DictionaryVersion,
@@ -39,7 +41,6 @@ import type {
 } from "./brands";
 import type {
   IdentifierClass,
-  MatterAiContext,
   PhiEngineFailureCode,
   PhiSubstitutionEngine,
   ReversalHandle,
@@ -49,9 +50,13 @@ import type {
   TokenizedTextSegment,
 } from "./contracts";
 import type { CaseTruthReader, DictionaryVersionCoordinator } from "../dictionary/contracts";
-import type { EscapedTokenLiteral } from "../tokens/ports";
+import type { EscapedTokenLiteral, TokenGrammarPolicy } from "../tokens/ports";
 import { isDictionaryError } from "../dictionary/errors";
-import { canonicalize, fold, runCollision, type KnownValue } from "../collision/index";
+import { canonicalize, detectStructuredIdentifiers } from "../collision/index";
+import { MatterDictionaryCompiler } from "../dictionary/compiler";
+import { tokenize, type DetectorSpanInput } from "../dictionary/tokenize";
+import { TokensLeafAssignmentPort } from "../dictionary/token-port";
+import type { AhoCorasickCompiledDictionary } from "../dictionary/compiled-dictionary";
 import {
   BracketTokenGrammar,
   HoldbackReverseStreamFactory,
@@ -63,7 +68,6 @@ import {
   SENTINEL_CLOSE,
   reverseText,
 } from "../tokens/index";
-import type { TokenGrammarPolicy } from "../tokens/ports";
 import { toTotalIdentifierCounts } from "../audit/index";
 import { PhiEngineError } from "./errors";
 
@@ -89,13 +93,37 @@ const ROLE_CLASS: Readonly<Record<string, IdentifierClass>> = {
   OTHER: "OTHER_TAGGED",
 };
 
+/** Identifier class → token role for a detector-only structured span. */
+const CLASS_ROLE: Readonly<Record<IdentifierClass, string>> = {
+  PERSON_NAME: "Claimant",
+  DOB: "DOB",
+  SSN: "SSN",
+  MRN: "MRN",
+  DEA: "DEA",
+  EMAIL: "EMAIL",
+  PHONE: "PHONE",
+  ADDRESS: "ADDRESS",
+  CLAIM_NUMBER: "CLAIM",
+  POLICY_NUMBER: "POLICY",
+  ACCOUNT_NUMBER: "ACCOUNT",
+  OTHER_TAGGED: "OTHER",
+};
+
+/**
+ * Reserved, NUL-fenced namespace for detector-only synthetic subjects (#6). Real
+ * subject ids come from tagged case truth and are never NUL-prefixed, so a synthetic
+ * subject can never share an assignment key with a real one — even a real id that
+ * happens to look like the old `det:op:ordinal` shape.
+ */
+const SYNTHETIC_DETECTOR_PREFIX = "\u0000detector\u0000";
+
 const role = (value: string): TokenRole => value as unknown as TokenRole;
 
 /**
  * Grammar policy for the boundary. Roles are the trusted allow-list for both the
- * class tokens the collision leaf produces (`[[MRN]]`, `[[ADDRESS]]`, ...) and
- * the person/role tokens (`[[Claimant]]`, ...). Reversal validates every
- * token-like sequence against this policy; an off-registry shape fails visibly.
+ * structured-id class tokens (`[[MRN]]`, `[[ADDRESS]]`, ...) and the person/role
+ * tokens (`[[Claimant]]`, ...). Reversal validates every token-like sequence
+ * against this policy; an off-registry shape fails visibly.
  */
 export const BOUNDARY_TOKEN_GRAMMAR_POLICY: TokenGrammarPolicy = {
   allowedRoles: new Set<TokenRole>(
@@ -125,13 +153,6 @@ export const BOUNDARY_TOKEN_GRAMMAR_POLICY: TokenGrammarPolicy = {
   maximumSequence: 9999,
 };
 
-/** Trusted subject/role info recovered by folded match text during re-tokenization. */
-interface SubjectInfo {
-  readonly subjectId: string;
-  readonly role: string;
-  readonly canonical: string;
-}
-
 export interface ComposedSubstitutionEngineDeps {
   /** Dictionary L2/N4 readiness gate. */
   readonly coordinator: DictionaryVersionCoordinator;
@@ -145,7 +166,11 @@ export interface ComposedSubstitutionEngineDeps {
   readonly grammar?: BracketTokenGrammar;
   readonly tokenPolicy?: TokenGrammarPolicy;
   readonly streamFactory?: HoldbackReverseStreamFactory;
-  /** Subject/operation-scoped token allocator (L1). Stable per tenant+matter+subject+role. */
+  /**
+   * Subject/operation-scoped token allocator (L1). Stable per tenant+matter+subject+role.
+   * A persistent (restart-safe) store keeps ordinals monotonic across operations so two
+   * operations' detector-only tokens never collide on the operation-blind reversal key.
+   */
   readonly assignmentStore?: InMemoryTokenAssignmentStore;
 }
 
@@ -160,6 +185,7 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
   readonly #streamFactory: HoldbackReverseStreamFactory;
   readonly #escaper: SentinelSourceTokenEscaper;
   readonly #assignmentStore: InMemoryTokenAssignmentStore;
+  readonly #compiler: MatterDictionaryCompiler;
 
   public constructor(deps: ComposedSubstitutionEngineDeps) {
     this.#coordinator = deps.coordinator;
@@ -173,6 +199,13 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     this.#escaper = new SentinelSourceTokenEscaper(this.#grammar);
     this.#assignmentStore =
       deps.assignmentStore ?? new InMemoryTokenAssignmentStore(this.#grammar, this.#policy);
+    // The compiler allocates subject tokens through the SAME shared assignment store, so
+    // dictionary and detector-only tokens share one monotonic ordinal space (L1/#6) and
+    // handle EVERY identifier class (not just the five person roles).
+    this.#compiler = new MatterDictionaryCompiler(
+      this.#truthReader,
+      () => new TokensLeafAssignmentPort(this.#assignmentStore),
+    );
   }
 
   public async substitute(request: SubstitutionRequest): Promise<SubstitutionResult> {
@@ -199,59 +232,122 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       throw new PhiEngineError("DETECTOR_UNAVAILABLE", context.operationId, {});
     }
 
-    const truth = await this.#loadTruth(context, dictionaryVersion, locale);
+    // §4.1 steps 2/6 / L3/L10: compile the matter dictionary — variant-expanded surface
+    // forms + subject-scoped tokens + the Aho–Corasick automaton. Subject tokens are
+    // stable across compiles because the shared assignment store owns their identity.
+    let compiled: AhoCorasickCompiledDictionary;
+    try {
+      compiled = (await this.#compiler.compile({
+        tenantId: context.tenantId,
+        matterId: context.matterId,
+        policy: request.policy,
+        dictionaryVersion,
+        engineVersion: this.#engineVersion,
+        schemaVersion: request.policy.schemaVersion,
+        sourceTruthRevision: this.#sourceTruthRevision,
+      })) as AhoCorasickCompiledDictionary;
+    } catch (error) {
+      if (isDictionaryError(error)) {
+        throw new PhiEngineError(mapDictionaryFailure(error.code), context.operationId, {});
+      }
+      throw error;
+    }
 
     const started = performance.now();
     const tokenizedSegments: TokenizedTextSegment[] = [];
     const counts: Partial<Record<IdentifierClass, number>> = {};
     const literals: EscapedTokenLiteral[] = [];
+    // Operation-scoped and monotonic across ALL segments of this call so two detector
+    // spans in one operation never share a synthetic subject.
+    let detectorOrdinal = 0;
 
     for (const segment of request.segments) {
-      // §4.1 step 5 / L6: escape reserved token-shaped source text BEFORE matching,
-      // so a caller cannot inject a `[[Role]]` shape and have it reversed to a value.
-      // Sentinel indices are re-based to GLOBAL positions so a single restore pass on
-      // the reversed output is unambiguous across segments.
+      // §4.1 step 5 / L6: escape reserved token-shaped source text BEFORE matching, so a
+      // caller cannot inject a `[[Role]]` shape and have it reversed to a value. Sentinel
+      // indices are re-based to GLOBAL positions so a single restore pass on the reversed
+      // output is unambiguous across segments.
       const escaped = this.#escaper.escape(segment.text, this.#policy);
       const base = literals.length;
       const sourceText = this.#rebaseSentinels(String(escaped.text), base);
       literals.push(...escaped.literals);
 
-      // §4.1 steps 6/8 / L3: match tagged truth + C1–C8 resolution + splice.
-      const collision = runCollision({ originalText: sourceText, locale, knownValues: truth.knownValues });
-      if (collision.errorCode !== null || collision.tokenizedText === null) {
-        // C6 ambiguity → fail closed; a known value is never guessed.
-        throw new PhiEngineError("AMBIGUOUS_KNOWN_IDENTIFIER", context.operationId, {
-          ambiguityCount: collision.ambiguityCount,
+      // §4.1 step 7 / L1 / #6: allocate an OPERATION-scoped token (through the shared store,
+      // under a reserved synthetic-subject namespace) for every deterministic structured-id
+      // span, so a detector-only span never coalesces with a real subject.
+      const detectorCanonicalByToken = new Map<string, string>();
+      const detectorSpans: DetectorSpanInput[] = [];
+      for (const span of detectStructuredIdentifiers(sourceText)) {
+        detectorOrdinal += 1;
+        const syntheticSubject = `${SYNTHETIC_DETECTOR_PREFIX}${String(context.operationId)}\u0000${detectorOrdinal}`;
+        const token = await this.#assignmentStore.getOrAllocate({
+          tenantId: context.tenantId,
+          matterId: context.matterId,
+          subjectId: syntheticSubject as unknown as SubjectId,
+          role: CLASS_ROLE[span.identifierClass] as unknown as TokenRole,
+          dictionaryVersion,
+        });
+        const start = span.startUtf16 as unknown as number;
+        const end = span.endUtf16 as unknown as number;
+        detectorCanonicalByToken.set(String(token), canonicalize(sourceText.slice(start, end)));
+        detectorSpans.push({
+          startUtf16: start,
+          endUtf16: end,
+          identifierClass: span.identifierClass,
+          confidence: span.confidence,
+          token: String(token),
         });
       }
 
-      // §4.1 step 8 / L1 / N5: re-tokenize the class tokens into subject/operation
-      // scoped tokens and record each token → its CURRENT canonical for reversal.
-      const rebuilt = await this.#assignScopedTokens(
-        context,
-        dictionaryVersion,
-        locale,
-        collision.tokenizedText,
-        collision.candidates,
-        truth.byFold,
-      );
+      // §4.1 steps 6/8 / L3/L12: the compiled matcher + C1–C8 resolver produce the
+      // tokenized text (dictionary identity overrides overlapping detector spans).
+      let tokenizedText: string;
+      try {
+        tokenizedText = tokenize(compiled, sourceText, locale, detectorSpans).tokenizedText;
+      } catch (error) {
+        if (isDictionaryError(error)) {
+          // C6 ambiguity → fail closed; a known value is never guessed.
+          throw new PhiEngineError("AMBIGUOUS_KNOWN_IDENTIFIER", context.operationId, {});
+        }
+        throw error;
+      }
 
-      // Tally per-class counts from the tokens that were actually substituted.
-      for (const [identifierClass, count] of this.#countTokens(rebuilt)) {
-        counts[identifierClass] = (counts[identifierClass] ?? 0) + count;
+      // §4.1 step 8 / N5: record each output token → its CURRENT canonical value, and tally
+      // per-class counts from the tokens actually present in the output.
+      for (const span of this.#grammar.scan(tokenizedText, this.#policy)) {
+        if (span.parsed.kind !== "valid") {
+          continue;
+        }
+        const token: SubstitutionToken = span.parsed.token;
+        const canonical =
+          compiled.canonicalForToken(String(token)) ?? detectorCanonicalByToken.get(String(token));
+        if (canonical === undefined) {
+          continue;
+        }
+        this.#reversalStore.record({
+          tenantId: context.tenantId,
+          matterId: context.matterId,
+          dictionaryVersion,
+          token,
+          canonical,
+        });
+        const identifierClass = ROLE_CLASS[span.parsed.role as unknown as string];
+        if (identifierClass !== undefined) {
+          counts[identifierClass] = (counts[identifierClass] ?? 0) + 1;
+        }
       }
 
       tokenizedSegments.push({
         path: segment.path,
         kind: segment.kind,
-        text: rebuilt as unknown as TokenizedText,
+        text: tokenizedText as unknown as TokenizedText,
       });
     }
 
     const total = performance.now() - started;
 
-    // §4.1 step 8: a non-serializable reversal capability, references only. It carries
-    // the escaped source literals so the wrapper can restore them onto reversed output.
+    // §4.1 step 8: a non-serializable reversal capability, references only. It carries the
+    // escaped source literals as a PRIVATE capability (§7/NEW-2) so the wrapper/stream can
+    // restore them onto reversed output without ever exposing the raw literals.
     const reversalHandle: ReversalHandle = new InProcessReversalHandle({
       tenantId: context.tenantId,
       matterId: context.matterId,
@@ -288,12 +384,13 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       this.#grammar,
       this.#policy,
     );
-    // L6: restore any escaped source token literals onto the reversed output so a
-    // source literal like `[[Claimant]]` round-trips to itself, never a sentinel.
-    const restored = this.#escaper.restoreLiterals(
-      reversed as unknown as TokenizedText,
-      handleLiterals(handle),
-    );
+    // L6/§7: restore any escaped source token literals onto the reversed output via the
+    // handle's BOUNDED capability (never via raw literal data) so a source literal like
+    // `[[Claimant]]` round-trips to itself, never a sentinel.
+    const restored =
+      handle instanceof InProcessReversalHandle
+        ? handle.restoreEscapedLiterals(String(reversed))
+        : String(reversed);
     return restored as unknown as DisplayText;
   }
 
@@ -301,7 +398,8 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     handle: ReversalHandle,
     sink: (safe: DisplayText) => void | Promise<void>,
   ): ReverseStream {
-    // §4.2 / L4: M-1 UTF-16 holdback; raw chunks never reach the display sink.
+    // §4.2 / L4: M-1 UTF-16 holdback; raw chunks never reach the display sink. The factory
+    // pulls the escaped-literal restore off the handle so streamed output round-trips too.
     return this.#streamFactory.create({
       handle,
       store: this.#reversalStore,
@@ -311,143 +409,17 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     });
   }
 
-  /** Reads schema-tagged case truth into collision known values + a folded subject lookup. */
-  async #loadTruth(
-    context: MatterAiContext,
-    dictionaryVersion: DictionaryVersion,
-    locale: string,
-  ): Promise<{ knownValues: readonly KnownValue[]; byFold: ReadonlyMap<string, SubjectInfo> }> {
-    const tagged = await this.#truthReader.readTaggedValues({
-      tenantId: context.tenantId,
-      matterId: context.matterId,
-      dictionaryVersion,
-      sourceTruthRevision: this.#sourceTruthRevision,
-    });
-    const knownValues: KnownValue[] = [];
-    const byFold = new Map<string, SubjectInfo>();
-    for (const value of tagged) {
-      const identifierClass = value.field.identifierClass;
-      const subjectId = value.subjectId as unknown as string;
-      const tokenRole = value.field.tokenRole as unknown as string;
-      const canonical = value.canonicalDisplayValue;
-      const info: SubjectInfo = { subjectId, role: tokenRole, canonical };
-      knownValues.push({
-        literal: value.canonicalDisplayValue,
-        identifierClass,
-        subjectId,
-        canonicalDisplayValue: canonical,
-      });
-      byFold.set(fold(value.canonicalDisplayValue, locale), info);
-      for (const alias of value.approvedAliases) {
-        knownValues.push({
-          literal: alias,
-          identifierClass,
-          subjectId,
-          canonicalDisplayValue: canonical,
-        });
-        byFold.set(fold(alias, locale), info);
-      }
-    }
-    return { knownValues, byFold };
-  }
-
-  /**
-   * Re-tokenizes the class-level tokens `runCollision` spliced in (one per resolved
-   * span, in ascending original offset order matching `candidates`) into distinct
-   * subject-scoped (or operation-scoped) tokens, recording each token → canonical.
-   */
-  async #assignScopedTokens(
-    context: MatterAiContext,
-    dictionaryVersion: DictionaryVersion,
-    locale: string,
-    tokenizedText: string,
-    candidates: readonly string[],
-    byFold: ReadonlyMap<string, SubjectInfo>,
-  ): Promise<string> {
-    const spans = this.#grammar.scan(tokenizedText, this.#policy);
-    let out = "";
-    let cursor = 0;
-    let candidateIndex = 0;
-    let detectorOrdinal = 0;
-    for (const span of spans) {
-      if (span.parsed.kind !== "valid") {
-        continue;
-      }
-      const matchText = candidates[candidateIndex] ?? "";
-      candidateIndex += 1;
-      const known = byFold.get(fold(matchText, locale));
-
-      let token: SubstitutionToken;
-      let canonical: string;
-      if (known !== undefined) {
-        // L1: stable token by tenant+matter+subject+role, distinct per subject.
-        token = await this.#assignmentStore.getOrAllocate({
-          tenantId: context.tenantId,
-          matterId: context.matterId,
-          subjectId: known.subjectId as unknown as SubjectId,
-          role: known.role as unknown as TokenRole,
-          dictionaryVersion,
-        });
-        canonical = known.canonical;
-      } else {
-        // Detector-only span: allocate an OPERATION-scoped token so one operation's
-        // detector token cannot surface as another operation's.
-        detectorOrdinal += 1;
-        const syntheticSubject = `det:${String(context.operationId)}:${detectorOrdinal}`;
-        token = await this.#assignmentStore.getOrAllocate({
-          tenantId: context.tenantId,
-          matterId: context.matterId,
-          subjectId: syntheticSubject as unknown as SubjectId,
-          role: (span.parsed.role as unknown as string) as unknown as TokenRole,
-          dictionaryVersion,
-        });
-        canonical = canonicalize(matchText);
-      }
-
-      this.#reversalStore.record({
-        tenantId: context.tenantId,
-        matterId: context.matterId,
-        dictionaryVersion,
-        token,
-        canonical,
-      });
-
-      out += tokenizedText.slice(cursor, span.startUtf16) + String(token);
-      cursor = span.endUtf16;
-    }
-    out += tokenizedText.slice(cursor);
-    return out;
-  }
-
   /** Rebases escaped-literal sentinel indices by `base` so global indices are unique. */
   #rebaseSentinels(text: string, base: number): string {
     if (base === 0) {
       return text;
     }
     const pattern = new RegExp(`${SENTINEL_OPEN}(\\d+)${SENTINEL_CLOSE}`, "g");
-    return text.replace(pattern, (_match, digits: string) => `${SENTINEL_OPEN}${base + Number(digits)}${SENTINEL_CLOSE}`);
+    return text.replace(
+      pattern,
+      (_match, digits: string) => `${SENTINEL_OPEN}${base + Number(digits)}${SENTINEL_CLOSE}`,
+    );
   }
-
-  /** Tallies substituted identifier classes from the token shapes in the output. */
-  #countTokens(tokenizedText: string): ReadonlyArray<readonly [IdentifierClass, number]> {
-    const tally = new Map<IdentifierClass, number>();
-    for (const span of this.#grammar.scan(tokenizedText, this.#policy)) {
-      if (span.parsed.kind !== "valid") continue;
-      const roleName = span.parsed.role as unknown as string;
-      const identifierClass = ROLE_CLASS[roleName];
-      if (identifierClass === undefined) continue;
-      tally.set(identifierClass, (tally.get(identifierClass) ?? 0) + 1);
-    }
-    return [...tally.entries()];
-  }
-}
-
-/** Reads escaped literals off a concrete in-process handle; empty for any other handle. */
-function handleLiterals(handle: ReversalHandle): readonly EscapedTokenLiteral[] {
-  if (handle instanceof InProcessReversalHandle) {
-    return handle.literals;
-  }
-  return [];
 }
 
 function mapDictionaryFailure(code: string): PhiEngineFailureCode {

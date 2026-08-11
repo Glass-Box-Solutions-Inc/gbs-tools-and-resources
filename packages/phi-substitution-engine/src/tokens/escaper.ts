@@ -53,13 +53,22 @@ export class SentinelSourceTokenEscaper implements SourceTokenEscaper {
     text: TokenizedText,
     literals: readonly EscapedTokenLiteral[],
   ): TokenizedText {
-    // Sentinels are replaced by index, which survives any length change the
-    // reversal step made to surrounding text. A missing/out-of-range index
-    // collapses to empty rather than leaking a stray sentinel.
-    const restored = String(text).replace(SENTINEL_PATTERN, (_match, digits: string) => {
-      const literal = literals[Number(digits)];
-      return literal ? literal.originalLiteral : "";
-    });
-    return restored as TokenizedText;
+    return restoreSentinelLiterals(String(text), literals) as TokenizedText;
   }
+}
+
+/**
+ * Restores escaped source-token literals by index on an arbitrary string (used by
+ * the escaper class, the in-process reversal handle, and the reverse stream). The
+ * index survives any length change the reversal step made to surrounding text; a
+ * missing/out-of-range index collapses to empty rather than leaking a stray sentinel.
+ */
+export function restoreSentinelLiterals(
+  text: string,
+  literals: readonly EscapedTokenLiteral[],
+): string {
+  return text.replace(SENTINEL_PATTERN, (_match, digits: string) => {
+    const literal = literals[Number(digits)];
+    return literal ? literal.originalLiteral : "";
+  });
 }

@@ -19,6 +19,7 @@ import {
   InMemoryReversalStore,
   InProcessReversalHandle,
   reverseText,
+  SENTINEL_OPEN,
 } from "../src/tokens/index";
 import {
   Aes256GcmAuditSpool,
@@ -29,6 +30,7 @@ import {
   InMemoryCaseTruthReader,
   InMemoryDictionaryVersionCoordinator,
 } from "../src/dictionary/index";
+import { PhiEngineError } from "../src/core/errors";
 
 // ---------------------------------------------------------------------------
 // Shared brand casters (runtime identity) + fixtures
@@ -746,5 +748,514 @@ describe("GLY-330 finding 11 (N3/N4): spool is volume-durable and drain is crash
     expect(flaky.finalizedEvents.map((e) => String(e.attemptId))).toContain("r2");
     // The delivered entry is discarded only after a successful finalize.
     expect(spool.recordIds()).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// ROUND 2 — gate's EXACT reproduced scenarios (red-before / green-after)
+// ===========================================================================
+
+/** A tagged case-truth value with an explicit expander (variants use "person-name"). */
+function taggedWith(
+  subjectId: string,
+  identifierClass: string,
+  value: string,
+  tokenRole: string,
+  expander: string,
+  approvedAliases: string[] = [],
+): any {
+  return {
+    field: {
+      schemaPath: `case.${subjectId}`,
+      substitution: true,
+      identifierClass,
+      tokenRole: b<any>(tokenRole),
+      expander,
+    },
+    subjectId: b<any>(subjectId),
+    canonicalDisplayValue: value,
+    approvedAliases,
+  };
+}
+
+/** Manual wrapper builder allowing custom policy/router/trace/primary injection. */
+function buildManualWrapper(
+  gate: Gate,
+  over: {
+    truth?: any[];
+    policyFn?: () => Promise<any>;
+    router?: any;
+    trace?: any;
+    sharedPrimary?: RecordingPrimaryStore;
+    engineWrap?: (e: any) => any;
+  } = {},
+): { wrapper: ComposedProtectedAiProvider<any, string>; provider: FakeRawProvider; primary: RecordingPrimaryStore; trace: any } {
+  const { engine } = makeEngine(over.truth ?? DEFAULT_TRUTH);
+  const provider = new FakeRawProvider(gate);
+  const trace = over.trace ?? new FakeSafeTrace();
+  const primary = over.sharedPrimary ?? new RecordingPrimaryStore(gate);
+  const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
+  const emitter = new DurablePhiAuditEmitter(primary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
+  const router =
+    over.router ??
+    new OriginalContentBaaRouter({
+      extractOriginalText,
+      rawProvider: provider,
+      baaProviderId: "azure-openai-baa",
+      nonBaaProviderId: "openai",
+      claudeBaaEnabled: true,
+      matterIsPhiTagged: true,
+    } as any);
+  const deps: any = {
+    engine: over.engineWrap ? over.engineWrap(engine) : engine,
+    context: { require: (): Promise<any> => Promise.resolve(ctx()) },
+    policy: { require: over.policyFn ?? ((): Promise<any> => Promise.resolve(policy())) },
+    options: new StructuralOptionsProjector(),
+    router,
+    safeTrace: trace,
+    audit: emitter,
+    invokeRaw: provider,
+    engineVersion: ENGINE,
+    clock: CLOCK,
+    embeddingOptionsFactory: (text: string): any => ({ embeddingText: text }),
+  };
+  const wrapper = new ComposedProtectedAiProvider(deps);
+  return { wrapper, provider, primary, trace };
+}
+
+function spoolPrepared(attemptId: string): any {
+  return {
+    state: "PREPARED",
+    attemptId: b<any>(attemptId),
+    operationId: b<any>("op-1"),
+    tenantId: TENANT,
+    matterId: MATTER,
+    actorId: b<any>("actor-1"),
+    operation: "generation",
+    dictionaryVersion: VERSION,
+    engineVersion: ENGINE,
+    counts: {
+      PERSON_NAME: 0, DOB: 0, SSN: 0, MRN: 0, DEA: 0, EMAIL: 0, PHONE: 0,
+      ADDRESS: 0, CLAIM_NUMBER: 0, POLICY_NUMBER: 0, ACCOUNT_NUMBER: 0, OTHER_TAGGED: 0,
+    },
+    ambiguityCount: 0,
+    detectorName: null,
+    detectorVersion: null,
+    latencyMs: { dictionary: 1, detector: 0, total: 2 },
+    preparedAt: CLOCK(),
+  };
+}
+
+function spoolTerminal(record: any): any {
+  return {
+    eventType: "AI_SUBSTITUTION_ATTEMPT",
+    attemptId: record.attemptId,
+    operationId: record.operationId,
+    tenantId: record.tenantId,
+    matterId: record.matterId,
+    actorId: record.actorId,
+    operation: record.operation,
+    dictionaryVersion: String(VERSION_BIGINT),
+    engineVersion: record.engineVersion,
+    counts: record.counts,
+    ambiguityCount: 0,
+    detectorName: null,
+    detectorVersion: null,
+    latencyMs: record.latencyMs,
+    outcome: "completed",
+    failureCode: null,
+    occurredAt: CLOCK(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ROOT / NEW-1 — orchestrator composes the compiler's variant-expanded matcher
+// ---------------------------------------------------------------------------
+describe("GLY-330 NEW-1 (L10/§4): orchestrator composes the compiler's variant-expanded Aho-Corasick output", () => {
+  it("substitutes the approved person-name variant 'Smith, Alice' instead of leaking it raw", async () => {
+    const truth = [taggedWith("s-alice", "PERSON_NAME", "Alice Smith", "Claimant", "person-name")];
+    const { engine } = makeEngine(truth);
+    const result = await engine.substitute({
+      context: ctx(),
+      policy: policy(),
+      segments: [{ path: "m", kind: "user", text: "Please contact Smith, Alice today." }],
+      purpose: "generation",
+    } as any);
+    const tokenized = String(result.segments[0].text);
+    // The reordered variant must be substituted, never egressed raw.
+    expect(tokenized).not.toContain("Smith");
+    expect(tokenized).not.toContain("Alice");
+    expect(tokenized).toContain("[[Claimant]]");
+    // And it reverses to the CURRENT canonical value.
+    const display = String(await engine.reverse(tokenized as any, result.reversalHandle));
+    expect(display).toBe("Please contact Alice Smith today.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #6 — subject-scoped tokens for ALL classes; synthetic vs real never collide
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 6 R2 (L1/N5): detector-only synthetic subjects never share a key with real subjects", () => {
+  it("keeps a real SSN subject whose id equals the old synthetic shape distinct from a detector-only SSN", async () => {
+    // A real tagged SSN subject whose subjectId is exactly the OLD synthetic shape `det:op-A:1`.
+    const truth = [taggedWith("det:op-A:1", "SSN", "222-22-2222", "SSN", "literal")];
+    const { engine } = makeEngine(truth);
+    const result = await engine.substitute({
+      context: ctx("att-A", "op-A"),
+      policy: policy(),
+      // detector-only 111-11-1111 first, then the real tagged 222-22-2222.
+      segments: [{ path: "m", kind: "user", text: "SSN 111-11-1111 and 222-22-2222 on file." }],
+      purpose: "generation",
+    } as any);
+    const tokenized = String(result.segments[0].text);
+    const display = String(await engine.reverse(tokenized as any, result.reversalHandle));
+    // Each SSN reverses to ITS OWN value; the real subject never overwrote the detector-only one.
+    expect(display).toBe("SSN 111-11-1111 and 222-22-2222 on file.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NEW-2 — the in-process handle exposes no raw literal data
+// ---------------------------------------------------------------------------
+describe("GLY-330 NEW-2 (§7): the reversal handle is an opaque capability (no raw literal via property/spread)", () => {
+  it("does not expose EscapedTokenLiteral.originalLiteral through property access or object spread", async () => {
+    const { engine } = makeEngine();
+    const result = await engine.substitute({
+      context: ctx(),
+      policy: policy(),
+      segments: [{ path: "m", kind: "user", text: "Echo [[Claimant]] please." }],
+      purpose: "generation",
+    } as any);
+    const handle: any = result.reversalHandle;
+    // Direct property access must not expose the raw token-shaped source literal.
+    expect(handle.literals).toBeUndefined();
+    // Object spread must not carry any raw literal data.
+    const spread = JSON.stringify({ ...handle });
+    expect(spread).not.toContain("[[Claimant]]");
+    // toJSON still throws so it cannot be smuggled into a trace/job/cache payload.
+    expect(() => JSON.stringify(handle)).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #7 — streaming reversal restores escaped source literals (no sentinel leak)
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 7 R2 (L6): streaming reversal restores escaped literals, never leaking the sentinel", () => {
+  it("emits the source literal [[Claimant]] on the streamed output, not the escape sentinel", async () => {
+    const { engine } = makeEngine();
+    const result = await engine.substitute({
+      context: ctx(),
+      policy: policy(),
+      segments: [{ path: "m", kind: "user", text: "Echo [[Claimant]] please." }],
+      purpose: "generation",
+    } as any);
+    const tokenized = String(result.segments[0].text); // contains the escape sentinel
+    const emitted: string[] = [];
+    const stream = engine.createReverseStream(result.reversalHandle, (safe) => {
+      emitted.push(String(safe));
+    });
+    await stream.push(tokenized as any);
+    await stream.end();
+    const display = emitted.join("");
+    expect(display).toBe("Echo [[Claimant]] please.");
+    expect(display).not.toContain(SENTINEL_OPEN);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #8 — the M-1 holdback must never split a COMPLETE, valid token
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 8 R2 (L4): a complete token is never split by the M-1 holdback cut", () => {
+  const grammar = new BracketTokenGrammar();
+  const factory = new HoldbackReverseStreamFactory();
+  function handle(): any {
+    return new InProcessReversalHandle({
+      tenantId: TENANT,
+      matterId: MATTER,
+      dictionaryVersion: VERSION,
+      operationId: b<any>("op-1"),
+      attemptId: b<any>("att-1"),
+    });
+  }
+
+  it("reverses a complete token + 60 ordinary chars in one chunk without aborting (len 72, cut 9)", async () => {
+    const store = new InMemoryReversalStore();
+    store.record({
+      tenantId: TENANT,
+      matterId: MATTER,
+      dictionaryVersion: VERSION,
+      token: b<any>("[[Claimant]]"),
+      canonical: "Alice",
+    });
+    const emitted: string[] = [];
+    const stream = factory.create({
+      handle: handle(),
+      store,
+      grammar,
+      policy: BOUNDARY_TOKEN_GRAMMAR_POLICY,
+      sink: (safe: any) => {
+        emitted.push(String(safe));
+      },
+    });
+    // One chunk: a COMPLETE token then 60 ordinary chars (len 72 -> M-1 cut 9, inside the token).
+    await stream.push(("[[Claimant]]" + "x".repeat(60)) as any);
+    await stream.end();
+    expect(emitted.join("")).toBe("Alice" + "x".repeat(60));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3 — router/callback errors are sanitized before caller and audit
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 3 R2 (N2/§7): unknown router/callback errors never leak text/code", () => {
+  it("never surfaces a raw error message/code to the caller nor stores it as the audit failureCode", async () => {
+    const gate: Gate = { prepared: false };
+    const badError: any = new Error("Maria García");
+    badError.code = "Maria García";
+    const router = new OriginalContentBaaRouter({
+      extractOriginalText: (): string => {
+        throw badError;
+      },
+      rawProvider: new FakeRawProvider(gate),
+      baaProviderId: "azure-openai-baa",
+      nonBaaProviderId: "openai",
+      claudeBaaEnabled: true,
+      matterIsPhiTagged: true,
+    } as any);
+    const built = buildManualWrapper(gate, { router });
+    let thrown: any;
+    try {
+      await built.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeTruthy();
+    // (a) No raw canary reaches the caller (message or code).
+    expect(String(thrown?.message ?? "")).not.toContain("Maria García");
+    expect(String(thrown?.code ?? "")).not.toContain("Maria García");
+    // (b) No raw canary is stored as the audit failureCode.
+    expect(JSON.stringify(built.primary.finalizedEvents)).not.toContain("Maria García");
+    // A single terminal was still finalized (N3), and nothing egressed.
+    expect(built.primary.finalizedEvents).toHaveLength(1);
+    expect(built.provider.calls).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #4 — projector validates provider-visible strings and preserves non-text knobs
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 4 R2 (L5): provider-visible strings validated + non-text knobs preserved", () => {
+  it("fails closed when a tool name carries a PHI canary, never egressing it raw", async () => {
+    const rig = makeWrapperRig({});
+    let threw = false;
+    try {
+      await rig.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        tools: [{ name: "Maria García", description: "Look things up." }],
+      } as any);
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+    expect(rig.provider.calls).toBe(0);
+    expect(joined(rig.provider.payloads)).not.toContain("Maria García");
+  });
+
+  it("preserves non-text sampling knobs (model/temperature/maxTokens) unchanged to the provider", async () => {
+    const rig = makeWrapperRig({ providerResponseText: "[[Claimant]]" });
+    await rig.wrapper.generateText({
+      model: "claude-x",
+      temperature: 0.2,
+      maxTokens: 512,
+      messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+    } as any);
+    expect(rig.provider.calls).toBe(1);
+    const sent = JSON.parse(rig.provider.payloads[0] ?? "{}");
+    expect(sent.model).toBe("claude-x");
+    expect(sent.temperature).toBe(0.2);
+    expect(sent.maxTokens).toBe(512);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #9 — exactly one terminal on EVERY failure path (no lost receipt, no double-prepare)
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 9 R2 (N3): exactly one terminal on every failure path", () => {
+  it("finalizes exactly one terminal when policy load fails (context is known)", async () => {
+    const gate: Gate = { prepared: false };
+    const built = buildManualWrapper(gate, {
+      policyFn: (): Promise<any> =>
+        Promise.reject(new PhiEngineError("MISSING_TRUSTED_POLICY", b<any>("op-1"), {})),
+    });
+    let threw = false;
+    try {
+      await built.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+    expect(built.provider.calls).toBe(0);
+    expect(built.primary.finalizedEvents).toHaveLength(1);
+  });
+
+  it("finalizes exactly one terminal when createReverseStream throws after prepare (stream)", async () => {
+    const gate: Gate = { prepared: false };
+    const built = buildManualWrapper(gate, {
+      engineWrap: (engine) => ({
+        substitute: (r: any) => engine.substitute(r),
+        reverse: (t: any, h: any) => engine.reverse(t, h),
+        createReverseStream: (): never => {
+          throw new Error("stream factory boom");
+        },
+      }),
+    });
+    let threw = false;
+    try {
+      await built.wrapper.generateStream({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+    expect(built.primary.finalizedEvents).toHaveLength(1);
+  });
+
+  it("finalizes exactly one terminal when response tracing throws after send (generation)", async () => {
+    const gate: Gate = { prepared: false };
+    const trace = {
+      request: async (): Promise<void> => undefined,
+      response: async (): Promise<void> => {
+        throw new Error("response trace boom");
+      },
+      metadata: async (): Promise<void> => undefined,
+    };
+    const built = buildManualWrapper(gate, { trace });
+    let threw = false;
+    try {
+      await built.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+    expect(built.provider.calls).toBe(1);
+    expect(built.primary.finalizedEvents).toHaveLength(1);
+  });
+
+  it("finalizes exactly one terminal (no double-prepare) when request tracing fails after prepare", async () => {
+    const gate: Gate = { prepared: false };
+    const primary = new RecordingPrimaryStore(gate);
+    const trace = {
+      request: async (): Promise<void> => {
+        throw new Error("request trace boom");
+      },
+      response: async (): Promise<void> => undefined,
+      metadata: async (): Promise<void> => undefined,
+    };
+    const built = buildManualWrapper(gate, { trace, sharedPrimary: primary });
+    let threw = false;
+    try {
+      await built.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+    expect(built.provider.calls).toBe(0);
+    expect(primary.finalizedEvents).toHaveLength(1);
+    expect(primary.prepareAttempts).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #10 — a finalized attempt can never egress again, even after restart
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 10 R2 (N3): durable idempotency survives restart", () => {
+  it("refuses a fresh spool append for an attempt already finalized on the durable volume", async () => {
+    const volume = new InMemorySpoolVolume();
+    const spool1 = new Aes256GcmAuditSpool(volume as any, new FixedKeyProvider() as any, CLOCK);
+    const rec = spoolPrepared("att-x");
+    const receipt = await spool1.appendPrepared(rec);
+    await spool1.finalize(receipt, spoolTerminal(rec));
+
+    // Restart: a brand-new spool over the SAME durable volume.
+    const spool2 = new Aes256GcmAuditSpool(volume as any, new FixedKeyProvider() as any, CLOCK);
+    let refused = false;
+    try {
+      await spool2.appendPrepared(rec); // same attempt id, already finalized
+    } catch {
+      refused = true;
+    }
+    expect(refused).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #11 — crash-safe drain (durable preparedInPrimary) + bigint dictionaryVersion
+// ---------------------------------------------------------------------------
+describe("GLY-330 finding 11 R2 (N3/N4): drain is crash-safe across restart and rehydrates the branded version", () => {
+  it("still delivers the terminal after restart when a prior finalize failed", async () => {
+    const volume = new InMemorySpoolVolume();
+    const spool1 = new Aes256GcmAuditSpool(volume as any, new FixedKeyProvider() as any, CLOCK);
+    const rec = spoolPrepared("att-r");
+    const receipt = await spool1.appendPrepared(rec);
+    await spool1.finalize(receipt, spoolTerminal(rec));
+
+    // A primary whose FIRST finalize fails (transient), later ones succeed.
+    const primary = {
+      prepared: new Set<string>(),
+      finalizeCalls: 0,
+      finalizedEvents: [] as any[],
+      async prepare(r: any): Promise<any> {
+        const id = String(r.attemptId);
+        if (this.prepared.has(id)) return { status: "already_exists", durableRecordId: `p:${id}` };
+        this.prepared.add(id);
+        return { status: "stored", durableRecordId: `p:${id}` };
+      },
+      async finalize(e: any): Promise<void> {
+        this.finalizeCalls += 1;
+        if (this.finalizeCalls === 1) throw new Error("finalize outage");
+        this.finalizedEvents.push(e);
+      },
+    };
+
+    // First drain: primary prepared ok, finalize failed -> entry kept.
+    await spool1.drainTo(primary as any).catch(() => undefined);
+
+    // RESTART: new spool over the same durable volume; primary already holds the PREPARED record.
+    const spool2 = new Aes256GcmAuditSpool(volume as any, new FixedKeyProvider() as any, CLOCK);
+    await spool2.drainTo(primary as any);
+
+    expect(primary.finalizedEvents.map((e: any) => String(e.attemptId))).toContain("att-r");
+    expect(spool2.recordIds()).toHaveLength(0);
+  });
+
+  it("rehydrates the rebuilt PREPARED record's dictionaryVersion to a branded bigint", async () => {
+    const volume = new InMemorySpoolVolume();
+    const spool1 = new Aes256GcmAuditSpool(volume as any, new FixedKeyProvider() as any, CLOCK);
+    await spool1.appendPrepared(spoolPrepared("att-b")); // no finalize -> drain reconstructs
+
+    const spool2 = new Aes256GcmAuditSpool(volume as any, new FixedKeyProvider() as any, CLOCK);
+    const captured: any[] = [];
+    const primary = {
+      async prepare(r: any): Promise<any> {
+        captured.push(r);
+        return { status: "stored", durableRecordId: `p:${String(r.attemptId)}` };
+      },
+      async finalize(): Promise<void> {
+        return undefined;
+      },
+    };
+    await spool2.drainTo(primary as any);
+    expect(captured).toHaveLength(1);
+    expect(typeof captured[0].dictionaryVersion).toBe("bigint");
+    expect(captured[0].dictionaryVersion).toBe(VERSION_BIGINT);
   });
 });
