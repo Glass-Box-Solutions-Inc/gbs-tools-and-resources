@@ -2477,7 +2477,7 @@ def _apply_contention_recipe(
         # One thin lever exists at contention level; the draw stays for
         # determinism symmetry (and future levers) rather than deciding much.
         chooser.random()
-        shaped = _replace_draft(draft, rationale=None)
+        shaped = _replace_draft(shaped, rationale=None)
     elif target == "unsupportable":
         chooser = _assertion_rng(seed, "unsupportable-defect", salt)
         psych_eligible = draft.claim_type == "psych_add_on"
@@ -2650,57 +2650,76 @@ def _append_sampled(
     explicit_keys = frozenset(_contention_semantic_key(c) for c in contentions)
 
     drafts = _contention_candidates(seed, context, history, trace)
+
+    # Shape FIRST. Every recipe/defect draw is keyed by the candidate's
+    # original semantic identity, so shaping a candidate that suppression will
+    # later drop cannot move any other candidate's stream.
+    shaped = [_apply_contention_recipe(seed, history, context, draft) for draft in drafts]
+
+    # Normalize the FINAL semantic key from the shaped surface, with the same
+    # B.2 rule-6 function that keys explicit entries. Shaping can change claim
+    # type, party, position or hooks; suppressing on the pre-shaping key would
+    # let a candidate become semantically identical to an explicit contention
+    # AFTER the only suppression pass (sol review, PR #44 M1).
+    normalized = [
+        _replace_draft(draft, semantic_key=_contention_semantic_key(draft))
+        for draft in shaped
+    ]
     candidates = tuple(
         AssertionCandidate(
             semantic_key=draft.semantic_key,
             candidate_family=draft.candidate_family,
             payload={"draft": draft},
         )
-        for draft in drafts
+        for draft in normalized
     )
     retained, suppression_hits = _suppress_explicit_collisions(candidates, explicit_keys)
     if trace is not None:
         trace.suppression_hits += suppression_hits
 
-    shaped = [
-        _apply_contention_recipe(seed, history, context, candidate.payload["draft"])  # type: ignore[arg-type]
-        for candidate in retained
-    ]
-    shaped.sort(key=lambda draft: _semantic_salt(draft.semantic_key))
+    ordered = sorted(
+        (candidate.payload["draft"] for candidate in retained),
+        key=lambda draft: _semantic_salt(draft.semantic_key),  # type: ignore[attr-defined]
+    )
+    # The 12-cap truncates in final-key order BEFORE anything downstream reads
+    # the contention set: a truncated candidate must not shape the opinion it
+    # can no longer appear beside. IDs are NOT assigned here — every
+    # stochastic decision completes first, and one labelling pass at the end
+    # assigns ctn/opn/app suffixes and resolves references (globally
+    # IDs-last).
+    ordered = ordered[: max(0, 12 - len(contentions))]
 
-    # --- assign contention IDs (explicit reserved; first unused suffix) -----
-    used_contention_ids = {c.id for c in contentions}
-    key_to_contention_id: dict[SemanticKey, str] = {}
-    sampled_contentions: list[Contention] = []
-    for draft in shaped:
-        if len(contentions) + len(sampled_contentions) >= 12:
-            break
-        assigned = _first_unused("ctn", used_contention_ids)
-        used_contention_ids.add(assigned)
-        key_to_contention_id[draft.semantic_key] = assigned
-        sampled_contentions.append(
-            Contention(
-                id=assigned,
-                claim_type=draft.claim_type,  # type: ignore[arg-type]
-                party=draft.party,  # type: ignore[arg-type]
-                position=draft.position,  # type: ignore[arg-type]
-                target_condition_id=draft.target_condition_id,
-                target_prior_claim_id=draft.target_prior_claim_id,
-                target_prior_award_id=draft.target_prior_award_id,
-                target_body_part=draft.target_body_part,
-                doctrine_hooks=draft.doctrine_hooks,  # type: ignore[arg-type]
-                rationale=draft.rationale,
-                groundings=draft.groundings,
-                quality="supported",
+    # Every contention the opinion machinery may read: explicit entries under
+    # their real IDs, sampled drafts under their final semantic keys. The
+    # probe objects carry the exact final fields; only the ID is a
+    # placeholder, and nothing below reads it.
+    pending: list[tuple[str | SemanticKey, Contention]] = [
+        (contention.id, contention) for contention in contentions
+    ]
+    for draft in ordered:
+        pending.append(
+            (
+                draft.semantic_key,
+                Contention(
+                    id="ctn-99",  # labelled last
+                    claim_type=draft.claim_type,  # type: ignore[arg-type]
+                    party=draft.party,  # type: ignore[arg-type]
+                    position=draft.position,  # type: ignore[arg-type]
+                    target_condition_id=draft.target_condition_id,
+                    target_prior_claim_id=draft.target_prior_claim_id,
+                    target_prior_award_id=draft.target_prior_award_id,
+                    target_body_part=draft.target_body_part,
+                    doctrine_hooks=draft.doctrine_hooks,  # type: ignore[arg-type]
+                    rationale=draft.rationale,
+                    groundings=draft.groundings,
+                    quality="supported",
+                ),
             )
         )
-        if trace is not None:
-            trace.recipes.append((assigned, draft.recipe, ""))
-
-    all_contentions = [*contentions, *sampled_contentions]
 
     # --- the stage's sampled evaluator opinion (B.6) ------------------------
     sampled_opinions: list[MedicalOpinion] = []
+    pending_dispositions: list[tuple[list[str | SemanticKey], list[str | SemanticKey]]] = []
     sampled_assertions: list[ApportionmentAssertion] = []
     stage = context.target_stage
     if stage != "intake" and len(opinions) < 8:
@@ -2798,39 +2817,47 @@ def _append_sampled(
         # no quality-target recipe of its own: B.6's omission, deferral and
         # zero-share machinery are its deliberate defects, and everything else
         # it stands behind grades it through the worst-of rubric.
-        endorses: list[str] = []
-        rejects: list[str] = []
-        supportable: list[Contention] = []
-        for contention in all_contentions:
+        endorses: list[str | SemanticKey] = []
+        rejects: list[str | SemanticKey] = []
+        supportable: list[tuple[str | SemanticKey, Contention]] = []
+        for ref, contention in pending:
             evidence = contention_evidence(history, context, contention)
             if evidence == "contradicts" and author_role in ("qme", "ame"):
                 if qme_disposition(evidence) == "reject":
-                    rejects.append(contention.id)
+                    rejects.append(ref)
             elif evidence == "supports":
-                supportable.append(contention)
+                supportable.append((ref, contention))
         if supportable:
             would_be = {
-                c.id: contention_quality(history, context, c) for c in supportable
+                _contention_semantic_key(c): contention_quality(history, context, c)
+                for _ref, c in supportable
             }
             pick = next(
-                (c for c in supportable if would_be[c.id] == "supported"),
+                (
+                    (ref, c)
+                    for ref, c in supportable
+                    if would_be[_contention_semantic_key(c)] == "supported"
+                ),
                 supportable[0] if author_role == "ptp" else None,
             )
             if pick is not None:
+                pick_ref, pick_contention = pick
                 if author_role in ("qme", "ame"):
                     if qme_disposition("supports") == "endorse":
-                        endorses.append(pick.id)
+                        endorses.append(pick_ref)
                 else:
-                    contention_salt = _semantic_salt(_contention_semantic_key(pick))
+                    contention_salt = _semantic_salt(
+                        _contention_semantic_key(pick_contention)
+                    )
                     if _fraction_draw(
                         _assertion_rng(seed, "ptp-disposition", contention_salt),
                         P_PTP_ENDORSE_SUPPORTED.value,
                     ):
-                        endorses.append(pick.id)
-        elif author_role == "ptp" and all_contentions:
+                        endorses.append(pick_ref)
+        elif author_role == "ptp" and pending:
             # The treater's occasional adoption of a weaker claim keeps the
             # indeterminate/contradicted PTP policies live decision families.
-            candidate = all_contentions[0]
+            candidate_ref, candidate = pending[0]
             evidence = contention_evidence(history, context, candidate)
             endorse_p = {
                 "supports": P_PTP_ENDORSE_SUPPORTED.value,
@@ -2841,7 +2868,7 @@ def _append_sampled(
             if _fraction_draw(
                 _assertion_rng(seed, "ptp-disposition", contention_salt), endorse_p
             ):
-                endorses.append(candidate.id)
+                endorses.append(candidate_ref)
 
         # The record pool a supported build may cite: the first ``budget``
         # relevant, visible entities. Reviewed is built FROM the citations, so
@@ -2864,8 +2891,8 @@ def _append_sampled(
                     and claim.award.conclusively_presumed
                 ):
                     pool.append(("prior_award", claim.award.id))
-            for contention in all_contentions:
-                if contention.id in endorses or contention.id in rejects:
+            for ref, contention in pending:
+                if ref in endorses or ref in rejects:
                     if contention.target_condition_id is not None:
                         condition = history.condition(contention.target_condition_id)
                         if condition is not None and condition.surfaces_in_file:
@@ -3111,28 +3138,63 @@ def _append_sampled(
                 reviewed_prior_award_ids=tuple(
                     ref for family, ref in reviewed if family == "prior_award"
                 ),
-                endorses_contention_ids=tuple(endorses),
-                rejects_contention_ids=tuple(rejects),
+                endorses_contention_ids=(),  # refs resolved in the labelling pass
+                rejects_contention_ids=(),
                 rationale=(
                     "the conclusions rest on the examination and the record reviewed"
                 ),
                 quality="supported",
             )
         )
+        pending_dispositions.append((list(endorses), list(rejects)))
         if trace is not None:
             trace.lifecycle.append(
                 f"{author_role}:{report_stage}:{state}:{determination_kind or '-'}:{branch}"
             )
 
-    # --- assign opinion/assertion IDs and resolve internal references -------
+    # --- the single labelling pass: every stochastic decision is complete ---
+    # Contention suffixes first (explicit reserved; first unused, final-key
+    # order), then opinions, then assertion rows; references resolve through
+    # the key->ID maps and never the other way around.
+    used_contention_ids = {c.id for c in contentions}
+    key_to_contention_id: dict[SemanticKey, str] = {}
+    sampled_contentions: list[Contention] = []
+    for draft, (_ref, probe) in zip(
+        ordered, pending[len(contentions) :], strict=True
+    ):
+        assigned = _first_unused("ctn", used_contention_ids)
+        used_contention_ids.add(assigned)
+        key_to_contention_id.setdefault(draft.semantic_key, assigned)
+        sampled_contentions.append(probe.model_copy(update={"id": assigned}))
+        if trace is not None:
+            trace.recipes.append((assigned, draft.recipe, ""))
+    all_contentions = [*contentions, *sampled_contentions]
+
+    def _resolve_ref(ref: str | SemanticKey) -> str:
+        return ref if isinstance(ref, str) else key_to_contention_id[ref]
+
     used_opinion_ids = {o.id for o in opinions}
     relabelled_opinions: list[MedicalOpinion] = []
     opinion_id_map: dict[str, str] = {}
-    for opinion in sampled_opinions:
+    for opinion, (endorse_refs, reject_refs) in zip(
+        sampled_opinions, pending_dispositions, strict=True
+    ):
         assigned = _first_unused("opn", used_opinion_ids)
         used_opinion_ids.add(assigned)
         opinion_id_map[opinion.id] = assigned
-        relabelled_opinions.append(opinion.model_copy(update={"id": assigned}))
+        relabelled_opinions.append(
+            opinion.model_copy(
+                update={
+                    "id": assigned,
+                    "endorses_contention_ids": tuple(
+                        _resolve_ref(ref) for ref in endorse_refs
+                    ),
+                    "rejects_contention_ids": tuple(
+                        _resolve_ref(ref) for ref in reject_refs
+                    ),
+                }
+            )
+        )
 
     used_assertion_ids = {a.id for a in assertions}
     relabelled_assertions: list[ApportionmentAssertion] = []
