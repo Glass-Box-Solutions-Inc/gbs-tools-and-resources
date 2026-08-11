@@ -320,6 +320,22 @@ export class StructuralOptionsProjector
  * benign value during validation and a PHI-laden one during rebuild (L5 fail-closed). Nested
  * message/tool carriers are normalized so their getters are read once too.
  */
+/**
+ * Maps an ARRAY the caller controls WITHOUT invoking its own `.map` — an adversarial caller can
+ * override `arr.map` to return the original elements without running the normalization callback,
+ * smuggling a raw value through (L5). `Array.isArray` (checked at every call) guarantees a genuine
+ * array whose `length` is a non-configurable data property, so the index walk reads each slot
+ * exactly once into a FRESH literal array via the intrinsic push.
+ */
+function intrinsicMap<T, U>(arr: readonly T[], fn: (item: T, index: number) => U): U[] {
+  const out: U[] = [];
+  const len = (arr as { length: number }).length;
+  for (let i = 0; i < len; i += 1) {
+    out.push(fn(arr[i] as T, i));
+  }
+  return out;
+}
+
 function snapshotBoundaryOptions(options: BoundaryGenerateOptions): MutableOptions {
   const src = options as unknown as Record<string, unknown>;
   const snap: Record<string, unknown> = {};
@@ -328,13 +344,13 @@ function snapshotBoundaryOptions(options: BoundaryGenerateOptions): MutableOptio
   }
   const messages = snap["messages"];
   if (Array.isArray(messages)) {
-    snap["messages"] = messages.map((message) => {
+    snap["messages"] = intrinsicMap(messages, (message) => {
       const m = message as Record<string, unknown>;
       const content = m["content"];
       return {
         role: m["role"],
         content: Array.isArray(content)
-          ? content.map((part) => {
+          ? intrinsicMap(content, (part) => {
               const p = part as Record<string, unknown>;
               return { type: p["type"], text: p["text"] };
             })
@@ -344,7 +360,7 @@ function snapshotBoundaryOptions(options: BoundaryGenerateOptions): MutableOptio
   }
   const tools = snap["tools"];
   if (Array.isArray(tools)) {
-    snap["tools"] = tools.map((tool) => {
+    snap["tools"] = intrinsicMap(tools, (tool) => {
       const t = tool as Record<string, unknown>;
       return { name: t["name"], description: t["description"] };
     });

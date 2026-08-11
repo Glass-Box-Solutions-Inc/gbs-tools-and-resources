@@ -75,10 +75,11 @@ export class PhiAuditedAttemptCoordinator {
 
     if (!plan.precondition.ok) {
       // §7/N2: only a RECOGNIZED fixed failure code may be recorded; a caller-supplied precondition
-      // code that is not a known PhiEngineFailureCode (and could carry PHI) is replaced.
-      const safeCode = isPhiEngineFailureCode(plan.precondition.failureCode)
-        ? plan.precondition.failureCode
-        : "PRECONDITION_FAILED";
+      // code that is not a known PhiEngineFailureCode (and could carry PHI) is replaced. The value
+      // is read EXACTLY ONCE into a local — a getter that returns a valid code on one read and a PHI
+      // value on the next cannot be validated-then-recorded differently.
+      const rawPreconditionCode: unknown = plan.precondition.failureCode;
+      const safeCode = isPhiEngineFailureCode(rawPreconditionCode) ? rawPreconditionCode : "PRECONDITION_FAILED";
       const event = preparedToTerminalEvent(plan.prepared, "failed_closed", safeCode, this.#clock());
       await this.#finalizeQuietly(receipt, event);
       return {
@@ -94,15 +95,15 @@ export class PhiAuditedAttemptCoordinator {
     } catch (error) {
       // N3: a provider rejection after send still finalizes exactly one terminal
       // (never a stuck PREPARED record). §7/N2: only a RECOGNIZED fixed failure code may be
-      // recorded — an arbitrary upstream `.code` (which can carry PHI) is never copied.
+      // recorded — an arbitrary upstream `.code` (which can carry PHI) is never copied. The code is
+      // read EXACTLY ONCE into a local so a getter cannot be validated on one read and recorded on
+      // another (TOCTOU on `.code`).
+      const rawCode: unknown =
+        error !== null && typeof error === "object" && "code" in error
+          ? (error as { code?: unknown }).code
+          : undefined;
       const failureCode =
-        error !== null &&
-        typeof error === "object" &&
-        "code" in error &&
-        typeof (error as { code?: unknown }).code === "string" &&
-        isPhiEngineFailureCode((error as { code: string }).code)
-          ? (error as { code: string }).code
-          : "PROVIDER_INVOCATION_FAILED";
+        typeof rawCode === "string" && isPhiEngineFailureCode(rawCode) ? rawCode : "PROVIDER_INVOCATION_FAILED";
       const failedEvent = preparedToTerminalEvent(plan.prepared, "unknown_after_send", failureCode, this.#clock());
       await this.#finalizeQuietly(receipt, failedEvent);
       return {

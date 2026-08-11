@@ -184,21 +184,23 @@ export class Aes256GcmAuditSpool implements EncryptedAuditSpool {
 
     for (const entry of [...this.#entries.values()]) {
       examined += 1;
-      let outcome;
+      let status: unknown;
       try {
-        outcome = await primary.prepare(entry.prepared);
+        const outcome = await primary.prepare(entry.prepared);
+        status = outcome.status; // read the untrusted status EXACTLY ONCE, inside the guarded region
       } catch {
-        // §7/N2: a RAW primary.prepare rejection must never surface from a background drain (it
-        // could carry an upstream message/code). Treat it as a transient outage — keep the durable
-        // entry and retry on a later drain rather than propagate.
+        // §7/N2: a RAW primary.prepare rejection — OR a throwing/mutating `status` getter — must
+        // never surface from a background drain (it could carry an upstream message/code). Treat it
+        // as a transient outage — keep the durable entry and retry on a later drain rather than
+        // propagate, and never branch on an un-captured getter (TOCTOU).
         remaining += 1;
         continue;
       }
-      if (outcome.status === "unavailable") {
+      if (status === "unavailable") {
         remaining += 1;
         continue;
       }
-      if (outcome.status === "already_exists" && !entry.preparedInPrimary) {
+      if (status === "already_exists" && !entry.preparedInPrimary) {
         // The attempt is already durable in primary from ELSEWHERE (not this spool's
         // own prior prepare). Idempotent: never publish a second terminal.
         duplicates += 1;

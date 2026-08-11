@@ -1834,3 +1834,182 @@ describe("GLY-330 finding 3 R6 (§7/N2): an arbitrary PhiEngineError.code is nev
     expect(JSON.stringify(built.primary.finalizedEvents)).not.toContain("RAW_POLICY_ALICE");
   });
 });
+
+// ===========================================================================
+// R7 — the round-7 gate attacked with a fully-hostile input object: a `.code`
+// getter that mutates between reads, an overridden array `.map`, and a throwing
+// `.status` getter. Discipline: read every untrusted scalar ONCE into a local,
+// never forward the mutable instance, use intrinsic array ops. Each is mutation-proven.
+// ===========================================================================
+describe("GLY-330 finding 3 R7 (§7/N2): a mutating error.code getter cannot smuggle PHI", () => {
+  it("emitter.prepare reads a PhiAuditError code once and throws a fresh error", async () => {
+    let reads = 0;
+    const evil = new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", null);
+    Object.defineProperty(evil, "code", {
+      get() {
+        reads += 1;
+        return reads <= 1 ? "AUDIT_DURABILITY_UNAVAILABLE" : "RAW_STORE_ALICE";
+      },
+      configurable: true,
+    });
+    const roguePrimary = {
+      async prepare(): Promise<any> {
+        throw evil;
+      },
+      async finalize(): Promise<void> {},
+    };
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
+    const emitter = new DurablePhiAuditEmitter(roguePrimary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
+    let thrown: any;
+    try {
+      await emitter.prepare(spoolPrepared("att-evil-p"));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(String(thrown?.code ?? "")).not.toContain("RAW_STORE_ALICE");
+    expect(String(thrown?.message ?? "")).not.toContain("RAW_STORE_ALICE");
+  });
+
+  it("emitter.finalize reads a PhiAuditError code once and throws a fresh error", async () => {
+    let reads = 0;
+    const evil = new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null);
+    Object.defineProperty(evil, "code", {
+      get() {
+        reads += 1;
+        return reads <= 1 ? "AUDIT_SPOOL_FLUSH_FAILED" : "RAW_STORE_ALICE";
+      },
+      configurable: true,
+    });
+    const roguePrimary = {
+      async prepare(r: any): Promise<any> {
+        return { status: "stored", durableRecordId: `p:${String(r.attemptId)}` };
+      },
+      async finalize(): Promise<void> {
+        throw evil;
+      },
+    };
+    const spool = new Aes256GcmAuditSpool(new InMemorySpoolVolume() as any, new FixedKeyProvider() as any, CLOCK);
+    const emitter = new DurablePhiAuditEmitter(roguePrimary as any, spool, new ExactAllowListAuditSerializer(), CLOCK);
+    const rec = spoolPrepared("att-evil-f");
+    const receipt = await emitter.prepare(rec);
+    let thrown: any;
+    try {
+      await emitter.finalize(receipt, spoolTerminal(rec));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(String(thrown?.code ?? "")).not.toContain("RAW_STORE_ALICE");
+  });
+
+  it("coordinator reads a provider error's code once (mutating getter cannot leak)", async () => {
+    let reads = 0;
+    const evil: any = new Error("boom");
+    Object.defineProperty(evil, "code", {
+      get() {
+        reads += 1;
+        return reads <= 2 ? "REVERSAL_FAILED" : "RAW_PROVIDER_ALICE";
+      },
+      configurable: true,
+    });
+    const finalized: any[] = [];
+    const okEmitter = {
+      async prepare(r: any): Promise<any> {
+        return { attemptId: r.attemptId, location: "PRIMARY_STORE", durableRecordId: "r" };
+      },
+      async finalize(_r: any, e: any): Promise<void> {
+        finalized.push(e);
+      },
+    };
+    const coordinator = new PhiAuditedAttemptCoordinator(okEmitter as any, CLOCK);
+    const plan = {
+      prepared: spoolPrepared("att-cc"),
+      precondition: { ok: true },
+      invokeProvider: async (): Promise<void> => {
+        throw evil;
+      },
+    };
+    const result: any = await coordinator.run(plan as any);
+    const surfaced = JSON.stringify(result) + JSON.stringify(finalized);
+    expect(surfaced).not.toContain("RAW_PROVIDER_ALICE");
+  });
+
+  it("wrapper never forwards the mutable error instance (fresh error, caller reads a data prop)", async () => {
+    const gate: Gate = { prepared: false };
+    let reads = 0;
+    const evil = new PhiEngineError("MISSING_TRUSTED_POLICY", b<any>("op-1"), {});
+    Object.defineProperty(evil, "code", {
+      get() {
+        reads += 1;
+        return reads <= 2 ? "MISSING_TRUSTED_POLICY" : "RAW_POLICY_ALICE";
+      },
+      configurable: true,
+    });
+    const built = buildManualWrapper(gate, { policyFn: (): Promise<any> => Promise.reject(evil) });
+    let thrown: any;
+    try {
+      await built.wrapper.generateText({
+        messages: [{ role: "user", content: [{ type: "text", text: "Maria García update." }] }],
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(String(thrown?.code ?? "")).not.toContain("RAW_POLICY_ALICE");
+    expect(String(thrown?.message ?? "")).not.toContain("RAW_POLICY_ALICE");
+    expect(JSON.stringify(built.primary.finalizedEvents)).not.toContain("RAW_POLICY_ALICE");
+  });
+});
+
+describe("GLY-330 finding 4 R7 (L5): an overridden array .map cannot skip projector normalization", () => {
+  it("uses intrinsic iteration, so a tools.map override cannot egress a mutating name", () => {
+    const projector = new StructuralOptionsProjector();
+    let reads = 0;
+    const tool: any = { description: "ok" };
+    Object.defineProperty(tool, "name", {
+      get() {
+        reads += 1;
+        return reads <= 1 ? "safe_tool" : "ALICE_CANARY";
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    const tools: any = [tool];
+    tools.map = (): any => tools; // adversarial: return the raw elements, skip the callback
+    const classified = projector.classify({ tools } as any);
+    const rebuilt: any = classified.rebuild(
+      classified.segments.map((s) => ({ path: s.path, text: s.text })) as any,
+    );
+    expect(rebuilt.tools[0].name).toBe("safe_tool");
+    expect(JSON.stringify(rebuilt)).not.toContain("ALICE_CANARY");
+  });
+});
+
+describe("GLY-330 NEW-R6-A R7 (§7/N2): spool.drainTo tolerates a throwing status getter", () => {
+  it("captures the prepare result's status inside the guarded region", async () => {
+    const volume = new InMemorySpoolVolume();
+    const spool = new Aes256GcmAuditSpool(volume as any, new FixedKeyProvider() as any, CLOCK);
+    await spool.appendPrepared(spoolPrepared("att-status"));
+    const rogue = {
+      async prepare(): Promise<any> {
+        const r: any = {};
+        Object.defineProperty(r, "status", {
+          get() {
+            const e: any = new Error("RAW_PRIMARY_ALICE");
+            e.code = "RAW_PRIMARY_CODE";
+            throw e;
+          },
+        });
+        return r;
+      },
+      async finalize(): Promise<void> {},
+    };
+    let thrown: any;
+    let report: any;
+    try {
+      report = await spool.drainTo(rogue as any);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeUndefined();
+    expect(report.remaining).toBeGreaterThanOrEqual(1);
+  });
+});

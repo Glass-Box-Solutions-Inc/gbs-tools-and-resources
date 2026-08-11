@@ -88,11 +88,16 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       this.#remember(receipt, record);
       return receipt;
     } catch (error) {
-      // The fixed-code audit failures thrown above are re-thrown verbatim — but ONLY if the code is
-      // a RECOGNIZED AuditFailureCode. A store that throws `new PhiAuditError(rawValue as any)` is
-      // NOT trusted just for being a PhiAuditError instance; an unknown code is re-wrapped (§7/N2).
-      if (error instanceof PhiAuditError && isAuditFailureCode(error.code)) {
-        throw error;
+      // A fixed-code audit failure thrown above is preserved ONLY if its code is a RECOGNIZED
+      // AuditFailureCode — and even then a FRESH error carrying the ONCE-read, validated code is
+      // thrown, never the original instance (a `.code` getter could return a valid code on the
+      // check read and a PHI value on the caller's read). A store that throws
+      // `new PhiAuditError(rawValue as any)` is thus never trusted for being an instance (§7/N2).
+      if (error instanceof PhiAuditError) {
+        const code = error.code; // read ONCE
+        if (isAuditFailureCode(code)) {
+          throw new PhiAuditError(code, record.operationId, { attemptId: record.attemptId });
+        }
       }
       // §7/N2 + N3: a RAW store/spool rejection must never surface an upstream message/code, and it
       // must be recognizable to the caller as an audit-layer failure (a `PhiAuditError`) so a failed
@@ -120,11 +125,14 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     } catch (error) {
       // §7/N2: a RAW store/spool finalize rejection must never surface an upstream message/code to
       // any caller (a rejecting finalizer could carry PHI). The terminal is NOT marked written, so a
-      // later drain/reconcile can still deliver it; the caller sees only this fixed, safe code. Only
-      // a RECOGNIZED AuditFailureCode passes through — a `PhiAuditError` with an unknown code (raw
-      // value cast to a code) is re-wrapped, not trusted for being an instance.
-      if (error instanceof PhiAuditError && isAuditFailureCode(error.code)) {
-        throw error;
+      // later drain/reconcile can still deliver it; the caller sees only this fixed, safe code. A
+      // recognized code is preserved by throwing a FRESH error carrying the ONCE-read, validated
+      // code — never the original instance (its `.code` getter could change between reads).
+      if (error instanceof PhiAuditError) {
+        const code = error.code; // read ONCE
+        if (isAuditFailureCode(code)) {
+          throw new PhiAuditError(code, null, {});
+        }
       }
       throw new PhiAuditError("AUDIT_SPOOL_FLUSH_FAILED", null, {});
     }
