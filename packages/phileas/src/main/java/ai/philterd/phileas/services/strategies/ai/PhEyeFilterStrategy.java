@@ -24,8 +24,10 @@ import ai.philterd.phileas.policy.Crypto;
 import ai.philterd.phileas.policy.FPE;
 import ai.philterd.phileas.policy.Policy;
 import ai.philterd.phileas.services.anonymization.AnonymizationService;
+import ai.philterd.phileas.services.context.ContextService;
 import ai.philterd.phileas.services.strategies.AbstractFilterStrategy;
 import ai.philterd.phileas.utils.Encryption;
+import ai.philterd.phileas.utils.FormatPreservingEncryptionException;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -40,7 +42,7 @@ public class PhEyeFilterStrategy extends AbstractFilterStrategy {
 
     private static final Logger LOGGER = LogManager.getLogger(PhEyeFilterStrategy.class);
 
-    private final FilterType filterType = FilterType.PERSON;
+    private final FilterType filterType = FilterType.OTHER;
 
     @Override
     public FilterType getFilterType() {
@@ -96,14 +98,21 @@ public class PhEyeFilterStrategy extends AbstractFilterStrategy {
     }
 
     @Override
-    public Replacement getReplacement(String label, String context, String token, String[] window, Crypto crypto, FPE fpe, AnonymizationService anonymizationService, FilterPattern filterPattern) throws Exception {
+    public Replacement getReplacement(ContextService contextService, String label, String context, String token, String[] window, Crypto crypto, FPE fpe, AnonymizationService anonymizationService, FilterPattern filterPattern) throws Exception {
 
         String replacement = null;
         String salt = "";
 
         if(Strings.CI.equals(strategy, REDACT)) {
 
-            replacement = getRedactedToken(token, label, filterType);
+            // Use the label for the type because a PhEye filter can have any filter type.
+            replacement = getValueOrDefault(redactionFormat, DEFAULT_REDACTION).replaceAll("%t", label.toLowerCase());
+
+            if(StringUtils.isNotEmpty(label)) {
+                replacement = replacement.replaceAll("%l", label.toLowerCase());
+            }
+
+            replacement = replacement.replaceAll("%v", token);
 
         } else if(Strings.CI.equals(strategy, MASK)) {
 
@@ -140,7 +149,7 @@ public class PhEyeFilterStrategy extends AbstractFilterStrategy {
                 as = this.anonymizationService;
             }
 
-            replacement = getAnonymizedToken(replacementScope, token, as, filterType.getType());
+            replacement = getAnonymizedToken(contextService, replacementScope, token, as, filterType.getType());
 
         } else if(Strings.CI.equals(strategy, STATIC_REPLACE)) {
 
@@ -152,7 +161,17 @@ public class PhEyeFilterStrategy extends AbstractFilterStrategy {
 
         } else if(Strings.CI.equals(strategy, FPE_ENCRYPT_REPLACE)) {
 
-            replacement = Encryption.formatPreservingEncrypt(fpe, token);
+            try {
+                replacement = Encryption.formatPreservingEncrypt(fpe, token);
+            } catch (final FormatPreservingEncryptionException e) {
+                // This token cannot be format-preserving encrypted (for example, its content is
+                // outside FF3's supported length range). Fall back to redaction so the token is
+                // still redacted - one such token must not abort redaction of the whole document,
+                // and the original value must never be emitted. The token is not logged.
+                LOGGER.warn("Could not format-preserving encrypt a {} value; falling back to redaction. Reason: {}",
+                        label, e.getMessage());
+                replacement = getRedactedToken(token, label, filterType);
+            }
 
         } else if(Strings.CI.equals(strategy, HASH_SHA256_REPLACE)) {
 

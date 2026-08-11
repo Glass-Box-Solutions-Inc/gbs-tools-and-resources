@@ -23,6 +23,7 @@ import ai.philterd.phileas.model.filtering.Filtered;
 import ai.philterd.phileas.model.filtering.Span;
 import ai.philterd.phileas.policy.Policy;
 import ai.philterd.phileas.services.Analyzer;
+import ai.philterd.phileas.services.context.ContextService;
 import ai.philterd.phileas.services.validators.SpanValidator;
 
 import java.util.Arrays;
@@ -58,11 +59,11 @@ public class DateFilter extends RegexFilter {
     }
 
     @Override
-    public Filtered filter(Policy policy, String context, int piece, String input) throws Exception {
+    public Filtered filter(ContextService contextService, Policy policy, String context, int piece, String input) throws Exception {
 
         final List<Span> spans = new LinkedList<>();
 
-        final List<Span> rawSpans = findSpans(policy, analyzer, input, context);
+        final List<Span> rawSpans = findSpans(contextService, policy, analyzer, input, context);
 
         if(onlyValidDates) {
 
@@ -71,13 +72,13 @@ public class DateFilter extends RegexFilter {
                 if(span.isAlwaysValid() || spanValidator.validate(span)) {
 
                     // The date is valid.
-                    LOGGER.debug("Date {} for pattern {} is valid.", span.getText(), span.getPattern());
+                    LOGGER.debug("Date for pattern {} is valid.", span.getPattern());
                     spans.add(span);
 
                 } else {
 
                     // The date is invalid.
-                    LOGGER.debug("Date {} for pattern {} is invalid.", span.getText(), span.getPattern());
+                    LOGGER.debug("Date for pattern {} is invalid.", span.getPattern());
 
                 }
 
@@ -105,6 +106,7 @@ public class DateFilter extends RegexFilter {
         // These spans do NOT have replaceable delimiters.
         // These dates with the month names are pretty specific so they always pass validation as valid dates.
         filterPatterns.add(new FilterPattern.FilterPatternBuilder(Pattern.compile("(?i)(\\b\\d{1,2}\\D{0,3})?\\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|(Nov|Dec)(?:ember)?) [\\d]{0,1}, [\\d]{4}\\b"), 0.75).withFormat("MMMM dd, yyyy").withAlwaysValid(true).build());
+        filterPatterns.add(new FilterPattern.FilterPatternBuilder(Pattern.compile("(?i)(\\b\\d{1,2}\\D{0,3})?\\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|(Nov|Dec)(?:ember)?) [\\d]{0,1} [\\d]{4}\\b"), 0.75).withFormat("MMMM dd yyyy").withAlwaysValid(true).build());
         filterPatterns.add(new FilterPattern.FilterPatternBuilder(Pattern.compile("(?i)(\\b\\d{1,2}\\D{0,3})?\\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|(Nov|Dec)(?:ember)?) [\\d]{2}\\b"), 0.75).withFormat("MMMM yy").withAlwaysValid(true).build());
         filterPatterns.add(new FilterPattern.FilterPatternBuilder(Pattern.compile("(?i)(\\b\\d{1,2}\\D{0,3})?\\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|(Nov|Dec)(?:ember)?) [\\d]{4}\\b"), 0.75).withFormat("MMMM yyyy").withAlwaysValid(true).build());
 

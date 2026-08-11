@@ -20,15 +20,22 @@ import ai.philterd.phileas.model.filtering.Replacement;
 import ai.philterd.phileas.policy.Crypto;
 import ai.philterd.phileas.policy.FPE;
 import ai.philterd.phileas.services.anonymization.AnonymizationService;
+import ai.philterd.phileas.services.context.ContextService;
 import ai.philterd.phileas.utils.Encryption;
+import ai.philterd.phileas.utils.FormatPreservingEncryptionException;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
+/** Base for strategies that use the standard replacement handling (redact, replace, encrypt, anonymize). */
 public abstract class StandardFilterStrategy extends AbstractFilterStrategy {
 
-    public Replacement getStandardReplacement(String label, String token,
+    private static final Logger LOGGER = LogManager.getLogger(StandardFilterStrategy.class);
+
+    public Replacement getStandardReplacement(ContextService contextService, String label, String token,
                                       Crypto crypto, FPE fpe,
                                       AnonymizationService anonymizationService,
                                       FilterType filterType) throws Exception {
@@ -75,7 +82,7 @@ public abstract class StandardFilterStrategy extends AbstractFilterStrategy {
                 as = this.anonymizationService;
             }
 
-            replacement = getAnonymizedToken(replacementScope, token, as, filterType.getType());
+            replacement = getAnonymizedToken(contextService, replacementScope, token, as, filterType.getType());
 
         } else if(Strings.CI.equals(strategy, STATIC_REPLACE)) {
 
@@ -87,7 +94,17 @@ public abstract class StandardFilterStrategy extends AbstractFilterStrategy {
 
         } else if(Strings.CI.equals(strategy, FPE_ENCRYPT_REPLACE)) {
 
-            replacement = Encryption.formatPreservingEncrypt(fpe, token);
+            try {
+                replacement = Encryption.formatPreservingEncrypt(fpe, token);
+            } catch (final FormatPreservingEncryptionException e) {
+                // This token cannot be format-preserving encrypted (for example, its content is
+                // outside FF3's supported length range). Fall back to redaction so the token is
+                // still redacted - one such token must not abort redaction of the whole document,
+                // and the original value must never be emitted. The token is not logged.
+                LOGGER.warn("Could not format-preserving encrypt a {} value; falling back to redaction. Reason: {}",
+                        filterType.getType(), e.getMessage());
+                replacement = getRedactedToken(token, label, filterType);
+            }
 
         } else if(Strings.CI.equals(strategy, LAST_4)) {
 

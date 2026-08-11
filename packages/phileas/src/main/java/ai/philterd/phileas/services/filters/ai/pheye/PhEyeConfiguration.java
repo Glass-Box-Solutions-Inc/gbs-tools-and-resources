@@ -28,7 +28,11 @@ public class PhEyeConfiguration {
     private int maxIdleConnections;
     private int keepAliveDurationMs;
     private Collection<String> labels;
-    
+
+    // Optional path to a local GLiNER model directory. When set, detection runs
+    // locally via ONNX Runtime instead of calling the remote endpoint.
+    private String modelPath;
+
     public PhEyeConfiguration(final String endpoint) {
         this.endpoint = endpoint;
     }
@@ -69,7 +73,11 @@ public class PhEyeConfiguration {
         if(CollectionUtils.isNotEmpty(labels)) {
             return labels;
         } else {
-            return List.of("Person");
+            // The default ph-eye English model (ph-eye-pii-en-small and the other
+            // ph-eye-pii-en-* sizes) is a GLiNER model trained on the label "name".
+            // GLiNER also responds to "Person", but "name" is the model's trained
+            // prompt, so it is the default. PhEyeFilter maps both to FilterType.PERSON.
+            return List.of("name");
         }
     }
 
@@ -83,6 +91,14 @@ public class PhEyeConfiguration {
 
     public void setBearerToken(String bearerToken) {
         this.bearerToken = bearerToken;
+    }
+
+    public String getModelPath() {
+        return modelPath;
+    }
+
+    public void setModelPath(String modelPath) {
+        this.modelPath = modelPath;
     }
 
 }

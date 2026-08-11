@@ -19,6 +19,7 @@ import ai.philterd.phileas.filters.rules.dictionary.FuzzyDictionaryFilter;
 import ai.philterd.phileas.model.filtering.FilterType;
 import ai.philterd.phileas.model.filtering.Filtered;
 import ai.philterd.phileas.model.filtering.SensitivityLevel;
+import ai.philterd.phileas.model.filtering.Span;
 import ai.philterd.phileas.services.strategies.dynamic.CityFilterStrategy;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -38,19 +39,18 @@ public class CityFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new CityFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final FuzzyDictionaryFilter filter = new FuzzyDictionaryFilter(FilterType.LOCATION_CITY, filterConfiguration, SensitivityLevel.MEDIUM, true);
 
-        Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Lived in Washington.");
+        Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Lived in Washington.");
 
-        showSpans(filtered.getSpans());
+        showSpans(Span.dropOverlappingSpans(filtered.getSpans()));
 
-        Assertions.assertEquals(6, filtered.getSpans().size());
-        Assertions.assertTrue(checkSpanInSpans(filtered.getSpans(), 9, 19, FilterType.LOCATION_CITY, "Washington", "{{{REDACTED-city}}}"));
+        // At MEDIUM sensitivity (Levenshtein distance up to 1) only the exact city "Washington" matches.
+        Assertions.assertEquals(1, Span.dropOverlappingSpans(filtered.getSpans()).size());
+        Assertions.assertTrue(checkSpanInSpans(Span.dropOverlappingSpans(filtered.getSpans()), 9, 19, FilterType.LOCATION_CITY, "Washington", "{{{REDACTED-city}}}"));
 
     }
 
@@ -59,21 +59,18 @@ public class CityFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new CityFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final FuzzyDictionaryFilter filter = new FuzzyDictionaryFilter(FilterType.LOCATION_CITY, filterConfiguration, SensitivityLevel.HIGH, true);
 
-        Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Lived in New York.");
+        Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Lived in New York.");
 
-        showSpans(filtered.getSpans());
+        showSpans(Span.dropOverlappingSpans(filtered.getSpans()));
 
-        Assertions.assertEquals(2, filtered.getSpans().size());
-        Assertions.assertTrue(checkSpan(filtered.getSpans().get(0), 9, 17, FilterType.LOCATION_CITY));
-        Assertions.assertTrue(checkSpan(filtered.getSpans().get(1), 13, 17, FilterType.LOCATION_CITY));
-        Assertions.assertEquals("New York", filtered.getSpans().get(0).getText());
+        Assertions.assertEquals(1, Span.dropOverlappingSpans(filtered.getSpans()).size());
+        Assertions.assertTrue(checkSpan(Span.dropOverlappingSpans(filtered.getSpans()).get(0), 9, 17, FilterType.LOCATION_CITY));
+        Assertions.assertEquals("New York", Span.dropOverlappingSpans(filtered.getSpans()).get(0).getText());
 
     }
 
@@ -82,19 +79,17 @@ public class CityFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new CityFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final FuzzyDictionaryFilter filter = new FuzzyDictionaryFilter(FilterType.LOCATION_CITY, filterConfiguration, SensitivityLevel.LOW, true);
 
-        Filtered filtered = filter.filter(getPolicy(), "context", PIECE,"Lived in Wshington");
+        Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE,"Lived in Wshington");
 
-        showSpans(filtered.getSpans());
+        showSpans(Span.dropOverlappingSpans(filtered.getSpans()));
 
-        Assertions.assertEquals(8, filtered.getSpans().size());
-        Assertions.assertTrue(checkSpanInSpans(filtered.getSpans(), 9, 18, FilterType.LOCATION_CITY, "Washington", "{{{REDACTED-city}}}"));
+        Assertions.assertEquals(2, Span.dropOverlappingSpans(filtered.getSpans()).size());
+        Assertions.assertTrue(checkSpanInSpans(Span.dropOverlappingSpans(filtered.getSpans()), 9, 18, FilterType.LOCATION_CITY, "Wshington", "{{{REDACTED-city}}}"));
 
     }
 
@@ -103,19 +98,20 @@ public class CityFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new CityFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final FuzzyDictionaryFilter filter = new FuzzyDictionaryFilter(FilterType.LOCATION_CITY, filterConfiguration, SensitivityLevel.MEDIUM, true);
 
-        Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Lived in Wshington");
+        Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Lived in Wshington");
 
-        showSpans(filtered.getSpans());
+        showSpans(Span.dropOverlappingSpans(filtered.getSpans()));
 
-        Assertions.assertEquals(8, filtered.getSpans().size());
-        Assertions.assertTrue(checkSpanInSpans(filtered.getSpans(), 9, 18, FilterType.LOCATION_CITY, "Washington", "{{{REDACTED-city}}}"));
+        // At MEDIUM sensitivity (Levenshtein distance up to 1) only "Wshington" (distance 1 from
+        // "Washington") matches. At LOW sensitivity (distance up to 2) an additional looser match is
+        // found, which is what distinguishes MEDIUM from LOW (see filterCitiesLow).
+        Assertions.assertEquals(1, Span.dropOverlappingSpans(filtered.getSpans()).size());
+        Assertions.assertTrue(checkSpanInSpans(Span.dropOverlappingSpans(filtered.getSpans()), 9, 18, FilterType.LOCATION_CITY, "Wshington", "{{{REDACTED-city}}}"));
 
     }
 
@@ -124,18 +120,16 @@ public class CityFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new CityFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final FuzzyDictionaryFilter filter = new FuzzyDictionaryFilter(FilterType.LOCATION_CITY, filterConfiguration, SensitivityLevel.HIGH, true);
 
-        Filtered filtered = filter.filter(getPolicy(), "context", PIECE,"Lived in Wasinton");
+        Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE,"Lived in Wasinton");
 
-        showSpans(filtered.getSpans());
+        showSpans(Span.dropOverlappingSpans(filtered.getSpans()));
 
-        Assertions.assertEquals(0, filtered.getSpans().size());
+        Assertions.assertEquals(0, Span.dropOverlappingSpans(filtered.getSpans()).size());
 
     }
 
@@ -150,17 +144,15 @@ public class CityFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(cityFilterStrategy))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final FuzzyDictionaryFilter filter = new FuzzyDictionaryFilter(FilterType.LOCATION_CITY, filterConfiguration, SensitivityLevel.LOW, true);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Lived in Washington.");
-        showSpans(filtered.getSpans());
-        Assertions.assertEquals(6, filtered.getSpans().size());
-        Assertions.assertTrue(candidates.contains(filtered.getSpans().get(0).getReplacement()));
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Lived in Washington.");
+        showSpans(Span.dropOverlappingSpans(filtered.getSpans()));
+        Assertions.assertEquals(2, Span.dropOverlappingSpans(filtered.getSpans()).size());
+        Assertions.assertTrue(candidates.contains(Span.dropOverlappingSpans(filtered.getSpans()).get(0).getReplacement()));
 
     }
 
