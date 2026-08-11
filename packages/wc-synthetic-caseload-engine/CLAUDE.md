@@ -84,6 +84,7 @@ If an import breaks, fix the bridge — not by copying files.
 | `get_template_for_subtype` returns `GenericDocumentTemplate` for keys it does not know, so "missing" and "generic" are the same answer | `RenderResult.template` / `.fallback` record which ran; `renderer.OVERLAY_TEMPLATES` resolves the three overlay subtypes the substrate enum lacks |
 | **Four** `data/wc_constants.py` pools name real organizations — `INSURANCE_CARRIERS`, `DEFENSE_FIRMS`, `ALL_EMPLOYERS` (Safeway, Costco, Kaiser, UPS, City of LA), `MEDICAL_FACILITIES` | `case_context._replace_real_organizations` substitutes coined names on every one whenever the seed does not name its own, and rebuilds the derived adjuster/defense emails. `name_denylist.substrate_organization_pools()` reads the pools **live** so the sweep cannot go stale |
 | Templates draw from the **global** `random` module | Re-seeded per document from `rng_seed` + index |
+| Four substrate sites compute rendered content from `date.today()` | `determinism.pin_substrate_clock()` rebinds those names to `ANCHOR_DATE`; new substrate clock readers must be added to `CLOCK_PINNED_ATTRIBUTES` / `CLOCK_PINNED_CALLABLES` |
 
 ### Known substrate limitations (documented, not worked around)
 
@@ -92,15 +93,6 @@ If an import breaks, fix the bridge — not by copying files.
   but does not change the rendered letterhead. Patching a substrate module's private constant
   at runtime would be shared mutable state across cases; a documented limitation is cheaper
   and honest.
-- **`list(set(...))` in `data/content_pools.py`** (lines ~1043 and ~1136) makes substrate
-  output non-reproducible across processes. Worked around here with `PYTHONHASHSEED=0`; the
-  proper fix is `sorted(...)` upstream.
-- **Substrate `date.today()` in rendered content.** Four sites (`fake_data_generator`,
-  `qme_ame_report`, `settlement_memo`, `deposition_exchanges`) compute ages and hire dates from
-  the *local* wall clock. Rebound at runtime by `determinism.pin_substrate_clock()` — a
-  deliberate exception to the no-patching rule, and a narrow one: the anchor is a process-wide
-  constant, so it carries none of the shared-mutable-state risk that keeps the letterhead
-  unpatched. The proper fix is an injectable clock upstream.
 - **Faker's `date_of_birth` is clock-relative.** A seeded Faker is still not deterministic for
   age-relative draws: the window ends at `datetime.now()`. Faker is *not* patched — rebinding
   its `datetime` breaks the `isinstance` checks in its own date parser — so
@@ -112,6 +104,31 @@ If an import breaks, fix the bridge — not by copying files.
   `ORDER_ON_RECONSIDERATION` and `AMENDED_FINDINGS_AWARD` through `MinutesOrders`. Real
   templates, correct-looking documents, but the two lien resolution flavours differ only by
   variant string.
+
+### AJC-72 fixed substrate-ordering surface
+
+- Set-ordering leakage from content pools has been fixed for the two AJC-72 canonicalized
+  pools (`mtus_citations` and `future_medical_items`) by forcing deterministic ordering at
+  the boundaries, and that behavior is part of the package contract.
+
+### Substrate pin (AJC-73)
+
+`substrate_pin.txt` at the package root records the substrate commit the determinism gates
+(the full suite plus `tools/golden_gate.py --check`) were last verified against.
+`check_substrate_pin()` WARNs on drift and never fails — `substrate.py`'s docstrings carry
+the rationale, and it holds for CI too, where the engine job surfaces a mismatch as a
+non-blocking `::warning` annotation. A blocking check would force every substrate-touching
+PR into a rubber-stamp pin bump; accordingly `tests/test_substrate_pin.py` enforces only
+that the pin exists and is well-formed, never that it matches the checkout.
+
+**Refresh from main state only, after a substrate-changing merge lands — never from a
+branch.** Squash-merges rewrite the merged commits, so a SHA recorded on a branch names a
+commit main's history will never contain. The demo golden's `recordedWith.substrateSha` is
+exactly such a commit — recording-time provenance from the AJC-72 branch, lawful because
+`recordedWith` is never enforced — and it is not this pin. To refresh: on main after the
+merge, re-run the gates, then write the output of
+`git -C packages/merus-test-data-generator log -1 --format=%H -- .` as the pin's value
+(step-by-step in the pin file's own header).
 
 ---
 
@@ -198,6 +215,7 @@ uv venv --python 3.12 && uv pip install -e ".[dev]"
 | `test_doc_controls.py` | The precedence matrix in isolation |
 | `test_taxonomy_sync.py` | 353-subtype parity and drift detection |
 | `test_substrate_bridge.py` | The bridge imports cleanly (fail fast, clear message) |
+| `test_substrate_pin.py` | The pin file is committed and well-formed, and `check_substrate_pin`'s WARN-on-mismatch and silent paths (AJC-73) |
 | `test_cli_surface.py` | Command surface, exit codes, templates |
 | `test_lifecycle_paths.py` | Lien resolutions, recon outcomes, statutory windows, dates |
 | `test_date_spine.py` | Runway validation, timeline invariants, ordering-preserving track fitting |

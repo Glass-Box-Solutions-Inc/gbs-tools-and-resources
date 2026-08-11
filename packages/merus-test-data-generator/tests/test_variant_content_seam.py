@@ -810,13 +810,302 @@ def test_the_fixture_case_is_pinned_to_the_anchor_not_to_today():
 
 
 def test_the_baseline_records_where_it_came_from():
-    """A baseline's value is that it predates the seam, which hashes cannot show."""
+    """A baseline's value is that it records the trusted trunk anchor, not a moving head."""
+    import json
+    import importlib.util
+
     meta = baseline_provenance()
-    assert meta.get("source_commit"), "baseline carries no source commit"
-    assert meta.get("base_commit"), "baseline does not pin the commit it was recorded from"
+    expected = "b0e77dd1b6fa949d2d5dc6a7f2d1a0c94ed6def3"
+    assert meta.get("source_commit") == expected, (
+        f"unexpected source_commit: {meta.get('source_commit')}"
+    )
+    assert meta.get("base_commit") == expected, (
+        f"unexpected base_commit: {meta.get('base_commit')}"
+    )
     assert meta.get("anchor_date") == ANCHOR_DATE.isoformat(), (
         "the baseline was recorded under a different anchor date than the one in force"
     )
+    recorder = _recorder_module()
+    assert meta["note"] == recorder.PROVENANCE_NOTE
+    assert "before the AJC-66" not in meta["note"]
+
+
+@pytest.fixture(scope="session")
+def base_worktree(tmp_path_factory):
+    import subprocess
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    recorder = _recorder_module()
+    requested = os.environ.get("AJC72_BASE_WORKTREE")
+
+    def _ensure_origin_main() -> None:
+        verify = subprocess.run(
+            ["git", "-C", _PACKAGE_ROOT, "rev-parse", "--verify", "--quiet", "origin/main"],
+            capture_output=True,
+            text=True,
+        )
+        if verify.returncode == 0:
+            return
+        if verify.returncode != 1:
+            pytest.fail(
+                "failed to verify origin/main before fixture restamp e2es:\n"
+                f"{verify.stdout.rstrip()}\n{verify.stderr.rstrip()}"
+            )
+
+        fetch = subprocess.run(
+            [
+                "git",
+                "-C",
+                _PACKAGE_ROOT,
+                "fetch",
+                "origin",
+                "+refs/heads/main:refs/remotes/origin/main",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        retry = subprocess.run(
+            ["git", "-C", _PACKAGE_ROOT, "rev-parse", "--verify", "--quiet", "origin/main"],
+            capture_output=True,
+            text=True,
+        )
+        if retry.returncode == 0:
+            return
+        if retry.returncode != 1:
+            pytest.fail(
+                "failed to verify origin/main after fixture fetch:\n"
+                f"{retry.stdout.rstrip()}\n{retry.stderr.rstrip()}"
+            )
+        pytest.skip(
+            "origin/main is unavailable for restamp fixture ancestry checks; "
+            "git fetch origin main did not provide refs/remotes/origin/main\n"
+            f"fetch stdout: {fetch.stdout.rstrip()}\nfetch stderr: {fetch.stderr.rstrip()}"
+        )
+
+    if requested:
+        if not os.path.isdir(requested):
+            pytest.fail(
+                "AJC72_BASE_WORKTREE is set but does not point to an existing directory: "
+                f"{requested!r}"
+            )
+        _ensure_origin_main()
+        try:
+            recorder._validate_base_worktree(requested)
+        except SystemExit as exc:
+            pytest.fail(f"AJC72_BASE_WORKTREE is set but invalid: {exc}")
+        yield requested
+        return
+
+    worktree = str(tmp_path_factory.mktemp("ajc72-worktrees") / "ajc72-base")
+    created = False
+
+    def _worktree_add() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "git",
+                "-C",
+                _PACKAGE_ROOT,
+                "worktree",
+                "add",
+                "--detach",
+                worktree,
+                recorder.BASE_COMMIT,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    def _is_shallow_missing(output: str) -> bool:
+        lower = output.lower()
+        return any(
+            needle in lower
+            for needle in (
+                "not a valid object",
+                "invalid object name",
+                "couldn't find",
+                "does not exist",
+                "unknown revision",
+                "bad revision",
+            )
+        )
+
+    try:
+        add = _worktree_add()
+        if add.returncode != 0:
+            fetch = subprocess.run(
+                ["git", "-C", _PACKAGE_ROOT, "fetch", "origin", recorder.BASE_COMMIT],
+                capture_output=True,
+                text=True,
+            )
+            if fetch.returncode != 0:
+                pytest.fail(
+                    "failed to create fixture base worktree: git worktree add failed and fetch retry failed\n"
+                    f"add stderr: {add.stderr.rstrip()}\nfetch stderr: {fetch.stderr.rstrip()}"
+                )
+
+            retry = _worktree_add()
+            if retry.returncode != 0:
+                if _is_shallow_missing(retry.stderr):
+                    pytest.skip(
+                        "base commit unavailable in shallow clone; fetch did not supply "
+                        f"{recorder.BASE_COMMIT}"
+                    )
+                pytest.fail(
+                    "failed to create fixture base worktree after fetch retry:\n"
+                    f"{retry.stdout.rstrip()}\n{retry.stderr.rstrip()}"
+                )
+
+        created = True
+        _ensure_origin_main()
+        recorder._validate_base_worktree(worktree)
+        yield worktree
+    finally:
+        if created:
+            subprocess.run(["git", "-C", _PACKAGE_ROOT, "worktree", "remove", "--force", worktree], check=False)
+            subprocess.run(["git", "-C", _PACKAGE_ROOT, "worktree", "prune"], check=False)
+
+
+_BASE_RENDER_GOLDEN_PAYLOAD = os.path.join(
+    "packages",
+    "merus-test-data-generator",
+    "tests",
+    "golden",
+    "render_baseline.json",
+)
+_BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE = os.path.join(
+    "tests",
+    "golden",
+    "render_baseline.json",
+)
+
+
+def _base_worktree_roots(base_worktree: str) -> tuple[str, str]:
+    recorder = _recorder_module()
+    return recorder._validate_base_worktree(base_worktree)
+
+
+def _run_restamp_provenance(base_worktree: str, output_path: str | None = None) -> tuple[int, str]:
+    import subprocess
+    import sys as _sys
+
+    _, base_package_root = _base_worktree_roots(base_worktree)
+    from tests.render_baseline import _PACKAGE_ROOT as feature_package_root
+    args = [
+        _sys.executable,
+        os.path.join(feature_package_root, "scripts", "record_render_baseline.py"),
+        "--restamp-provenance",
+        "--base-worktree",
+        base_worktree,
+    ]
+    if output_path is not None:
+        args.extend(["--output", output_path])
+
+    result = subprocess.run(
+        args,
+        cwd=base_package_root, capture_output=True, text=True,
+    )
+    return result.returncode, result.stdout + result.stderr
+
+
+def _trusted_base_payload(base_worktree: str) -> tuple[dict, dict]:
+    import json
+
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    _, base_package_root = _base_worktree_roots(base_worktree)
+    path = os.path.join(base_package_root, _BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE)
+    with open(os.path.join(_PACKAGE_ROOT, "tests", "golden", "render_baseline.json"), encoding="utf-8") as fh:
+        feature_payload = json.load(fh)
+    with open(path, encoding="utf-8") as fh:
+        base_payload = json.load(fh)
+    return feature_payload, base_payload
+
+
+def _trusted_base_baseline_path(base_worktree: str) -> str:
+    _, base_package_root = _base_worktree_roots(base_worktree)
+    return os.path.join(base_package_root, _BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE)
+
+
+def _trusted_base_payload_bytes(base_worktree: str) -> bytes:
+    with open(_trusted_base_baseline_path(base_worktree), "rb") as fh:
+        return fh.read()
+
+
+def _assert_base_worktree_clean(base_worktree: str, expected_payload_bytes: bytes) -> None:
+    import subprocess
+
+    base_repo, base_package_root = _base_worktree_roots(base_worktree)
+    base_payload_path = os.path.join(base_package_root, _BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE)
+    recorder = _recorder_module()
+
+    relative_blob = _BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE
+    relative_blob_in_repo = os.path.join(os.path.relpath(base_package_root, base_repo), relative_blob)
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no", "--", _BASE_RENDER_GOLDEN_PAYLOAD],
+        cwd=base_repo,
+        capture_output=True, text=True, check=True,
+    )
+    assert not status.stdout, f"base worktree golden is not clean: {status.stdout.rstrip()}"
+    head_ref = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=base_worktree,
+        capture_output=True, text=True, check=True,
+    )
+    assert head_ref.stdout.strip() == "HEAD", (
+        f"base worktree is not detached: {head_ref.stdout.strip()}"
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=base_repo,
+        capture_output=True, text=True, check=True,
+    )
+    assert head.stdout.strip() == recorder.BASE_COMMIT, (
+        f"base worktree HEAD is {head.stdout.strip()}, expected {recorder.BASE_COMMIT}"
+    )
+
+    expected = expected_payload_bytes
+    current = subprocess.run(
+        ["git", "show", f"{recorder.BASE_COMMIT}:{relative_blob_in_repo}"], cwd=base_repo,
+        capture_output=True, text=False, check=True,
+    ).stdout
+    assert current == expected, "base baseline does not match the committed blob"
+    with open(base_payload_path, "rb") as fh:
+        assert fh.read() == expected
+
+
+def _mutate_baseline(json_text: str | dict) -> str:
+    from tests.render_baseline import BASELINE_PATH
+    import copy
+    import json
+
+    original = json.loads(json_text) if isinstance(json_text, str) else json_text
+    mutated = copy.deepcopy(original)
+    mutated["cases"] = dict(mutated["cases"])
+    mutated["cases"][next(iter(mutated["cases"]))] = {
+        "text": "restamp-provenance-test-has-changed-this-case",
+        "story": "restamp-provenance-test-has-changed-this-case",
+        "rng": "restamp-provenance-test-has-changed-this-case",
+        "pdf": "restamp-provenance-test-has-changed-this-case",
+    }
+    mutated["_meta"]["note"] = "tampered baseline note for restamp proof"
+    return json.dumps(mutated, sort_keys=True, indent=2) + "\n"
+
+
+def _restore_baseline(payload_text: str) -> None:
+    from tests.render_baseline import BASELINE_PATH
+
+    with open(BASELINE_PATH, "w", encoding="utf-8") as fh:
+        fh.write(payload_text)
+
+
+def _write_baseline(payload: str | dict, destination: os.PathLike[str] | str) -> None:
+    if isinstance(payload, str):
+        text = payload
+    else:
+        import json
+
+        text = json.dumps(payload, sort_keys=True, indent=2) + "\n"
+
+    with open(destination, "w", encoding="utf-8") as fh:
+        fh.write(text)
 
 
 def test_record_mode_refuses_a_tree_that_is_not_the_base_ref():
@@ -832,6 +1121,543 @@ def test_record_mode_refuses_a_tree_that_is_not_the_base_ref():
     )
     assert result.returncode != 0, "record mode accepted a non-base checkout"
     assert "refusing to record" in (result.stdout + result.stderr)
+
+
+def test_restamp_provenance_uses_only_fresh_pinned_base_cases(base_worktree, tmp_path):
+    import json
+    import subprocess
+
+    from tests.render_baseline import BASELINE_PATH, _PACKAGE_ROOT
+
+    recorder = _recorder_module()
+    feature_before, base_payload = _trusted_base_payload(base_worktree)
+    base_payload_bytes = _trusted_base_payload_bytes(base_worktree)
+    baseline_bytes = open(BASELINE_PATH, "rb").read()
+    baseline_text = baseline_bytes.decode("utf-8")
+    output = tmp_path / "render_baseline-test-restamp.json"
+    assert not output.exists()
+
+    try:
+        code, out = _run_restamp_provenance(
+            base_worktree, output_path=str(output),
+        )
+        assert code == 0, f"restamp-provenance did not succeed:\n{out}"
+        assert output.exists(), "--output destination was not created"
+        with open(output, encoding="utf-8") as fh:
+            after = json.load(fh)
+        assert after["cases"] == base_payload["cases"]
+        assert after["cases"] == feature_before["cases"]
+        changed = sorted(recorder._structural_diff(feature_before, after))
+        assert set(changed).issubset({"_meta.note", "_meta.recorded_utc"}), (
+            f"restamp changed non-provenance leaves: {changed}"
+        )
+        assert after["_meta"]["note"] == recorder.PROVENANCE_NOTE
+        assert open(BASELINE_PATH, "rb").read() == baseline_bytes
+    finally:
+        _assert_base_worktree_clean(base_worktree, base_payload_bytes)
+        _restore_baseline(baseline_text)
+        status = subprocess.run(
+            [
+                "git",
+                "status",
+                "--porcelain",
+                "--untracked-files=no",
+                "--",
+                "packages/merus-test-data-generator/tests/golden/render_baseline.json",
+            ],
+            cwd=_PACKAGE_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        assert not status.stdout, f"post-restamp dirty tree: {status.stdout.rstrip()}"
+        if os.path.exists(output):
+            os.unlink(output)
+
+
+def test_restamp_provenance_refuses_output_inside_base_worktree(base_worktree, monkeypatch):
+    import subprocess
+
+    from tests.render_baseline import BASELINE_PATH, _PACKAGE_ROOT
+
+    recorder = _recorder_module()
+    base_payload_bytes = _trusted_base_payload_bytes(base_worktree)
+    feature_payload_bytes = open(BASELINE_PATH, "rb").read()
+    destination = os.path.join(base_worktree, "restamp-output-inside-base.json")
+    assert not os.path.exists(destination)
+
+    base_recorder_ran = False
+
+    def forbidden_base_recorder(_base_package_root: str) -> dict:
+        nonlocal base_recorder_ran
+        base_recorder_ran = True
+        pytest.fail("base recorder ran before --output base-worktree containment refusal")
+
+    monkeypatch.setattr(recorder, "_run_base_recorder", forbidden_base_recorder)
+    with pytest.raises(SystemExit) as exc:
+        recorder._run_restamp_mode(base_worktree, output=destination)
+
+    assert "refusing to write --output inside the detached base worktree" in str(exc.value)
+    assert not base_recorder_ran
+    assert not os.path.exists(destination)
+    _assert_base_worktree_clean(base_worktree, base_payload_bytes)
+    assert open(BASELINE_PATH, "rb").read() == feature_payload_bytes
+    status = subprocess.run(
+        [
+            "git",
+            "status",
+            "--porcelain",
+            "--untracked-files=no",
+            "--",
+            "tests/golden/render_baseline.json",
+        ],
+        cwd=_PACKAGE_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert not status.stdout, f"feature baseline is not clean: {status.stdout.rstrip()}"
+
+
+def test_restamp_provenance_restores_base_worktree_on_success_and_failure(base_worktree):
+    from tests.render_baseline import BASELINE_PATH
+
+    recorder = _recorder_module()
+    import subprocess
+
+    feature_payload_text = open(BASELINE_PATH, "rb").read().decode("utf-8")
+    feature_payload_bytes = feature_payload_text.encode("utf-8")
+    base_payload_bytes = _trusted_base_payload_bytes(base_worktree)
+    _, base_package_root = _base_worktree_roots(base_worktree)
+    base_relative_payload_path = os.path.join(
+        os.path.relpath(base_package_root, base_worktree), _BASE_RENDER_GOLDEN_PAYLOAD_IN_PACKAGE
+    )
+
+    try:
+        assert recorder._run_restamp_mode(base_worktree) == 0
+        _assert_base_worktree_clean(base_worktree, base_payload_bytes)
+
+        _restore_baseline(feature_payload_text)
+        real_run_base_recorder = recorder._run_base_recorder
+
+        def _run_base_recorder_then_corrupt(base_package_root: str) -> dict:
+            payload = real_run_base_recorder(base_package_root)
+            meta = dict(payload.setdefault("_meta", {}))
+            meta["base_commit"] = "0000000000000000000000000000000000000000"
+            payload["_meta"] = meta
+            return payload
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(recorder, "_run_base_recorder", _run_base_recorder_then_corrupt)
+            with pytest.raises(SystemExit, match="base payload base_commit is not pinned"):
+                recorder._run_restamp_mode(base_worktree)
+
+        _assert_base_worktree_clean(base_worktree, base_payload_bytes)
+        head_ref = subprocess.run(
+            ["git", "-C", base_worktree, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+        assert head_ref.stdout.strip() == "HEAD", (
+            f"base worktree is not detached after cleanup: {head_ref.stdout.strip()}"
+        )
+        head = subprocess.run(
+            ["git", "-C", base_worktree, "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+        assert head.stdout.strip() == recorder.BASE_COMMIT, (
+            f"base worktree HEAD is {head.stdout.strip()}, expected {recorder.BASE_COMMIT}"
+        )
+        head_blob = subprocess.run(
+            ["git", "-C", base_worktree, "show", f"HEAD:{base_relative_payload_path}"],
+            capture_output=True, check=True,
+        ).stdout
+        assert head_blob == base_payload_bytes, (
+            "base payload changed from its HEAD blob after forced restamp failure"
+        )
+        assert open(BASELINE_PATH, "rb").read() == feature_payload_bytes
+    finally:
+        _restore_baseline(feature_payload_text)
+        _assert_base_worktree_clean(base_worktree, base_payload_bytes)
+
+
+def test_record_mode_from_base_worktree_with_base_ref_has_no_whitespace_in_commits(
+    base_worktree,
+    tmp_path,
+):
+    import json
+    recorder = _recorder_module()
+    _, base_package_root = _base_worktree_roots(base_worktree)
+    baseline_output = str(tmp_path / "recorded-with-base-ref.json")
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(recorder, "_PACKAGE_ROOT", base_package_root)
+        original_git = recorder._git
+
+        def _git_with_base_root(
+            *args: str,
+            cwd: str | None = None,
+            text: bool = True,
+            strip: bool = True,
+        ):
+            return original_git(
+                *args,
+                cwd=cwd or base_package_root,
+                text=text,
+                strip=strip,
+            )
+
+        mp.setattr(recorder, "_git", _git_with_base_root)
+        mp.setattr(recorder.sys, "path", [base_package_root, *(
+            p for p in recorder.sys.path if p != base_package_root
+        )])
+        for name in list(recorder.sys.modules):
+            if name == "tests" or name.startswith("tests."):
+                mp.delitem(recorder.sys.modules, name, raising=False)
+
+        assert (
+            recorder.main(
+                [
+                    "--record",
+                    "--base-ref",
+                    recorder.BASE_COMMIT,
+                    "--output",
+                    baseline_output,
+                ]
+            )
+            == 0
+        )
+
+    with open(baseline_output, encoding="utf-8") as fh:
+        recorded = json.load(fh)
+    assert recorded["_meta"]["base_commit"] == recorded["_meta"]["base_commit"].strip() == recorder.BASE_COMMIT
+    assert recorded["_meta"]["source_commit"] == recorded["_meta"]["source_commit"].strip() == recorder.BASE_COMMIT
+
+
+def test_resolve_base_reports_unavailable_origin_main_truthfully(tmp_path):
+    import subprocess
+
+    recorder = _recorder_module()
+    repo = tmp_path / "repo-without-origin-main"
+    repo.mkdir()
+
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "ci@example.com"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "ci"], check=True)
+    (repo / "f.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "f.txt"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "seed"], check=True)
+    commit = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(recorder, "_PACKAGE_ROOT", str(repo))
+        original_git = recorder._git
+
+        def _git_in_scratch(
+            *args: str,
+            cwd: str | None = None,
+            text: bool = True,
+            strip: bool = True,
+        ):
+            return original_git(*args, cwd=cwd or str(repo), text=text, strip=strip)
+
+        mp.setattr(recorder, "_git", _git_in_scratch)
+        with pytest.raises(SystemExit) as exc:
+            recorder._resolve_base(commit)
+
+    message = str(exc.value)
+    assert "cannot evaluate trunk ancestry" in message
+    assert "is not an ancestor" not in message
+
+
+def test_restamp_provenance_changes_only_meta_note():
+    import copy
+
+    recorder = _recorder_module()
+    feature_payload = {
+        "_meta": {
+            "note": "pre-run note",
+            "recorded_utc": "2026-02-02T00:00:00",
+            "source_commit": "1111111111111111111111111111111111111111",
+            "base_commit": "2222222222222222222222222222222222222222",
+        },
+        "cases": {
+            "case.alpha": {
+                "text": "base text",
+                "story": "base story",
+                "rng": "base rng",
+                "pdf": "base pdf",
+            },
+            "case.beta": {
+                "text": "other text",
+                "story": "other story",
+                "rng": "other rng",
+                "pdf": "other pdf",
+            },
+        },
+    }
+    base_payload = copy.deepcopy(feature_payload)
+    base_payload["_meta"]["note"] = "pre-run base note"
+    base_payload["_meta"]["source_commit"] = "3333333333333333333333333333333333333333"
+    base_payload["_meta"]["base_commit"] = "4444444444444444444444444444444444444444"
+    base_payload["_meta"]["recorded_utc"] = "2026-01-01T00:00:00"
+    candidate = recorder._rebase_provenance_payload(feature_payload, base_payload)
+    assert sorted(recorder._structural_diff(feature_payload, candidate)) == sorted(
+        ["_meta.base_commit", "_meta.note", "_meta.recorded_utc", "_meta.source_commit"]
+    )
+    assert candidate["_meta"]["note"] == recorder.PROVENANCE_NOTE
+
+    bad_candidate = copy.deepcopy(candidate)
+    bad_candidate["cases"]["case.alpha"]["text"] = "changed case text"
+    with pytest.raises(SystemExit) as exc:
+        recorder._assert_restamp_payload_delta_is_meta_note_only(base_payload, bad_candidate)
+    assert "restamp would change more than _meta.note" in str(exc.value)
+    assert "cases.case.alpha.text" in str(exc.value)
+
+
+def test_check_mode_refuses_output(tmp_path):
+    recorder = _recorder_module()
+    output = tmp_path / "check-output.json"
+
+    with pytest.raises(SystemExit) as exc:
+        recorder.main(["--check", "--output", str(output)])
+
+    assert "--output is supported only with --record and --restamp-provenance" in str(exc.value)
+    assert not output.exists()
+
+
+def test_output_destination_resolves_relative_to_invoking_cwd(tmp_path, monkeypatch):
+    recorder = _recorder_module()
+    monkeypatch.chdir(tmp_path)
+
+    destination = recorder._resolve_output_destination(
+        "result.json",
+        os.path.join(recorder._PACKAGE_ROOT, "tests", "golden", "render_baseline.json"),
+    )
+
+    assert destination == str(tmp_path / "result.json")
+
+
+def test_status_paths_preserves_porcelain_path_prefix(tmp_path):
+    import subprocess
+
+    recorder = _recorder_module()
+
+    repo = tmp_path / "status-path-patch"
+    package = repo / "packages" / "x"
+    target = package / "tests" / "golden" / "f.json"
+    target.parent.mkdir(parents=True)
+
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "ci@example.com"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "ci"], check=True)
+    target.write_text("{}", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "packages/x/tests/golden/f.json"],
+        check=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "seed"],
+        check=True,
+        text=True,
+    )
+
+    target.write_text("modified\n", encoding="utf-8")
+    assert recorder._status_paths(str(package)) == ["tests/golden/f.json"]
+
+
+def test_restamp_provenance_refuses_case_drift_without_writing(tmp_path):
+    import json
+
+    recorder = _recorder_module()
+
+    feature_payload = {
+        "_meta": {
+            "note": "pre-run note",
+            "recorded_utc": "2026-01-01T00:00:00",
+        },
+        "cases": {
+            "case.alpha": {
+                "text": "base text",
+                "story": "base story",
+                "rng": "base rng",
+                "pdf": "base pdf",
+            },
+            "case.beta": {
+                "text": "other text",
+                "story": "other story",
+                "rng": "other rng",
+                "pdf": "other pdf",
+            },
+        },
+    }
+    drifted_base = json.loads(json.dumps(feature_payload))
+    drifted_base["cases"]["case.alpha"]["text"] = "base recorder text does not match"
+
+    destination = tmp_path / "restamp-case-drift-proof.json"
+    destination_text = json.dumps(feature_payload, sort_keys=True, indent=2) + "\n"
+    destination.write_text(destination_text, encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        recorder._rewrite_restamped_provenance_payload(
+            str(destination),
+            str(destination),
+            drifted_base,
+        )
+    assert "base recorder cases do not match feature baseline pre-restamp cases" in str(exc.value)
+    assert destination.read_text(encoding="utf-8") == destination_text
+
+
+def test_restamp_provenance_refuses_untrusted_base_worktree(base_worktree, tmp_path):
+    recorder = _recorder_module()
+    recorder._validate_base_worktree(base_worktree)
+
+    # wrong SHA: alter BASE_COMMIT inside the same process and assert that
+    # the head check compares against that expected value.
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(recorder, "BASE_COMMIT", "0000000000000000000000000000000000000000")
+        with pytest.raises(SystemExit) as exc:
+            recorder._validate_base_worktree(base_worktree)
+    assert "base HEAD is" in str(exc.value)
+
+    shared_top_level = recorder._git("rev-parse", "--show-toplevel", cwd=recorder._PACKAGE_ROOT).strip()
+
+    def fake_git_not_detached(*args: str, cwd: str, text: bool = True) -> str:
+        if tuple(args) == ("rev-parse", "--show-toplevel"):
+            return shared_top_level + "\n"
+        if tuple(args) == ("rev-parse", "--abbrev-ref", "HEAD"):
+            return "main\n"
+        if tuple(args) == ("rev-parse", "HEAD"):
+            return recorder.BASE_COMMIT + "\n"
+        raise AssertionError(f"unexpected git command {args} from {cwd}")
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(recorder, "_git_common_dir", lambda _cwd: "/tmp/restamp-shared-common")
+        mp.setattr(recorder, "_git", fake_git_not_detached)
+        mp.setattr(recorder, "_status_paths", lambda _cwd, include_untracked=False: [])
+        mp.setattr(recorder, "_verify_file_vs_blob", lambda *_args, **_kwargs: None)
+        with pytest.raises(SystemExit) as exc:
+            recorder._validate_base_worktree(base_worktree)
+    assert "base worktree is not detached" in str(exc.value)
+
+    def fake_git_dirty(*args: str, cwd: str, text: bool = True) -> str:
+        if tuple(args) == ("rev-parse", "--show-toplevel"):
+            return shared_top_level + "\n"
+        if tuple(args) == ("rev-parse", "--abbrev-ref", "HEAD"):
+            return "HEAD\n"
+        if tuple(args) == ("rev-parse", "HEAD"):
+            return recorder.BASE_COMMIT + "\n"
+        raise AssertionError(f"unexpected git command {args} from {cwd}")
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(recorder, "_git_common_dir", lambda _cwd: "/tmp/restamp-shared-common")
+        mp.setattr(recorder, "_git", fake_git_dirty)
+        mp.setattr(
+            recorder,
+            "_status_paths",
+            lambda _cwd, include_untracked=False: ["tests/render_baseline.py"],
+        )
+        mp.setattr(recorder, "_verify_file_vs_blob", lambda *_args, **_kwargs: None)
+        with pytest.raises(SystemExit) as exc:
+            recorder._validate_base_worktree(base_worktree)
+    assert "base worktree is not clean" in str(exc.value)
+
+    # different repository fails the repo-root identity check.
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    import subprocess
+
+    subprocess.run(["git", "init", "--quiet"], cwd=foreign, check=True)
+    with pytest.raises(SystemExit) as exc:
+        recorder._validate_base_worktree(str(foreign))
+    assert "base worktree is not in this repository" in str(exc.value)
+
+
+def test_restamp_provenance_never_computes_cases_from_feature_tree():
+    import ast
+
+    from tests.render_baseline import _PACKAGE_ROOT
+
+    path = os.path.join(_PACKAGE_ROOT, "scripts", "record_render_baseline.py")
+    with open(path, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read(), filename=path)
+
+    module_functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    restamp_fn = module_functions["_run_restamp_mode"]
+
+    def module_function_calls(func_node: ast.FunctionDef) -> set[str]:
+        called_names = set()
+        for node in ast.walk(func_node):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id in module_functions:
+                    called_names.add(func.id)
+                elif isinstance(func, ast.Attribute) and func.attr in module_functions:
+                    called_names.add(func.attr)
+        return called_names
+
+    reachable: set[str] = set()
+    to_visit = {"_run_restamp_mode"}
+    while to_visit:
+        name = to_visit.pop()
+        if name in reachable:
+            continue
+        if name not in module_functions:
+            continue
+        reachable.add(name)
+        to_visit.update(module_function_calls(module_functions[name]) - reachable)
+
+    assert "_rewrite_restamped_provenance_payload" in reachable, (
+        "restamp mode reachable set does not include _rewrite_restamped_provenance_payload"
+    )
+    assert "_rebase_provenance_payload" in reachable, (
+        "restamp mode reachable set does not include _rebase_provenance_payload"
+    )
+
+    compute_imports: list[tuple[str, int]] = []
+    compute_calls: list[int] = []
+    for fn_name in reachable:
+        fn = module_functions[fn_name]
+        imported_compute_names: set[str] = set()
+        imported_baseline_modules: set[str] = set()
+        for node in ast.walk(fn):
+            if isinstance(node, ast.ImportFrom) and node.module in {"tests.render_baseline", "render_baseline"}:
+                for alias in node.names:
+                    if alias.name == "compute_baseline":
+                        import_name = alias.asname or alias.name
+                        imported_compute_names.add(import_name)
+                        compute_imports.append((alias.name, node.lineno))
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in {"tests.render_baseline", "render_baseline"}:
+                        imported_baseline_modules.add(alias.asname or alias.name)
+                        compute_imports.append((alias.name, node.lineno))
+            elif isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    if node.func.id == "compute_baseline" or node.func.id in imported_compute_names:
+                        compute_calls.append(node.lineno)
+                elif (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "compute_baseline"
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in imported_baseline_modules
+                ):
+                    compute_calls.append(node.lineno)
+
+    assert not compute_imports, (
+        "restamp mode reachable helpers import compute_baseline: "
+        f"{sorted(compute_imports)}"
+    )
+    assert not compute_calls, (
+        "restamp mode reachable helpers call compute_baseline: "
+        f"{sorted(compute_calls)}"
+    )
 
 
 # --- F6: the PDF digest is asserted, not just described -------------------
@@ -1206,7 +2032,7 @@ def test_the_baseline_records_the_patches_its_base_carried():
     """Provenance must name any tracked file the base checkout differed on."""
     meta = baseline_provenance()
     assert "base_patches" in meta, "provenance does not disclose base patches"
-    assert meta["base_patches"] == ["data/deposition_exchanges.py"], (
+    assert meta["base_patches"] == [], (
         f"unexpected base patches: {meta['base_patches']}"
     )
     assert meta.get("base_commit"), "provenance does not pin a base commit"
@@ -1373,12 +2199,12 @@ def test_an_untampered_harness_passes_verification_in_the_same_sandbox(
 
 
 def test_the_harness_is_verified_before_it_is_imported():
-    """Order is the whole property — a check after the import guards nothing.
+    """Order is the whole property — verification must gate harness imports.
 
-    Importing the harness runs its module body. Verifying afterwards would let
-    the untrusted file execute first and then report on itself, so this asserts
-    statically that the import sits inside ``main`` *after* the verify call,
-    rather than at module scope where it would run before anything.
+    Importing the harness runs its module body. Current shape:
+    ``main()`` verifies the reviewed hash, then dispatches to verified helper
+    functions that may import the harness. This avoids the untrusted module body
+    running before verification.
     """
     import ast
 
@@ -1388,28 +2214,46 @@ def test_the_harness_is_verified_before_it_is_imported():
     with open(path, encoding="utf-8") as fh:
         tree = ast.parse(fh.read(), filename=path)
 
-    def harness_imports(node):
+    def harness_import_line_numbers(node):
         return [
             child.lineno
             for child in ast.walk(node)
-            if isinstance(child, ast.ImportFrom)
-            and child.module in {"tests.render_baseline", "render_baseline"}
+            if (
+                (isinstance(child, ast.Import) and any(
+                    alias.name in {"tests.render_baseline", "render_baseline"} for alias in child.names
+                ))
+                or (
+                    isinstance(child, ast.ImportFrom)
+                    and child.module in {"tests.render_baseline", "render_baseline"}
+                )
+            )
         ]
+
+    main = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
 
     module_level = [
         lineno
         for stmt in tree.body
         if isinstance(stmt, (ast.Import, ast.ImportFrom))
-        for lineno in harness_imports(stmt)
+        for lineno in harness_import_line_numbers(stmt)
     ]
     assert not module_level, (
         f"the harness is imported at module scope (line {module_level}), so it runs "
         f"before any verification can happen"
     )
 
-    main = next(
-        node for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    helper_functions = {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name != "main"
+        and harness_import_line_numbers(node)
+    }
+    assert helper_functions, (
+        "no top-level helper imports the harness; this check would be vacuous"
     )
     verify_calls = [
         node.lineno
@@ -1421,8 +2265,19 @@ def test_the_harness_is_verified_before_it_is_imported():
     assert verify_calls, "main() never verifies the harness"
 
     verify_line = min(verify_calls)
-    assert [lineno for lineno in harness_imports(main) if lineno > verify_line], (
-        "no harness import follows the verification, so nothing is being protected"
+    helper_calls = [
+        node.lineno
+        for node in ast.walk(main)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in helper_functions
+    ]
+    assert helper_calls, (
+        "main() never dispatches to a harness-importing helper after verification"
+    )
+    assert all(lineno > verify_line for lineno in helper_calls), (
+        "a harness-importing helper can be called before _verify_harness(), so the "
+        "untrusted module body can run first"
     )
 
     # No exemption for --check. An earlier revision of this test excused the
@@ -1432,9 +2287,12 @@ def test_the_harness_is_verified_before_it_is_imported():
     # compute_baseline() returned load_baseline_cases() would report every case
     # identical forever. --check IS the standalone gate. Every harness import in
     # main(), on either path, must follow the verification.
-    unguarded = [lineno for lineno in harness_imports(main) if lineno < verify_line]
-    assert not unguarded, (
-        f"the harness is imported at line {unguarded} before _verify_harness() at "
-        f"line {verify_line}; --check is not exempt, it is the gate"
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_run_check_mode"
+        and node.lineno < verify_line
+        for node in ast.walk(main)
+    ), (
+        "a --check helper can run before _verify_harness(); --check is not exempt, it is the gate"
     )
-

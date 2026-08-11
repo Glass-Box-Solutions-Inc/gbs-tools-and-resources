@@ -70,21 +70,6 @@ import java.util.List;
 
 public class PolicyTest {
 
-    private final Gson gson = new Gson();
-
-//    @Test
-//    public void compare() throws IOException {
-//
-//        final Policy policy1 = getPolicy();
-//        final String policyJson1 = gson.toJson(policy1);
-//
-//        final Policy policy2 = getPolicy();
-//        final String policyJson2 = gson.toJson(policy2);
-//
-//        Assertions.assertEquals(policyJson1, policyJson2);
-//
-//    }
-
     @Test
     public void serialize() throws IOException {
 
@@ -358,22 +343,6 @@ public class PolicyTest {
 
     }
 
-    @Test
-    public void deserializeEmpty() {
-
-        final String json = """
-                {
-                  "identifiers": {
-                  }
-                }""";
-
-        Gson gson = new Gson();
-        Policy policy = gson.fromJson(json, Policy.class);
-
-        Assertions.assertEquals("unnamed", policy.getName());
-
-    }
-
     private Policy getPolicy() throws IOException {
 
         CustomDictionary customDictionary = new CustomDictionary();
@@ -457,7 +426,7 @@ public class PolicyTest {
         identifiers.setHospital(hospital);
         identifiers.setIdentifiers(List.of(identifier));
         identifiers.setIpAddress(ipAddress);
-        identifiers.setPerson(phEye);
+        identifiers.setPhEyes(List.of(phEye));
         identifiers.setPhoneNumber(phoneNumber);
         identifiers.setPhoneNumberExtension(phoneNumberExtension);
         identifiers.setSsn(ssn);
@@ -473,7 +442,6 @@ public class PolicyTest {
         ignored.setTerms(Arrays.asList("term1", "term2"));
 
         Policy policy = new Policy();
-        policy.setName("default");
         policy.setIdentifiers(identifiers);
         policy.setIgnored(List.of(ignored));
 

@@ -19,6 +19,7 @@ import ai.philterd.phileas.filters.rules.dictionary.FuzzyDictionaryFilter;
 import ai.philterd.phileas.model.filtering.FilterType;
 import ai.philterd.phileas.model.filtering.Filtered;
 import ai.philterd.phileas.model.filtering.SensitivityLevel;
+import ai.philterd.phileas.model.filtering.Span;
 import ai.philterd.phileas.services.strategies.dynamic.CountyFilterStrategy;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -34,111 +35,100 @@ public class CountyFilterTest extends AbstractFilterTest {
     private static final Logger LOGGER = LogManager.getLogger(CountyFilterTest.class);
 
     @Test
-    public void filterCountiesLow() throws Exception {
+    void filterCountiesLow() throws Exception {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new CountyFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final FuzzyDictionaryFilter filter = new FuzzyDictionaryFilter(FilterType.LOCATION_COUNTY, filterConfiguration, SensitivityLevel.LOW, true);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE,"Lived in Fyette");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE,"Lived in Fyette");
 
-        showSpans(filtered.getSpans());
+        showSpans(Span.dropOverlappingSpans(filtered.getSpans()));
 
-        Assertions.assertEquals(3, filtered.getSpans().size());
+        Assertions.assertEquals(2, Span.dropOverlappingSpans(filtered.getSpans()).size());
 
     }
 
     @Test
-    public void filterCountiesMedium() throws Exception {
+    void filterCountiesMedium() throws Exception {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new CountyFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final FuzzyDictionaryFilter filter = new FuzzyDictionaryFilter(FilterType.LOCATION_COUNTY, filterConfiguration, SensitivityLevel.MEDIUM, true);
 
-        Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "He lived in Fyette County");
+        Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "He lived in Fyette County");
 
-        showSpans(filtered.getSpans());
+        showSpans(Span.dropOverlappingSpans(filtered.getSpans()));
 
-        Assertions.assertEquals(2, filtered.getSpans().size());
-        Assertions.assertEquals("Payette", filtered.getSpans().get(0).getText());
-        Assertions.assertEquals("Fayette", filtered.getSpans().get(1).getText());
+        Assertions.assertEquals(1, Span.dropOverlappingSpans(filtered.getSpans()).size());
+        Assertions.assertEquals("Fyette", Span.dropOverlappingSpans(filtered.getSpans()).get(0).getText());
 
     }
 
     @Test
-    public void filterCountiesHigh() throws Exception {
+    void filterCountiesHigh() throws Exception {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new CountyFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final FuzzyDictionaryFilter filter = new FuzzyDictionaryFilter(FilterType.LOCATION_COUNTY, filterConfiguration, SensitivityLevel.HIGH, true);
 
-        Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Lived in Fyette");
+        Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Lived in Fyette");
 
-        showSpans(filtered.getSpans());
+        showSpans(Span.dropOverlappingSpans(filtered.getSpans()));
 
-        Assertions.assertEquals(0, filtered.getSpans().size());
+        Assertions.assertEquals(0, Span.dropOverlappingSpans(filtered.getSpans()).size());
 
     }
 
     @Test
-    public void filterCountiesOffWithExactMatch() throws Exception {
+    void filterCountiesOffWithExactMatch() throws Exception {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new CountyFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final FuzzyDictionaryFilter filter = new FuzzyDictionaryFilter(FilterType.LOCATION_COUNTY, filterConfiguration, SensitivityLevel.OFF, true);
 
-        Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Lived in Fayette");
+        Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Lived in Fayette");
 
-        showSpans(filtered.getSpans());
+        showSpans(Span.dropOverlappingSpans(filtered.getSpans()));
 
-        Assertions.assertEquals(1, filtered.getSpans().size());
-        Assertions.assertTrue(checkSpan(filtered.getSpans().get(0), 9, 16, FilterType.LOCATION_COUNTY));
-        Assertions.assertEquals("Fayette", filtered.getSpans().get(0).getText());
+        Assertions.assertEquals(1, Span.dropOverlappingSpans(filtered.getSpans()).size());
+        Assertions.assertTrue(checkSpan(Span.dropOverlappingSpans(filtered.getSpans()).get(0), 9, 16, FilterType.LOCATION_COUNTY));
+        Assertions.assertEquals("Fayette", Span.dropOverlappingSpans(filtered.getSpans()).get(0).getText());
 
     }
 
     @Test
-    public void filterCountiesOffNoExactMatch() throws Exception {
+    void filterCountiesOffNoExactMatch() throws Exception {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new CountyFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final FuzzyDictionaryFilter filter = new FuzzyDictionaryFilter(FilterType.LOCATION_COUNTY, filterConfiguration, SensitivityLevel.OFF, true);
 
-        Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Lived in Fyette");
+        Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Lived in Fyette");
 
-        showSpans(filtered.getSpans());
+        showSpans(Span.dropOverlappingSpans(filtered.getSpans()));
 
-        Assertions.assertEquals(0, filtered.getSpans().size());
+        Assertions.assertEquals(0, Span.dropOverlappingSpans(filtered.getSpans()).size());
 
     }
 
     @Test
-    public void filterWithCandidates1() throws Exception {
+    void filterWithCandidates1() throws Exception {
 
         final List<String> candidates = List.of("candidate1", "candidate2");
 
@@ -148,14 +138,12 @@ public class CountyFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(countyFilterStrategy))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final FuzzyDictionaryFilter filter = new FuzzyDictionaryFilter(FilterType.LOCATION_COUNTY, filterConfiguration, SensitivityLevel.LOW, true);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Lived in Fayette County");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Lived in Fayette County");
         showSpans(filtered.getSpans());
         Assertions.assertTrue(filtered.getSpans().size() >= 1);
         Assertions.assertTrue(candidates.contains(filtered.getSpans().get(0).getReplacement()));

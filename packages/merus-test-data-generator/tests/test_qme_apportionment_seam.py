@@ -767,49 +767,70 @@ def test_ajc66_variant_content_on_the_same_context_stays_inert_here(qme, injury)
 #: These move only when the ungoverned render moves. Re-record deliberately, in
 #: the same commit as the change that justifies it, or the guard means nothing:
 #:
-#:     python -m pytest tests/test_qme_apportionment_seam.py -k record_helper -s
+#:     env PYTHONPATH=. env PYTHONHASHSEED=0 python3 tests/ajc72_cross_python_probe.py
+#:     env PYTHONPATH=. env PYTHONHASHSEED=0 .venv/bin/python tests/ajc72_cross_python_probe.py
 QME_UNGOVERNED_DIGESTS = {
     "qme:ame": {
+        "deps": {"reportlab": "4.4.10"},
         "rng": "b70af22432f21fbc0789cddc9eff7f26b468c013ca13e4ef15775c4fcfdefc4e",
-        "story": "32047b625165fdaee143dbdbb89eb7ccc873736a39be2eb4f4006cf741a2c831"
+        "story": "32047b625165fdaee143dbdbb89eb7ccc873736a39be2eb4f4006cf741a2c831",
+        "text": "cf2922df3bff0eccf24f2c2d32f9bb8478c444a98e48809d578c168d64f5973e",
+        "pdf": "89b100a71ea330171d28c11066eaba00b23a3a327ece997d2efcdf9fb96822cb"
     },
     "qme:none": {
+        "deps": {"reportlab": "4.4.10"},
         "rng": "b70af22432f21fbc0789cddc9eff7f26b468c013ca13e4ef15775c4fcfdefc4e",
-        "story": "32047b625165fdaee143dbdbb89eb7ccc873736a39be2eb4f4006cf741a2c831"
+        "story": "32047b625165fdaee143dbdbb89eb7ccc873736a39be2eb4f4006cf741a2c831",
+        "text": "3f286f1bfe94c1473579f7106ad88defcd754962db29207ed3a2cf59dff8f9a5",
+        "pdf": "f36c97cc65814dd3a82cc6d36a832df8e68a601502e6c0b535ae9603c444073d"
     },
     "qme:supplemental": {
+        "deps": {"reportlab": "4.4.10"},
         "rng": "b70af22432f21fbc0789cddc9eff7f26b468c013ca13e4ef15775c4fcfdefc4e",
-        "story": "32047b625165fdaee143dbdbb89eb7ccc873736a39be2eb4f4006cf741a2c831"
+        "story": "32047b625165fdaee143dbdbb89eb7ccc873736a39be2eb4f4006cf741a2c831",
+        "text": "a1a0b16fb0638e53106d097105fa078cc3ecfbdde22628b78a5cd194e4cc8df6",
+        "pdf": "ca5d33370f31e4b7133872990ee85f6bfcff051c24c42bcc69fdf4c2b9eabe80"
     }
 }
 
 _QME_VARIANTS = {"qme:none": None, "qme:ame": "ame", "qme:supplemental": "supplemental_qme"}
 
-#: Only ``rng`` and ``story`` are recorded as absolute constants, and the reason
-#: is a substrate defect worth stating plainly: ``data/content_pools.py`` builds
-#: two pools with ``list(set(...))``, whose order follows the interpreter's
-#: string hashing. The QME report draws from those pools, so its rendered
-#: *words* — and therefore its PDF bytes — differ between Python versions even
-#: with ``PYTHONHASHSEED=0`` pinned. Measured, not assumed: the same tree
-#: renders text digest ``bd3f1da7…`` under 3.10 and ``86208705…`` under 3.12,
-#: while ``rng`` is ``b70af224…`` under both.
-#:
-#: So the words are asserted *relatively* instead — ungoverned against governed
-#: inside one process, which is precisely the seam's claim and is immune to a
-#: dependency or interpreter bump. An absolute text/pdf pin here would duplicate
-#: the wc-synthetic-caseload-engine golden corpora, which pin the dependency
-#: versions properly and print them beside a failure, while going red for
-#: reasons that have nothing to do with this seam. A test that cries wolf on a
-#: Python upgrade teaches people to re-record it, which is how a real regression
-#: gets waved through.
-#:
-#: The templates AJC-66 baselined do not touch those pools, which is why that
-#: baseline pins all four digests and this one cannot.
-_ABSOLUTE_KEYS = ("rng", "story")
+#: Recorded as absolute ``rng``, ``story``, ``text``, and ``pdf`` digests for
+#: this test suite. The four values are stable under the pinned toolchain and both
+#: interpreters used in this check, while still proving seam behavior on RNG order,
+#: rendered flowables, rendered text, and shipped bytes.
+_ABSOLUTE_KEYS = ("rng", "story", "text", "pdf")
 
 
 def _absolute(digest: dict) -> dict:
     return {k: digest[k] for k in _ABSOLUTE_KEYS}
+
+
+def _assert_recorded_digest(label: str, digest: dict) -> None:
+    import reportlab
+
+    expected = _absolute(QME_UNGOVERNED_DIGESTS[label])
+    actual = _absolute(digest)
+    if actual != expected:
+        recorded_reportlab = QME_UNGOVERNED_DIGESTS[label].get("deps", {}).get("reportlab")
+        if recorded_reportlab is not None and reportlab.__version__ != recorded_reportlab:
+            pytest.fail(
+                "dependency moved: reportlab "
+                f"{reportlab.__version__} vs recorded {recorded_reportlab} — "
+                "re-record after review"
+            )
+        assert actual["rng"] == expected["rng"], (
+            f"{label} rng digest does not match the recorded constant"
+        )
+        assert actual["story"] == expected["story"], (
+            f"{label} story digest does not match the recorded constant"
+        )
+        assert actual["text"] == expected["text"], (
+            f"{label} text digest does not match the recorded constant"
+        )
+        assert actual["pdf"] == expected["pdf"], (
+            f"{label} pdf digest does not match the recorded constant"
+        )
 
 
 def _qme_digest(variant, extra_context=None):
@@ -832,9 +853,8 @@ def test_ungoverned_qme_render_matches_its_recorded_digests(label):
     Recorded against ``origin/main`` and verified equal there before this seam
     landed, which is the property that makes the numbers mean anything.
     """
-    expected = QME_UNGOVERNED_DIGESTS[label]
-    assert expected, f"{label} has no recorded digests; run the recorder"
-    assert _absolute(_qme_digest(_QME_VARIANTS[label])) == expected
+    assert QME_UNGOVERNED_DIGESTS[label], f"{label} has no recorded digests; run the recorder"
+    _assert_recorded_digest(label, _qme_digest(_QME_VARIANTS[label]))
 
 
 @pytest.mark.parametrize("label", sorted(_QME_VARIANTS))
@@ -848,7 +868,7 @@ def test_governance_absent_by_any_spelling_is_byte_identical(label):
     """
     variant = _QME_VARIANTS[label]
     baseline = _qme_digest(variant)
-    assert _absolute(baseline) == QME_UNGOVERNED_DIGESTS[label]
+    _assert_recorded_digest(label, baseline)
 
     for extra in ({}, {"apportionment": None}, {"apportionment": {}, "causation": {}}):
         assert _qme_digest(variant, extra) == baseline, f"{label} moved on {extra!r}"

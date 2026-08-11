@@ -15,35 +15,34 @@
  */
 package ai.philterd.phileas.services.anonymization;
 
-import ai.philterd.phileas.services.context.ContextService;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Calendar;
 import java.util.List;
-import java.util.Random;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
 public class DateAnonymizationService extends AbstractAnonymizationService {
 
-    public DateAnonymizationService(final ContextService contextService, final Random random, final AnonymizationMethod anonymizationMethod) {
-        super(contextService, random, anonymizationMethod);
+    public DateAnonymizationService(final SecureRandom random, final AnonymizationMethod anonymizationMethod) {
+        super(random, anonymizationMethod);
     }
 
-    public DateAnonymizationService(final ContextService contextService, final Random random, final List<String> candidates) {
-        super(contextService, random, candidates);
+    public DateAnonymizationService(final SecureRandom random, final List<String> candidates) {
+        super(random, candidates);
     }
 
-    public DateAnonymizationService(final ContextService contextService, final Random random) {
-        super(contextService, random);
+    public DateAnonymizationService(final SecureRandom random) {
+        super(random);
     }
 
-    public DateAnonymizationService(final ContextService contextService) {
-        super(contextService);
+    public DateAnonymizationService() {
+        super();
     }
 
     private static final Logger LOGGER = LogManager.getLogger(DateAnonymizationService.class);
@@ -53,11 +52,6 @@ public class DateAnonymizationService extends AbstractAnonymizationService {
     private static final Pattern DATE_MMDDYYYY_REGEX = Pattern.compile("\\b\\d{2}-\\d{2}-\\d{4}\\b");
     private static final Pattern DATE_MDYYYY_REGEX = Pattern.compile("\\b\\d{1,2}-\\d{1,2}-\\d{2,4}\\b");
     private static final Pattern DATE_MONTH_REGEX = Pattern.compile("(?i)(\\b\\d{1,2}\\D{0,3})?\\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|(Nov|Dec)(?:ember)?)\\D?(\\d{1,2}(\\D?(st|nd|rd|th))?\\D?)(\\D?((19[7-9]\\d|20\\d{2})|\\d{2}))?\\b", Pattern.CASE_INSENSITIVE);
-
-    @Override
-    public ContextService getContextService() {
-        return contextService;
-    }
 
     @Override
     public String anonymize(final String token) {
@@ -126,7 +120,7 @@ public class DateAnonymizationService extends AbstractAnonymizationService {
 
         } else {
 
-            LOGGER.warn("Date {} matched no pattern.", token);
+            LOGGER.warn("A date value matched no known pattern.");
 
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
             return localDate.format(formatter);

@@ -7,15 +7,12 @@ package's own logic, all of them fixed here rather than by editing the
 substrate.
 
 **1. Salted string hashing (the widest one).**
-``data/content_pools.py`` does ``items = list(set(items))`` before shuffling.
-Python salts ``str.__hash__`` per process, so set iteration order — and
-therefore the treatment items printed in a settlement memo — changed between
-runs even with a perfectly seeded RNG. The salt cannot be changed after the
-interpreter starts, so :func:`ensure_stable_hashing` re-executes the process
-once with ``PYTHONHASHSEED=0``.
-
-This fixes the *class*, not the instance: any ``set``-of-strings ordering
-anywhere in the substrate becomes stable, including leaks not yet found.
+The general hazard is materializing output-affecting strings through unordered
+sets before sampling or shuffling: Python salts ``str.__hash__`` per process, so
+iteration order can drift even with a perfectly seeded RNG. AJC-72 fixed the two
+known content-pool instances by canonical ordering before RNG use, and
+:func:`ensure_stable_hashing` still re-executes with ``PYTHONHASHSEED=0`` to
+guard the broader class of future set-ordering leaks.
 
 **2. Wall-clock ZIP timestamps in ``.docx``.**
 A ``.docx`` is a ZIP, and every entry carries the modification time at save.
@@ -163,9 +160,10 @@ def ensure_stable_hashing() -> None:
     """Re-execute this process unless ``PYTHONHASHSEED`` is exactly ``"0"``.
 
     Called from the CLI entry point before any generation work. Without it,
-    ``list(set(...))`` inside the substrate's content pools yields a different
-    order in every process, and two runs of the same spec produce different
-    documents.
+    any output-affecting set iteration over strings can yield a different order
+    in every process. AJC-72 removed the two known content-pool leaks by sorting
+    before RNG use, and this guard remains the process-level backstop for the
+    broader class.
 
     **Any** other value re-execs, including a value the caller set on purpose.
     Deferring to a pre-set value was the defect this replaced: ``PYTHONHASHSEED``

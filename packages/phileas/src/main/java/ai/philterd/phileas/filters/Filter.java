@@ -26,6 +26,7 @@ import ai.philterd.phileas.policy.FPE;
 import ai.philterd.phileas.policy.IgnoredPattern;
 import ai.philterd.phileas.policy.Policy;
 import ai.philterd.phileas.policy.filters.Identifier;
+import java.security.SecureRandom;
 import ai.philterd.phileas.services.anonymization.AgeAnonymizationService;
 import ai.philterd.phileas.services.anonymization.AlphanumericAnonymizationService;
 import ai.philterd.phileas.services.anonymization.AnonymizationMethod;
@@ -67,13 +68,18 @@ import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public abstract class Filter {
 
     protected static final Logger LOGGER = LogManager.getLogger(Filter.class);
+
+    // Precompiled patterns used when building the token window, compiled once rather than on every
+    // span/token via String.split and String.replaceAll.
+    private static final Pattern WINDOW_WHITESPACE = Pattern.compile("\\s");
+    private static final Pattern WINDOW_PUNCTUATION = Pattern.compile("\\p{Punct}");
 
     /**
      * The {@link FilterType type} of identifiers handled by this filter.
@@ -121,6 +127,12 @@ public abstract class Filter {
     protected int priority;
 
     /**
+     * The maximum time, in milliseconds, a single regex match attempt may run before being aborted
+     * as a suspected ReDoS pattern.
+     */
+    protected long regexTimeoutMs;
+
+    /**
      * Filters the input text.
      * @param policy The {@link Policy} to use.
      * @param context The name of the context.
@@ -128,7 +140,7 @@ public abstract class Filter {
      * @param input The input text.
      * @return A {@link Filtered} containing the identified {@link Span spans}.
      */
-    public abstract Filtered filter(Policy policy, String context, int piece, String input) throws Exception;
+    public abstract Filtered filter(ContextService contextService, Policy policy, String context, int piece, String input) throws Exception;
 
     /**
      * Creates a new filter.
@@ -146,6 +158,7 @@ public abstract class Filter {
         this.fpe = filterConfiguration.getFPE();
         this.windowSize = filterConfiguration.getWindowSize();
         this.priority = filterConfiguration.getPriority();
+        this.regexTimeoutMs = filterConfiguration.getRegexTimeoutMs();
 
         if(this.ignored == null) {
             this.ignored = new LinkedHashSet<>();
@@ -182,7 +195,6 @@ public abstract class Filter {
 
             final AnonymizationService strategyAnonymizationService = getAnonymizationService(
                     filterType,
-                    filterConfiguration.getContextService(),
                     filterConfiguration.getRandom(),
                     strategy.getAnonymizationCandidates(),
                     strategy.getAnonymizationMethod()
@@ -194,52 +206,52 @@ public abstract class Filter {
 
     }
 
-    private AnonymizationService getAnonymizationService(FilterType filterType, ContextService contextService, Random random, List<String> candidates, AnonymizationMethod anonymizationMethod) {
+    private AnonymizationService getAnonymizationService(FilterType filterType, SecureRandom random, List<String> candidates, AnonymizationMethod anonymizationMethod) {
 
         if(filterType == FilterType.AGE) {
-            return new AgeAnonymizationService(contextService, random, candidates);
+            return new AgeAnonymizationService(random, candidates);
         } else if(filterType == FilterType.BITCOIN_ADDRESS) {
-            return new BitcoinAddressAnonymizationService(contextService, random, candidates);
+            return new BitcoinAddressAnonymizationService(random, candidates);
         } else if(filterType == FilterType.LOCATION_CITY) {
-            return new CityAnonymizationService(contextService, random, candidates);
+            return new CityAnonymizationService(random, candidates);
         } else if(filterType == FilterType.LOCATION_COUNTY) {
-            return new CountyAnonymizationService(contextService, random, candidates);
+            return new CountyAnonymizationService(random, candidates);
         } else if(filterType == FilterType.CREDIT_CARD) {
-            return new CreditCardAnonymizationService(contextService, random, candidates);
+            return new CreditCardAnonymizationService(random, candidates);
         } else if(filterType == FilterType.CURRENCY) {
-            return new CurrencyAnonymizationService(contextService, random, candidates);
+            return new CurrencyAnonymizationService(random, candidates);
         } else if(filterType == FilterType.DATE) {
-            return new DateAnonymizationService(contextService, random, candidates);
+            return new DateAnonymizationService(random, candidates);
         } else if(filterType == FilterType.EMAIL_ADDRESS) {
-            return new EmailAddressAnonymizationService(contextService, random, candidates);
+            return new EmailAddressAnonymizationService(random, candidates);
         } else if(filterType == FilterType.HOSPITAL) {
-            return new HospitalAnonymizationService(contextService, random, candidates);
+            return new HospitalAnonymizationService(random, candidates);
         } else if(filterType == FilterType.HOSPITAL_ABBREVIATION) {
-            return new HospitalAbbreviationAnonymizationService(contextService, random, candidates);
+            return new HospitalAbbreviationAnonymizationService(random, candidates);
         } else if(filterType == FilterType.IBAN_CODE) {
-            return new IbanCodeAnonymizationService(contextService, random, candidates);
+            return new IbanCodeAnonymizationService(random, candidates);
         } else if(filterType == FilterType.IP_ADDRESS) {
-            return new IpAddressAnonymizationService(contextService, random, candidates);
+            return new IpAddressAnonymizationService(random, candidates);
         } else if(filterType == FilterType.MAC_ADDRESS) {
-            return new MacAddressAnonymizationService(contextService, random, candidates);
+            return new MacAddressAnonymizationService(random, candidates);
         } else if(filterType == FilterType.PASSPORT_NUMBER) {
-            return new PassportNumberAnonymizationService(contextService, random, candidates);
+            return new PassportNumberAnonymizationService(random, candidates);
         } else if(filterType == FilterType.PERSON) {
-            return new PersonsAnonymizationService(contextService, random, candidates);
+            return new PersonsAnonymizationService(random, candidates);
         } else if(filterType == FilterType.LOCATION_STATE) {
-            return new StateAnonymizationService(contextService, random, candidates);
+            return new StateAnonymizationService(random, candidates);
         } else if(filterType == FilterType.STATE_ABBREVIATION) {
-            return new StateAbbreviationAnonymizationService(contextService, random, candidates);
+            return new StateAbbreviationAnonymizationService(random, candidates);
         } else if(filterType == FilterType.STREET_ADDRESS) {
-            return new StreetAddressAnonymizationService(contextService, random, candidates);
+            return new StreetAddressAnonymizationService(random, candidates);
         } else if(filterType == FilterType.SURNAME) {
-            return new SurnameAnonymizationService(contextService, random, candidates);
+            return new SurnameAnonymizationService(random, candidates);
         } else if(filterType == FilterType.URL) {
-            return new UrlAnonymizationService(contextService, random, candidates);
+            return new UrlAnonymizationService(random, candidates);
         } else if(filterType == FilterType.ZIP_CODE) {
-            return new ZipCodeAnonymizationService(contextService, random, candidates);
+            return new ZipCodeAnonymizationService(random, candidates);
         } else {
-            return new AlphanumericAnonymizationService(contextService, random, candidates);
+            return new AlphanumericAnonymizationService(random, candidates);
         }
 
     }
@@ -295,15 +307,22 @@ public abstract class Filter {
 
         }
 
-        final String[] tokens = text.substring(finalStart + 1, finalEnd).trim().split("\\s");
+        final String[] rawTokens = WINDOW_WHITESPACE.split(text.substring(finalStart + 1, finalEnd).trim());
 
-        // Remove punctuation from each token.
+        // Strip punctuation from each token and drop any that become empty (for example a token that
+        // was only punctuation, or an empty entry produced by splitting). Empty tokens are not real
+        // context words; keeping them would, for instance, make every all-punctuation window hash to
+        // the same bucket and add correlated noise to the disambiguation vectors.
         // TODO: Should punctuation be preserved in the token itself?
-        for(int i = 0; i < tokens.length; i++) {
-            tokens[i] = tokens[i].replaceAll("\\p{Punct}", "");
+        final List<String> tokens = new LinkedList<>();
+        for(final String rawToken : rawTokens) {
+            final String token = WINDOW_PUNCTUATION.matcher(rawToken).replaceAll("");
+            if(!token.isEmpty()) {
+                tokens.add(token);
+            }
         }
 
-        return tokens;
+        return tokens.toArray(new String[0]);
 
     }
 
@@ -317,7 +336,7 @@ public abstract class Filter {
      * @param classification The classification of the item.
      * @return The replacement string.
      */
-    public Replacement getReplacement(final Policy policy, final String context,
+    public Replacement getReplacement(final ContextService contextService, final Policy policy, final String context,
                                       final String token, final String[] window, double confidence,
                                       final String classification,
                                       final FilterPattern filterPattern) throws Exception {
@@ -341,14 +360,14 @@ public abstract class Filter {
                     if(evaluates) {
 
                         // Break early since we met the strategy's condition.
-                        return strategy.getReplacement(classification, context, token, window, crypto, fpe, strategy.getAnonymizationService(), filterPattern);
+                        return strategy.getReplacement(contextService, classification, context, token, window, crypto, fpe, strategy.getAnonymizationService(), filterPattern);
 
                     }
 
                 } else {
 
                     // Break early since there is no condition.
-                    return strategy.getReplacement(classification, context, token, window, crypto, fpe, strategy.getAnonymizationService(), filterPattern);
+                    return strategy.getReplacement(contextService, classification, context, token, window, crypto, fpe, strategy.getAnonymizationService(), filterPattern);
 
                 }
 
@@ -358,7 +377,7 @@ public abstract class Filter {
 
             // PHL-68: When there are no strategies just redact.
             LOGGER.warn("No filter strategies found for filter type {}. Defaulting to redaction.", filterType.getType());
-            return new Replacement(AbstractFilterStrategy.DEFAULT_REDACTION.replaceAll("%t", filterType.getType()));
+            return new Replacement(AbstractFilterStrategy.DEFAULT_REDACTION.replace("%t", filterType.getType()));
 
         }
 
@@ -381,7 +400,7 @@ public abstract class Filter {
         // No reason to check if it is already ignored by an ignored term.
         if(!isIgnored) {
             for (final IgnoredPattern ignoredPattern : ignoredPatterns) {
-                if (token.matches(ignoredPattern.getPattern())) {
+                if (ignoredPattern.matches(token)) {
                     isIgnored = true;
                     break;
                 }
@@ -398,7 +417,8 @@ public abstract class Filter {
 
         final Identifier identifier = identifiers.stream().
                 filter(p -> p.getClassification().equalsIgnoreCase(name)).
-                findFirst().get();
+                findFirst().
+                orElseThrow(() -> new IllegalArgumentException("No identifier filter found with classification: " + name));
 
         return identifier.getIdentifierFilterStrategies();
 

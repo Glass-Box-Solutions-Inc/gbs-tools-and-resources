@@ -1,18 +1,16 @@
 {
   "_meta": {
     "anchor_date": "2026-01-15",
-    "base_commit": "e2f52edb11c994d2b4bf8d9209e73ed29f015e30",
-    "base_patches": [
-      "data/deposition_exchanges.py"
-    ],
+    "base_commit": "b0e77dd1b6fa949d2d5dc6a7f2d1a0c94ed6def3",
+    "base_patches": [],
     "case_seed": 4242,
     "harness_sha256": {
       "tests/render_baseline.py": "d9ff9bfc9ef212376070b4181dc453a538ec1624b61042e8bdd338fd67b002c7"
     },
-    "note": "Recorded from a detached checkout at base_commit, before the AJC-66 variant-content seam existed. base_patches lists the only tracked files the base checkout may differ on \u2014 each is behaviour-preserving and required for the clock pin to reach the code. Re-recording requires the same conditions; see this script's docstring.",
-    "recorded_utc": "2026-08-10T08:56:48+00:00",
+    "note": "Recorded from a detached checkout at base_commit, the trusted post-#38 trunk before AJC-72. base_patches lists the only tracked files the base checkout differs on. Re-recording requires the same conditions; see this script's docstring.",
+    "recorded_utc": "2026-08-10T22:56:37+00:00",
     "render_seed": 20260808,
-    "source_commit": "e2f52edb11c994d2b4bf8d9209e73ed29f015e30"
+    "source_commit": "b0e77dd1b6fa949d2d5dc6a7f2d1a0c94ed6def3"
   },
   "cases": {
     "defense_letter:advocacy_qme": {

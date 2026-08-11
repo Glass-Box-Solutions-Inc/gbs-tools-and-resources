@@ -23,7 +23,7 @@ import ai.philterd.phileas.model.filtering.Replacement;
 import ai.philterd.phileas.model.filtering.SensitivityLevel;
 import ai.philterd.phileas.model.filtering.Span;
 import ai.philterd.phileas.policy.Policy;
-import org.apache.commons.lang3.StringUtils;
+import ai.philterd.phileas.services.context.ContextService;
 import org.apache.commons.text.similarity.LevenshteinDistance;
 
 import java.io.IOException;
@@ -65,7 +65,7 @@ public class FuzzyDictionaryFilter extends DictionaryFilter {
     }
 
     @Override
-    public Filtered filter(Policy policy, final String context, int piece, String input) throws Exception {
+    public Filtered filter(ContextService contextService, Policy policy, final String context, int piece, String input) throws Exception {
 
         final List<Span> spans = new LinkedList<>();
 
@@ -73,9 +73,8 @@ public class FuzzyDictionaryFilter extends DictionaryFilter {
 
             // Build ngrams from the input text.
             final Map<Integer, Map<Position, String>> ngrams = new HashMap<>();
-            ngrams.put(0, splitWithIndexes(input, " "));
 
-            for(int x = 1; x < maxNgrams; x++) {
+            for(int x = 1; x <= maxNgrams; x++) {
                 ngrams.put(x, getNgramsOfLength(input, x));
             }
 
@@ -87,7 +86,11 @@ public class FuzzyDictionaryFilter extends DictionaryFilter {
                 if (matcher.find()) {
 
                     final int startPosition = matcher.start();
-                    spans.add(createSpan(input, startPosition, startPosition + entry.length(), 1.0, context, entry, policy));
+                    if (requireCapitalization && Character.isUpperCase(input.charAt(startPosition))) {
+                        spans.add(createSpan(contextService, input, startPosition, startPosition + entry.length(), 1.0, context, entry, policy));
+                    } else if(!requireCapitalization) {
+                        spans.add(createSpan(contextService, input, startPosition, startPosition + entry.length(), 1.0, context, entry, policy));
+                    }
 
                 } else {
 
@@ -95,36 +98,43 @@ public class FuzzyDictionaryFilter extends DictionaryFilter {
                     if(sensitivityLevel != SensitivityLevel.OFF) {
 
                         // Fuzzy matches.
-                        final int spacesInEntry = StringUtils.countMatches(entry, " ");
+                        final int wordsInEntry = entry.split(" ").length;
 
-                        for (final Position position : ngrams.get(spacesInEntry).keySet()) {
+                        if (ngrams.containsKey(wordsInEntry)) {
+                            for (final Position position : ngrams.get(wordsInEntry).keySet()) {
 
-                            // Compare string distance between word and ngrams.
-                            final String ngram = ngrams.get(spacesInEntry).get(position);
+                                // Compare string distance between word and ngrams.
+                                final String ngram = ngrams.get(wordsInEntry).get(position);
 
-                            if (ngram.length() > 2) {
-
-                                if (requireCapitalization && Character.isUpperCase(ngram.charAt(0))) {
-
-                                    final int start = position.getStart();
-                                    final int end = position.getEnd();
+                                if (ngram.length() > 2) {
 
                                     // TODO: Should this be customizable in the dictionary's properties in the filter policy?
                                     final LevenshteinDistance levenshteinDistance = LevenshteinDistance.getDefaultInstance();
-                                    final int distance = levenshteinDistance.apply(entry, ngram);
+                                    final int distance = levenshteinDistance.apply(entry.toLowerCase(), ngram.toLowerCase());
 
-                                    if (sensitivityLevel == SensitivityLevel.HIGH && distance < 1) {
-                                        spans.add(createSpan(input, start, end, 0.9, context, entry, policy));
-                                    } else if (sensitivityLevel == SensitivityLevel.MEDIUM && distance <= 2) {
-                                        spans.add(createSpan(input, start, end, 0.5, context, entry, policy));
-                                    } else if (sensitivityLevel == SensitivityLevel.LOW && distance < 3) {
-                                        spans.add(createSpan(input, start, end, 0.3, context, entry, policy));
+                                    if (!requireCapitalization || Character.isUpperCase(ngram.charAt(0))) {
+
+                                        final int start = position.getStart();
+                                        final int end = position.getEnd();
+
+                                        // Higher sensitivity requires a closer match: HIGH matches only
+                                        // exact tokens, MEDIUM allows a Levenshtein distance up to 1, and
+                                        // LOW allows a distance up to 2. The thresholds are distinct so the
+                                        // three levels behave differently (previously MEDIUM and LOW were
+                                        // both an effective distance of 2 and so were indistinguishable).
+                                        if (sensitivityLevel == SensitivityLevel.HIGH && distance == 0) {
+                                            spans.add(createSpan(contextService, input, start, end, 0.9, context, ngram, policy));
+                                        } else if (sensitivityLevel == SensitivityLevel.MEDIUM && distance <= 1) {
+                                            spans.add(createSpan(contextService, input, start, end, 0.7, context, ngram, policy));
+                                        } else if (sensitivityLevel == SensitivityLevel.LOW && distance <= 2) {
+                                            spans.add(createSpan(contextService, input, start, end, 0.5, context, ngram, policy));
+                                        }
+
                                     }
 
                                 }
 
                             }
-
                         }
 
                     }
@@ -139,14 +149,14 @@ public class FuzzyDictionaryFilter extends DictionaryFilter {
 
     }
 
-    private Span createSpan(String text, int characterStart, int characterEnd, double confidence, String context,
+    private Span createSpan(ContextService contextService, String text, int characterStart, int characterEnd, double confidence, String context,
                             String token, Policy policy) throws Exception {
 
         final boolean ignored = isIgnored(text);
         final String[] window = getWindow(text, characterStart, characterEnd);
 
         // Get the replacement token or the original token if no filter strategy conditions are met.
-        final Replacement replacement = getReplacement(policy, context, token,
+        final Replacement replacement = getReplacement(contextService, policy, context, token,
                 window, confidence, classification, null);
 
         // Add the span to the list.

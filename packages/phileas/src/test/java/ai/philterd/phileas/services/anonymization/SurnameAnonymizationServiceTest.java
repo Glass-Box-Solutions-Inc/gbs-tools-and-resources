@@ -15,7 +15,6 @@
  */
 package ai.philterd.phileas.services.anonymization;
 
-import ai.philterd.phileas.services.context.ContextService;
 import ai.philterd.phileas.services.context.DefaultContextService;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -31,7 +30,7 @@ public class SurnameAnonymizationServiceTest {
     @Test
     public void constructor() {
 
-        AnonymizationService anonymizationService = new SurnameAnonymizationService(new DefaultContextService(), new SecureRandom(), AnonymizationMethod.REALISTIC);
+        AnonymizationService anonymizationService = new SurnameAnonymizationService(new SecureRandom(), AnonymizationMethod.REALISTIC);
 
         final String token = "Smith";
         final String replacement = anonymizationService.anonymize(token);
@@ -46,9 +45,7 @@ public class SurnameAnonymizationServiceTest {
     @Test
     public void anonymize1() {
 
-        final ContextService contextService = new DefaultContextService();
-
-        AnonymizationService anonymizationService = new SurnameAnonymizationService(contextService);
+        AnonymizationService anonymizationService = new SurnameAnonymizationService();
 
         final String token = "abcd1234";
         final String replacement = anonymizationService.anonymize(token);
@@ -63,9 +60,7 @@ public class SurnameAnonymizationServiceTest {
     @Test
     public void anonymize2() {
 
-        final ContextService contextService = new DefaultContextService();
-
-        AnonymizationService anonymizationService = new SurnameAnonymizationService(contextService);
+        AnonymizationService anonymizationService = new SurnameAnonymizationService();
 
         final String token = "April 1, 2019";
         final String replacement = anonymizationService.anonymize(token);
@@ -80,7 +75,7 @@ public class SurnameAnonymizationServiceTest {
     @Test
     public void anonymizeUUID() {
 
-        AnonymizationService anonymizationService = new SurnameAnonymizationService(new DefaultContextService(), new SecureRandom(), AnonymizationMethod.UUID);
+        AnonymizationService anonymizationService = new SurnameAnonymizationService(new SecureRandom(), AnonymizationMethod.UUID);
 
         final String token = "Smith";
         final String replacement = anonymizationService.anonymize(token);
@@ -88,6 +83,20 @@ public class SurnameAnonymizationServiceTest {
         LOGGER.info("Surname: {}", replacement);
         Assertions.assertNotEquals(token, replacement);
         Assertions.assertTrue(replacement.length() >= 32);
+
+    }
+
+    @Test
+    public void producesNonEmptyReplacement() {
+
+        // SecureRandom is not deterministically seedable, so the replacement varies run to run;
+        // verify the anonymizer still produces a non-empty replacement distinct from the input.
+        final String token = "Smith";
+
+        final String first = new SurnameAnonymizationService().anonymize(token);
+
+        Assertions.assertNotEquals(token, first);
+        Assertions.assertFalse(first.isEmpty());
 
     }
 

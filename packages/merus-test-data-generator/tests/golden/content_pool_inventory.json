@@ -1,0 +1,206 @@
+{
+  "future_medical_classifier": [
+    {
+      "input_label": "fallback",
+      "sha256_of_canonical_json": "212e19534d8e9363cc03603542e332a3ae6a0ae0cd4a89657711b6fe717bee29",
+      "sorted_unique_items": [
+        "Annual diagnostic imaging (MRI) to monitor for progression at $1,200-2,500 per study",
+        "Annual epidural steroid injection series (up to 3 per year) at $1,500-3,000 per injection",
+        "Continued medication management: gabapentin, NSAIDs, muscle relaxants (~$200-400/month)",
+        "Ergonomic workstation modifications for return to work ($500-2,000)",
+        "Home exercise equipment (TENS unit, exercise ball, resistance bands) \u2014 one-time $200-500",
+        "Lumbar fusion surgery if conservative measures fail ($75,000-150,000 including hospitalization)",
+        "Ongoing pain management including medication management every 4-8 weeks ($150-300 per visit)",
+        "Physical therapy flare-up protocol: 6-12 sessions per year at $150-200 per session",
+        "Radiofrequency ablation every 12-18 months at $3,500-5,000 per procedure",
+        "Spinal cord stimulator trial and implantation if indicated ($50,000-85,000)"
+      ],
+      "unique_count": 10
+    },
+    {
+      "input_label": "single:spine",
+      "sha256_of_canonical_json": "212e19534d8e9363cc03603542e332a3ae6a0ae0cd4a89657711b6fe717bee29",
+      "sorted_unique_items": [
+        "Annual diagnostic imaging (MRI) to monitor for progression at $1,200-2,500 per study",
+        "Annual epidural steroid injection series (up to 3 per year) at $1,500-3,000 per injection",
+        "Continued medication management: gabapentin, NSAIDs, muscle relaxants (~$200-400/month)",
+        "Ergonomic workstation modifications for return to work ($500-2,000)",
+        "Home exercise equipment (TENS unit, exercise ball, resistance bands) \u2014 one-time $200-500",
+        "Lumbar fusion surgery if conservative measures fail ($75,000-150,000 including hospitalization)",
+        "Ongoing pain management including medication management every 4-8 weeks ($150-300 per visit)",
+        "Physical therapy flare-up protocol: 6-12 sessions per year at $150-200 per session",
+        "Radiofrequency ablation every 12-18 months at $3,500-5,000 per procedure",
+        "Spinal cord stimulator trial and implantation if indicated ($50,000-85,000)"
+      ],
+      "unique_count": 10
+    },
+    {
+      "input_label": "single:upper_extremity",
+      "sha256_of_canonical_json": "ea658a153c8bc615f361bb1e64a74704a087e7a5d03f87422e4671a893968bb6",
+      "sorted_unique_items": [
+        "Assistive devices for activities of daily living ($100-500)",
+        "Continued medication management: NSAIDs, topical analgesics (~$100-200/month)",
+        "Corticosteroid injection to affected joint up to 3 times per year ($500-1,500 per injection)",
+        "Custom orthotic/splinting with periodic replacement ($200-500 per device)",
+        "Functional capacity evaluation annually to monitor work capacity ($1,500-3,000)",
+        "Ongoing orthopedic follow-up every 3-6 months ($150-300 per visit)",
+        "Physical therapy maintenance: 12-24 sessions per year ($150-200 per session)",
+        "Repeat MRI or ultrasound as clinically indicated ($800-2,000 per study)",
+        "Surgical revision if initial repair fails ($25,000-60,000)"
+      ],
+      "unique_count": 9
+    },
+    {
+      "input_label": "single:lower_extremity",
+      "sha256_of_canonical_json": "0e412611dd0fd25573301c05a53d95621ab8d69a3c6dc5ce1abb11554fb5c78c",
+      "sorted_unique_items": [
+        "Ambulatory aids (cane, knee brace) with periodic replacement ($100-500/year)",
+        "Annual diagnostic imaging to monitor for degenerative progression ($500-1,500)",
+        "Continued medication management: NSAIDs, topical analgesics (~$100-200/month)",
+        "Custom orthotics and supportive footwear with annual replacement ($300-800/year)",
+        "Home modifications (grab bars, shower chair) \u2014 one-time $500-2,000",
+        "Ongoing orthopedic follow-up every 3-6 months ($150-300 per visit)",
+        "Physical therapy maintenance: 12-24 sessions per year ($150-200 per session)",
+        "Total joint arthroplasty if conservative measures fail ($40,000-80,000 including rehab)",
+        "Viscosupplementation injections (hyaluronic acid) series annually ($1,500-3,000 per series)"
+      ],
+      "unique_count": 9
+    },
+    {
+      "input_label": "single:psyche",
+      "sha256_of_canonical_json": "aa8e11e71119c5c2a44c2f4d9d480fe36ff0944edc22b65bd4c1db817c52b52b",
+      "sorted_unique_items": [
+        "Annual psychological testing to monitor treatment progress ($1,500-3,000)",
+        "Group therapy for chronic pain management ($50-100 per session, weekly)",
+        "Individual psychotherapy (CBT/EMDR) weekly to biweekly ($150-250 per session)",
+        "Medication management adjustments as clinically indicated",
+        "Ongoing psychiatric medication management every 4-8 weeks ($200-400 per visit)",
+        "Psychiatric hospitalization for crisis stabilization if needed ($2,000-5,000/day)",
+        "Psychiatric medication costs: antidepressants, anxiolytics (~$100-400/month)",
+        "Sleep study and ongoing sleep disorder treatment ($1,500-3,000 initial, $100-200/month ongoing)"
+      ],
+      "unique_count": 8
+    },
+    {
+      "input_label": "repeated:spine",
+      "sha256_of_canonical_json": "212e19534d8e9363cc03603542e332a3ae6a0ae0cd4a89657711b6fe717bee29",
+      "sorted_unique_items": [
+        "Annual diagnostic imaging (MRI) to monitor for progression at $1,200-2,500 per study",
+        "Annual epidural steroid injection series (up to 3 per year) at $1,500-3,000 per injection",
+        "Continued medication management: gabapentin, NSAIDs, muscle relaxants (~$200-400/month)",
+        "Ergonomic workstation modifications for return to work ($500-2,000)",
+        "Home exercise equipment (TENS unit, exercise ball, resistance bands) \u2014 one-time $200-500",
+        "Lumbar fusion surgery if conservative measures fail ($75,000-150,000 including hospitalization)",
+        "Ongoing pain management including medication management every 4-8 weeks ($150-300 per visit)",
+        "Physical therapy flare-up protocol: 6-12 sessions per year at $150-200 per session",
+        "Radiofrequency ablation every 12-18 months at $3,500-5,000 per procedure",
+        "Spinal cord stimulator trial and implantation if indicated ($50,000-85,000)"
+      ],
+      "unique_count": 10
+    },
+    {
+      "input_label": "mixed:all_branches",
+      "sha256_of_canonical_json": "0fb4105c3f597bc9aeb3689fa9bc01bb9f3d47ab18630a016fc6fbb23de16df7",
+      "sorted_unique_items": [
+        "Ambulatory aids (cane, knee brace) with periodic replacement ($100-500/year)",
+        "Annual diagnostic imaging (MRI) to monitor for progression at $1,200-2,500 per study",
+        "Annual diagnostic imaging to monitor for degenerative progression ($500-1,500)",
+        "Annual epidural steroid injection series (up to 3 per year) at $1,500-3,000 per injection",
+        "Annual psychological testing to monitor treatment progress ($1,500-3,000)",
+        "Assistive devices for activities of daily living ($100-500)",
+        "Continued medication management: NSAIDs, topical analgesics (~$100-200/month)",
+        "Continued medication management: gabapentin, NSAIDs, muscle relaxants (~$200-400/month)",
+        "Corticosteroid injection to affected joint up to 3 times per year ($500-1,500 per injection)",
+        "Custom orthotic/splinting with periodic replacement ($200-500 per device)",
+        "Custom orthotics and supportive footwear with annual replacement ($300-800/year)",
+        "Ergonomic workstation modifications for return to work ($500-2,000)",
+        "Functional capacity evaluation annually to monitor work capacity ($1,500-3,000)",
+        "Group therapy for chronic pain management ($50-100 per session, weekly)",
+        "Home exercise equipment (TENS unit, exercise ball, resistance bands) \u2014 one-time $200-500",
+        "Home modifications (grab bars, shower chair) \u2014 one-time $500-2,000",
+        "Individual psychotherapy (CBT/EMDR) weekly to biweekly ($150-250 per session)",
+        "Lumbar fusion surgery if conservative measures fail ($75,000-150,000 including hospitalization)",
+        "Medication management adjustments as clinically indicated",
+        "Ongoing orthopedic follow-up every 3-6 months ($150-300 per visit)",
+        "Ongoing pain management including medication management every 4-8 weeks ($150-300 per visit)",
+        "Ongoing psychiatric medication management every 4-8 weeks ($200-400 per visit)",
+        "Physical therapy flare-up protocol: 6-12 sessions per year at $150-200 per session",
+        "Physical therapy maintenance: 12-24 sessions per year ($150-200 per session)",
+        "Psychiatric hospitalization for crisis stabilization if needed ($2,000-5,000/day)",
+        "Psychiatric medication costs: antidepressants, anxiolytics (~$100-400/month)",
+        "Radiofrequency ablation every 12-18 months at $3,500-5,000 per procedure",
+        "Repeat MRI or ultrasound as clinically indicated ($800-2,000 per study)",
+        "Sleep study and ongoing sleep disorder treatment ($1,500-3,000 initial, $100-200/month ongoing)",
+        "Spinal cord stimulator trial and implantation if indicated ($50,000-85,000)",
+        "Surgical revision if initial repair fails ($25,000-60,000)",
+        "Total joint arthroplasty if conservative measures fail ($40,000-80,000 including rehab)",
+        "Viscosupplementation injections (hyaluronic acid) series annually ($1,500-3,000 per series)"
+      ],
+      "unique_count": 33
+    }
+  ],
+  "mtus_citations_classifier": [
+    {
+      "input_label": "fallback",
+      "sha256_of_canonical_json": "12571127684a994b03e84fc742dab03eac6c884d556e1bb38958252ce799a1f1",
+      "sorted_unique_items": [
+        "spine_conservative"
+      ],
+      "unique_count": 1
+    },
+    {
+      "input_label": "single:spine",
+      "sha256_of_canonical_json": "4fb1cfbaec8adf88db970f9aa9c6eb30a43a967d883271f01e2199878b2976ce",
+      "sorted_unique_items": [
+        "spine_conservative",
+        "spine_surgical"
+      ],
+      "unique_count": 2
+    },
+    {
+      "input_label": "single:upper_extremity",
+      "sha256_of_canonical_json": "dd23f914b8789f8e284efb7a7b9064ace7da4b4c2f739f44924fa37e536b176f",
+      "sorted_unique_items": [
+        "upper_extremity"
+      ],
+      "unique_count": 1
+    },
+    {
+      "input_label": "single:psyche",
+      "sha256_of_canonical_json": "8ebded63e1ca699449325e78c0b3c7af75e7995c7228b477507b257af17efc4f",
+      "sorted_unique_items": [
+        "opioid_guidelines"
+      ],
+      "unique_count": 1
+    },
+    {
+      "input_label": "single:physical_therapy_default",
+      "sha256_of_canonical_json": "034d4becefc1200d858fc10227b4a76353253550c73e28c5a466c29aa1a8ccfc",
+      "sorted_unique_items": [
+        "physical_therapy"
+      ],
+      "unique_count": 1
+    },
+    {
+      "input_label": "repeated:spine",
+      "sha256_of_canonical_json": "4fb1cfbaec8adf88db970f9aa9c6eb30a43a967d883271f01e2199878b2976ce",
+      "sorted_unique_items": [
+        "spine_conservative",
+        "spine_surgical"
+      ],
+      "unique_count": 2
+    },
+    {
+      "input_label": "mixed:all_branches",
+      "sha256_of_canonical_json": "dc91fe564545e867cb4bfb066ce34765362d99a938e3ed1ea44a5a9af29e258a",
+      "sorted_unique_items": [
+        "opioid_guidelines",
+        "physical_therapy",
+        "spine_conservative",
+        "spine_surgical",
+        "upper_extremity"
+      ],
+      "unique_count": 5
+    }
+  ]
+}

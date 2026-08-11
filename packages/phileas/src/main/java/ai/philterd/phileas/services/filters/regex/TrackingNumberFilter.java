@@ -23,6 +23,7 @@ import ai.philterd.phileas.model.filtering.Filtered;
 import ai.philterd.phileas.model.filtering.Span;
 import ai.philterd.phileas.policy.Policy;
 import ai.philterd.phileas.services.Analyzer;
+import ai.philterd.phileas.services.context.ContextService;
 
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -93,6 +94,12 @@ public class TrackingNumberFilter extends RegexFilter {
             final FilterPattern usps2FilterPattern = new FilterPattern.FilterPatternBuilder(usps2, 0.90).withClassification("usps").build();
             filterPatterns.add(usps2FilterPattern);
 
+            // The same "94/93/92/95"-prefixed number is often written in space-separated groups of
+            // four digits (e.g. "9400 1000 0000 0000 0000"). Match that grouped form as a single span.
+            final Pattern usps2Grouped = Pattern.compile("\\b(94|93|92|95)\\d{2}( \\d{4}){4}\\b", Pattern.CASE_INSENSITIVE);
+            final FilterPattern usps2GroupedFilterPattern = new FilterPattern.FilterPatternBuilder(usps2Grouped, 0.90).withClassification("usps").build();
+            filterPatterns.add(usps2GroupedFilterPattern);
+
             final Pattern usps3 = Pattern.compile("\\b(70|14|23|03)\\d{14}\\b", Pattern.CASE_INSENSITIVE);
             final FilterPattern usps3FilterPattern = new FilterPattern.FilterPatternBuilder(usps3, 0.90).withClassification("usps").build();
             filterPatterns.add(usps3FilterPattern);
@@ -132,9 +139,9 @@ public class TrackingNumberFilter extends RegexFilter {
     }
 
     @Override
-    public Filtered filter(Policy policy, String context, int piece, String input) throws Exception {
+    public Filtered filter(ContextService contextService, Policy policy, String context, int piece, String input) throws Exception {
 
-        final List<Span> spans = findSpans(policy, analyzer, input, context);
+        final List<Span> spans = findSpans(contextService, policy, analyzer, input, context);
 
         return new Filtered(context, spans);
 

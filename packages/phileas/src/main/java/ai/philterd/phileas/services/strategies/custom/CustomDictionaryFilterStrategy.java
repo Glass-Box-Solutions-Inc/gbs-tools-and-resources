@@ -24,6 +24,7 @@ import ai.philterd.phileas.policy.Crypto;
 import ai.philterd.phileas.policy.FPE;
 import ai.philterd.phileas.policy.Policy;
 import ai.philterd.phileas.services.anonymization.AnonymizationService;
+import ai.philterd.phileas.services.context.ContextService;
 import ai.philterd.phileas.services.strategies.StandardFilterStrategy;
 import org.apache.commons.lang3.Strings;
 import org.apache.logging.log4j.LogManager;
@@ -81,8 +82,6 @@ public class CustomDictionaryFilterStrategy extends StandardFilterStrategy {
 
             }
 
-            LOGGER.debug("Condition for [{}] satisfied: {}", condition, conditionsSatisfied);
-
             // Short-circuit if we have a failure.
             if(!conditionsSatisfied) break;
 
@@ -93,9 +92,9 @@ public class CustomDictionaryFilterStrategy extends StandardFilterStrategy {
     }
 
     @Override
-    public Replacement getReplacement(String label, String context, String token, String[] window, Crypto crypto, FPE fpe, AnonymizationService anonymizationService, FilterPattern filterPattern) throws Exception {
+    public Replacement getReplacement(ContextService contextService, String label, String context, String token, String[] window, Crypto crypto, FPE fpe, AnonymizationService anonymizationService, FilterPattern filterPattern) throws Exception {
 
-        return getStandardReplacement(label, token, crypto, fpe, anonymizationService, filterType);
+        return getStandardReplacement(contextService, label, token, crypto, fpe, anonymizationService, filterType);
 
     }
 

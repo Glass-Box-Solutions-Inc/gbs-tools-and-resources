@@ -30,7 +30,7 @@ public class CityAnonymizationServiceTest {
     @Test
     public void constructor() {
 
-        AnonymizationService anonymizationService = new CityAnonymizationService(new DefaultContextService(), new SecureRandom(), AnonymizationMethod.REALISTIC);
+        AnonymizationService anonymizationService = new CityAnonymizationService(new SecureRandom(), AnonymizationMethod.REALISTIC);
 
         final String token = "New York";
         final String replacement = anonymizationService.anonymize(token);
@@ -45,7 +45,7 @@ public class CityAnonymizationServiceTest {
     @Test
     public void anonymize1() {
 
-        AnonymizationService anonymizationService = new CityAnonymizationService(new DefaultContextService());
+        AnonymizationService anonymizationService = new CityAnonymizationService();
 
         final String token = "abcd1234";
         final String replacement = anonymizationService.anonymize(token);
@@ -60,7 +60,7 @@ public class CityAnonymizationServiceTest {
     @Test
     public void anonymize2() {
 
-        AnonymizationService anonymizationService = new CityAnonymizationService(new DefaultContextService());
+        AnonymizationService anonymizationService = new CityAnonymizationService();
 
         final String token = "April 1, 2019";
         final String replacement = anonymizationService.anonymize(token);
@@ -75,7 +75,7 @@ public class CityAnonymizationServiceTest {
     @Test
     public void anonymizeUUID() {
 
-        AnonymizationService anonymizationService = new CityAnonymizationService(new DefaultContextService(), new SecureRandom(), AnonymizationMethod.UUID);
+        AnonymizationService anonymizationService = new CityAnonymizationService(new SecureRandom(), AnonymizationMethod.UUID);
 
         final String token = "New York";
         final String replacement = anonymizationService.anonymize(token);
@@ -83,6 +83,20 @@ public class CityAnonymizationServiceTest {
         LOGGER.info("City: {}", replacement);
         Assertions.assertNotEquals(token, replacement);
         Assertions.assertTrue(replacement.length() >= 32);
+
+    }
+
+    @Test
+    public void producesNonEmptyReplacement() {
+
+        // SecureRandom is not deterministically seedable, so the replacement varies run to run;
+        // verify the anonymizer still produces a non-empty replacement distinct from the input.
+        final String token = "New York";
+
+        final String first = new CityAnonymizationService().anonymize(token);
+
+        Assertions.assertNotEquals(token, first);
+        Assertions.assertFalse(first.isEmpty());
 
     }
 

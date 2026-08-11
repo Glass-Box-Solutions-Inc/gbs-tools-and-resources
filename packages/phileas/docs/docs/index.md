@@ -8,71 +8,119 @@ Information can be redacted based on the content of the information and other at
 
 ## Using Phileas
 
-Phileas snapshots and releases are available in our [Maven repositories](https://artifacts.philterd.ai/) so add the following to your Maven configuration:
+Phileas releases are published to [Maven Central](https://central.sonatype.com/artifact/ai.philterd/phileas). Maven Central is configured by default, so for a release version you only need to add the dependency:
+
+```
+<dependency>
+  <groupId>ai.philterd</groupId>
+  <artifactId>phileas</artifactId>
+  <version>4.1.0</version>
+</dependency>
+```
+
+To track the latest development build, depend on the current `-SNAPSHOT` version and add the Maven Central snapshot repository to your build (snapshots are not served from the default Maven Central repository):
 
 ```
 <repositories>
     <repository>
-        <id>philterd-repository-releases</id>
-        <url>https://artifacts.philterd.ai/releases</url>
-        <snapshots>
+        <id>central-portal-snapshots</id>
+        <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+        <releases>
             <enabled>false</enabled>
-        </snapshots>
-    </repository>
-    <repository>
-        <id>philterd-repository-snapshots</id>
-        <url>https://artifacts.philterd.ai/snapshots</url>
+        </releases>
         <snapshots>
             <enabled>true</enabled>
         </snapshots>
     </repository>
 </repositories>
-```
 
-Next, add the Phileas dependency to your project:
-
-```
 <dependency>
   <groupId>ai.philterd</groupId>
-  <artifactId>phileas-core</artifactId>
-  <version>2.7.1</version>
+  <artifactId>phileas</artifactId>
+  <version>4.2.0-SNAPSHOT</version>
 </dependency>
-
 ```
+
+Snapshots are development builds: they are mutable and are periodically pruned, so pin a release version for anything you need to reproduce.
 
 ### Quick Start
 
-Create a `FilterService`, using a `PhileasConfiguration`, and call `filter()` on the service:
+Create a `PlainTextFilterService`, using a `PhileasConfiguration`, and call `filter()` on the service:
 
 ```
 Properties properties = new Properties();
 PhileasConfiguration phileasConfiguration = new PhileasConfiguration(properties);
 
-FilterService filterService = new PhileasFilterService(phileasConfiguration);
+// A policy is deserialized from its JSON definition.
+Policy policy = new Gson().fromJson(policyJson, Policy.class);
 
-FilterResponse response = filterService.filter(policies, context, body, MimeType.TEXT_PLAIN);
+PlainTextFilterService filterService = new PlainTextFilterService(
+        phileasConfiguration, new DefaultContextService(), new InMemoryVectorService(), null);
+
+TextFilterResult result = filterService.filter(policy, context, body);
 ```
 
-The `policies` is a list of `Policy` classes. (See below for more about Policies.) The `context` is an arbitrary value you can use to uniquely identify the text being filtered. The `body` is the text you are filtering. Lastly, we specify that the data is plain text.
+The `policy` is a `Policy` deserialized from JSON. (See below for more about policies.) The `context` is an arbitrary value you can use to uniquely identify the text being filtered. The `body` is the text you are filtering.
 
-The `response` contains information about the identified sensitive information along with the filtered text.
+The `result` contains information about the identified sensitive information along with the filtered text, available from `result.getFilteredText()`.
+
+A `PlainTextFilterService` is safe to call concurrently: `filter()` may be invoked from multiple threads on a single shared instance without external locking, so a per-row caller (such as a Spark, Kafka, or logging function) can share one instance across threads.
 
 #### Usage Examples
 
-The [PhileasFilterServiceTest](https://github.com/philterd/phileas/blob/main/phileas-core/src/test/java/io/philterd/test/phileas/services/PhileasFilterServiceTest.java) and [EndToEndTests](https://github.com/philterd/phileas/blob/main/phileas-core/src/test/java/io/philterd/test/phileas/services/EndToEndTests.java) test classes have examples of how to configure Phileas and filter text.
+The [PlainTextFilterServiceTest](https://github.com/philterd/phileas/blob/main/src/test/java/ai/philterd/phileas/services/PlainTextFilterServiceTest.java) and [EndToEndTests](https://github.com/philterd/phileas/blob/main/src/test/java/ai/philterd/phileas/services/EndToEndTests.java) test classes have examples of how to configure Phileas and filter text.
+
+#### Redacting many texts efficiently (prepared policy)
+
+When you redact many texts with the same policy in a tight loop (for example a per-row Spark, Kafka, or logging function), prepare the policy once and reuse the handle. `prepare()` resolves the policy's filters and post-filters a single time, so each call avoids that per-call work. The handle is safe to reuse across calls and across threads.
+
+```
+PlainTextFilterService service = new PlainTextFilterService(
+        phileasConfiguration, contextService, vectorService, null);
+
+// Resolve the policy once.
+PlainTextFilterService.PreparedPolicy prepared = service.prepare(policy);
+
+// Reuse the handle for every text.
+for (String text : texts) {
+    TextFilterResult result = prepared.filter(context, text);
+}
+```
+
+#### Reusing one warm instance across requests with different context and vector services
+
+The constructor above binds a single `ContextService` and `VectorService` to the instance. When each request needs its own context or vector service (for example a server that scopes the context store per user, or per-request entity-type disambiguation), build the service once with the service-less constructor and pass the per-request `ContextService` and `VectorService` to `filter()`. One warm instance then serves every request, keeping its filter and post-filter caches populated rather than rebuilding them on each request. The instance is safe to call concurrently; supply a thread-safe `Random` (the default is `SecureRandom`) when sharing it across threads.
+
+```
+// Build once and share. No context or vector service is bound to the instance.
+PlainTextFilterService service = new PlainTextFilterService(phileasConfiguration, httpClient);
+
+// Each request supplies its own context and vector service.
+TextFilterResult result = service.filter(policy, contextService, vectorService, context, text);
+
+// prepare() works the same way: resolve the policy once, then pass per-request services.
+PlainTextFilterService.PreparedPolicy prepared = service.prepare(policy);
+TextFilterResult prepared1 = prepared.filter(contextService, vectorService, context, text);
+```
+
+`PdfFilterService` exposes the same service-less constructor and per-call `filter(...)` overload for PDF and image documents.
 
 ### Finding and Redacting Sensitive Information in a PDF Document
 
-Create a `FilterService`, using a `PhileasConfiguration`, and call `filter()` on the service:
+Create a `PdfFilterService`, using a `PhileasConfiguration`, and call `filter()` on the service:
 
 ```
-PhileasConfiguration phileasConfiguration = ConfigFactory.create(PhileasConfiguration.class);
+PhileasConfiguration phileasConfiguration = new PhileasConfiguration(new Properties());
 
-FilterService filterService = new PhileasFilterService(phileasConfiguration);
+// A policy is deserialized from its JSON definition.
+Policy policy = new Gson().fromJson(policyJson, Policy.class);
 
-BinaryDocumentFilterResponse response = filterService.filter(policies, context, body, MimeType.APPLICATION_PDF, MimeType.IMAGE_JPEG);
+PdfFilterService filterService = new PdfFilterService(
+        phileasConfiguration, new DefaultContextService(), new InMemoryVectorService(), null);
+
+BinaryDocumentFilterResult result = filterService.filter(policy, context, body, MimeType.APPLICATION_PDF);
 ```
 
-The `policies` is a list of `Policy` classes which are created by deserializing a policy from JSON. (See below for more about Policies.) The `context` is an arbitrary value you can use to uniquely identify the text being filtered. The `body` is the text you are filtering. Lastly, we specify that the data is plain text.
+The `policy` is a `Policy` deserialized from JSON. (See below for more about policies.) The `context` is an arbitrary value you can use to uniquely identify the document being filtered. The `body` is the PDF document bytes. The last argument is the output `MimeType`.
 
-The `response` contains a zip file of the images generated by redacting the PDF document.
+The `result` contains the redacted document along with information about the identified sensitive information.

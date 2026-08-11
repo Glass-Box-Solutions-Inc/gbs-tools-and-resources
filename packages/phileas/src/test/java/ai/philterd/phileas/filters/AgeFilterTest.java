@@ -36,15 +36,13 @@ public class AgeFilterTest extends AbstractFilterTest {
         final List<IgnoredPattern> ignoredPatterns = List.of(ignoredPattern);
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
-                .withContextService(contextService)
-                .withRandom(random)
                 .withIgnoredPatterns(ignoredPatterns)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "the patient is 35years old.");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "the patient is 35years old.");
 
         Assertions.assertEquals(1, filtered.getSpans().size());
         Assertions.assertTrue(filtered.getSpans().get(0).isIgnored());
@@ -59,15 +57,13 @@ public class AgeFilterTest extends AbstractFilterTest {
         ignore.add("35yEaRs old");
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
-                .withContextService(contextService)
-                .withRandom(random)
                 .withIgnored(ignore)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "the patient is 35yEaRs old.");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "the patient is 35yEaRs old.");
 
         Assertions.assertEquals(1, filtered.getSpans().size());
         Assertions.assertTrue(filtered.getSpans().get(0).isIgnored());
@@ -81,14 +77,12 @@ public class AgeFilterTest extends AbstractFilterTest {
         // This tests PHL-68. When there are no filter strategies just redact.
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "the patient is 3.5years old.");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "the patient is 3.5years old.");
 
         showSpans(filtered.getSpans());
 
@@ -105,14 +99,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "the patient is 3.5years old.");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "the patient is 3.5years old.");
 
         showSpans(filtered.getSpans());
 
@@ -127,14 +119,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "the patient age is 3.yrs.");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "the patient age is 3.yrs.");
 
         showSpans(filtered.getSpans());
 
@@ -149,14 +139,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "the patient age is 3yrs.");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "the patient age is 3yrs.");
 
         showSpans(filtered.getSpans());
 
@@ -171,14 +159,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "the patient is 3.5yrs old.");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "the patient is 3.5yrs old.");
 
         showSpans(filtered.getSpans());
 
@@ -193,14 +179,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "the patient is 39yrs. old");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "the patient is 39yrs. old");
 
         showSpans(filtered.getSpans());
 
@@ -215,14 +199,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "she is aged 39");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "she is aged 39");
 
         showSpans(filtered.getSpans());
 
@@ -237,14 +219,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "she is age 39");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "she is age 39");
 
         showSpans(filtered.getSpans());
 
@@ -259,14 +239,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "she is age 39.5");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "she is age 39.5");
 
         showSpans(filtered.getSpans());
 
@@ -281,14 +259,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Patient Timothy Hook is 72 Yr. old male lives alone.");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Patient Timothy Hook is 72 Yr. old male lives alone.");
 
         showSpans(filtered.getSpans());
 
@@ -305,14 +281,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Cari Morris is 75 yo female alert and oriented x’s3 with some mild memory loss.");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Cari Morris is 75 yo female alert and oriented x’s3 with some mild memory loss.");
 
         showSpans(filtered.getSpans());
 
@@ -329,14 +303,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Had symptoms for the past 10 years");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Had symptoms for the past 10 years");
 
         showSpans(filtered.getSpans());
 
@@ -351,14 +323,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "She is a 22-year-old female");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "She is a 22-year-old female");
 
         showSpans(filtered.getSpans());
 
@@ -375,14 +345,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Admit age: 69 years");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Admit age: 69 years");
 
         showSpans(filtered.getSpans());
 
@@ -399,14 +367,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Female Admit Age: 69 years");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Female Admit Age: 69 years");
 
         showSpans(filtered.getSpans());
 
@@ -423,14 +389,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "Female Admit Age: 69 years\n");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "Female Admit Age: 69 years\n");
 
         showSpans(filtered.getSpans());
 
@@ -447,14 +411,12 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "patient is 61 y/o and");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "patient is 61 y/o and");
 
         showSpans(filtered.getSpans());
 
@@ -471,20 +433,115 @@ public class AgeFilterTest extends AbstractFilterTest {
 
         final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
                 .withStrategies(List.of(new AgeFilterStrategy()))
-                .withContextService(contextService)
-                .withRandom(random)
                 .withWindowSize(windowSize)
                 .build();
 
         final AgeFilter filter = new AgeFilter(filterConfiguration);
 
-        final Filtered filtered = filter.filter(getPolicy(), "context", PIECE, "patient is 161 y/o and");
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "patient is 161 y/o and");
 
         showSpans(filtered.getSpans());
 
         Assertions.assertEquals(1, filtered.getSpans().size());
         Assertions.assertTrue(checkSpan(filtered.getSpans().get(0), 11, 18, FilterType.AGE));
         Assertions.assertNotEquals(filtered.getSpans().get(0).getText(), filtered.getSpans().get(0).getReplacement());
+
+    }
+
+    @Test
+    public void spelledOutYearsOld() throws Exception {
+
+        final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
+                .withStrategies(List.of(new AgeFilterStrategy()))
+                .withWindowSize(windowSize)
+                .build();
+
+        final AgeFilter filter = new AgeFilter(filterConfiguration);
+
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "the patient is thirty-five years old.");
+
+        showSpans(filtered.getSpans());
+
+        Assertions.assertEquals(1, filtered.getSpans().size());
+        Assertions.assertEquals("thirty-five years old", filtered.getSpans().get(0).getText());
+        Assertions.assertEquals("{{{REDACTED-age}}}", filtered.getSpans().get(0).getReplacement());
+
+    }
+
+    @Test
+    public void spelledOutHyphenatedYearOld() throws Exception {
+
+        final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
+                .withStrategies(List.of(new AgeFilterStrategy()))
+                .withWindowSize(windowSize)
+                .build();
+
+        final AgeFilter filter = new AgeFilter(filterConfiguration);
+
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "a thirty-five-year-old patient");
+
+        showSpans(filtered.getSpans());
+
+        Assertions.assertEquals(1, filtered.getSpans().size());
+        Assertions.assertEquals("thirty-five-year-old", filtered.getSpans().get(0).getText());
+
+    }
+
+    @Test
+    public void spelledOutAgedPrefix() throws Exception {
+
+        final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
+                .withStrategies(List.of(new AgeFilterStrategy()))
+                .withWindowSize(windowSize)
+                .build();
+
+        final AgeFilter filter = new AgeFilter(filterConfiguration);
+
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "she is aged forty-two");
+
+        showSpans(filtered.getSpans());
+
+        Assertions.assertEquals(1, filtered.getSpans().size());
+        Assertions.assertEquals("aged forty-two", filtered.getSpans().get(0).getText());
+
+    }
+
+    @Test
+    public void spelledOutOneHundredYearsOld() throws Exception {
+
+        final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
+                .withStrategies(List.of(new AgeFilterStrategy()))
+                .withWindowSize(windowSize)
+                .build();
+
+        final AgeFilter filter = new AgeFilter(filterConfiguration);
+
+        final Filtered filtered = filter.filter(contextService, getPolicy(), "context", PIECE, "he is one hundred years old");
+
+        showSpans(filtered.getSpans());
+
+        Assertions.assertEquals(1, filtered.getSpans().size());
+        Assertions.assertEquals("one hundred years old", filtered.getSpans().get(0).getText());
+
+    }
+
+    @Test
+    public void spelledOutPostFilterDropsNonAge() throws Exception {
+
+        final FilterConfiguration filterConfiguration = new FilterConfiguration.FilterConfigurationBuilder()
+                .withStrategies(List.of(new AgeFilterStrategy()))
+                .withWindowSize(windowSize)
+                .build();
+
+        final AgeFilter filter = new AgeFilter(filterConfiguration);
+
+        // "five years ago" is matched by the pattern but has no age/old context, so the post-filter
+        // drops it. "thirty-five years old" has the "old" context and is kept.
+        final var dropped = filter.postFilter(filter.filter(contextService, getPolicy(), "context", PIECE, "she left five years ago").getSpans());
+        Assertions.assertEquals(0, dropped.size());
+
+        final var kept = filter.postFilter(filter.filter(contextService, getPolicy(), "context", PIECE, "she is thirty-five years old").getSpans());
+        Assertions.assertEquals(1, kept.size());
 
     }
 
