@@ -26,6 +26,7 @@ import type {
   AiOperation,
   MatterAiContext,
   PhiEngineFailureCode,
+  PhiSubstitutionEngine,
   ReversalHandle,
   SubstitutionResult,
   TokenizedTextSegment,
@@ -42,7 +43,7 @@ import type {
   PhiAuditPreparedRecord,
 } from "../audit/ports";
 import { isAuditError, preparedToTerminalEvent, toTotalIdentifierCounts } from "../audit/index";
-import { isPhiEngineError, PhiEngineError, toFailureCode } from "./errors";
+import { isPhiEngineError, isPhiEngineFailureCode, PhiEngineError, toFailureCode } from "./errors";
 
 /** The single private raw-provider port. It is never exported as an application binding. */
 export interface RawProviderPort<GenerateOptions, EmbeddingKind = string> {
@@ -73,7 +74,8 @@ function errorCodeString(error: unknown): string {
     error !== null &&
     typeof error === "object" &&
     "code" in error &&
-    typeof (error as { code?: unknown }).code === "string"
+    typeof (error as { code?: unknown }).code === "string" &&
+    isPhiEngineFailureCode((error as { code: string }).code)
   ) {
     return (error as { code: string }).code;
   }
@@ -100,15 +102,24 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
 
   public async generateText(options: GenerateOptions): Promise<DisplayText> {
     const context = await this.#requireContext();
-    const policy = await this.#deps.policy.require(context);
 
     let prepared: PreparedEgress<GenerateOptions, EmbeddingKind>;
     try {
+      // §4.1 step 2 / N3: policy load is INSIDE the protected region — a policy rejection
+      // after context is known finalizes exactly one terminal.
+      const policy = await this.#deps.policy.require(context);
       prepared = await this.#prepareForEgress(options, "generation", context, policy);
     } catch (error) {
       // §4.1 step 12 / N3: any pre-egress failure finalizes exactly one terminal.
       await this.#recordPreEgressFailure(context, "generation", error);
-      throw error;
+      // §7: never surface a raw upstream message/code to the caller.
+      throw isPhiEngineError(error)
+        ? error
+        : new PhiEngineError(
+            toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
+            context.operationId,
+            {},
+          );
     }
 
     let rawOutput: TokenizedText;
@@ -122,28 +133,55 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         ? error
         : new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), prepared.context.operationId, {});
     }
-    // §4.1 step 11 / N2: trace tokenized output BEFORE reversal.
-    await this.#deps.safeTrace.response(rawOutput);
+    // §4.1 step 11 / N2/N3: tracing the tokenized output is AFTER the single provider call, so a
+    // trace failure here still finalizes exactly one terminal (provider already invoked once).
+    try {
+      await this.#deps.safeTrace.response(rawOutput);
+    } catch (error) {
+      await this.#finalize(prepared, "unknown_after_send", errorCodeString(error));
+      throw isPhiEngineError(error)
+        ? error
+        : new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), prepared.context.operationId, {});
+    }
     return this.#reverseAndFinalize(rawOutput, prepared);
   }
 
   public async generateStream(options: GenerateOptions): Promise<ProtectedStreamResult> {
     const context = await this.#requireContext();
-    const policy = await this.#deps.policy.require(context);
 
     let prepared: PreparedEgress<GenerateOptions, EmbeddingKind>;
     try {
+      const policy = await this.#deps.policy.require(context);
       prepared = await this.#prepareForEgress(options, "stream", context, policy);
     } catch (error) {
       await this.#recordPreEgressFailure(context, "stream", error);
-      throw error;
+      throw isPhiEngineError(error)
+        ? error
+        : new PhiEngineError(
+            toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
+            context.operationId,
+            {},
+          );
     }
 
     const displayChunks: DisplayText[] = [];
-    // §4.2 / L4: the reverse stream holds back M-1 units; raw chunks never reach display.
-    const stream = this.#deps.engine.createReverseStream(prepared.substitutionHandle, (safe) => {
-      displayChunks.push(safe);
-    });
+    let stream: ReturnType<PhiSubstitutionEngine["createReverseStream"]>;
+    try {
+      // §4.2 / N3: the reverse-stream factory runs BEFORE egress; a factory throw finalizes a
+      // fail-closed terminal with zero provider calls.
+      stream = this.#deps.engine.createReverseStream(prepared.substitutionHandle, (safe) => {
+        displayChunks.push(safe);
+      });
+    } catch (error) {
+      await this.#finalize(prepared, "failed_closed", errorCodeString(error));
+      throw isPhiEngineError(error)
+        ? error
+        : new PhiEngineError(
+            toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
+            prepared.context.operationId,
+            {},
+          );
+    }
     try {
       // §4.1 step 10 / N1: exactly one PINNED provider call.
       await prepared.provider.generateStream(prepared.tokenizedOptions, async (chunk) => {
@@ -262,15 +300,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     // §4.1 step 9 / N3: durably PREPARE the metadata-only record BEFORE egress.
     const receipt = await this.#prepareAudit(context, policy, substitution, purpose);
 
-    // §4.1 step 10 / N2: trace tokenized input.
-    await this.#deps.safeTrace.request(
-      substitution.segments.map((segment: TokenizedTextSegment) => ({
-        path: segment.path,
-        text: segment.text,
-      })),
-    );
-
-    return {
+    const prepared: PreparedEgress<GenerateOptions, EmbeddingKind> = {
       context,
       purpose,
       substitution,
@@ -280,6 +310,28 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       // L11: the PINNED provider object selected for the routed+gated decision.
       provider: decision.provider,
     };
+
+    // §4.1 step 10 / N2/N3: tracing the tokenized input is AFTER the durable prepare. A failure
+    // here MUST finalize against THIS receipt (exactly one terminal, no second prepare).
+    try {
+      await this.#deps.safeTrace.request(
+        substitution.segments.map((segment: TokenizedTextSegment) => ({
+          path: segment.path,
+          text: segment.text,
+        })),
+      );
+    } catch (error) {
+      await this.#finalize(prepared, "failed_closed", errorCodeString(error));
+      throw isPhiEngineError(error)
+        ? error
+        : new PhiEngineError(
+            toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
+            context.operationId,
+            {},
+          );
+    }
+
+    return prepared;
   }
 
   #classify(options: GenerateOptions, context: MatterAiContext) {

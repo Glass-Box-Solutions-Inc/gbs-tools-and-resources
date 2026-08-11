@@ -32,6 +32,25 @@ export function isPhiEngineError(value: unknown): value is PhiEngineError {
   return value instanceof PhiEngineError;
 }
 
+const PHI_ENGINE_FAILURE_CODES: ReadonlySet<string> = new Set<PhiEngineFailureCode>([
+  "MISSING_TRUSTED_CONTEXT",
+  "MISSING_TRUSTED_POLICY",
+  "DICTIONARY_NOT_READY",
+  "DICTIONARY_UNAVAILABLE",
+  "AMBIGUOUS_KNOWN_IDENTIFIER",
+  "DETECTOR_UNAVAILABLE",
+  "INVALID_DETECTOR_OFFSET",
+  "UNCLASSIFIED_PROVIDER_FIELD",
+  "AUDIT_DURABILITY_UNAVAILABLE",
+  "REVERSAL_FAILED",
+  "PROVIDER_SAFETY_GATE_FAILED",
+]);
+
+/** True only for a recognized, fixed, safe PhiEngineFailureCode (never a raw upstream code). */
+export function isPhiEngineFailureCode(value: unknown): value is PhiEngineFailureCode {
+  return typeof value === "string" && PHI_ENGINE_FAILURE_CODES.has(value);
+}
+
 /** Maps a thrown value to its fixed failure code, defaulting to a safe generic code. */
 export function toFailureCode(value: unknown, fallback: PhiEngineFailureCode): PhiEngineFailureCode {
   if (isPhiEngineError(value)) {
@@ -41,7 +60,8 @@ export function toFailureCode(value: unknown, fallback: PhiEngineFailureCode): P
     value !== null &&
     typeof value === "object" &&
     "code" in value &&
-    typeof (value as { code?: unknown }).code === "string"
+    typeof (value as { code?: unknown }).code === "string" &&
+    isPhiEngineFailureCode((value as { code: string }).code)
   ) {
     return (value as { code: PhiEngineFailureCode }).code;
   }
