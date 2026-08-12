@@ -103,6 +103,24 @@ orphaned ⇒ unreferenced" invariant test when extending the conformance suite (
 pending-absent-from-readCurrent) — correct code, add oracles as the suite grows. **Lane A DONE. NEXT WAVE:
 C (AzureKeyVaultKeyProvider, deps staged) + B1 (PG schema/migrations) in parallel.**
 
+## Stage 7 — Lane C IMPLEMENTED (sol) → **Opus-5 APPROVE** + MEDIUM fixed (commits e95acfb, 48645db)
+GPT-5.6-sol authored 4 files (azure/kek-crypto-client.ts, azure/azure-keyvault-key-provider.ts,
+azure/azure-kek-crypto-client.ts, tests/azure-keyvault-key-provider.test.ts). F8 fix: DEK wrapped as
+{ver(0x01)‖bindingDigest(32)‖dek(32)}, unwrap constant-time-verifies the embedded digest (timingSafeEqual,
+length-guarded) + scope/keyId, fails closed BEFORE returning the DEK — restores the cross-tenant/matter
+relocation backstop. @azure imports isolated to azure-kek-crypto-client.ts (smoke-tested, not unit); logic
+unit-tested via a FAKE opaque KekCryptoClient. Orchestrator re-verified: tsc clean, 331 tests, frozen
+integrity empty-diff. **Opus-5 APPROVE** — 3 mutations proven RED (MUT-KEK-BINDING-BYPASS, handle-scope,
++ digest guard); confirmed the fake is a faithful opaque wrap (measures the provider, not itself). **One
+MEDIUM: length/version-guard fixtures were non-isolating** (also failed the digest compare → deleting the
+guard left all green). Orchestrator applied the reviewer's prescribed fix (embed the matching presented
+digest 0x11×32 in each malformed fixture) — MUTATION-PROVEN: neutralizing azure-keyvault-key-provider.ts:71
+→ both fixtures RED; restored → 331 green (48645db). **Lane C DONE.**
+**NEXT: B1 (Postgres control-plane schema/migrations + ControlPlane port). B1's live validation (conformance
+suite vs real PG) needs the phi_reversal Postgres → provisioning + the dedicated-vs-shared isolation decision
+surfaced to Alex. Lanes remaining: B1, B2 (Files adapter ←B1), B3 (Azure SpoolMaintenance ←A+B1+B2), D (Q6
+smoke ←B1+B2+C), E (cron ←B3).**
+
 ## Parallel — data-retention legal audit (Sonnet agent, background)
 Launched per Alex to review our data-retention policy vs law (HIPAA/CMIA/CCPA-CPRA/§632/State-Bar/WC).
 Report → scratchpad/retention-audit.md. Relevant to this lane: the 7-day soft-delete tail + the
