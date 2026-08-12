@@ -662,6 +662,63 @@ describe("L2.4 durable current mapping survives a concurrent different-attempt p
     const resolved = await hA.store.resolveEncounteredTokens(resolveInput());
     expect(resolved.get(CLAIMANT)).toBe(CANON);
   });
+
+  it("an old-attempt idempotent replay does NOT roll the durable current canonical back (MUT-DURABLE-ROLLBACK)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-1"), canonical: "First" }));
+    await h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-2"), canonical: "Second" }));
+    // Replaying the OLDER attempt is a no-op that flushes its ORIGINAL (lower-ordinal) commit again.
+    await h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-1"), canonical: "First" }));
+    const map = await h.store.resolveEncounteredTokens(resolveInput());
+    expect(map.get(CLAIMANT)).toBe("Second"); // atomic publication order wins — NOT rolled back to "First"
+  });
+
+  it("a late flush of an earlier publication does not override a newer commit's durable current (MUT-DURABLE-ROLLBACK)", async () => {
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    const hA = makeHarness({ faults: { flushGate: gateA } });
+    const hB = makeHarness({ backend: hA.backend, keyProvider: hA.keyProvider });
+    // A publishes FIRST (lower ordinal) but its flush is held pending.
+    const pA = hA.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-A"), canonical: "First" }));
+    await macrotask();
+    // B publishes SECOND (higher ordinal) and flushes → durable current = B.
+    await hB.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-B"), canonical: "Second" }));
+    // A's flush now completes LAST; flush-completion order must NOT override publication order.
+    releaseA();
+    await pA;
+    const map = await hA.store.resolveEncounteredTokens(resolveInput());
+    expect(map.get(CLAIMANT)).toBe("Second");
+  });
+
+  it("a gated peer of a crashed idempotency claim fails closed — cannot ack a vanished commit (MUT-FLUSH-LOST-COMMIT)", async () => {
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    const gateA = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    const gateB = new Promise<void>((r) => {
+      releaseB = r;
+    });
+    const hA = makeHarness({ faults: { flushGate: gateA } });
+    const hB = makeHarness({ backend: hA.backend, keyProvider: hA.keyProvider, faults: { flushGate: gateB } });
+    // A publishes its idempotency claim, then blocks in flush (claim is published-but-unflushed).
+    const pA = hA.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-A"), canonical: "X" }));
+    await macrotask();
+    // B (SAME attempt) observes the existing unflushed claim and enters a gated flush of that SAME commit.
+    const pB = hB.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-A"), canonical: "X" }));
+    await macrotask();
+    // Replica loss erases the unflushed claim and its commit-index entry.
+    hA.backend.crash();
+    // Both gated callers resume; neither may acknowledge a vanished commit.
+    releaseA();
+    releaseB();
+    await expect(pA).rejects.toBeInstanceOf(ReversalFailedError);
+    await expect(pB).rejects.toBeInstanceOf(ReversalFailedError);
+    const map = await hA.store.resolveEncounteredTokens(resolveInput());
+    expect(map.has(CLAIMANT)).toBe(false);
+  });
 });
 
 describe("L2.4 retention is operation-scoped — classifier sees identifiers only, identically per operation (C3)", () => {

@@ -71,6 +71,8 @@ interface StoredMapping {
   readonly mappingKey: ReversalMappingKey;
   readonly preparedHandle: PreparedWriteHandle;
   readonly commit: PublishedCommitHandle;
+  /** Atomic-publication ordinal of `commit` (§9/§10): the current record is the HIGHEST-ordinal one. */
+  readonly ordinal: number;
   readonly flushed: boolean;
 }
 
@@ -105,19 +107,24 @@ export class InMemoryReversalSpoolBackend {
   /** PROVISIONAL current pointer (last-writer). Pre-crash bookkeeping only — NOT what reads follow. */
   readonly #mappings = new Map<string, StoredMapping>();
   /**
-   * DURABLE current pointer — the ONLY mapping reads follow. Written EXCLUSIVELY by a completed flush
-   * (last-durable-flush-wins) and NEVER by publish or discarded by `crash()`. This is what makes an
-   * acknowledged write survive a concurrent different-attempt publisher: two operations of one matter
-   * tokenize the same canonical → same mappingKey, different attemptId. A later `publish` overwrites the
-   * PROVISIONAL pointer, but a flushed commit's durable pointer stands until another flush replaces it,
-   * so `record()` never acknowledges while the durable-readable mapping is absent or points at an
-   * unflushed successor (§6/N4). Deterministic tokenization makes either commit's canonical identical, so
-   * whichever durable pointer wins decrypts correctly. Dropping this (reads follow `#mappings`, or flush
-   * not writing here) is the named mutation `MUT-DURABLE-MAPPING-STEAL`.
+   * DURABLE current pointer — the ONLY mapping reads follow. Written EXCLUSIVELY by a completed flush,
+   * and NEVER by publish or discarded by `crash()`. The current record is defined by ATOMIC PUBLICATION
+   * ORDER (§9/§10): the durable pointer advances ONLY to a commit with a HIGHER publication ordinal, so a
+   * flush of an older commit — a same-attempt replay flushing its original commit, or a late flush of an
+   * earlier publication — makes THAT commit's bytes durable WITHOUT rolling the current pointer back to it
+   * (`MUT-DURABLE-ROLLBACK`). Because the pointer only moves forward on flush and survives `crash()`,
+   * `record()` never acknowledges while the durable-readable mapping is absent or points at an unflushed
+   * successor (§6/N4). Reads following `#mappings` instead is `MUT-DURABLE-MAPPING-STEAL`.
    */
   readonly #durableMappings = new Map<string, StoredMapping>();
   readonly #commitIndex = new Map<string, CommitContext>();
+  /**
+   * Monotonic publication ordinal per commit (assigned at atomic publish). The durable current pointer
+   * compares against it so publication order — not flush-completion order — decides the current record.
+   */
+  readonly #commitOrdinal = new Map<string, number>();
   #handleSeq = 0;
+  #publishSeq = 0;
 
   public mount(faults: SpoolFaults = {}, nowEpochMilliseconds: () => number = Date.now): InMemoryReversalSpoolVolume {
     return new InMemoryReversalSpoolVolume(this, faults, nowEpochMilliseconds);
@@ -180,6 +187,9 @@ export class InMemoryReversalSpoolBackend {
     }
     this.#handleSeq += 1;
     const commit = `commit-${this.#handleSeq}` as unknown as PublishedCommitHandle;
+    // Atomic publication ordinal: this establishes commit order for "current record" (§9/§10).
+    this.#publishSeq += 1;
+    const ordinal = this.#publishSeq;
     const claim: StoredClaim = {
       idempotencyKey: ctx.idempotencyKey,
       mappingKey: ctx.mappingKey,
@@ -191,10 +201,12 @@ export class InMemoryReversalSpoolBackend {
       flushed: false,
     };
     this.#claims.set(idempotencyKey, claim);
+    this.#commitOrdinal.set(commit as unknown as string, ordinal);
     this.#mappings.set(ctx.mappingKey as unknown as string, {
       mappingKey: ctx.mappingKey,
       preparedHandle: ctx.preparedHandle,
       commit,
+      ordinal,
       flushed: false,
     });
     this.#commitIndex.set(commit as unknown as string, ctx);
@@ -205,7 +217,11 @@ export class InMemoryReversalSpoolBackend {
   flushCommit(commit: PublishedCommitHandle): void {
     const ctx = this.#commitIndex.get(commit as unknown as string);
     if (ctx === undefined) {
-      return; // unknown / already durable — idempotent no-op
+      // The commit is UNKNOWN — never published, or published-but-unflushed then lost to `crash()` (a
+      // durably-flushed commit ALWAYS retains its commit-index entry). Durability cannot be positively
+      // proven, so fail closed rather than acknowledge a vanished write (§6/N4). Reverting this to a
+      // silent no-op lets a gated peer of a crashed claim ack with no durable mapping (MUT-FLUSH-LOST-COMMIT).
+      throw new Error("flush_unknown_or_lost_commit");
     }
     const blob = this.#preparedBlobs.get(ctx.preparedHandle as unknown as string);
     if (blob === undefined) {
@@ -226,16 +242,23 @@ export class InMemoryReversalSpoolBackend {
     if (claim !== undefined && (claim.commit as unknown as string) === commitStr) {
       this.#claims.set(ctx.idempotencyKey as unknown as string, { ...claim, flushed: true });
     }
-    // Promote THIS flushed commit to the durable current pointer UNCONDITIONALLY (last-durable-flush-wins):
-    // the record bytes are now durable, so its mapping is a valid durable pointer even if a later
-    // different-attempt publish already stole the provisional pointer. Reads follow ONLY this map, so the
-    // acknowledgment that follows this flush can never expose an absent/unflushed current mapping.
-    this.#durableMappings.set(ctx.mappingKey as unknown as string, {
-      mappingKey: ctx.mappingKey,
-      preparedHandle: ctx.preparedHandle,
-      commit,
-      flushed: true,
-    });
+    // Advance the durable current pointer to THIS commit ONLY when it is newer by publication order
+    // (§9/§10). A flush of an older commit — a same-attempt replay flushing its original commit, or a
+    // late flush of an earlier publication — still makes that commit's bytes/claim durable above, but must
+    // NOT roll the current canonical back over a newer publication (MUT-DURABLE-ROLLBACK). Because the
+    // pointer only moves forward and survives crash, an acknowledged commit's durable mapping is never
+    // absent nor superseded by an unflushed successor.
+    const ordinal = this.#commitOrdinal.get(commitStr) ?? 0;
+    const durableCurrent = this.#durableMappings.get(ctx.mappingKey as unknown as string);
+    if (durableCurrent === undefined || ordinal > durableCurrent.ordinal) {
+      this.#durableMappings.set(ctx.mappingKey as unknown as string, {
+        mappingKey: ctx.mappingKey,
+        preparedHandle: ctx.preparedHandle,
+        commit,
+        ordinal,
+        flushed: true,
+      });
+    }
     // Keep the provisional pointer's flushed flag consistent when it still points here (bookkeeping only).
     const mapping = this.#mappings.get(ctx.mappingKey as unknown as string);
     if (mapping !== undefined && (mapping.commit as unknown as string) === commitStr) {
