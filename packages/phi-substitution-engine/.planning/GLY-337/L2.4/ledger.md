@@ -45,3 +45,19 @@ Cross-family split preserved: Claude Engineer authors the fixes; GPT-5.6-sol re-
   AAD injectivity(10): field 1..10 each drop → its oracle RED.
   (AAD-tenant/-matter relocation oracles are backstopped by the KeyProvider bindingDigest — known
   redundant survivors; the 10 injectivity oracles are the isolating guard.)
+
+## Gate round 3 (BLOCK) — `l2.4-gate4.out`, gpt-5.6-sol, 177K tokens. VERIFIED fixes 2/3/4; found 2 HIGH in the round-2 mapping model:
+- F(3rd)-1 HIGH — unconditional last-flush-wins rolls the durable current canonical BACK. An old-attempt
+  replay flushes its original (lower-ordinal) commit and overwrites a newer one; likewise A.publish→
+  B.publish→B.flush→A.flush leaves A current. Contradicts spec §9/§10 (current record = atomic publication
+  order) + the "different attempts advance the current canonical" test. My "same canonical" assumption was
+  WRONG (different attempts UPDATE the canonical). → FIX.
+- F(3rd)-2 HIGH (pre-existing, exposed) — flushCommit(unknown commit) was a silent no-op success, so a
+  gated peer of an existing-claim commit erased by crash() acks with NO durable mapping (N4). → FIX.
+Fix round 3 (commit `d0e146c`): monotonic publication ordinal per commit; durable pointer advances ONLY
+to a higher ordinal (MUT-DURABLE-ROLLBACK); flushCommit fails closed on an unknown/lost commit
+(MUT-FLUSH-LOST-COMMIT). Store unchanged. tsc clean, 306 tests.
+Mutation evidence (tree @ d0e146c): DURABLE-ROLLBACK (kills both replay + late-flush oracles),
+FLUSH-LOST-COMMIT, + re-confirmed moved spool guards F1-NONATOMIC, REUSE-GCM-NONCE, DURABLE-MAPPING-STEAL.
+25 guards proven total (5 core + 4 fr1 + 4 fr2 + 2 fr3 + 10 AAD injectivity).
+Gate round-3 dispositions on my triage: F2 verified fixed; F3 AGREED (reject); F4 AGREED (C2 amendment).
