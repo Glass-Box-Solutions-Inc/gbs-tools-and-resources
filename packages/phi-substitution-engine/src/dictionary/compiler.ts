@@ -220,6 +220,9 @@ export class MatterDictionaryCompiler implements DictionaryCompiler {
       });
       const identifierClass = value.field.identifierClass;
       const boundaryMode = boundaryModeFor(identifierClass);
+      // Intra-value form dedup. Not required to be poison-resistant: a consumer that can
+      // replace `Set.prototype.has` controls the realm and already holds this plaintext —
+      // out of scope for N2 per CONTRACT/THREAT-MODEL.md (ratified GLY-336, 2026-08-12).
       const seen = new Set<string>();
       for (const form of expandForms(value, locale)) {
         const normalized = foldCached(form, locale);
