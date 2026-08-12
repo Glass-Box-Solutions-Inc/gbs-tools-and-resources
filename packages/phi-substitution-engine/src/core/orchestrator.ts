@@ -66,6 +66,7 @@ import { TokensLeafAssignmentPort } from "../dictionary/token-port";
 import type { AhoCorasickCompiledDictionary } from "../dictionary/compiled-dictionary";
 import {
   BracketTokenGrammar,
+  frozenRoleSet,
   HoldbackReverseStreamFactory,
   InMemoryTokenAssignmentStore,
   InProcessReversalHandle,
@@ -133,8 +134,12 @@ const role = (value: string): TokenRole => value as unknown as TokenRole;
  * tokens (`[[Claimant]]`, ...). Reversal validates every token-like sequence
  * against this policy; an off-registry shape fails visibly.
  */
-export const BOUNDARY_TOKEN_GRAMMAR_POLICY: TokenGrammarPolicy = {
-  allowedRoles: new Set<TokenRole>(
+// §7/N2 (GLY-336 gate, finding 2): DEEP-FROZEN. The allow-list is the fixed, PHI-free set of
+// structural roles (person roles + structured-id classes). Freezing the policy object AND its role
+// Set makes it immutable, so no in-process actor can add a PHI-bearing role that would let the
+// grammar emit a raw value as a "token". The engine's token policy is not caller-overridable.
+export const BOUNDARY_TOKEN_GRAMMAR_POLICY: TokenGrammarPolicy = Object.freeze({
+  allowedRoles: frozenRoleSet(
     [
       "Claimant",
       "Witness",
@@ -159,7 +164,7 @@ export const BOUNDARY_TOKEN_GRAMMAR_POLICY: TokenGrammarPolicy = {
   maximumTokenUtf16Length: 64,
   maximumRoleUtf16Length: 48,
   maximumSequence: 9999,
-};
+});
 
 export interface ComposedSubstitutionEngineDeps {
   /** Dictionary L2/N4 readiness gate. */

@@ -1,6 +1,14 @@
 import type { TokenRole } from "../core/brands";
-import type { TokenGrammarPolicy } from "./ports";
-import { BracketTokenGrammar } from "./grammar";
+import type { ReversalWriteStore } from "../core/contracts";
+import type {
+  ReverseStreamFactory,
+  SourceTokenEscaper,
+  TokenAssignmentStore,
+  TokenGrammar,
+  TokenGrammarPolicy,
+  TokenReverser,
+} from "./ports";
+import { BracketTokenGrammar, frozenRoleSet } from "./grammar";
 import { InMemoryTokenAssignmentStore } from "./assignment-store";
 import { SentinelSourceTokenEscaper } from "./escaper";
 import {
@@ -10,7 +18,7 @@ import {
 } from "./reversal";
 import { HoldbackReverseStreamFactory } from "./reverse-stream";
 
-export { BracketTokenGrammar, type TokenSpanParse } from "./grammar";
+export { BracketTokenGrammar, frozenRoleSet, type TokenSpanParse } from "./grammar";
 export { InMemoryTokenAssignmentStore } from "./assignment-store";
 export { SentinelSourceTokenEscaper, SENTINEL_OPEN, SENTINEL_CLOSE } from "./escaper";
 export {
@@ -37,9 +45,14 @@ function role(value: string): TokenRole {
  * Phase-1 grammar policy. Roles are the trusted allow-list; the length and
  * sequence caps bound the `[[Role[_N]]]` shape (and therefore the streaming
  * holdback) for every token surface.
+ *
+ * §7/N2 (GLY-336 gate, finding 2): DEEP-FROZEN. The role allow-list is the trusted,
+ * PHI-free set of structural roles; freezing the policy object AND the role Set makes
+ * it immutable so no caller can inject a PHI-bearing role that would make the grammar
+ * emit `[[John Smith]]`. The factories never accept a caller-supplied token policy.
  */
-export const DEFAULT_TOKEN_GRAMMAR_POLICY: TokenGrammarPolicy = {
-  allowedRoles: new Set<TokenRole>([
+export const DEFAULT_TOKEN_GRAMMAR_POLICY: TokenGrammarPolicy = Object.freeze({
+  allowedRoles: frozenRoleSet([
     role("Claimant"),
     role("Witness"),
     role("Treating_Physician"),
@@ -49,17 +62,22 @@ export const DEFAULT_TOKEN_GRAMMAR_POLICY: TokenGrammarPolicy = {
   maximumTokenUtf16Length: 64,
   maximumRoleUtf16Length: 48,
   maximumSequence: 9999,
-};
+});
 
-/** Assembled token/escape/reversal module over one grammar policy. */
+/**
+ * Assembled token/escape/reversal module over one grammar policy. Fields are typed as the
+ * frozen PORT INTERFACES (not the concrete classes) so a `createTokensModule` consumer receives
+ * an interface-typed surface — the reversal store is the bounded `ReversalWriteStore`, never a
+ * reflectable concrete store (§7/N2 / GLY-336 gate finding 1/7).
+ */
 export interface TokensModule {
   readonly policy: TokenGrammarPolicy;
-  readonly grammar: BracketTokenGrammar;
-  readonly assignmentStore: InMemoryTokenAssignmentStore;
-  readonly escaper: SentinelSourceTokenEscaper;
-  readonly reversalStore: InMemoryReversalStore;
-  readonly reverser: AtomicTokenReverser;
-  readonly streamFactory: HoldbackReverseStreamFactory;
+  readonly grammar: TokenGrammar;
+  readonly assignmentStore: TokenAssignmentStore;
+  readonly escaper: SourceTokenEscaper;
+  readonly reversalStore: ReversalWriteStore;
+  readonly reverser: TokenReverser;
+  readonly streamFactory: ReverseStreamFactory;
 }
 
 export function createTokensModule(
