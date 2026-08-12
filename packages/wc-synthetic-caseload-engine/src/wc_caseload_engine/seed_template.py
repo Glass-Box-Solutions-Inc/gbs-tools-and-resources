@@ -164,10 +164,12 @@ lifecycle:
 # and loads cleanly; only internal incoherence (dangling references,
 # impossible lifecycles, percentages that cannot sum) fails validation.
 #
-# Hikida/King is TYPED, never an enum hook: claim_type
+# Hikida/King semantics are TYPED, not carried by the enum hook: claim_type
 # compensable_consequence + treatment_causation (sole_cause |
 # contributing_cause) + requested_apportionment (apply | refuse) state the
-# narrowed Justice rule, and both wrong directions grade unsupportable.
+# narrowed Justice rule, and both wrong directions grade unsupportable. The
+# hikida_treatment_carveout hook (AJC-62) is doctrine content/pool machinery
+# and never drawn on a case without scenario.medical_history.
 #
 # scenario:
 #   medical_history:

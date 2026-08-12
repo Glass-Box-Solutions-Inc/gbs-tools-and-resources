@@ -53,6 +53,30 @@ from wc_caseload_engine.seeds import (
 DOI = dt.date(2022, 4, 11)
 ANCHOR = dt.date(2026, 1, 1)
 
+EXPECTED_DOCTRINE_HOOKS = (
+    "ogilvie",
+    "almaraz_guzman",
+    "benson",
+    "escobedo",
+    "kite",
+    "going_and_coming",
+    "sibtf",
+    "death_dependency",
+    "lc3208_3_psych",
+    "gfpa",
+    "firefighter_presumption",
+    "imr_constitutionality",
+    "ab5_dynamex",
+    "lc4664_prior_award",
+    "hikida_treatment_carveout",
+)
+"""The frozen fifteen-member doctrine oracle, in declaration order (AJC-62 R72).
+
+A deliberate independent literal — never derived from the enum it checks. Both
+doctrine test modules freeze this exact tuple so a drifted declaration cannot
+re-derive its own oracle green.
+"""
+
 
 def _context(**overrides: Any) -> AssertionValidationContext:
     values: dict[str, Any] = {
@@ -261,15 +285,20 @@ def test_seed_assertion_models_have_no_quality_field() -> None:
         assert "rubric" not in model.model_fields, model.__name__
 
 
-def test_contention_doctrine_hooks_accept_exactly_the_shipped_fourteen_members() -> None:
-    """The fifteenth hook is AJC-62's; M2 types Hikida instead of enumerating it."""
-    hooks = tuple(sorted(typing.get_args(DoctrineHook.__value__)))
-    assert len(hooks) == 14
-    assert "hikida_treatment_carveout" not in hooks
-    for hook in hooks:
+def test_contention_doctrine_hooks_accept_exactly_the_frozen_fifteen_members_in_order() -> None:
+    """AJC-62 R72: the declaration IS the frozen oracle, order included.
+
+    Declaration order is load-bearing — the content table mirrors it and the
+    LEGACY/MEDICAL_STORY pool split slices it — so the comparison is against
+    the declaration directly, not a sorted view. Every member must also
+    round-trip through ``Contention``, proving the schema accepts exactly the
+    frozen vocabulary and nothing beside it.
+    """
+    assert typing.get_args(DoctrineHook.__value__) == EXPECTED_DOCTRINE_HOOKS
+    for hook in EXPECTED_DOCTRINE_HOOKS:
         assert _contention(doctrine_hooks=(hook,)).doctrine_hooks == (hook,)
     with pytest.raises(ValidationError):
-        _contention(doctrine_hooks=("hikida_treatment_carveout",))
+        _contention(doctrine_hooks=("not_a_doctrine_hook",))
 
 
 def test_typed_doctrine_grounding_union_round_trips_all_four_variants() -> None:

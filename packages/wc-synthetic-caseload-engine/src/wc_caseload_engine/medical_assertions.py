@@ -19,11 +19,12 @@ never appears in the seed schema, ``case_facts.yaml``, ``manifest.json``, any
 rendered document, warning, filename or log. The label-position leakage probe
 holds that boundary mechanically.
 
-Doctrine-hook boundary: AJC-61 does **not** add ``hikida_treatment_carveout``
-to :data:`~wc_caseload_engine.seeds.DoctrineHook` — the doctrine content tests
-require enum/content equality and a re-recorded showcase golden, both AJC-62's.
-Hikida/Justice semantics are typed instead: ``claim_type="compensable_consequence"``
-plus ``treatment_causation`` and ``requested_apportionment``, graded under the
+Doctrine-hook boundary: AJC-62 appended ``hikida_treatment_carveout`` as the
+fifteenth :data:`~wc_caseload_engine.seeds.DoctrineHook` member, held out of
+the feature-absent draw by ``LEGACY_DOCTRINE_POOL`` (the frozen first
+fourteen). The enum member is content/pool machinery only — Hikida/Justice
+*semantics* remain typed here: ``claim_type="compensable_consequence"`` plus
+``treatment_causation`` and ``requested_apportionment``, graded under the
 NARROWED Justice rule (treatment unapportionable only where it is the *sole*
 cause of the disability).
 
@@ -177,8 +178,8 @@ class Contention(BaseModel):
     target_prior_award_id: str | None = None
     target_body_part: str | None = None
     doctrine_hooks: tuple[DoctrineHook, ...] = ()
-    """Validated against exactly the fourteen shipped enum members — the
-    fifteenth (Hikida) is typed fields, not an enum member, until AJC-62."""
+    """Validated against exactly the fifteen frozen enum members (AJC-62 added
+    ``hikida_treatment_carveout``); the Hikida *semantics* stay typed below."""
 
     rationale: str | None = None
     treatment_causation: TreatmentCausation | None = None

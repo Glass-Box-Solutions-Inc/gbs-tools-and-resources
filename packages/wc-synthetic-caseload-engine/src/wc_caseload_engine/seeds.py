@@ -119,6 +119,7 @@ type DoctrineHook = Literal[
     "imr_constitutionality",
     "ab5_dynamex",
     "lc4664_prior_award",
+    "hikida_treatment_carveout",
 ]
 type DocumentFormat = Literal["pdf", "scanned_pdf", "eml", "docx"]
 type FilenameStyle = Literal["neutral", "corpus"]
@@ -3007,20 +3008,36 @@ _LIEN_RESOLUTIONS: tuple[str, ...] = (
     "mixed",
 )
 
-_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)
-"""Hooks ``auto:`` derivation may draw, in content-table order (AJC-60).
+LEGACY_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)[:14]
+"""Hooks the feature-absent ``auto:`` draw may pull, in content-table order.
+
+Exactly the first fourteen table entries — the pre-M3 pool, byte for byte
+(AJC-62 R7). ``hikida_treatment_carveout`` is deliberately outside it: adding
+the fifteenth enum member must not re-roll doctrine hooks in any case without
+the medical-story gate, because feature-absent corpora are pinned byte-identical
+by the golden gate. Every existing draw path reads this pool.
 
 Read from :data:`~wc_caseload_engine.doctrine.DOCTRINE_CONTENT` rather than
-transcribed, because the transcription had already drifted: thirteen entries
-against the table's fourteen, with ``death_dependency`` present in the table,
-accepted by the schema, and reachable only by naming it in a seed. A hand-kept
-third copy of a list two other places already agree on is a drift waiting to
-happen, and the next hook added is the one that would have inherited it.
+transcribed, because the transcription had already drifted once (AJC-60):
+thirteen entries against the table's then-fourteen, with ``death_dependency``
+present in the table, accepted by the schema, and reachable only by naming it
+in a seed. A hand-kept copy of a list other places already agree on is a drift
+waiting to happen. The slice is pinned against the frozen fifteen-member oracle
+by ``tests/test_doctrine_content.py``.
 
 Derived in **insertion order, not sorted**. ``_derive_doctrine_hooks`` shuffles
 this sequence, so its order is an input to every ``auto:`` draw — sorting it
-would silently re-roll every auto-derived caseload. Insertion order preserves
-the thirteen entries' existing relative positions exactly.
+would silently re-roll every auto-derived caseload.
+"""
+
+MEDICAL_STORY_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)
+"""All fifteen hooks, in content-table order — the medical-story-gated pool.
+
+Selected only when the M3 medical-story gate (``scenario.medical_history``) is
+present, and wired in by a later AJC-62 build step; no additional RNG draw may
+be introduced to choose between the pools (AJC-62 R7). Defined beside its
+legacy sibling so the pair is one reviewable seam rather than two lists that
+can drift apart silently.
 """
 
 _MECHANISMS: Mapping[str, tuple[str, ...]] = {
@@ -3327,7 +3344,7 @@ def _derive_doctrine_hooks(
     if rng.random() < profile.doctrine_hook_rate:
         pool = [
             hook
-            for hook in _DOCTRINE_POOL
+            for hook in LEGACY_DOCTRINE_POOL
             if hook not in hooks and hook_is_supported(hook, facts)
         ]
         rng.shuffle(pool)

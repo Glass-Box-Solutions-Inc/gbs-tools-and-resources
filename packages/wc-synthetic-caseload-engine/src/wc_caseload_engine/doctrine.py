@@ -7,7 +7,7 @@ documents that never said "Kite" or "Escobedo" anywhere. A classifier corpus
 built from it could not be used to measure whether a model finds doctrine
 language, because the language was not in the corpus.
 
-This module is the content table that closes that gap. Each of the fourteen
+This module is the content table that closes that gap. Each of the fifteen
 :data:`~wc_caseload_engine.seeds.DoctrineHook` values maps to one
 :class:`DoctrineContent`: the controlling authority, a short **marker** that
 survives PDF text extraction, and two pools of paragraphs — one written in the
@@ -26,7 +26,7 @@ Three properties are load-bearing:
 * **Every paragraph carries its hook's marker.** The marker is what a probe (or
   a corpus consumer) greps for, so a paragraph without one is content that
   cannot be verified to have arrived.
-* **A subtype has one register across all fourteen hooks.** ``TRIAL_BRIEF`` is
+* **A subtype has one register across all fifteen hooks.** ``TRIAL_BRIEF`` is
   legal for every hook that targets it; ``QME_COMPREHENSIVE_REPORT`` is medical
   for every hook that targets it. That invariant is what lets a document flagged
   with two hooks carry one heading instead of two contradictory ones.
@@ -372,7 +372,7 @@ class DoctrineContent:
 # Shared target sets
 #
 # Named rather than repeated so that "the med-legal report family" means one
-# thing across all fourteen hooks. A hook that wants a narrower reach declares
+# thing across all fifteen hooks. A hook that wants a narrower reach declares
 # its own set; a hook that wants the family uses the family.
 # ---------------------------------------------------------------------------
 
@@ -1085,6 +1085,67 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "ANSWER_TO_APPLICATION",
             "PD_RATING_CALCULATION_WORKSHEET",
         },
+        requires=_RATING_PREREQUISITE,
+    ),
+    # The fifteenth hook (AJC-62 R7). Appended LAST on purpose: the table's
+    # insertion order is the enum's declaration order, and the first fourteen
+    # keys are the frozen LEGACY_DOCTRINE_POOL the feature-absent draw reads —
+    # inserting this anywhere earlier would silently change that pool's slice.
+    "hikida_treatment_carveout": DoctrineContent(
+        hook="hikida_treatment_carveout",
+        display="Hikida/Justice — disability from industrial medical treatment",
+        marker="Hikida",
+        citation=(
+            "Hikida v. WCAB (2017) 12 Cal.App.5th 1249, 82 Cal.Comp.Cases 679 "
+            "(permanent disability resulting solely from medical treatment for an "
+            "industrial injury is compensated without apportionment), as narrowed by "
+            "County of Santa Clara v. WCAB (Justice) (2020) 49 Cal.App.5th 605, "
+            "85 Cal.Comp.Cases 467 (apportionment applies where the disability has "
+            "multifactorial causes)."
+        ),
+        medical_paragraphs=(
+            "This evaluation addresses the Hikida question: whether the permanent "
+            "disability that followed the medical treatment provided for the industrial "
+            "injury results solely from that treatment, or whether other factors — "
+            "including any preexisting pathology shown to be causing permanent disability "
+            "now — contribute to it. My finding on that question is stated above, with "
+            "the reasoning, and the distinction controls whether any part of the "
+            "disability can be apportioned.",
+            "As narrowed in Justice, Hikida does not remove apportionment merely because "
+            "industrial medical treatment contributed to the permanent disability. Where "
+            "the disability under review has more than one cause, I have stated the "
+            "approximate percentage caused by the industrial injury and its treatment and "
+            "the approximate percentage caused by other factors, and I have explained how "
+            "and why I reached those figures rather than supplying a number without a "
+            "basis.",
+            "Where the record supports the conclusion that the treatment for the "
+            "industrial injury is the sole cause of the permanent disability under "
+            "review, Hikida requires that the resulting disability be compensated "
+            "without apportionment, and I have said so with the findings that support "
+            "it. Where the record does not establish sole causation, I have not "
+            "extended the Hikida carveout to it.",
+        ),
+        legal_paragraphs=(
+            "Hikida v. WCAB holds that an employer is responsible without apportionment "
+            "for permanent disability that results solely from medical treatment provided "
+            "for an industrial injury. County of Santa Clara v. WCAB (Justice) narrows "
+            "that carveout: where the permanent disability has multifactorial causes, "
+            "statutory apportionment applies even though the industrial treatment "
+            "contributed to the result.",
+            "A Hikida objection asking that apportionment be refused on a record where "
+            "preexisting pathology is shown to contribute to the permanent disability "
+            "over-reads the carveout after Justice. The proponent of an unapportioned "
+            "award must show that the treatment, and not the underlying condition "
+            "operating with it, is the sole cause of the disability at issue.",
+            "The parties should frame the Hikida issue in two steps: first, what "
+            "permanent disability followed the medical treatment for the industrial "
+            "injury; second, whether that disability results solely from the treatment "
+            "or from the treatment operating with other contributing causes. Only "
+            "sole causation supports an unapportioned award, and a medical opinion "
+            "that does not separate the two questions cannot carry the issue.",
+        ),
+        medical_targets=_CORE_MEDLEGAL | {"APPORTIONMENT_REPORT"},
+        legal_targets=_BRIEFS | {"APPORTIONMENT_WORKSHEET"},
         requires=_RATING_PREREQUISITE,
     ),
 }

@@ -1882,14 +1882,14 @@ note = 'AJC-60. R4 re-pointed twice over: the divisor moved from the applicant o
 
 [[mutant]]
 id = 'm17-7'
-title = 'the auto-derivation pool drifts from the doctrine content table again'
+title = 'the legacy doctrine pool drifts from the frozen first fourteen again'
 file = 'src/wc_caseload_engine/seeds.py'
-test = 'tests/test_doctrine_content.py::TestContentTableIsComplete::test_the_derivation_pool_is_the_whole_content_table'
-find = '''_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)'''
-replace = '''_DOCTRINE_POOL: tuple[str, ...] = tuple(
-    _h for _h in DOCTRINE_CONTENT if _h != "death_dependency"
+test = 'tests/test_doctrine_content.py::TestContentTableIsComplete::test_legacy_and_medical_story_doctrine_pools_are_exact_and_ordered'
+find = '''LEGACY_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)[:14]'''
+replace = '''LEGACY_DOCTRINE_POOL: tuple[str, ...] = tuple(
+    _h for _h in tuple(DOCTRINE_CONTENT)[:14] if _h != "death_dependency"
 )'''
-note = 'AJC-60. Restores the drift exactly as it stood: thirteen entries against the fourteen in the content table, with death_dependency reachable only by explicit seeding. Harmless today, because the hook cannot survive the filter the derivation applies before shuffling — and that is the point. It was harmless for as long as it existed, which is why nobody noticed, and the next hook added to the table would have inherited it without the accident of being unreachable.'
+note = 'AJC-60, repointed by AJC-62 R72 at the pool split. Restores the original drift under the new shape: thirteen entries against the frozen first fourteen, with death_dependency reachable only by explicit seeding. The guard moved with the code (the old whole-table equality is now WRONG by design — the table holds fifteen while the feature-absent pool must stay the frozen fourteen), so the pool-exactness test is the single node that must go red: LEGACY_DOCTRINE_POOL no longer equals EXPECTED_DOCTRINE_HOOKS[:14]. The draw-identity oracle beside it would redden too, but the exactness assertion names the defect rather than its symptom.'
 
 # ---------------------------------------------------------------------------
 # AJC-60 round 2 — the three findings review found, each with the mutation that
