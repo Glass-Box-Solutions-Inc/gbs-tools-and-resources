@@ -13,12 +13,15 @@ gates land with their producers); nothing here may be weakened when they do.
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import typing
 from fractions import Fraction
+from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from assertion_cohort import (
     M2_APPORTIONMENT_ORACLE_FIELDS,
@@ -35,6 +38,8 @@ from assertion_cohort import (
     cohort_seed_body,
 )
 from wc_caseload_engine import medical_assertions as assertion_module
+from wc_caseload_engine import renderer as renderer_module
+from wc_caseload_engine.manifests import generate_case
 from wc_caseload_engine.medical_assertions import (
     ASSERTION_RNG_FAMILIES,
     ASSERTION_RNG_NAMESPACE,
@@ -58,7 +63,25 @@ from wc_caseload_engine.medical_assertions import (
     derive_medical_assertions,
 )
 from wc_caseload_engine.medical_history import derive_medical_history
-from wc_caseload_engine.seeds import parse_case_seed
+from wc_caseload_engine.medical_story import (
+    MedicalUrPlan,
+    resolve_imr_application_content,
+)
+from wc_caseload_engine.planner import build_case_plan
+from wc_caseload_engine.seeds import (
+    derive_seed,
+    parse_case_seed,
+    parse_caseload_spec,
+)
+
+_RENDER_KEY_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "medical_story_render_key_pair.yaml"
+)
+_IMR_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "medical_story_imr_matrix.yaml"
+)
 
 #: An INDEPENDENT literal copy of the R46 registry — never imported from
 #: production, so a production edit and this oracle must both move for the
@@ -139,8 +162,8 @@ EXPECTED_MEDICAL_STORY_FAMILIES: tuple[str, ...] = (
 #:   the eight UR/IMR families — step 8's derivation;
 #:   the five document families — step 9's rendering.
 #:
-#: By step 9 the observed set (cohort plus focused render fixtures) MUST
-#: equal the full registry.
+#: Step 9 retains this cohort-only pin and separately requires the cohort plus
+#: focused witnesses to equal the full registry.
 EXERCISED_STORY_FAMILIES_TODAY: frozenset[str] = frozenset(
     {
         "ptp-aoe-coe-finding",
@@ -170,23 +193,57 @@ EXERCISED_STORY_FAMILIES_TODAY: frozenset[str] = frozenset(
 _TRACE_WITNESS_INDICES = (3, 5760)
 
 
+def _render_key_seed_pair() -> tuple[Any, Any]:
+    """R67's one seed and its sole permitted in-memory insertion clone."""
+    payload = yaml.safe_load(_RENDER_KEY_FIXTURE.read_text(encoding="utf-8"))
+    assert payload["caseload_id"] == "medical-story-render-key-pair"
+    assert len(payload["cases"]) == 1
+    base_body = payload["cases"][0]
+    assert (base_body["case_id"], base_body["rng_seed"]) == (
+        "render-key-stability",
+        620401,
+    )
+
+    inserted_body = copy.deepcopy(base_body)
+    assertions = inserted_body["scenario"]["medical_assertions"]
+    assert "contention_documents" not in assertions
+    assertions["contention_documents"] = [
+        {
+            "id": "cdoc-90",
+            "document_kind": "advocacy",
+            "actor_party": "defense",
+            "target_medical_opinion_id": "opn-01",
+            "spoken_contention_ids": ["ctn-02"],
+            "subtype": "ADVOCACY_LETTERS_QME",
+            "doc_date": "2024-08-20",
+        }
+    ]
+    base = parse_case_seed(base_body)
+    inserted = parse_case_seed(inserted_body)
+    assert base.case_id == inserted.case_id == "render-key-stability"
+    assert base.rng_seed == inserted.rng_seed == 620401
+    return base, inserted
+
+
 # ---------------------------------------------------------------------------
 # R46 — the exact 34-family registry
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
-def test_medical_story_stream_registry_is_exact_complete_and_namespaced() -> None:
-    """R70's namespace/family gate, scoped honestly to R77 step 3.
+def test_medical_story_stream_registry_is_exact_complete_and_namespaced(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """R70's complete closed registry and positive construction witness.
 
     The registry equals the independent R46 literal in exact order under the
     one exact namespace; family names are disjoint from every M2 family; an
-    undeclared constructed family fails closed at the helper. The positive
-    "every declared family is exercised" half is scoped to what the frozen
-    cohort exercises TODAY (``EXERCISED_STORY_FAMILIES_TODAY`` — empty until
-    the step-4-through-9 consumers land; the constant's comment carries the
-    step-by-step expansion obligation, and by step 9 the observed set must
-    equal the full registry).
+    undeclared constructed family fails closed at the helper. The frozen M2
+    cohort retains its independent nineteen-family ratchet, then focused psych,
+    UR/IMR, and render fixtures positively construct the remaining families.
+    Their union must equal the literal R46 copy: a declared but unexercised
+    family therefore fails rather than entering the registry invisibly.
     """
     assert MEDICAL_STORY_RNG_NAMESPACE == "medical-story"
     assert MEDICAL_STORY_RNG_FAMILIES == EXPECTED_MEDICAL_STORY_FAMILIES
@@ -225,15 +282,218 @@ def test_medical_story_stream_registry_is_exact_complete_and_namespaced() -> Non
             seed, "not-a-registered-family", ("case", seed.case_id)
         )
 
-    # Exercised-family half, scoped to today: the frozen cohort constructs
-    # exactly the expected set, observed through the wrapped module
-    # attribute, not inferred from a list.
+    observed: set[str] = set()
+    original_story_seed = assertion_module._medical_story_seed
+
+    def recording_story_seed(seed_obj: Any, family: str, semantic_key: Any) -> int:
+        observed.add(family)
+        return original_story_seed(seed_obj, family, semantic_key)
+
+    monkeypatch.setattr(
+        assertion_module, "_medical_story_seed", recording_story_seed
+    )
+
+    # The fixed 6,000-case cohort remains an independently pinned nineteen
+    # families; the focused witnesses below close only the fifteen known gaps.
     result = build_cohort()
     assert result.story_families_seen == EXERCISED_STORY_FAMILIES_TODAY
+
+    render_payload = yaml.safe_load(_RENDER_KEY_FIXTURE.read_text(encoding="utf-8"))
+    render_spec = parse_caseload_spec(render_payload)
+    assert [(case.case_id, case.rng_seed) for case in render_spec.cases] == [
+        ("render-key-stability", 620401)
+    ]
+    render_seed = render_spec.cases[0]
+
+    # The two psych draw sites are focused at their actual production seams.
+    # Their keys are literal R45 identities, not values discovered from the
+    # registry, so deleting either producer removes an observed family.
+    c_key = (
+        "case",
+        render_seed.case_id,
+        "contention",
+        "explicit",
+        "psych-family-focus",
+    )
+    o_key = (
+        "case",
+        render_seed.case_id,
+        "opinion",
+        "explicit",
+        "psych-family-focus",
+    )
+    assertion_module._applicant_psych_framing(render_seed, c_key)
+    assertion_module._ptp_psych_classification(render_seed, o_key, c_key)
+
+    # The frozen IMR matrix supplies the natural positive denominators. A
+    # clone with only the authored decision removed exercises ur-decision.
+    imr_payload = yaml.safe_load(_IMR_FIXTURE.read_text(encoding="utf-8"))
+    imr_spec = parse_caseload_spec(imr_payload)
+    for seed_obj in imr_spec.cases:
+        build_case_plan(seed_obj)
+    sampled_imr = next(
+        seed_obj
+        for seed_obj in imr_spec.cases
+        if seed_obj.case_id == "imr-sampled-upheld"
+    )
+    unstated_ur = sampled_imr.lifecycle.ur_dispute.model_copy(
+        update={"decision": None}
+    )
+    unstated = sampled_imr.model_copy(
+        update={
+            "case_id": "imr-unstated-decision-family-focus",
+            "lifecycle": sampled_imr.lifecycle.model_copy(
+                update={"ur_dispute": unstated_ur}
+            ),
+        }
+    )
+    assert unstated.lifecycle.ur_dispute.decision is None
+    build_case_plan(unstated)
+
+    # Seed 620004 is a literal positive-control witness: both a supporting
+    # record count and rebuttal-substance decision are eligible and populated.
+    # Without this witness the two conditional families could remain declared
+    # forever while every focused fixture missed their branch.
+    sparse_seed = render_seed.model_copy(update={"rng_seed": 620004})
+    sparse_content = resolve_imr_application_content(
+        sparse_seed,
+        MedicalUrPlan(
+            effective_decision="upheld",
+            decision_was_authored=True,
+            imr_requested=True,
+            imr_was_authored=False,
+            effective_imr_outcome="upheld",
+        ),
+        target_denial_date=dt.date(2024, 8, 1),
+        medical_history=derive_medical_history(sparse_seed),
+        earlier_record_subtypes=(
+            "TREATING_PHYSICIAN_REPORT_PR2",
+            "MRI_REPORT",
+        ),
+        disputed_treatment="lumbar epidural injection",
+    )
+    assert sparse_content is not None
+    assert sparse_content.supporting_record_subtypes
+    assert sparse_content.clinical_rebuttal
+
+    # Full generation, not a helper call, constructs format, render, scan,
+    # PDF-ID, and doctrine streams from the required one-case render fixture.
+    generated = generate_case(render_seed, tmp_path / "render-families")
+    assert generated.renders
+    assert {render.doc_format for render in generated.renders} >= {
+        "pdf",
+        "scanned_pdf",
+    }
+    assert any(render.content_flags for render in generated.renders)
+
+    assert observed == set(EXPECTED_MEDICAL_STORY_FAMILIES)
     # The R70 pre-ID key recorder, attached at step 4 with the first
     # production key sites: no sampled story key carries a ctn/opn/app/cdoc
     # ID atom outside the explicit key forms.
     assert result.story_key_findings == []
+
+
+def test_inserting_an_unrelated_document_cannot_move_semantic_render_outputs(
+    tmp_path: Path,
+) -> None:
+    """R59/R70: one inserted D cannot perturb any surviving R output.
+
+    This is an insertion-controlled invariant, not repeat rendering: both plans
+    retain the exact frozen case ID and RNG seed, and the only seed-definition
+    delta is one explicit advocacy document. At least one common semantic
+    document must move to a different final index, after which its complete
+    rendered bytes still have to match.
+    """
+    base_seed, inserted_seed = _render_key_seed_pair()
+    base_result = generate_case(base_seed, tmp_path / "base")
+    inserted_result = generate_case(inserted_seed, tmp_path / "inserted")
+
+    def by_render_key(result: Any) -> dict[str, tuple[Any, Any, bytes]]:
+        observed: dict[str, tuple[Any, Any, bytes]] = {}
+        for document, render in zip(
+            result.plan.documents, result.renders, strict=True
+        ):
+            key = document.medical_story_render_key
+            assert key is not None, (
+                f"history-present document {document.index} has no R45 render key"
+            )
+            canonical = canonical_story_key(key)
+            assert canonical not in observed, f"duplicate semantic R key: {canonical}"
+            observed[canonical] = (document, render, render.path.read_bytes())
+        return observed
+
+    base = by_render_key(base_result)
+    inserted = by_render_key(inserted_result)
+    common = set(base) & set(inserted)
+    assert common, "the insertion left no unrelated semantic document to compare"
+
+    added_advocacy = [
+        document
+        for document in inserted_result.plan.documents
+        if document.contention_surface == "advocacy"
+        and document.target_medical_opinion_id == "opn-01"
+        and document.spoken_contention_ids == ("ctn-02",)
+    ]
+    assert len(added_advocacy) == 1
+    assert canonical_story_key(
+        added_advocacy[0].medical_story_render_key
+    ) not in base
+
+    moved = [
+        key for key in common if base[key][0].index != inserted[key][0].index
+    ]
+    assert moved, "the control insertion moved no common final index"
+    for key in sorted(common):
+        base_document, base_render, base_bytes = base[key]
+        inserted_document, inserted_render, inserted_bytes = inserted[key]
+        assert base_document.doc_format == inserted_document.doc_format, key
+        assert base_render.doc_format == inserted_render.doc_format, key
+        assert base_render.template == inserted_render.template, key
+        assert base_render.content_flags == inserted_render.content_flags, key
+        assert base_bytes == inserted_bytes, (
+            f"semantic document {key} changed after one unrelated insertion: "
+            f"index {base_document.index} -> {inserted_document.index}"
+        )
+
+
+def test_semantic_format_replaces_but_does_not_skip_the_legacy_format_draw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R59 consumes ``format:{index}``, discards it, then uses family R."""
+    seed, _inserted = _render_key_seed_pair()
+    document = build_case_plan(seed).documents[1]
+    assert document.subtype == "FIRST_REPORT_OF_INJURY_PHYSICIAN"
+    assert document.medical_story_render_key is not None
+
+    legacy_seed = derive_seed(seed.rng_seed, "format:1")
+    semantic_seed = assertion_module._medical_story_seed(
+        seed,
+        "document-format",
+        (
+            "case",
+            seed.case_id,
+            document.medical_story_render_key,
+        ),
+    )
+    constructed: list[int] = []
+    original_random = renderer_module.random.Random
+
+    def recording_random(value: int) -> Any:
+        constructed.append(value)
+        return original_random(value)
+
+    monkeypatch.setattr(renderer_module.random, "Random", recording_random)
+    selected = renderer_module.choose_format(
+        seed,
+        document.index,
+        medical_story_render_key=document.medical_story_render_key,
+    )
+
+    assert constructed == [legacy_seed, semantic_seed]
+    assert renderer_module._format_from_roll(
+        seed.effective_format_mix(), original_random(legacy_seed).random()
+    ) == "pdf"
+    assert selected == "scanned_pdf"
 
 
 # ---------------------------------------------------------------------------

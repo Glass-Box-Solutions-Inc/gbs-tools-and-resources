@@ -202,6 +202,7 @@ def _render(seed: Any, plan: Any, document: Any, story: Any, stem: str) -> _Rend
         medical_story=story,
         contention_actor_party=document.contention_actor_party,
         defense_contest_theories=document.defense_contest_theories,
+        medical_story_render_key=document.medical_story_render_key,
     )
     with fitz.open(path) as pdf:
         text = "\n".join(page.get_text() for page in pdf)

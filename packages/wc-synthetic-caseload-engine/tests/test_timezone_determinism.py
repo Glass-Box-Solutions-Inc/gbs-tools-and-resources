@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 import zipfile
+from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
@@ -45,8 +46,18 @@ from wc_caseload_engine.determinism import (
     zip_date_time,
 )
 from wc_caseload_engine.manifests import generate_case
+from wc_caseload_engine.medical_assertions import (
+    MEDICAL_STORY_HASH_SEEDS,
+    MEDICAL_STORY_REPEAT_GENERATIONS,
+    MEDICAL_STORY_TZ_MATRIX,
+    canonical_story_key,
+)
 from wc_caseload_engine.planner import build_case_plan
-from wc_caseload_engine.seeds import ANCHOR_DATE, parse_case_seed
+from wc_caseload_engine.seeds import (
+    ANCHOR_DATE,
+    parse_case_seed,
+    parse_caseload_spec,
+)
 from wc_caseload_engine.substrate import import_substrate
 
 # Two zones on opposite sides of the date line, chosen so that for most of the
@@ -136,6 +147,262 @@ def digest_tree(root: Path) -> dict[str, str]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     }
+
+
+_MEDICAL_STORY_RENDER_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "medical_story_render_key_pair.yaml"
+)
+
+
+def _medical_story_seed() -> Any:
+    payload = __import__("yaml").safe_load(
+        _MEDICAL_STORY_RENDER_FIXTURE.read_text(encoding="utf-8")
+    )
+    spec = parse_caseload_spec(payload)
+    assert [(case.case_id, case.rng_seed) for case in spec.cases] == [
+        ("render-key-stability", 620401)
+    ]
+    return spec.cases[0]
+
+
+def _medical_story_plan_payload(plan: Any) -> dict[str, Any]:
+    """Complete canonical M3 plan projection for R65's digest."""
+
+    def dumped(value: Any) -> Any:
+        return value.model_dump(mode="json") if value is not None else None
+
+    documents = []
+    for document in plan.documents:
+        render_key = document.medical_story_render_key
+        assert render_key is not None
+        documents.append(
+            {
+                "index": document.index,
+                "subtype": document.subtype,
+                "parent_type": document.parent_type,
+                "doc_date": document.doc_date.isoformat(),
+                "doc_format": document.doc_format,
+                "track": document.track,
+                "author_role": document.author_role,
+                "title": document.title,
+                "recipient_role": document.recipient_role,
+                "content_flags": list(document.content_flags),
+                "medical_opinion_id": document.medical_opinion_id,
+                "spoken_contention_ids": list(document.spoken_contention_ids),
+                "contention_surface": document.contention_surface,
+                "template_subtype": document.template_subtype,
+                "target_medical_opinion_id": document.target_medical_opinion_id,
+                "contention_actor_party": document.contention_actor_party,
+                "defense_contest_theories": list(
+                    document.defense_contest_theories
+                ),
+                "imr_target_denial_date": (
+                    document.imr_target_denial_date.isoformat()
+                    if document.imr_target_denial_date is not None
+                    else None
+                ),
+                "imr_application_content": dumped(
+                    document.imr_application_content
+                ),
+                "imr_outcome": document.imr_outcome,
+                "medical_story_render_key": canonical_story_key(render_key),
+            }
+        )
+    return {
+        "medical_history": dumped(plan.medical_history),
+        "medical_assertions": dumped(plan.medical_assertions),
+        "medical_story": dumped(plan.medical_story),
+        "medical_ur_plan": dumped(plan.medical_ur_plan),
+        "documents": documents,
+        "warnings": list(plan.warnings),
+    }
+
+
+def _medical_story_leakage_findings(root: Path) -> list[str]:
+    """Bounded R65 leakage vector; step 11 owns the OCR/full-surface gate."""
+    import email
+    import email.policy
+
+    import fitz
+    import yaml as yaml_module
+
+    from test_medical_assertions import (
+        _BARE_TOKEN,
+        ASSERTION_LEAKAGE_EXEMPTIONS,
+        _leakage_reserved_key_findings,
+    )
+
+    findings: list[str] = []
+
+    def note(text: str, where: str) -> None:
+        if _BARE_TOKEN.search(text.lower()) and where not in ASSERTION_LEAKAGE_EXEMPTIONS:
+            findings.append(f"bare token at {where}")
+
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root).as_posix()
+        if rel == "truth" or rel.startswith("truth/"):
+            continue
+        note(rel, f"path:{rel}")
+        if not path.is_file():
+            continue
+        raw = path.read_bytes()
+        note(raw.decode("utf-8", errors="ignore"), f"bytes:{rel}")
+        if path.name in ("seed.yaml", "case_facts.yaml"):
+            findings.extend(
+                _leakage_reserved_key_findings(
+                    yaml_module.safe_load(raw.decode("utf-8")), rel
+                )
+            )
+        elif path.suffix == ".json":
+            findings.extend(
+                _leakage_reserved_key_findings(
+                    json.loads(raw.decode("utf-8")), rel
+                )
+            )
+        elif path.suffix == ".pdf":
+            with fitz.open(stream=raw, filetype="pdf") as document:
+                note(
+                    "\n".join(page.get_text() for page in document),
+                    f"pdf-text:{rel}",
+                )
+        elif path.suffix == ".docx":
+            with zipfile.ZipFile(path) as archive:
+                for name in archive.namelist():
+                    if name.endswith(".xml"):
+                        note(
+                            archive.read(name).decode("utf-8", errors="replace"),
+                            f"docx:{rel}!{name}",
+                        )
+        elif path.suffix == ".eml":
+            message = email.message_from_bytes(raw, policy=email.policy.default)
+            for part in message.walk():
+                if part.get_content_maintype() == "text":
+                    note(str(part.get_content()), f"eml:{rel}")
+    return sorted(findings)
+
+
+def _medical_story_observation(out: Path) -> dict[str, Any]:
+    """One R65 observation across every required plan/output surface."""
+    from wc_caseload_engine import medical_assertions as assertion_module
+    from wc_caseload_engine.truth_manifest import build_case_truth_manifest
+
+    seed = _medical_story_seed()
+    family_counts: Counter[str] = Counter()
+    original_seed = assertion_module._medical_story_seed
+
+    def counting_seed(seed_obj: Any, family: str, semantic_key: Any) -> int:
+        family_counts[family] += 1
+        return original_seed(seed_obj, family, semantic_key)
+
+    assertion_module._medical_story_seed = counting_seed
+    try:
+        result = generate_case(seed, out, case_number=1)
+    finally:
+        assertion_module._medical_story_seed = original_seed
+
+    plan_payload = _medical_story_plan_payload(result.plan)
+    plan_bytes = json.dumps(
+        plan_payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    truth = build_case_truth_manifest(result.plan)
+    bindings = [
+        {
+            "render_key": document["medical_story_render_key"],
+            "medical_opinion_id": document["medical_opinion_id"],
+            "spoken_contention_ids": document["spoken_contention_ids"],
+            "contention_surface": document["contention_surface"],
+            "template_subtype": document["template_subtype"],
+            "target_medical_opinion_id": document[
+                "target_medical_opinion_id"
+            ],
+            "contention_actor_party": document["contention_actor_party"],
+            "defense_contest_theories": document[
+                "defense_contest_theories"
+            ],
+        }
+        for document in plan_payload["documents"]
+    ]
+    dates = [
+        (document["medical_story_render_key"], document["doc_date"])
+        for document in plan_payload["documents"]
+    ]
+    return {
+        "plan_digest": hashlib.sha256(plan_bytes).hexdigest(),
+        "bindings": bindings,
+        "dates": dates,
+        "truth_assertion_channel": truth["channels"].get("assertions"),
+        "output_tree_bytes": digest_tree(result.directory),
+        "leakage_findings": _medical_story_leakage_findings(result.directory),
+        "story_trace_counters": dict(sorted(family_counts.items())),
+    }
+
+
+def _write_medical_story_observation(out: str, destination: str) -> None:
+    observation = _medical_story_observation(Path(out))
+    Path(destination).write_text(
+        json.dumps(observation, ensure_ascii=True, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def _medical_story_observation_in_subprocess(
+    root: Path,
+    hash_seed: str,
+) -> dict[str, Any]:
+    result_path = root / "observation.json"
+    package_root = Path(__file__).resolve().parents[1]
+    script = (
+        "import sys; "
+        "sys.path.insert(0, sys.argv[1]); "
+        "from test_timezone_determinism import "
+        "_write_medical_story_observation; "
+        "_write_medical_story_observation(sys.argv[2], sys.argv[3])"
+    )
+    env = dict(os.environ)
+    env["PYTHONHASHSEED"] = hash_seed
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(Path(__file__).resolve().parent),
+            str(root / "out"),
+            str(result_path),
+        ],
+        cwd=package_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr[-4000:]
+    return json.loads(result_path.read_text(encoding="utf-8"))
+
+
+def _assert_medical_story_observations_equal(
+    observations: dict[str, dict[str, Any]],
+) -> None:
+    """Compare every R65 surface explicitly, with the changed label named."""
+    assert len(observations) == 2
+    (first_label, first), (second_label, second) = observations.items()
+    for field in (
+        "plan_digest",
+        "bindings",
+        "dates",
+        "truth_assertion_channel",
+        "output_tree_bytes",
+        "leakage_findings",
+        "story_trace_counters",
+    ):
+        assert first[field] == second[field], (
+            f"medical-story {field} drifted between {first_label} and "
+            f"{second_label}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -723,3 +990,59 @@ def test_assertion_ledger_digest_is_identical_across_hash_seeded_processes(
     assert json.dumps(first_channel, sort_keys=True) == json.dumps(
         second_channel, sort_keys=True
     )
+
+
+# ---------------------------------------------------------------------------
+# AJC-62 (M3) — complete medical-story determinism observations
+# ---------------------------------------------------------------------------
+
+
+def _assert_medical_story_matrix_pins() -> None:
+    """R65 literals live beside their consumers; production cannot self-pin."""
+    assert MEDICAL_STORY_TZ_MATRIX == (
+        "America/Los_Angeles",
+        "Australia/Sydney",
+    )
+    assert MEDICAL_STORY_HASH_SEEDS == ("0", "424242")
+    assert MEDICAL_STORY_REPEAT_GENERATIONS == 2
+
+
+@requires_substrate
+def test_medical_story_plan_and_output_are_identical_across_timezones(
+    tmp_path: Path,
+) -> None:
+    """R65's two-zone perturbation over all seven frozen observation fields."""
+    _assert_medical_story_matrix_pins()
+    observations: dict[str, dict[str, Any]] = {}
+    for zone in MEDICAL_STORY_TZ_MATRIX:
+        with timezone_set(zone):
+            observations[zone] = _medical_story_observation(tmp_path / zone)
+    _assert_medical_story_observations_equal(observations)
+
+
+@requires_substrate
+def test_medical_story_plan_and_output_are_identical_across_hash_seeded_processes(
+    tmp_path: Path,
+) -> None:
+    """R65's two real hash salts over plan, bindings, truth, bytes, and trace."""
+    _assert_medical_story_matrix_pins()
+    observations = {
+        hash_seed: _medical_story_observation_in_subprocess(
+            tmp_path / f"hash-{hash_seed}", hash_seed
+        )
+        for hash_seed in MEDICAL_STORY_HASH_SEEDS
+    }
+    _assert_medical_story_observations_equal(observations)
+
+
+@requires_substrate
+def test_medical_story_repeated_generation_is_byte_identical(
+    tmp_path: Path,
+) -> None:
+    """R65's exact repeat count over the same complete observation contract."""
+    _assert_medical_story_matrix_pins()
+    observations = {
+        f"repeat-{index}": _medical_story_observation(tmp_path / f"repeat-{index}")
+        for index in range(MEDICAL_STORY_REPEAT_GENERATIONS)
+    }
+    _assert_medical_story_observations_equal(observations)

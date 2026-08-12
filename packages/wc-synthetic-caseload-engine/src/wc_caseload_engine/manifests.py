@@ -338,6 +338,7 @@ def generate_case(
             defense_contest_theories=document.defense_contest_theories,
             imr_application_content=document.imr_application_content,
             imr_outcome=document.imr_outcome,
+            medical_story_render_key=document.medical_story_render_key,
         )
         if document.subtype in SUBPOENAED_RECORDS_SUBTYPES:
             packet_counter += 1

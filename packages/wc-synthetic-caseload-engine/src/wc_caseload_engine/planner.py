@@ -77,6 +77,7 @@ from wc_caseload_engine.medical_assertions import (
     MedicalAssertionLedger,
     assertion_context,
     assertion_warnings,
+    canonical_story_key,
     derive_medical_assertion_plan,
     project_medical_history,
     validate_medical_assertions,
@@ -168,6 +169,43 @@ class PlannedDocument:
     imr_target_denial_date: date | None = None
     imr_application_content: ImrApplicationContent | None = None
     imr_outcome: ImrOutcome | None = None
+    medical_story_render_key: tuple[object, ...] | None = None
+    """R45/R59 final semantic render identity, internal and never exported."""
+
+
+def _unbound_document_render_key(
+    seed: CaseSeed,
+    candidate: DatedCandidate,
+    *,
+    author_role: str,
+    occurrences: Counter[str],
+) -> tuple[object, ...]:
+    """Build R45's final ``R`` identity for one unbound document.
+
+    The candidate source is semantic planning provenance — stage, priority,
+    and structural metadata — never a collection position or final index. An
+    occurrence counter is scoped to the complete otherwise-identical source
+    tuple, so genuinely duplicate legacy proposals remain distinguishable.
+    """
+    prefix: tuple[object, ...] = (
+        "case",
+        seed.case_id,
+        "unbound_document",
+        candidate.subtype,
+        candidate.template_subtype,
+        candidate.doc_date,
+        candidate.track,
+        author_role,
+        (
+            candidate.stage,
+            candidate.priority,
+            candidate.metadata,
+        ),
+    )
+    identity = canonical_story_key(prefix)
+    occurrence = occurrences[identity]
+    occurrences[identity] += 1
+    return (*prefix, occurrence)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2464,6 +2502,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     dated.sort(key=lambda item: (item.doc_date, item.subtype, item.track))
 
     documents: list[PlannedDocument] = []
+    render_key_occurrences: Counter[str] = Counter()
     for index, candidate in enumerate(dated):
         subtype = candidate.subtype
         if not taxonomy.is_canonical(subtype):
@@ -2478,13 +2517,35 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
                 "reach a manifest"
             )
         roles = document_roles(subtype, candidate.author_role, seed.perspective)
+        render_key: tuple[object, ...] | None = None
+        if medical_history is not None:
+            render_key = candidate.medical_story_render_key
+            if (
+                render_key is None
+                and CONTENTION_LOOP_SOURCE_KEY in candidate.metadata
+            ):
+                raise MedicalAssertionError(
+                    "contention-bound planned document reached final rendering "
+                    "without its R45 semantic D key"
+                )
+            if render_key is None:
+                render_key = _unbound_document_render_key(
+                    seed,
+                    candidate,
+                    author_role=roles.author_role,
+                    occurrences=render_key_occurrences,
+                )
         documents.append(
             PlannedDocument(
                 index=index,
                 subtype=subtype,
                 parent_type=taxonomy.parent_of(subtype),
                 doc_date=candidate.doc_date,
-                doc_format=choose_format(seed, index),
+                doc_format=choose_format(
+                    seed,
+                    index,
+                    medical_story_render_key=render_key,
+                ),
                 track=candidate.track,
                 author_role=roles.author_role,
                 title=taxonomy.label(subtype) or subtype.replace("_", " ").title(),
@@ -2502,6 +2563,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
                 imr_target_denial_date=candidate.imr_target_denial_date,
                 imr_application_content=candidate.imr_application_content,
                 imr_outcome=candidate.imr_outcome,
+                medical_story_render_key=render_key,
             )
         )
 

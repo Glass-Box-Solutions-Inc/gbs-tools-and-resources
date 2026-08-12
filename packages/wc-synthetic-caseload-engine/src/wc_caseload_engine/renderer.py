@@ -70,6 +70,7 @@ from typing import Any
 
 import structlog
 
+from wc_caseload_engine import medical_assertions as assertion_module
 from wc_caseload_engine.determinism import (
     ensure_deterministic_substrate,
     mark_docx_synthetic,
@@ -203,11 +204,8 @@ class RenderResult:
         return self.fallback_reason is not None
 
 
-def choose_format(seed: CaseSeed, index: int) -> str:
-    """Pick an output format for document *index* from the seed's weights."""
-    mix = seed.effective_format_mix()
-    rng = random.Random(derive_seed(seed.rng_seed, f"format:{index}"))
-    roll = rng.random()
+def _format_from_roll(mix: Mapping[str, float], roll: float) -> str:
+    """Resolve one already-drawn format roll against the effective mix."""
     upto = 0.0
     for name, weight in sorted(mix.items()):
         upto += weight
@@ -216,13 +214,73 @@ def choose_format(seed: CaseSeed, index: int) -> str:
     return sorted(mix)[-1]
 
 
-def scan_seed_for(seed: CaseSeed, index: int) -> int:
+def _story_family_key(
+    seed: CaseSeed,
+    render_key: tuple[object, ...],
+    *suffix: object,
+) -> tuple[object, ...]:
+    """R46's ``(R, ...)`` suffix under the mandatory case prefix."""
+    return ("case", seed.case_id, render_key, *suffix)
+
+
+def document_seed_for(
+    seed: CaseSeed,
+    index: int,
+    family: str,
+    medical_story_render_key: tuple[object, ...] | None,
+) -> int:
+    """Choose the legacy index seed or R59 semantic family seed."""
+    if medical_story_render_key is None:
+        legacy_prefix = {
+            "document-render": "render",
+            "document-scan": "scan",
+            "document-pdf-id": "pdfid",
+        }[family]
+        return derive_seed(seed.rng_seed, f"{legacy_prefix}:{index}")
+    return assertion_module._medical_story_seed(
+        seed,
+        family,
+        _story_family_key(seed, medical_story_render_key),
+    )
+
+
+def choose_format(
+    seed: CaseSeed,
+    index: int,
+    *,
+    medical_story_render_key: tuple[object, ...] | None = None,
+) -> str:
+    """Pick a format, retaining the gated legacy draw-and-discard."""
+    mix = seed.effective_format_mix()
+    legacy_roll = random.Random(
+        derive_seed(seed.rng_seed, f"format:{index}")
+    ).random()
+    if medical_story_render_key is None:
+        return _format_from_roll(mix, legacy_roll)
+    semantic_roll = assertion_module._medical_story_rng(
+        seed,
+        "document-format",
+        _story_family_key(seed, medical_story_render_key),
+    ).random()
+    return _format_from_roll(mix, semantic_roll)
+
+
+def scan_seed_for(
+    seed: CaseSeed,
+    index: int,
+    medical_story_render_key: tuple[object, ...] | None = None,
+) -> int:
     """The explicit scan-simulation seed for document *index*.
 
     Derived with SHA-256 from ``rng_seed`` and the index — never from
     ``hash()``, whose salt changes between processes.
     """
-    return derive_seed(seed.rng_seed, f"scan:{index}")
+    return document_seed_for(
+        seed,
+        index,
+        "document-scan",
+        medical_story_render_key,
+    )
 
 
 def resolve_template(subtype: str) -> tuple[str, str | None]:
@@ -528,10 +586,11 @@ def doctrine_flowables(
     template: Any,
     *,
     subtype: str,
-    rng_seed: int,
+    seed: CaseSeed,
     index: int,
     content_flags: Sequence[str],
     medical_story_enabled: bool = False,
+    medical_story_render_key: tuple[object, ...] | None = None,
 ) -> list[Any]:
     """The authorities section appended to a flagged document's story.
 
@@ -561,7 +620,16 @@ def doctrine_flowables(
         )
         if not pool:
             continue
-        rng = random.Random(derive_seed(rng_seed, f"doctrine:{index}:{hook}"))
+        if medical_story_render_key is None:
+            rng = random.Random(
+                derive_seed(seed.rng_seed, f"doctrine:{index}:{hook}")
+            )
+        else:
+            rng = assertion_module._medical_story_rng(
+                seed,
+                "document-doctrine",
+                _story_family_key(seed, medical_story_render_key, hook),
+            )
         body.append(Paragraph(rng.choice(pool), styles["BodyText14"]))
         body.append(Paragraph(content.citation, styles["SmallItalic"]))
         body.append(Spacer(1, 8))
@@ -632,6 +700,7 @@ def render_document(
     defense_contest_theories: Sequence[str] = (),
     imr_application_content: Any = None,
     imr_outcome: str | None = None,
+    medical_story_render_key: tuple[object, ...] | None = None,
 ) -> RenderResult:
     """Render one planned document to *out_path*, reproducibly.
 
@@ -671,6 +740,8 @@ def render_document(
             tuple order (R30).
         imr_application_content: R39's sparse, denial-bound application fields.
         imr_outcome: the one R57 outcome carried by the governed IMR decision.
+        medical_story_render_key: R45/R59 final semantic render identity. When
+            absent, every legacy index-salted renderer path remains exact.
 
     Returns:
         A :class:`RenderResult` with the checksum and size for the manifest.
@@ -702,10 +773,11 @@ def render_document(
             lambda template, _doc_spec: doctrine_flowables(
                 template,
                 subtype=subtype,
-                rng_seed=seed.rng_seed,
+                seed=seed,
                 index=index,
                 content_flags=flags,
                 medical_story_enabled=medical_story is not None,
+                medical_story_render_key=medical_story_render_key,
             ),
         )
 
@@ -813,8 +885,16 @@ def render_document(
         fallback_reason = f"no registry template for {subtype}; rendered by {class_name}"
         log.warning("render.generic_fallback", case_id=seed.case_id, subtype=subtype)
 
-    # Re-pin the global stream the substrate templates draw from.
-    random.seed(derive_seed(seed.rng_seed, f"render:{index}"))
+    # Re-pin the global stream the substrate templates draw from. R59 replaces
+    # the gated index salt with the document's semantic R identity; the absent
+    # path remains the exact legacy seed.
+    render_seed = document_seed_for(
+        seed,
+        index,
+        "document-render",
+        medical_story_render_key,
+    )
+    random.seed(render_seed)
 
     template = template_class(cast.case)
     if case_facts is not None:
@@ -849,7 +929,7 @@ def render_document(
         effective_format = "pdf"
         spec.output_format = models.OutputFormat("pdf")
         out_path = out_path.with_suffix(".pdf")
-        random.seed(derive_seed(seed.rng_seed, f"render:{index}"))
+        random.seed(render_seed)
         retry = template_class(cast.case)
         if case_facts is not None:
             retry._wc_case_facts = case_facts
@@ -862,12 +942,21 @@ def render_document(
     if effective_format == "scanned_pdf":
         # Never let the substrate derive the scan seed from hash().
         scan_simulator = import_substrate("pdf_templates.scan_simulator")
-        scan_rng = random.Random(scan_seed_for(seed, index))
+        scan_seed = scan_seed_for(seed, index, medical_story_render_key)
+        scan_rng = random.Random(scan_seed)
         payload = scan_simulator.simulate_scan(payload, scan_rng, doc_date=doc_date)
-        payload = normalize_pdf_id(payload, scan_seed_for(seed, index))
+        payload = normalize_pdf_id(payload, scan_seed)
         out_path.write_bytes(payload)
     elif effective_format == "pdf":
-        normalized = normalize_pdf_id(payload, derive_seed(seed.rng_seed, f"pdfid:{index}"))
+        normalized = normalize_pdf_id(
+            payload,
+            document_seed_for(
+                seed,
+                index,
+                "document-pdf-id",
+                medical_story_render_key,
+            ),
+        )
         if normalized != payload:
             out_path.write_bytes(normalized)
             payload = normalized
@@ -909,6 +998,7 @@ __all__ = [
     "choose_format",
     "doctrine_flowables",
     "doctrine_template_class",
+    "document_seed_for",
     "normalize_pdf_id",
     "render_document",
     "resolve_template",

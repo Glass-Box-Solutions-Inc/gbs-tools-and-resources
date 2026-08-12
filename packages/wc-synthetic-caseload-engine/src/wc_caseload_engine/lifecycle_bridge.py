@@ -365,6 +365,13 @@ class DatedCandidate:
     imr_target_denial_date: date | None = None
     imr_application_content: ImrApplicationContent | None = None
     imr_outcome: ImrOutcome | None = None
+    medical_story_render_key: tuple[object, ...] | None = None
+    """R45/R59 semantic render identity for a bound M3 document.
+
+    Unbound candidates receive their final identity only after sorting and
+    author-role resolution. This field carries a binding's pre-ID ``D`` key
+    through controls, date fitting, shaping, and reconciliation.
+    """
 
     def to_candidate(self, parent_type: str | None = None) -> DocumentCandidate:
         """Adapt to the control resolver's input type.

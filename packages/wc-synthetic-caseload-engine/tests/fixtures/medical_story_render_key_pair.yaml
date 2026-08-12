@@ -1,0 +1,85 @@
+# AJC-62 R67/R77 step 9 — one seed for the unrelated-document insertion gate.
+# The paired plan exists only in memory inside the test; this file deliberately
+# contains exactly one case.
+caseload_id: medical-story-render-key-pair
+
+cases:
+  - case_id: render-key-stability
+    rng_seed: 620401
+    injury:
+      type: specific
+      date_of_injury: 2024-03-01
+      body_parts:
+        - {part: lumbar_spine}
+        - {part: shoulder}
+    lifecycle:
+      target_stage: medical_legal
+      claim_response: accepted
+      eval_type: qme
+      doctrine_hooks: [escobedo]
+    documents:
+      global_cap: 20
+      format_mix: {pdf: 0.5, scanned_pdf: 0.25, eml: 0.15, docx: 0.1}
+      include_only:
+        - FIRST_REPORT_OF_INJURY_PHYSICIAN
+        - EMPLOYER_REPORT_INJURY
+        - TREATING_PHYSICIAN_REPORT_PR2
+        - NOTICE_OF_REPRESENTATION
+        - WAGE_STATEMENTS_PRE_INJURY
+        - RESERVE_WORKSHEET
+        - QME_COMPREHENSIVE_REPORT
+        - QME_REPORT_INITIAL
+        - ADVOCACY_LETTERS_QME
+    output:
+      formats: [pdf, scanned_pdf, eml, docx]
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: multilevel degenerative disc disease of the lumbar spine
+            origin: mixed
+            body_part: lumbar_spine
+            icd10: M51.36
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+          - label: chronic rotator cuff tendinosis
+            origin: nonindustrial
+            body_part: shoulder
+            icd10: M75.82
+            severity: mild
+            trajectory: stable
+            symptomatic_before_doi: false
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        contentions:
+          - id: ctn-01
+            claim_type: industrial_causation
+            party: applicant
+            target_condition_id: cond-00
+            rationale: the work injury caused the present lumbar condition
+          - id: ctn-02
+            claim_type: apportionment_defense
+            party: defense
+            target_condition_id: cond-01
+            rationale: the shoulder condition independently contributes to disability
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-20
+            apportionment_state: determined
+            determination_kind: no_nonindustrial_share
+            determination_rationale: >-
+              The present disability is caused entirely by the industrial
+              injury after examination and review of the available records.
+            examination_performed: true
+            reviewed_condition_ids: [cond-00, cond-01]
+            concurs_with_contention_ids: [ctn-01]
+            rejects_contention_ids: [ctn-02]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The mechanism, symptom onset, examination, and treatment course
+              establish industrial causation within reasonable medical probability.
+            rationale: the conclusions rest on examination and record review

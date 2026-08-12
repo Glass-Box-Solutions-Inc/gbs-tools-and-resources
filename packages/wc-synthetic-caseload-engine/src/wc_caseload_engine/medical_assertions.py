@@ -510,6 +510,12 @@ class ContentionDocumentBinding(BaseModel):
     template_subtype: str | None = None
     proposed_date: dt.date | None = None
     source: Literal["explicit", "required_opinion", "sampled"] = "explicit"
+    semantic_key: tuple[object, ...] | None = Field(default=None, exclude=True)
+    """R45's pre-ID ``D`` identity, retained for R59 rendering only.
+
+    This is excluded from serialization so manifests, copied seeds, truth
+    channels, and existing binding digests do not acquire a publication field.
+    """
 
 
 class MedicalAssertionPlan(BaseModel):
@@ -6847,6 +6853,19 @@ def _derive_contention_loop(
         doc_date = entry.doc_date  # type: ignore[attr-defined]
         if doc_date is None and current is not None:
             doc_date = current.report_date
+        target_ref = entry.target_medical_opinion_id  # type: ignore[attr-defined]
+        target = ledger.opinion(target_ref) if target_ref is not None else None
+        current_key = (
+            _story_opinion_key(seed, current, explicit_opinion_ids)
+            if current is not None
+            else None
+        )
+        target_key = (
+            _story_opinion_key(seed, target, explicit_opinion_ids)
+            if target is not None
+            else None
+        )
+        spoken = tuple(entry.spoken_contention_ids)  # type: ignore[attr-defined]
         return _BindingDraft(
             document_kind=kind,
             subtype=subtype,
@@ -6854,12 +6873,20 @@ def _derive_contention_loop(
             proposed_date=doc_date,
             doc_date=entry.doc_date,  # type: ignore[attr-defined]
             medical_opinion_ref=current_ref,
-            target_ref=entry.target_medical_opinion_id,  # type: ignore[attr-defined]
-            spoken=tuple(entry.spoken_contention_ids),  # type: ignore[attr-defined]
+            target_ref=target_ref,
+            spoken=spoken,
             actor_party=entry.actor_party,  # type: ignore[attr-defined]
             theories=tuple(entry.defense_contest_theories),  # type: ignore[attr-defined]
             source="explicit",
             explicit_id=entry.id,  # type: ignore[attr-defined]
+            d_key=_contest_d_key(
+                seed,
+                kind,
+                entry.actor_party,  # type: ignore[attr-defined]
+                current_key,
+                target_key,
+                tuple(contention_keys[ref] for ref in spoken),
+            ),
         )
 
     def realization_binding(opinion: MedicalOpinion) -> _BindingDraft:
@@ -6871,6 +6898,17 @@ def _derive_contention_loop(
             template = subtype
         elif kind == "qme_deposition":
             template = _DEPOSITION_TEMPLATE_SUBTYPE
+        current_key = _story_opinion_key(seed, opinion, explicit_opinion_ids)
+        target = (
+            ledger.opinion(opinion.responds_to_opinion_id)
+            if opinion.responds_to_opinion_id is not None
+            else None
+        )
+        target_key = (
+            _story_opinion_key(seed, target, explicit_opinion_ids)
+            if target is not None
+            else None
+        )
         return _BindingDraft(
             document_kind=kind,
             subtype=subtype,
@@ -6885,6 +6923,14 @@ def _derive_contention_loop(
             actor_party=None,
             theories=(),
             source="required_opinion",
+            d_key=_contest_d_key(
+                seed,
+                kind,
+                None,
+                current_key,
+                target_key,
+                tuple(contention_keys[ref] for ref in spoken),
+            ),
         )
 
     # Groups 1-2 — explicit opinions' realizations (replaced in place by an
@@ -7075,6 +7121,11 @@ def _derive_contention_loop(
         else:
             binding_id = _first_unused("cdoc", used_cdoc_ids)
             used_cdoc_ids.add(binding_id)
+        if draft.d_key is None:  # pragma: no cover - every constructor owns D
+            raise MedicalAssertionError(
+                "contention-document binding reached final labeling without "
+                "its R45 semantic D key"
+            )
         bindings.append(
             ContentionDocumentBinding(
                 id=binding_id,
@@ -7099,6 +7150,7 @@ def _derive_contention_loop(
                 template_subtype=draft.template_subtype,
                 proposed_date=draft.proposed_date,
                 source=draft.source,  # type: ignore[arg-type]
+                semantic_key=draft.d_key,
             )
         )
     return final_ledger, tuple(bindings)

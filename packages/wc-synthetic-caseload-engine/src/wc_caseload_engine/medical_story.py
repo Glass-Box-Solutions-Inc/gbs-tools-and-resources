@@ -758,6 +758,7 @@ def _bound_candidate(
         target_medical_opinion_id=binding.target_medical_opinion_id,
         contention_actor_party=binding.actor_party,
         defense_contest_theories=binding.defense_contest_theories,
+        medical_story_render_key=binding.semantic_key,
     )
 
 
