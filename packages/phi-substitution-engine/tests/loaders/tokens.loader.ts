@@ -10,7 +10,7 @@ import type {
   TokenizedText,
   TokenRole,
 } from "../../src/core/brands";
-import type { ReversalHandle, ReversalStore } from "../../src/core/contracts";
+import type { ReversalHandle, ReversalStore, ReversalWriteStore } from "../../src/core/contracts";
 import {
   createTokensModule,
   InProcessReversalHandle,
@@ -442,6 +442,117 @@ async function runCase(
       } catch (thrown) {
         return { ...baseObservation(), displayText: null, errorCode: failureCode(thrown) };
       }
+    }
+
+    // ---- GLY-335 Wave 0 seam: the ReversalWriteStore PORT CONTRACT ----
+    // The engine depends on the WRITE PORT interface, never the concrete store; these cases
+    // drive `module.reversalStore` typed as `ReversalWriteStore` to freeze that contract.
+
+    // record idempotency: a DIVERGENT replay under one attemptId is a no-op that keeps the FIRST
+    // canonical; a DIFFERENT attempt may update it. (Strengthened per the GLY-335 cross-family gate —
+    // an identical-value replay could not distinguish a real no-op from plain map dedup.)
+    case "M-GLY335-REVERSAL-RECORD-IDEMPOTENT": {
+      const store: ReversalWriteStore = module.reversalStore;
+      const tk = token("[[Claimant]]");
+      const firstCanonical = (fixture.canonical as string) ?? "Maria García";
+      const divergentCanonical = "Impostor Replacement";
+      const updatedCanonical = "Maria García (corrected)";
+      const attemptA = attempt((fixture.attemptId as string) ?? "att-replay-1");
+      const attemptB = attempt("att-update-2");
+      const writeBase = { tenantId: TENANT, matterId: MATTER, dictionaryVersion: V1, token: tk };
+      // Write under attempt A, then REPLAY under the SAME attempt with a DIVERGENT payload (a retry
+      // whose body differs): the replay MUST be a no-op — the first canonical stands.
+      store.record({ ...writeBase, canonical: firstCanonical, attemptId: attemptA });
+      store.record({ ...writeBase, canonical: divergentCanonical, attemptId: attemptA });
+      const afterReplay = await store.resolveEncounteredTokens({
+        tenantId: TENANT,
+        matterId: MATTER,
+        dictionaryVersion: V1,
+        tokens: [tk, tk],
+      });
+      // A DIFFERENT attempt is allowed to update the current canonical.
+      store.record({ ...writeBase, canonical: updatedCanonical, attemptId: attemptB });
+      const afterUpdate = await store.resolveEncounteredTokens({
+        tenantId: TENANT,
+        matterId: MATTER,
+        dictionaryVersion: V1,
+        tokens: [tk],
+      });
+      return {
+        ...baseObservation(),
+        reversalLookupTokens: [...afterReplay.keys()].map(String),
+        metrics: {
+          distinctMappings: afterReplay.size,
+          replayHeldFirstCanonical: afterReplay.get(tk) === firstCanonical,
+          divergentReplayIgnored: afterReplay.get(tk) !== divergentCanonical,
+          differentAttemptUpdated: afterUpdate.get(tk) === updatedCanonical,
+        },
+      };
+    }
+
+    // bounded resolve: encounter-bounded; an over-limit request is rejected (N2, no unbounded pull).
+    case "M-GLY335-REVERSAL-BOUNDED-RESOLVE": {
+      const store: ReversalWriteStore = module.reversalStore;
+      const limit = store.maximumEncounteredTokenBatch;
+      store.record({
+        tenantId: TENANT,
+        matterId: MATTER,
+        dictionaryVersion: V1,
+        token: token("[[Claimant]]"),
+        canonical: "Maria García",
+        attemptId: ATTEMPT,
+      });
+      // A request larger than the encounter bound must be REJECTED — a caller can never enumerate
+      // the matter map through resolve (a soft proxy for "no list-all").
+      const tooMany: SubstitutionToken[] = [];
+      for (let i = 0; i <= limit; i += 1) {
+        tooMany.push(token(`[[Adjuster_${i}]]`));
+      }
+      let overLimitRejected = false;
+      try {
+        await store.resolveEncounteredTokens({
+          tenantId: TENANT,
+          matterId: MATTER,
+          dictionaryVersion: V1,
+          tokens: tooMany,
+        });
+      } catch {
+        overLimitRejected = true;
+      }
+      // A within-bound resolve returns ONLY the encountered token that was recorded.
+      const within = await store.resolveEncounteredTokens({
+        tenantId: TENANT,
+        matterId: MATTER,
+        dictionaryVersion: V1,
+        tokens: [token("[[Claimant]]")],
+      });
+      return {
+        ...baseObservation(),
+        reversalLookupTokens: [...within.keys()].map(String),
+        metrics: { batchLimit: limit, overLimitRejected, withinBoundSize: within.size },
+      };
+    }
+
+    // structural absence of a list-all / enumerate-all API (§7/N2). The frozen INTERFACE
+    // `ReversalWriteStore` declares only `record` + the bounded resolve; this asserts the
+    // concrete callable surface adds no enumerate-all/snapshot method a consumer could call.
+    case "M-GLY335-REVERSAL-NO-LIST-ALL": {
+      const store: ReversalWriteStore = module.reversalStore;
+      const asRecord = store as unknown as Record<string, unknown>;
+      const forbidden = [
+        "list", "listAll", "all", "entries", "keys", "values",
+        "dump", "export", "getAll", "scan", "enumerate", "snapshot", "toJSON",
+      ];
+      const present = forbidden.filter((name) => typeof asRecord[name] === "function");
+      return {
+        ...baseObservation(),
+        diagnostics: present.map((name) => `FORBIDDEN_ENUMERATION_API:${name}`),
+        metrics: {
+          listAllApisPresent: present.length,
+          hasBoundedResolve: typeof asRecord.resolveEncounteredTokens === "function",
+          hasRecord: typeof asRecord.record === "function",
+        },
+      };
     }
 
     default:

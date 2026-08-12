@@ -48,6 +48,7 @@ import type {
   PhiEngineFailureCode,
   PhiSubstitutionEngine,
   ReversalHandle,
+  ReversalWriteStore,
   ReverseStream,
   SubstitutionRequest,
   SubstitutionResult,
@@ -66,7 +67,6 @@ import type { AhoCorasickCompiledDictionary } from "../dictionary/compiled-dicti
 import {
   BracketTokenGrammar,
   HoldbackReverseStreamFactory,
-  InMemoryReversalStore,
   InMemoryTokenAssignmentStore,
   InProcessReversalHandle,
   isInProcessReversalHandle,
@@ -168,8 +168,13 @@ export interface ComposedSubstitutionEngineDeps {
   readonly truthReader: CaseTruthReader;
   /** Constant per-matter truth revision the wrapper reads under. */
   readonly sourceTruthRevision: string;
-  /** Tenant-scoped reversal store (tokens leaf); may be pre-seeded by callers. */
-  readonly reversalStore: InMemoryReversalStore;
+  /**
+   * Tenant-scoped reversal WRITE port (GLY-335 seam; roadmap defect A#3). The engine depends on
+   * the `ReversalWriteStore` interface — record + encounter-bounded resolve — never a concrete
+   * store class, so the durable §6 store swaps in without re-typing core. `InMemoryReversalStore`
+   * is the in-process dev implementation and may be pre-seeded by callers.
+   */
+  readonly reversalStore: ReversalWriteStore;
   readonly engineVersion: EngineVersion;
   readonly grammar?: BracketTokenGrammar;
   readonly tokenPolicy?: TokenGrammarPolicy;
@@ -186,7 +191,7 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
   readonly #coordinator: DictionaryVersionCoordinator;
   readonly #truthReader: CaseTruthReader;
   readonly #sourceTruthRevision: string;
-  readonly #reversalStore: InMemoryReversalStore;
+  readonly #reversalStore: ReversalWriteStore;
   readonly #engineVersion: EngineVersion;
   readonly #grammar: BracketTokenGrammar;
   readonly #policy: TokenGrammarPolicy;
@@ -444,15 +449,19 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
         if (canonical === undefined) {
           continue;
         }
-        // §7/N2: the injected reversal store is UNTRUSTED — a `record()` throw (its message could carry
-        // PHI) must fail closed with a FIXED code, never propagate raw out of substitute.
+        // §7/N2: the injected reversal store is UNTRUSTED — a `record()` throw OR promise rejection
+        // (its message could carry PHI) must fail closed with a FIXED code, never propagate raw out of
+        // substitute. §6: awaiting `record` makes the mapping DURABLE before this tokenized text is
+        // returned for egress — a token is never egressed without exactly one durable reversible mapping.
         try {
-          this.#reversalStore.record({
+          await this.#reversalStore.record({
             tenantId: context.tenantId,
             matterId: context.matterId,
             dictionaryVersion,
             token,
             canonical,
+            // §6/§3.1.3 idempotency key: a replayed attempt is a no-op, never a duplicate/divergent mapping.
+            attemptId: context.attemptId,
           });
         } catch {
           throw new PhiEngineError("REVERSAL_FAILED", context.operationId, {});
