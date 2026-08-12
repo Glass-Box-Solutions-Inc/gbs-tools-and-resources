@@ -1368,6 +1368,10 @@ def _m3_complete_scenario() -> dict[str, Any]:
                     "rationale": "examined the applicant and reviewed the record",
                 },
                 {
+                    # R37 (enforced at R77 step 4): a revised_apportionment
+                    # response changes ONLY the apportionment family — it
+                    # restates the predecessor's disposition results, AOE/COE
+                    # and psych classification unchanged.
                     "id": "opn-03",
                     "author_role": "qme",
                     "report_stage": "final",
@@ -1382,12 +1386,25 @@ def _m3_complete_scenario() -> dict[str, Any]:
                     "reviewed_prior_claim_ids": ["prior-00"],
                     "responds_to_opinion_id": "opn-02",
                     "supersedes_opinion_id": "opn-02",
+                    "endorses_contention_ids": ["ctn-01"],
+                    "rejects_contention_ids": ["ctn-02"],
+                    "concurs_with_contention_ids": ["ctn-04"],
+                    "defers_contention_ids": ["ctn-03"],
+                    "aoe_coe_finding": "industrial",
+                    "aoe_coe_rationale": (
+                        "records, examination and mechanism reviewed to reasonable "
+                        "medical probability"
+                    ),
+                    "psych_injury_kind": "compensable_consequence",
                     "rationale": "the newly produced records were reviewed",
                     "revision_rationale": (
                         "newly produced imaging changes the nonindustrial share"
                     ),
                 },
                 {
+                    # R37: unchanged_additional_reasoning changes NOTHING —
+                    # same dispositions, AOE/COE, psych classification,
+                    # apportionment state/kind and percentages as opn-03.
                     "id": "opn-04",
                     "author_role": "qme",
                     "report_stage": "final",
@@ -1400,6 +1417,16 @@ def _m3_complete_scenario() -> dict[str, Any]:
                     "revision_kind": "unchanged_additional_reasoning",
                     "reviewed_condition_ids": ["cond-00"],
                     "responds_to_opinion_id": "opn-03",
+                    "endorses_contention_ids": ["ctn-01"],
+                    "rejects_contention_ids": ["ctn-02"],
+                    "concurs_with_contention_ids": ["ctn-04"],
+                    "defers_contention_ids": ["ctn-03"],
+                    "aoe_coe_finding": "industrial",
+                    "aoe_coe_rationale": (
+                        "records, examination and mechanism reviewed to reasonable "
+                        "medical probability"
+                    ),
+                    "psych_injury_kind": "compensable_consequence",
                     "rationale": (
                         "testimony under oath restates the written conclusions with "
                         "additional reasoning"
@@ -1473,13 +1500,19 @@ def _m3_complete_scenario() -> dict[str, Any]:
                     ),
                 },
                 {
+                    # R37: the unchanged deposition row keeps opn-03's exact
+                    # percentages AND basis set, and claims no revision.
                     "id": "app-04",
                     "opinion_id": "opn-04",
                     "body_part": "lumbar_spine",
                     "industrial_percent": 70,
                     "nonindustrial_percent": 30,
-                    "basis_kinds": ["preexisting_degenerative_pathology"],
+                    "basis_kinds": [
+                        "preexisting_degenerative_pathology",
+                        "industrial_treatment",
+                    ],
                     "condition_ids": ["cond-00"],
+                    "linked_contention_id": "ctn-03",
                     "description": "the deposition restates the supplemental split",
                     "disability_causation_stated": True,
                     "reasonable_medical_probability": True,

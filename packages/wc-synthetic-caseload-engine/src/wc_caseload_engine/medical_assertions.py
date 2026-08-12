@@ -1090,6 +1090,233 @@ def _response_opinion_structure(ledger: MedicalAssertionLedger) -> list[str]:
     return problems
 
 
+def _causation_family_changed(
+    response: MedicalOpinion, predecessor: MedicalOpinion
+) -> bool:
+    """R37's causation changed-field family: AOE/COE, psych classification,
+    any endorsement/concurrence/rejection/deferral result, or the causation
+    rationale differs from the immediate predecessor."""
+    if response.aoe_coe_finding != predecessor.aoe_coe_finding:
+        return True
+    if response.psych_injury_kind != predecessor.psych_injury_kind:
+        return True
+    if response.aoe_coe_rationale != predecessor.aoe_coe_rationale:
+        return True
+    return any(
+        frozenset(getattr(response, collection))
+        != frozenset(getattr(predecessor, collection))
+        for collection in (
+            "endorses_contention_ids",
+            "concurs_with_contention_ids",
+            "rejects_contention_ids",
+            "defers_contention_ids",
+        )
+    )
+
+
+def _apportionment_family_changed(
+    response: MedicalOpinion,
+    predecessor: MedicalOpinion,
+    ledger: MedicalAssertionLedger,
+) -> bool:
+    """R37's apportionment changed-field family: apportionment state,
+    determination kind, a row's basis set, or at least one percentage differs
+    from the immediate predecessor (a row appearing or disappearing is a
+    percentage-surface change)."""
+    if response.apportionment_state != predecessor.apportionment_state:
+        return True
+    if response.determination_kind != predecessor.determination_kind:
+        return True
+    response_rows = {a.body_part: a for a in ledger.assertions_of(response.id)}
+    predecessor_rows = {
+        a.body_part: a for a in ledger.assertions_of(predecessor.id)
+    }
+    if set(response_rows) != set(predecessor_rows):
+        return True
+    return any(
+        row.nonindustrial_percent != predecessor_rows[part].nonindustrial_percent
+        or frozenset(row.basis_kinds)
+        != frozenset(predecessor_rows[part].basis_kinds)
+        for part, row in response_rows.items()
+    )
+
+
+def _reviewed_record_union(opinion: MedicalOpinion) -> frozenset[tuple[str, str]]:
+    return frozenset(
+        (family, ref)
+        for family, refs in (
+            ("condition", opinion.reviewed_condition_ids),
+            ("prior_claim", opinion.reviewed_prior_claim_ids),
+            ("prior_award", opinion.reviewed_prior_award_ids),
+        )
+        for ref in refs
+    )
+
+
+def _revision_kind_predicates(ledger: MedicalAssertionLedger) -> list[str]:
+    """R37's per-kind structural predicates — each kind permits and forbids
+    exactly its stated field changes (R77 step 4).
+
+    Inert on a parsed channel-``1.0.0`` ledger, where every ``event_kind`` is
+    the ``base_report`` default (Amendment A1). Fires only where the response
+    opinion's exact immediate predecessor resolves; dangling predecessors are
+    the chain validator's finding, not this one's.
+    """
+    problems: list[str] = []
+    for opinion in ledger.medical_opinions:
+        if opinion.event_kind == "base_report" or opinion.revision_kind is None:
+            continue
+        if opinion.responds_to_opinion_id is None:
+            continue  # the model validator already rejected this shape
+        predecessor = ledger.opinion(opinion.responds_to_opinion_id)
+        if predecessor is None or predecessor.id == opinion.id:
+            continue
+        kind = opinion.revision_kind
+        causation_changed = _causation_family_changed(opinion, predecessor)
+        apportionment_changed = _apportionment_family_changed(
+            opinion, predecessor, ledger
+        )
+        if kind in ("unchanged_additional_reasoning", "new_records_no_change"):
+            if opinion.supersedes_opinion_id is not None:
+                problems.append(
+                    f"medical opinion '{opinion.id}' has revision_kind "
+                    f"'{kind}' but sets supersedes_opinion_id; a response "
+                    "that changes no result supersedes nothing"
+                )
+            if causation_changed:
+                problems.append(
+                    f"medical opinion '{opinion.id}' has revision_kind "
+                    f"'{kind}' but changes a causation-family result relative "
+                    f"to predecessor '{predecessor.id}'; AOE/COE, psych "
+                    "classification and every disposition result must remain "
+                    "the same under this kind"
+                )
+            if apportionment_changed:
+                problems.append(
+                    f"medical opinion '{opinion.id}' has revision_kind "
+                    f"'{kind}' but changes an apportionment-family result "
+                    f"relative to predecessor '{predecessor.id}'; state, "
+                    "determination kind, bases and percentages must remain "
+                    "the same under this kind"
+                )
+            if kind == "new_records_no_change" and not (
+                _reviewed_record_union(opinion)
+                > _reviewed_record_union(predecessor)
+            ):
+                problems.append(
+                    f"medical opinion '{opinion.id}' has revision_kind "
+                    "'new_records_no_change' but its reviewed-record union is "
+                    "not a strict superset of predecessor "
+                    f"'{predecessor.id}''s; acknowledging new records is what "
+                    "this kind states"
+                )
+        else:
+            if opinion.supersedes_opinion_id != predecessor.id:
+                problems.append(
+                    f"medical opinion '{opinion.id}' has revision_kind "
+                    f"'{kind}' but supersedes_opinion_id is not its immediate "
+                    f"predecessor '{predecessor.id}'; a revising response "
+                    "supersedes exactly the report it revises"
+                )
+            # The complete R37 conjunction: each revising kind requires its
+            # own changed-field family and forbids the family it does not
+            # state; the combined kind requires BOTH.
+            if kind in (
+                "revised_causation",
+                "revised_causation_and_apportionment",
+            ) and not causation_changed:
+                problems.append(
+                    f"medical opinion '{opinion.id}' has revision_kind "
+                    f"'{kind}' but changes no causation-family result "
+                    f"relative to predecessor '{predecessor.id}'"
+                )
+            if kind in (
+                "revised_apportionment",
+                "revised_causation_and_apportionment",
+            ) and not apportionment_changed:
+                problems.append(
+                    f"medical opinion '{opinion.id}' has revision_kind "
+                    f"'{kind}' but changes no apportionment-family result "
+                    f"relative to predecessor '{predecessor.id}'"
+                )
+            if kind == "revised_causation" and apportionment_changed:
+                problems.append(
+                    f"medical opinion '{opinion.id}' has revision_kind "
+                    "'revised_causation' but also changes an "
+                    "apportionment-family result relative to predecessor "
+                    f"'{predecessor.id}'; use "
+                    "'revised_causation_and_apportionment'"
+                )
+            if kind == "revised_apportionment" and causation_changed:
+                problems.append(
+                    f"medical opinion '{opinion.id}' has revision_kind "
+                    "'revised_apportionment' but also changes a "
+                    "causation-family result relative to predecessor "
+                    f"'{predecessor.id}'; use "
+                    "'revised_causation_and_apportionment'"
+                )
+        problems.extend(_percentage_revision_rows(ledger, opinion, predecessor))
+    return problems
+
+
+def _percentage_revision_rows(
+    ledger: MedicalAssertionLedger,
+    opinion: MedicalOpinion,
+    predecessor: MedicalOpinion,
+) -> list[str]:
+    """R37's allocated-predecessor row metadata, exact in both directions.
+
+    For an allocated predecessor: an unchanged row keeps the predecessor
+    percentages and has ``revised_from_percent=None``; a changed row's
+    ``revised_from_percent`` MUST equal the immediate predecessor's
+    nonindustrial percentage for that body part and MUST state a nonempty
+    ``revision_rationale``. A row on a body part the predecessor never
+    allocated has nothing to revise from.
+    """
+    if predecessor.determination_kind != "allocated":
+        return []
+    problems: list[str] = []
+    predecessor_rows = {
+        a.body_part: a for a in ledger.assertions_of(predecessor.id)
+    }
+    for row in ledger.assertions_of(opinion.id):
+        prior = predecessor_rows.get(row.body_part)
+        if prior is None:
+            if row.revised_from_percent is not None:
+                problems.append(
+                    f"apportionment assertion '{row.id}' sets "
+                    f"revised_from_percent but predecessor '{predecessor.id}' "
+                    f"allocated no percentage for body part '{row.body_part}'"
+                )
+            continue
+        if row.nonindustrial_percent == prior.nonindustrial_percent:
+            if row.revised_from_percent is not None:
+                problems.append(
+                    f"apportionment assertion '{row.id}' keeps predecessor "
+                    f"'{predecessor.id}''s nonindustrial "
+                    f"{prior.nonindustrial_percent}% for body part "
+                    f"'{row.body_part}' but sets revised_from_percent; an "
+                    "unchanged row does not claim revision"
+                )
+            continue
+        if row.revised_from_percent != prior.nonindustrial_percent:
+            problems.append(
+                f"apportionment assertion '{row.id}' changes body part "
+                f"'{row.body_part}' from predecessor '{predecessor.id}''s "
+                f"nonindustrial {prior.nonindustrial_percent}% but "
+                f"revised_from_percent is {row.revised_from_percent}; a "
+                "changed row carries the exact predecessor percentage"
+            )
+        if not row.revision_rationale:
+            problems.append(
+                f"apportionment assertion '{row.id}' changes body part "
+                f"'{row.body_part}' from predecessor '{predecessor.id}' "
+                "without a revision_rationale; a changed percentage states "
+                "its reason"
+            )
+    return problems
+
+
 def _lifecycle(ledger: MedicalAssertionLedger) -> list[str]:
     problems: list[str] = []
     for opinion in ledger.medical_opinions:
@@ -1318,6 +1545,7 @@ def validate_medical_assertions(
     problems.extend(_opinion_chain(ledger, context))
     problems.extend(_psych_kind_anchoring(ledger, history, context))
     problems.extend(_response_opinion_structure(ledger))
+    problems.extend(_revision_kind_predicates(ledger))
     problems.extend(_lifecycle(ledger))
     problems.extend(_grounding_typing(ledger))
     problems.extend(_apportionment_shape(ledger))
@@ -2459,6 +2687,329 @@ def _medical_story_rng(
     other entity observing them.
     """
     return random.Random(_medical_story_seed(seed, family, semantic_key))
+
+
+# ---------------------------------------------------------------------------
+# R77 step 4 — story semantic keys and the disposition/response draw primitives
+# ---------------------------------------------------------------------------
+
+
+def _story_contention_key(
+    seed: CaseSeed,
+    contention: Contention,
+    explicit_contention_ids: frozenset[str],
+) -> StorySemanticKey:
+    """The R45 ``C`` identity for one completed contention.
+
+    Explicit form carries the authored ID (the one place an ID may appear);
+    the sampled form embeds the full M2 rule-6 semantic tuple — the same
+    normalized key the suppression pass uses — exactly as the frozen step-3
+    grammar pins (``("case", id, "contention", "sampled", <M2 key>)``).
+    """
+    if contention.id in explicit_contention_ids:
+        return ("case", seed.case_id, "contention", "explicit", contention.id)
+    return (
+        "case",
+        seed.case_id,
+        "contention",
+        "sampled",
+        _contention_semantic_key(contention),
+    )
+
+
+def _story_sampled_base_opinion_key(
+    seed: CaseSeed, opinion: MedicalOpinion
+) -> StorySemanticKey:
+    """The R45 ``O`` identity for the sampled stage base opinion.
+
+    ``("case", id, "opinion", "sampled_base", author_role, report_stage,
+    report_date, tuple(sorted(relevant C keys)))``. The relevant-C component
+    is the EMPTY tuple for M2's single case-level stage opinion: its M2
+    semantic identity is ``{author_role}:case`` — the evaluator of the case,
+    not of any contention subset — and embedding the contention docket here
+    would let an unrelated added explicit contention shift this opinion's
+    private draws, which R41 rule 8 forbids. (Interpretation flagged for the
+    spec author: R45 leaves "relevant" undefined for the case-level opinion;
+    response-opinion keys get their own composition with their genuinely
+    bound revisited-C keys when step 5 lands.)
+    """
+    return (
+        "case",
+        seed.case_id,
+        "opinion",
+        "sampled_base",
+        opinion.author_role,
+        opinion.report_stage,
+        opinion.report_date,
+        (),
+    )
+
+
+def _ptp_aoe_coe_finding(seed: CaseSeed, opinion_key: StorySemanticKey) -> str:
+    """One R49 independent AOE/COE finding for an eligible sampled PTP base
+    opinion — ``ptp-aoe-coe-finding``, keyed ``(O,)``.
+
+    Exactly ``0.95 -> industrial``; the complement consumes a second draw from
+    the same entity-private stream under the frozen 3/5 nonindustrial : 2/5
+    deferred split, so ``0.03 -> nonindustrial`` and ``0.02 -> deferred``. The
+    draw inspects nothing beyond the opinion identity: no advocacy letter, no
+    letter author/content/date/subtype, no file perspective, no contention
+    quality, no QME/AME result (R49/R16).
+    """
+    rng = _medical_story_rng(
+        seed, "ptp-aoe-coe-finding", ("case", seed.case_id, opinion_key)
+    )
+    if _fraction_draw(rng, P_PTP_INDUSTRIAL_AOE_COE.value):
+        return "industrial"
+    complement = PTP_AOE_COE_COMPLEMENT_WEIGHTS.value
+    members = tuple(complement)
+    index = _weighted_index(rng, tuple(complement[member] for member in members))
+    return members[index]
+
+
+def _applicant_psych_framing(
+    seed: CaseSeed, contention_key: StorySemanticKey
+) -> str:
+    """R49 applicant framing of a consequence-psych contention —
+    ``applicant-psych-framing``, keyed ``(C,)``: 3/4 mischaracterized
+    ``direct``, complement ``compensable_consequence``."""
+    rng = _medical_story_rng(
+        seed, "applicant-psych-framing", ("case", seed.case_id, contention_key)
+    )
+    if _fraction_draw(rng, P_APPLICANT_DIRECT_PSYCH_FRAMING_GIVEN_CONSEQUENCE.value):
+        return "direct"
+    return "compensable_consequence"
+
+
+def _ptp_psych_classification(
+    seed: CaseSeed,
+    opinion_key: StorySemanticKey,
+    contention_key: StorySemanticKey,
+) -> str:
+    """R49 PTP direct-versus-consequence classification —
+    ``ptp-psych-classification``, keyed ``(O, psychiatric C)``: 3/5
+    mischaracterized ``direct``, complement ``compensable_consequence``.
+    Independent of applicant framing and of advocacy."""
+    rng = _medical_story_rng(
+        seed,
+        "ptp-psych-classification",
+        ("case", seed.case_id, opinion_key, contention_key),
+    )
+    if _fraction_draw(rng, P_PTP_DIRECT_PSYCH_CLASSIFICATION_GIVEN_CONSEQUENCE.value):
+        return "direct"
+    return "compensable_consequence"
+
+
+def _qme_ame_indeterminate_disposition(
+    seed: CaseSeed,
+    opinion_key: StorySemanticKey,
+    contention_key: StorySemanticKey,
+) -> str:
+    """R49's indeterminate stream — ``qme-ame-indeterminate-disposition``,
+    keyed ``(O, C)``: 3/5 ``deferred``, complement ``unaddressed``. It chooses
+    only between those two states; it cannot produce adoption or concurrence.
+    """
+    rng = _medical_story_rng(
+        seed,
+        "qme-ame-indeterminate-disposition",
+        ("case", seed.case_id, opinion_key, contention_key),
+    )
+    if _fraction_draw(rng, P_QME_AME_INDETERMINATE_DEFERRED.value):
+        return "deferred"
+    return "unaddressed"
+
+
+def _qme_ame_supported_disposition(
+    seed: CaseSeed,
+    opinion_key: StorySemanticKey,
+    contention_key: StorySemanticKey,
+    qualifying_communication_keys: tuple[StorySemanticKey, ...],
+) -> str:
+    """R38/R53 — adopted versus concurred for one evidence-supported pair.
+
+    A responsive-adoption opportunity exists only when one or more earlier
+    qualifying R38 communications target the opinion and speak this
+    contention. Without one, the result is concurrence WITHOUT an adoption
+    draw — agreement in result is not responsive adoption. With one, exactly
+    one ``qme-ame-responsive-adoption`` draw is made, keyed
+    ``(O, C, tuple(sorted(qualifying D keys)))``; a miss is concurrence.
+
+    The measured 0.25 denominator is the pre-control structural opportunity
+    count: later removal of the communication document may drop its citation
+    from the rendered report but MUST NOT retroactively redraw this result
+    (R53) — the caller passes the pre-control communication set once.
+    """
+    if not qualifying_communication_keys:
+        return "concurred"
+    rng = _medical_story_rng(
+        seed,
+        "qme-ame-responsive-adoption",
+        (
+            "case",
+            seed.case_id,
+            opinion_key,
+            contention_key,
+            tuple(sorted(qualifying_communication_keys, key=canonical_story_key)),
+        ),
+    )
+    if _fraction_draw(rng, P_QME_AME_RESPONSIVE_ADOPTION.value):
+        return "adopted"
+    return "concurred"
+
+
+#: The frozen R54 revision-kind declaration order — one weight row per member.
+_REVISION_KIND_ORDER: Final[tuple[str, ...]] = (
+    "unchanged_additional_reasoning",
+    "new_records_no_change",
+    "revised_causation",
+    "revised_apportionment",
+    "revised_causation_and_apportionment",
+)
+
+#: The R54/R37 kinds able to carry a causation-family revision — the only
+#: kinds retained after responsive adoption changes a disposition.
+_CAUSATION_CAPABLE_REVISION_KINDS: Final[frozenset[str]] = frozenset(
+    {"revised_causation", "revised_causation_and_apportionment"}
+)
+
+
+def _draw_revision_kind(
+    seed: CaseSeed,
+    response_opinion_key: StorySemanticKey,
+    predecessor_opinion_key: StorySemanticKey,
+    trigger_class: str,
+    *,
+    can_acknowledge_new_records: bool,
+    can_change_apportionment: bool,
+    can_change_causation: bool,
+    adoption_changed_disposition: bool,
+) -> str:
+    """One trigger-conditioned compatible R54 revision-kind draw.
+
+    Structurally ineligible kinds are removed BEFORE the single draw — never
+    drawn-and-retried (R54):
+
+    - ``new_records_no_change`` goes unless the reviewed-record union can
+      become a strict superset from an existing visible condition, prior claim
+      or prior award (and its deposition rows already carry zero weight);
+    - the apportionment kinds go if no apportionment issue can change;
+    - the causation kinds go if no causation, psych classification or
+      disposition can change;
+    - after responsive adoption changes a disposition, only causation-capable
+      kinds remain.
+
+    The remaining exact ``Fraction`` weights are renormalized and exactly one
+    draw is consumed from ``revision-kind``, keyed
+    ``(response O, predecessor O, trigger_class)``.
+    """
+    weights_by_trigger = REVISION_KIND_WEIGHTS.value
+    if trigger_class not in weights_by_trigger:
+        raise MedicalAssertionError(
+            f"unknown revision trigger class {trigger_class!r}; R54 freezes "
+            "exactly supplemental_after_objection, supplemental_after_completion, "
+            "deposition_examining_base and deposition_examining_supplemental"
+        )
+    row = weights_by_trigger[trigger_class]
+    eligible: list[tuple[str, Fraction]] = []
+    for kind, weight in zip(_REVISION_KIND_ORDER, row, strict=True):
+        if kind == "new_records_no_change" and not can_acknowledge_new_records:
+            continue
+        if (
+            kind in ("revised_apportionment", "revised_causation_and_apportionment")
+            and not can_change_apportionment
+        ):
+            continue
+        if (
+            kind in ("revised_causation", "revised_causation_and_apportionment")
+            and not can_change_causation
+        ):
+            continue
+        if (
+            adoption_changed_disposition
+            and kind not in _CAUSATION_CAPABLE_REVISION_KINDS
+        ):
+            continue
+        eligible.append((kind, weight))
+    total = sum(weight for _kind, weight in eligible)
+    if not eligible or total == 0:
+        raise MedicalAssertionError(
+            f"no compatible revision kind remains for trigger {trigger_class!r}; "
+            "a response opinion cannot be sampled where nothing may change and "
+            "nothing may be acknowledged"
+        )
+    rng = _medical_story_rng(
+        seed,
+        "revision-kind",
+        (
+            "case",
+            seed.case_id,
+            response_opinion_key,
+            predecessor_opinion_key,
+            trigger_class,
+        ),
+    )
+    index = _weighted_index(
+        rng, tuple(weight / total for _kind, weight in eligible)
+    )
+    return eligible[index][0]
+
+
+def _draw_revision_percentage(
+    seed: CaseSeed,
+    response_opinion_key: StorySemanticKey,
+    body_part: str,
+    predecessor_assertion_key: StorySemanticKey,
+    *,
+    predecessor_nonindustrial: int | None,
+    require_change: bool,
+) -> int:
+    """One R55 changed-row percentage for an M3 revision.
+
+    Two entity-private streams share the exact ``(response O, body_part,
+    predecessor assertion semantic key)`` identity:
+    ``revision-percentage-register`` selects the common pool at the frozen
+    17/20 (the existing M2 knob, by identity) versus the 78-member granular
+    remainder; ``revision-percentage-value`` then makes ONE selection from the
+    resulting pool. When R37 requires a changed percentage, the immediate
+    predecessor's value is removed from the SELECTED pool before selection —
+    never redrawn after the fact.
+
+    The granular selector implements the continuous latent law: with
+    ``U ~ Uniform[0,1)`` over the ordered eligible values ``G``,
+    ``z = U*len(G)``, ``i = floor(z)``, ``x = G[i] - 1/2 + (z - i)``, and
+    quantization ``floor(x + 1/2)`` returns exactly ``G[i]`` — uniform by
+    Lebesgue measure over ``union([g-0.5, g+0.5))``. It never clamps a
+    continuous value to the nearest common percentage, never rounds a
+    common-pool miss into the common pool, never retries, and roundness never
+    touches quality (R55).
+    """
+    key: StorySemanticKey = (
+        "case",
+        seed.case_id,
+        response_opinion_key,
+        body_part,
+        predecessor_assertion_key,
+    )
+    register = _medical_story_rng(seed, "revision-percentage-register", key)
+    common_selected = _fraction_draw(register, P_COMMON_PERCENTAGE_REGISTER.value)
+    pool = (
+        COMMON_NONINDUSTRIAL_PERCENTAGES
+        if common_selected
+        else GRANULAR_NONINDUSTRIAL_PERCENTAGES
+    )
+    if require_change and predecessor_nonindustrial in pool:
+        pool = tuple(
+            value for value in pool if value != predecessor_nonindustrial
+        )
+    value_rng = _medical_story_rng(seed, "revision-percentage-value", key)
+    if common_selected:
+        return pool[value_rng.randrange(len(pool))]
+    # Granular remainder: the continuous inverse-CDF construction. The
+    # interval index IS the selection — G[i] is returned directly after
+    # computing the same index the latent x would quantize back to.
+    z = value_rng.random() * len(pool)
+    interval = min(int(z), len(pool) - 1)
+    return pool[interval]
 
 
 @dataclass(frozen=True, slots=True)
@@ -4547,23 +5098,284 @@ def _first_unused(prefix: str, used: set[str]) -> str:
     )
 
 
+def _world_consequence_psych(
+    history: AssertionWorldProjection, condition_id: str | None
+) -> bool:
+    """Whether *condition_id* names a world condition classified
+    ``compensable_consequence`` — the R49 eligibility anchor for both psych
+    mischaracterization draws."""
+    if condition_id is None:
+        return False
+    condition = history.condition(condition_id)
+    return (
+        condition is not None
+        and condition.psych_injury_kind == "compensable_consequence"
+    )
+
+
+def _remodel_sampled_ptp(
+    seed: CaseSeed,
+    ledger: MedicalAssertionLedger,
+    history: AssertionWorldProjection,
+    opinion: MedicalOpinion,
+    opinion_key: StorySemanticKey,
+    contention_keys: dict[str, StorySemanticKey],
+) -> MedicalOpinion:
+    """R49/R16 — the PTP independence remodel for one sampled base opinion.
+
+    The AOE/COE finding is an independent draw; no eligible sampled PTP
+    opinion retains ``aoe_coe_finding=None``. For dispositions, the unchanged
+    M2 ``ptp-disposition`` stream's affirmative result becomes independent
+    concurrence — agreement in result, never responsive endorsement — except
+    that a deferred AOE/COE finding places a directly affected causation
+    contention (``claim_type="industrial_causation"``) in
+    ``defers_contention_ids`` instead. A negative M2 result remains what it
+    was, and no sampled PTP result enters ``endorses_contention_ids``. The
+    sampled psych classification then fires for the first addressed
+    consequence-classified psychiatric contention (R49; the deterministic
+    QME/AME triad re-derivation is step-8 surface material).
+    """
+    finding = _ptp_aoe_coe_finding(seed, opinion_key)
+    concurs: list[str] = []
+    defers: list[str] = []
+    for ref in opinion.endorses_contention_ids:
+        contention = ledger.contention(ref)
+        if (
+            finding == "deferred"
+            and contention is not None
+            and contention.claim_type == "industrial_causation"
+        ):
+            defers.append(ref)
+        else:
+            concurs.append(ref)
+    psych_kind = opinion.psych_injury_kind
+    for ref in (*concurs, *defers):
+        if psych_kind is not None:
+            break
+        contention = ledger.contention(ref)
+        if contention is not None and _world_consequence_psych(
+            history, contention.target_condition_id
+        ):
+            psych_kind = _ptp_psych_classification(
+                seed, opinion_key, contention_keys[ref]
+            )
+    return opinion.model_copy(
+        update={
+            "aoe_coe_finding": finding,
+            "endorses_contention_ids": (),
+            "concurs_with_contention_ids": tuple(concurs),
+            "defers_contention_ids": tuple(defers),
+            "psych_injury_kind": psych_kind,
+        }
+    )
+
+
+def _remodel_sampled_qme_ame(
+    seed: CaseSeed,
+    context: AssertionValidationContext,
+    ledger: MedicalAssertionLedger,
+    history: AssertionWorldProjection,
+    opinion: MedicalOpinion,
+    opinion_key: StorySemanticKey,
+    contention_keys: dict[str, StorySemanticKey],
+    qualifying_communications: dict[str, tuple[StorySemanticKey, ...]],
+) -> MedicalOpinion:
+    """R38/R49/R53 — the complete five-state classification for one sampled
+    QME/AME base opinion.
+
+    Classification from sufficient evidence is deterministic: every
+    evidence-supported pair is adopted or concurred (adoption only through an
+    earlier qualifying communication plus the 0.25 channel), and every
+    contradicted pair stays in the preserved M2 rejects tuple. Only the
+    indeterminate stream draws, choosing deferred versus unaddressed; it can
+    produce neither adoption nor concurrence. An ID in no collection is
+    unaddressed (R26).
+    """
+    rejected = frozenset(opinion.rejects_contention_ids)
+    adopted: list[str] = []
+    concurred: list[str] = []
+    deferred: list[str] = []
+    # One semantic identity, one decision: two contentions may legally share
+    # a full C key (distinct explicit twins never do — their explicit keys
+    # carry their own IDs — but two sampled candidates can shape onto one
+    # rule-6 tuple). The pair stream is constructed once per identity and the
+    # result applies to every contention carrying it.
+    decided: dict[str, str] = {}
+    for contention in ledger.contentions:
+        if contention.id in rejected:
+            continue
+        contention_key = contention_keys[contention.id]
+        identity = canonical_story_key(contention_key)
+        evidence = contention_evidence(history, context, contention)
+        if evidence == "supports":
+            if identity not in decided:
+                decided[identity] = _qme_ame_supported_disposition(
+                    seed,
+                    opinion_key,
+                    contention_key,
+                    qualifying_communications.get(contention.id, ()),
+                )
+            if decided[identity] == "adopted":
+                adopted.append(contention.id)
+            else:
+                concurred.append(contention.id)
+        elif evidence == "contradicts":
+            # The M2 rejection policy already rejected every contradicted
+            # pair; the preserved rejects tuple carries them (R38).
+            continue
+        else:
+            if identity not in decided:
+                decided[identity] = _qme_ame_indeterminate_disposition(
+                    seed, opinion_key, contention_key
+                )
+            if decided[identity] == "deferred":
+                deferred.append(contention.id)
+    return opinion.model_copy(
+        update={
+            "endorses_contention_ids": tuple(adopted),
+            "concurs_with_contention_ids": tuple(concurred),
+            "defers_contention_ids": tuple(deferred),
+        }
+    )
+
+
+def _apply_story_semantics(
+    seed: CaseSeed,
+    scenario: object,
+    context: AssertionValidationContext,
+    history: AssertionWorldProjection,
+    graded: MedicalAssertionLedger,
+    *,
+    qualifying_communications: dict[str, tuple[StorySemanticKey, ...]]
+    | None = None,
+) -> MedicalAssertionLedger:
+    """R77 step 4 — the M3 base-disposition remodel over the graded M2 ledger.
+
+    A pure post-pass: it runs strictly AFTER the exact M2 base derivation and
+    its baseline snapshot, touches only SAMPLED entities (authored explicit
+    disposition collections and classifications remain authoritative, R49),
+    reads no ``quality`` (R32), and draws only from the private
+    ``medical-story:`` streams keyed by R45 pre-ID semantics. With sampling
+    disabled there is nothing sampled to remodel and no stream is
+    constructed.
+
+    ``qualifying_communications`` maps a contention ID to the sorted R45 ``D``
+    keys of the earlier qualifying R38 communications that target the sampled
+    evaluator opinion and speak that contention — empty until R77 step 5
+    plans sampled advocacy, so at step 4 every evidence-supported sampled
+    QME/AME pair concurs without an adoption draw (R53).
+    """
+    if not getattr(scenario, "sample_assertions", True):
+        return graded
+    explicit_contention_ids = frozenset(
+        entry.id for entry in scenario.contentions  # type: ignore[attr-defined]
+    )
+    explicit_opinion_ids = frozenset(
+        entry.id for entry in scenario.medical_opinions  # type: ignore[attr-defined]
+    )
+    communications = dict(qualifying_communications or {})
+    contention_keys = {
+        contention.id: _story_contention_key(
+            seed, contention, explicit_contention_ids
+        )
+        for contention in graded.contentions
+    }
+
+    # R49 applicant framing — a sampled applicant contention concerning a
+    # consequence-classified world psych condition, with no explicit
+    # classification, is characterized by one draw keyed (C,). One draw per
+    # semantic identity: sampled candidates sharing one rule-6 key share the
+    # framing decision.
+    framed: dict[str, str] = {}
+    contentions: list[Contention] = []
+    for contention in graded.contentions:
+        if (
+            contention.id not in explicit_contention_ids
+            and contention.party == "applicant"
+            and contention.psych_injury_kind is None
+            and _world_consequence_psych(history, contention.target_condition_id)
+        ):
+            identity = canonical_story_key(contention_keys[contention.id])
+            if identity not in framed:
+                framed[identity] = _applicant_psych_framing(
+                    seed, contention_keys[contention.id]
+                )
+            contention = contention.model_copy(
+                update={"psych_injury_kind": framed[identity]}
+            )
+        contentions.append(contention)
+
+    remodeled = MedicalAssertionLedger(
+        contentions=tuple(contentions),
+        medical_opinions=graded.medical_opinions,
+        apportionment_assertions=graded.apportionment_assertions,
+    )
+
+    opinions: list[MedicalOpinion] = []
+    for opinion in remodeled.medical_opinions:
+        if (
+            opinion.id in explicit_opinion_ids
+            or opinion.event_kind != "base_report"
+        ):
+            # Authored explicit disposition collections remain authoritative
+            # (R49); sampled response events own their step-5 semantics.
+            opinions.append(opinion)
+            continue
+        opinion_key = _story_sampled_base_opinion_key(seed, opinion)
+        if opinion.author_role == "ptp":
+            opinions.append(
+                _remodel_sampled_ptp(
+                    seed, remodeled, history, opinion, opinion_key, contention_keys
+                )
+            )
+        else:
+            opinions.append(
+                _remodel_sampled_qme_ame(
+                    seed,
+                    context,
+                    remodeled,
+                    history,
+                    opinion,
+                    opinion_key,
+                    contention_keys,
+                    communications,
+                )
+            )
+
+    return MedicalAssertionLedger(
+        contentions=remodeled.contentions,
+        medical_opinions=tuple(opinions),
+        apportionment_assertions=remodeled.apportionment_assertions,
+    )
+
+
 def derive_medical_assertion_plan(
     seed: CaseSeed,
     history: MedicalHistory | None,
     timeline: object = None,
     trace: AssertionTrace | None = None,
 ) -> MedicalAssertionPlan:
-    """The complete assertion-layer product for one case (R32, R77 step 3).
+    """The complete assertion-layer product for one case (R32, R77 steps 3-4).
 
-    The IDs-last entry point ``build_case_plan()`` calls. At step 3 this is
-    the preservation seam: it runs the exact M2 base derivation byte-for-byte
-    — same streams, same salts, same draw order, same ``ctn/opn/app`` IDs,
-    same graded ledger — records that ledger on the test-only
-    ``AssertionTrace.m2_baseline_ledger`` (R61), and returns it inside a
-    :class:`MedicalAssertionPlan` with no contention-document bindings yet.
-    The R32 semantic subphases (response drafts, contest decisions, binding
-    drafts, the single final labeling pass) attach here in steps 4-6; every
-    one of them runs AFTER the recorded M2 baseline, never inside it.
+    The IDs-last entry point ``build_case_plan()`` calls. It runs the exact
+    M2 base derivation byte-for-byte — same streams, same salts, same draw
+    order, same ``ctn/opn/app`` IDs, same graded ledger — records that ledger
+    on the test-only ``AssertionTrace.m2_baseline_ledger`` (R61), and only
+    THEN applies the step-4 M3 base-disposition remodel
+    (:func:`_apply_story_semantics`) and grades the completed ledger (R32
+    subphase 10). The baseline snapshot always retains the original result.
+
+    The R47 final labeling pass is subphased and IDs-last by construction:
+
+    1-3. exact M2 base contentions, opinions and apportionment rows — the
+         preserved M2 labeling pass inside ``_append_sampled`` assigns them
+         in unbroken 01..N sequences;
+    4.   M3 response opinions and their rows — attach at R77 step 5, taking
+         the first unused suffixes after all base entries;
+    5.   contention-document bindings — attach at R77 steps 5-6.
+
+    The step-4 remodel labels nothing and moves no ID: it is a pure
+    disposition/classification pass over already-labeled base entities.
 
     The gate is the first observable and nothing precedes it: no assertion
     rng, no ID allocation, no quality derivation, no warning may run before
@@ -4624,9 +5436,18 @@ def derive_medical_assertion_plan(
         # The exact M2 post-grade/pre-M3 ledger (R61). Recorded BEFORE any
         # M3 transformation so the R62 digest oracle and the R70 stream gate
         # always read the preserved baseline; the frozen model is its own
-        # snapshot — no M3 subphase may mutate or replace it.
+        # snapshot — no M3 subphase may mutate or replace it. The realized
+        # recipe grades above are M2 counters and therefore read the
+        # baseline, never the remodeled plan ledger.
         trace.m2_baseline_ledger = graded
-    return MedicalAssertionPlan(ledger=graded, contention_documents=())
+    # R77 step 4: the M3 base-disposition remodel, strictly after the
+    # baseline snapshot, followed by the R32 subphase-10 grading of the
+    # completed ledger. Grading stays the frozen M2 rubric — it reads no
+    # M3-only field, which is exactly what keeps the writer's stated quality
+    # reproducible from the frozen channel-1.0.0 projection (Amendment A1).
+    story = _apply_story_semantics(seed, scenario, context, projection, graded)
+    completed = graded if story is graded else grade_ledger(context, projection, story)
+    return MedicalAssertionPlan(ledger=completed, contention_documents=())
 
 
 def derive_medical_assertions(
@@ -4637,9 +5458,11 @@ def derive_medical_assertions(
 ) -> MedicalAssertionLedger | None:
     """Compatibility wrapper over :func:`derive_medical_assertion_plan` (R32).
 
-    Returns only ``.ledger`` — exactly the pre-M3 surface, so every existing
-    caller and test keeps its shape while the plan entry point owns the gate,
-    the M2 baseline recording, and (from steps 4-6) the loop subphases.
+    Returns only ``.ledger`` — the completed plan ledger (from R77 step 4:
+    post-remodel), keeping every existing caller's shape while the plan entry
+    point owns the gate, the M2 baseline recording, the step-4 disposition
+    remodel, and (from steps 5-6) the loop subphases. The preserved pre-M3
+    surface lives on ``AssertionTrace.m2_baseline_ledger``.
     """
     return derive_medical_assertion_plan(
         seed, history, timeline=timeline, trace=trace

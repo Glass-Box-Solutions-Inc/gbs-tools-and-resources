@@ -2515,7 +2515,7 @@ note = 'AJC-61, fix round 1 (sol H1). document.metadata exposes only standard ke
 id = 'm19-22'
 title = 'endorsement grades collapse onto the shared suppression tuple'
 file = 'src/wc_caseload_engine/medical_assertions.py'
-test = 'tests/test_medical_assertion_properties.py::test_two_explicit_contentions_sharing_a_suppression_key_keep_their_own_grades'
+test = 'tests/test_medical_assertion_properties.py::test_two_explicit_contentions_sharing_a_suppression_key_keep_their_own_grades_and_concurrence'
 find = '''            would_be = {
                 ref: contention_quality(history, context, c)
                 for ref, c, _key in supportable

@@ -104,30 +104,44 @@ EXPECTED_MEDICAL_STORY_FAMILIES: tuple[str, ...] = (
 #:
 #: R65's final form requires all 34 families observed across the cohort plus
 #: focused render fixtures — a declared-but-unexercised family is a test
-#: defect. At R77 step 3 the registry is definition-only by construction: the
-#: consumers land at steps 4-8, so the honest exercised set is EMPTY, and this
-#: literal is the ratchet that forces each step to expand it or go red:
+#: defect. This literal is the ratchet that forces each step to expand it
+#: with exactly what the frozen cohort then observes, or go red.
 #:
-#:   step 4 — applicant-psych-framing, ptp-aoe-coe-finding,
-#:            ptp-psych-classification, qme-ame-indeterminate-disposition,
-#:            qme-ame-responsive-adoption, revision-kind,
-#:            revision-percentage-register, revision-percentage-value
-#:   step 5 — advocacy-incidence, advocacy-bundle-size,
-#:            defense-contest-incidence, applicant-contest-incidence,
-#:            completion-incidence, contest-path, defense-theory-count,
-#:            defense-theory-selection
-#:   step 6 — advocacy-lead, objection-lag, supplemental-request-lag,
-#:            supplemental-report-lag, deposition-lag
-#:   step 8 — ur-decision, imr-request, imr-outcome, imr-application-lag,
-#:            imr-decision-lag, imr-field-occupancy, imr-field-count,
-#:            imr-rebuttal-substance
-#:   step 9 — document-format, document-render, document-scan,
-#:            document-pdf-id, document-doctrine
+#: R77 step 4 landed ALL EIGHT disposition/response consumers, but the frozen
+#: cohort composition (R61 — untunable) can reach only two of their
+#: eligibility gates today, so the honest measured expansion is two families:
 #:
-#: By step 9 this set MUST equal the full registry (with render fixtures
-#: supplying whatever the cohort alone cannot reach) and the emptiness below
-#: MUST be gone.
-EXERCISED_STORY_FAMILIES_TODAY: frozenset[str] = frozenset()
+#:   ptp-aoe-coe-finding             every cell with a sampled PTP opinion
+#:   qme-ame-indeterminate-disposition  qme/ame cells with an
+#:                                      indeterminate-evidence contention
+#:
+#: The other six step-4 consumers exist and are draw-law-gated below, but
+#: their cohort eligibility awaits later producers or fixtures (deviation
+#: from the step-3 prediction table, recorded for sol's post-PR review):
+#:
+#:   qme-ame-responsive-adoption — needs a qualifying R38 communication
+#:       targeting the sampled evaluator; only step 5's sampled advocacy can
+#:       create one (an explicit document cannot reference a sampled opinion)
+#:   revision-kind, revision-percentage-register, revision-percentage-value —
+#:       consumed by sampled response opinions, which step 5 introduces
+#:   applicant-psych-framing, ptp-psych-classification — need a world
+#:       condition classified compensable_consequence; no frozen cohort seed
+#:       authors one and M1 samples none, so the render/psych fixtures
+#:       (steps 7-8) supply their positive exercise
+#:
+#: Remaining schedule: step 5 — advocacy-incidence, advocacy-bundle-size,
+#: defense-contest-incidence, applicant-contest-incidence,
+#: completion-incidence, contest-path, defense-theory-count,
+#: defense-theory-selection (plus adoption/revision cohort eligibility);
+#: step 6 — the five lag/lead date bands; step 8 — the eight UR/IMR
+#: families; step 9 — the five document families. By step 9 the observed set
+#: (cohort plus focused render fixtures) MUST equal the full registry.
+EXERCISED_STORY_FAMILIES_TODAY: frozenset[str] = frozenset(
+    {
+        "ptp-aoe-coe-finding",
+        "qme-ame-indeterminate-disposition",
+    }
+)
 
 #: The step-3 trace/digest witnesses: one ordinary cell case and the pinned
 #: suppression-collision case.
@@ -190,11 +204,14 @@ def test_medical_story_stream_registry_is_exact_complete_and_namespaced() -> Non
         )
 
     # Exercised-family half, scoped to today: the frozen cohort constructs
-    # exactly the expected set (empty at step 3 — the M2 base derivation may
-    # construct no story stream), observed through the wrapped module
+    # exactly the expected set, observed through the wrapped module
     # attribute, not inferred from a list.
     result = build_cohort()
     assert result.story_families_seen == EXERCISED_STORY_FAMILIES_TODAY
+    # The R70 pre-ID key recorder, attached at step 4 with the first
+    # production key sites: no sampled story key carries a ctn/opn/app/cdoc
+    # ID atom outside the explicit key forms.
+    assert result.story_key_findings == []
 
 
 # ---------------------------------------------------------------------------
@@ -875,3 +892,758 @@ def test_every_counsel_ruled_medical_story_knob_and_denominator_is_exact() -> No
     assert MEDICAL_STORY_TZ_MATRIX == ("America/Los_Angeles", "Australia/Sydney")
     assert MEDICAL_STORY_HASH_SEEDS == ("0", "424242")
     assert MEDICAL_STORY_REPEAT_GENERATIONS == 2
+
+
+# ---------------------------------------------------------------------------
+# R77 step 4 — PTP remodel, adoption/concurrence, revision draws, percentage
+# law (R49/R53/R54/R55, gated by R70).
+#
+# R70's date-band gate — test_raw_date_band_draws_are_inclusive_causal_and_
+# never_redrawn — is DEFERRED: no date-band family has a producer yet. The
+# lag/lead draws happen when sampled response drafts and chain documents
+# propose dates, which R77 assigns to steps 5-6; the test lands with those
+# producers (deferral recorded in the build ledger).
+# ---------------------------------------------------------------------------
+
+
+def _derive_case(index: int, patch: dict[str, Any] | None = None):
+    """One cohort case through the plan seam, with its baseline trace."""
+    body = cohort_seed_body(index)
+    if patch:
+        body["scenario"].update(patch)
+    seed = parse_case_seed(body)
+    history = derive_medical_history(seed)
+    trace = AssertionTrace()
+    plan = derive_medical_assertion_plan(seed, history, trace=trace)
+    return seed, history, trace, plan
+
+
+def _record_story_streams(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Any]]:
+    """Observe every medical-story stream the wrapped module attribute
+    constructs, without disturbing a single drawn value."""
+    constructed: list[tuple[str, Any]] = []
+    original = assertion_module._medical_story_rng
+
+    def recording(seed: Any, family: str, semantic_key: Any) -> Any:
+        constructed.append((family, semantic_key))
+        return original(seed, family, semantic_key)
+
+    monkeypatch.setattr(assertion_module, "_medical_story_rng", recording)
+    return constructed
+
+
+def _sampled_opinion_ids(trace: AssertionTrace, patch_explicit: set[str]) -> set[str]:
+    baseline = trace.m2_baseline_ledger
+    assert baseline is not None
+    return {o.id for o in baseline.medical_opinions if o.id not in patch_explicit}
+
+
+def test_ptp_remodel_has_exact_findings_complement_and_no_sampled_endorsement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R70's PTP-remodel gate (R49/R16/R47).
+
+    The finding law is exact — 19/20 industrial from the entity-private
+    stream, complement split 3/5 nonindustrial : 2/5 deferred consumed from
+    the SAME stream — no eligible sampled PTP opinion retains
+    ``aoe_coe_finding=None``, no sampled PTP result enters
+    ``endorses_contention_ids``, the unchanged M2 ``ptp-disposition``
+    affirmative result reappears as independent concurrence (deferral for a
+    directly affected causation contention under a deferred finding), the M2
+    baseline snapshot retains the original endorsement, and an explicit PTP
+    opinion is excluded from the draw entirely.
+    """
+    import random as random_module
+
+    from wc_caseload_engine.seeds import derive_seed
+
+    # The exact draw law, reproduced independently: one uniform against
+    # 19/20; on a miss, a second uniform from the SAME stream against the
+    # 3/5 : 2/5 complement. Swept over many opinion identities so all three
+    # findings are positively observed.
+    observed: set[str] = set()
+    seed3 = parse_case_seed(cohort_seed_body(3))
+    for day in range(1, 400):
+        opinion_key = (
+            "case",
+            seed3.case_id,
+            "opinion",
+            "sampled_base",
+            "ptp",
+            "interim",
+            dt.date(2024, 3, 1) + dt.timedelta(days=day),
+            (),
+        )
+        full_key = ("case", seed3.case_id, opinion_key)
+        oracle = random_module.Random(
+            derive_seed(
+                seed3.rng_seed,
+                "medical-story:ptp-aoe-coe-finding:"
+                + canonical_story_key(full_key),
+            )
+        )
+        if oracle.random() < float(Fraction(19, 20)):
+            expected = "industrial"
+        elif oracle.random() < float(Fraction(3, 5)):
+            expected = "nonindustrial"
+        else:
+            expected = "deferred"
+        actual = assertion_module._ptp_aoe_coe_finding(seed3, opinion_key)
+        assert actual == expected, (day, actual, expected)
+        observed.add(actual)
+    assert observed == {"industrial", "nonindustrial", "deferred"}
+
+    # End-to-end over PTP cells: findings present, endorsements remodeled to
+    # concurrence, baseline untouched.
+    checked = 0
+    for index in (1, 2, 5, 7, 8, 11, 4801, 4802, 5761, 5762):
+        _seed, _history, trace, plan = _derive_case(index)
+        baseline = trace.m2_baseline_ledger
+        assert baseline is not None
+        assert plan.ledger is not None
+        for base_opinion, plan_opinion in zip(
+            baseline.medical_opinions, plan.ledger.medical_opinions, strict=True
+        ):
+            if base_opinion.author_role != "ptp":
+                continue
+            checked += 1
+            assert plan_opinion.aoe_coe_finding is not None
+            assert plan_opinion.endorses_contention_ids == ()
+            assert base_opinion.aoe_coe_finding is None
+            assert set(base_opinion.endorses_contention_ids) == set(
+                plan_opinion.concurs_with_contention_ids
+            ) | set(plan_opinion.defers_contention_ids)
+            for ref in plan_opinion.defers_contention_ids:
+                assert plan_opinion.aoe_coe_finding == "deferred"
+                contention = plan.ledger.contention(ref)
+                assert contention is not None
+                assert contention.claim_type == "industrial_causation"
+    assert checked >= 8
+
+    # Deferral placement, forced through the sanctioned entity-private
+    # replacement (R67): with the finding stream forced into the deferred
+    # complement, the affirmative M2 result on a causation contention lands
+    # in defers_contention_ids, never concurrence, never endorsement.
+    class _ForcedComplement(random_module.Random):
+        def __init__(self) -> None:
+            super().__init__()
+            self._values = iter((0.99, 0.99))
+
+        def random(self) -> float:
+            try:
+                return next(self._values)
+            except StopIteration:  # pragma: no cover - two draws maximum
+                return 0.5
+
+    original = assertion_module._medical_story_rng
+
+    def forcing(seed: Any, family: str, semantic_key: Any) -> Any:
+        if family == "ptp-aoe-coe-finding":
+            return _ForcedComplement()
+        return original(seed, family, semantic_key)
+
+    monkeypatch.setattr(assertion_module, "_medical_story_rng", forcing)
+    _seed, _history, trace, plan = _derive_case(2)
+    monkeypatch.setattr(assertion_module, "_medical_story_rng", original)
+    baseline = trace.m2_baseline_ledger
+    assert baseline is not None and plan.ledger is not None
+    forced = next(
+        o for o in plan.ledger.medical_opinions if o.author_role == "ptp"
+    )
+    base = next(
+        o for o in baseline.medical_opinions if o.author_role == "ptp"
+    )
+    assert forced.aoe_coe_finding == "deferred"
+    assert base.endorses_contention_ids, "cohort-0002 stopped endorsing"
+    endorsed = base.endorses_contention_ids[0]
+    endorsed_claim = baseline.contention(endorsed)
+    assert endorsed_claim is not None
+    if endorsed_claim.claim_type == "industrial_causation":
+        assert forced.defers_contention_ids == (endorsed,)
+        assert forced.concurs_with_contention_ids == ()
+    else:  # pragma: no cover - cohort-0002 endorses industrial causation
+        assert forced.concurs_with_contention_ids == (endorsed,)
+    assert forced.endorses_contention_ids == ()
+
+    # Explicit PTP opinions are excluded from the draw and keep their
+    # authored (absent) finding.
+    explicit_patch = {
+        "medical_assertions": {
+            "medical_opinions": [
+                {
+                    "id": "opn-01",
+                    "author_role": "ptp",
+                    "report_stage": "interim",
+                    "report_date": "2024-06-01",
+                    "apportionment_state": "deferred",
+                    "examination_performed": True,
+                    "rationale": "explicit treating narrative",
+                }
+            ]
+        }
+    }
+    _seed, _history, trace, plan = _derive_case(1, explicit_patch)
+    assert plan.ledger is not None
+    explicit_opinion = plan.ledger.opinion("opn-01")
+    assert explicit_opinion is not None
+    assert explicit_opinion.aoe_coe_finding is None
+    sampled = [
+        o
+        for o in plan.ledger.medical_opinions
+        if o.id != "opn-01" and o.author_role == "ptp"
+    ]
+    for opinion in sampled:
+        assert opinion.aoe_coe_finding is not None
+
+
+def test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R70's adoption gate (R38/R53).
+
+    Adoption requires ALL THREE: supporting evidence, an earlier qualifying
+    communication targeting the opinion, and the 0.25 channel firing. Without
+    a communication the result is concurrence WITHOUT an adoption draw; a
+    missed draw is concurrence; contradicted evidence stays in the preserved
+    M2 rejection result whatever communications exist; indeterminate evidence
+    defers or stays unaddressed through its own stream and can never be
+    adopted or concurred.
+    """
+    import random as random_module
+
+    from wc_caseload_engine.seeds import derive_seed
+
+    # End-to-end, communication-free world (step 4): every sampled QME/AME
+    # opinion classifies every pair deterministically from evidence — all
+    # supports concur, nothing is adopted, the M2 rejects stand — and the
+    # adoption stream is never constructed.
+    constructed = _record_story_streams(monkeypatch)
+    checked_opinions = 0
+    for index in (3, 9, 4, 10, 5283, 5763, 5523, 5043):
+        seed, history, trace, plan = _derive_case(index)
+        baseline = trace.m2_baseline_ledger
+        assert baseline is not None and plan.ledger is not None
+        from wc_caseload_engine.medical_assertions import (
+            assertion_context,
+            contention_evidence,
+            project_medical_history,
+        )
+
+        context = assertion_context(seed)
+        projection = project_medical_history(history, context.current_body_parts)
+        for base_opinion, plan_opinion in zip(
+            baseline.medical_opinions, plan.ledger.medical_opinions, strict=True
+        ):
+            if base_opinion.author_role not in ("qme", "ame"):
+                continue
+            checked_opinions += 1
+            assert plan_opinion.endorses_contention_ids == ()
+            assert plan_opinion.rejects_contention_ids == (
+                base_opinion.rejects_contention_ids
+            )
+            concurred = set(plan_opinion.concurs_with_contention_ids)
+            deferred = set(plan_opinion.defers_contention_ids)
+            rejected = set(plan_opinion.rejects_contention_ids)
+            for contention in plan.ledger.contentions:
+                evidence = contention_evidence(projection, context, contention)
+                if contention.id in rejected:
+                    assert evidence == "contradicts"
+                    continue
+                if evidence == "supports":
+                    assert contention.id in concurred
+                    assert contention.id not in deferred
+                elif evidence == "indeterminate":
+                    assert contention.id not in concurred
+                else:
+                    assert contention.id not in concurred | deferred
+    assert checked_opinions >= 6
+    assert all(
+        family != "qme-ame-responsive-adoption" for family, _key in constructed
+    ), "an adoption stream was constructed with no qualifying communication"
+
+    # Unit half — the classifier itself. Without a communication: concurrence
+    # and NO stream construction at all.
+    seed3 = parse_case_seed(cohort_seed_body(3))
+    opinion_key = (
+        "case",
+        seed3.case_id,
+        "opinion",
+        "sampled_base",
+        "qme",
+        "final",
+        dt.date(2024, 12, 26),
+        (),
+    )
+    contention_key = (
+        "case",
+        seed3.case_id,
+        "contention",
+        "sampled",
+        ("contention", "industrial_causation", "affirm", "cond-00", None, None, None, ()),
+    )
+
+    def fail_if_constructed(*args: object, **kwargs: object):
+        pytest.fail("adoption draw constructed without a qualifying communication")
+
+    monkeypatch.setattr(assertion_module, "_medical_story_rng", fail_if_constructed)
+    assert (
+        assertion_module._qme_ame_supported_disposition(
+            seed3, opinion_key, contention_key, ()
+        )
+        == "concurred"
+    )
+    monkeypatch.undo()
+
+    # With a qualifying communication: exactly the 0.25 law against the
+    # (O, C, sorted D keys) stream — fires adopted, misses concurred — and
+    # the D-key ordering is canonical, so presentation order cannot move the
+    # draw.
+    d_key_a = (
+        "case",
+        seed3.case_id,
+        "contention_document",
+        "advocacy",
+        "applicant",
+        None,
+        opinion_key,
+        (contention_key,),
+    )
+    d_key_b = (
+        "case",
+        seed3.case_id,
+        "contention_document",
+        "advocacy",
+        "defense",
+        None,
+        opinion_key,
+        (contention_key,),
+    )
+    outcomes: set[str] = set()
+    for day in range(1, 200):
+        shifted_opinion_key = (
+            "case",
+            seed3.case_id,
+            "opinion",
+            "sampled_base",
+            "qme",
+            "final",
+            dt.date(2023, 1, 1) + dt.timedelta(days=day),
+            (),
+        )
+        sorted_d = tuple(
+            sorted((d_key_b, d_key_a), key=canonical_story_key)
+        )
+        full_key = (
+            "case",
+            seed3.case_id,
+            shifted_opinion_key,
+            contention_key,
+            sorted_d,
+        )
+        oracle = random_module.Random(
+            derive_seed(
+                seed3.rng_seed,
+                "medical-story:qme-ame-responsive-adoption:"
+                + canonical_story_key(full_key),
+            )
+        )
+        expected = (
+            "adopted" if oracle.random() < float(Fraction(1, 4)) else "concurred"
+        )
+        forward = assertion_module._qme_ame_supported_disposition(
+            seed3, shifted_opinion_key, contention_key, (d_key_a, d_key_b)
+        )
+        reversed_order = assertion_module._qme_ame_supported_disposition(
+            seed3, shifted_opinion_key, contention_key, (d_key_b, d_key_a)
+        )
+        assert forward == expected
+        assert reversed_order == expected
+        outcomes.add(forward)
+    assert outcomes == {"adopted", "concurred"}
+
+    # A communication cannot resurrect a contradicted pair: the preserved M2
+    # rejection stands and no adoption enters the ledger.
+    seed, history, trace, plan = _derive_case(5763)
+    baseline = trace.m2_baseline_ledger
+    assert baseline is not None
+    from wc_caseload_engine.medical_assertions import (
+        assertion_context,
+        project_medical_history,
+    )
+
+    context = assertion_context(seed)
+    projection = project_medical_history(history, context.current_body_parts)
+    base_evaluator = next(
+        o for o in baseline.medical_opinions if o.author_role in ("qme", "ame")
+    )
+    assert base_evaluator.rejects_contention_ids, "cohort-5763 stopped rejecting"
+    rejected_id = base_evaluator.rejects_contention_ids[0]
+    scenario = seed.scenario.medical_assertions
+    remodeled = assertion_module._apply_story_semantics(
+        seed,
+        scenario,
+        context,
+        projection,
+        baseline,
+        qualifying_communications={rejected_id: (d_key_a,)},
+    )
+    evaluator = next(
+        o for o in remodeled.medical_opinions if o.author_role in ("qme", "ame")
+    )
+    assert rejected_id in evaluator.rejects_contention_ids
+    assert rejected_id not in evaluator.endorses_contention_ids
+    assert rejected_id not in evaluator.concurs_with_contention_ids
+
+    # …while a supported pair WITH a communication goes through the exact
+    # 0.25 channel inside the full remodel.
+    supported_id = base_evaluator.endorses_contention_ids[0]
+    remodeled = assertion_module._apply_story_semantics(
+        seed,
+        scenario,
+        context,
+        projection,
+        baseline,
+        qualifying_communications={supported_id: (d_key_a,)},
+    )
+    evaluator = next(
+        o for o in remodeled.medical_opinions if o.author_role in ("qme", "ame")
+    )
+    assert (
+        supported_id
+        in evaluator.endorses_contention_ids + evaluator.concurs_with_contention_ids
+    )
+
+
+def test_revision_kind_draws_follow_trigger_conditioned_compatible_weights(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R70's revision gate (R54): trigger-conditioned weights, compatibility
+    pruning BEFORE the single draw, exact renormalization, adoption
+    conditioning, structurally zero deposition ``new_records_no_change``, and
+    fail-closed impossibility — never a draw-and-retry loop."""
+    import random as random_module
+
+    from wc_caseload_engine.seeds import derive_seed
+
+    seed3 = parse_case_seed(cohort_seed_body(3))
+    revision_kinds = typing.get_args(OpinionRevisionKind.__value__)
+    weights = {
+        "supplemental_after_objection": (
+            Fraction(7, 20), Fraction(3, 20), Fraction(3, 20),
+            Fraction(1, 4), Fraction(1, 10),
+        ),
+        "supplemental_after_completion": (
+            Fraction(3, 20), Fraction(1, 5), Fraction(1, 5),
+            Fraction(3, 10), Fraction(3, 20),
+        ),
+        "deposition_examining_base": (
+            Fraction(13, 20), Fraction(0, 1), Fraction(1, 10),
+            Fraction(1, 5), Fraction(1, 20),
+        ),
+        "deposition_examining_supplemental": (
+            Fraction(7, 10), Fraction(0, 1), Fraction(1, 10),
+            Fraction(3, 20), Fraction(1, 20),
+        ),
+    }
+
+    def response_key(day: int):
+        return (
+            "case",
+            seed3.case_id,
+            "opinion",
+            "sampled_response",
+            "supplemental_report",
+            "qme",
+            dt.date(2025, 1, 1) + dt.timedelta(days=day),
+            (),
+        )
+
+    predecessor_key = (
+        "case",
+        seed3.case_id,
+        "opinion",
+        "sampled_base",
+        "qme",
+        "final",
+        dt.date(2024, 12, 26),
+        (),
+    )
+
+    def oracle_kind(
+        trigger: str,
+        day: int,
+        eligible: tuple[str, ...],
+    ) -> str:
+        pool = [
+            (kind, weight)
+            for kind, weight in zip(revision_kinds, weights[trigger], strict=True)
+            if kind in eligible
+        ]
+        total = sum(weight for _kind, weight in pool)
+        full_key = (
+            "case",
+            seed3.case_id,
+            response_key(day),
+            predecessor_key,
+            trigger,
+        )
+        stream = random_module.Random(
+            derive_seed(
+                seed3.rng_seed,
+                "medical-story:revision-kind:" + canonical_story_key(full_key),
+            )
+        )
+        draw = stream.random()
+        cumulative = 0.0
+        for kind, weight in pool:
+            cumulative += float(weight / total)
+            if draw < cumulative:
+                return kind
+        return pool[-1][0]
+
+    everything = tuple(revision_kinds)
+    no_records = tuple(k for k in everything if k != "new_records_no_change")
+    causation_only = (
+        "unchanged_additional_reasoning",
+        "new_records_no_change",
+        "revised_causation",
+    )
+    adoption_pool = ("revised_causation", "revised_causation_and_apportionment")
+
+    for trigger in weights:
+        seen: set[str] = set()
+        for day in range(1, 120):
+            # Full eligibility.
+            actual = assertion_module._draw_revision_kind(
+                seed3,
+                response_key(day),
+                predecessor_key,
+                trigger,
+                can_acknowledge_new_records=True,
+                can_change_apportionment=True,
+                can_change_causation=True,
+                adoption_changed_disposition=False,
+            )
+            assert actual == oracle_kind(trigger, day, everything), (trigger, day)
+            seen.add(actual)
+            # Records structurally unavailable: the kind is pruned before the
+            # draw and the remaining weights renormalize exactly.
+            pruned = assertion_module._draw_revision_kind(
+                seed3,
+                response_key(day),
+                predecessor_key,
+                trigger,
+                can_acknowledge_new_records=False,
+                can_change_apportionment=True,
+                can_change_causation=True,
+                adoption_changed_disposition=False,
+            )
+            assert pruned == oracle_kind(trigger, day, no_records), (trigger, day)
+            assert pruned != "new_records_no_change"
+            # No apportionment issue can change.
+            causation_pruned = assertion_module._draw_revision_kind(
+                seed3,
+                response_key(day),
+                predecessor_key,
+                trigger,
+                can_acknowledge_new_records=True,
+                can_change_apportionment=False,
+                can_change_causation=True,
+                adoption_changed_disposition=False,
+            )
+            assert causation_pruned == oracle_kind(trigger, day, causation_only)
+            # Responsive adoption changed a disposition: only
+            # causation-capable kinds remain.
+            adopted = assertion_module._draw_revision_kind(
+                seed3,
+                response_key(day),
+                predecessor_key,
+                trigger,
+                can_acknowledge_new_records=True,
+                can_change_apportionment=True,
+                can_change_causation=True,
+                adoption_changed_disposition=True,
+            )
+            assert adopted == oracle_kind(trigger, day, adoption_pool)
+            assert adopted in adoption_pool
+        if trigger.startswith("deposition"):
+            # The zero-weight member can never be selected even when the
+            # record predicate would allow it.
+            assert "new_records_no_change" not in seen
+        else:
+            assert seen == set(everything), (trigger, seen)
+
+    # Exactly ONE draw is consumed — pruning renormalizes, it never retries.
+    draws: list[int] = []
+    original = assertion_module._medical_story_rng
+
+    def counting(seed: Any, family: str, semantic_key: Any) -> Any:
+        stream = _CountingRandom()
+        stream.setstate(original(seed, family, semantic_key).getstate())
+        draws.append(0)
+        outer = stream
+
+        class _Probe:
+            def random(self) -> float:
+                draws[-1] += 1
+                return outer.random()
+
+        return _Probe()
+
+    monkeypatch.setattr(assertion_module, "_medical_story_rng", counting)
+    assertion_module._draw_revision_kind(
+        seed3,
+        response_key(1),
+        predecessor_key,
+        "supplemental_after_completion",
+        can_acknowledge_new_records=False,
+        can_change_apportionment=False,
+        can_change_causation=True,
+        adoption_changed_disposition=False,
+    )
+    monkeypatch.undo()
+    assert draws == [1]
+
+    # Fail-closed: an unknown trigger and an impossible pool are loud errors.
+    with pytest.raises(MedicalAssertionError, match="unknown revision trigger"):
+        assertion_module._draw_revision_kind(
+            seed3,
+            response_key(1),
+            predecessor_key,
+            "supplemental_after_lunch",
+            can_acknowledge_new_records=True,
+            can_change_apportionment=True,
+            can_change_causation=True,
+            adoption_changed_disposition=False,
+        )
+    with pytest.raises(MedicalAssertionError, match="no compatible revision kind"):
+        assertion_module._draw_revision_kind(
+            seed3,
+            response_key(1),
+            predecessor_key,
+            "supplemental_after_objection",
+            can_acknowledge_new_records=True,
+            can_change_apportionment=True,
+            can_change_causation=False,
+            adoption_changed_disposition=True,
+        )
+
+
+def test_percentage_register_pool_continuous_remainder_and_predecessor_exclusion_are_exact() -> None:  # noqa: E501
+    """R70's percentage gate (R55): the 17/20 register selects the exact M2
+    common pool versus the 78-member granular remainder; when R37 requires a
+    changed percentage the immediate predecessor's value leaves the SELECTED
+    pool before the single value selection; the granular selector implements
+    the continuous latent law's interval index — never a clamp onto the
+    common register, never a retry."""
+    import random as random_module
+
+    from wc_caseload_engine.seeds import derive_seed
+
+    seed3 = parse_case_seed(cohort_seed_body(3))
+    response_key = (
+        "case",
+        seed3.case_id,
+        "opinion",
+        "sampled_response",
+        "supplemental_report",
+        "qme",
+        dt.date(2025, 3, 1),
+        (),
+    )
+
+    def predecessor_row_key(day: int):
+        return ("apportionment", "sampled", "qme", "lumbar_spine", day)
+
+    common = COMMON_NONINDUSTRIAL_PERCENTAGES
+    granular = GRANULAR_NONINDUSTRIAL_PERCENTAGES
+
+    def oracle(day: int, predecessor: int | None, require_change: bool) -> int:
+        full_key = (
+            "case",
+            seed3.case_id,
+            response_key,
+            "lumbar_spine",
+            predecessor_row_key(day),
+        )
+        register = random_module.Random(
+            derive_seed(
+                seed3.rng_seed,
+                "medical-story:revision-percentage-register:"
+                + canonical_story_key(full_key),
+            )
+        )
+        common_selected = register.random() < float(Fraction(17, 20))
+        pool = common if common_selected else granular
+        if require_change and predecessor in pool:
+            pool = tuple(v for v in pool if v != predecessor)
+        value = random_module.Random(
+            derive_seed(
+                seed3.rng_seed,
+                "medical-story:revision-percentage-value:"
+                + canonical_story_key(full_key),
+            )
+        )
+        if common_selected:
+            return pool[value.randrange(len(pool))]
+        z = value.random() * len(pool)
+        return pool[min(int(z), len(pool) - 1)]
+
+    common_seen = 0
+    granular_seen = 0
+    exclusion_exercised = 0
+    for day in range(1, 500):
+        # No change required: the full selected pool is used.
+        unforced = assertion_module._draw_revision_percentage(
+            seed3,
+            response_key,
+            "lumbar_spine",
+            predecessor_row_key(day),
+            predecessor_nonindustrial=25,
+            require_change=False,
+        )
+        assert unforced == oracle(day, 25, False), day
+        # Change required against a common predecessor: the predecessor
+        # leaves whichever pool was selected before the single selection.
+        changed = assertion_module._draw_revision_percentage(
+            seed3,
+            response_key,
+            "lumbar_spine",
+            predecessor_row_key(day),
+            predecessor_nonindustrial=25,
+            require_change=True,
+        )
+        assert changed == oracle(day, 25, True), day
+        assert changed != 25
+        # …and against a granular predecessor.
+        granular_changed = assertion_module._draw_revision_percentage(
+            seed3,
+            response_key,
+            "lumbar_spine",
+            predecessor_row_key(day),
+            predecessor_nonindustrial=42,
+            require_change=True,
+        )
+        assert granular_changed == oracle(day, 42, True), day
+        assert granular_changed != 42
+        if changed in common:
+            common_seen += 1
+            if unforced == 25:
+                exclusion_exercised += 1
+        else:
+            granular_seen += 1
+            # The anti-clamp law: a common-pool miss is NEVER rounded into
+            # the common register.
+            assert changed in granular
+        assert 1 <= changed <= 99
+    assert common_seen and granular_seen
+    assert exclusion_exercised, (
+        "the sweep never hit the predecessor value without exclusion — the "
+        "exclusion branch was not positively exercised"
+    )
+
+    # Every granular result obeys the interval law exactly (already pinned
+    # by the oracle equality above); the pool partition is total and exact.
+    assert set(common).isdisjoint(granular)
+    assert set(common) | set(granular) == set(range(1, 100))
+    assert len(granular) == 78

@@ -18,6 +18,7 @@ guesses; the property suite asserts exact deterministic reproduction.
 from __future__ import annotations
 
 import random
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -239,6 +240,7 @@ class CohortResult:
     contention_shapes: set = field(default_factory=set)
     stream_trace_digests: dict[int, str] = field(default_factory=dict)
     story_families_seen: set = field(default_factory=set)
+    story_key_findings: list = field(default_factory=list)
 
 
 # The M2 digest oracle projects each item onto the exact AJC-61 field
@@ -363,6 +365,34 @@ class _CountingRandom(random.Random):
         return super().getrandbits(k)
 
 
+_SAMPLED_ID_SHAPE = re.compile(r"^(ctn|opn|app|cdoc)-\d{2}$")
+
+
+def pre_id_key_problems(semantic_key: tuple) -> list[str]:
+    """R45's pre-ID discipline over one production story key (R70's family
+    recorder, attached at R77 step 4 with the first production key sites).
+
+    A ``ctn/opn/app/cdoc``-shaped atom may appear only in an explicit key
+    form — the atom immediately following an ``"explicit"`` marker. Any other
+    occurrence means a sampled pre-label key was salted with an assigned ID,
+    collection position, or final index.
+    """
+    problems: list[str] = []
+
+    def walk(node, parent: tuple, position: int) -> None:
+        if isinstance(node, tuple):
+            for index, item in enumerate(node):
+                walk(item, node, index)
+            return
+        if isinstance(node, str) and _SAMPLED_ID_SHAPE.match(node):
+            preceded_by_explicit = position > 0 and parent[position - 1] == "explicit"
+            if not preceded_by_explicit:
+                problems.append(f"assigned-ID atom {node!r} in sampled key {semantic_key!r}")
+
+    walk(semantic_key, (), 0)
+    return problems
+
+
 def _stream_trace_digest(trace: list[tuple[str, str, _CountingRandom]]) -> str:
     """SHA-256 over the ordered (family, full salt, draw count) construction
     trace of one case — the R70 instrument that sees what the ledger digest
@@ -420,6 +450,7 @@ def build_cohort(sample: int | None = None) -> CohortResult:
 
     def recording_story_rng(seed: Any, family: str, semantic_key: Any) -> Any:
         result.story_families_seen.add(family)
+        result.story_key_findings.extend(pre_id_key_problems(semantic_key))
         return original_story_rng(seed, family, semantic_key)
 
     assertion_module._assertion_rng = recording_rng
