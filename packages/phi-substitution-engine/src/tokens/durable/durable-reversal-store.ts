@@ -50,9 +50,9 @@ export class DurableReversalStore implements ReversalWriteStore {
   /** The ONLY public own property (required by `ReversalStore`). A number — nothing sensitive. */
   public readonly maximumEncounteredTokenBatch: number;
 
-  // §7/N2 (req 19): every sensitive/held reference is a native `#private` slot. `#dekCache` holds
-  // UNWRAPPED DEK bytes and MUST be `#`, not TS `private` (which stays reflectively enumerable at
-  // runtime under ES2022) — replacing it with `private dekCache` is `MUT-TS-PRIVATE-DEK-CACHE`.
+  // §7/N2 (req 19): every sensitive/held reference is a native `#private` slot. The DEK cache holds
+  // UNWRAPPED DEK bytes and MUST be a `#`-field, not a TS-`private` one (which stays reflectively
+  // enumerable at runtime under ES2022) — downgrading it to TS-private is `MUT-TS-PRIVATE-DEK-CACHE`.
   readonly #keyProvider: KeyProvider;
   readonly #spool: SpoolVolume;
   readonly #classifyRetention: (input: RetentionClassificationInput) => Promise<ReversalRetentionClass>;

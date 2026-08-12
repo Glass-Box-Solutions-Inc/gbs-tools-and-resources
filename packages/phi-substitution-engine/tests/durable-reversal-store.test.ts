@@ -1,0 +1,469 @@
+/**
+ * L2.4 DurableReversalStore — store-level oracles (GLY-337), sol spec §C/§D as amended by the Opus
+ * spec-check addendum (C1–C4). Named-mutation IDs are in the assertions so the GPT cross-family gate
+ * can trace each oracle to the mutation it kills.
+ *
+ * Test-internal deep imports (../src/tokens/durable/*) are legitimate: these are NEW additive oracles
+ * (not the frozen Sol harness), and a test may reach internals to probe them (factory-smoke precedent).
+ */
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { ReversalFailedError } from "../src/tokens/index";
+import { InMemoryReversalStore } from "../src/tokens/index";
+import { buildReversalAad, mappingKeyOf } from "../src/tokens/durable/index";
+import type { DurableReversalRecordMeta, EncryptedReversalRecordBlob } from "../src/tokens/durable/index";
+import {
+  brand,
+  DEFAULT_MATTER,
+  DEFAULT_TOKEN,
+  DEFAULT_VERSION,
+  DETECTOR_TTL_MS,
+  keyFor,
+  macrotask,
+  makeClock,
+  makeHarness,
+  recordInput,
+  resolveInput,
+  T0,
+} from "./durable-harness";
+import type { SubstitutionToken, TenantId, MatterId, DictionaryVersion, OperationAttemptId } from "../src/core/brands";
+import { expectNoCanary } from "./test-helpers";
+
+const CLAIMANT = DEFAULT_TOKEN;
+const WITNESS = brand<SubstitutionToken>("[[Witness]]");
+
+describe("L2.4 DurableReversalStore — durability + envelope + idempotency (§6, L8, N5)", () => {
+  it("record resolves only after durable flush (MUT-RETURN-BEFORE-FLUSH)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = makeHarness({ faults: { flushGate: gate } });
+
+    let resolved = false;
+    const pending = h.store.record(recordInput()).then(() => {
+      resolved = true;
+    });
+    await macrotask();
+    // The promise is parked at flush — publish has happened but the write is not durable yet.
+    expect(resolved).toBe(false);
+    expect(h.spy.counts.published).toBe(1);
+    expect(h.spy.counts.flush).toBe(1);
+
+    release();
+    await pending;
+    expect(resolved).toBe(true);
+  });
+
+  it("record rejection has the fixed, safe surface — no cause / no canonical / no provider text (MUT-LEAK-UNDERLYING-ERROR)", async () => {
+    const h = makeHarness({
+      retention: async () => {
+        throw new Error("primary db down: Maria García 078-05-1120 at /var/spool/reversal");
+      },
+    });
+    let caught: unknown;
+    try {
+      await h.store.record(recordInput());
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ReversalFailedError);
+    const err = caught as ReversalFailedError & { cause?: unknown };
+    expect(err.code).toBe("REVERSAL_FAILED");
+    expect(err.message).toBe("reversal_failed");
+    expect(err.cause).toBeUndefined();
+    const surface = JSON.stringify({ name: err.name, message: err.message, code: err.code, ...err });
+    expectNoCanary([surface, err.message, String(err), err.stack ?? ""]);
+    expect(surface).not.toContain("db down");
+    expect(surface).not.toContain("/var/spool");
+  });
+
+  it("acknowledged write survives replica loss (remount) (MUT-FLUSH-FILE-ONLY / MUT-CONTAINER-SCRATCH)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ canonical: "Maria García" }));
+
+    const replica = h.remount();
+    const map = await replica.store.resolveEncounteredTokens(resolveInput());
+    expect(map.get(CLAIMANT)).toBe("Maria García");
+  });
+
+  it("publication is atomic under a crash injected at every persistence phase (MUT-NONATOMIC-PUBLISH)", async () => {
+    for (const phase of ["ensureDekGeneration", "reserveNonce", "prepare", "publish", "flush"] as const) {
+      const h = makeHarness({ clock: () => T0, faults: { failAt: phase } });
+      await expect(h.store.record(recordInput())).rejects.toBeInstanceOf(ReversalFailedError);
+
+      // Fresh replica over the same durable backend: no partial readable state from the crashed write.
+      const replica = h.remount();
+      const afterCrash = await replica.store.resolveEncounteredTokens(resolveInput());
+      expect(afterCrash.size, `phase=${phase}: no partial mapping visible`).toBe(0);
+
+      // And the crash left no durable tombstone — a fresh, complete write of the same attempt succeeds.
+      await replica.store.record(recordInput({ canonical: "Maria García" }));
+      const afterRetry = await replica.store.resolveEncounteredTokens(resolveInput());
+      expect(afterRetry.get(CLAIMANT), `phase=${phase}: retry resolves`).toBe("Maria García");
+    }
+  });
+
+  it("record round-trips through encrypt → durable → decrypt (envelope sanity, §6 L8)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ canonical: "Robert O'Neil" }));
+    const map = await h.store.resolveEncounteredTokens(resolveInput());
+    expect(map.get(CLAIMANT)).toBe("Robert O'Neil");
+  });
+});
+
+describe("L2.4 DurableReversalStore — idempotency (§3.1.3, §6)", () => {
+  it("same-attempt exact replay is a durable no-op — exactly one commit", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-x"), canonical: "Maria García" }));
+    await h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-x"), canonical: "Maria García" }));
+    expect(h.spy.counts.published).toBe(1);
+    expect(h.spy.counts.existing).toBe(1);
+    const map = await h.store.resolveEncounteredTokens(resolveInput());
+    expect(map.get(CLAIMANT)).toBe("Maria García");
+  });
+
+  it("same-attempt DIVERGENT replay keeps the FIRST canonical and creates no second commit (MUT-IDEMPOTENCY-INCLUDE-CANONICAL / MUT-OVERWRITE-SAME-ATTEMPT)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-x"), canonical: "Maria García" }));
+    await h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-x"), canonical: "TOTALLY DIFFERENT" }));
+    const map = await h.store.resolveEncounteredTokens(resolveInput());
+    expect(map.get(CLAIMANT)).toBe("Maria García"); // first canonical stands
+    expect(map.get(CLAIMANT)).not.toBe("TOTALLY DIFFERENT");
+    expect(h.spy.counts.published).toBe(1); // no second commit
+  });
+
+  it("cross-scope replay (same tenant/attempt/token, different matter) rejects and creates no second mapping", async () => {
+    const h = makeHarness();
+    await h.store.record(
+      recordInput({ attemptId: brand<OperationAttemptId>("att-cs"), matterId: brand<MatterId>("matter-1"), canonical: "Maria García" }),
+    );
+    await expect(
+      h.store.record(
+        recordInput({ attemptId: brand<OperationAttemptId>("att-cs"), matterId: brand<MatterId>("matter-2"), canonical: "Maria García" }),
+      ),
+    ).rejects.toBeInstanceOf(ReversalFailedError);
+    // No mapping was created under matter-2; matter-1 is intact.
+    const underM2 = await h.store.resolveEncounteredTokens(resolveInput({ matterId: brand<MatterId>("matter-2") }));
+    expect(underM2.has(CLAIMANT)).toBe(false);
+    const underM1 = await h.store.resolveEncounteredTokens(resolveInput({ matterId: brand<MatterId>("matter-1") }));
+    expect(underM1.get(CLAIMANT)).toBe("Maria García");
+  });
+
+  it("different attempts advance the current canonical (atomic commit order wins)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-1"), canonical: "First" }));
+    await h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-2"), canonical: "Second" }));
+    const map = await h.store.resolveEncounteredTokens(resolveInput());
+    expect(map.get(CLAIMANT)).toBe("Second");
+    expect(h.spy.counts.published).toBe(2);
+  });
+
+  it("concurrent replay waits for the original durable flush — neither caller acks early (MUT-CONFLICT-ACK-WITHOUT-FLUSH)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = makeHarness({ faults: { flushGate: gate } });
+
+    let firstDone = false;
+    let secondDone = false;
+    const p1 = h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-race"), canonical: "Maria García" })).then(() => {
+      firstDone = true;
+    });
+    const p2 = h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-race"), canonical: "Maria García" })).then(() => {
+      secondDone = true;
+    });
+    await macrotask();
+    // The conflict-path caller must not acknowledge before the shared commit is durably flushed.
+    expect(firstDone).toBe(false);
+    expect(secondDone).toBe(false);
+
+    release();
+    await Promise.all([p1, p2]);
+    expect(firstDone).toBe(true);
+    expect(secondDone).toBe(true);
+    expect(h.spy.counts.published).toBe(1); // exactly one real commit for the shared attempt
+  });
+});
+
+describe("L2.4 DurableReversalStore — detector TTL (§6, roadmap D5)", () => {
+  it("expired detector mapping is absent at now === expiresAt, without decrypt (MUT-SKIP-READ-TTL)", async () => {
+    const clock = makeClock(T0);
+    const h = makeHarness({ retention: "detector-only", clock: clock.now });
+    await h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-d"), canonical: "Maria García" }));
+
+    clock.set(T0 + DETECTOR_TTL_MS - 1);
+    const before = await h.store.resolveEncounteredTokens(resolveInput());
+    expect(before.get(CLAIMANT)).toBe("Maria García");
+
+    clock.set(T0 + DETECTOR_TTL_MS); // exact expiry instant
+    const at = await h.store.resolveEncounteredTokens(resolveInput());
+    expect(at.has(CLAIMANT)).toBe(false); // ABSENT (partial map), not a throw
+  });
+
+  it("expired detector attempt is non-retryable — replay rejects and opens no fresh 24h window (MUT-REFRESH-EXPIRED-REPLAY)", async () => {
+    const clock = makeClock(T0);
+    const h = makeHarness({ retention: "detector-only", clock: clock.now });
+    await h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-d"), canonical: "Maria García" }));
+
+    clock.set(T0 + DETECTOR_TTL_MS + 10);
+    await expect(
+      h.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-d"), canonical: "Maria García" })),
+    ).rejects.toBeInstanceOf(ReversalFailedError);
+
+    // No new window — still absent well past the original expiry.
+    clock.set(T0 + DETECTOR_TTL_MS + 20);
+    const after = await h.store.resolveEncounteredTokens(resolveInput());
+    expect(after.has(CLAIMANT)).toBe(false);
+  });
+
+  it("matter mapping has no store-level 24h expiry", async () => {
+    const clock = makeClock(T0);
+    const h = makeHarness({ retention: "matter", clock: clock.now });
+    await h.store.record(recordInput({ canonical: "Maria García" }));
+
+    clock.set(T0 + DETECTOR_TTL_MS * 30);
+    const map = await h.store.resolveEncounteredTokens(resolveInput());
+    expect(map.get(CLAIMANT)).toBe("Maria García");
+  });
+
+  it("retention classification fails closed on an unknown class", async () => {
+    const h = makeHarness({ retention: (() => "surprise") as never });
+    await expect(h.store.record(recordInput())).rejects.toBeInstanceOf(ReversalFailedError);
+  });
+});
+
+describe("L2.4 DurableReversalStore — AAD authenticates every field (§B.6, tamper → fail closed)", () => {
+  it("cross-tenant record relocation rejects (MUT-AAD-DROP-TENANT)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ tenantId: brand<TenantId>("tenant-a"), canonical: "Maria García" }));
+    const from = keyFor({ tenantId: brand<TenantId>("tenant-a") });
+    const to = keyFor({ tenantId: brand<TenantId>("tenant-b") });
+    h.backend.debugRelocate(from, to);
+    await expect(
+      h.store.resolveEncounteredTokens(resolveInput({ tenantId: brand<TenantId>("tenant-b") })),
+    ).rejects.toBeInstanceOf(ReversalFailedError);
+  });
+
+  it("cross-matter relocation rejects (MUT-AAD-DROP-MATTER)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ matterId: brand<MatterId>("matter-1"), canonical: "Maria García" }));
+    h.backend.debugRelocate(keyFor({ matterId: brand<MatterId>("matter-1") }), keyFor({ matterId: brand<MatterId>("matter-2") }));
+    await expect(
+      h.store.resolveEncounteredTokens(resolveInput({ matterId: brand<MatterId>("matter-2") })),
+    ).rejects.toBeInstanceOf(ReversalFailedError);
+  });
+
+  it("cross-version relocation rejects (MUT-AAD-DROP-VERSION)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ dictionaryVersion: brand<DictionaryVersion>(1n), canonical: "Maria García" }));
+    h.backend.debugRelocate(keyFor({ dictionaryVersion: brand<DictionaryVersion>(1n) }), keyFor({ dictionaryVersion: brand<DictionaryVersion>(2n) }));
+    await expect(
+      h.store.resolveEncounteredTokens(resolveInput({ dictionaryVersion: brand<DictionaryVersion>(2n) })),
+    ).rejects.toBeInstanceOf(ReversalFailedError);
+  });
+
+  it("token-slot substitution rejects (MUT-AAD-DROP-TOKEN)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ token: CLAIMANT, canonical: "Maria García" }));
+    h.backend.debugRelocate(keyFor({ token: CLAIMANT }), keyFor({ token: WITNESS }));
+    await expect(h.store.resolveEncounteredTokens(resolveInput({ tokens: [WITNESS] }))).rejects.toBeInstanceOf(ReversalFailedError);
+  });
+
+  it("persisted-metadata tampering rejects for attempt / retention / timestamps / dekGen / kekVersion (MUT-AAD-DROP-ATTEMPT / -TTL, key-metadata substitution)", async () => {
+    const metaTampers: ReadonlyArray<readonly [string, Partial<DurableReversalRecordMeta>]> = [
+      ["attemptId", { attemptId: brand<OperationAttemptId>("att-forged") }],
+      ["retentionClass", { retentionClass: "detector-only" }],
+      ["createdAtEpochMs", { createdAtEpochMs: 42 }],
+      ["expiresAtEpochMs", { expiresAtEpochMs: 999_999_999_999_999n }],
+    ];
+    for (const [label, patch] of metaTampers) {
+      const h = makeHarness({ retention: "matter" });
+      await h.store.record(recordInput({ canonical: "Maria García" }));
+      h.backend.debugMutateMeta(keyFor(), patch);
+      // Read via a fresh replica so the read hits the tampered durable record, not a clean pending copy.
+      const replica = h.remount();
+      await expect(replica.store.resolveEncounteredTokens(resolveInput()), `meta tamper: ${label}`).rejects.toBeInstanceOf(ReversalFailedError);
+    }
+
+    const blobTampers: ReadonlyArray<readonly [string, Partial<EncryptedReversalRecordBlob>]> = [
+      ["dekGenerationId", { dekGenerationId: brand("gen-forged") }],
+      ["wrappingKeyVersion", { wrappingKeyVersion: brand("v-forged") }],
+    ];
+    for (const [label, patch] of blobTampers) {
+      const h = makeHarness({ retention: "matter" });
+      await h.store.record(recordInput({ canonical: "Maria García" }));
+      h.backend.debugPatchBlob(keyFor(), patch);
+      const replica = h.remount();
+      await expect(replica.store.resolveEncounteredTokens(resolveInput()), `blob tamper: ${label}`).rejects.toBeInstanceOf(ReversalFailedError);
+    }
+  });
+
+  it("extending a detector expiry via metadata tamper is rejected (MUT-AAD-DROP-TTL)", async () => {
+    const clock = makeClock(T0);
+    const h = makeHarness({ retention: "detector-only", clock: clock.now });
+    await h.store.record(recordInput({ canonical: "Maria García" }));
+    // Attacker extends expiry to resurrect an about-to-expire detector record.
+    h.backend.debugMutateMeta(keyFor(), { expiresAtEpochMs: BigInt(T0) + BigInt(DETECTOR_TTL_MS) * 100n });
+    clock.set(T0 + DETECTOR_TTL_MS + 5);
+    const replica = h.remount();
+    await expect(replica.store.resolveEncounteredTokens(resolveInput())).rejects.toBeInstanceOf(ReversalFailedError);
+  });
+
+  it("ciphertext bit-flip fails closed — never returns plaintext (MUT-IGNORE-GCM-TAG)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ canonical: "Maria García" }));
+    h.backend.debugCorruptCiphertext(keyFor());
+    const replica = h.remount();
+    await expect(replica.store.resolveEncounteredTokens(resolveInput())).rejects.toBeInstanceOf(ReversalFailedError);
+  });
+});
+
+describe("L2.4 DurableReversalStore — tenant isolation + nonce uniqueness (L8, §6)", () => {
+  it("a colliding token never crosses tenants (MUT-FALLBACK-TENANTLESS-LOOKUP)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ tenantId: brand<TenantId>("tenant-a"), canonical: "Value-A" }));
+    await h.store.record(recordInput({ tenantId: brand<TenantId>("tenant-b"), canonical: "Value-B" }));
+
+    const a = await h.store.resolveEncounteredTokens(resolveInput({ tenantId: brand<TenantId>("tenant-a") }));
+    const b = await h.store.resolveEncounteredTokens(resolveInput({ tenantId: brand<TenantId>("tenant-b") }));
+    expect(a.get(CLAIMANT)).toBe("Value-A");
+    expect(b.get(CLAIMANT)).toBe("Value-B");
+
+    // Tenant C never recorded this token — absent, never A's or B's canonical.
+    const c = await h.store.resolveEncounteredTokens(resolveInput({ tenantId: brand<TenantId>("tenant-c") }));
+    expect(c.has(CLAIMANT)).toBe(false);
+  });
+
+  it("nonce reservation is unique across concurrency and remount (MUT-REUSE-GCM-NONCE)", async () => {
+    const backend = new (await import("../src/tokens/durable/index")).InMemoryReversalSpoolBackend();
+    const volumeA = backend.mount();
+    const dekGenerationId = brand<import("../src/tokens/durable/index").DekGenerationId>("gen-1");
+    const scoped = { tenantId: brand<TenantId>("tenant-a"), matterId: DEFAULT_MATTER, dekGenerationId };
+
+    const first = await Promise.all(Array.from({ length: 8 }, () => volumeA.reserveNonce(scoped)));
+    // Remount: a fresh replica over the same durable backend must NOT restart the counter.
+    const volumeB = backend.mount();
+    const second = await Promise.all(Array.from({ length: 8 }, () => volumeB.reserveNonce(scoped)));
+
+    const hex = [...first, ...second].map((n) => Buffer.from(n).toString("hex"));
+    expect(new Set(hex).size).toBe(hex.length); // all 16 distinct across concurrency + remount
+  });
+});
+
+describe("L2.4 DurableReversalStore — resolve semantics (addendum C2/C4, §7/N2)", () => {
+  it("returns a PARTIAL map (missing token absent) with behavioral parity to InMemoryReversalStore", async () => {
+    const durable = makeHarness();
+    await durable.store.record(recordInput({ token: CLAIMANT, canonical: "Maria García" }));
+
+    const inMemory = new InMemoryReversalStore();
+    inMemory.record({
+      tenantId: recordInput().tenantId,
+      matterId: recordInput().matterId,
+      dictionaryVersion: recordInput().dictionaryVersion,
+      token: CLAIMANT,
+      canonical: "Maria García",
+      attemptId: recordInput().attemptId,
+    });
+
+    const query = resolveInput({ tokens: [CLAIMANT, WITNESS] }); // one known, one never-recorded
+    const durableMap = await durable.store.resolveEncounteredTokens(query);
+    const inMemoryMap = await inMemory.resolveEncounteredTokens(query);
+
+    expect(durableMap.get(CLAIMANT)).toBe("Maria García");
+    expect(durableMap.has(WITNESS)).toBe(false); // absent, NOT a throw (MUT-PARTIAL-RESOLVE is at the reverser)
+    expect(durableMap.size).toBe(1);
+    // Behavioral parity: same keys and values as the frozen dev store (swap-in invariant).
+    expect([...durableMap.entries()].sort()).toEqual([...inMemoryMap.entries()].sort());
+  });
+
+  it("resolve reads ONLY the exact tenant-scoped keys requested (bounded, no list-all)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ token: CLAIMANT, canonical: "Maria García" }));
+    await h.store.record(recordInput({ token: WITNESS, canonical: "Robert O'Neil", attemptId: brand<OperationAttemptId>("att-w") }));
+
+    await h.store.resolveEncounteredTokens(resolveInput({ tokens: [CLAIMANT] }));
+    const requested = h.spy.lastReadRequests.map((r) => String(r.mappingKey));
+    expect(requested).toEqual([String(keyFor({ token: CLAIMANT }))]);
+    expect(requested).toHaveLength(1);
+  });
+
+  it("dedupes tokens and never over-reads", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ token: CLAIMANT, canonical: "Maria García" }));
+    const map = await h.store.resolveEncounteredTokens(resolveInput({ tokens: [CLAIMANT, CLAIMANT, CLAIMANT] }));
+    expect(map.size).toBe(1);
+    expect(h.spy.lastReadRequests).toHaveLength(1);
+  });
+
+  it("rejects an over-sized batch BEFORE any I/O", async () => {
+    const h = makeHarness({ maximumEncounteredTokenBatch: 2 });
+    const tokens = [CLAIMANT, WITNESS, brand<SubstitutionToken>("[[Adjuster]]")];
+    await expect(h.store.resolveEncounteredTokens(resolveInput({ tokens }))).rejects.toBeInstanceOf(ReversalFailedError);
+    expect(h.spy.counts.readCurrent).toBe(0); // no I/O occurred
+  });
+
+  it("an empty batch resolves to an empty map without I/O", async () => {
+    const h = makeHarness();
+    const map = await h.store.resolveEncounteredTokens(resolveInput({ tokens: [] }));
+    expect(map.size).toBe(0);
+    expect(h.spy.counts.readCurrent).toBe(0);
+  });
+});
+
+describe("L2.4 DurableReversalStore — capability boundary (§7/N2, req 18/19)", () => {
+  it("the public surface is frozen: exactly record + resolveEncounteredTokens + maximumEncounteredTokenBatch (MUT-WIDEN-LISTALL)", () => {
+    const h = makeHarness();
+    const proto = Object.getPrototypeOf(h.store);
+    const methods = Object.getOwnPropertyNames(proto)
+      .filter((n) => n !== "constructor")
+      .sort();
+    expect(methods).toEqual(["record", "resolveEncounteredTokens"]);
+    expect(Object.getOwnPropertyNames(h.store).sort()).toEqual(["maximumEncounteredTokenBatch"]);
+    for (const forbidden of ["listAll", "snapshot", "export", "entriesForMatter", "delete", "diagnostics", "dump", "all", "keys", "entries", "values"]) {
+      expect((h.store as unknown as Record<string, unknown>)[forbidden]).toBeUndefined();
+    }
+  });
+
+  it("store reflection exposes no DEK cache / canonical / wrapped-key after a write+read (MUT-TS-PRIVATE-DEK-CACHE)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ canonical: "Maria García 078-05-1120" }));
+    await h.store.resolveEncounteredTokens(resolveInput()); // populates the #dekCache
+
+    const reflect = Reflect.ownKeys(h.store).map(String);
+    expect(reflect).toEqual(["maximumEncounteredTokenBatch"]); // ONLY the required public number
+    for (const forbidden of ["dekCache", "keyProvider", "spool", "classifyRetention", "nowEpochMilliseconds"]) {
+      expect(reflect).not.toContain(forbidden);
+      expect(Object.getOwnPropertyNames(h.store)).not.toContain(forbidden);
+      expect(Object.keys(h.store)).not.toContain(forbidden);
+    }
+    const serialized = JSON.stringify(h.store) ?? "";
+    expect(serialized).not.toContain("Maria García");
+    expectNoCanary([serialized]);
+  });
+
+  it("sensitive fields use native #private identifiers in source (MUT-TS-PRIVATE-DEK-CACHE, AST)", () => {
+    const src = readFileSync(new URL("../src/tokens/durable/durable-reversal-store.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/#dekCache\b/); // native private field
+    expect(src).not.toMatch(/\bprivate\s+dekCache\b/); // NOT TS-private (runtime-enumerable)
+    for (const field of ["#keyProvider", "#spool", "#classifyRetention", "#nowEpochMilliseconds", "#dekCache"]) {
+      expect(src, `${field} must be a native #private field`).toContain(field);
+    }
+  });
+
+  it("the returned map is a working ReadonlyMap view (behavioral parity, addendum C4)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ canonical: "Maria García" }));
+    const map = await h.store.resolveEncounteredTokens(resolveInput());
+    expect(map.get(CLAIMANT)).toBe("Maria García");
+    expect([...map.keys()]).toEqual([CLAIMANT]);
+    // The AAD builder is a pure, tested primitive (referenced so a tree-shake never drops it).
+    expect(buildReversalAad).toBeTypeOf("function");
+    expect(mappingKeyOf).toBeTypeOf("function");
+  });
+});
+
+// Silence unused-import lint in transpile-only test runs while keeping the symbols available.
+void DEFAULT_MATTER;
+void DEFAULT_VERSION;

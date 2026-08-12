@@ -172,6 +172,21 @@ export class InMemoryReversalSpoolBackend {
     this.#preparedBlobs.set(m.preparedHandle as unknown as string, mutated);
   }
 
+  /** Simulates tampering of a top-level stored blob field (e.g. dekGenerationId, wrappingKeyVersion, nonce). */
+  public debugPatchBlob(mappingKey: ReversalMappingKey, patch: Partial<EncryptedReversalRecordBlob>): void {
+    const m = this.#mappings.get(mappingKey as unknown as string);
+    if (m === undefined) {
+      throw new Error("debug_patch_blob_absent");
+    }
+    const blob = this.getBlobForRead(m.preparedHandle);
+    if (blob === undefined) {
+      throw new Error("debug_patch_blob_missing");
+    }
+    const mutated: EncryptedReversalRecordBlob = { ...blob, ...patch };
+    this.putCommittedRecord(m.preparedHandle, mutated);
+    this.#preparedBlobs.set(m.preparedHandle as unknown as string, mutated);
+  }
+
   /** Simulates a one-bit ciphertext corruption (tamper). */
   public debugCorruptCiphertext(mappingKey: ReversalMappingKey): void {
     const m = this.#mappings.get(mappingKey as unknown as string);
