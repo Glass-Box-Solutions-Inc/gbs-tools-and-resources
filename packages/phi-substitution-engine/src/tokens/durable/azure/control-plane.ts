@@ -101,6 +101,13 @@ export interface CurrentPointerRow {
   readonly blobLength: bigint;
 }
 
+/** Durable blob address for a pending/flushed claim; used to HEAD before `flushClaim`. */
+export interface ClaimBlobReference {
+  readonly blobPath: string;
+  readonly blobEtag: string;
+  readonly blobLength: bigint;
+}
+
 export interface ReclaimQueryInput {
   readonly olderThanEpochMs: number;
   readonly limit: number;
@@ -136,6 +143,7 @@ export interface ControlPlane {
   insertPreparedUploading(input: InsertPreparedUploadingInput): Promise<void>;
   markFinalized(input: MarkFinalizedInput): Promise<void>;
   publish(input: PublishPreparedInput): Promise<PublishReversalResult>;
+  readClaimBlobReference(commit: PublishedCommitHandle): Promise<ClaimBlobReference>;
   flushClaim(input: FlushClaimInput): Promise<void>;
   /** Returns true for an existing/just-created tombstone, false when the claim is not yet expired. */
   expirePendingDetach(input: ExpirePendingDetachInput): Promise<boolean>;

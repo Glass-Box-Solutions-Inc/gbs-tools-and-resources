@@ -16,6 +16,7 @@ import type {
 } from "../ports";
 import type {
   ClaimControlPlaneState,
+  ClaimBlobReference,
   ControlPlane,
   CurrentPointerRow,
   ExpirePendingDetachInput,
@@ -76,6 +77,15 @@ interface ReferenceRow extends QueryResultRow {
 interface PreparedBlobRow extends QueryResultRow {
   readonly prepared_blob_id: string;
   readonly state: string;
+  readonly blob_etag: string | null;
+  readonly blob_len: string | null;
+}
+
+interface ClaimBlobReferenceRow extends QueryResultRow {
+  readonly claim_state: ClaimControlPlaneState;
+  readonly prepared_blob_id: string | null;
+  readonly prepared_state: string | null;
+  readonly blob_path: string | null;
   readonly blob_etag: string | null;
   readonly blob_len: string | null;
 }
@@ -375,6 +385,30 @@ export class PostgresControlPlane implements ControlPlane {
         expired,
       };
     });
+  }
+
+  public async readClaimBlobReference(commit: PublishedCommitHandle): Promise<ClaimBlobReference> {
+    const result = await this.#pool.query<ClaimBlobReferenceRow>(
+      `SELECT c.state AS claim_state, c.prepared_blob_id, p.state AS prepared_state,
+              p.blob_path, p.blob_etag, p.blob_len
+       FROM reversal_claim c
+       LEFT JOIN reversal_prepared p ON p.prepared_blob_id = c.prepared_blob_id
+       WHERE c.commit_handle = $1`,
+      [commit],
+    );
+    const row = result.rows[0];
+    if (
+      row === undefined ||
+      (row.claim_state !== "pending" && row.claim_state !== "flushed") ||
+      row.prepared_blob_id === null ||
+      row.prepared_state !== "committed" ||
+      row.blob_path === null ||
+      row.blob_etag === null ||
+      row.blob_len === null
+    ) {
+      throw new Error("flush_claim_blob_reference_integrity_failure");
+    }
+    return { blobPath: row.blob_path, blobEtag: row.blob_etag, blobLength: BigInt(row.blob_len) };
   }
 
   public async flushClaim(input: FlushClaimInput): Promise<void> {
