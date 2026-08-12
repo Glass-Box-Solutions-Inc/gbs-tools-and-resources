@@ -76,13 +76,17 @@ SCENARIO_CLASSES = (
     "ApplicantProfile",
     # The assertion layer (AJC-61, M2). In scope from the day the classes exist,
     # and — unlike the medical-history block above — none of their fields
-    # carries a "not yet honoured" marker: every field drives the truth
-    # manifest's assertions channel, which is output. A marker here would be
-    # the opposite lie to the one this guard usually catches.
+    # carries a "not yet honoured" marker: the AJC-61 vocabulary drives the
+    # truth manifest's assertions channel, which is output, and the AJC-62/M3
+    # fields (event kinds, dispositions, psych/AOE-COE axes, contention
+    # documents) parse, validate and populate the internal ledger that the
+    # M3 build steps consume — Amendment A1 deliberately freezes them OUT of
+    # the 1.0.0 channel, which is a frozen boundary, not an unwired knob.
     "MedicalAssertionsScenario",
     "ContentionEntry",
     "MedicalOpinionEntry",
     "ApportionmentAssertionEntry",
+    "ContentionDocumentEntry",
 )
 
 @dataclass(frozen=True)

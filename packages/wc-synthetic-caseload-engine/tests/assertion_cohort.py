@@ -233,11 +233,102 @@ class CohortResult:
     contention_shapes: set = field(default_factory=set)
 
 
+# The M2 digest oracle projects each item onto the exact AJC-61 field
+# vocabulary (R62): "Because R6 and R26 add defaulted fields to existing
+# models, the M2 digest oracle MUST use a literal AJC-61 field projection
+# rather than a new full model_dump()." These are independent test-side
+# literals — production's ASSERTIONS_V1_* tuples are declared separately and
+# the coordinated oracle compares the two for exact equality. Every pinned
+# digest below is therefore byte-identical to its pre-M3 recording.
+M2_CONTENTION_ORACLE_FIELDS = (
+    "id",
+    "claim_type",
+    "party",
+    "position",
+    "target_condition_id",
+    "target_prior_claim_id",
+    "target_prior_award_id",
+    "target_body_part",
+    "doctrine_hooks",
+    "rationale",
+    "treatment_causation",
+    "requested_apportionment",
+    "groundings",
+    "quality",
+)
+
+M2_OPINION_ORACLE_FIELDS = (
+    "id",
+    "author_role",
+    "report_stage",
+    "report_date",
+    "apportionment_state",
+    "determination_kind",
+    "determination_rationale",
+    "examination_performed",
+    "reviewed_condition_ids",
+    "reviewed_prior_claim_ids",
+    "reviewed_prior_award_ids",
+    "endorses_contention_ids",
+    "rejects_contention_ids",
+    "responds_to_opinion_id",
+    "supersedes_opinion_id",
+    "rationale",
+    "revision_rationale",
+    "quality",
+)
+
+M2_APPORTIONMENT_ORACLE_FIELDS = (
+    "id",
+    "opinion_id",
+    "body_part",
+    "industrial_percent",
+    "nonindustrial_percent",
+    "basis_kinds",
+    "condition_ids",
+    "prior_claim_ids",
+    "prior_award_ids",
+    "description",
+    "disability_causation_stated",
+    "reasonable_medical_probability",
+    "causal_rationale",
+    "percentage_rationale",
+    "prior_award_analysis",
+    "revised_from_percent",
+    "revision_rationale",
+    "psych_exception_analysis",
+    "linked_contention_id",
+    "groundings",
+    "quality",
+)
+
+
+def _oracle_projection(item, fields: tuple[str, ...]) -> dict:
+    dumped = item.model_dump(mode="json")
+    return {name: dumped[name] for name in fields}
+
+
 def _digest(ledger: MedicalAssertionLedger) -> str:
     import hashlib
     import json
 
-    payload = json.dumps(ledger.model_dump(mode="json"), sort_keys=True)
+    payload = json.dumps(
+        {
+            "contentions": [
+                _oracle_projection(item, M2_CONTENTION_ORACLE_FIELDS)
+                for item in ledger.contentions
+            ],
+            "medical_opinions": [
+                _oracle_projection(item, M2_OPINION_ORACLE_FIELDS)
+                for item in ledger.medical_opinions
+            ],
+            "apportionment_assertions": [
+                _oracle_projection(item, M2_APPORTIONMENT_ORACLE_FIELDS)
+                for item in ledger.apportionment_assertions
+            ],
+        },
+        sort_keys=True,
+    )
     return hashlib.sha256(payload.encode()).hexdigest()
 
 

@@ -36,9 +36,19 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from itertools import pairwise
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from wc_caseload_engine.medical_assertions import (
+        ContentionParty,
+        DefenseContestTheory,
+    )
+    from wc_caseload_engine.medical_story import (
+        ContentionSurface,
+        ImrApplicationContent,
+    )
 
 from wc_caseload_engine.case_facts import resolve_has_surgery
 from wc_caseload_engine.doc_controls import (
@@ -64,6 +74,10 @@ ROLE_PHYSICIAN = "physician"
 ROLE_COURT = "court"
 ROLE_EMPLOYER = "employer"
 ROLE_LIEN_CLAIMANT = "lien_claimant"
+ROLE_COURT_REPORTER = "court_reporter"
+"""A deposition transcript's base-document author (AJC-62 R35). The examining
+party stays separately available through the candidate's
+``contention_actor_party`` binding."""
 
 # ---------------------------------------------------------------------------
 # Seed -> substrate parameter mapping
@@ -320,7 +334,15 @@ def author_role_for(subtype: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class DatedCandidate:
-    """One proposed document with its date, track and provenance."""
+    """One proposed document with its date, track and provenance.
+
+    The ``medical_opinion_id`` block below is the AJC-62 (M3) explicit
+    document-to-assertion binding (R5/R35): internal planning state that must
+    survive controls, perspective resolution, date fitting, sorting and final
+    index assignment, and must never be exported to the ordinary manifest.
+    All fields default to their absent state, so every pre-M3 construction
+    site and every history-only document is unchanged.
+    """
 
     subtype: str
     doc_date: date
@@ -329,6 +351,18 @@ class DatedCandidate:
     author_role: str = ROLE_APPLICANT_ATTORNEY
     stage: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    medical_opinion_id: str | None = None
+    spoken_contention_ids: tuple[str, ...] = ()
+    contention_surface: ContentionSurface | None = None
+    template_subtype: str | None = None
+    """Internal substrate dispatch key (R2/R35). Never replaces the canonical
+    subtype in ``manifest.json``, filenames, controls or taxonomy checks."""
+
+    target_medical_opinion_id: str | None = None
+    contention_actor_party: ContentionParty | None = None
+    defense_contest_theories: tuple[DefenseContestTheory, ...] = ()
+    imr_target_denial_date: date | None = None
+    imr_application_content: ImrApplicationContent | None = None
 
     def to_candidate(self, parent_type: str | None = None) -> DocumentCandidate:
         """Adapt to the control resolver's input type."""

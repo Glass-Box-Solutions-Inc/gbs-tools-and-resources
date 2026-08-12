@@ -22,8 +22,19 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from itertools import pairwise
+from typing import TYPE_CHECKING
 
 import structlog
+
+if TYPE_CHECKING:
+    from wc_caseload_engine.medical_assertions import (
+        ContentionParty,
+        DefenseContestTheory,
+    )
+    from wc_caseload_engine.medical_story import (
+        ContentionSurface,
+        ImrApplicationContent,
+    )
 
 from wc_caseload_engine.case_context import (
     CaseCast,
@@ -123,6 +134,29 @@ class PlannedDocument:
     this subtype. Empty for every document of a hook-free case, which is what
     keeps the no-doctrine render path byte-identical to what it was.
     """
+
+    medical_opinion_id: str | None = None
+    """AJC-62 (M3) explicit document-to-assertion binding (R5/R35), with the
+    eight fields below. Internal render state only: the manifest writer builds
+    its entries field-by-field and never reads these, so they cannot reach
+    ``manifest.json``, filenames or controls. ``derive_medical_story()``
+    resolves content from these bindings — never a nearest date, report
+    ordinal, subtype coincidence or collection order. All default to their
+    absent state; a history-only document carries exactly the defaults.
+    """
+
+    spoken_contention_ids: tuple[str, ...] = ()
+    contention_surface: ContentionSurface | None = None
+    template_subtype: str | None = None
+    """Internal substrate dispatch key (R2). The canonical classifier subtype
+    stays in ``subtype``; template provenance records the actually resolved
+    class/variant."""
+
+    target_medical_opinion_id: str | None = None
+    contention_actor_party: ContentionParty | None = None
+    defense_contest_theories: tuple[DefenseContestTheory, ...] = ()
+    imr_target_denial_date: date | None = None
+    imr_application_content: ImrApplicationContent | None = None
 
 
 @dataclass(frozen=True, slots=True)

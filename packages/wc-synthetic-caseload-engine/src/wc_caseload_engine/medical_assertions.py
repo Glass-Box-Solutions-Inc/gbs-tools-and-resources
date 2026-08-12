@@ -45,6 +45,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from wc_caseload_engine.medical_history import (
     SIBTF_QUALIFYING,
     MedicalHistory,
+    PsychInjuryKind,
 )
 from wc_caseload_engine.seeds import (
     ANCHOR_DATE,
@@ -136,12 +137,75 @@ corpus cannot contain. ``genetics_heredity_pathology`` is *not* among them —
 
 type EvidenceDisposition = Literal["supports", "contradicts", "indeterminate"]
 
+# --- AJC-62 (M3) frozen literals — R6 and R26 ---
+
+type AoeCoeFinding = Literal[
+    "industrial",
+    "nonindustrial",
+    "deferred",
+]
+"""A physician's own AOE/COE conclusion (R6). An independent finding: PTP
+sampling never inspects whether an advocacy letter exists (R16), and agreement
+in result is concurrence, never responsive adoption."""
+
+type OpinionEventKind = Literal[
+    "base_report",
+    "supplemental_report",
+    "deposition",
+]
+
+type OpinionRevisionKind = Literal[
+    "unchanged_additional_reasoning",
+    "new_records_no_change",
+    "revised_causation",
+    "revised_apportionment",
+    "revised_causation_and_apportionment",
+]
+
+type OpinionContentionDisposition = Literal[
+    "adopted",
+    "concurred",
+    "rejected",
+    "deferred",
+    "unaddressed",
+]
+"""The five-way classification of one opinion's answer to one contention
+(R26). ``adopted`` is responsive adoption of an advocated theory
+(``endorses_contention_ids``); ``concurred`` is an independently reached same
+result; an ID in none of the four collections is ``unaddressed``."""
+
+type DefenseContestTheory = Literal[
+    "insufficient_investigation",
+    "post_termination",
+    "lack_of_substantial_medical_evidence",
+]
+
+type ContestPath = Literal[
+    "objection_only",
+    "objection_supplemental",
+    "objection_deposition",
+    "objection_supplemental_deposition",
+    "supplemental_only",
+    "supplemental_deposition",
+]
+
+type ContentionDocumentKind = Literal[
+    "opinion_report",
+    "advocacy",
+    "objection",
+    "supplemental_request",
+    "supplemental_report",
+    "qme_deposition",
+]
+
 CONTENTION_ID_PATTERN: Final[str] = r"^ctn-(0[1-9]|[1-9][0-9])$"
 OPINION_ID_PATTERN: Final[str] = r"^opn-(0[1-9]|[1-9][0-9])$"
 APPORTIONMENT_ID_PATTERN: Final[str] = r"^app-(0[1-9]|[1-9][0-9])$"
-"""``ctn-01`` … ``ctn-99``; ``opn-``/``app-`` likewise. Two digits from ``01``.
-The seed caps (12/8/12) keep two-digit space sufficient; IDs are assigned only
-after every stochastic decision, as a pure labelling pass."""
+CDOC_ID_PATTERN: Final[str] = r"^cdoc-(0[1-9]|[1-9][0-9])$"
+"""``ctn-01`` … ``ctn-99``; ``opn-``/``app-``/``cdoc-`` likewise. Two digits
+from ``01``. The seed caps (12/8/12, and 15 contention documents) keep
+two-digit space sufficient; IDs are assigned only after every stochastic
+decision, as a pure labelling pass."""
 
 #: Grounding hook → the apportionment basis kind its typed grounding backs.
 HOOK_TO_BASIS: Final[dict[str, str]] = {
@@ -190,6 +254,13 @@ class Contention(BaseModel):
     requested_apportionment: RequestedApportionment | None = None
     groundings: tuple[DoctrineGrounding, ...] = ()
 
+    psych_injury_kind: PsychInjuryKind | None = None
+    """The party's direct-versus-consequence characterisation (AJC-62, M3) —
+    an assertion, free to diverge from the world condition's own kind. Requires
+    a psychiatric anchor (psychiatric target condition, psyche target body
+    part, or psyche claim body part); §C holds that line. Frozen out of
+    assertions channel ``1.0.0`` by Amendment A1."""
+
     quality: AssertionQuality
     """Truth-only. Derived by the frozen rubric, never authored, never copied
     from a sampling target recipe."""
@@ -223,6 +294,30 @@ class MedicalOpinion(BaseModel):
     rationale: str | None = None
     revision_rationale: str | None = None
 
+    event_kind: OpinionEventKind = "base_report"
+    """Which report event this opinion is (AJC-62, M3). Supplemental and
+    deposition events are responses: a QME/AME author, an exact
+    ``responds_to_opinion_id`` predecessor, a ``revision_kind`` and no fresh
+    examination — the validator below and §C hold the structure."""
+
+    revision_kind: OpinionRevisionKind | None = None
+    concurs_with_contention_ids: tuple[str, ...] = ()
+    """Independent agreement — the evaluator reached the advocated result on
+    its own (AJC-62, M3). Distinct from ``endorses_contention_ids``, which is
+    responsive adoption; the four disposition collections are pairwise
+    disjoint."""
+
+    defers_contention_ids: tuple[str, ...] = ()
+    """Contentions the report expressly reserved rather than resolved."""
+
+    psych_injury_kind: PsychInjuryKind | None = None
+    aoe_coe_finding: AoeCoeFinding | None = None
+    """The physician's own AOE/COE conclusion (AJC-62, M3) — an independent
+    finding based on treatment history, examination, mechanism and clinical
+    course, never a response to advocacy (R16)."""
+
+    aoe_coe_rationale: str | None = None
+
     quality: AssertionQuality
 
     @model_validator(mode="after")
@@ -236,6 +331,56 @@ class MedicalOpinion(BaseModel):
             raise ValueError(
                 f"medical opinion '{self.id}' reviews {combined} records combined; "
                 f"the combined cap is {REVIEWED_IDS_COMBINED_CAP}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _event_kind_is_structurally_coherent(self) -> MedicalOpinion:
+        """R26/R27/R37's single-model structure. Version-safe by construction:
+        a ledger parsed from assertions channel ``1.0.0`` carries only the
+        ``base_report`` default, so no clause here can misfire on the
+        truth-manifest path (Amendment A1)."""
+        if self.event_kind == "base_report":
+            if self.revision_kind is not None:
+                raise ValueError(
+                    f"medical opinion '{self.id}' sets revision_kind "
+                    f"{self.revision_kind!r} but event_kind is 'base_report'; "
+                    "revision kinds describe supplemental and deposition "
+                    "response events"
+                )
+            return self
+        if self.author_role == "ptp":
+            raise ValueError(
+                f"medical opinion '{self.id}' has event_kind "
+                f"{self.event_kind!r} but author_role 'ptp'; PTP opinions may "
+                "only be base reports — supplemental and deposition opinions "
+                "carry a QME or AME author"
+            )
+        if self.revision_kind is None:
+            raise ValueError(
+                f"medical opinion '{self.id}' has event_kind "
+                f"{self.event_kind!r} but no revision_kind; a response opinion "
+                "states how it relates to its predecessor"
+            )
+        if self.responds_to_opinion_id is None:
+            raise ValueError(
+                f"medical opinion '{self.id}' has event_kind "
+                f"{self.event_kind!r} but no responds_to_opinion_id; a "
+                "response opinion names its exact immediate predecessor"
+            )
+        if self.examination_performed:
+            raise ValueError(
+                f"medical opinion '{self.id}' has event_kind "
+                f"{self.event_kind!r} but examination_performed is true; a "
+                "response opinion reviews and reasons without a fresh "
+                "examination"
+            )
+        if not (self.rationale or self.revision_rationale):
+            raise ValueError(
+                f"medical opinion '{self.id}' has event_kind "
+                f"{self.event_kind!r} but neither rationale nor "
+                "revision_rationale; a response opinion states a nonempty "
+                "reason appropriate to its revision kind"
             )
         return self
 
@@ -331,6 +476,48 @@ class MedicalAssertionLedger(BaseModel):
         return counts
 
 
+class ContentionDocumentBinding(BaseModel):
+    """One normalized contention-document decision — internal planning state.
+
+    The R26 record behind :class:`~wc_caseload_engine.seeds.
+    ContentionDocumentEntry`: every entry field normalized, plus the internal
+    ``template_subtype`` carrier split (R2/R35), the proposed date, and whether
+    the binding came from an explicit entry, a required opinion realization, or
+    sampling. Never exported — no manifest, no seed YAML, no truth channel, no
+    ``quality``-like field.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(pattern=CDOC_ID_PATTERN)
+    document_kind: ContentionDocumentKind
+    subtype: str | None = None
+    doc_date: dt.date | None = None
+    medical_opinion_id: str | None = None
+    target_medical_opinion_id: str | None = None
+    spoken_contention_ids: tuple[str, ...] = Field(default=(), max_length=3)
+    actor_party: ContentionParty | None = None
+    defense_contest_theories: tuple[DefenseContestTheory, ...] = ()
+    template_subtype: str | None = None
+    proposed_date: dt.date | None = None
+    source: Literal["explicit", "required_opinion", "sampled"] = "explicit"
+
+
+class MedicalAssertionPlan(BaseModel):
+    """The complete assertion-layer product (R26): ledger plus loop bindings.
+
+    ``derive_medical_assertion_plan()`` (R77 step 3) returns this; step 2 ships
+    the frozen shape. The ledger member is the same quality-bearing object as
+    today; the bindings never carry a quality, a derived quality synonym, or an
+    analyzer verdict.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ledger: MedicalAssertionLedger | None = None
+    contention_documents: tuple[ContentionDocumentBinding, ...] = ()
+
+
 # ---------------------------------------------------------------------------
 # Validation context + world projection — ONE rule implementation, both paths
 # ---------------------------------------------------------------------------
@@ -370,6 +557,9 @@ class ProjectedCondition:
     trajectory: Literal["resolved", "stable", "progressive", "fluctuating"]
     symptomatic_before_doi: bool | None
     surfaces_in_file: bool
+    psych_injury_kind: PsychInjuryKind | None = None
+    """R6's projection support (AJC-62, M3). Frozen out of assertions channel
+    ``1.0.0`` by Amendment A1, so a parsed truth projection carries ``None``."""
 
 
 @dataclass(frozen=True)
@@ -477,6 +667,7 @@ def project_medical_history(
             trajectory=c.trajectory,
             symptomatic_before_doi=c.symptomatic_before_doi,
             surfaces_in_file=c.surfaces_in_file,
+            psych_injury_kind=c.psych_injury_kind,
         )
         for c in history.conditions
     )
@@ -626,22 +817,27 @@ def _opinion_referential(
             problems.append(
                 f"medical opinion '{opinion.id}' reviews unknown prior award '{ref}'"
             )
-    for ref in opinion.endorses_contention_ids:
-        if ref not in contention_ids:
-            problems.append(
-                f"medical opinion '{opinion.id}' endorses unknown contention '{ref}'"
-            )
-    for ref in opinion.rejects_contention_ids:
-        if ref not in contention_ids:
-            problems.append(
-                f"medical opinion '{opinion.id}' rejects unknown contention '{ref}'"
-            )
-    for ref in sorted(
-        set(opinion.endorses_contention_ids) & set(opinion.rejects_contention_ids)
-    ):
-        problems.append(
-            f"medical opinion '{opinion.id}' both endorses and rejects contention '{ref}'"
-        )
+    disposition_collections: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("endorses", opinion.endorses_contention_ids),
+        ("concurs with", opinion.concurs_with_contention_ids),
+        ("rejects", opinion.rejects_contention_ids),
+        ("defers", opinion.defers_contention_ids),
+    )
+    for verb, refs in disposition_collections:
+        for ref in refs:
+            if ref not in contention_ids:
+                problems.append(
+                    f"medical opinion '{opinion.id}' {verb} unknown contention '{ref}'"
+                )
+    # R26: the four disposition collections are pairwise disjoint. The
+    # endorses/rejects pair keeps its exact M2 template.
+    for index, (verb_a, refs_a) in enumerate(disposition_collections):
+        for verb_b, refs_b in disposition_collections[index + 1 :]:
+            for ref in sorted(set(refs_a) & set(refs_b)):
+                problems.append(
+                    f"medical opinion '{opinion.id}' both {verb_a} and {verb_b} "
+                    f"contention '{ref}'"
+                )
     return problems
 
 
@@ -786,6 +982,110 @@ def _opinion_chain(
                     problems.append(
                         f"medical opinion chain contains a cycle: {chain}"
                     )
+    return problems
+
+
+def _psych_kind_anchoring(
+    ledger: MedicalAssertionLedger,
+    history: AssertionWorldProjection,
+    context: AssertionValidationContext,
+) -> list[str]:
+    """R6: a contention or opinion psych kind requires a psychiatric anchor.
+
+    The anchor is a psychiatric target condition, a psyche target body part, a
+    psyche claim body part, or (for an opinion) a referenced psychiatric
+    contention. Divergence among the world condition, contention and opinion
+    KINDS is legal case content and never lands here — only a psych
+    classification with nothing psychiatric anywhere near it is incoherent.
+
+    Version-safe on the truth path by construction (Amendment A1): channel
+    ``1.0.0`` omits ``psych_injury_kind``, so a parsed ledger carries ``None``
+    everywhere and every clause below is inert — the AJC-61-representable rule
+    set, without guessing omitted values.
+    """
+    problems: list[str] = []
+    psyche_claimed = "psyche" in context.current_body_parts
+
+    def psychiatric_target(condition_id: str | None) -> bool:
+        if condition_id is None:
+            return False
+        condition = history.condition(condition_id)
+        return condition is not None and condition.body_system == "psychiatric"
+
+    def psychiatric_contention(contention: Contention) -> bool:
+        return (
+            contention.psych_injury_kind is not None
+            or contention.claim_type == "psych_add_on"
+            or contention.target_body_part == "psyche"
+            or psychiatric_target(contention.target_condition_id)
+        )
+
+    for contention in ledger.contentions:
+        if contention.psych_injury_kind is None:
+            continue
+        if (
+            psychiatric_target(contention.target_condition_id)
+            or contention.target_body_part == "psyche"
+            or psyche_claimed
+        ):
+            continue
+        problems.append(
+            f"contention '{contention.id}' sets psych_injury_kind "
+            f"'{contention.psych_injury_kind}' without a psychiatric target "
+            "condition, a psyche target body part, or a psyche claim body part"
+        )
+    for opinion in ledger.medical_opinions:
+        if opinion.psych_injury_kind is None:
+            continue
+        if psyche_claimed or any(
+            psychiatric_target(ref) for ref in opinion.reviewed_condition_ids
+        ):
+            continue
+        referenced = (
+            *opinion.endorses_contention_ids,
+            *opinion.concurs_with_contention_ids,
+            *opinion.rejects_contention_ids,
+            *opinion.defers_contention_ids,
+        )
+        if any(
+            (found := ledger.contention(ref)) is not None
+            and psychiatric_contention(found)
+            for ref in referenced
+        ):
+            continue
+        problems.append(
+            f"medical opinion '{opinion.id}' sets psych_injury_kind "
+            f"'{opinion.psych_injury_kind}' without a psychiatric reviewed "
+            "condition, a psyche claim body part, or a referenced psychiatric "
+            "contention"
+        )
+    return problems
+
+
+def _response_opinion_structure(ledger: MedicalAssertionLedger) -> list[str]:
+    """R37's cross-opinion structure: a response keeps its predecessor's author.
+
+    The single-model half (revision kind, predecessor reference, no fresh
+    examination, nonempty reasoning) lives on the model validator; what needs
+    the ledger is the author-role parity between a supplemental or deposition
+    opinion and the exact predecessor it responds to. Inert on a parsed
+    channel-``1.0.0`` ledger, where ``event_kind`` is always ``base_report``.
+    """
+    problems: list[str] = []
+    for opinion in ledger.medical_opinions:
+        if opinion.event_kind == "base_report":
+            continue
+        if opinion.responds_to_opinion_id is None:
+            continue  # the model validator already rejected this shape
+        predecessor = ledger.opinion(opinion.responds_to_opinion_id)
+        if predecessor is not None and predecessor.author_role != opinion.author_role:
+            problems.append(
+                f"medical opinion '{opinion.id}' has author_role "
+                f"'{opinion.author_role}' but its predecessor "
+                f"'{predecessor.id}' has author_role "
+                f"'{predecessor.author_role}'; a supplemental or deposition "
+                "opinion keeps its predecessor's author"
+            )
     return problems
 
 
@@ -1015,6 +1315,8 @@ def validate_medical_assertions(
     for assertion in ledger.apportionment_assertions:
         problems.extend(_assertion_referential(assertion, history, ledger))
     problems.extend(_opinion_chain(ledger, context))
+    problems.extend(_psych_kind_anchoring(ledger, history, context))
+    problems.extend(_response_opinion_structure(ledger))
     problems.extend(_lifecycle(ledger))
     problems.extend(_grounding_typing(ledger))
     problems.extend(_apportionment_shape(ledger))
@@ -2033,16 +2335,18 @@ def _explicit_reference_problems(scenario: object) -> list[str]:
     opinion_ids = {e.id for e in scenario.medical_opinions}  # type: ignore[attr-defined]
     problems: list[str] = []
     for opinion in scenario.medical_opinions:  # type: ignore[attr-defined]
-        for ref in opinion.endorses_contention_ids:
-            if ref not in contention_ids:
-                problems.append(
-                    f"medical opinion '{opinion.id}' endorses unknown contention '{ref}'"
-                )
-        for ref in opinion.rejects_contention_ids:
-            if ref not in contention_ids:
-                problems.append(
-                    f"medical opinion '{opinion.id}' rejects unknown contention '{ref}'"
-                )
+        for verb, refs in (
+            ("endorses", opinion.endorses_contention_ids),
+            ("concurs with", opinion.concurs_with_contention_ids),
+            ("rejects", opinion.rejects_contention_ids),
+            ("defers", opinion.defers_contention_ids),
+        ):
+            for ref in refs:
+                if ref not in contention_ids:
+                    problems.append(
+                        f"medical opinion '{opinion.id}' {verb} unknown "
+                        f"contention '{ref}'"
+                    )
         for verb, ref in (
             ("responds to", opinion.responds_to_opinion_id),
             ("supersedes", opinion.supersedes_opinion_id),
@@ -2050,6 +2354,22 @@ def _explicit_reference_problems(scenario: object) -> list[str]:
             if ref is not None and ref != opinion.id and ref not in opinion_ids:
                 problems.append(
                     f"medical opinion '{opinion.id}' {verb} unknown opinion '{ref}'"
+                )
+    for document in scenario.contention_documents:  # type: ignore[attr-defined]
+        for label, ref in (
+            ("medical_opinion_id", document.medical_opinion_id),
+            ("target_medical_opinion_id", document.target_medical_opinion_id),
+        ):
+            if ref is not None and ref not in opinion_ids:
+                problems.append(
+                    f"contention document '{document.id}' references unknown "
+                    f"medical opinion '{ref}' as {label}"
+                )
+        for ref in document.spoken_contention_ids:
+            if ref not in contention_ids:
+                problems.append(
+                    f"contention document '{document.id}' speaks unknown "
+                    f"contention '{ref}'"
                 )
     for assertion in scenario.apportionment_assertions:  # type: ignore[attr-defined]
         if assertion.opinion_id not in opinion_ids:
@@ -2087,6 +2407,7 @@ def _contention_from_entry(entry: object) -> Contention:
         treatment_causation=entry.treatment_causation,  # type: ignore[attr-defined]
         requested_apportionment=entry.requested_apportionment,  # type: ignore[attr-defined]
         groundings=_groundings_tuple(entry),
+        psych_injury_kind=entry.psych_injury_kind,  # type: ignore[attr-defined]
         quality="supported",
     )
 
@@ -2110,6 +2431,13 @@ def _opinion_from_entry(entry: object) -> MedicalOpinion:
         supersedes_opinion_id=entry.supersedes_opinion_id,  # type: ignore[attr-defined]
         rationale=entry.rationale,  # type: ignore[attr-defined]
         revision_rationale=entry.revision_rationale,  # type: ignore[attr-defined]
+        event_kind=entry.event_kind,  # type: ignore[attr-defined]
+        revision_kind=entry.revision_kind,  # type: ignore[attr-defined]
+        concurs_with_contention_ids=tuple(entry.concurs_with_contention_ids),  # type: ignore[attr-defined]
+        defers_contention_ids=tuple(entry.defers_contention_ids),  # type: ignore[attr-defined]
+        psych_injury_kind=entry.psych_injury_kind,  # type: ignore[attr-defined]
+        aoe_coe_finding=entry.aoe_coe_finding,  # type: ignore[attr-defined]
+        aoe_coe_rationale=entry.aoe_coe_rationale,  # type: ignore[attr-defined]
         quality="supported",
     )
 
@@ -3485,6 +3813,7 @@ __all__ = [
     "ASSERTION_RNG_FAMILIES",
     "ASSERTION_RNG_NAMESPACE",
     "BASIS_RULE_CONFIDENCE",
+    "CDOC_ID_PATTERN",
     "COMMON_NONINDUSTRIAL_PERCENTAGES",
     "CONTENTION_ID_PATTERN",
     "EVIDENCE_BUDGET_MIX",
@@ -3493,6 +3822,7 @@ __all__ = [
     "OPINION_ID_PATTERN",
     "REVIEWED_IDS_COMBINED_CAP",
     "UNCONDITIONAL_HARD_INVALID_BASES",
+    "AoeCoeFinding",
     "ApportionmentAssertion",
     "ApportionmentBasisKind",
     "ApportionmentDeterminationKind",
@@ -3506,21 +3836,30 @@ __all__ = [
     "BensonGrounding",
     "Contention",
     "ContentionClaimType",
+    "ContentionDocumentBinding",
+    "ContentionDocumentKind",
     "ContentionParty",
     "ContentionPosition",
+    "ContestPath",
+    "DefenseContestTheory",
     "DoctrineGrounding",
     "EvidenceDisposition",
     "FirefighterPresumptionGrounding",
     "Lc4664PriorAwardGrounding",
     "MedicalAssertionError",
     "MedicalAssertionLedger",
+    "MedicalAssertionPlan",
     "MedicalOpinion",
     "OpinionAuthorRole",
+    "OpinionContentionDisposition",
+    "OpinionEventKind",
     "OpinionReportStage",
+    "OpinionRevisionKind",
     "ProjectedCondition",
     "ProjectedPriorAward",
     "ProjectedPriorClaim",
     "PsychAddOnExceptionAnalysis",
+    "PsychInjuryKind",
     "RequestedApportionment",
     "SibtfGrounding",
     "TreatmentCausation",
