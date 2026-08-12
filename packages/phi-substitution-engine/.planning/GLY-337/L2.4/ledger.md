@@ -61,3 +61,15 @@ Mutation evidence (tree @ d0e146c): DURABLE-ROLLBACK (kills both replay + late-f
 FLUSH-LOST-COMMIT, + re-confirmed moved spool guards F1-NONATOMIC, REUSE-GCM-NONCE, DURABLE-MAPPING-STEAL.
 25 guards proven total (5 core + 4 fr1 + 4 fr2 + 2 fr3 + 10 AAD injectivity).
 Gate round-3 dispositions on my triage: F2 verified fixed; F3 AGREED (reject); F4 AGREED (C2 amendment).
+
+## Gate round 4 (BLOCK) — `l2.4-gate5.out`, gpt-5.6-sol, ~170K tokens. VERIFIED both fix-round-3 durability fixes + all 7 axes; one HIGH:
+- F(4th)-1 HIGH — `#handleSeq`/`#publishSeq`/`ordinal`/`#commitOrdinal` were IEEE-754 `number`; at 2^53
+  `+= 1` no longer changes the value → repeated commit/prepared handles (commit-index overwrite; a pending
+  older flush flushes a later commit's ctx and returns success while its own claim stays unflushed) and
+  tied ordinals (strict `>` can't advance the durable pointer for a newer publication). In scope (no
+  poisoning — pure sequence exhaustion). → FIX.
+Fix round 4 (commit `ecc3749`): converted all four to `bigint` (arbitrary precision — the nonce counter
+was already bigint). tsc now enforces the bigint discipline throughout, so a regression to `number` fails
+typecheck; a literal 2^53 exhaustion oracle is infeasible and moot (no representable saturation). Store
+unchanged. tsc clean, 306 tests. MUT-DURABLE-ROLLBACK re-confirmed red with bigint ordinals.
+Gate round-4 dispositions: F(3rd)-1 rollback fix VERIFIED; F(3rd)-2 lost-commit fix VERIFIED; all other axes clear.
