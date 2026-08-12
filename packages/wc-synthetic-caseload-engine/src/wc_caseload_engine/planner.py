@@ -91,6 +91,8 @@ from wc_caseload_engine.medical_story import (
     CONTENTION_DOCUMENT_KIND_KEY,
     CONTENTION_LOOP_SOURCE_KEY,
     CONTENTION_LOOP_WARNING_PREFIX,
+    MedicalStoryPlan,
+    derive_medical_story,
     plan_medical_story_documents,
 )
 from wc_caseload_engine.money import MoneyFacts, derive_money_facts
@@ -220,6 +222,17 @@ class CasePlan:
     surface: the truth manifest's ``assertions`` channel — its ``quality``
     grades never reach ``case_facts.yaml``, ``manifest.json``, a rendered
     document, a warning, a filename or a log.
+    """
+
+    medical_story: MedicalStoryPlan | None = None
+    """Every governed document's label-free story projection (AJC-62 R4).
+
+    ``None`` exactly when ``scenario.medical_history`` is absent — the R1 gate.
+    Internal render state only: nothing writes it to ``case_facts.yaml``,
+    ``manifest.json``, copied seed YAML, a filename, a warning or a log. Its
+    single consumer is the renderer, which hands each governed document its own
+    :class:`~wc_caseload_engine.medical_story.DocumentMedicalStory` by final
+    document index.
     """
 
     money_facts: MoneyFacts | None = None
@@ -2433,6 +2446,12 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
             )
         )
 
+    # R3/R4: the story projection runs LAST, over the final dated, controlled,
+    # perspective-resolved, sorted and indexed document tuple. Pure — on the
+    # medical-story-absent path it returns None before constructing anything.
+    medical_story = derive_medical_story(
+        seed, medical_history, medical_assertions, documents
+    )
 
     emitted = _emitted_per_track(
         documents, [track.documents for track in lien_tracks] + [recon.documents]
@@ -2542,6 +2561,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         money_facts=money_facts,
         medical_history=medical_history,
         medical_assertions=medical_assertions,
+        medical_story=medical_story,
     )
 
 

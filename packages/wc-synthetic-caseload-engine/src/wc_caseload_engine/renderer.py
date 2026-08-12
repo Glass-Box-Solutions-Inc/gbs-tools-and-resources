@@ -245,7 +245,12 @@ def template_label(class_name: str, variant: str | None) -> str:
     return f"{class_name}/{variant}" if variant else class_name
 
 
-def _load_template(subtype: str, *, fact_aware: bool = False) -> tuple[type, str | None, str]:
+def _load_template(
+    subtype: str,
+    *,
+    fact_aware: bool = False,
+    template_subtype: str | None = None,
+) -> tuple[type, str | None, str]:
     """Resolve a subtype to (template class, variant, class name).
 
     When *fact_aware* and the subtype is registered in
@@ -254,12 +259,20 @@ def _load_template(subtype: str, *, fact_aware: bool = False) -> tuple[type, str
     unregistered takes the original path unchanged — that is what keeps a case
     with no fact-aware subtype byte-identical to 0.2.0.
 
+    ``template_subtype`` is AJC-62's internal substrate dispatch key (R2): when
+    present, the substrate class and registry variant are resolved from IT —
+    that is how an ``ADVOCACY_LETTERS_PTP_QME_AME`` manifest carrier reaches
+    the registered ``Objection to QME/AME Report`` variant — while the
+    canonical subtype keeps naming the manifest, the filename and the
+    fact-aware registration. Template provenance records the actually resolved
+    class/variant.
+
     The reported ``class_name`` stays the *substrate* class either way, because
     it is the manifest's ``template`` provenance string and the subclass renders
     the same document through the same base. The subclass is not a fallback and
     must not read as one.
     """
-    class_name, variant = resolve_template(subtype)
+    class_name, variant = resolve_template(template_subtype or subtype)
     if fact_aware:
         from wc_caseload_engine.fact_templates import fact_aware_templates
 
@@ -281,6 +294,221 @@ def _title_for(subtype: str, taxonomy_label: str | None) -> str:
 def _md5(payload: bytes) -> str:
     """MD5 of file bytes (manifest checksum field)."""
     return hashlib.md5(payload, usedforsecurity=False).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# AJC-62 (M3) — the AJC-65 and AJC-66 governance seams (R12/R13, R77 step 7)
+# ---------------------------------------------------------------------------
+
+AJC66_LETTER_TEMPLATE_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "ADVOCACY_LETTERS_PTP",
+        "ADVOCACY_LETTERS_QME",
+        "ADVOCACY_LETTERS_AME",
+        "ADVOCACY_LETTERS_PTP_QME_AME",
+        "OBJECTION_TO_QME_AME_REPORT",
+        "REQUEST_SUPPLEMENTAL_QME_AME_REPORT",
+    }
+)
+"""Template subtypes whose registered AJC-66 variant family is ``letter`` (R2)."""
+
+AJC66_DEPOSITION_TEMPLATE_SUBTYPES: frozenset[str] = frozenset(
+    {
+        "DEPOSITION_TRANSCRIPT_QME_AME",
+    }
+)
+"""Template subtypes whose registered AJC-66 family is ``deposition_transcript``."""
+
+
+def ajc66_variant_content(template_subtype: str | None) -> dict[str, bool] | None:
+    """R13 — the family-scoped AJC-66 switch for one internal dispatch key.
+
+    Only the applicable namespaced switch is ever set: ``{"letter": True}``
+    for the advocacy/objection/request registered variants and
+    ``{"deposition_transcript": True}`` for the QME/AME deposition. M3 never
+    sets global ``True`` — under the substrate's namespaced contract a global
+    switch would opt diagnostic, hospital and deposition-notice families into
+    variant content in documents whose author never asked for any of it —
+    and a key that is absent, ``False`` or ``{}`` reads as off everywhere.
+    ``None`` means "set nothing": supplemental-report carriers and every
+    non-loop dispatch stay exactly as they were.
+    """
+    if template_subtype in AJC66_LETTER_TEMPLATE_SUBTYPES:
+        return {"letter": True}
+    if template_subtype in AJC66_DEPOSITION_TEMPLATE_SUBTYPES:
+        return {"deposition_transcript": True}
+    return None
+
+
+def _row_basis_text(row: Any) -> str:
+    """The stated basis for one apportionment row, from its semantic fields."""
+    if row.description:
+        return str(row.description)
+    if row.basis_kinds:
+        return ", ".join(kind.replace("_", " ") for kind in row.basis_kinds)
+    return "nonindustrial factors"
+
+
+def _single_row_opinion(row: Any) -> str:
+    """A determined single-split conclusion, composed from semantic fields only."""
+    part = row.body_part.replace("_", " ")
+    sentences = [
+        f"As to the {part}, {row.nonindustrial_percent} percent of the current "
+        f"permanent disability is apportioned to {_row_basis_text(row)} and "
+        f"{row.industrial_percent} percent is caused by the industrial injury, "
+        "per Labor Code sections 4663 and 4664."
+    ]
+    if row.causal_rationale:
+        sentences.append(str(row.causal_rationale))
+    if row.percentage_rationale:
+        sentences.append(str(row.percentage_rationale))
+    if row.reasonable_medical_probability:
+        sentences.append(
+            "This apportionment is stated to a reasonable degree of medical "
+            "probability."
+        )
+    return " ".join(sentences)
+
+
+def _plural_row_sentences(rows: Sequence[Any]) -> list[str]:
+    """One per-body-part sentence per row, in ledger order."""
+    sentences = []
+    for row in rows:
+        part = row.body_part.replace("_", " ")
+        sentences.append(
+            f"As to the {part}, {row.nonindustrial_percent} percent of the "
+            f"permanent disability is apportioned to {_row_basis_text(row)} "
+            f"and {row.industrial_percent} percent is caused by the "
+            "industrial injury."
+        )
+    return sentences
+
+
+def _ajc65_apportionment_block(
+    opinion: Any, rows: Sequence[Any]
+) -> dict[str, Any] | None:
+    """R12 — the frozen opinion-state → AJC-65 projection mapping.
+
+    Lossless by construction: every branch renders exactly the semantic state
+    the ledger carries, and no branch invents a number the evaluator never
+    stated. ``None`` means the opinion does not govern apportionment (an
+    ``omitted`` state), so the substrate's own legacy behaviour stands.
+    """
+    if opinion.apportionment_state == "deferred":
+        # Deferred: register only, no percentage — the substrate renders its
+        # own §4663/§4664 reservation language from the register.
+        return {"register": "deferred"}
+    if opinion.determination_kind == "no_nonindustrial_share":
+        reasoned = opinion.determination_rationale or (
+            "The entire permanent disability is caused by the industrial "
+            "injury. This conclusion rests on the history obtained, the "
+            "records reviewed, and the examination findings documented in "
+            "this report."
+        )
+        return {"register": "none", "nonindustrial_pct": 0, "opinion": reasoned}
+    if opinion.determination_kind == "unable_to_approximate":
+        # Prose-only: no percentage exists and none may be invented.
+        prose = opinion.determination_rationale or (
+            "The relative contributions of industrial and nonindustrial "
+            "factors to the current permanent disability cannot be "
+            "approximated on this record within reasonable medical "
+            "probability, and no percentage allocation is stated."
+        )
+        return {"opinion": prose}
+    if not rows:
+        return None
+    if len(rows) == 1:
+        row = rows[0]
+        return {
+            "register": "apportioned",
+            "nonindustrial_pct": row.nonindustrial_percent,
+            "basis": _row_basis_text(row),
+            "opinion": _single_row_opinion(row),
+        }
+    shares = {row.nonindustrial_percent for row in rows}
+    if len(shares) == 1:
+        common = rows[0].nonindustrial_percent
+        return {
+            "register": "apportioned",
+            "nonindustrial_pct": common,
+            "basis": _row_basis_text(rows[0]),
+            "opinion": " ".join(
+                [
+                    f"For each body part addressed below, {common} percent of "
+                    "the permanent disability is apportioned to nonindustrial "
+                    "factors per Labor Code sections 4663 and 4664.",
+                    *_plural_row_sentences(rows),
+                ]
+            ),
+        }
+    # R12 — heterogeneous plural rows are PROSE-ONLY. The rows carry different
+    # nonindustrial percentages, so no single scalar exists: an average, a
+    # maximum, a first row or a "primary" body part would each state a split
+    # the evaluator never made. AJC-65 suppresses its scalar impairment block
+    # on a prose-only opinion, and the wcce subclass renders the body-part
+    # table in its place.
+    return {
+        "opinion": " ".join(
+            [
+                "Apportionment of permanent disability is determined "
+                "separately for each body part, per Labor Code sections 4663 "
+                "and 4664.",
+                *_plural_row_sentences(rows),
+            ]
+        )
+    }
+
+
+def _ajc65_causation_block(opinion: Any) -> dict[str, str]:
+    """R12 — the causation projection for one bound medical opinion."""
+    discussion: str | None = None
+    if opinion.aoe_coe_rationale:
+        discussion = str(opinion.aoe_coe_rationale)
+    elif opinion.aoe_coe_finding == "nonindustrial":
+        discussion = (
+            "It is my opinion, within reasonable medical probability, that "
+            "the current condition did not arise out of and in the course of "
+            "employment. The available history, records, and examination "
+            "findings do not establish industrial causation."
+        )
+    elif opinion.aoe_coe_finding == "deferred":
+        discussion = (
+            "The determination of whether the condition arose out of and in "
+            "the course of employment is deferred pending receipt and review "
+            "of the outstanding records identified in this report."
+        )
+    elif opinion.rationale:
+        discussion = str(opinion.rationale)
+    attribution = (
+        "entirely"
+        if opinion.determination_kind == "no_nonindustrial_share"
+        else "predominantly"
+    )
+    block: dict[str, str] = {"attribution": attribution}
+    if discussion:
+        block["discussion"] = discussion
+    return block
+
+
+def ajc65_story_governance(story: Any) -> dict[str, dict[str, Any]]:
+    """R12 — the AJC-65 context blocks for one document's bound opinion.
+
+    Empty for a history-only document: with no bound opinion there is nothing
+    to govern, and the substrate's own draws stand exactly as they did. The
+    same returned objects govern the impairment and conclusion call sites,
+    because the substrate parses this context once and renders both sections
+    from the single parsed decision.
+    """
+    opinion = getattr(story, "medical_opinion", None)
+    if opinion is None:
+        return {}
+    governance: dict[str, dict[str, Any]] = {
+        "causation": _ajc65_causation_block(opinion)
+    }
+    apportionment = _ajc65_apportionment_block(opinion, tuple(story.apportionments))
+    if apportionment is not None:
+        governance["apportionment"] = apportionment
+    return governance
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +620,10 @@ def render_document(
     report_ordinal: int | None = None,
     letter_ordinal: int | None = None,
     cadence_anchors: tuple[tuple[str, date], ...] = (),
+    template_subtype: str | None = None,
+    medical_story: Any = None,
+    contention_actor_party: str | None = None,
+    defense_contest_theories: Sequence[str] = (),
 ) -> RenderResult:
     """Render one planned document to *out_path*, reproducibly.
 
@@ -416,6 +648,19 @@ def render_document(
             templates all delegate straight to the substrate on ``None``, so a
             case with no money layer renders through the unmodified path even
             for the subtypes the money registry claims.
+        template_subtype: AJC-62's internal substrate dispatch key (R2), or
+            ``None`` for every pre-M3 document. Resolves the substrate class
+            and registry variant while ``subtype`` stays the canonical
+            manifest carrier.
+        medical_story: this document's
+            :class:`~wc_caseload_engine.medical_story.DocumentMedicalStory`,
+            or ``None``. ``None`` is the exact pre-M3 render path: no new
+            context key, no AJC-65 block, no AJC-66 switch (R1).
+        contention_actor_party: the bound acting party for a contention-loop
+            communication or deposition, threaded to the subclasses through
+            the story context (R14/R35).
+        defense_contest_theories: the bound defense theories, in their frozen
+            tuple order (R30).
 
     Returns:
         A :class:`RenderResult` with the checksum and size for the manifest.
@@ -423,7 +668,11 @@ def render_document(
     _ensure_invariant()
     models = import_substrate("data.models")
 
-    template_class, variant, class_name = _load_template(subtype, fact_aware=case_facts is not None)
+    template_class, variant, class_name = _load_template(
+        subtype,
+        fact_aware=case_facts is not None,
+        template_subtype=template_subtype,
+    )
     output_format = models.OutputFormat(doc_format if doc_format != "scanned_pdf" else "pdf")
 
     # Canonicalize before anything is decided by it. ``render_document`` is
@@ -504,6 +753,29 @@ def render_document(
         context["author_role"] = author_role
     if recipient_role:
         context["recipient_role"] = recipient_role
+
+    if medical_story is not None:
+        # AJC-62 (M3). Every key below is gated on the story's presence: the
+        # medical-story-absent path constructs no new renderer context key,
+        # no AJC-65 block and no AJC-66 switch (R1).
+        context["medical_story"] = medical_story
+        context["medical_story_firms"] = {
+            "applicant": cast.applicant_firm,
+            "defense": cast.defense_firm,
+        }
+        if contention_actor_party is not None:
+            context["contention_actor_party"] = contention_actor_party
+        if defense_contest_theories:
+            context["defense_contest_theories"] = tuple(defense_contest_theories)
+        # R12 — the AJC-65 seam: causation and apportionment derived from the
+        # bound opinion through the frozen state mapping. The same parsed
+        # objects govern the impairment and conclusion call sites.
+        context.update(ajc65_story_governance(medical_story))
+        # R13 — the AJC-66 seam: only the bound letter or deposition family
+        # activates, and only through its namespaced switch.
+        variant_switch = ajc66_variant_content(template_subtype)
+        if variant_switch is not None:
+            context["variant_content"] = variant_switch
 
     spec = _DocumentSpec(
         subtype=_SubtypeProxy(subtype),
@@ -609,12 +881,16 @@ def render_document(
 
 
 __all__ = [
+    "AJC66_DEPOSITION_TEMPLATE_SUBTYPES",
+    "AJC66_LETTER_TEMPLATE_SUBTYPES",
     "DOCTRINE_CLASS_SUFFIX",
     "FORMAT_EXTENSIONS",
     "GENERIC_TEMPLATE_CLASS",
     "MIME_TYPES",
     "OVERLAY_TEMPLATES",
     "RenderResult",
+    "ajc65_story_governance",
+    "ajc66_variant_content",
     "choose_format",
     "doctrine_flowables",
     "doctrine_template_class",

@@ -31,7 +31,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -45,14 +45,17 @@ from wc_caseload_engine.lifecycle_bridge import (
 )
 from wc_caseload_engine.medical_assertions import (
     AoeCoeFinding,
+    ApportionmentAssertion,
     ApportionmentBasisKind,
     ApportionmentDeterminationKind,
     ApportionmentState,
+    Contention,
     ContentionClaimType,
     ContentionDocumentBinding,
     ContentionParty,
     ContentionPosition,
     MedicalAssertionError,
+    MedicalAssertionLedger,
     MedicalAssertionPlan,
     MedicalOpinion,
     OpinionAuthorRole,
@@ -63,8 +66,18 @@ from wc_caseload_engine.medical_assertions import (
     RequestedApportionment,
     TreatmentCausation,
 )
-from wc_caseload_engine.medical_history import PsychInjuryKind
+from wc_caseload_engine.medical_history import (
+    ApplicantDemographics,
+    MedicalCondition,
+    MedicalHistory,
+    PriorAward,
+    PriorClaim,
+    PsychInjuryKind,
+)
 from wc_caseload_engine.seeds import CaseSeed, DoctrineGrounding, DoctrineHook, UrDecision
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard (planner imports us)
+    from wc_caseload_engine.planner import PlannedDocument
 
 type ContentionSurface = Literal[
     "advocacy",
@@ -1049,6 +1062,453 @@ def plan_medical_story_documents(
     return StoryDocumentPlanning(candidates=tuple(out), warnings=tuple(warnings))
 
 
+# ---------------------------------------------------------------------------
+# R4/R5/R10 — derive_medical_story(): the pure, label-free document projection
+# (R77 step 7)
+# ---------------------------------------------------------------------------
+# Runs after the final document tuple is dated, controlled, perspective-
+# resolved, sorted and indexed (R3). It is a pure projection: no RNG, no
+# ledger mutation, no draw. Content is resolved from the explicit R5/R35
+# bindings only — never a nearest date, report ordinal, subtype coincidence
+# or collection order — and every projection below uses an explicit field
+# allowlist so a future truth-only field cannot leak by default (R4).
+
+#: R2/R35 — the exact canonical-manifest-carrier / internal-template pair per
+#: governed contention communication surface. The FIRST member of each pair is
+#: what ``manifest.json``, filenames and controls see; the SECOND is internal
+#: render state that resolves the registered substrate variant. The order is
+#: load-bearing: swapping a pair would put a substrate-only registry key into
+#: the manifest vocabulary, which is the one thing the manifest promises never
+#: to contain.
+CONTENTION_SURFACE_TEMPLATE_PAIRS: Mapping[ContentionSurface, tuple[str, str]] = {
+    "objection": ("ADVOCACY_LETTERS_PTP_QME_AME", "OBJECTION_TO_QME_AME_REPORT"),
+    "supplemental_request": (
+        "ADVOCACY_LETTERS_PTP_QME_AME",
+        "REQUEST_SUPPLEMENTAL_QME_AME_REPORT",
+    ),
+    "qme_deposition": ("DEPOSITION_TRANSCRIPT", "DEPOSITION_TRANSCRIPT_QME_AME"),
+}
+
+#: R10 — the parent types whose earlier planned documents a governed report's
+#: records review may cite. ``cadence_anchors`` remains untouched; expanding
+#: ``CADENCE_ANCHOR_SUBTYPES`` would alter attorney-letter timing (R10).
+RECORD_REFERENCE_PARENT_TYPES: frozenset[str] = frozenset(
+    {"MEDICAL_CLINICAL", "MEDICAL_LEGAL"}
+)
+
+_REPORT_SURFACE_SETS: tuple[frozenset[str], ...] = (
+    INITIAL_MEDLEGAL_SURFACES,
+    PSYCH_MEDLEGAL_SURFACES,
+    SUPPLEMENTAL_MEDLEGAL_SURFACES,
+    PTP_CAUSATION_SURFACES,
+)
+
+
+def _is_governed_document(document: PlannedDocument) -> bool:
+    """Whether *document* is an R8 medical-story surface.
+
+    Report surfaces are governed whenever the gate is open — a history-present
+    case gets history-only expression on them even without a bound opinion
+    (R1). Communications are governed only through their bound
+    ``contention_surface``: an unbound legacy advocacy letter and an ordinary
+    applicant/employer/witness deposition keep their exact pre-M3 path (R8).
+    """
+    if any(document.subtype in surface_set for surface_set in _REPORT_SURFACE_SETS):
+        return True
+    if document.subtype in ADVOCACY_LETTER_SURFACES:
+        return document.contention_surface in (
+            "advocacy",
+            "objection",
+            "supplemental_request",
+        )
+    if document.subtype == "DEPOSITION_TRANSCRIPT":
+        return document.contention_surface == "qme_deposition"
+    return False
+
+
+def _project_demographics(demographics: ApplicantDemographics) -> StoryDemographics:
+    """R4 — the explicit demographic allowlist."""
+    return StoryDemographics(
+        age=demographics.age,
+        sex=demographics.sex,
+        bmi_band=demographics.bmi_band,
+        smoking_status=demographics.smoking_status,
+    )
+
+
+def _project_condition(condition: MedicalCondition) -> StoryCondition:
+    """R4 — the explicit condition allowlist.
+
+    Deliberately narrower than the world record: no ``causal_ground_truth``,
+    no ``wholly_unrelated``, no ``surfaces_in_file``, no world
+    ``psych_injury_kind`` — visibility is decided by the projector and causal
+    truth never reaches a document.
+    """
+    return StoryCondition(
+        id=condition.id,
+        label=condition.label,
+        body_system=condition.body_system,
+        body_part=condition.body_part,
+        icd10=condition.icd10,
+        onset=condition.onset,
+        severity=condition.severity,
+        trajectory=condition.trajectory,
+        symptomatic_before_doi=condition.symptomatic_before_doi,
+        billing_coded=condition.billing_coded,
+    )
+
+
+def _project_prior_claim(claim: PriorClaim) -> StoryPriorClaim:
+    """R4 — the explicit prior-claim allowlist."""
+    return StoryPriorClaim(
+        id=claim.id,
+        date_of_injury=claim.date_of_injury,
+        body_parts=claim.body_parts,
+        resolution_type=claim.resolution_type,
+    )
+
+
+def _project_prior_award(award: PriorAward, prior_claim_id: str) -> StoryPriorAward:
+    """R4 — the explicit prior-award allowlist."""
+    return StoryPriorAward(
+        id=award.id,
+        prior_claim_id=prior_claim_id,
+        body_parts=award.body_parts,
+        pd_percent=award.pd_percent,
+        award_date=award.award_date,
+        resolution_type=award.resolution_type,
+        conclusively_presumed=award.still_exists_conclusively_presumed,
+    )
+
+
+def _project_contention(contention: Contention) -> StoryContention:
+    """R4 — the explicit contention allowlist: every semantic field, never
+    ``quality``."""
+    return StoryContention(
+        id=contention.id,
+        claim_type=contention.claim_type,
+        party=contention.party,
+        position=contention.position,
+        target_condition_id=contention.target_condition_id,
+        target_prior_claim_id=contention.target_prior_claim_id,
+        target_prior_award_id=contention.target_prior_award_id,
+        target_body_part=contention.target_body_part,
+        doctrine_hooks=contention.doctrine_hooks,
+        rationale=contention.rationale,
+        treatment_causation=contention.treatment_causation,
+        requested_apportionment=contention.requested_apportionment,
+        groundings=contention.groundings,
+        psych_injury_kind=contention.psych_injury_kind,
+    )
+
+
+def _project_opinion(opinion: MedicalOpinion) -> StoryMedicalOpinion:
+    """R4 — the explicit opinion-projection allowlist.
+
+    Every semantic ``MedicalOpinion`` field, stated literally, and never
+    ``quality``: an unrestricted ``model_dump()`` followed by removal would
+    let a future truth-only field leak by default, which is exactly the
+    failure mode this block exists to make impossible.
+    """
+    return StoryMedicalOpinion(
+        id=opinion.id,
+        author_role=opinion.author_role,
+        report_stage=opinion.report_stage,
+        report_date=opinion.report_date,
+        apportionment_state=opinion.apportionment_state,
+        determination_kind=opinion.determination_kind,
+        determination_rationale=opinion.determination_rationale,
+        examination_performed=opinion.examination_performed,
+        reviewed_condition_ids=opinion.reviewed_condition_ids,
+        reviewed_prior_claim_ids=opinion.reviewed_prior_claim_ids,
+        reviewed_prior_award_ids=opinion.reviewed_prior_award_ids,
+        endorses_contention_ids=opinion.endorses_contention_ids,
+        concurs_with_contention_ids=opinion.concurs_with_contention_ids,
+        rejects_contention_ids=opinion.rejects_contention_ids,
+        defers_contention_ids=opinion.defers_contention_ids,
+        responds_to_opinion_id=opinion.responds_to_opinion_id,
+        supersedes_opinion_id=opinion.supersedes_opinion_id,
+        rationale=opinion.rationale,
+        revision_rationale=opinion.revision_rationale,
+        event_kind=opinion.event_kind,
+        revision_kind=opinion.revision_kind,
+        psych_injury_kind=opinion.psych_injury_kind,
+        aoe_coe_finding=opinion.aoe_coe_finding,
+        aoe_coe_rationale=opinion.aoe_coe_rationale,
+    )
+
+
+def _project_apportionment(assertion: ApportionmentAssertion) -> StoryApportionment:
+    """R4 — the explicit apportionment allowlist: every semantic field, never
+    ``quality``."""
+    return StoryApportionment(
+        id=assertion.id,
+        opinion_id=assertion.opinion_id,
+        body_part=assertion.body_part,
+        industrial_percent=assertion.industrial_percent,
+        nonindustrial_percent=assertion.nonindustrial_percent,
+        basis_kinds=assertion.basis_kinds,
+        condition_ids=assertion.condition_ids,
+        prior_claim_ids=assertion.prior_claim_ids,
+        prior_award_ids=assertion.prior_award_ids,
+        description=assertion.description,
+        disability_causation_stated=assertion.disability_causation_stated,
+        reasonable_medical_probability=assertion.reasonable_medical_probability,
+        causal_rationale=assertion.causal_rationale,
+        percentage_rationale=assertion.percentage_rationale,
+        prior_award_analysis=assertion.prior_award_analysis,
+        revised_from_percent=assertion.revised_from_percent,
+        revision_rationale=assertion.revision_rationale,
+        psych_exception_analysis=assertion.psych_exception_analysis,
+        linked_contention_id=assertion.linked_contention_id,
+        groundings=assertion.groundings,
+    )
+
+
+def _record_reference(document: PlannedDocument) -> StoryRecordReference:
+    """One actual earlier planned document, as a report may cite it (R10)."""
+    return StoryRecordReference(
+        document_index=document.index,
+        subtype=document.subtype,
+        title=document.title,
+        doc_date=document.doc_date,
+        author_role=document.author_role,
+    )
+
+
+def _document_label(document: PlannedDocument) -> str:
+    return f"planned document {document.index} ({document.subtype})"
+
+
+def _check_condition_exposure(
+    document: PlannedDocument,
+    history: MedicalHistory,
+    opinion: MedicalOpinion | None,
+    contentions: Sequence[Contention],
+    apportionments: Sequence[ApportionmentAssertion],
+) -> None:
+    """R4 — a bound assertion must not expose a hidden world condition.
+
+    A condition enters a document projection only by surfacing in the file. A
+    bound assertion whose reference would put a ``surfaces_in_file=False``
+    condition on the page is internally incoherent and fails here, before
+    rendering; the projector never silently mutates the world ledger to make
+    the reference true.
+    """
+    referenced: list[tuple[str, str]] = []
+    if opinion is not None:
+        referenced.extend(
+            (ref, f"medical opinion '{opinion.id}' reviewed_condition_ids")
+            for ref in opinion.reviewed_condition_ids
+        )
+    for contention in contentions:
+        if contention.target_condition_id is not None:
+            referenced.append(
+                (
+                    contention.target_condition_id,
+                    f"contention '{contention.id}' target_condition_id",
+                )
+            )
+    for assertion in apportionments:
+        referenced.extend(
+            (ref, f"apportionment assertion '{assertion.id}' condition_ids")
+            for ref in assertion.condition_ids
+        )
+    for ref, via in referenced:
+        condition = history.condition(ref)
+        if condition is None:
+            raise MedicalAssertionError(
+                f"{_document_label(document)} binds a condition reference "
+                f"'{ref}' (via {via}) that does not exist in the world ledger; "
+                "the projection fails closed rather than render a dangling "
+                "reference (R4)"
+            )
+        if not condition.surfaces_in_file:
+            raise MedicalAssertionError(
+                f"{_document_label(document)} would expose condition '{ref}' "
+                f"(via {via}) while its world record says "
+                "surfaces_in_file=false; a bound assertion that exposes a "
+                "hidden condition is internally incoherent, and the projector "
+                "never mutates the world ledger to repair it (R4)"
+            )
+
+
+def _verify_surface_carrier(document: PlannedDocument) -> None:
+    """R2/R35 — a governed communication rides its exact carrier pair."""
+    surface = document.contention_surface
+    if surface in CONTENTION_SURFACE_TEMPLATE_PAIRS:
+        carrier, template = CONTENTION_SURFACE_TEMPLATE_PAIRS[surface]
+        if document.subtype != carrier or document.template_subtype != template:
+            raise MedicalAssertionError(
+                f"{_document_label(document)} carries surface '{surface}' with "
+                f"carrier '{document.subtype}' / template "
+                f"'{document.template_subtype}'; the frozen pair is "
+                f"('{carrier}', '{template}') — the canonical carrier is the "
+                "manifest vocabulary and the template subtype is internal "
+                "dispatch, never the reverse (R2/R35)"
+            )
+    elif surface == "advocacy":
+        if (
+            document.subtype not in ADVOCACY_LETTER_SURFACES
+            or document.template_subtype != document.subtype
+        ):
+            raise MedicalAssertionError(
+                f"{_document_label(document)} carries surface 'advocacy' with "
+                f"carrier '{document.subtype}' / template "
+                f"'{document.template_subtype}'; an advocacy letter rides a "
+                "registered advocacy carrier whose template subtype is the "
+                "same registered subtype (R2/R35)"
+            )
+
+
+def derive_medical_story(
+    seed: CaseSeed,
+    history: MedicalHistory | None,
+    ledger: MedicalAssertionLedger | None,
+    documents: Sequence[PlannedDocument],
+) -> MedicalStoryPlan | None:
+    """R4 — the label-free, visibility-limited story every governed document tells.
+
+    The medical-story gate is ``scenario.medical_history`` (R1): when it is
+    absent this returns ``None`` before constructing any projection, and the
+    plan carries ``medical_story=None``. History-present/assertions-absent
+    cases receive history-only projections on the R8 report surfaces — no
+    contention prose, no governed apportionment, no bound opinion.
+
+    Pure. No RNG, no mutation, no draw: rendering must be a function of the
+    completed plan (R3).
+    """
+    if seed.scenario.medical_history is None:
+        return None
+    if history is None:  # pragma: no cover - the planner derives both together
+        raise MedicalAssertionError(
+            "the medical-story gate is open but no MedicalHistory was derived; "
+            "derive_medical_story() requires the world ledger the seed asked for"
+        )
+
+    opinions: dict[str, MedicalOpinion] = {}
+    contentions: dict[str, Contention] = {}
+    if ledger is not None:
+        opinions = {opinion.id: opinion for opinion in ledger.medical_opinions}
+        contentions = {contention.id: contention for contention in ledger.contentions}
+
+    realization_by_opinion: dict[str, PlannedDocument] = {}
+    for document in documents:
+        if document.medical_opinion_id is not None:
+            realization_by_opinion.setdefault(document.medical_opinion_id, document)
+
+    demographics = _project_demographics(history.demographics)
+    visible_conditions = tuple(
+        _project_condition(condition) for condition in history.surfaced_conditions()
+    )
+    prior_claims = tuple(
+        _project_prior_claim(claim) for claim in history.prior_claims
+    )
+    prior_awards = tuple(
+        _project_prior_award(claim.award, claim.id)
+        for claim in history.prior_claims
+        if claim.award is not None
+    )
+
+    medical_record_documents = [
+        document
+        for document in documents
+        if document.parent_type in RECORD_REFERENCE_PARENT_TYPES
+    ]
+
+    stories: dict[int, DocumentMedicalStory] = {}
+    for document in documents:
+        if not _is_governed_document(document):
+            continue
+        _verify_surface_carrier(document)
+
+        opinion: MedicalOpinion | None = None
+        if document.medical_opinion_id is not None:
+            opinion = opinions.get(document.medical_opinion_id)
+            if opinion is None:
+                # R5 — an explicit binding is the only basis for content.
+                # This failure is the boundary: a dangling opinion ID must
+                # never be repaired by choosing the opinion with the nearest
+                # report date, a report ordinal, a subtype coincidence or
+                # collection order.
+                raise MedicalAssertionError(
+                    f"{_document_label(document)} binds medical opinion "
+                    f"'{document.medical_opinion_id}', which does not exist in "
+                    "the completed ledger; a missing or unbound opinion ID "
+                    "fails instead of guessing by date (R5)"
+                )
+
+        spoken: list[Contention] = []
+        for contention_id in document.spoken_contention_ids:
+            contention = contentions.get(contention_id)
+            if contention is None:
+                raise MedicalAssertionError(
+                    f"{_document_label(document)} speaks contention "
+                    f"'{contention_id}', which does not exist in the completed "
+                    "ledger; the story is resolved from explicit bindings only "
+                    "(R5)"
+                )
+            spoken.append(contention)
+
+        apportionments: tuple[ApportionmentAssertion, ...] = ()
+        if opinion is not None and ledger is not None:
+            apportionments = ledger.assertions_of(opinion.id)
+
+        _check_condition_exposure(document, history, opinion, spoken, apportionments)
+
+        preceding_report: StoryRecordReference | None = None
+        target_id = document.target_medical_opinion_id
+        if target_id is not None and document.contention_surface != "advocacy":
+            if target_id not in opinions:
+                raise MedicalAssertionError(
+                    f"{_document_label(document)} targets medical opinion "
+                    f"'{target_id}', which does not exist in the completed "
+                    "ledger (R5/R35)"
+                )
+            target_document = realization_by_opinion.get(target_id)
+            if target_document is None:
+                raise MedicalAssertionError(
+                    f"{_document_label(document)} targets medical opinion "
+                    f"'{target_id}', whose report realization is absent from "
+                    "the final plan; a chain dependent must have been removed "
+                    "by reconciliation rather than left citing a document "
+                    "that does not exist (R35/R36)"
+                )
+            preceding_report = _record_reference(target_document)
+
+        references = tuple(
+            _record_reference(entry)
+            for entry in medical_record_documents
+            if entry.index != document.index
+            and entry.doc_date < document.doc_date
+            and (
+                preceding_report is None
+                or document.subtype not in SUPPLEMENTAL_MEDLEGAL_SURFACES
+                or entry.doc_date > preceding_report.doc_date
+            )
+        )
+
+        stories[document.index] = DocumentMedicalStory(
+            document_index=document.index,
+            subtype=document.subtype,
+            template_subtype=document.template_subtype,
+            contention_surface=document.contention_surface,
+            demographics=demographics,
+            conditions=visible_conditions,
+            prior_claims=prior_claims,
+            prior_awards=prior_awards,
+            record_references=references,
+            preceding_report=preceding_report,
+            contentions=tuple(_project_contention(entry) for entry in spoken),
+            medical_opinion=_project_opinion(opinion) if opinion is not None else None,
+            apportionments=tuple(
+                _project_apportionment(entry) for entry in apportionments
+            ),
+        )
+
+    return MedicalStoryPlan(by_document_index=stories)
+
+
 __all__ = [
     "ADVOCACY_LETTER_SURFACES",
     "CONTENTION_BINDING_ID_KEY",
@@ -1056,11 +1516,13 @@ __all__ = [
     "CONTENTION_LOOP_PLANNING_RANKS",
     "CONTENTION_LOOP_SOURCE_KEY",
     "CONTENTION_LOOP_WARNING_PREFIX",
+    "CONTENTION_SURFACE_TEMPLATE_PAIRS",
     "INITIAL_MEDLEGAL_SURFACES",
     "PSYCH_MEDLEGAL_SURFACES",
     "PTP_APPORTIONMENT_SURFACES",
     "PTP_CAUSATION_SURFACES",
     "QME_PANEL_PREDECESSOR_SUBTYPES",
+    "RECORD_REFERENCE_PARENT_TYPES",
     "SUPPLEMENTAL_MEDLEGAL_SURFACES",
     "ContentionSurface",
     "DocumentMedicalStory",
@@ -1076,5 +1538,6 @@ __all__ = [
     "StoryPriorAward",
     "StoryPriorClaim",
     "StoryRecordReference",
+    "derive_medical_story",
     "plan_medical_story_documents",
 ]

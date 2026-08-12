@@ -270,8 +270,7 @@ class ApplicantProfile(_Model):
 
     Added because note C's grounding tables are sex-conditioned and the engine had
     nowhere to record the answer: SEER incidence, facet arthropathy and hypertension
-    all report a split, and every one of them was stranded. Not yet honoured — no
-    document renders it (M3), and the archetype mixture that reads it only runs when
+    all report a split. The archetype mixture that reads it only runs when
     ``scenario.medical_history`` is present.
     """
 
@@ -279,11 +278,11 @@ class ApplicantProfile(_Model):
     """``None`` means *derive it*, calibrated to CDC obesity prevalence for the age.
 
     A risk factor, not a disease state — the design record draws that line and this
-    field is which side of it body mass sits on. Not yet honoured (M3).
+    field is which side of it body mass sits on.
     """
 
     smoking_status: SmokingStatus | None = None
-    """``None`` means *derive it*. Not yet honoured (M3).
+    """``None`` means *derive it*.
 
     ``former`` is worth distinguishing from ``never`` because cessation of a year or
     more returns spinal-fusion outcomes to the never-smoker baseline: a former smoker
@@ -2481,7 +2480,7 @@ class ScenarioSpec(_Model):
     penalties: PenaltyScenario | None = None
     """Automatic late-indemnity increases. Requires ``wages`` — see the same validator."""
     medical_history: MedicalHistoryScenario | None = None
-    """The world-truth gate. Not yet honoured — no document renders it (M3).
+    """The world-truth gate.
 
     ``None`` — the default — means this case has no medical-history layer: no
     comorbidities, no prior claims, nothing an apportionment opinion could concretely

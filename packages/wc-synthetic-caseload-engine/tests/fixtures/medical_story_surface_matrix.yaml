@@ -1,0 +1,770 @@
+# AJC-62 (M3) — the frozen R8 surface x AJC-65 state matrix (R67, R77 step 7).
+#
+# Exactly seven cases, seeds 620101-620107, everything explicit: conditions,
+# assertions and contention documents are all authored and every sampler is
+# off, so each case is byte-decided by its own text. Collectively the seven
+# cases cover every governed R8 member, both objection and
+# supplemental-request surfaces, the QME/AME deposition, and all six AJC-65
+# apportionment shapes (none / single / equal-plural / heterogeneous-plural /
+# unable-to-approximate / deferred). Interim opinions defer rather than omit
+# and final opinions never defer — the §C validator holds both lines.
+#
+# surface-psych-medlegal (620102) exercises the R81 psych section ORDER with
+# the current generic content; the full psych register (P5 phrase pools,
+# Hikida/SIBTF/IMR structure) lands at R77 steps 8 and 10 and is deliberately
+# absent here.
+#
+# @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+
+caseload_id: medical-story-surface-matrix
+
+defaults:
+  injury:
+    type: specific
+    date_of_injury: 2024-03-01
+    body_parts:
+      - {part: lumbar_spine}
+      - {part: shoulder}
+  lifecycle:
+    target_stage: medical_legal
+    claim_response: accepted
+    eval_type: qme
+
+cases:
+  # R8 initial med-legal family on one QME file: the default interim carrier,
+  # the default final carrier, and both explicit initial-family overrides.
+  # AJC-65 states: none / single / heterogeneous-plural / unable.
+  - case_id: surface-initial-medlegal
+    rng_seed: 620101
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: multilevel degenerative disc disease of the lumbar spine
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+          - label: chronic rotator cuff tendinosis
+            origin: nonindustrial
+            body_part: shoulder
+            severity: mild
+            trajectory: stable
+            symptomatic_before_doi: false
+        prior_claims:
+          - body_parts: [lumbar_spine]
+            date_of_injury: 2018-05-14
+            resolution_type: stipulated_award
+            resolution_date: 2019-08-02
+            award:
+              body_parts: [lumbar_spine]
+              pd_percent: 12
+              award_date: 2019-08-02
+              resolution_type: stipulated_award
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: interim
+            report_date: 2024-09-10
+            apportionment_state: determined
+            determination_kind: no_nonindustrial_share
+            determination_rationale: >-
+              The entire permanent disability is caused by the industrial
+              injury of March 1, 2024. The pre-existing degenerative changes
+              were asymptomatic and non-disabling before the injury and there
+              is no medical evidence that they cause any portion of the
+              current disability.
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The mechanism of injury, the temporal onset of symptoms, and
+              the treatment course establish within reasonable medical
+              probability that the condition arose out of and in the course
+              of employment.
+            rationale: the conclusions rest on the examination and the record reviewed
+          - id: opn-02
+            author_role: qme
+            report_stage: final
+            report_date: 2024-10-20
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00, cond-01]
+            reviewed_prior_claim_ids: [prior-00]
+            reviewed_prior_award_ids: [prior-00-award]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              Industrial causation is established by the contemporaneous
+              onset of symptoms with the lifting incident and the absence of
+              any intervening nonindustrial event.
+            rationale: the conclusions rest on the examination and the record reviewed
+          - id: opn-03
+            author_role: qme
+            report_stage: final
+            report_date: 2024-11-25
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00, cond-01]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              Each claimed body part shows an injury pattern consistent with
+              the reported mechanism, and the condition arose out of and in
+              the course of employment.
+            rationale: the conclusions rest on the examination and the record reviewed
+          - id: opn-04
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-30
+            apportionment_state: determined
+            determination_kind: unable_to_approximate
+            determination_rationale: >-
+              The relative contributions of the industrial injury and the
+              pre-existing degenerative disease cannot be approximated on
+              this record within reasonable medical probability, and no
+              percentage allocation is stated.
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The injury arose out of and in the course of employment based
+              on the history, the records, and the examination.
+            rationale: the conclusions rest on the examination and the record reviewed
+        apportionment_assertions:
+          - id: app-01
+            opinion_id: opn-02
+            body_part: lumbar_spine
+            industrial_percent: 75
+            nonindustrial_percent: 25
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+            causal_rationale: >-
+              The multilevel degenerative disc disease predated the injury,
+              was symptomatic, and continues to cause a portion of the
+              current permanent disability.
+            percentage_rationale: >-
+              The allocation rests on the imaging severity, the pre-injury
+              symptom history, and the prior award affecting the same region.
+          - id: app-02
+            opinion_id: opn-03
+            body_part: lumbar_spine
+            industrial_percent: 70
+            nonindustrial_percent: 30
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+            causal_rationale: >-
+              The degenerative disease is an independent cause of lumbar
+              disability operating now.
+          - id: app-03
+            opinion_id: opn-03
+            body_part: shoulder
+            industrial_percent: 90
+            nonindustrial_percent: 10
+            basis_kinds: [asymptomatic_prior_condition]
+            condition_ids: [cond-01]
+            reasonable_medical_probability: true
+            causal_rationale: >-
+              The previously asymptomatic rotator cuff tendinosis makes a
+              small but medically probable contribution to the shoulder
+              disability.
+        contention_documents:
+          - id: cdoc-01
+            document_kind: opinion_report
+            medical_opinion_id: opn-03
+            subtype: APPORTIONMENT_REPORT
+          - id: cdoc-02
+            document_kind: opinion_report
+            medical_opinion_id: opn-04
+            subtype: MEDICAL_LEGAL_QME_AME_IME
+
+  # The psych med-legal surface: a psych-bound QME opinion rides the psych
+  # default carrier and renders through the R81 psych section order with the
+  # deferred AJC-65 posture. Content registers stay current-generic.
+  - case_id: surface-psych-medlegal
+    rng_seed: 620102
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: adjustment disorder with mixed anxiety and depressed mood
+            body_system: psychiatric
+            origin: mixed
+            body_part: psyche
+            severity: moderate
+            trajectory: fluctuating
+            symptomatic_before_doi: false
+          - label: multilevel degenerative disc disease of the lumbar spine
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        contentions:
+          - id: ctn-01
+            claim_type: psych_add_on
+            party: applicant
+            target_body_part: psyche
+            psych_injury_kind: direct
+            rationale: >-
+              The psychiatric condition arose directly from the industrial
+              events and is compensable in its own right.
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: interim
+            report_date: 2024-12-05
+            apportionment_state: deferred
+            examination_performed: true
+            reviewed_condition_ids: [cond-00, cond-01]
+            endorses_contention_ids: [ctn-01]
+            psych_injury_kind: direct
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The psychiatric injury arose from the employment events
+              themselves rather than from the medical consequences of the
+              physical injury, and the predominant cause of the condition is
+              the actual events of employment.
+            rationale: the conclusions rest on the examination and the record reviewed
+
+  # The supplemental family: one base report, then both R8 supplemental
+  # carriers in series — the default carrier on the first response and the
+  # explicit override on the second. Equal-plural on the base, a revised
+  # heterogeneous split on the first supplemental, and an unchanged
+  # additional-reasoning response on the second (its delta window holds no
+  # interposed records, and the delta form must say so honestly).
+  - case_id: surface-supplemental
+    rng_seed: 620103
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: multilevel degenerative disc disease of the lumbar spine
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+          - label: chronic rotator cuff tendinosis
+            origin: nonindustrial
+            body_part: shoulder
+            severity: mild
+            trajectory: stable
+            symptomatic_before_doi: false
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-09-05
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The condition arose out of and in the course of employment
+              based on the mechanism, the onset, and the treatment course.
+            rationale: the conclusions rest on the examination and the record reviewed
+          - id: opn-02
+            author_role: qme
+            report_stage: final
+            report_date: 2024-11-10
+            event_kind: supplemental_report
+            revision_kind: revised_apportionment
+            responds_to_opinion_id: opn-01
+            supersedes_opinion_id: opn-01
+            apportionment_state: determined
+            determination_kind: allocated
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The condition arose out of and in the course of employment
+              based on the mechanism, the onset, and the treatment course.
+            revision_rationale: >-
+              The lumbar allocation is revised upon further review of the
+              pre-injury treatment records, which document a longer
+              symptomatic period than the history previously available.
+          - id: opn-03
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-20
+            event_kind: supplemental_report
+            revision_kind: unchanged_additional_reasoning
+            responds_to_opinion_id: opn-02
+            apportionment_state: determined
+            determination_kind: allocated
+            reviewed_condition_ids: [cond-00, cond-01]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The condition arose out of and in the course of employment
+              based on the mechanism, the onset, and the treatment course.
+            revision_rationale: >-
+              The opinions stated in the prior supplemental report are
+              unchanged; the additional reasoning requested on the basis of
+              the allocation is set forth in this report.
+        apportionment_assertions:
+          - id: app-01
+            opinion_id: opn-01
+            body_part: lumbar_spine
+            industrial_percent: 80
+            nonindustrial_percent: 20
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+          - id: app-02
+            opinion_id: opn-01
+            body_part: shoulder
+            industrial_percent: 80
+            nonindustrial_percent: 20
+            basis_kinds: [asymptomatic_prior_condition]
+            condition_ids: [cond-01]
+            reasonable_medical_probability: true
+          - id: app-03
+            opinion_id: opn-02
+            body_part: lumbar_spine
+            industrial_percent: 75
+            nonindustrial_percent: 25
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+            revised_from_percent: 20
+            revision_rationale: >-
+              The pre-injury treatment records establish a greater
+              nonindustrial contribution than previously apparent.
+          - id: app-04
+            opinion_id: opn-02
+            body_part: shoulder
+            industrial_percent: 80
+            nonindustrial_percent: 20
+            basis_kinds: [asymptomatic_prior_condition]
+            condition_ids: [cond-01]
+            reasonable_medical_probability: true
+          - id: app-05
+            opinion_id: opn-03
+            body_part: lumbar_spine
+            industrial_percent: 75
+            nonindustrial_percent: 25
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+          - id: app-06
+            opinion_id: opn-03
+            body_part: shoulder
+            industrial_percent: 80
+            nonindustrial_percent: 20
+            basis_kinds: [asymptomatic_prior_condition]
+            condition_ids: [cond-01]
+            reasonable_medical_probability: true
+        contention_documents:
+          - id: cdoc-01
+            document_kind: supplemental_report
+            medical_opinion_id: opn-03
+            target_medical_opinion_id: opn-02
+            subtype: QME_REPORT_SUPPLEMENTAL
+
+  # PTP interim causation surfaces: the default PR-2 carrier and the plain
+  # explicit override. The treating register speaks its own AOE/COE
+  # conclusion; the interim apportionment posture is deferred (§C forbids
+  # omitted on an interim), and no interim surface renders a scalar block.
+  - case_id: surface-ptp-interim
+    rng_seed: 620104
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: multilevel degenerative disc disease of the lumbar spine
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        medical_opinions:
+          - id: opn-01
+            author_role: ptp
+            report_stage: interim
+            report_date: 2024-08-15
+            apportionment_state: deferred
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              Based on the mechanism of injury, the examination findings,
+              and the treatment course to date, the condition arose out of
+              and in the course of employment.
+            rationale: the conclusions rest on the examination and the treatment course
+          - id: opn-02
+            author_role: ptp
+            report_stage: interim
+            report_date: 2024-10-10
+            apportionment_state: deferred
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: deferred
+            rationale: the conclusions rest on the examination and the treatment course
+        contention_documents:
+          - id: cdoc-01
+            document_kind: opinion_report
+            medical_opinion_id: opn-02
+            subtype: TREATING_PHYSICIAN_REPORT
+
+  # PTP final apportionment surfaces: the default PR-4 carrier with an
+  # equal-plural allocation, and the explicit final override with a single
+  # row. The final register adds the §4660.1-consequence language.
+  - case_id: surface-ptp-final
+    rng_seed: 620105
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: multilevel degenerative disc disease of the lumbar spine
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+          - label: chronic rotator cuff tendinosis
+            origin: nonindustrial
+            body_part: shoulder
+            severity: mild
+            trajectory: stable
+            symptomatic_before_doi: false
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        medical_opinions:
+          - id: opn-01
+            author_role: ptp
+            report_stage: final
+            report_date: 2024-11-20
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00, cond-01]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The treatment course, the examinations performed, and the
+              mechanism of injury establish industrial causation for each
+              claimed body part.
+            rationale: the conclusions rest on the examination and the treatment course
+          - id: opn-02
+            author_role: ptp
+            report_stage: final
+            report_date: 2024-12-18
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The clinical course from the date of injury through maximum
+              medical improvement supports industrial causation.
+            rationale: the conclusions rest on the examination and the treatment course
+        apportionment_assertions:
+          - id: app-01
+            opinion_id: opn-01
+            body_part: lumbar_spine
+            industrial_percent: 80
+            nonindustrial_percent: 20
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+          - id: app-02
+            opinion_id: opn-01
+            body_part: shoulder
+            industrial_percent: 80
+            nonindustrial_percent: 20
+            basis_kinds: [asymptomatic_prior_condition]
+            condition_ids: [cond-01]
+            reasonable_medical_probability: true
+          - id: app-03
+            opinion_id: opn-02
+            body_part: lumbar_spine
+            industrial_percent: 85
+            nonindustrial_percent: 15
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+        contention_documents:
+          - id: cdoc-01
+            document_kind: opinion_report
+            medical_opinion_id: opn-02
+            subtype: TREATING_PHYSICIAN_REPORT_FINAL
+
+  # The advocacy-letter family on an AME file: the PTP role carrier, the AME
+  # role carrier, and the combined carrier under a defense actor. Every
+  # letter strictly precedes the report it advocates to (R34) and speaks
+  # only its own party's contentions (R28).
+  - case_id: surface-advocacy
+    rng_seed: 620106
+    lifecycle:
+      eval_type: ame
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: multilevel degenerative disc disease of the lumbar spine
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        contentions:
+          - id: ctn-01
+            claim_type: industrial_causation
+            party: applicant
+            target_body_part: lumbar_spine
+            rationale: >-
+              The lumbar condition arose from the specific lifting incident
+              of March 1, 2024 and is industrial in its entirety.
+          - id: ctn-02
+            claim_type: apportionment_defense
+            party: defense
+            target_condition_id: cond-00
+            rationale: >-
+              A substantial portion of the current disability is caused by
+              the documented pre-existing degenerative disease and must be
+              apportioned under Labor Code sections 4663 and 4664.
+        medical_opinions:
+          - id: opn-01
+            author_role: ptp
+            report_stage: interim
+            report_date: 2024-07-20
+            apportionment_state: deferred
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The mechanism and the clinical course establish that the
+              condition arose out of and in the course of employment.
+            rationale: the conclusions rest on the examination and the treatment course
+          - id: opn-02
+            author_role: ame
+            report_stage: interim
+            report_date: 2024-10-05
+            apportionment_state: deferred
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              Industrial causation is established; apportionment is deferred
+              pending the complete pre-injury treatment records.
+            rationale: the conclusions rest on the examination and the record reviewed
+          - id: opn-03
+            author_role: ame
+            report_stage: final
+            report_date: 2024-12-15
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The agreed medical evaluation establishes industrial causation
+              within reasonable medical probability.
+            rationale: the conclusions rest on the examination and the record reviewed
+        apportionment_assertions:
+          - id: app-01
+            opinion_id: opn-03
+            body_part: lumbar_spine
+            industrial_percent: 70
+            nonindustrial_percent: 30
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+            causal_rationale: >-
+              The pre-existing degenerative disease remains an independent
+              cause of a portion of the current permanent disability.
+        contention_documents:
+          - id: cdoc-01
+            document_kind: advocacy
+            actor_party: applicant
+            target_medical_opinion_id: opn-01
+            spoken_contention_ids: [ctn-01]
+            subtype: ADVOCACY_LETTERS_PTP
+            doc_date: 2024-06-25
+          - id: cdoc-02
+            document_kind: advocacy
+            actor_party: defense
+            target_medical_opinion_id: opn-02
+            spoken_contention_ids: [ctn-02]
+            subtype: ADVOCACY_LETTERS_PTP_QME_AME
+            doc_date: 2024-09-12
+          - id: cdoc-03
+            document_kind: advocacy
+            actor_party: applicant
+            target_medical_opinion_id: opn-03
+            spoken_contention_ids: [ctn-01]
+            subtype: ADVOCACY_LETTERS_AME
+            doc_date: 2024-11-20
+
+  # The full contention loop on one QME file: a QME advocacy letter, a
+  # defense objection with contest theories, an applicant supplemental
+  # request, the answering supplemental report, and the terminal QME
+  # deposition — the two contested communication surfaces and the
+  # deposition surface R67 requires.
+  - case_id: surface-contention-loop
+    rng_seed: 620107
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: multilevel degenerative disc disease of the lumbar spine
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        contentions:
+          - id: ctn-01
+            claim_type: industrial_causation
+            party: applicant
+            target_body_part: lumbar_spine
+            rationale: >-
+              The lumbar condition is industrial in its entirety and no
+              legally sufficient basis for apportionment exists.
+          - id: ctn-02
+            claim_type: apportionment_defense
+            party: defense
+            target_condition_id: cond-00
+            rationale: >-
+              The evaluator understated the apportionment attributable to
+              the documented pre-existing degenerative disease.
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-10-15
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The condition arose out of and in the course of employment
+              based on the mechanism, the contemporaneous onset, and the
+              treatment course.
+            rationale: the conclusions rest on the examination and the record reviewed
+          - id: opn-02
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-10
+            event_kind: supplemental_report
+            revision_kind: revised_apportionment
+            responds_to_opinion_id: opn-01
+            supersedes_opinion_id: opn-01
+            apportionment_state: determined
+            determination_kind: allocated
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The condition arose out of and in the course of employment
+              based on the mechanism, the contemporaneous onset, and the
+              treatment course.
+            revision_rationale: >-
+              Upon review of the questions presented and the pre-injury
+              records served with the request, the lumbar apportionment is
+              revised upward.
+          - id: opn-03
+            author_role: qme
+            report_stage: final
+            report_date: 2025-02-20
+            event_kind: deposition
+            revision_kind: unchanged_additional_reasoning
+            responds_to_opinion_id: opn-01
+            apportionment_state: determined
+            determination_kind: allocated
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The condition arose out of and in the course of employment
+              based on the mechanism, the contemporaneous onset, and the
+              treatment course.
+            rationale: >-
+              The opinions stated in the report are unchanged; additional
+              reasoning was provided under oath in response to examination.
+        apportionment_assertions:
+          - id: app-01
+            opinion_id: opn-01
+            body_part: lumbar_spine
+            industrial_percent: 70
+            nonindustrial_percent: 30
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+            causal_rationale: >-
+              The pre-existing degenerative disc disease is an independent
+              cause of lumbar disability operating now.
+            percentage_rationale: >-
+              The allocation rests on the imaging severity and the
+              documented pre-injury symptomatic course.
+          - id: app-02
+            opinion_id: opn-02
+            body_part: lumbar_spine
+            industrial_percent: 60
+            nonindustrial_percent: 40
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+            revised_from_percent: 30
+            revision_rationale: >-
+              The pre-injury treatment records served with the supplemental
+              request document a longer and more severe symptomatic course
+              than the history previously available.
+          - id: app-03
+            opinion_id: opn-03
+            body_part: lumbar_spine
+            industrial_percent: 70
+            nonindustrial_percent: 30
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+        contention_documents:
+          - id: cdoc-01
+            document_kind: advocacy
+            actor_party: applicant
+            target_medical_opinion_id: opn-01
+            spoken_contention_ids: [ctn-01]
+            subtype: ADVOCACY_LETTERS_QME
+            doc_date: 2024-09-20
+          - id: cdoc-02
+            document_kind: objection
+            actor_party: defense
+            target_medical_opinion_id: opn-01
+            spoken_contention_ids: [ctn-02]
+            defense_contest_theories: [insufficient_investigation, lack_of_substantial_medical_evidence]
+            doc_date: 2024-11-05
+          - id: cdoc-03
+            document_kind: supplemental_request
+            actor_party: applicant
+            target_medical_opinion_id: opn-01
+            spoken_contention_ids: [ctn-01]
+            doc_date: 2024-11-12
+          - id: cdoc-04
+            document_kind: qme_deposition
+            medical_opinion_id: opn-03
+            target_medical_opinion_id: opn-01
+            actor_party: defense
+            spoken_contention_ids: [ctn-02]
+            defense_contest_theories: [lack_of_substantial_medical_evidence]
+            doc_date: 2025-02-20

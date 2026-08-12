@@ -175,12 +175,6 @@ INERT_PROBES: dict[str, InertProbe] = {
     # ledger and renders none of it: M3 owns every document surface, M4 owns the
     # scorer channel, M5 owns the section 4664 arithmetic. Each entry below is a
     # tripwire on one of those milestones.
-    "ScenarioSpec.medical_history": InertProbe(
-        plain={},
-        varied=_medical(),
-        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
-        witness=_MEDICAL_WITNESS,
-    ),
     "MedicalHistoryScenario.archetype": InertProbe(
         plain=_medical(),
         varied=_medical(archetype="multimorbid"),
@@ -199,27 +193,6 @@ INERT_PROBES: dict[str, InertProbe] = {
     # truth projection), so it is honoured now and the reverse guard would
     # reject a probe whose marker is gone. No replacement probe — that is the
     # rule working, not a gap.
-    "ApplicantProfile.sex": InertProbe(
-        plain=_medical(),
-        varied=_medical(),
-        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
-        witness=_MEDICAL_WITNESS,
-        profile={"sex": "female"},
-    ),
-    "ApplicantProfile.bmi_band": InertProbe(
-        plain=_medical(),
-        varied=_medical(),
-        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
-        witness=_MEDICAL_WITNESS,
-        profile={"bmi_band": "severely_obese"},
-    ),
-    "ApplicantProfile.smoking_status": InertProbe(
-        plain=_medical(),
-        varied=_medical(),
-        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
-        witness=_MEDICAL_WITNESS,
-        profile={"smoking_status": "current"},
-    ),
 }
 
 
