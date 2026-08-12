@@ -15,6 +15,42 @@ import type { ParsedToken, TokenGrammar, TokenGrammarPolicy } from "./ports";
 const OPEN = "[[";
 const CLOSE = "]]";
 
+/**
+ * A GENUINELY immutable role allow-list (GLY-336 gate finding 2, capability-level).
+ *
+ * `Object.freeze(new Set(...))` is NOT enough: `Set.prototype.add.call(frozenSet, role)` still
+ * mutates the internal `[[SetData]]` slot (freezing only locks own properties). The membership
+ * oracle returned here is a FROZEN plain object with NO `[[SetData]]` slot, so no `Set.prototype`
+ * mutator can operate on it, and it exposes no `add`/`delete`/`clear`. The backing `Set` is
+ * captured in this function's closure and is never reachable from the returned value — so a
+ * recovered reference can never register a PHI-bearing role that would let the grammar emit a raw
+ * value as a "token".
+ */
+export function frozenRoleSet(roles: Iterable<TokenRole>): ReadonlySet<TokenRole> {
+  const members = new Set<TokenRole>(roles); // closure-private; never exposed
+  const list: readonly TokenRole[] = Object.freeze([...members]);
+  const iterate = (): IterableIterator<TokenRole> => list[Symbol.iterator]();
+  const result: ReadonlySet<TokenRole> = Object.freeze({
+    has: (value: TokenRole): boolean => members.has(value),
+    get size(): number {
+      return list.length;
+    },
+    keys: iterate,
+    values: iterate,
+    *entries(): IterableIterator<[TokenRole, TokenRole]> {
+      for (const role of list) yield [role, role];
+    },
+    forEach(
+      callbackfn: (value: TokenRole, value2: TokenRole, set: ReadonlySet<TokenRole>) => void,
+      thisArg?: unknown,
+    ): void {
+      for (const role of list) callbackfn.call(thisArg, role, role, result);
+    },
+    [Symbol.iterator]: iterate,
+  });
+  return result;
+}
+
 /** Spans returned by `scan` are always token-like: valid or malformed, never `not_token`. */
 export type TokenSpanParse = Exclude<ParsedToken, Readonly<{ kind: "not_token" }>>;
 

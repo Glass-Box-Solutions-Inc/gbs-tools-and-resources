@@ -38,7 +38,11 @@ import type {
   MatterAiContextAccessor,
   MatterAiPolicyAccessor,
   PhiSubstitutionEngine,
+  ReversalHandle,
   ReversalWriteStore,
+  ReverseStream,
+  SubstitutionRequest,
+  SubstitutionResult,
   TrustedMatterAiPolicy,
 } from "./core/contracts";
 import type { AiProvider, SafeAiTrace } from "./core/protected-ai-provider";
@@ -148,25 +152,83 @@ export interface CreateSubstitutionEngineOptions {
 }
 
 /**
- * A composed dev engine plus the matching dev context/policy and the seeded dev stores.
- * `engine` is the frozen `PhiSubstitutionEngine` contract; `context`/`policy` line up with
- * the seeded defaults so a caller can immediately `engine.substitute({ context, policy, ... })`.
+ * A composed dev engine plus the matching dev context/policy.
+ * `engine` is an UNFORGEABLE, null-prototype facade over the `PhiSubstitutionEngine` contract (see
+ * {@link sealEngine}); `context`/`policy` are frozen and line up with the seeded defaults so a
+ * caller can immediately `engine.substitute({ context, policy, ... })`. No concrete store,
+ * coordinator, or truth reader is returned — those are injectable via options and otherwise stay
+ * captured inside the engine (GLY-336 gate, capability-level).
  */
 export interface DevSubstitutionEngine {
   readonly engine: PhiSubstitutionEngine;
   readonly context: MatterAiContext;
   readonly policy: TrustedMatterAiPolicy;
-  readonly reversalStore: ReversalWriteStore;
-  readonly coordinator: DictionaryVersionCoordinator;
-  readonly truthReader: CaseTruthReader;
   readonly dictionaryVersion: DictionaryVersion;
   readonly sourceTruthRevision: string;
   readonly engineVersion: EngineVersion;
 }
 
-interface DevEngineParts extends DevSubstitutionEngine {
+/** Internal parts; the CONCRETE engine here is only ever sealed, never returned to a consumer. */
+interface DevEngineParts {
   readonly engine: ComposedSubstitutionEngine;
+  readonly context: MatterAiContext;
+  readonly policy: TrustedMatterAiPolicy;
+  readonly dictionaryVersion: DictionaryVersion;
+  readonly sourceTruthRevision: string;
   readonly brandedEngineVersion: EngineVersion;
+}
+
+// ---------------------------------------------------------------------------
+// Unforgeable facades (GLY-336 gate, capability-level: findings 2/3)
+//
+// A concrete class instance leaks its public constructor via the prototype chain
+// (`Object.getPrototypeOf(x).constructor`), so a consumer could `new` it with a fake engine (relabel
+// raw text as TokenizedText) or a malicious policy. Interface typing is COMPILE-TIME only and does
+// not prevent this. Each factory therefore returns a FROZEN, NULL-PROTOTYPE object exposing ONLY the
+// interface methods as closure-bound functions. There is no prototype → no recoverable constructor;
+// no concrete field/internal is reachable; the real instance stays captured in the closure.
+// ---------------------------------------------------------------------------
+
+type DevBoundaryProvider = AiProvider<
+  BoundaryGenerateOptions,
+  Promise<DisplayText>,
+  Promise<ProtectedStreamResult>,
+  string,
+  Promise<readonly number[]>
+>;
+
+function sealReverseStream(stream: ReverseStream): ReverseStream {
+  const facade = Object.assign(Object.create(null) as object, {
+    push: (chunk: TokenizedText): Promise<void> => stream.push(chunk),
+    end: (): Promise<void> => stream.end(),
+    abort: (reason: unknown): Promise<void> => stream.abort(reason),
+  });
+  return Object.freeze(facade) as ReverseStream;
+}
+
+function sealEngine(engine: PhiSubstitutionEngine): PhiSubstitutionEngine {
+  const facade = Object.assign(Object.create(null) as object, {
+    substitute: (request: SubstitutionRequest): Promise<SubstitutionResult> => engine.substitute(request),
+    reverse: (text: TokenizedText, handle: ReversalHandle): Promise<DisplayText> =>
+      engine.reverse(text, handle),
+    createReverseStream: (
+      handle: ReversalHandle,
+      sink: (safe: DisplayText) => void | Promise<void>,
+    ): ReverseStream => sealReverseStream(engine.createReverseStream(handle, sink)),
+  });
+  return Object.freeze(facade) as PhiSubstitutionEngine;
+}
+
+function sealProvider(provider: DevBoundaryProvider): DevBoundaryProvider {
+  const facade = Object.assign(Object.create(null) as object, {
+    generateText: (options: BoundaryGenerateOptions): Promise<DisplayText> =>
+      provider.generateText(options),
+    generateStream: (options: BoundaryGenerateOptions): Promise<ProtectedStreamResult> =>
+      provider.generateStream(options),
+    embedText: (text: string, kind: string): Promise<readonly number[]> =>
+      provider.embedText(text, kind),
+  });
+  return Object.freeze(facade) as DevBoundaryProvider;
 }
 
 function buildDevEngineParts(options: CreateSubstitutionEngineOptions): DevEngineParts {
@@ -232,12 +294,8 @@ function buildDevEngineParts(options: CreateSubstitutionEngineOptions): DevEngin
     engine,
     context,
     policy,
-    reversalStore,
-    coordinator,
-    truthReader,
     dictionaryVersion,
     sourceTruthRevision,
-    engineVersion: brandedEngineVersion,
     brandedEngineVersion,
   };
 }
@@ -252,17 +310,16 @@ export function createSubstitutionEngine(
   options: CreateSubstitutionEngineOptions = {},
 ): DevSubstitutionEngine {
   const parts = buildDevEngineParts(options);
-  return {
-    engine: parts.engine,
-    context: parts.context,
-    policy: parts.policy,
-    reversalStore: parts.reversalStore,
-    coordinator: parts.coordinator,
-    truthReader: parts.truthReader,
+  // Seal the engine into an unforgeable facade and freeze the bundle + its data records. The
+  // concrete engine is captured only inside the facade's closure — never handed to the consumer.
+  return Object.freeze({
+    engine: sealEngine(parts.engine),
+    context: Object.freeze({ ...parts.context }),
+    policy: Object.freeze({ ...parts.policy }),
     dictionaryVersion: parts.dictionaryVersion,
     sourceTruthRevision: parts.sourceTruthRevision,
-    engineVersion: parts.engineVersion,
-  };
+    engineVersion: parts.brandedEngineVersion,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -406,21 +463,16 @@ export interface CreateProtectedAiProviderOptions extends CreateSubstitutionEngi
 /** A composed dev protected provider — the single application-facing binding — plus its context. */
 export interface DevProtectedAiProvider {
   /**
-   * The single application-facing binding, typed as the `AiProvider` INTERFACE (GLY-336 gate
-   * finding 3/F). The concrete wrapper constructor is never exported, so a consumer cannot forge a
-   * wrapper around a fake engine that relabels raw text as `TokenizedText`.
+   * The single application-facing binding, returned as an UNFORGEABLE, null-prototype facade over the
+   * `AiProvider` interface (GLY-336 gate, capability-level: finding 3). No recoverable constructor,
+   * so a consumer cannot forge a wrapper around a fake engine that relabels raw text as
+   * `TokenizedText`.
    */
-  readonly provider: AiProvider<
-    BoundaryGenerateOptions,
-    Promise<DisplayText>,
-    Promise<ProtectedStreamResult>,
-    string,
-    Promise<readonly number[]>
-  >;
+  readonly provider: DevBoundaryProvider;
+  /** Unforgeable facade over the underlying `PhiSubstitutionEngine`. */
   readonly engine: PhiSubstitutionEngine;
   readonly context: MatterAiContext;
   readonly policy: TrustedMatterAiPolicy;
-  readonly reversalStore: ReversalWriteStore;
 }
 
 /**
@@ -478,11 +530,12 @@ export function createProtectedAiProvider(
     embeddingOptionsFactory: (text: string): BoundaryGenerateOptions => ({ embeddingText: text }),
   });
 
-  return {
-    provider,
-    engine: parts.engine,
-    context: parts.context,
-    policy: parts.policy,
-    reversalStore: parts.reversalStore,
-  };
+  // Seal the provider AND the engine into unforgeable facades; freeze the bundle + its data records.
+  // The concrete wrapper/engine are captured only inside the facades' closures — never returned.
+  return Object.freeze({
+    provider: sealProvider(provider),
+    engine: sealEngine(parts.engine),
+    context: Object.freeze({ ...parts.context }),
+    policy: Object.freeze({ ...parts.policy }),
+  });
 }

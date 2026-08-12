@@ -26,8 +26,10 @@ export type * from "./coverage/contracts";
 // ===========================================================================
 
 // -- (1) Composition factories: the ONLY runtime entry points --
+// `createTokensModule` is deliberately NOT re-exported (GLY-336 gate finding 4): it hands out the
+// low-level reversal store / reverser / stream-factory capability. It stays internal for the
+// factories; the two factories below are the whole public composition path.
 export { createSubstitutionEngine, createProtectedAiProvider } from "./factory";
-export { createTokensModule } from "./tokens/index";
 
 // -- (3) Fixed, PHI-free error surface (a consumer catches/inspects these) --
 export { PhiEngineError, isPhiEngineError, isPhiEngineFailureCode } from "./core/errors";
@@ -44,7 +46,6 @@ export type {
   CreateProtectedAiProviderOptions,
   DevProtectedAiProvider,
 } from "./factory";
-export type { TokensModule } from "./tokens/index";
 export type {
   BoundaryGenerateOptions,
   BoundaryMessage,

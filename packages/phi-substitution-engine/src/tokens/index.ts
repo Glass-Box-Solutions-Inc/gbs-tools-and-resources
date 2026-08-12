@@ -8,7 +8,7 @@ import type {
   TokenGrammarPolicy,
   TokenReverser,
 } from "./ports";
-import { BracketTokenGrammar } from "./grammar";
+import { BracketTokenGrammar, frozenRoleSet } from "./grammar";
 import { InMemoryTokenAssignmentStore } from "./assignment-store";
 import { SentinelSourceTokenEscaper } from "./escaper";
 import {
@@ -18,7 +18,7 @@ import {
 } from "./reversal";
 import { HoldbackReverseStreamFactory } from "./reverse-stream";
 
-export { BracketTokenGrammar, type TokenSpanParse } from "./grammar";
+export { BracketTokenGrammar, frozenRoleSet, type TokenSpanParse } from "./grammar";
 export { InMemoryTokenAssignmentStore } from "./assignment-store";
 export { SentinelSourceTokenEscaper, SENTINEL_OPEN, SENTINEL_CLOSE } from "./escaper";
 export {
@@ -52,15 +52,13 @@ function role(value: string): TokenRole {
  * emit `[[John Smith]]`. The factories never accept a caller-supplied token policy.
  */
 export const DEFAULT_TOKEN_GRAMMAR_POLICY: TokenGrammarPolicy = Object.freeze({
-  allowedRoles: Object.freeze(
-    new Set<TokenRole>([
-      role("Claimant"),
-      role("Witness"),
-      role("Treating_Physician"),
-      role("Adjuster"),
-      role("Employer"),
-    ]),
-  ) as ReadonlySet<TokenRole>,
+  allowedRoles: frozenRoleSet([
+    role("Claimant"),
+    role("Witness"),
+    role("Treating_Physician"),
+    role("Adjuster"),
+    role("Employer"),
+  ]),
   maximumTokenUtf16Length: 64,
   maximumRoleUtf16Length: 48,
   maximumSequence: 9999,

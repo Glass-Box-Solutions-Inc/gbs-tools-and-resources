@@ -1,40 +1,40 @@
 // @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 /**
- * GLY-336 M1 smoke + boundary oracles (ADDED, not frozen — §10).
+ * GLY-336 M1 smoke + CAPABILITY-level boundary oracles (ADDED, not frozen — §10).
  *
- * Two jobs:
- *  1. Prove the tightened root barrel is EXERCISED, not merely declared: import the composition
- *     factories from the published root (`../src/index`, i.e. `dist/index.js`) and drive a real
- *     substitute+reverse round-trip and a protected-provider round-trip.
- *  2. Reflection-oriented §7/N2 oracles (GPT cross-family gate): prove (i) the concrete reversal
- *     store's raw backing map is NOT reflectively enumerable (#private holds under ES2022), and
- *     (ii) the public root does NOT export the concrete stores/handle/reverser/live policy.
+ * After the GPT cross-family gate: name-pruning the barrel is not enough — the factories must hand
+ * out UNFORGEABLE facades, and the policy must be GENUINELY immutable. These oracles prove the
+ * capability boundary, not just the export names:
+ *  - the returned provider/engine are frozen null-prototype facades (no recoverable constructor,
+ *    no reachable concrete internals);
+ *  - the boundary role policy cannot be mutated, even via `Set.prototype.add.call`;
+ *  - the root barrel exports only the factories + error surface (createTokensModule is NOT public);
+ *  - (regression) the concrete reversal store's raw map stays #private / non-enumerable.
  *
- * The dev seed is deliberately fictional: `Jordan Testcase` (never a real person) and the SSA
- * advertising-reserved SSN block.
+ * Test-internal DEEP imports (from ../src/...) are legitimate — the boundary under test is the
+ * PUBLIC package root (../src/index), and a test is allowed to reach internals to probe them.
  */
 import { describe, expect, it } from "vitest";
 import {
   createProtectedAiProvider,
   createSubstitutionEngine,
-  createTokensModule,
   PhiEngineError,
   ReversalFailedError,
   REVERSAL_FAILED,
 } from "../src/index";
 import type { BoundaryGenerateOptions, TextSegment } from "../src/index";
+// Deep imports (test-internal probes of internals — NOT the public boundary):
+import { InMemoryReversalStore } from "../src/tokens/index";
+import { BOUNDARY_TOKEN_GRAMMAR_POLICY } from "../src/core/orchestrator";
 
 const DEV_NAME = "Jordan Testcase";
 
-describe("GLY-336 M1: composable from a TIGHT published root", () => {
-  it("root exports the factories + error surface — and nothing else runtime", async () => {
+describe("GLY-336 M1: capability-tight composition from the published root", () => {
+  it("root exports ONLY the factories + error surface (createTokensModule is not public)", async () => {
     const mod = (await import("../src/index")) as Record<string, unknown>;
-
-    // (3) allowed runtime root exports
     for (const name of [
       "createSubstitutionEngine",
       "createProtectedAiProvider",
-      "createTokensModule",
       "PhiEngineError",
       "isPhiEngineError",
       "isPhiEngineFailureCode",
@@ -43,17 +43,16 @@ describe("GLY-336 M1: composable from a TIGHT published root", () => {
     ]) {
       expect(typeof mod[name] !== "undefined", `${name} MUST be a root export`).toBe(true);
     }
-
-    // Boundary oracle (ii): no concrete internal class / live policy / dev seed at the root.
     for (const name of [
+      "createTokensModule", // finding 4 — dropped from the public root
+      "ComposedSubstitutionEngine",
+      "ComposedProtectedAiProvider",
       "InMemoryReversalStore",
       "InProcessReversalHandle",
       "isInProcessReversalHandle",
       "reverseText",
       "AtomicTokenReverser",
       "HoldbackReverseStreamFactory",
-      "ComposedSubstitutionEngine",
-      "ComposedProtectedAiProvider",
       "BracketTokenGrammar",
       "InMemoryTokenAssignmentStore",
       "SentinelSourceTokenEscaper",
@@ -62,26 +61,97 @@ describe("GLY-336 M1: composable from a TIGHT published root", () => {
       "BOUNDARY_TOKEN_GRAMMAR_POLICY",
       "DEFAULT_TOKEN_GRAMMAR_POLICY",
       "DEFAULT_DEV_TAGGED_VALUES",
+      "frozenRoleSet",
       "SENTINEL_OPEN",
       "SENTINEL_CLOSE",
     ]) {
       expect(mod[name], `${name} MUST NOT be a root export`).toBeUndefined();
     }
-
     expect(REVERSAL_FAILED).toBe("REVERSAL_FAILED");
     expect(new ReversalFailedError()).toBeInstanceOf(Error);
     expect(new PhiEngineError("REVERSAL_FAILED").code).toBe("REVERSAL_FAILED");
   });
 
-  it("boundary oracle (i): the concrete reversal store's raw map is NOT reflectively enumerable", async () => {
-    // createTokensModule returns the store typed as the bounded interface; the runtime object is
-    // the concrete InMemoryReversalStore, so this exercises the real #private backing.
-    const store = createTokensModule().reversalStore as unknown as {
+  it("the provider facade is unforgeable (null prototype, no recoverable constructor, no leaked internals)", () => {
+    const { provider } = createProtectedAiProvider();
+    // No prototype → no recoverable public constructor to `new` with a fake engine (finding 3).
+    expect(Object.getPrototypeOf(provider)).toBeNull();
+    expect((provider as Record<string, unknown>)["constructor"]).toBeUndefined();
+    expect(Object.isFrozen(provider)).toBe(true);
+    // Exposes ONLY the AiProvider interface methods.
+    expect(Object.getOwnPropertyNames(provider).sort()).toEqual([
+      "embedText",
+      "generateStream",
+      "generateText",
+    ]);
+    for (const leak of [
+      "engine",
+      "reversalStore",
+      "reverser",
+      "streamFactory",
+      "policy",
+      "options",
+      "router",
+      "audit",
+      "invokeRaw",
+      "safeTrace",
+      "deps",
+    ]) {
+      expect((provider as Record<string, unknown>)[leak], `facade must not leak ${leak}`).toBeUndefined();
+    }
+  });
+
+  it("the engine facade is unforgeable (null prototype, only interface methods)", () => {
+    const { engine } = createSubstitutionEngine();
+    expect(Object.getPrototypeOf(engine)).toBeNull();
+    expect((engine as Record<string, unknown>)["constructor"]).toBeUndefined();
+    expect(Object.isFrozen(engine)).toBe(true);
+    expect(Object.getOwnPropertyNames(engine).sort()).toEqual([
+      "createReverseStream",
+      "reverse",
+      "substitute",
+    ]);
+    for (const leak of [
+      "reversalStore",
+      "reverser",
+      "streamFactory",
+      "assignmentStore",
+      "coordinator",
+      "truthReader",
+      "policy",
+      "grammar",
+      "compiler",
+      "cache",
+      "escaper",
+    ]) {
+      expect((engine as Record<string, unknown>)[leak], `facade must not leak ${leak}`).toBeUndefined();
+    }
+  });
+
+  it("the boundary role policy is GENUINELY immutable (no mutators, no Set.prototype bypass)", () => {
+    const roles = BOUNDARY_TOKEN_GRAMMAR_POLICY.allowedRoles as unknown as {
+      has: (v: string) => boolean;
+    } & Record<string, unknown>;
+    expect(roles.has("Claimant")).toBe(true);
+    expect(roles.has("Jordan Smith PHI role")).toBe(false);
+    // No mutator method is exposed on the membership oracle.
+    for (const mutator of ["add", "delete", "clear"]) {
+      expect(roles[mutator], `role set must not expose ${mutator}`).toBeUndefined();
+    }
+    // And a stolen `Set.prototype.add` cannot operate on it — the oracle has no [[SetData]] slot.
+    expect(() =>
+      (Set.prototype.add as (this: unknown, v: unknown) => unknown).call(roles, "Jordan Smith PHI role"),
+    ).toThrow();
+    expect(roles.has("Jordan Smith PHI role")).toBe(false);
+    expect(Object.isFrozen(roles)).toBe(true);
+  });
+
+  it("regression (#private): the concrete reversal store's raw map is NOT reflectively enumerable", async () => {
+    const store = new InMemoryReversalStore() as unknown as {
       record: (input: unknown) => void;
       resolveEncounteredTokens: (input: unknown) => Promise<ReadonlyMap<string, string>>;
     };
-    const CANARY = "Jordan Testcase — 987-65-4320"; // a raw value the store now holds
-
+    const CANARY = "Jordan Testcase — 987-65-4320";
     store.record({
       tenantId: "t-1",
       matterId: "m-1",
@@ -90,37 +160,22 @@ describe("GLY-336 M1: composable from a TIGHT published root", () => {
       canonical: CANARY,
       attemptId: "a-1",
     });
-
-    // The value IS stored — the bounded read returns it...
     const resolved = await store.resolveEncounteredTokens({
       tenantId: "t-1",
       matterId: "m-1",
       dictionaryVersion: 1n,
       tokens: ["[[Claimant]]"],
     });
-    expect(resolved.get("[[Claimant]]")).toBe(CANARY);
+    expect(resolved.get("[[Claimant]]")).toBe(CANARY); // value IS stored (bounded read works)...
 
-    // ...but it is NOT reachable by any reflective/enumerable path.
     const ownNames = Object.getOwnPropertyNames(store);
     const reflectKeys = Reflect.ownKeys(store).map((k) => String(k));
-    const enumKeys = Object.keys(store);
     for (const forbidden of ["canonicalByKey", "recordedAttempts"]) {
-      expect(ownNames, `getOwnPropertyNames must not expose ${forbidden}`).not.toContain(forbidden);
-      expect(reflectKeys, `Reflect.ownKeys must not expose ${forbidden}`).not.toContain(forbidden);
-      expect(enumKeys, `Object.keys must not expose ${forbidden}`).not.toContain(forbidden);
+      expect(ownNames).not.toContain(forbidden);
+      expect(reflectKeys).not.toContain(forbidden);
+      expect(Object.keys(store)).not.toContain(forbidden);
     }
-    // No enumerable own value (nor a whole-object serialization) reveals the raw canonical.
-    expect(JSON.stringify(store) ?? "").not.toContain("Jordan Testcase");
-    for (const name of ownNames) {
-      const value = (store as unknown as Record<string, unknown>)[name];
-      expect(JSON.stringify(value ?? null)).not.toContain("Jordan Testcase");
-    }
-  });
-
-  it("boundary oracle (finding 2): the grammar policy handed out is deep-frozen", () => {
-    const tokens = createTokensModule();
-    expect(Object.isFrozen(tokens.policy)).toBe(true);
-    expect(Object.isFrozen(tokens.policy.allowedRoles)).toBe(true);
+    expect(JSON.stringify(store) ?? "").not.toContain("Jordan Testcase"); // ...but never reflectable
   });
 
   it("createSubstitutionEngine() composes and performs a basic substitution + reversal", async () => {
@@ -140,14 +195,13 @@ describe("GLY-336 M1: composable from a TIGHT published root", () => {
     });
 
     const tokenized = String(result.segments[0]!.text);
-    expect(tokenized).toMatch(/\[\[Claimant/); // trusted name replaced with a role token
-    expect(tokenized).not.toContain(DEV_NAME); // raw value never survives into egress text
+    expect(tokenized).toMatch(/\[\[Claimant/);
+    expect(tokenized).not.toContain(DEV_NAME);
 
-    // §7/N2: the reversal handle is a non-serializable capability, never a map.
-    expect(() => result.reversalHandle.toJSON()).toThrow();
+    expect(() => result.reversalHandle.toJSON()).toThrow(); // non-serializable capability
 
     const display = await dev.engine.reverse(result.segments[0]!.text, result.reversalHandle);
-    expect(String(display)).toContain(DEV_NAME); // reversed server-side for display
+    expect(String(display)).toContain(DEV_NAME);
   });
 
   it("createProtectedAiProvider() round-trips generateText through the protected binding", async () => {
@@ -156,7 +210,6 @@ describe("GLY-336 M1: composable from a TIGHT published root", () => {
       messages: [{ role: "user", content: [{ type: "text", text: `Please contact ${DEV_NAME}.` }] }],
     };
     const display = await dev.provider.generateText(options);
-    // The dev raw provider only ever saw tokenized text; the wrapper reversed it for display.
     expect(String(display)).toContain(DEV_NAME);
     expect(String(display)).not.toContain("[[Claimant");
   });

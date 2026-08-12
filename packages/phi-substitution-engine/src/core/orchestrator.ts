@@ -66,6 +66,7 @@ import { TokensLeafAssignmentPort } from "../dictionary/token-port";
 import type { AhoCorasickCompiledDictionary } from "../dictionary/compiled-dictionary";
 import {
   BracketTokenGrammar,
+  frozenRoleSet,
   HoldbackReverseStreamFactory,
   InMemoryTokenAssignmentStore,
   InProcessReversalHandle,
@@ -138,30 +139,28 @@ const role = (value: string): TokenRole => value as unknown as TokenRole;
 // Set makes it immutable, so no in-process actor can add a PHI-bearing role that would let the
 // grammar emit a raw value as a "token". The engine's token policy is not caller-overridable.
 export const BOUNDARY_TOKEN_GRAMMAR_POLICY: TokenGrammarPolicy = Object.freeze({
-  allowedRoles: Object.freeze(
-    new Set<TokenRole>(
-      [
-        "Claimant",
-        "Witness",
-        "Treating_Physician",
-        "Adjuster",
-        "Employer",
-        "Person",
-        "DOB",
-        "SSN",
-        "MRN",
-        "DEA",
-        "EMAIL",
-        "PHONE",
-        "ADDRESS",
-        "Address",
-        "CLAIM",
-        "POLICY",
-        "ACCOUNT",
-        "OTHER",
-      ].map(role),
-    ),
-  ) as ReadonlySet<TokenRole>,
+  allowedRoles: frozenRoleSet(
+    [
+      "Claimant",
+      "Witness",
+      "Treating_Physician",
+      "Adjuster",
+      "Employer",
+      "Person",
+      "DOB",
+      "SSN",
+      "MRN",
+      "DEA",
+      "EMAIL",
+      "PHONE",
+      "ADDRESS",
+      "Address",
+      "CLAIM",
+      "POLICY",
+      "ACCOUNT",
+      "OTHER",
+    ].map(role),
+  ),
   maximumTokenUtf16Length: 64,
   maximumRoleUtf16Length: 48,
   maximumSequence: 9999,
