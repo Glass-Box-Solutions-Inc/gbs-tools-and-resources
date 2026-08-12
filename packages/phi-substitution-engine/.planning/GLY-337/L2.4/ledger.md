@@ -73,3 +73,19 @@ was already bigint). tsc now enforces the bigint discipline throughout, so a reg
 typecheck; a literal 2^53 exhaustion oracle is infeasible and moot (no representable saturation). Store
 unchanged. tsc clean, 306 tests. MUT-DURABLE-ROLLBACK re-confirmed red with bigint ordinals.
 Gate round-4 dispositions: F(3rd)-1 rollback fix VERIFIED; F(3rd)-2 lost-commit fix VERIFIED; all other axes clear.
+
+## Crown-jewel security review (post-APPROVE) — 2 Claude-family agents, read-only
+- security-auditor (OWASP/PHI-egress): NO in-scope PHI-egress/capability/crypto/tenant defect. 2 INFO
+  (DEK cache no-eviction → G4/Q5; capability boundary rests on package `exports` allowlist → add a guard).
+- Silas (offensive leak probe, claude-opus-4-8): NO valid in-scope attack chain for any of the 4 goals
+  (plaintext/DEK extraction, illegitimate reversal, cross-boundary read, egress-without-durable-mapping).
+  One fix recommended pre-ship (F1); rest governance-deferred/cosmetic.
+Folded in (commit `0cf58df`):
+- Silas F1: resolve() now snapshots `{tenantId,matterId,dictionaryVersion}` once at the top of the scrub
+  try (symmetry with record()'s F(2nd)-2 hardening); removes the only read-path TOCTOU. Oracle
+  MUT-RESOLVE-SCOPE-TOCTOU proven red (flipping dictionaryVersion getter re-read diverges → reject).
+- Auditor INFO#2 / Silas capability: strengthened factory-smoke forbidden-root-export list with the L2.4
+  durable symbols + new guard asserting package.json `exports` == {".","./package.json"}, no wildcard.
+Deferred to G4/governance (NOT this unit): DEK cache TTL/eviction/zeroization (Q5); orphaned prepared-blob
+reclamation (Q3); warm/cold cache timing (cosmetic); resolve returns live Map as ReadonlyMap (deliberate C4).
+tsc clean, 308 tests, 26 guards mutation-proven (adds MUT-RESOLVE-SCOPE-TOCTOU).
