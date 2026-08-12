@@ -18,7 +18,7 @@
  * Threat model (CONTRACT/THREAT-MODEL.md): defends accidental egress + returned-surface tampering.
  * It does NOT defend against a first-party consumer replacing JS global intrinsics — out of scope.
  */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { ReversalRecordInput, ReversalWriteStore } from "../../core/contracts";
 import type {
   DictionaryVersion,
@@ -302,7 +302,14 @@ export class DurableReversalStore implements ReversalWriteStore {
     return Buffer.from(plaintext).toString("utf8");
   }
 
-  /** Unwrap + cache the DEK (Q5: cache key includes tenant/matter/DEK-generation + KEK version). */
+  /**
+   * Unwrap + cache the DEK. The cache identity is bound to the EXACT wrapped-key material — a sha256
+   * fingerprint of `wrappedDek` PLUS the `wrappingKeyId`, alongside tenant/matter/generation/version
+   * (Q5). `wrappedDek` and `wrappingKeyId` are NOT covered by the 10-field AAD, so binding the cache
+   * key to them is what makes the WARM path fail closed identically to a cold read (finding F2): a
+   * post-warm swap of the stored wrapped-key material misses the cache → re-authenticates via
+   * `unwrap` → throws, instead of silently decrypting under the cached original DEK.
+   */
   async #unwrapDek(
     scope: WrappingKeyScope,
     keyHandle: WrappingKeyHandle,
@@ -310,7 +317,10 @@ export class DurableReversalStore implements ReversalWriteStore {
     wrappedDek: WrappedDekMaterial,
     wrappingKeyVersion: string,
   ): Promise<Uint8Array> {
-    const cacheKey = `${dekGenerationId} ${wrappingKeyVersion}`;
+    const cacheKey = createHash("sha256")
+      .update(`${scope.tenantId} ${scope.matterId} ${dekGenerationId} ${wrappingKeyVersion} ${keyHandle.keyId} `, "utf8")
+      .update(wrappedDek as unknown as Uint8Array)
+      .digest("hex");
     const cached = this.#dekCache.get(cacheKey);
     if (cached !== undefined) {
       return cached;

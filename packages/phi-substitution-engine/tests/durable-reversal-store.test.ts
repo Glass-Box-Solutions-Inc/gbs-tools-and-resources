@@ -333,8 +333,10 @@ describe("L2.4 DurableReversalStore — AAD authenticates every field (§B.6, ta
     }
 
     const blobTampers: ReadonlyArray<readonly [string, Partial<EncryptedReversalRecordBlob>]> = [
-      ["dekGenerationId", { dekGenerationId: brand("gen-forged") }],
-      ["wrappingKeyVersion", { wrappingKeyVersion: brand("v-forged") }],
+      ["dekGenerationId", { dekGenerationId: brand("gen-forged") }], // authenticated by AAD field 9
+      ["wrappingKeyVersion", { wrappingKeyVersion: brand("v-forged") }], // authenticated by AAD field 10
+      ["wrappedDek", { wrappedDek: brand(new Uint8Array(60)) }], // NOT in AAD — fails closed via unwrap/GCM (F4)
+      ["wrappingKeyId", { wrappingKeyId: brand("kek-forged") }], // NOT in AAD — fails closed via binding digest (F4)
     ];
     for (const [label, patch] of blobTampers) {
       const h = makeHarness({ retention: "matter" });
@@ -394,6 +396,36 @@ describe("L2.4 DurableReversalStore — tenant isolation + nonce uniqueness (L8,
 
     const hex = [...first, ...second].map((n) => Buffer.from(n).toString("hex"));
     expect(new Set(hex).size).toBe(hex.length); // all 16 distinct across concurrency + remount
+  });
+});
+
+describe("L2.4 DurableReversalStore — warm DEK cache fails closed on key-material tamper (F2)", () => {
+  it("a post-warm wrappedDek swap misses the cache and fails closed — never decrypts under the cached DEK (F2)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ tenantId: brand<TenantId>("tenant-a"), canonical: "Maria García" })); // warms #dekCache for tenant-a
+    await h.store.record(recordInput({ tenantId: brand<TenantId>("tenant-b"), canonical: "Robert O'Neil" })); // a different scope → a different valid wrapped DEK
+
+    // Warm path works before tamper.
+    const warm = await h.store.resolveEncounteredTokens(resolveInput({ tenantId: brand<TenantId>("tenant-a") }));
+    expect(warm.get(CLAIMANT)).toBe("Maria García");
+
+    // Attacker swaps in a VALID-but-wrong wrapped DEK (not covered by the AAD). The warm store must
+    // NOT reuse the cached original DEK.
+    const otherWrapped = h.backend.debugReadBlob(keyFor({ tenantId: brand<TenantId>("tenant-b") })).wrappedDek;
+    h.backend.debugPatchBlob(keyFor({ tenantId: brand<TenantId>("tenant-a") }), { wrappedDek: otherWrapped });
+    await expect(
+      h.store.resolveEncounteredTokens(resolveInput({ tenantId: brand<TenantId>("tenant-a") })),
+    ).rejects.toBeInstanceOf(ReversalFailedError);
+  });
+
+  it("a post-warm wrappingKeyId swap misses the cache and fails closed (F2)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ canonical: "Maria García" })); // warms #dekCache
+    const warm = await h.store.resolveEncounteredTokens(resolveInput());
+    expect(warm.get(CLAIMANT)).toBe("Maria García");
+
+    h.backend.debugPatchBlob(keyFor(), { wrappingKeyId: brand("kek-forged") });
+    await expect(h.store.resolveEncounteredTokens(resolveInput())).rejects.toBeInstanceOf(ReversalFailedError);
   });
 });
 
