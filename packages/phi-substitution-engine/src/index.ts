@@ -4,6 +4,7 @@ export type * from "./core/protected-ai-provider";
 export type * from "./dictionary/contracts";
 export type * from "./collision/ports";
 export type * from "./tokens/ports";
+export type * from "./tokens/durable/ports";
 export type * from "./detectors/ports";
 export type * from "./detectors/phileas-service-adapter";
 export type * from "./audit/ports";

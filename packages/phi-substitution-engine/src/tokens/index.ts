@@ -37,6 +37,26 @@ export {
   DIAG_REVERSAL_HANDLE_NOT_SERIALIZABLE,
 } from "./errors";
 
+// L2.4 durable reversal store (GLY-337) — the §6 productionization of the reversal WRITE seam.
+// Internal surface (deep-importable); the capability-tight public root exposes only the port types.
+export {
+  DurableReversalStore,
+  InMemoryKeyProvider,
+  InMemoryReversalSpoolBackend,
+  InMemoryReversalSpoolVolume,
+  buildReversalAad,
+  MATTER_EXPIRES_AT,
+  mappingKeyOf,
+  idempotencyKeyOf,
+  scopeDigestOf,
+  dekGenerationIdOf,
+  dekBindingDigestOf,
+  gcmEncrypt,
+  gcmDecrypt,
+  bytesEqual,
+  DEK_BYTES,
+} from "./durable/index";
+
 function role(value: string): TokenRole {
   return value as TokenRole;
 }
