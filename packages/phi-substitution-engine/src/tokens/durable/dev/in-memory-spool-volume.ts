@@ -3,23 +3,28 @@
  * impl lands at G4 behind the SAME `SpoolVolume` interface. No Azure SDK / filesystem client here.
  *
  * Durability model (so the oracles can simulate the real thing):
- *  - `InMemoryReversalSpoolBackend` is the DURABLE substrate (the "mounted volume"): DEK generations,
- *    the durable nonce counters, prepared artifacts, committed record bytes, idempotency claims
- *    (tombstones), and current mappings all live here and SURVIVE a remount.
- *  - `InMemoryReversalSpoolVolume` is a per-replica handle. PENDING state — a published-but-not-yet-
- *    flushed commit — lives on the VOLUME and is LOST on replica loss / remount. A fresh replica is
- *    `backend.mount()`.
+ *  - `InMemoryReversalSpoolBackend` is the DURABLE, SHARED substrate (the "mounted volume"): DEK
+ *    generations, the durable nonce counters, prepared artifacts, committed record bytes, idempotency
+ *    claims (tombstones), and current mappings all live here. It is shared across every replica mounted
+ *    on it.
+ *  - `InMemoryReversalSpoolVolume` is a per-replica handle. Its only replica-local state is the
+ *    prepared-write context (a handle it minted). All claim/mapping/nonce state is on the shared
+ *    backend, so a SECOND replica mounted on the same backend sees the first replica's claims.
  *
- * `publish` is atomic: it writes the idempotency claim AND the current mapping into pending in one
- * synchronous critical section; only `flush` promotes them (together with the record bytes) to the
- * durable backend. So an acknowledged (flushed) write survives remount, and an unflushed one leaves
- * no readable current mapping.
+ * `publish` is CROSS-REPLICA atomic: `backend.publishAtomic` does a SYNCHRONOUS check-and-set (no
+ * `await` between the claim-existence check and the claim+mapping write), so two `record()` calls
+ * interleaved at their awaits — even on two different volumes over one backend — can never both create
+ * a first commit. The loser gets `kind:"existing"` and flushes that shared commit.
  *
- * Crash + fault injection: set `volume.faults.failAt` to throw at a phase boundary, or
- * `volume.faults.flushGate` to hold `flush` pending. `backend.mount()` models a replica takeover.
- * The `debug*` methods on the backend simulate an attacker with raw storage access (record
- * relocation, metadata tampering, ciphertext corruption) — they are dev/test affordances, NOT part
- * of the `SpoolVolume` port.
+ * `flush` is the DURABILITY barrier: it promotes a published commit's record bytes AND publication
+ * metadata (claim + mapping) from "published" to durably-flushed. A replica loss (`crash()`) discards
+ * every published-but-unflushed claim/mapping, so an unacknowledged write leaves no readable mapping
+ * and no blocking tombstone; a flushed write survives.
+ *
+ * Fault injection: `volume.faults.failAt` throws at a phase boundary; `volume.faults.flushGate` holds
+ * `flush` pending. `backend.crash()` models a replica-loss remount. The `debug*` methods simulate an
+ * attacker with raw storage access (relocation, metadata/blob tampering, ciphertext corruption) — dev
+ * affordances, NOT part of the `SpoolVolume` port.
  */
 import type {
   DekGeneration,
@@ -50,7 +55,7 @@ export interface SpoolFaults {
   flushGate?: Promise<void> | null;
 }
 
-interface ClaimRecord {
+interface StoredClaim {
   readonly idempotencyKey: ReversalIdempotencyKey;
   readonly mappingKey: ReversalMappingKey;
   readonly scopeDigest: ReversalScopeDigest;
@@ -58,48 +63,71 @@ interface ClaimRecord {
   readonly preparedHandle: PreparedWriteHandle;
   readonly createdAtEpochMs: number;
   readonly expiresAtEpochMs: bigint;
+  /** false = published but not yet durably flushed (lost on replica loss); true = durable. */
+  readonly flushed: boolean;
 }
 
-interface MappingRecord {
+interface StoredMapping {
   readonly mappingKey: ReversalMappingKey;
   readonly preparedHandle: PreparedWriteHandle;
   readonly commit: PublishedCommitHandle;
+  readonly flushed: boolean;
 }
 
-interface PendingCommit {
-  readonly commit: PublishedCommitHandle;
-  readonly claim: ClaimRecord;
-  readonly mapping: MappingRecord;
+interface CommitContext {
+  readonly idempotencyKey: ReversalIdempotencyKey;
+  readonly mappingKey: ReversalMappingKey;
+  readonly scopeDigest: ReversalScopeDigest;
   readonly preparedHandle: PreparedWriteHandle;
 }
 
 /** Big-endian 96-bit nonce from a durable counter. */
 function nonce96(counter: bigint): GcmNonce96 {
   const buf = Buffer.alloc(12);
-  buf.writeBigUInt64BE(counter >> 32n, 0); // high 64 bits (0 for realistic counts) into bytes 0..7
-  buf.writeUInt32BE(Number(counter & 0xffffffffn), 8); // low 32 bits into bytes 8..11
+  buf.writeBigUInt64BE(counter >> 32n, 0);
+  buf.writeUInt32BE(Number(counter & 0xffffffffn), 8);
   return new Uint8Array(buf) as unknown as GcmNonce96;
 }
 
 /**
- * The durable "mounted volume". Persists across a remount; only PENDING (unflushed) state on the
- * per-replica {@link InMemoryReversalSpoolVolume} is lost.
+ * The durable, SHARED "mounted volume". Every replica mounted on it sees the same claims/mappings.
+ * A published-but-unflushed claim/mapping is visible to a live peer (so idempotency is cross-replica)
+ * but is discarded by `crash()` (replica loss).
  */
 export class InMemoryReversalSpoolBackend {
   readonly #dekGenerations = new Map<string, DekGeneration>();
   readonly #nonceNext = new Map<string, bigint>();
-  /** Prepared artifacts on the mounted volume — durable but UNREACHABLE without a durable mapping. */
+  /** Prepared artifacts — durable, UNREACHABLE by readCurrent (only a committed record is readable). */
   readonly #preparedBlobs = new Map<string, EncryptedReversalRecordBlob>();
-  /** Record bytes made durable by a completed flush. */
+  /** Record bytes made durable by a completed flush — the ONLY blobs readCurrent returns. */
   readonly #committedRecords = new Map<string, EncryptedReversalRecordBlob>();
-  /** Durable idempotency claims (tombstones persist past detector expiry). */
-  readonly #claims = new Map<string, ClaimRecord>();
-  /** Durable current mappings. */
-  readonly #mappings = new Map<string, MappingRecord>();
+  readonly #claims = new Map<string, StoredClaim>();
+  readonly #mappings = new Map<string, StoredMapping>();
+  readonly #commitIndex = new Map<string, CommitContext>();
   #handleSeq = 0;
 
   public mount(faults: SpoolFaults = {}, nowEpochMilliseconds: () => number = Date.now): InMemoryReversalSpoolVolume {
     return new InMemoryReversalSpoolVolume(this, faults, nowEpochMilliseconds);
+  }
+
+  /** Replica loss: discard every published-but-unflushed claim/mapping/commit. Durable state survives. */
+  public crash(): void {
+    for (const [key, claim] of this.#claims) {
+      if (!claim.flushed) {
+        this.#claims.delete(key);
+      }
+    }
+    for (const [key, mapping] of this.#mappings) {
+      if (!mapping.flushed) {
+        this.#mappings.delete(key);
+      }
+    }
+    for (const [commit, ctx] of this.#commitIndex) {
+      const claim = this.#claims.get(ctx.idempotencyKey as unknown as string);
+      if (claim === undefined || (claim.commit as unknown as string) !== commit) {
+        this.#commitIndex.delete(commit);
+      }
+    }
   }
 
   // ---- internal substrate API used only by the volume ----
@@ -107,17 +135,12 @@ export class InMemoryReversalSpoolBackend {
     this.#handleSeq += 1;
     return `prep-${this.#handleSeq}` as unknown as PreparedWriteHandle;
   }
-  nextCommit(): PublishedCommitHandle {
-    this.#handleSeq += 1;
-    return `commit-${this.#handleSeq}` as unknown as PublishedCommitHandle;
-  }
   getDekGeneration(scopeKey: string): DekGeneration | undefined {
     return this.#dekGenerations.get(scopeKey);
   }
   putDekGeneration(scopeKey: string, generation: DekGeneration): void {
     this.#dekGenerations.set(scopeKey, generation);
   }
-  /** Durably reserve + advance the per-generation nonce counter BEFORE returning (survives remount). */
   reserveNonceCounter(dekGenerationId: string): bigint {
     const next = this.#nonceNext.get(dekGenerationId) ?? 0n;
     this.#nonceNext.set(dekGenerationId, next + 1n);
@@ -126,100 +149,148 @@ export class InMemoryReversalSpoolBackend {
   putPreparedBlob(handle: PreparedWriteHandle, blob: EncryptedReversalRecordBlob): void {
     this.#preparedBlobs.set(handle as unknown as string, blob);
   }
-  getClaim(idempotencyKey: ReversalIdempotencyKey): ClaimRecord | undefined {
-    return this.#claims.get(idempotencyKey as unknown as string);
+  getPreparedBlob(handle: PreparedWriteHandle): EncryptedReversalRecordBlob | undefined {
+    return this.#preparedBlobs.get(handle as unknown as string);
   }
-  putClaim(claim: ClaimRecord): void {
-    this.#claims.set(claim.idempotencyKey as unknown as string, claim);
+
+  /**
+   * SYNCHRONOUS cross-replica atomic publish (§6 / F1): the claim-existence check and the claim +
+   * current-mapping write happen with NO `await` between them, so two await-interleaved callers — even
+   * on two volumes over this one backend — cannot both create a first commit. First writer wins.
+   */
+  publishAtomic(ctx: CommitContext, blob: EncryptedReversalRecordBlob, nowEpochMs: number): PublishReversalResult {
+    const idempotencyKey = ctx.idempotencyKey as unknown as string;
+    const existing = this.#claims.get(idempotencyKey);
+    if (existing !== undefined) {
+      const expired = BigInt(nowEpochMs) >= existing.expiresAtEpochMs;
+      return { kind: "existing", commit: existing.commit, immutableScopeDigest: existing.scopeDigest, expired };
+    }
+    this.#handleSeq += 1;
+    const commit = `commit-${this.#handleSeq}` as unknown as PublishedCommitHandle;
+    const claim: StoredClaim = {
+      idempotencyKey: ctx.idempotencyKey,
+      mappingKey: ctx.mappingKey,
+      scopeDigest: ctx.scopeDigest,
+      commit,
+      preparedHandle: ctx.preparedHandle,
+      createdAtEpochMs: blob.meta.createdAtEpochMs,
+      expiresAtEpochMs: blob.meta.expiresAtEpochMs,
+      flushed: false,
+    };
+    this.#claims.set(idempotencyKey, claim);
+    this.#mappings.set(ctx.mappingKey as unknown as string, {
+      mappingKey: ctx.mappingKey,
+      preparedHandle: ctx.preparedHandle,
+      commit,
+      flushed: false,
+    });
+    this.#commitIndex.set(commit as unknown as string, ctx);
+    return { kind: "published", commit };
   }
-  putMapping(mapping: MappingRecord): void {
-    this.#mappings.set(mapping.mappingKey as unknown as string, mapping);
+
+  /** Durability barrier: promote a commit's record bytes AND publication metadata to durable. */
+  flushCommit(commit: PublishedCommitHandle): void {
+    const ctx = this.#commitIndex.get(commit as unknown as string);
+    if (ctx === undefined) {
+      return; // unknown / already durable — idempotent no-op
+    }
+    const blob = this.#preparedBlobs.get(ctx.preparedHandle as unknown as string);
+    if (blob === undefined) {
+      throw new Error("flush_missing_prepared_blob");
+    }
+    // Skipping the bytes is MUT-CONTAINER-SCRATCH; skipping the metadata is MUT-FLUSH-FILE-ONLY.
+    this.#persistRecordBytes(ctx.preparedHandle, blob);
+    this.#persistPublicationMetadata(commit, ctx);
   }
-  getMapping(mappingKey: ReversalMappingKey): MappingRecord | undefined {
-    return this.#mappings.get(mappingKey as unknown as string);
-  }
-  putCommittedRecord(handle: PreparedWriteHandle, blob: EncryptedReversalRecordBlob): void {
+
+  #persistRecordBytes(handle: PreparedWriteHandle, blob: EncryptedReversalRecordBlob): void {
     this.#committedRecords.set(handle as unknown as string, blob);
   }
-  getBlobForRead(handle: PreparedWriteHandle): EncryptedReversalRecordBlob | undefined {
-    const h = handle as unknown as string;
-    return this.#committedRecords.get(h) ?? this.#preparedBlobs.get(h);
+
+  #persistPublicationMetadata(commit: PublishedCommitHandle, ctx: CommitContext): void {
+    const commitStr = commit as unknown as string;
+    const claim = this.#claims.get(ctx.idempotencyKey as unknown as string);
+    if (claim !== undefined && (claim.commit as unknown as string) === commitStr) {
+      this.#claims.set(ctx.idempotencyKey as unknown as string, { ...claim, flushed: true });
+    }
+    const mapping = this.#mappings.get(ctx.mappingKey as unknown as string);
+    if (mapping !== undefined && (mapping.commit as unknown as string) === commitStr) {
+      this.#mappings.set(ctx.mappingKey as unknown as string, { ...mapping, flushed: true });
+    }
+  }
+
+  readMapping(mappingKey: ReversalMappingKey): StoredMapping | undefined {
+    return this.#mappings.get(mappingKey as unknown as string);
+  }
+  /** Only a committed (durably flushed) record is readable. */
+  readCommittedBlob(handle: PreparedWriteHandle): EncryptedReversalRecordBlob | undefined {
+    return this.#committedRecords.get(handle as unknown as string);
   }
 
   // ---- dev/attacker-simulation affordances (NOT part of the SpoolVolume port) ----
 
-  /** Simulates an attacker with raw storage access relocating an envelope to another mapping key. */
+  #blobFor(mappingKey: ReversalMappingKey): { handle: PreparedWriteHandle; blob: EncryptedReversalRecordBlob } {
+    const m = this.#mappings.get(mappingKey as unknown as string);
+    if (m === undefined) {
+      throw new Error("debug_mapping_absent");
+    }
+    const blob =
+      this.#committedRecords.get(m.preparedHandle as unknown as string) ??
+      this.#preparedBlobs.get(m.preparedHandle as unknown as string);
+    if (blob === undefined) {
+      throw new Error("debug_blob_absent");
+    }
+    return { handle: m.preparedHandle, blob };
+  }
+
+  #restore(handle: PreparedWriteHandle, blob: EncryptedReversalRecordBlob): void {
+    this.#committedRecords.set(handle as unknown as string, blob);
+    this.#preparedBlobs.set(handle as unknown as string, blob);
+  }
+
+  /** Read a stored blob (for attacker-simulation tests that reuse valid-but-wrong material). */
+  public debugReadBlob(mappingKey: ReversalMappingKey): EncryptedReversalRecordBlob {
+    return this.#blobFor(mappingKey).blob;
+  }
+
+  /** Simulates raw-storage relocation of an envelope to another mapping key. */
   public debugRelocate(from: ReversalMappingKey, to: ReversalMappingKey): void {
     const m = this.#mappings.get(from as unknown as string);
     if (m === undefined) {
       throw new Error("debug_relocate_source_absent");
     }
-    this.#mappings.set(to as unknown as string, { mappingKey: to, preparedHandle: m.preparedHandle, commit: m.commit });
+    this.#mappings.set(to as unknown as string, { ...m, mappingKey: to });
   }
 
   /** Simulates tampering of stored (authenticated) record metadata. */
   public debugMutateMeta(mappingKey: ReversalMappingKey, patch: Partial<DurableReversalRecordMeta>): void {
-    const m = this.#mappings.get(mappingKey as unknown as string);
-    if (m === undefined) {
-      throw new Error("debug_mutate_meta_absent");
-    }
-    const blob = this.getBlobForRead(m.preparedHandle);
-    if (blob === undefined) {
-      throw new Error("debug_mutate_meta_blob_absent");
-    }
-    const mutated: EncryptedReversalRecordBlob = { ...blob, meta: { ...blob.meta, ...patch } };
-    this.putCommittedRecord(m.preparedHandle, mutated);
-    this.#preparedBlobs.set(m.preparedHandle as unknown as string, mutated);
+    const { handle, blob } = this.#blobFor(mappingKey);
+    this.#restore(handle, { ...blob, meta: { ...blob.meta, ...patch } });
   }
 
-  /** Simulates tampering of a top-level stored blob field (e.g. dekGenerationId, wrappingKeyVersion, nonce). */
+  /** Simulates tampering of a top-level stored blob field (wrappedDek, wrappingKeyId, dekGenerationId…). */
   public debugPatchBlob(mappingKey: ReversalMappingKey, patch: Partial<EncryptedReversalRecordBlob>): void {
-    const m = this.#mappings.get(mappingKey as unknown as string);
-    if (m === undefined) {
-      throw new Error("debug_patch_blob_absent");
-    }
-    const blob = this.getBlobForRead(m.preparedHandle);
-    if (blob === undefined) {
-      throw new Error("debug_patch_blob_missing");
-    }
-    const mutated: EncryptedReversalRecordBlob = { ...blob, ...patch };
-    this.putCommittedRecord(m.preparedHandle, mutated);
-    this.#preparedBlobs.set(m.preparedHandle as unknown as string, mutated);
+    const { handle, blob } = this.#blobFor(mappingKey);
+    this.#restore(handle, { ...blob, ...patch });
   }
 
   /** Simulates a one-bit ciphertext corruption (tamper). */
   public debugCorruptCiphertext(mappingKey: ReversalMappingKey): void {
-    const m = this.#mappings.get(mappingKey as unknown as string);
-    if (m === undefined) {
-      throw new Error("debug_corrupt_absent");
-    }
-    const blob = this.getBlobForRead(m.preparedHandle);
-    if (blob === undefined) {
-      throw new Error("debug_corrupt_blob_absent");
-    }
+    const { handle, blob } = this.#blobFor(mappingKey);
     const flipped = Uint8Array.from(blob.ciphertext);
     if (flipped.length === 0) {
       throw new Error("debug_corrupt_empty");
     }
     flipped[0] = flipped[0]! ^ 0x01;
-    const mutated: EncryptedReversalRecordBlob = { ...blob, ciphertext: flipped };
-    this.putCommittedRecord(m.preparedHandle, mutated);
-    this.#preparedBlobs.set(m.preparedHandle as unknown as string, mutated);
+    this.#restore(handle, { ...blob, ciphertext: flipped });
   }
 }
 
 export class InMemoryReversalSpoolVolume implements SpoolVolume {
   readonly #backend: InMemoryReversalSpoolBackend;
   readonly #nowEpochMilliseconds: () => number;
-  // Per-replica PENDING state — lost on remount.
-  readonly #pendingRecords = new Map<string, EncryptedReversalRecordBlob>();
-  readonly #pendingClaims = new Map<string, ClaimRecord>();
-  readonly #pendingMappings = new Map<string, MappingRecord>();
-  readonly #pendingCommits = new Map<string, PendingCommit>();
-  readonly #preparedContext = new Map<
-    string,
-    { readonly idempotencyKey: ReversalIdempotencyKey; readonly mappingKey: ReversalMappingKey; readonly scopeDigest: ReversalScopeDigest }
-  >();
+  /** The only replica-local state: prepared-write context for handles THIS replica minted. */
+  readonly #preparedContext = new Map<string, CommitContext>();
   /** Mutable so a test can inject a fault/gate on an already-constructed volume. */
   public readonly faults: SpoolFaults;
 
@@ -247,7 +318,6 @@ export class InMemoryReversalSpoolVolume implements SpoolVolume {
       return existing;
     }
     const minted = await input.mint();
-    // Re-check after the async mint in case a concurrent caller won the race (first mint wins durably).
     const raced = this.#backend.getDekGeneration(scopeKey);
     if (raced !== undefined) {
       return raced;
@@ -267,19 +337,14 @@ export class InMemoryReversalSpoolVolume implements SpoolVolume {
   public prepare(input: PrepareReversalWriteInput): Promise<PreparedReversalWrite> {
     this.#faultCheck("prepare");
     const handle = this.#backend.nextPreparedHandle();
-    // Prepared artifact goes to the durable substrate (unreachable) AND the live replica.
     this.#backend.putPreparedBlob(handle, input.encryptedRecord);
-    this.#pendingRecords.set(handle as unknown as string, input.encryptedRecord);
     this.#preparedContext.set(handle as unknown as string, {
       idempotencyKey: input.idempotencyKey,
       mappingKey: input.mappingKey,
       scopeDigest: input.immutableScopeDigest,
+      preparedHandle: handle,
     });
     return Promise.resolve({ handle });
-  }
-
-  #lookupClaim(idempotencyKey: ReversalIdempotencyKey): ClaimRecord | undefined {
-    return this.#pendingClaims.get(idempotencyKey as unknown as string) ?? this.#backend.getClaim(idempotencyKey);
   }
 
   public publish(prepared: PreparedReversalWrite): Promise<PublishReversalResult> {
@@ -288,39 +353,15 @@ export class InMemoryReversalSpoolVolume implements SpoolVolume {
     if (ctx === undefined) {
       return Promise.reject(new Error("publish_without_prepare"));
     }
-    const existing = this.#lookupClaim(ctx.idempotencyKey);
-    if (existing !== undefined) {
-      // Atomic no-op: the claim already exists. Never create a second claim/mapping.
-      const expired = BigInt(this.#nowEpochMilliseconds()) >= existing.expiresAtEpochMs;
-      return Promise.resolve({
-        kind: "existing",
-        commit: existing.commit,
-        immutableScopeDigest: existing.scopeDigest,
-        expired,
-      });
-    }
-    const blob = this.#backend.getBlobForRead(prepared.handle);
+    const blob = this.#backend.getPreparedBlob(prepared.handle);
     if (blob === undefined) {
       return Promise.reject(new Error("publish_missing_prepared_blob"));
     }
-    const commit = this.#backend.nextCommit();
-    const claim: ClaimRecord = {
-      idempotencyKey: ctx.idempotencyKey,
-      mappingKey: ctx.mappingKey,
-      scopeDigest: ctx.scopeDigest,
-      commit,
-      preparedHandle: prepared.handle,
-      createdAtEpochMs: blob.meta.createdAtEpochMs,
-      expiresAtEpochMs: blob.meta.expiresAtEpochMs,
-    };
-    const mapping: MappingRecord = { mappingKey: ctx.mappingKey, preparedHandle: prepared.handle, commit };
-    // ATOMIC critical section: claim + current mapping become visible together, into PENDING only.
-    // Nothing is durable until flush. (Splitting these, or writing either straight to the durable
-    // backend here, is MUT-NONATOMIC-PUBLISH.)
-    this.#pendingClaims.set(ctx.idempotencyKey as unknown as string, claim);
-    this.#pendingMappings.set(ctx.mappingKey as unknown as string, mapping);
-    this.#pendingCommits.set(commit as unknown as string, { commit, claim, mapping, preparedHandle: prepared.handle });
-    return Promise.resolve({ kind: "published", commit });
+    // Read the clock and run the atomic check-and-set synchronously (no await between) → cross-replica
+    // atomic. Splitting the check from the claim, or claiming in replica-local state, is MUT-NONATOMIC-PUBLISH.
+    const now = this.#nowEpochMilliseconds();
+    const result = this.#backend.publishAtomic(ctx, blob, now);
+    return Promise.resolve(result);
   }
 
   public async flush(commit: PublishedCommitHandle): Promise<void> {
@@ -328,49 +369,22 @@ export class InMemoryReversalSpoolVolume implements SpoolVolume {
       await this.faults.flushGate;
     }
     this.#faultCheck("flush");
-    const pending = this.#pendingCommits.get(commit as unknown as string);
-    if (pending === undefined) {
-      // Already durable (a prior flush of the same commit) — flush is idempotent.
-      return;
-    }
-    // Durable barrier: BOTH the record bytes AND the publication metadata (claim + mapping) are
-    // promoted to the mounted backend. Skipping the bytes is MUT-CONTAINER-SCRATCH; skipping the
-    // metadata is MUT-FLUSH-FILE-ONLY.
-    const blob = this.#backend.getBlobForRead(pending.preparedHandle);
-    if (blob === undefined) {
-      throw new Error("flush_missing_prepared_blob");
-    }
-    this.#persistRecordBytes(pending.preparedHandle, blob);
-    this.#persistPublicationMetadata(pending.claim, pending.mapping);
-    this.#pendingCommits.delete(commit as unknown as string);
-  }
-
-  #persistRecordBytes(handle: PreparedWriteHandle, blob: EncryptedReversalRecordBlob): void {
-    this.#backend.putCommittedRecord(handle, blob);
-  }
-
-  #persistPublicationMetadata(claim: ClaimRecord, mapping: MappingRecord): void {
-    this.#backend.putClaim(claim);
-    this.#backend.putMapping(mapping);
+    this.#backend.flushCommit(commit);
   }
 
   public readCurrent(requests: readonly ReversalLookupRequest[]): Promise<readonly ReversalLookupResult[]> {
     if (requests.length === 0) {
-      // Exact-key only: an empty "all records" selector is not permitted.
       return Promise.reject(new Error("read_current_requires_exact_keys"));
     }
     const out: ReversalLookupResult[] = [];
     for (const request of requests) {
-      const key = request.mappingKey as unknown as string;
-      const mapping = this.#pendingMappings.get(key) ?? this.#backend.getMapping(request.mappingKey);
+      const mapping = this.#backend.readMapping(request.mappingKey);
       if (mapping === undefined) {
-        continue; // exact-key miss → absent (partial map at the store level)
+        continue; // exact-key miss → absent
       }
-      const blob =
-        this.#pendingRecords.get(mapping.preparedHandle as unknown as string) ??
-        this.#backend.getBlobForRead(mapping.preparedHandle);
+      const blob = this.#backend.readCommittedBlob(mapping.preparedHandle);
       if (blob === undefined) {
-        continue;
+        continue; // published-but-unflushed → not yet readable
       }
       out.push({ mappingKey: request.mappingKey, encryptedRecord: blob });
     }

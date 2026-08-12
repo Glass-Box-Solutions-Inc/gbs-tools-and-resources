@@ -164,8 +164,39 @@ export function makeHarness(options: HarnessOptions = {}): Harness {
     faults,
     classifyRetention,
     maximumEncounteredTokenBatch,
-    remount: (remountFaults: SpoolFaults = {}) =>
-      mountStore(backend, keyProvider, clock, classifyRetention, maximumEncounteredTokenBatch, remountFaults),
+    remount: (remountFaults: SpoolFaults = {}) => {
+      // Replica loss: a fresh replica takes over the durable volume; unflushed writes are discarded.
+      backend.crash();
+      return mountStore(backend, keyProvider, clock, classifyRetention, maximumEncounteredTokenBatch, remountFaults);
+    },
+  };
+}
+
+/** Two LIVE replicas mounted on ONE shared durable backend + one KEK (for cross-replica race oracles). */
+export interface TwoMounts {
+  readonly backend: InMemoryReversalSpoolBackend;
+  readonly keyProvider: InMemoryKeyProvider;
+  readonly clock: () => number;
+  readonly a: MountedStore;
+  readonly b: MountedStore;
+  /** Total real (first-write) commits across both replicas. */
+  publishedTotal: () => number;
+}
+
+export function twoMounts(options: { retention?: RetentionOption; clock?: () => number } = {}): TwoMounts {
+  const backend = new InMemoryReversalSpoolBackend();
+  const keyProvider = new InMemoryKeyProvider();
+  const clock = options.clock ?? (() => Date.now());
+  const classifyRetention = classifierFrom(options.retention ?? "matter");
+  const a = mountStore(backend, keyProvider, clock, classifyRetention, 256, {});
+  const b = mountStore(backend, keyProvider, clock, classifyRetention, 256, {});
+  return {
+    backend,
+    keyProvider,
+    clock,
+    a,
+    b,
+    publishedTotal: () => a.spy.counts.published + b.spy.counts.published,
   };
 }
 

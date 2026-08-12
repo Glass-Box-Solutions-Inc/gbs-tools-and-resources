@@ -25,6 +25,7 @@ import {
   recordInput,
   resolveInput,
   T0,
+  twoMounts,
 } from "./durable-harness";
 import type { SubstitutionToken, TenantId, MatterId, DictionaryVersion, OperationAttemptId } from "../src/core/brands";
 import { expectNoCanary } from "./test-helpers";
@@ -184,6 +185,50 @@ describe("L2.4 DurableReversalStore — idempotency (§3.1.3, §6)", () => {
     expect(firstDone).toBe(true);
     expect(secondDone).toBe(true);
     expect(h.spy.counts.published).toBe(1); // exactly one real commit for the shared attempt
+  });
+});
+
+describe("L2.4 DurableReversalStore — cross-replica atomic publish (F1, two mounts on one backend)", () => {
+  it("exact replay racing on two replicas commits exactly ONCE (MUT-NONATOMIC-PUBLISH)", async () => {
+    const t = twoMounts();
+    await Promise.all([
+      t.a.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-r"), canonical: "Maria García" })),
+      t.b.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-r"), canonical: "Maria García" })),
+    ]);
+    expect(t.publishedTotal()).toBe(1); // NOT two commits — the claim is cross-replica atomic
+    const map = await t.a.store.resolveEncounteredTokens(resolveInput());
+    expect(map.get(CLAIMANT)).toBe("Maria García");
+  });
+
+  it("divergent canonical under one attempt racing on two replicas — first wins, one commit, loser no-ops", async () => {
+    const t = twoMounts();
+    const settled = await Promise.allSettled([
+      t.a.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-r"), canonical: "Maria García" })),
+      t.b.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-r"), canonical: "TOTALLY DIFFERENT" })),
+    ]);
+    expect(settled.every((r) => r.status === "fulfilled")).toBe(true); // loser is an idempotent no-op
+    expect(t.publishedTotal()).toBe(1);
+    const map = await t.a.store.resolveEncounteredTokens(resolveInput());
+    const winner = map.get(CLAIMANT);
+    expect(["Maria García", "TOTALLY DIFFERENT"]).toContain(winner); // exactly ONE canonical won
+    const again = await t.b.store.resolveEncounteredTokens(resolveInput());
+    expect(again.get(CLAIMANT)).toBe(winner); // stable across replicas — the loser never overwrote
+  });
+
+  it("divergent matter under one attempt racing on two replicas — one rejects, one commit, no second mapping", async () => {
+    const t = twoMounts();
+    const settled = await Promise.allSettled([
+      t.a.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-cs"), matterId: brand<MatterId>("matter-1"), canonical: "Maria García" })),
+      t.b.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-cs"), matterId: brand<MatterId>("matter-2"), canonical: "Maria García" })),
+    ]);
+    const rejected = settled.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+    expect(settled.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toBeInstanceOf(ReversalFailedError); // the cross-scope racer fails closed
+    expect(t.publishedTotal()).toBe(1);
+    const m1 = await t.a.store.resolveEncounteredTokens(resolveInput({ matterId: brand<MatterId>("matter-1") }));
+    const m2 = await t.a.store.resolveEncounteredTokens(resolveInput({ matterId: brand<MatterId>("matter-2") }));
+    expect(m1.has(CLAIMANT) !== m2.has(CLAIMANT)).toBe(true); // exactly one matter has the mapping
   });
 });
 
