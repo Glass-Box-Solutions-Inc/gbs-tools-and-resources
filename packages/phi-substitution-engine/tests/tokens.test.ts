@@ -104,4 +104,37 @@ describe("phase-1 token assignment, escape, reversal, and streaming", () => {
     expect(r.displayText).toBeNull();
     expect(r.errorCode).toBe("REVERSAL_FAILED");
   });
+
+  // ---- GLY-335 Wave 0 seam-freeze: the ReversalWriteStore PORT CONTRACT (roadmap defect A#3) ----
+
+  it("SEC-GLY335-01 / M-GLY335-REVERSAL-RECORD-IDEMPOTENT: replayed record under one attemptId keeps a single mapping", async () => {
+    const r = await loadTokensHarness().run("M-GLY335-REVERSAL-RECORD-IDEMPOTENT", {
+      canonical: "Maria García",
+      attemptId: "att-replay-1",
+    });
+    // Recording the same (attemptId, token) twice is a no-op: exactly one stable mapping resolves.
+    expect(r.metrics.distinctMappings).toBe(1);
+    expect(r.metrics.canonicalStable).toBe(true);
+    expect(r.reversalLookupTokens).toEqual(["[[Claimant]]"]);
+  });
+
+  it("SEC-GLY335-02 / M-GLY335-REVERSAL-BOUNDED-RESOLVE: resolve is encounter-bounded, over-limit is rejected", async () => {
+    const r = await loadTokensHarness().run("M-GLY335-REVERSAL-BOUNDED-RESOLVE", {});
+    expect(typeof r.metrics.batchLimit).toBe("number");
+    expect(r.metrics.batchLimit as number).toBeGreaterThan(0);
+    // A request larger than the encounter bound is rejected — no caller can pull the whole map.
+    expect(r.metrics.overLimitRejected).toBe(true);
+    // A within-bound resolve returns only the encountered token.
+    expect(r.metrics.withinBoundSize).toBe(1);
+    expect(r.reversalLookupTokens).toEqual(["[[Claimant]]"]);
+  });
+
+  it("SEC-GLY335-03 / M-GLY335-REVERSAL-NO-LIST-ALL: write port exposes no enumerate-all API (§7/N2)", async () => {
+    const r = await loadTokensHarness().run("M-GLY335-REVERSAL-NO-LIST-ALL", {});
+    expect(r.metrics.listAllApisPresent).toBe(0);
+    expect(r.diagnostics).toEqual([]);
+    // The only surfaces are the bounded resolve (read) and record (write).
+    expect(r.metrics.hasBoundedResolve).toBe(true);
+    expect(r.metrics.hasRecord).toBe(true);
+  });
 });
