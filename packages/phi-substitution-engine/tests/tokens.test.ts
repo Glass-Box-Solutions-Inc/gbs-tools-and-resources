@@ -107,14 +107,18 @@ describe("phase-1 token assignment, escape, reversal, and streaming", () => {
 
   // ---- GLY-335 Wave 0 seam-freeze: the ReversalWriteStore PORT CONTRACT (roadmap defect A#3) ----
 
-  it("SEC-GLY335-01 / M-GLY335-REVERSAL-RECORD-IDEMPOTENT: replayed record under one attemptId keeps a single mapping", async () => {
+  it("SEC-GLY335-01 / M-GLY335-REVERSAL-RECORD-IDEMPOTENT: a divergent same-attempt replay is a no-op (keeps first canonical); a new attempt may update", async () => {
     const r = await loadTokensHarness().run("M-GLY335-REVERSAL-RECORD-IDEMPOTENT", {
       canonical: "Maria García",
       attemptId: "att-replay-1",
     });
-    // Recording the same (attemptId, token) twice is a no-op: exactly one stable mapping resolves.
+    // Exactly one mapping, and a DIVERGENT replay under the same attemptId did NOT overwrite it —
+    // the first canonical stands (proves the port's "replay is a no-op" promise, not map dedup).
     expect(r.metrics.distinctMappings).toBe(1);
-    expect(r.metrics.canonicalStable).toBe(true);
+    expect(r.metrics.replayHeldFirstCanonical).toBe(true);
+    expect(r.metrics.divergentReplayIgnored).toBe(true);
+    // A DIFFERENT attempt is allowed to update the current canonical.
+    expect(r.metrics.differentAttemptUpdated).toBe(true);
     expect(r.reversalLookupTokens).toEqual(["[[Claimant]]"]);
   });
 

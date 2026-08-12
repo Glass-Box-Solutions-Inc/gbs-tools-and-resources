@@ -176,8 +176,8 @@ export interface ReversalRecordInput {
    * Idempotency key (§6 durable PREPARE, §3.1.3). Recording the same (attemptId, token)
    * again MUST be a no-op — a replay/retry never creates a duplicate or divergent mapping,
    * so a token can never egress without exactly one durable reversible mapping. Durable
-   * implementations key their idempotent upsert on this; the in-process dev store is
-   * inherently idempotent because its map is keyed by tenant+matter+version+token.
+   * implementations key their idempotent upsert on this; the in-process dev store honors it
+   * too (a same-attempt replay is a no-op that keeps the first canonical).
    */
   readonly attemptId: OperationAttemptId;
 }
@@ -194,10 +194,11 @@ export interface ReversalRecordInput {
  *
  * §7 / N2 (frozen): there is deliberately NO list-all / enumerate-all / snapshot method —
  * the only read is the bounded, encountered-tokens-only `resolveEncounteredTokens`. A durable
- * implementation MUST NOT widen this surface. `record` is synchronous to match how the
- * orchestrator writes today; a durable store that needs async durability drains behind this
- * signature rather than changing the call site.
+ * implementation MUST NOT widen this surface. `record` returns `void | Promise<void>`: a
+ * completed return means the mapping is DURABLY committed. The orchestrator awaits it, so a
+ * durable (§6 / L2.4) store persists the mapping BEFORE the token can egress and its rejection
+ * fails closed; the in-process dev store completes synchronously (returns `void`).
  */
 export interface ReversalWriteStore extends ReversalStore {
-  record(input: ReversalRecordInput): void;
+  record(input: ReversalRecordInput): void | Promise<void>;
 }

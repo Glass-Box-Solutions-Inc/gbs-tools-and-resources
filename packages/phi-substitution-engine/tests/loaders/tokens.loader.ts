@@ -448,28 +448,44 @@ async function runCase(
     // The engine depends on the WRITE PORT interface, never the concrete store; these cases
     // drive `module.reversalStore` typed as `ReversalWriteStore` to freeze that contract.
 
-    // record idempotency: a replayed record under one attemptId yields a single stable mapping.
+    // record idempotency: a DIVERGENT replay under one attemptId is a no-op that keeps the FIRST
+    // canonical; a DIFFERENT attempt may update it. (Strengthened per the GLY-335 cross-family gate —
+    // an identical-value replay could not distinguish a real no-op from plain map dedup.)
     case "M-GLY335-REVERSAL-RECORD-IDEMPOTENT": {
       const store: ReversalWriteStore = module.reversalStore;
       const tk = token("[[Claimant]]");
-      const canonical = (fixture.canonical as string) ?? "Maria García";
-      const attemptId = attempt((fixture.attemptId as string) ?? "att-replay-1");
-      // Write, then REPLAY the identical record under the SAME attemptId (a retry).
-      store.record({ tenantId: TENANT, matterId: MATTER, dictionaryVersion: V1, token: tk, canonical, attemptId });
-      store.record({ tenantId: TENANT, matterId: MATTER, dictionaryVersion: V1, token: tk, canonical, attemptId });
-      // Bounded resolve of the (deduped) encountered token: the replay must leave ONE mapping.
-      const resolved = await store.resolveEncounteredTokens({
+      const firstCanonical = (fixture.canonical as string) ?? "Maria García";
+      const divergentCanonical = "Impostor Replacement";
+      const updatedCanonical = "Maria García (corrected)";
+      const attemptA = attempt((fixture.attemptId as string) ?? "att-replay-1");
+      const attemptB = attempt("att-update-2");
+      const writeBase = { tenantId: TENANT, matterId: MATTER, dictionaryVersion: V1, token: tk };
+      // Write under attempt A, then REPLAY under the SAME attempt with a DIVERGENT payload (a retry
+      // whose body differs): the replay MUST be a no-op — the first canonical stands.
+      store.record({ ...writeBase, canonical: firstCanonical, attemptId: attemptA });
+      store.record({ ...writeBase, canonical: divergentCanonical, attemptId: attemptA });
+      const afterReplay = await store.resolveEncounteredTokens({
         tenantId: TENANT,
         matterId: MATTER,
         dictionaryVersion: V1,
         tokens: [tk, tk],
       });
+      // A DIFFERENT attempt is allowed to update the current canonical.
+      store.record({ ...writeBase, canonical: updatedCanonical, attemptId: attemptB });
+      const afterUpdate = await store.resolveEncounteredTokens({
+        tenantId: TENANT,
+        matterId: MATTER,
+        dictionaryVersion: V1,
+        tokens: [tk],
+      });
       return {
         ...baseObservation(),
-        reversalLookupTokens: [...resolved.keys()].map(String),
+        reversalLookupTokens: [...afterReplay.keys()].map(String),
         metrics: {
-          distinctMappings: resolved.size,
-          canonicalStable: resolved.get(tk) === canonical,
+          distinctMappings: afterReplay.size,
+          replayHeldFirstCanonical: afterReplay.get(tk) === firstCanonical,
+          divergentReplayIgnored: afterReplay.get(tk) !== divergentCanonical,
+          differentAttemptUpdated: afterUpdate.get(tk) === updatedCanonical,
         },
       };
     }

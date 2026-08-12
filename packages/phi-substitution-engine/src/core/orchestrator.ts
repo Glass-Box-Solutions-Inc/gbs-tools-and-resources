@@ -449,17 +449,18 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
         if (canonical === undefined) {
           continue;
         }
-        // §7/N2: the injected reversal store is UNTRUSTED — a `record()` throw (its message could carry
-        // PHI) must fail closed with a FIXED code, never propagate raw out of substitute.
+        // §7/N2: the injected reversal store is UNTRUSTED — a `record()` throw OR promise rejection
+        // (its message could carry PHI) must fail closed with a FIXED code, never propagate raw out of
+        // substitute. §6: awaiting `record` makes the mapping DURABLE before this tokenized text is
+        // returned for egress — a token is never egressed without exactly one durable reversible mapping.
         try {
-          this.#reversalStore.record({
+          await this.#reversalStore.record({
             tenantId: context.tenantId,
             matterId: context.matterId,
             dictionaryVersion,
             token,
             canonical,
-            // §6/§3.1.3 idempotency key: a replayed attempt re-writes the same mapping, never a duplicate,
-            // so a token is never egressed without exactly one durable reversible mapping.
+            // §6/§3.1.3 idempotency key: a replayed attempt is a no-op, never a duplicate/divergent mapping.
             attemptId: context.attemptId,
           });
         } catch {

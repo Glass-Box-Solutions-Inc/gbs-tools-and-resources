@@ -113,15 +113,18 @@ type InMemoryReversalRecordInput = Omit<ReversalRecordInput, "attemptId"> & {
  *
  * The ONLY read surface is the bounded `resolveEncounteredTokens`; there is no
  * list-all API. Every key includes the tenant id, so a cross-tenant lookup
- * misses even when matter, version, and token text collide. The map is keyed by
- * tenant+matter+version+token, so `record` is inherently idempotent: replaying a
- * write (any attempt) overwrites the same key with the same value — never a
- * duplicate mapping. `attemptId` is accepted to satisfy the frozen write contract;
- * the durable §6 store uses it as its upsert idempotency key.
+ * misses even when matter, version, and token text collide. `record` honors the
+ * `attemptId` idempotency key: a replay under the same (attemptId, token) is a
+ * no-op that keeps the FIRST canonical, so a retry — even one carrying a divergent
+ * payload — never overwrites the mapping a token was egressed under; a NEW attempt
+ * may update the current canonical. A write without an attemptId (concrete-only
+ * seeders) sets the key directly. The durable §6 store keys its upsert the same way.
  */
 export class InMemoryReversalStore implements ReversalWriteStore {
   readonly maximumEncounteredTokenBatch: number;
   private readonly canonicalByKey = new Map<string, string>();
+  /** (tenant+matter+version+token)+attemptId pairs already written — for replay no-op (§3.1.3). */
+  private readonly recordedAttempts = new Set<string>();
 
   constructor(maximumEncounteredTokenBatch = 256) {
     this.maximumEncounteredTokenBatch = maximumEncounteredTokenBatch;
@@ -138,14 +141,23 @@ export class InMemoryReversalStore implements ReversalWriteStore {
 
   /**
    * Write the current canonical value for a token (compiler-side truth write). Idempotent
-   * by the tenant+matter+version+token key: a replay under the same or a later attempt
-   * re-sets the same key, so the store never holds a duplicate or divergent mapping.
+   * per (attemptId, token): a replay under the same attempt is a no-op that keeps the first
+   * canonical (never a divergent overwrite); a new attempt may update it. The store never
+   * holds a duplicate mapping — one canonical per tenant+matter+version+token.
    */
   record(input: InMemoryReversalRecordInput): void {
-    this.canonicalByKey.set(
-      this.key(input.tenantId, input.matterId, input.dictionaryVersion, input.token),
-      input.canonical,
-    );
+    const key = this.key(input.tenantId, input.matterId, input.dictionaryVersion, input.token);
+    if (input.attemptId !== undefined) {
+      const attemptKey = `${key}${SEP}${input.attemptId}`;
+      if (this.recordedAttempts.has(attemptKey)) {
+        // Idempotent replay: the same (attemptId, token) was already written — no-op that keeps
+        // the FIRST canonical, so a retry never overwrites the mapping a token egressed under
+        // (even if the replay carries a divergent payload).
+        return;
+      }
+      this.recordedAttempts.add(attemptKey);
+    }
+    this.canonicalByKey.set(key, input.canonical);
   }
 
   async resolveEncounteredTokens(input: {
