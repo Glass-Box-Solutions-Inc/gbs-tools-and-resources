@@ -44,6 +44,7 @@ from wc_caseload_engine.medical_assertions import (
     ASSERTION_RNG_FAMILIES,
     AssertionKnob,
     AssertionTrace,
+    derive_medical_assertion_plan,
     derive_medical_assertions,
     qme_disposition,
 )
@@ -236,7 +237,11 @@ def test_assertion_provenance_supersedes_clinical_tag_for_new_knobs() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_qme_disposition_is_completely_conditioned_on_ledger_evidence() -> None:
+def test_m2_qme_disposition_is_completely_conditioned_on_ledger_evidence() -> None:
+    """The RETAINED M2 base-disposition policy (R72 rename): a pure function
+    of the ledger evidence, witnessed on ``AssertionTrace.m2_baseline_ledger``
+    — the preserved M2 baseline the plan seam records — never on the post-M3
+    adoption/concurrence remodel, which owns its own step-4 gates."""
     assert qme_disposition("supports") == "endorse"
     assert qme_disposition("contradicts") == "reject"
     assert qme_disposition("indeterminate") == "neither"
@@ -254,7 +259,10 @@ def test_qme_disposition_is_completely_conditioned_on_ledger_evidence() -> None:
         body = cohort_seed_body(index)
         seed = parse_case_seed(body)
         history = derive_medical_history(seed)
-        ledger = derive_medical_assertions(seed, history)
+        trace = AssertionTrace()
+        derive_medical_assertion_plan(seed, history, trace=trace)
+        ledger = trace.m2_baseline_ledger
+        assert ledger is not None
         context = assertion_context(seed)
         projection = project_medical_history(history, context.current_body_parts)
         for opinion in ledger.medical_opinions:
@@ -273,10 +281,16 @@ def test_qme_disposition_is_completely_conditioned_on_ledger_evidence() -> None:
     assert checked > 0
 
 
-def test_ptp_disposition_uses_its_separate_tagged_policy() -> None:
-    """PTP endorsement is a draw under its own tagged trio, not the QME policy:
-    across the cohort's PTP opinions some supported-evidence contentions stay
-    unendorsed, which the deterministic QME policy could never produce."""
+def test_m2_ptp_disposition_stream_is_consumed_unchanged_before_independence_remodel() -> None:
+    """R72 rename of the tagged-policy witness. The M2 ``ptp-disposition``
+    stream is STILL consumed byte-for-byte through the plan seam — same salts,
+    same draws, proven by the unchanged cohort pins and stream-trace digests —
+    and stays a draw under its own tagged trio, not the QME policy: across the
+    cohort's PTP opinions some supported-evidence contentions stay unendorsed,
+    which the deterministic QME policy could never produce. Step 4's R16/R49
+    independence remodel reinterprets the affirmative RESULT (endorsement
+    becomes concurrence on the M3 ledger) while the M2 baseline snapshot
+    retains the original — it may not touch the stream this test pins."""
     result = _cohort()
     ptp_opinions = sum(
         count

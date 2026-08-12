@@ -2276,7 +2276,7 @@ find = '''    scenario = seed.scenario.medical_assertions
 replace = '''    scenario = seed.scenario.medical_assertions
     _assertion_rng(seed, "gate-probe", "case")
     if scenario is None:'''
-note = 'AJC-61. The gate is the byte-identity instrument: any rng constructed above it runs for every assertion-absent case. The guard monkeypatches the module attribute with pytest.fail, so the reintroduced construction fails RED rather than ERROR.'
+note = 'AJC-61; re-pointed for AJC-62 R77 step 3 (R72): the gate now lives in derive_medical_assertion_plan(), the R32 entry seam build_case_plan calls — the find block matches there and only there (the derive_medical_assertions wrapper carries no gate of its own). Any rng constructed above the gate runs for every assertion-absent case. The guard monkeypatches the module attribute with pytest.fail and drives BOTH the plan entry and the wrapper, so the reintroduced construction fails RED rather than ERROR.'
 
 [[mutant]]
 id = 'm19-2'
@@ -2393,7 +2393,7 @@ note = 'AJC-61. The guard asserts on raw-JSON .get("channelVersion"), not throug
 id = 'm19-12'
 title = 'the sampled evaluator endorses unconditionally'
 file = 'src/wc_caseload_engine/medical_assertions.py'
-test = 'tests/test_medical_assertion_properties.py::test_qme_disposition_is_completely_conditioned_on_ledger_evidence'
+test = 'tests/test_medical_assertion_properties.py::test_m2_qme_disposition_is_completely_conditioned_on_ledger_evidence'
 find = '''    if evidence == "supports":
         disposition = "endorse"
     elif evidence == "contradicts":
@@ -2401,7 +2401,7 @@ find = '''    if evidence == "supports":
     else:
         disposition = "neither"'''
 replace = '''    disposition = "endorse"'''
-note = 'AJC-61. QME/AME disposition is a pure function of the ledger evidence — no draw, no flat endorsement rate. The guard asserts the tri-state mapping directly and then the wiring over a deterministic cohort slice.'
+note = 'AJC-61; re-pointed for AJC-62 R77 step 3 (R72): the guard is the renamed test_m2_qme_disposition_..., which asserts the tri-state mapping directly and then the wiring over a deterministic cohort slice read from AssertionTrace.m2_baseline_ledger — the PRESERVED M2 base-disposition block, not the step-4 adoption/concurrence remodel. The find block is the retained qme_disposition body.'
 
 [[mutant]]
 id = 'm19-13'

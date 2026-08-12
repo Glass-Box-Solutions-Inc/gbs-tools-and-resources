@@ -17,6 +17,7 @@ guesses; the property suite asserts exact deterministic reproduction.
 
 from __future__ import annotations
 
+import random
 from collections import Counter
 from dataclasses import dataclass, field
 from fractions import Fraction
@@ -29,7 +30,7 @@ from wc_caseload_engine.medical_assertions import (
     AssertionTrace,
     MedicalAssertionLedger,
     assertion_context,
-    derive_medical_assertions,
+    derive_medical_assertion_plan,
     project_medical_history,
     validate_medical_assertions,
 )
@@ -40,6 +41,11 @@ ASSERTION_COHORT_N = 6000
 COHORT_SEED_BASE = 610000
 ORDINARY_COUNT = 4800
 WITNESS_STRATUM_SIZE = 240
+
+#: The M2 spot-digest positions — one per lifecycle cell plus each witness
+#: stratum's first case and the last case. R64 reuses exactly these indices
+#: for the later M3 plan digests.
+DIGEST_INDICES: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 4800, 5040, 5280, 5520, 5760, 5999)
 
 #: The frozen six-cell lifecycle schedule (Part 5 B.9). ``post_recon`` is
 #: intentionally excluded — it adds no unique M2 assertion decision family.
@@ -231,6 +237,8 @@ class CohortResult:
     ledger_digests: dict[int, str] = field(default_factory=dict)
     budget_quality: Counter = field(default_factory=Counter)
     contention_shapes: set = field(default_factory=set)
+    stream_trace_digests: dict[int, str] = field(default_factory=dict)
+    story_families_seen: set = field(default_factory=set)
 
 
 # The M2 digest oracle projects each item onto the exact AJC-61 field
@@ -332,25 +340,90 @@ def _digest(ledger: MedicalAssertionLedger) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+class _CountingRandom(random.Random):
+    """A byte-transparent draw counter.
+
+    State is transplanted from the stream the production helper constructed,
+    so every value drawn is bit-identical to the uninstrumented stream — the
+    subclass only counts how many times the stream was consumed. Both
+    ``random()`` and ``getrandbits()`` are counted because every public
+    consuming method funnels through one of them.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.draws = 0
+
+    def random(self) -> float:
+        self.draws += 1
+        return super().random()
+
+    def getrandbits(self, k: int) -> int:
+        self.draws += 1
+        return super().getrandbits(k)
+
+
+def _stream_trace_digest(trace: list[tuple[str, str, _CountingRandom]]) -> str:
+    """SHA-256 over the ordered (family, full salt, draw count) construction
+    trace of one case — the R70 instrument that sees what the ledger digest
+    cannot: a stream constructed under the wrong family or namespace whose
+    draws happen not to move the sampled payload."""
+    import hashlib
+    import json
+
+    payload = json.dumps(
+        [[family, salt, rng.draws] for family, salt, rng in trace],
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 @cache
 def build_cohort(sample: int | None = None) -> CohortResult:
     """Build the cohort (or its first *sample* cases) and aggregate the trace.
 
     Cached per process so every property test shares one build. The rng-family
     completeness record comes from wrapping the module's own ``_assertion_rng``
-    for the duration — reading the streams actually constructed, not a list.
+    for the duration — reading the streams actually constructed, not a list —
+    and, since R77 step 3, every returned stream is a state-transplanted
+    counting twin so the per-case construction/draw trace can be digested.
+
+    Every M2 measurement below reads ``AssertionTrace.m2_baseline_ledger`` —
+    the exact post-grade/pre-M3 ledger the plan entry point records (R61/R72)
+    — never the (later remodeled) plan ledger, so the pinned M2 constants keep
+    measuring the preserved baseline through every M3 step.
+    ``_medical_story_rng`` is wrapped alongside: any medical-story family the
+    M2 cohort derivation constructs lands in ``story_families_seen`` for the
+    R70 registry gate.
     """
     result = CohortResult()
     for model in ("contentions", "medical_opinions", "apportionment_assertions"):
         result.quality_counts[model] = Counter()
 
     original_rng = assertion_module._assertion_rng
+    original_story_rng = assertion_module._medical_story_rng
+    case_streams: list[tuple[str, str, _CountingRandom]] = []
 
     def recording_rng(seed: Any, family: str, stable_key: str) -> Any:
         result.families_seen.add(family)
-        return original_rng(seed, family, stable_key)
+        constructed = original_rng(seed, family, stable_key)
+        counting = _CountingRandom()
+        counting.setstate(constructed.getstate())
+        case_streams.append(
+            (
+                family,
+                f"{assertion_module.ASSERTION_RNG_NAMESPACE}:{family}:{stable_key}",
+                counting,
+            )
+        )
+        return counting
+
+    def recording_story_rng(seed: Any, family: str, semantic_key: Any) -> Any:
+        result.story_families_seen.add(family)
+        return original_story_rng(seed, family, semantic_key)
 
     assertion_module._assertion_rng = recording_rng
+    assertion_module._medical_story_rng = recording_story_rng
     try:
         count = ASSERTION_COHORT_N if sample is None else sample
         for index in range(count):
@@ -363,8 +436,11 @@ def build_cohort(sample: int | None = None) -> CohortResult:
                 result.stratum_cell_counts[(stratum, cell)] += 1
             history = derive_medical_history(seed)
             trace = AssertionTrace()
-            ledger = derive_medical_assertions(seed, history, trace=trace)
+            case_streams.clear()
+            plan = derive_medical_assertion_plan(seed, history, trace=trace)
+            ledger = trace.m2_baseline_ledger
             assert ledger is not None
+            assert plan.ledger is not None
             context = assertion_context(seed)
             projection = project_medical_history(history, context.current_body_parts)
             if validate_medical_assertions(context, projection, ledger):
@@ -397,10 +473,12 @@ def build_cohort(sample: int | None = None) -> CohortResult:
             if trace.candidate_families.get("psych_add_on"):
                 result.psych_add_on_cases += 1
             result.suppression_hits += trace.suppression_hits
-            if index in (0, 1, 2, 3, 4, 5, 4800, 5040, 5280, 5520, 5760, 5999):
+            if index in DIGEST_INDICES:
                 result.ledger_digests[index] = _digest(ledger)
+                result.stream_trace_digests[index] = _stream_trace_digest(case_streams)
     finally:
         assertion_module._assertion_rng = original_rng
+        assertion_module._medical_story_rng = original_story_rng
     return result
 
 
@@ -503,6 +581,31 @@ MEASURED_LEDGER_DIGESTS: dict[int, str] = {
 last case. Indexes 0 and 5040 legitimately coincide — both are intake cases
 whose every incidence draw missed, and two empty ledgers are the same bytes."""
 
+MEASURED_M2_STREAM_TRACE_DIGESTS: dict[int, str] = {
+    0: "94c4d2bcb9d8b8ae39aec60cce89605ce8e8415c36c72434c7b745755311e5e4",
+    1: "a7b032e88e12f9cc4287b183cf8f2174cfe4e64c352ea27b17c56b5379b6bf15",
+    2: "c29896526efe1578287c0775088f62cde416e4882da4173d26302273645955e6",
+    3: "8d55bceec6fd63c41290f9ca5d4d38af691b109ec5a6ab4ed415fbc18937b563",
+    4: "d7b7b7351d7d3d7dccb9ebc4ae1c9776f8053acd0459a893b7744e0ec7b5f14a",
+    5: "b028d955f574d4686351dc6af38c29ff0bce045f756748a74a558388eb0e341f",
+    4800: "5ac8fe79fac68c93678fb9bcec6b658976deb693df7ea12d062a9d6428afd715",
+    5040: "5349e6c8855b7a5e627f20521b65be393426040fdd3249f0d4e41ebe25537aa2",
+    5280: "9231e27ba8ab4e1b5edc463c3321cd6e15a08d73e744616e1303038c319e7ee9",
+    5520: "75e515bd762f14d34079e1784fc810b1aa24d313150445ecccac666e8666efe8",
+    5760: "9096d964f0882eb02e9eca0676f3e222b1e91e2946886ac59e01bd429d7206ef",
+    5999: "f392a67c2ed1c9d68816e7ade8d65f7408ffc978b7d59f936110da3946d5ab70",
+}
+"""The R70 M2 stream-trace pins: per spot index, SHA-256 over the ordered
+``(family, complete semantic salt, within-stream draw count)`` construction
+trace of the M2 base derivation. Recorded at R77 step 3, where byte-identity
+with the ``eedad1093`` baseline is separately proven by the UNCHANGED
+``MEASURED_LEDGER_DIGESTS`` (any draw inserted into an M2 stream moves the
+sampled payload and reddens those frozen digests) — so the trace pinned here
+IS the M2 baseline trace, frozen thereafter. What this instrument sees that
+the ledger digests cannot: a fresh stream constructed under an M2 family or
+namespace by later M3 code, whose private draws leave the M2 payload intact
+(the m20-10 failure shape)."""
+
 
 def _print_measurement() -> None:
     import structlog
@@ -530,7 +633,9 @@ def _print_measurement() -> None:
     print("# invalid ledgers:", result.invalid_ledgers)
     print("# suppression hits:", result.suppression_hits)
     print("# families seen:", sorted(result.families_seen))
+    print("# story families seen:", sorted(result.story_families_seen))
     print("# ledger digests:", result.ledger_digests)
+    print("MEASURED_M2_STREAM_TRACE_DIGESTS =", result.stream_trace_digests)
 
 
 if __name__ == "__main__":

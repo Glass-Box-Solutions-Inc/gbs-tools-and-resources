@@ -34,8 +34,9 @@ cause of the disability).
 from __future__ import annotations
 
 import datetime as dt
+import json
 import random
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Final, Literal
@@ -1495,13 +1496,18 @@ P_FINAL_REPORT_OMITS_APPORTIONMENT = AssertionKnob[Fraction](
 
 P_COMMON_PERCENTAGE_REGISTER = AssertionKnob[Fraction](
     value=Fraction(17, 20),
-    provenance="counsel_estimate",
+    provenance="counsel_confirmed",
     rationale=(
         "Counsel: percentages sit 'normally on the fives... or a third'; roundness "
-        "is NOT a tell, excess granularity is. Direction counsel's; the exact mass "
-        "is invented. Percentage roundness never affects quality."
+        "is NOT a tell, excess granularity is. Ruling Set Three confirmed the 0.85 "
+        "mass exactly (R48); the denominator is every newly sampled allocated "
+        "percentage, including a changed supplemental/deposition row. Percentage "
+        "roundness never affects quality."
     ),
-    source="sme-answers.md q4; anti-clamp rule per frequency-priors-calibration.md.",
+    source=(
+        "sme-answers.md q4, Ruling Set Three (AJC-62 Part 3 R48); anti-clamp rule "
+        "per frequency-priors-calibration.md."
+    ),
 )
 
 P_EVIDENCE_DISTRACTOR = AssertionKnob[Fraction](
@@ -1612,6 +1618,566 @@ SIBTF policy source."""
 
 
 # ---------------------------------------------------------------------------
+# M3 medical-story knobs (AJC-62 Part 3, R48-R58) — definitions and provenance
+# land at R77 step 3; the samplers that CONSUME them arrive with steps 4-8.
+# Provenance vocabulary for every M3 knob is R60's four members only:
+# counsel_confirmed | counsel_qualitative | derived | invented.
+# ---------------------------------------------------------------------------
+
+P_DEFENSE_CONTEST = AssertionKnob[Fraction](
+    value=Fraction(13, 20),
+    provenance="counsel_confirmed",
+    rationale=(
+        "Counsel ruled the defense contests an eligible apportionment/psych "
+        "finding at exactly 0.65. Denominator: every raw sampled R30-eligible "
+        "(actor, opinion, contention) opportunity before bundling, explicit "
+        "collision removal, semantic caps, document controls, or date "
+        "feasibility — both R30 disposition classes (determined adverse "
+        "objection paths and deferred/unaddressed completion paths). Never "
+        "conditioned on WPI, quality, document availability, or future money."
+    ),
+    source="sme-answers.md, Ruling Set Three (AJC-62 Part 3 R48).",
+)
+
+P_PTP_INDUSTRIAL_AOE_COE = AssertionKnob[Fraction](
+    value=Fraction(19, 20),
+    provenance="counsel_confirmed",
+    rationale=(
+        "Counsel ruled the sampled treating physician independently finds "
+        "industrial AOE/COE at exactly 0.95. Denominator: every sampled PTP "
+        "base_report opinion; explicit PTP opinions are excluded. The draw "
+        "never inspects advocacy, file perspective, quality, or QME/AME "
+        "results (R16 independence)."
+    ),
+    source="sme-answers.md, Ruling Set Three (AJC-62 Part 3 R48).",
+)
+
+P_QME_AME_RESPONSIVE_ADOPTION = AssertionKnob[Fraction](
+    value=Fraction(1, 4),
+    provenance="counsel_confirmed",
+    rationale=(
+        "Counsel ruled the QME/AME responsively adopts an advocated theory at "
+        "exactly 0.25. Denominator: every sampled QME/AME opinion-contention "
+        "pair satisfying all three R38 predicates (evidence-supportable, an "
+        "earlier qualifying communication targets the opinion, no explicit "
+        "disposition controls the pair) before controls. A miss becomes "
+        "independent concurrence, never silence."
+    ),
+    source="sme-answers.md, Ruling Set Three (AJC-62 Part 3 R48).",
+)
+
+P_IMR_REQUEST_GIVEN_UPHELD_DENIAL = AssertionKnob[Fraction](
+    value=Fraction(1, 2),
+    provenance="counsel_confirmed",
+    rationale=(
+        "Counsel ruled IMR is requested for exactly 0.5 of UR denials. "
+        "Denominator: every effective upheld UR denial for which imr was not "
+        "authored; explicit imr values (including false) stay authoritative "
+        "and draw nothing."
+    ),
+    source="sme-answers.md, Ruling Set Three (AJC-62 Part 3 R48).",
+)
+
+P_DEFENSE_CONTEST_OUTSIDE_R30 = AssertionKnob[Fraction](
+    value=Fraction(0, 1),
+    provenance="derived",
+    rationale=(
+        "A contention outside R30's eligibility creates no sampled defense "
+        "chain — the structural consequence of counsel's eligibility rule, "
+        "not a tunable rate. Explicit chains remain permitted."
+    ),
+    source="AJC-62 Part 3 R48; structural consequence of the R30 predicate.",
+)
+
+PTP_AOE_COE_COMPLEMENT_WEIGHTS = AssertionKnob[dict[str, Fraction]](
+    value={
+        "nonindustrial": Fraction(3, 5),
+        "deferred": Fraction(2, 5),
+    },
+    provenance="invented",
+    rationale=(
+        "The 0.05 PTP complement splits 0.03 nonindustrial / 0.02 deferred so "
+        "both contrary and deferred treating reports remain observable. The "
+        "0.95 direction is counsel's (P_PTP_INDUSTRIAL_AOE_COE); this exact "
+        "split is calibration, expressly not attributed to counsel."
+    ),
+    source="AJC-62 Part 3 calibration (R49).",
+)
+
+P_APPLICANT_DIRECT_PSYCH_FRAMING_GIVEN_CONSEQUENCE = AssertionKnob[Fraction](
+    value=Fraction(3, 4),
+    provenance="invented",
+    rationale=(
+        "A sampled applicant contention frames a compensable-consequence psych "
+        "condition as direct at 0.75; the complement keeps the honest "
+        "compensable_consequence framing. Eligible only for a sampled "
+        "applicant contention on a consequence-classified world condition "
+        "lacking an explicit classification."
+    ),
+    source="AJC-62 Part 3 calibration (R49); direction counsel-confirmed.",
+)
+
+P_PTP_DIRECT_PSYCH_CLASSIFICATION_GIVEN_CONSEQUENCE = AssertionKnob[Fraction](
+    value=Fraction(3, 5),
+    provenance="invented",
+    rationale=(
+        "A sampled PTP opinion classifies a compensable-consequence psych "
+        "condition as direct at 0.6, independent of applicant framing and "
+        "advocacy; the complement is compensable_consequence."
+    ),
+    source="AJC-62 Part 3 calibration (R49); direction counsel-confirmed.",
+)
+
+P_QME_AME_INDETERMINATE_DEFERRED = AssertionKnob[Fraction](
+    value=Fraction(3, 5),
+    provenance="invented",
+    rationale=(
+        "An indeterminate QME/AME contention defers at 0.6 and is otherwise "
+        "unaddressed. The stream chooses only between those two results; it "
+        "can never produce adoption or concurrence."
+    ),
+    source="AJC-62 Part 3 calibration (R49).",
+)
+
+P_APPLICANT_CONTEST = AssertionKnob[Fraction](
+    value=Fraction(1, 2),
+    provenance="invented",
+    rationale=(
+        "An applicant contests a determined-adverse R29 row at 0.5 when the "
+        "permitted contesting actor is applicant. Bounded-file realism under "
+        "the counsel-fixed defense rate."
+    ),
+    source="AJC-62 Part 3 calibration (R50).",
+)
+
+P_APPLICANT_COMPLETION_REQUEST = AssertionKnob[Fraction](
+    value=Fraction(13, 20),
+    provenance="invented",
+    rationale=(
+        "An applicant requests completion of a deferred/unaddressed R29 row "
+        "at 0.65 when the permitted requesting actor is applicant. No second "
+        "incidence draw occurs after a path has been selected."
+    ),
+    source="AJC-62 Part 3 calibration (R50).",
+)
+
+ADVERSE_CONTEST_PATH_WEIGHTS = AssertionKnob[
+    dict[str, tuple[tuple[str, Fraction], ...]]
+](
+    value={
+        "applicant": (
+            ("objection_only", Fraction(1, 2)),
+            ("objection_supplemental", Fraction(3, 10)),
+            ("objection_deposition", Fraction(3, 20)),
+            ("objection_supplemental_deposition", Fraction(1, 20)),
+        ),
+        "defense": (
+            ("objection_only", Fraction(2, 5)),
+            ("objection_supplemental", Fraction(3, 10)),
+            ("objection_deposition", Fraction(1, 5)),
+            ("objection_supplemental_deposition", Fraction(1, 10)),
+        ),
+    },
+    provenance="invented",
+    rationale=(
+        "Ordered ContestPath weights for determined-adverse rows, per actor. "
+        "The selected path is the proposed semantic path; R31 truncation may "
+        "shorten it but never redraws it."
+    ),
+    source="AJC-62 Part 3 calibration (R50).",
+)
+
+COMPLETION_PATH_WEIGHTS = AssertionKnob[
+    dict[str, tuple[tuple[str, Fraction], ...]]
+](
+    value={
+        "applicant": (
+            ("supplemental_only", Fraction(17, 20)),
+            ("supplemental_deposition", Fraction(3, 20)),
+        ),
+        "defense": (
+            ("supplemental_only", Fraction(3, 4)),
+            ("supplemental_deposition", Fraction(1, 4)),
+        ),
+    },
+    provenance="invented",
+    rationale=(
+        "Ordered ContestPath weights for deferred/unaddressed completion "
+        "rows, per actor — a completion request has no conclusion to object "
+        "to, so both members start at the supplemental request."
+    ),
+    source="AJC-62 Part 3 calibration (R50).",
+)
+
+DEFENSE_THEORY_COUNT_WEIGHTS = AssertionKnob[tuple[tuple[int, Fraction], ...]](
+    value=(
+        (1, Fraction(3, 4)),
+        (2, Fraction(1, 5)),
+        (3, Fraction(1, 20)),
+    ),
+    provenance="invented",
+    rationale=(
+        "One count draw per sampled defense chain; selection then proceeds "
+        "weighted-without-replacement in DefenseContestTheory declaration "
+        "order with exact-Fraction renormalization."
+    ),
+    source="AJC-62 Part 3 calibration (R51).",
+)
+
+DEFENSE_THEORY_WEIGHTS = AssertionKnob[tuple[tuple[str, Fraction], ...]](
+    value=(
+        ("insufficient_investigation", Fraction(7, 20)),
+        ("post_termination", Fraction(7, 20)),
+        ("lack_of_substantial_medical_evidence", Fraction(3, 10)),
+    ),
+    provenance="invented",
+    rationale=(
+        "The three content categories are counsel_confirmed (Ruling Set "
+        "Three); their exact relative weights are calibration. Selection is "
+        "weighted without replacement in this declaration order, and the "
+        "ordered selected tuple is copied to every attorney-authored document "
+        "in the chain."
+    ),
+    source=(
+        "Categories: sme-answers.md, Ruling Set Three. Weights: AJC-62 Part 3 "
+        "calibration (R51)."
+    ),
+)
+
+ADVOCACY_INCIDENCE = AssertionKnob[dict[tuple[str, str], Fraction]](
+    value={
+        ("ptp", "applicant"): Fraction(3, 5),
+        ("qme", "applicant"): Fraction(7, 10),
+        ("ame", "applicant"): Fraction(3, 5),
+        ("qme", "defense"): Fraction(11, 20),
+        ("ame", "defense"): Fraction(1, 2),
+    },
+    provenance="invented",
+    rationale=(
+        "Advocacy incidence by (target role, actor); all other sampled pairs "
+        "have probability zero. One incidence draw per R28-eligible "
+        "contention/target pair; eligibility never inspects evidence "
+        "disposition or quality."
+    ),
+    source="AJC-62 Part 3 calibration (R52); target ordering per R28.",
+)
+
+ADVOCACY_BUNDLE_SIZE_WEIGHTS = AssertionKnob[tuple[tuple[int, Fraction], ...]](
+    value=(
+        (1, Fraction(1, 2)),
+        (2, Fraction(7, 20)),
+        (3, Fraction(3, 20)),
+    ),
+    provenance="invented",
+    rationale=(
+        "One weighted size draw per provisional sampled bundle, renormalized "
+        "over the sizes not exceeding the remaining winners; a single "
+        "provisional winner forms a size-one letter without a draw."
+    ),
+    source="AJC-62 Part 3 calibration (R52).",
+)
+
+REVISION_KIND_WEIGHTS = AssertionKnob[dict[str, tuple[Fraction, ...]]](
+    value={
+        "supplemental_after_objection": (
+            Fraction(7, 20),
+            Fraction(3, 20),
+            Fraction(3, 20),
+            Fraction(1, 4),
+            Fraction(1, 10),
+        ),
+        "supplemental_after_completion": (
+            Fraction(3, 20),
+            Fraction(1, 5),
+            Fraction(1, 5),
+            Fraction(3, 10),
+            Fraction(3, 20),
+        ),
+        "deposition_examining_base": (
+            Fraction(13, 20),
+            Fraction(0, 1),
+            Fraction(1, 10),
+            Fraction(1, 5),
+            Fraction(1, 20),
+        ),
+        "deposition_examining_supplemental": (
+            Fraction(7, 10),
+            Fraction(0, 1),
+            Fraction(1, 10),
+            Fraction(3, 20),
+            Fraction(1, 20),
+        ),
+    },
+    provenance="invented",
+    rationale=(
+        "Revision-kind weights per trigger stage, in exact OpinionRevisionKind "
+        "declaration order. Structurally ineligible kinds are removed and the "
+        "remainder renormalized BEFORE one draw — never draw-and-retry. The "
+        "completion mix is more revision-heavy because the predecessor "
+        "omitted or deferred the issue; deposition is mostly clarification "
+        "and new_records_no_change always has zero deposition weight."
+    ),
+    source="AJC-62 Part 3 calibration (R54).",
+)
+
+GRANULAR_NONINDUSTRIAL_PERCENTAGES: Final[tuple[int, ...]] = tuple(
+    value
+    for value in range(1, 100)
+    if value not in COMMON_NONINDUSTRIAL_PERCENTAGES
+)
+"""The exactly-78-integer continuous remainder of 1..99 (R55). The granular
+selector implements the continuous latent law (uniform by Lebesgue measure over
+the union of [g-0.5, g+0.5) intervals) so a non-register percentage is never
+the output of a nearest-common-value clamp."""
+
+ADVOCACY_LEAD_DAYS = AssertionKnob[tuple[int, int]](
+    value=(14, 45),
+    provenance="invented",
+    rationale=(
+        "Inclusive lead days a proposed advocacy letter precedes its target "
+        "report; one randint(lower, upper) draw before R34 fitting, "
+        "subtracted from the target report date."
+    ),
+    source="AJC-62 Part 3 calibration (R56); ordinary service intervals.",
+)
+
+OBJECTION_LAG_DAYS = AssertionKnob[tuple[int, int]](
+    value=(10, 30),
+    provenance="invented",
+    rationale=(
+        "Inclusive lag days from the objected-to report date; one "
+        "randint(lower, upper) draw before R34 fitting."
+    ),
+    source="AJC-62 Part 3 calibration (R56); ordinary service intervals.",
+)
+
+SUPPLEMENTAL_REQUEST_LAG_DAYS = AssertionKnob[tuple[int, int]](
+    value=(7, 21),
+    provenance="invented",
+    rationale=(
+        "Inclusive lag days from the objection date on objection-led paths "
+        "and from the target report date on completion paths; one "
+        "randint(lower, upper) draw before R34 fitting."
+    ),
+    source="AJC-62 Part 3 calibration (R56); ordinary service intervals.",
+)
+
+SUPPLEMENTAL_REPORT_LAG_DAYS = AssertionKnob[tuple[int, int]](
+    value=(30, 90),
+    provenance="invented",
+    rationale=(
+        "Inclusive lag days from the supplemental-request date; one "
+        "randint(lower, upper) draw before R34 fitting."
+    ),
+    source="AJC-62 Part 3 calibration (R56); ordinary evaluator intervals.",
+)
+
+DEPOSITION_LAG_DAYS = AssertionKnob[tuple[int, int]](
+    value=(30, 120),
+    provenance="invented",
+    rationale=(
+        "Inclusive lag days from the examined-report date; one "
+        "randint(lower, upper) draw before R34 fitting."
+    ),
+    source="AJC-62 Part 3 calibration (R56); ordinary discovery intervals.",
+)
+
+IMR_APPLICATION_LAG_DAYS = AssertionKnob[tuple[int, int]](
+    value=(10, 30),
+    provenance="derived",
+    rationale=(
+        "Inclusive application lag for an M3-effective IMR, preserving the "
+        "existing lifecycle range. A legacy authored IMR chain still consumes "
+        "and discards the lifecycle RNG's two date draws before the semantic "
+        "values replace them; a 0.5-channel IMR uses only the private M3 "
+        "streams."
+    ),
+    source=(
+        "Existing lifecycle implementation; LC section 4610.5 window "
+        "discipline (AJC-62 Part 3 R56)."
+    ),
+)
+
+IMR_DECISION_LAG_DAYS = AssertionKnob[tuple[int, int]](
+    value=(30, 60),
+    provenance="derived",
+    rationale=(
+        "Inclusive decision lag from the actual application date, preserving "
+        "the existing lifecycle range."
+    ),
+    source=(
+        "Existing lifecycle implementation; LC section 4610.5 window "
+        "discipline (AJC-62 Part 3 R56)."
+    ),
+)
+
+UR_DECISION_WEIGHTS_WHEN_UNSTATED = AssertionKnob[
+    tuple[tuple[str, Fraction], ...]
+](
+    value=(
+        ("upheld", Fraction(1, 2)),
+        ("overturned", Fraction(1, 2)),
+    ),
+    provenance="derived",
+    rationale=(
+        "Applies only when the UR decision is unresolved — preserves the "
+        "current substrate's uniform 'random' choice. A stated decision "
+        "remains authoritative and draws nothing."
+    ),
+    source="Existing lifecycle/substrate behavior (AJC-62 Part 3 R57).",
+)
+
+IMR_OUTCOME_WEIGHTS_WHEN_UNSTATED = AssertionKnob[
+    tuple[tuple[str, Fraction], ...]
+](
+    value=(
+        ("upheld", Fraction(1, 2)),
+        ("overturned", Fraction(1, 2)),
+    ),
+    provenance="derived",
+    rationale=(
+        "Applies only when imr_outcome is unresolved — preserves the current "
+        "substrate's uniform choice. The auto-profile's independently "
+        "generated 0.80/0.20 outcome, once a resolved seed value, is never "
+        "overwritten."
+    ),
+    source="Existing lifecycle/substrate behavior (AJC-62 Part 3 R57).",
+)
+
+IMR_APPLICATION_FIELD_OCCUPANCY = AssertionKnob[dict[str, Fraction]](
+    value={
+        "disputed_treatment": Fraction(19, 20),
+        "diagnosis_icd10": Fraction(3, 5),
+        "ur_determination_attached": Fraction(7, 10),
+        "supporting_record_subtypes": Fraction(7, 20),
+        "clinical_rebuttal": Fraction(1, 4),
+        "mtus_citations": Fraction(3, 20),
+    },
+    provenance="invented",
+    rationale=(
+        "Per-field occupancy of the sampled applicant-attorney IMR "
+        "application, one independent draw per eligible field — "
+        "operationalizing counsel's confirmed observation that applicant "
+        "attorneys generally under-work IMR. The exact sparse rates are not "
+        "attributed to counsel; under-working is inferable only from missing "
+        "or generic work product, never a truth-like field."
+    ),
+    source="AJC-62 Part 3 calibration (R58); direction counsel-confirmed.",
+)
+
+SUPPORTING_RECORD_COUNT_WEIGHTS = AssertionKnob[
+    tuple[tuple[int, Fraction], ...]
+](
+    value=(
+        (1, Fraction(3, 5)),
+        (2, Fraction(3, 10)),
+        (3, Fraction(1, 10)),
+    ),
+    provenance="invented",
+    rationale=(
+        "One count draw for a populated supporting-record list, clipped only "
+        "to the distinct grounded values available; a count above "
+        "availability never redraws."
+    ),
+    source="AJC-62 Part 3 calibration (R58).",
+)
+
+MTUS_CITATION_COUNT_WEIGHTS = AssertionKnob[tuple[tuple[int, Fraction], ...]](
+    value=(
+        (1, Fraction(4, 5)),
+        (2, Fraction(1, 5)),
+    ),
+    provenance="invented",
+    rationale=(
+        "One count draw for a populated MTUS-citation list, clipped only to "
+        "the distinct grounded citations available."
+    ),
+    source="AJC-62 Part 3 calibration (R58).",
+)
+
+P_IMR_CASE_SPECIFIC_REBUTTAL = AssertionKnob[Fraction](
+    value=Fraction(1, 2),
+    provenance="invented",
+    rationale=(
+        "When clinical_rebuttal is populated, case-specific versus generic "
+        "content splits at 0.5. Both are professionally written; neither "
+        "carries a quality label."
+    ),
+    source="AJC-62 Part 3 calibration (R58).",
+)
+
+MEDICAL_STORY_KNOBS: Final[dict[str, AssertionKnob]] = {
+    "P_DEFENSE_CONTEST": P_DEFENSE_CONTEST,
+    "P_PTP_INDUSTRIAL_AOE_COE": P_PTP_INDUSTRIAL_AOE_COE,
+    "P_QME_AME_RESPONSIVE_ADOPTION": P_QME_AME_RESPONSIVE_ADOPTION,
+    "P_IMR_REQUEST_GIVEN_UPHELD_DENIAL": P_IMR_REQUEST_GIVEN_UPHELD_DENIAL,
+    "P_COMMON_PERCENTAGE_REGISTER": P_COMMON_PERCENTAGE_REGISTER,
+    "P_DEFENSE_CONTEST_OUTSIDE_R30": P_DEFENSE_CONTEST_OUTSIDE_R30,
+    "PTP_AOE_COE_COMPLEMENT_WEIGHTS": PTP_AOE_COE_COMPLEMENT_WEIGHTS,
+    "P_APPLICANT_DIRECT_PSYCH_FRAMING_GIVEN_CONSEQUENCE": (
+        P_APPLICANT_DIRECT_PSYCH_FRAMING_GIVEN_CONSEQUENCE
+    ),
+    "P_PTP_DIRECT_PSYCH_CLASSIFICATION_GIVEN_CONSEQUENCE": (
+        P_PTP_DIRECT_PSYCH_CLASSIFICATION_GIVEN_CONSEQUENCE
+    ),
+    "P_QME_AME_INDETERMINATE_DEFERRED": P_QME_AME_INDETERMINATE_DEFERRED,
+    "P_APPLICANT_CONTEST": P_APPLICANT_CONTEST,
+    "P_APPLICANT_COMPLETION_REQUEST": P_APPLICANT_COMPLETION_REQUEST,
+    "ADVERSE_CONTEST_PATH_WEIGHTS": ADVERSE_CONTEST_PATH_WEIGHTS,
+    "COMPLETION_PATH_WEIGHTS": COMPLETION_PATH_WEIGHTS,
+    "DEFENSE_THEORY_COUNT_WEIGHTS": DEFENSE_THEORY_COUNT_WEIGHTS,
+    "DEFENSE_THEORY_WEIGHTS": DEFENSE_THEORY_WEIGHTS,
+    "ADVOCACY_INCIDENCE": ADVOCACY_INCIDENCE,
+    "ADVOCACY_BUNDLE_SIZE_WEIGHTS": ADVOCACY_BUNDLE_SIZE_WEIGHTS,
+    "REVISION_KIND_WEIGHTS": REVISION_KIND_WEIGHTS,
+    "COMMON_NONINDUSTRIAL_PERCENTAGES": AssertionKnob[tuple[int, ...]](
+        value=COMMON_NONINDUSTRIAL_PERCENTAGES,
+        provenance="counsel_qualitative",
+        rationale=(
+            "The M2-frozen implementation of counsel's fives/thirds/quarters "
+            "register, consumed unchanged by R55's revision selector. Base M2 "
+            "rows keep the existing percentage-register stream and value "
+            "selector byte-for-byte."
+        ),
+        source="sme-answers.md q4 direction; M2-frozen pool (AJC-62 Part 3 R55).",
+    ),
+    "GRANULAR_NONINDUSTRIAL_PERCENTAGES": AssertionKnob[tuple[int, ...]](
+        value=GRANULAR_NONINDUSTRIAL_PERCENTAGES,
+        provenance="derived",
+        rationale=(
+            "The continuous remainder — exactly the 78 integers of 1..99 "
+            "outside the common pool, selected through the R55 continuous "
+            "latent law so no granular value is a nearest-common clamp."
+        ),
+        source=(
+            "Anti-clamp consequence of the M2 pool and integer schema "
+            "(AJC-62 Part 3 R55)."
+        ),
+    ),
+    "ADVOCACY_LEAD_DAYS": ADVOCACY_LEAD_DAYS,
+    "OBJECTION_LAG_DAYS": OBJECTION_LAG_DAYS,
+    "SUPPLEMENTAL_REQUEST_LAG_DAYS": SUPPLEMENTAL_REQUEST_LAG_DAYS,
+    "SUPPLEMENTAL_REPORT_LAG_DAYS": SUPPLEMENTAL_REPORT_LAG_DAYS,
+    "DEPOSITION_LAG_DAYS": DEPOSITION_LAG_DAYS,
+    "IMR_APPLICATION_LAG_DAYS": IMR_APPLICATION_LAG_DAYS,
+    "IMR_DECISION_LAG_DAYS": IMR_DECISION_LAG_DAYS,
+    "UR_DECISION_WEIGHTS_WHEN_UNSTATED": UR_DECISION_WEIGHTS_WHEN_UNSTATED,
+    "IMR_OUTCOME_WEIGHTS_WHEN_UNSTATED": IMR_OUTCOME_WEIGHTS_WHEN_UNSTATED,
+    "IMR_APPLICATION_FIELD_OCCUPANCY": IMR_APPLICATION_FIELD_OCCUPANCY,
+    "SUPPORTING_RECORD_COUNT_WEIGHTS": SUPPORTING_RECORD_COUNT_WEIGHTS,
+    "MTUS_CITATION_COUNT_WEIGHTS": MTUS_CITATION_COUNT_WEIGHTS,
+    "P_IMR_CASE_SPECIFIC_REBUTTAL": P_IMR_CASE_SPECIFIC_REBUTTAL,
+}
+"""Every R48-R58 medical-story knob by name (R60), including the existing
+:data:`P_COMMON_PERCENTAGE_REGISTER` object BY IDENTITY — one knob, two
+registries, zero duplication. Weighted choices consume these through
+integerized exact weights or exact cumulative comparison; ``random.choices()``
+with float weights is forbidden. R63's statistical denominator floors and the
+coverage-only exact-pin floors are recorded at R77 step 12 with the
+measurement they gate — never guessed here in advance."""
+
+
+# ---------------------------------------------------------------------------
 # RNG streams — new namespace, semantic keys, independent seeding
 # ---------------------------------------------------------------------------
 
@@ -1662,6 +2228,237 @@ def _assertion_rng(seed: CaseSeed, family: str, stable_key: str) -> random.Rando
     return random.Random(
         derive_seed(seed.rng_seed, f"{ASSERTION_RNG_NAMESPACE}:{family}:{stable_key}")
     )
+
+
+# ---------------------------------------------------------------------------
+# M3 medical-story streams (AJC-62 Part 3, R44-R46) — namespace, exact family
+# registry, canonical semantic-key grammar. Policy constants, not probability
+# knobs; each carries its rationale/source here (R60).
+# ---------------------------------------------------------------------------
+
+MEDICAL_STORY_RNG_NAMESPACE: Final[str] = "medical-story"
+"""The single M3 namespace (R44) — never ``medical:`` (M1) and never
+``medical-assertions:`` (M2). Every new M3 stochastic decision derives from
+``medical-story:{family}:{canonical-semantic-key}``; a single registered
+namespace makes completeness mechanically testable and prevents a new loop
+decision from consuming an existing stream. Source: AJC-62 Part 3 R44."""
+
+MEDICAL_STORY_RNG_FAMILIES: Final[tuple[str, ...]] = (
+    "advocacy-incidence",
+    "advocacy-bundle-size",
+    "applicant-psych-framing",
+    "ptp-aoe-coe-finding",
+    "ptp-psych-classification",
+    "qme-ame-indeterminate-disposition",
+    "qme-ame-responsive-adoption",
+    "defense-contest-incidence",
+    "applicant-contest-incidence",
+    "completion-incidence",
+    "contest-path",
+    "defense-theory-count",
+    "defense-theory-selection",
+    "revision-kind",
+    "revision-percentage-register",
+    "revision-percentage-value",
+    "advocacy-lead",
+    "objection-lag",
+    "supplemental-request-lag",
+    "supplemental-report-lag",
+    "deposition-lag",
+    "ur-decision",
+    "imr-request",
+    "imr-outcome",
+    "imr-application-lag",
+    "imr-decision-lag",
+    "imr-field-occupancy",
+    "imr-field-count",
+    "imr-rebuttal-substance",
+    "document-format",
+    "document-render",
+    "document-scan",
+    "document-pdf-id",
+    "document-doctrine",
+)
+"""The exact 34-family medical-story registry (R46) — complete and CLOSED for
+AJC-62. Each family has exactly the R46 semantic-key suffix and draw site; a
+weighted-without-replacement operation may consume multiple draws from its
+entity-private stream, and no other entity shares that ``random.Random``.
+Date fitting, stable sorting, record selection, collision removal, cap
+application, and contest-document chunking are deterministic and never acquire
+a family. Source: AJC-62 Part 3 R46."""
+
+MEDICAL_STORY_ASSERTION_LOOP_FAMILIES: Final[frozenset[str]] = frozenset(
+    MEDICAL_STORY_RNG_FAMILIES[:21]
+)
+"""The 21 contention-loop families, callable only when BOTH gates are present
+(R44): ``scenario.medical_history`` and ``scenario.medical_assertions``. The
+13-family complement — the eight UR/IMR families and the five document-render
+families — may run in a history-present/assertions-absent case where Parts 1-2
+authorize them. Source: AJC-62 Part 3 R44; Part 2 R25."""
+
+MEDICAL_STORY_TZ_MATRIX: Final[tuple[str, ...]] = (
+    "America/Los_Angeles",
+    "Australia/Sydney",
+)
+"""R65 determinism matrix — the two timezones every M3 plan, binding, output
+byte, truth channel, leakage result and counter must be identical across.
+Policy constant, not a knob; the step-9 determinism tests consume it.
+Source: AJC-62 Part 3 R65."""
+
+MEDICAL_STORY_HASH_SEEDS: Final[tuple[str, ...]] = ("0", "424242")
+"""R65 determinism matrix — the two ``PYTHONHASHSEED`` values the cross-process
+gates run under. Source: AJC-62 Part 3 R65."""
+
+MEDICAL_STORY_REPEAT_GENERATIONS: Final[int] = 2
+"""R65 — repeated-generation count for the byte-identity gate.
+Source: AJC-62 Part 3 R65."""
+
+type StorySemanticAtom = str | int | bool | None
+type StorySemanticKey = tuple[object, ...]
+
+
+def _normalized_story_atom(value: object) -> object:
+    """One R45 normalization step — structural, pre-ID, JSON-representable.
+
+    Exact rules: dates become ISO ``YYYY-MM-DD``; string-backed literals stay
+    their literal strings; tuples and lists become arrays WITHOUT reordering;
+    sets and frozensets become sorted arrays; a mapping appears only after
+    sorting its items by normalized key. Floats, datetimes, model dumps,
+    object representations, memory addresses and Python ``hash()`` are
+    forbidden — an unrepresentable atom raises instead of degrading to
+    ``str(value)``, because a repr carries a memory address and a float
+    carries platform formatting.
+    """
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, float):  # must precede int: bool handled above
+        raise MedicalAssertionError(
+            f"medical-story semantic keys forbid floats ({value!r}); use an "
+            "exact int, string literal, or Fraction-free structural value"
+        )
+    if isinstance(value, int):
+        return value
+    if isinstance(value, dt.datetime):
+        raise MedicalAssertionError(
+            "medical-story semantic keys forbid datetimes; a clock-flavored "
+            "value is not a structural identity — pass the date"
+        )
+    if isinstance(value, dt.date):
+        return value.isoformat()
+    if isinstance(value, (tuple, list)):
+        return [_normalized_story_atom(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        normalized = [_normalized_story_atom(item) for item in value]
+        return sorted(
+            normalized,
+            key=lambda item: json.dumps(
+                item, ensure_ascii=True, separators=(",", ":")
+            ),
+        )
+    if isinstance(value, Mapping):
+        pairs = [
+            [_normalized_story_atom(key), _normalized_story_atom(item)]
+            for key, item in value.items()
+        ]
+        return sorted(
+            pairs,
+            key=lambda pair: json.dumps(
+                pair[0], ensure_ascii=True, separators=(",", ":")
+            ),
+        )
+    raise MedicalAssertionError(
+        f"medical-story semantic keys forbid {type(value).__name__} atoms; "
+        "only str/int/bool/None, dates, tuples/lists, sets, and mappings are "
+        "structural"
+    )
+
+
+def canonical_story_key(key: StorySemanticKey) -> str:
+    """The canonical ASCII-JSON string form of one R45 semantic key.
+
+    Exactly ``json.dumps(normalized_key, ensure_ascii=True,
+    separators=(",", ":"))`` over the normalized structure — byte-stable
+    across process, timezone, hash seed, and interpreter, which is the whole
+    reason positions, indices, and object identities are banned from keys.
+    """
+    return json.dumps(
+        _normalized_story_atom(tuple(key)),
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+
+
+def _medical_story_seed(
+    seed: CaseSeed,
+    family: str,
+    semantic_key: StorySemanticKey,
+) -> int:
+    """The derived seed for one ``medical-story:{family}:{key}`` stream (R44).
+
+    Fail-closed on every R44 precondition: the family must be registered (an
+    unregistered constructed family is an implementation failure, not a
+    warning); the medical-story gate must be present (no call to either
+    helper is permitted when ``scenario.medical_history is None``);
+    assertion-loop families additionally require ``scenario.medical_assertions``
+    (UR/IMR and document-render families may run history-present/
+    assertions-absent per Parts 1-2). Every key begins
+    ``("case", seed.case_id, ...)`` — R45's grammar — so two cases can never
+    share a stream. Callers in other modules MUST call through the
+    ``medical_assertions`` module attribute (never a locally imported alias)
+    so the P4 family recorder can observe every construction.
+    """
+    if family not in MEDICAL_STORY_RNG_FAMILIES:
+        raise MedicalAssertionError(
+            f"unknown medical-story rng family {family!r}; the R46 registry "
+            "is complete and closed for AJC-62 — a new decision must be "
+            "registered in MEDICAL_STORY_RNG_FAMILIES, never drawn under a "
+            "generic loop rng"
+        )
+    if seed.scenario.medical_history is None:
+        raise MedicalAssertionError(
+            "medical-story rng constructed without the medical-story gate: "
+            "scenario.medical_history is None, and the absent path must "
+            "return before any stream exists (R44/R1)"
+        )
+    if (
+        family in MEDICAL_STORY_ASSERTION_LOOP_FAMILIES
+        and seed.scenario.medical_assertions is None
+    ):
+        raise MedicalAssertionError(
+            f"assertion-loop family {family!r} constructed while "
+            "scenario.medical_assertions is None; only UR/IMR and "
+            "document-render families may run history-present/"
+            "assertions-absent (R44)"
+        )
+    if (
+        len(semantic_key) < 2
+        or semantic_key[0] != "case"
+        or semantic_key[1] != seed.case_id
+    ):
+        raise MedicalAssertionError(
+            f"medical-story semantic key {semantic_key!r} does not begin "
+            f'("case", {seed.case_id!r}, ...); R45 requires the case prefix '
+            "on every key"
+        )
+    return derive_seed(
+        seed.rng_seed,
+        f"{MEDICAL_STORY_RNG_NAMESPACE}:{family}:{canonical_story_key(semantic_key)}",
+    )
+
+
+def _medical_story_rng(
+    seed: CaseSeed,
+    family: str,
+    semantic_key: StorySemanticKey,
+) -> random.Random:
+    """A fresh entity-private stream from :func:`_medical_story_seed` (R44).
+
+    Constructs a new ``random.Random`` on every call — it never shares state
+    with M1, M2, lifecycle, format, substrate, or module-global RNGs, so a
+    weighted-without-replacement consumer can take several draws without any
+    other entity observing them.
+    """
+    return random.Random(_medical_story_seed(seed, family, semantic_key))
 
 
 @dataclass(frozen=True, slots=True)
@@ -2285,6 +3082,15 @@ class AssertionTrace:
     frozen oracle can assert composition behaviour positively instead of
     inferring it from absence. Nothing here may enter a ledger, warning,
     manifest or document.
+
+    Every counter above the M3 line is an M2 counter and is NEVER incremented
+    by M3 (R61). ``m2_baseline_ledger`` is the one M3-era member: the exact
+    M2 post-grade/pre-M3 ledger, recorded by
+    :func:`derive_medical_assertion_plan` so the R62 digest oracle and the
+    R70 stream gate read the preserved baseline rather than the (later)
+    remodeled plan ledger. M3 opportunity/outcome/path/date/revision/field
+    counters arrive as separate ``story_*`` members with their producers
+    (R77 steps 4-8).
     """
 
     suppression_hits: int = 0
@@ -2295,6 +3101,7 @@ class AssertionTrace:
     candidate_families: dict[str, int] = None  # type: ignore[assignment]
     eligible_candidates: dict[str, int] = None  # type: ignore[assignment]
     lifecycle: list[str] = None  # type: ignore[assignment]
+    m2_baseline_ledger: MedicalAssertionLedger | None = None
 
     def __post_init__(self) -> None:
         self.recipes = [] if self.recipes is None else self.recipes
@@ -3740,22 +4547,32 @@ def _first_unused(prefix: str, used: set[str]) -> str:
     )
 
 
-def derive_medical_assertions(
+def derive_medical_assertion_plan(
     seed: CaseSeed,
     history: MedicalHistory | None,
     timeline: object = None,
     trace: AssertionTrace | None = None,
-) -> MedicalAssertionLedger | None:
-    """The assertion ledger for one case, or ``None`` when the seed asked for none.
+) -> MedicalAssertionPlan:
+    """The complete assertion-layer product for one case (R32, R77 step 3).
 
-    The gate is the first observable and nothing precedes it: no assertion rng,
-    no ID allocation, no quality derivation, no warning may run before the
-    ``None`` return. That is the whole byte-identity instrument — an absent
-    block constructs nothing, so every golden byte stays where it was.
+    The IDs-last entry point ``build_case_plan()`` calls. At step 3 this is
+    the preservation seam: it runs the exact M2 base derivation byte-for-byte
+    — same streams, same salts, same draw order, same ``ctn/opn/app`` IDs,
+    same graded ledger — records that ledger on the test-only
+    ``AssertionTrace.m2_baseline_ledger`` (R61), and returns it inside a
+    :class:`MedicalAssertionPlan` with no contention-document bindings yet.
+    The R32 semantic subphases (response drafts, contest decisions, binding
+    drafts, the single final labeling pass) attach here in steps 4-6; every
+    one of them runs AFTER the recorded M2 baseline, never inside it.
+
+    The gate is the first observable and nothing precedes it: no assertion
+    rng, no ID allocation, no quality derivation, no warning may run before
+    the empty-plan return. That is the whole byte-identity instrument — an
+    absent block constructs nothing, so every golden byte stays where it was.
     """
     scenario = seed.scenario.medical_assertions
     if scenario is None:
-        return None
+        return MedicalAssertionPlan(ledger=None, contention_documents=())
     if history is None:
         raise MedicalAssertionError(
             "scenario.medical_assertions requires scenario.medical_history; "
@@ -3804,7 +4621,29 @@ def derive_medical_assertions(
             (key, recipe, realized.get(key, ""))
             for key, recipe, _placeholder in trace.recipes
         ]
-    return graded
+        # The exact M2 post-grade/pre-M3 ledger (R61). Recorded BEFORE any
+        # M3 transformation so the R62 digest oracle and the R70 stream gate
+        # always read the preserved baseline; the frozen model is its own
+        # snapshot — no M3 subphase may mutate or replace it.
+        trace.m2_baseline_ledger = graded
+    return MedicalAssertionPlan(ledger=graded, contention_documents=())
+
+
+def derive_medical_assertions(
+    seed: CaseSeed,
+    history: MedicalHistory | None,
+    timeline: object = None,
+    trace: AssertionTrace | None = None,
+) -> MedicalAssertionLedger | None:
+    """Compatibility wrapper over :func:`derive_medical_assertion_plan` (R32).
+
+    Returns only ``.ledger`` — exactly the pre-M3 surface, so every existing
+    caller and test keeps its shape while the plan entry point owns the gate,
+    the M2 baseline recording, and (from steps 4-6) the loop subphases.
+    """
+    return derive_medical_assertion_plan(
+        seed, history, timeline=timeline, trace=trace
+    ).ledger
 
 
 __all__ = [
@@ -3817,8 +4656,16 @@ __all__ = [
     "COMMON_NONINDUSTRIAL_PERCENTAGES",
     "CONTENTION_ID_PATTERN",
     "EVIDENCE_BUDGET_MIX",
+    "GRANULAR_NONINDUSTRIAL_PERCENTAGES",
     "GROUNDABLE_HOOKS",
     "HOOK_TO_BASIS",
+    "MEDICAL_STORY_ASSERTION_LOOP_FAMILIES",
+    "MEDICAL_STORY_HASH_SEEDS",
+    "MEDICAL_STORY_KNOBS",
+    "MEDICAL_STORY_REPEAT_GENERATIONS",
+    "MEDICAL_STORY_RNG_FAMILIES",
+    "MEDICAL_STORY_RNG_NAMESPACE",
+    "MEDICAL_STORY_TZ_MATRIX",
     "OPINION_ID_PATTERN",
     "REVIEWED_IDS_COMBINED_CAP",
     "UNCONDITIONAL_HARD_INVALID_BASES",
@@ -3862,12 +4709,16 @@ __all__ = [
     "PsychInjuryKind",
     "RequestedApportionment",
     "SibtfGrounding",
+    "StorySemanticAtom",
+    "StorySemanticKey",
     "TreatmentCausation",
     "apportionment_quality",
     "assertion_context",
     "assertion_warnings",
+    "canonical_story_key",
     "contention_evidence",
     "contention_quality",
+    "derive_medical_assertion_plan",
     "derive_medical_assertions",
     "escobedo_misses",
     "grade_ledger",

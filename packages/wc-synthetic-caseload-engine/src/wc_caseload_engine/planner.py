@@ -77,7 +77,7 @@ from wc_caseload_engine.medical_assertions import (
     MedicalAssertionLedger,
     assertion_context,
     assertion_warnings,
-    derive_medical_assertions,
+    derive_medical_assertion_plan,
     project_medical_history,
     validate_medical_assertions,
 )
@@ -2052,7 +2052,12 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # fails HERE, at generation time — a dangling reference must never survive
     # into a rendered corpus — while divergence from world truth passes through
     # to be graded. The nonfatal grounding warnings land beside M1's.
-    medical_assertions = derive_medical_assertions(seed, medical_history, timeline)
+    # R32: build_case_plan calls the IDs-last plan entry point; at R77 step 3
+    # the plan carries the byte-identical M2 ledger and no bindings yet — the
+    # contention-document bindings materialize through steps 5-6.
+    medical_assertions = derive_medical_assertion_plan(
+        seed, medical_history, timeline
+    ).ledger
     medical_assertion_warnings: tuple[str, ...] = ()
     if medical_assertions is not None and medical_history is not None:
         context = assertion_context(seed, timeline)

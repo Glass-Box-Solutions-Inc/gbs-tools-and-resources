@@ -1,0 +1,877 @@
+"""AJC-62 (M3) — Part 3 stream, semantic-key, knob, and M2-preservation gates.
+
+The R77 step-3 slice of the R70 gate inventory: the exact 34-family
+``medical-story`` registry, the R45 canonical semantic-key grammar, the
+R48-R58 knob provenance/exactness surface, and the R62/R70 proof that the new
+``derive_medical_assertion_plan()`` seam consumes every M2 stream
+byte-identically. Later steps EXTEND this module (PTP remodel, adoption,
+contest, revision, percentage, date-band, IMR, render-key, cohort, TZ/hash
+gates land with their producers); nothing here may be weakened when they do.
+
+@Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import typing
+from fractions import Fraction
+from typing import Any
+
+import pytest
+
+from assertion_cohort import (
+    M2_APPORTIONMENT_ORACLE_FIELDS,
+    M2_CONTENTION_ORACLE_FIELDS,
+    M2_OPINION_ORACLE_FIELDS,
+    MEASURED_ASSERTION_QUALITY_COUNTS,
+    MEASURED_CONTENTION_FAMILY_COUNTS,
+    MEASURED_ELIGIBLE_COUNTS,
+    MEASURED_LEDGER_DIGESTS,
+    MEASURED_M2_STREAM_TRACE_DIGESTS,
+    _CountingRandom,
+    _digest,
+    build_cohort,
+    cohort_seed_body,
+)
+from wc_caseload_engine import medical_assertions as assertion_module
+from wc_caseload_engine.medical_assertions import (
+    ASSERTION_RNG_FAMILIES,
+    ASSERTION_RNG_NAMESPACE,
+    COMMON_NONINDUSTRIAL_PERCENTAGES,
+    GRANULAR_NONINDUSTRIAL_PERCENTAGES,
+    MEDICAL_STORY_ASSERTION_LOOP_FAMILIES,
+    MEDICAL_STORY_HASH_SEEDS,
+    MEDICAL_STORY_KNOBS,
+    MEDICAL_STORY_REPEAT_GENERATIONS,
+    MEDICAL_STORY_RNG_FAMILIES,
+    MEDICAL_STORY_RNG_NAMESPACE,
+    MEDICAL_STORY_TZ_MATRIX,
+    AssertionKnob,
+    AssertionTrace,
+    ContestPath,
+    DefenseContestTheory,
+    MedicalAssertionError,
+    OpinionRevisionKind,
+    canonical_story_key,
+    derive_medical_assertion_plan,
+    derive_medical_assertions,
+)
+from wc_caseload_engine.medical_history import derive_medical_history
+from wc_caseload_engine.seeds import parse_case_seed
+
+#: An INDEPENDENT literal copy of the R46 registry — never imported from
+#: production, so a production edit and this oracle must both move for the
+#: gate to stay green. Complete and closed for AJC-62.
+EXPECTED_MEDICAL_STORY_FAMILIES: tuple[str, ...] = (
+    "advocacy-incidence",
+    "advocacy-bundle-size",
+    "applicant-psych-framing",
+    "ptp-aoe-coe-finding",
+    "ptp-psych-classification",
+    "qme-ame-indeterminate-disposition",
+    "qme-ame-responsive-adoption",
+    "defense-contest-incidence",
+    "applicant-contest-incidence",
+    "completion-incidence",
+    "contest-path",
+    "defense-theory-count",
+    "defense-theory-selection",
+    "revision-kind",
+    "revision-percentage-register",
+    "revision-percentage-value",
+    "advocacy-lead",
+    "objection-lag",
+    "supplemental-request-lag",
+    "supplemental-report-lag",
+    "deposition-lag",
+    "ur-decision",
+    "imr-request",
+    "imr-outcome",
+    "imr-application-lag",
+    "imr-decision-lag",
+    "imr-field-occupancy",
+    "imr-field-count",
+    "imr-rebuttal-substance",
+    "document-format",
+    "document-render",
+    "document-scan",
+    "document-pdf-id",
+    "document-doctrine",
+)
+
+#: Which R46 families the frozen M2 cohort positively exercises TODAY.
+#:
+#: R65's final form requires all 34 families observed across the cohort plus
+#: focused render fixtures — a declared-but-unexercised family is a test
+#: defect. At R77 step 3 the registry is definition-only by construction: the
+#: consumers land at steps 4-8, so the honest exercised set is EMPTY, and this
+#: literal is the ratchet that forces each step to expand it or go red:
+#:
+#:   step 4 — applicant-psych-framing, ptp-aoe-coe-finding,
+#:            ptp-psych-classification, qme-ame-indeterminate-disposition,
+#:            qme-ame-responsive-adoption, revision-kind,
+#:            revision-percentage-register, revision-percentage-value
+#:   step 5 — advocacy-incidence, advocacy-bundle-size,
+#:            defense-contest-incidence, applicant-contest-incidence,
+#:            completion-incidence, contest-path, defense-theory-count,
+#:            defense-theory-selection
+#:   step 6 — advocacy-lead, objection-lag, supplemental-request-lag,
+#:            supplemental-report-lag, deposition-lag
+#:   step 8 — ur-decision, imr-request, imr-outcome, imr-application-lag,
+#:            imr-decision-lag, imr-field-occupancy, imr-field-count,
+#:            imr-rebuttal-substance
+#:   step 9 — document-format, document-render, document-scan,
+#:            document-pdf-id, document-doctrine
+#:
+#: By step 9 this set MUST equal the full registry (with render fixtures
+#: supplying whatever the cohort alone cannot reach) and the emptiness below
+#: MUST be gone.
+EXERCISED_STORY_FAMILIES_TODAY: frozenset[str] = frozenset()
+
+#: The step-3 trace/digest witnesses: one ordinary cell case and the pinned
+#: suppression-collision case.
+_TRACE_WITNESS_INDICES = (3, 5760)
+
+
+# ---------------------------------------------------------------------------
+# R46 — the exact 34-family registry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+def test_medical_story_stream_registry_is_exact_complete_and_namespaced() -> None:
+    """R70's namespace/family gate, scoped honestly to R77 step 3.
+
+    The registry equals the independent R46 literal in exact order under the
+    one exact namespace; family names are disjoint from every M2 family; an
+    undeclared constructed family fails closed at the helper. The positive
+    "every declared family is exercised" half is scoped to what the frozen
+    cohort exercises TODAY (``EXERCISED_STORY_FAMILIES_TODAY`` — empty until
+    the step-4-through-9 consumers land; the constant's comment carries the
+    step-by-step expansion obligation, and by step 9 the observed set must
+    equal the full registry).
+    """
+    assert MEDICAL_STORY_RNG_NAMESPACE == "medical-story"
+    assert MEDICAL_STORY_RNG_FAMILIES == EXPECTED_MEDICAL_STORY_FAMILIES
+    assert len(MEDICAL_STORY_RNG_FAMILIES) == 34
+    assert len(set(MEDICAL_STORY_RNG_FAMILIES)) == 34
+    # The loop/optional split is structural (R44): the 21 assertion-loop
+    # families are exactly the registry minus the eight UR/IMR and five
+    # document-render families.
+    assert frozenset(
+        EXPECTED_MEDICAL_STORY_FAMILIES[:21]
+    ) == MEDICAL_STORY_ASSERTION_LOOP_FAMILIES
+    assert frozenset(EXPECTED_MEDICAL_STORY_FAMILIES[21:]) == {
+        "ur-decision",
+        "imr-request",
+        "imr-outcome",
+        "imr-application-lag",
+        "imr-decision-lag",
+        "imr-field-occupancy",
+        "imr-field-count",
+        "imr-rebuttal-substance",
+        "document-format",
+        "document-render",
+        "document-scan",
+        "document-pdf-id",
+        "document-doctrine",
+    }
+    # No name collision with the M2 registry — a shared name is how a loop
+    # decision would quietly consume an existing stream.
+    assert set(MEDICAL_STORY_RNG_FAMILIES).isdisjoint(set(ASSERTION_RNG_FAMILIES))
+
+    # An undeclared constructed family is an implementation failure, not a
+    # warning: the helper refuses it before any stream exists.
+    seed = parse_case_seed(cohort_seed_body(3))
+    with pytest.raises(MedicalAssertionError, match="unknown medical-story rng family"):
+        assertion_module._medical_story_rng(
+            seed, "not-a-registered-family", ("case", seed.case_id)
+        )
+
+    # Exercised-family half, scoped to today: the frozen cohort constructs
+    # exactly the expected set (empty at step 3 — the M2 base derivation may
+    # construct no story stream), observed through the wrapped module
+    # attribute, not inferred from a list.
+    result = build_cohort()
+    assert result.story_families_seen == EXERCISED_STORY_FAMILIES_TODAY
+
+
+# ---------------------------------------------------------------------------
+# R45 — semantic-key grammar: structural, pre-ID, canonical
+# ---------------------------------------------------------------------------
+
+
+def test_medical_story_keys_use_pre_id_semantics_and_never_positions_or_indices() -> None:
+    """R70's semantic-key gate: the R45 grammar, pinned canonically.
+
+    Every key begins ``("case", case_id, ...)`` — the helper fails closed on
+    any other prefix — and the canonical form is byte-pinned for each R45
+    identity shape, so a position, index, counter, or object identity cannot
+    enter a salt without moving one of these exact strings. ``ctn-*``/
+    ``opn-*``/``app-*``/``cdoc-*`` IDs, advancing counters, collection
+    positions and final document indices stay out of SAMPLED pre-label keys
+    as a construction-site rule (authored explicit IDs are permitted only in
+    the explicit forms below); its mechanical recorder is the P4 family
+    recorder, which attaches as the step-4-8 consumers introduce production
+    key-construction sites.
+    """
+    seed = parse_case_seed(cohort_seed_body(3))
+
+    # The case prefix is mandatory — R45's first two atoms.
+    for bad_key in (
+        (),
+        ("case",),
+        ("contention", "sampled"),
+        ("case", "some-other-case", "ur"),
+    ):
+        with pytest.raises(MedicalAssertionError, match="does not begin"):
+            assertion_module._medical_story_seed(seed, "ur-decision", bad_key)
+
+    case_id = seed.case_id
+    assert case_id == "cohort-0003"
+
+    # C, sampled — carries the M2 full contention semantic key, never an id.
+    c_sampled = (
+        "case",
+        case_id,
+        "contention",
+        "sampled",
+        (
+            "contention",
+            "industrial_causation",
+            "affirm",
+            "cond-00",
+            None,
+            None,
+            None,
+            ("kite",),
+        ),
+    )
+    assert canonical_story_key(c_sampled) == (
+        f'["case","{case_id}","contention","sampled",'
+        '["contention","industrial_causation","affirm","cond-00",'
+        'null,null,null,["kite"]]]'
+    )
+
+    # C, explicit — the one place an authored explicit ID may appear.
+    c_explicit = ("case", case_id, "contention", "explicit", "ctn-01")
+    assert canonical_story_key(c_explicit) == (
+        f'["case","{case_id}","contention","explicit","ctn-01"]'
+    )
+
+    # O, sampled base — role/stage/date plus the sorted relevant C keys,
+    # embedded as key TUPLES (nested arrays), never as assigned opinion IDs.
+    o_base = (
+        "case",
+        case_id,
+        "opinion",
+        "sampled_base",
+        "qme",
+        "final",
+        dt.date(2025, 6, 1),
+        (c_sampled,),
+    )
+    assert canonical_story_key(o_base) == (
+        f'["case","{case_id}","opinion","sampled_base","qme","final",'
+        f'"2025-06-01",[["case","{case_id}","contention","sampled",'
+        '["contention","industrial_causation","affirm","cond-00",'
+        'null,null,null,["kite"]]]]]'
+    )
+
+    # U — dates become ISO, booleans stay JSON booleans, body parts arrive
+    # pre-sorted as R45 composes them.
+    u_key = (
+        "case",
+        case_id,
+        "ur",
+        dt.date(2024, 3, 1),
+        True,
+        ("lumbar_spine", "shoulder"),
+    )
+    assert canonical_story_key(u_key) == (
+        f'["case","{case_id}","ur","2024-03-01",true,'
+        '["lumbar_spine","shoulder"]]'
+    )
+
+    # Tuples and lists are NEVER reordered; sets and frozensets ALWAYS are.
+    ordered = ("case", case_id, "probe", ("b", "a"))
+    assert canonical_story_key(ordered) == (
+        f'["case","{case_id}","probe",["b","a"]]'
+    )
+    unordered = ("case", case_id, "probe", frozenset({"b", "a"}))
+    assert canonical_story_key(unordered) == (
+        f'["case","{case_id}","probe",["a","b"]]'
+    )
+    # A mapping appears only after sorting its items by normalized key.
+    mapped = ("case", case_id, "probe", {"z": 1, "a": 2})
+    assert canonical_story_key(mapped) == (
+        f'["case","{case_id}","probe",[["a",2],["z",1]]]'
+    )
+
+    # Floats, datetimes, and arbitrary objects are forbidden atoms — a repr
+    # carries a memory address, a float carries platform formatting, a
+    # datetime carries a clock.
+    for forbidden in (
+        ("case", case_id, 0.5),
+        ("case", case_id, dt.datetime(2024, 3, 1, 12, 0)),
+        ("case", case_id, object()),
+        ("case", case_id, b"bytes"),
+    ):
+        with pytest.raises(MedicalAssertionError, match="forbid"):
+            canonical_story_key(forbidden)
+
+    # Canonicalization is ASCII-stable: non-ASCII content is escaped, never
+    # re-encoded differently per locale.
+    accented = ("case", case_id, "probe", "café")
+    assert canonical_story_key(accented) == (
+        f'["case","{case_id}","probe","caf\\u00e9"]'
+    )
+
+
+def test_medical_story_rng_streams_are_fresh_independent_and_gated() -> None:
+    """R44 unit surface: fresh per-construction streams under the exact
+    namespace, seed-disjoint from M1/M2, and fail-closed on both gates."""
+    seed = parse_case_seed(cohort_seed_body(3))
+    key = ("case", seed.case_id, "gate-probe")
+
+    # Same family and key: an identical, reproducible stream — and a FRESH
+    # instance per call, so consuming one cannot advance the other.
+    first = assertion_module._medical_story_rng(seed, "ur-decision", key)
+    second = assertion_module._medical_story_rng(seed, "ur-decision", key)
+    assert first is not second
+    sequence = [first.random() for _ in range(4)]
+    assert [second.random() for _ in range(4)] == sequence
+
+    # Different family, different key, or different namespace: different seed.
+    seeds = {
+        assertion_module._medical_story_seed(seed, family, key)
+        for family in ("ur-decision", "imr-request", "document-render")
+    }
+    assert len(seeds) == 3
+    assert assertion_module._medical_story_seed(
+        seed, "ur-decision", key
+    ) != assertion_module._medical_story_seed(
+        seed, "ur-decision", ("case", seed.case_id, "other-probe")
+    )
+    from wc_caseload_engine.seeds import derive_seed
+
+    canonical = canonical_story_key(key)
+    story_seed = assertion_module._medical_story_seed(seed, "ur-decision", key)
+    assert story_seed == derive_seed(
+        seed.rng_seed, f"medical-story:ur-decision:{canonical}"
+    )
+    for foreign_namespace in ("medical-assertions", "medical"):
+        assert story_seed != derive_seed(
+            seed.rng_seed, f"{foreign_namespace}:ur-decision:{canonical}"
+        )
+
+    # Gate half: no helper call is permitted without medical history; the 21
+    # assertion-loop families additionally require the assertions block, while
+    # UR/IMR and document-render families may run history-only (R44).
+    history_only = cohort_seed_body(3)
+    history_only["scenario"].pop("medical_assertions")
+    history_only_seed = parse_case_seed(history_only)
+    allowed = assertion_module._medical_story_rng(
+        history_only_seed, "ur-decision", ("case", history_only_seed.case_id)
+    )
+    assert 0.0 <= allowed.random() < 1.0
+    with pytest.raises(MedicalAssertionError, match="assertion-loop family"):
+        assertion_module._medical_story_rng(
+            history_only_seed, "contest-path", ("case", history_only_seed.case_id)
+        )
+
+    bare = cohort_seed_body(3)
+    bare["scenario"] = {}
+    bare_seed = parse_case_seed(bare)
+    with pytest.raises(MedicalAssertionError, match="medical-story gate"):
+        assertion_module._medical_story_rng(
+            bare_seed, "ur-decision", ("case", bare_seed.case_id)
+        )
+
+
+# ---------------------------------------------------------------------------
+# R62/R70 — M2 stream preservation through the new plan seam
+# ---------------------------------------------------------------------------
+
+
+def _record_m2_streams(index: int) -> tuple[Any, AssertionTrace, list[tuple[str, str, int]]]:
+    """Derive one case through ``derive_medical_assertion_plan`` recording the
+    ordered (family, complete salt, within-stream draw count) construction
+    trace of every ``medical-assertions`` stream, byte-transparently."""
+    body = cohort_seed_body(index)
+    seed = parse_case_seed(body)
+    history = derive_medical_history(seed)
+    original = assertion_module._assertion_rng
+    live: list[tuple[str, str, _CountingRandom]] = []
+
+    def recording(seed_obj: Any, family: str, stable_key: str) -> Any:
+        constructed = original(seed_obj, family, stable_key)
+        counting = _CountingRandom()
+        counting.setstate(constructed.getstate())
+        live.append(
+            (family, f"{ASSERTION_RNG_NAMESPACE}:{family}:{stable_key}", counting)
+        )
+        return counting
+
+    assertion_module._assertion_rng = recording
+    try:
+        trace = AssertionTrace()
+        plan = derive_medical_assertion_plan(seed, history, trace=trace)
+    finally:
+        assertion_module._assertion_rng = original
+    return plan, trace, [(family, salt, rng.draws) for family, salt, rng in live]
+
+
+@pytest.mark.slow
+def test_m2_baseline_stream_calls_ids_counts_and_digests_are_byte_identical() -> None:
+    """R70's M2-stream gate: family names, complete semantic salts,
+    construction counts, within-stream draw counts, base ctn/opn/app IDs, the
+    R62 field-projected payload and ``MEASURED_LEDGER_DIGESTS`` — all read
+    from ``AssertionTrace.m2_baseline_ledger`` through the new
+    ``derive_medical_assertion_plan()`` seam and byte-identical to the frozen
+    M2 recording.
+
+    Two instruments, deliberately overlapping: the ledger digests were pinned
+    PRE-M3 (any draw inserted into an M2 stream moves the sampled payload and
+    reddens them), and the stream-trace digests — pinned at step 3 under that
+    separately proven byte-identity — additionally see a construction the
+    payload cannot: a fresh stream created under an M2 family or namespace by
+    later M3 code whose private draws leave the M2 payload intact (the m20-10
+    failure shape).
+    """
+    result = build_cohort()
+    # The R62 payload digests, computed from m2_baseline_ledger with the
+    # literal M2 field allowlists, equal the frozen pre-M3 pins — no pin may
+    # be re-recorded to accommodate M3; a mismatch is an implementation
+    # defect (R62).
+    assert result.ledger_digests == MEASURED_LEDGER_DIGESTS
+    # The construction/draw traces equal their step-3 recordings.
+    assert result.stream_trace_digests == MEASURED_M2_STREAM_TRACE_DIGESTS
+    # …and the existing M2 counters stand unchanged beside them (R70 names
+    # the counters in this gate; the pinned-reproduction guard owns the full
+    # counter surface, this node re-checks the load-bearing three so it is a
+    # complete witness on its own).
+    assert {
+        model: dict(counts) for model, counts in result.quality_counts.items()
+    } == MEASURED_ASSERTION_QUALITY_COUNTS
+    assert dict(result.contention_family_counts) == MEASURED_CONTENTION_FAMILY_COUNTS
+    assert dict(result.eligible_counts) == MEASURED_ELIGIBLE_COUNTS
+
+    for index in _TRACE_WITNESS_INDICES:
+        plan, trace, streams = _record_m2_streams(index)
+        baseline = trace.m2_baseline_ledger
+        assert baseline is not None
+        assert plan.ledger is not None
+        # Step-3 shape: the plan carries no bindings yet (they arrive with
+        # steps 5-6) and the recorded baseline is the graded M2 ledger.
+        assert plan.contention_documents == ()
+
+        # Every constructed stream lives in the M2 namespace under a
+        # registered M2 family; no medical-story stream may be constructed
+        # inside the M2 base derivation, and within one derivation every
+        # stream is constructed at most once.
+        assert streams, "the witness case stopped constructing M2 streams"
+        for family, salt, draws in streams:
+            assert family in ASSERTION_RNG_FAMILIES, family
+            assert salt.startswith("medical-assertions:"), salt
+            assert not salt.startswith("medical-story:"), salt
+            assert draws >= 0
+        salts = [salt for _family, salt, _draws in streams]
+        assert len(salts) == len(set(salts))
+
+        # Base ctn/opn/app IDs remain the unbroken 01..N sequences the M2
+        # final labeling pass assigns — the sequences later response events
+        # must extend, never disturb (R47).
+        for collection, prefix in (
+            (baseline.contentions, "ctn"),
+            (baseline.medical_opinions, "opn"),
+            (baseline.apportionment_assertions, "app"),
+        ):
+            assert [item.id for item in collection] == [
+                f"{prefix}-{position:02d}"
+                for position in range(1, len(collection) + 1)
+            ]
+
+        # The R62 field projection of the baseline reproduces the frozen pin.
+        assert _digest(baseline) == MEASURED_LEDGER_DIGESTS[index]
+
+        # Determinism of the trace itself: a second derivation constructs the
+        # same streams in the same order with the same draw counts.
+        _plan_again, _trace_again, streams_again = _record_m2_streams(index)
+        assert streams_again == streams
+
+        # And the compatibility wrapper returns exactly the plan ledger.
+        body = cohort_seed_body(index)
+        seed = parse_case_seed(body)
+        history = derive_medical_history(seed)
+        wrapped = derive_medical_assertions(seed, history)
+        assert wrapped is not None
+        assert wrapped.model_dump() == plan.ledger.model_dump()
+
+
+def test_m2_oracle_allowlists_are_independent_literals_equal_to_production_v1_tuples() -> None:
+    """A1-R9's step-3 obligation: the test-only R62 allowlists stay
+    independently literal AND value-identical to the production assertions-v1
+    tuples. Production never imports the test constants (A1-R3); the
+    coordinated oracle compares the two declarations for exact equality."""
+    from wc_caseload_engine import truth_manifest as tm
+
+    assert M2_CONTENTION_ORACLE_FIELDS == tm.ASSERTIONS_V1_CONTENTION_FIELDS
+    assert M2_OPINION_ORACLE_FIELDS == tm.ASSERTIONS_V1_MEDICAL_OPINION_FIELDS
+    assert (
+        M2_APPORTIONMENT_ORACLE_FIELDS
+        == tm.ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS
+    )
+    # Independence is identity-level: equal values, distinct declarations.
+    assert M2_CONTENTION_ORACLE_FIELDS is not tm.ASSERTIONS_V1_CONTENTION_FIELDS
+    assert M2_OPINION_ORACLE_FIELDS is not tm.ASSERTIONS_V1_MEDICAL_OPINION_FIELDS
+    assert (
+        M2_APPORTIONMENT_ORACLE_FIELDS
+        is not tm.ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS
+    )
+    # The R62 vocabulary ends at quality on every collection.
+    for fields in (
+        M2_CONTENTION_ORACLE_FIELDS,
+        M2_OPINION_ORACLE_FIELDS,
+        M2_APPORTIONMENT_ORACLE_FIELDS,
+    ):
+        assert fields[-1] == "quality"
+
+
+# ---------------------------------------------------------------------------
+# R48-R60 — knob provenance and exact-choice surface
+# ---------------------------------------------------------------------------
+
+#: R60's M3 provenance vocabulary — four members, not the six the M2 enum
+#: carries. counsel_estimate and counsel_assumed are M2-era gradations and may
+#: not tag a medical-story knob.
+_M3_PROVENANCE = frozenset({"counsel_confirmed", "counsel_qualitative", "derived", "invented"})
+
+_EXPECTED_KNOB_NAMES = frozenset(
+    {
+        "P_DEFENSE_CONTEST",
+        "P_PTP_INDUSTRIAL_AOE_COE",
+        "P_QME_AME_RESPONSIVE_ADOPTION",
+        "P_IMR_REQUEST_GIVEN_UPHELD_DENIAL",
+        "P_COMMON_PERCENTAGE_REGISTER",
+        "P_DEFENSE_CONTEST_OUTSIDE_R30",
+        "PTP_AOE_COE_COMPLEMENT_WEIGHTS",
+        "P_APPLICANT_DIRECT_PSYCH_FRAMING_GIVEN_CONSEQUENCE",
+        "P_PTP_DIRECT_PSYCH_CLASSIFICATION_GIVEN_CONSEQUENCE",
+        "P_QME_AME_INDETERMINATE_DEFERRED",
+        "P_APPLICANT_CONTEST",
+        "P_APPLICANT_COMPLETION_REQUEST",
+        "ADVERSE_CONTEST_PATH_WEIGHTS",
+        "COMPLETION_PATH_WEIGHTS",
+        "DEFENSE_THEORY_COUNT_WEIGHTS",
+        "DEFENSE_THEORY_WEIGHTS",
+        "ADVOCACY_INCIDENCE",
+        "ADVOCACY_BUNDLE_SIZE_WEIGHTS",
+        "REVISION_KIND_WEIGHTS",
+        "COMMON_NONINDUSTRIAL_PERCENTAGES",
+        "GRANULAR_NONINDUSTRIAL_PERCENTAGES",
+        "ADVOCACY_LEAD_DAYS",
+        "OBJECTION_LAG_DAYS",
+        "SUPPLEMENTAL_REQUEST_LAG_DAYS",
+        "SUPPLEMENTAL_REPORT_LAG_DAYS",
+        "DEPOSITION_LAG_DAYS",
+        "IMR_APPLICATION_LAG_DAYS",
+        "IMR_DECISION_LAG_DAYS",
+        "UR_DECISION_WEIGHTS_WHEN_UNSTATED",
+        "IMR_OUTCOME_WEIGHTS_WHEN_UNSTATED",
+        "IMR_APPLICATION_FIELD_OCCUPANCY",
+        "SUPPORTING_RECORD_COUNT_WEIGHTS",
+        "MTUS_CITATION_COUNT_WEIGHTS",
+        "P_IMR_CASE_SPECIFIC_REBUTTAL",
+    }
+)
+
+
+def _assert_no_float(name: str, value: object) -> None:
+    """Recursively forbid floats anywhere inside a knob value — every
+    probability or weight is an exact Fraction and every structural member an
+    int, string, date pair or nested container of those."""
+    if isinstance(value, Fraction):
+        return
+    if isinstance(value, float):
+        pytest.fail(f"{name} carries a float component {value!r}; exact values only")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _assert_no_float(name, key)
+            _assert_no_float(name, item)
+        return
+    if isinstance(value, (tuple, list, set, frozenset)):
+        for item in value:
+            _assert_no_float(name, item)
+
+
+def test_every_medical_story_knob_has_value_rationale_source_and_provenance() -> None:
+    """R70's provenance gate over R60's registry: every R48-R58 knob present
+    by name, carrying an exact float-free value, a nonempty rationale and
+    source, and one of R60's four provenance members — with the existing
+    P_COMMON_PERCENTAGE_REGISTER object shared BY IDENTITY, never duplicated.
+    """
+    assert set(MEDICAL_STORY_KNOBS) == _EXPECTED_KNOB_NAMES
+    for name, knob in MEDICAL_STORY_KNOBS.items():
+        assert isinstance(knob, AssertionKnob), name
+        assert knob.rationale.strip(), name
+        assert knob.source.strip(), name
+        assert knob.provenance in _M3_PROVENANCE, (name, knob.provenance)
+        _assert_no_float(name, knob.value)
+
+    # One knob, two registries, zero duplication — and the value is untouched.
+    shared = MEDICAL_STORY_KNOBS["P_COMMON_PERCENTAGE_REGISTER"]
+    assert shared is assertion_module.P_COMMON_PERCENTAGE_REGISTER
+    assert shared is assertion_module.ASSERTION_KNOBS["P_COMMON_PERCENTAGE_REGISTER"]
+    assert shared.value == Fraction(17, 20)
+
+    # The two percentage pools are held by identity too — the knob registry
+    # documents the module tuples, it does not fork them.
+    assert (
+        MEDICAL_STORY_KNOBS["COMMON_NONINDUSTRIAL_PERCENTAGES"].value
+        is COMMON_NONINDUSTRIAL_PERCENTAGES
+    )
+    assert (
+        MEDICAL_STORY_KNOBS["GRANULAR_NONINDUSTRIAL_PERCENTAGES"].value
+        is GRANULAR_NONINDUSTRIAL_PERCENTAGES
+    )
+
+
+def test_every_counsel_ruled_medical_story_knob_and_denominator_is_exact() -> None:
+    """R70's counsel-knob gate: the five R48 constants exact under
+    counsel_confirmed provenance with their Ruling Set Three source and their
+    exact denominator language recorded on the knob; every other R48-R58
+    exact choice pinned against independent literals. The behavioral
+    denominator witnesses (which draws actually consume which populations)
+    land with the samplers in steps 4-8 and the R63 cohort measurement at
+    step 12 — this gate freezes the ruled values so those steps cannot bend
+    them."""
+    knobs = MEDICAL_STORY_KNOBS
+
+    counsel_five = {
+        "P_DEFENSE_CONTEST": (Fraction(13, 20), "before bundling"),
+        "P_PTP_INDUSTRIAL_AOE_COE": (Fraction(19, 20), "explicit PTP opinions are excluded"),
+        "P_QME_AME_RESPONSIVE_ADOPTION": (Fraction(1, 4), "all three R38 predicates"),
+        "P_IMR_REQUEST_GIVEN_UPHELD_DENIAL": (
+            Fraction(1, 2),
+            "imr was not authored",
+        ),
+        "P_COMMON_PERCENTAGE_REGISTER": (
+            Fraction(17, 20),
+            "every newly sampled allocated percentage",
+        ),
+    }
+    for name, (value, denominator_phrase) in counsel_five.items():
+        knob = knobs[name]
+        assert knob.value == value, name
+        assert knob.provenance == "counsel_confirmed", name
+        assert "Ruling Set Three" in knob.source, name
+        assert denominator_phrase in knob.rationale, (name, denominator_phrase)
+
+    # Outside R30 there is no defense channel at all.
+    assert knobs["P_DEFENSE_CONTEST_OUTSIDE_R30"].value == Fraction(0, 1)
+
+    # R49 — complement split and psych masses.
+    assert knobs["PTP_AOE_COE_COMPLEMENT_WEIGHTS"].value == {
+        "nonindustrial": Fraction(3, 5),
+        "deferred": Fraction(2, 5),
+    }
+    assert sum(knobs["PTP_AOE_COE_COMPLEMENT_WEIGHTS"].value.values()) == 1
+    assert knobs["P_APPLICANT_DIRECT_PSYCH_FRAMING_GIVEN_CONSEQUENCE"].value == Fraction(3, 4)
+    assert knobs["P_PTP_DIRECT_PSYCH_CLASSIFICATION_GIVEN_CONSEQUENCE"].value == Fraction(3, 5)
+    assert knobs["P_QME_AME_INDETERMINATE_DEFERRED"].value == Fraction(3, 5)
+
+    # R50 — applicant incidence and the complete ContestPath mixes.
+    assert knobs["P_APPLICANT_CONTEST"].value == Fraction(1, 2)
+    assert knobs["P_APPLICANT_COMPLETION_REQUEST"].value == Fraction(13, 20)
+    contest_paths = set(typing.get_args(ContestPath.__value__))
+    adverse = knobs["ADVERSE_CONTEST_PATH_WEIGHTS"].value
+    assert adverse == {
+        "applicant": (
+            ("objection_only", Fraction(1, 2)),
+            ("objection_supplemental", Fraction(3, 10)),
+            ("objection_deposition", Fraction(3, 20)),
+            ("objection_supplemental_deposition", Fraction(1, 20)),
+        ),
+        "defense": (
+            ("objection_only", Fraction(2, 5)),
+            ("objection_supplemental", Fraction(3, 10)),
+            ("objection_deposition", Fraction(1, 5)),
+            ("objection_supplemental_deposition", Fraction(1, 10)),
+        ),
+    }
+    completion = knobs["COMPLETION_PATH_WEIGHTS"].value
+    assert completion == {
+        "applicant": (
+            ("supplemental_only", Fraction(17, 20)),
+            ("supplemental_deposition", Fraction(3, 20)),
+        ),
+        "defense": (
+            ("supplemental_only", Fraction(3, 4)),
+            ("supplemental_deposition", Fraction(1, 4)),
+        ),
+    }
+    for table in (adverse, completion):
+        for actor, weighted in table.items():
+            assert actor in ("applicant", "defense")
+            assert sum(weight for _path, weight in weighted) == 1, actor
+            for path, _weight in weighted:
+                assert path in contest_paths, path
+
+    # R51 — theory count and weighted selection; categories are exactly the
+    # DefenseContestTheory declaration order (counsel_confirmed content).
+    assert knobs["DEFENSE_THEORY_COUNT_WEIGHTS"].value == (
+        (1, Fraction(3, 4)),
+        (2, Fraction(1, 5)),
+        (3, Fraction(1, 20)),
+    )
+    theory_weights = knobs["DEFENSE_THEORY_WEIGHTS"].value
+    assert theory_weights == (
+        ("insufficient_investigation", Fraction(7, 20)),
+        ("post_termination", Fraction(7, 20)),
+        ("lack_of_substantial_medical_evidence", Fraction(3, 10)),
+    )
+    assert tuple(theory for theory, _weight in theory_weights) == typing.get_args(
+        DefenseContestTheory.__value__
+    )
+    assert "Ruling Set Three" in knobs["DEFENSE_THEORY_WEIGHTS"].source
+    for weighted in (
+        knobs["DEFENSE_THEORY_COUNT_WEIGHTS"].value,
+        theory_weights,
+    ):
+        assert sum(weight for _member, weight in weighted) == 1
+
+    # R52 — advocacy incidence and bundling.
+    assert knobs["ADVOCACY_INCIDENCE"].value == {
+        ("ptp", "applicant"): Fraction(3, 5),
+        ("qme", "applicant"): Fraction(7, 10),
+        ("ame", "applicant"): Fraction(3, 5),
+        ("qme", "defense"): Fraction(11, 20),
+        ("ame", "defense"): Fraction(1, 2),
+    }
+    assert knobs["ADVOCACY_BUNDLE_SIZE_WEIGHTS"].value == (
+        (1, Fraction(1, 2)),
+        (2, Fraction(7, 20)),
+        (3, Fraction(3, 20)),
+    )
+    assert sum(w for _size, w in knobs["ADVOCACY_BUNDLE_SIZE_WEIGHTS"].value) == 1
+
+    # R54 — revision-kind distributions per trigger stage, in exact
+    # OpinionRevisionKind declaration order (five members per row), each row
+    # summing to one, deposition rows carrying zero new_records_no_change.
+    revision_kinds = typing.get_args(OpinionRevisionKind.__value__)
+    assert revision_kinds == (
+        "unchanged_additional_reasoning",
+        "new_records_no_change",
+        "revised_causation",
+        "revised_apportionment",
+        "revised_causation_and_apportionment",
+    )
+    revision = knobs["REVISION_KIND_WEIGHTS"].value
+    assert revision == {
+        "supplemental_after_objection": (
+            Fraction(7, 20),
+            Fraction(3, 20),
+            Fraction(3, 20),
+            Fraction(1, 4),
+            Fraction(1, 10),
+        ),
+        "supplemental_after_completion": (
+            Fraction(3, 20),
+            Fraction(1, 5),
+            Fraction(1, 5),
+            Fraction(3, 10),
+            Fraction(3, 20),
+        ),
+        "deposition_examining_base": (
+            Fraction(13, 20),
+            Fraction(0, 1),
+            Fraction(1, 10),
+            Fraction(1, 5),
+            Fraction(1, 20),
+        ),
+        "deposition_examining_supplemental": (
+            Fraction(7, 10),
+            Fraction(0, 1),
+            Fraction(1, 10),
+            Fraction(3, 20),
+            Fraction(1, 20),
+        ),
+    }
+    for trigger, row in revision.items():
+        assert len(row) == len(revision_kinds), trigger
+        assert sum(row) == 1, trigger
+        if trigger.startswith("deposition"):
+            assert row[1] == 0, trigger
+
+    # R55 — the percentage pools: the M2 pool untouched, the granular
+    # remainder exactly the 78-integer complement of 1..99.
+    assert COMMON_NONINDUSTRIAL_PERCENTAGES == (
+        5, 10, 15, 20, 25, 30, 33, 35, 40, 45, 50,
+        55, 60, 65, 67, 70, 75, 80, 85, 90, 95,
+    )
+    assert tuple(
+        value
+        for value in range(1, 100)
+        if value not in COMMON_NONINDUSTRIAL_PERCENTAGES
+    ) == GRANULAR_NONINDUSTRIAL_PERCENTAGES
+    assert len(GRANULAR_NONINDUSTRIAL_PERCENTAGES) == 78
+    assert set(COMMON_NONINDUSTRIAL_PERCENTAGES).isdisjoint(
+        GRANULAR_NONINDUSTRIAL_PERCENTAGES
+    )
+    assert set(COMMON_NONINDUSTRIAL_PERCENTAGES) | set(
+        GRANULAR_NONINDUSTRIAL_PERCENTAGES
+    ) == set(range(1, 100))
+
+    # R56 — inclusive integer date bands, strictly positive and ordered.
+    bands = {
+        "ADVOCACY_LEAD_DAYS": (14, 45),
+        "OBJECTION_LAG_DAYS": (10, 30),
+        "SUPPLEMENTAL_REQUEST_LAG_DAYS": (7, 21),
+        "SUPPLEMENTAL_REPORT_LAG_DAYS": (30, 90),
+        "DEPOSITION_LAG_DAYS": (30, 120),
+        "IMR_APPLICATION_LAG_DAYS": (10, 30),
+        "IMR_DECISION_LAG_DAYS": (30, 60),
+    }
+    for name, expected in bands.items():
+        value = knobs[name].value
+        assert value == expected, name
+        lower, upper = value
+        assert isinstance(lower, int) and isinstance(upper, int), name
+        assert 0 < lower < upper, name
+
+    # R57 — unstated-result weights preserve the uniform substrate choice.
+    for name in ("UR_DECISION_WEIGHTS_WHEN_UNSTATED", "IMR_OUTCOME_WEIGHTS_WHEN_UNSTATED"):
+        assert knobs[name].value == (
+            ("upheld", Fraction(1, 2)),
+            ("overturned", Fraction(1, 2)),
+        ), name
+        assert knobs[name].provenance == "derived", name
+
+    # R58 — applicant-attorney IMR sparseness.
+    assert knobs["IMR_APPLICATION_FIELD_OCCUPANCY"].value == {
+        "disputed_treatment": Fraction(19, 20),
+        "diagnosis_icd10": Fraction(3, 5),
+        "ur_determination_attached": Fraction(7, 10),
+        "supporting_record_subtypes": Fraction(7, 20),
+        "clinical_rebuttal": Fraction(1, 4),
+        "mtus_citations": Fraction(3, 20),
+    }
+    assert knobs["SUPPORTING_RECORD_COUNT_WEIGHTS"].value == (
+        (1, Fraction(3, 5)),
+        (2, Fraction(3, 10)),
+        (3, Fraction(1, 10)),
+    )
+    assert knobs["MTUS_CITATION_COUNT_WEIGHTS"].value == (
+        (1, Fraction(4, 5)),
+        (2, Fraction(1, 5)),
+    )
+    for name in ("SUPPORTING_RECORD_COUNT_WEIGHTS", "MTUS_CITATION_COUNT_WEIGHTS"):
+        assert sum(weight for _count, weight in knobs[name].value) == 1, name
+    assert knobs["P_IMR_CASE_SPECIFIC_REBUTTAL"].value == Fraction(1, 2)
+
+    # R65 — determinism matrices are policy constants with exact members.
+    assert MEDICAL_STORY_TZ_MATRIX == ("America/Los_Angeles", "Australia/Sydney")
+    assert MEDICAL_STORY_HASH_SEEDS == ("0", "424242")
+    assert MEDICAL_STORY_REPEAT_GENERATIONS == 2

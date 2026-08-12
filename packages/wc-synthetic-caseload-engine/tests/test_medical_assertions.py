@@ -1587,13 +1587,23 @@ def test_absent_gate_returns_before_any_assertion_rng_is_constructed(
         pytest.fail("assertion RNG constructed while medical_assertions gate was absent")
 
     monkeypatch.setattr(module, "_assertion_rng", fail_if_called)
+    monkeypatch.setattr(module, "_medical_story_rng", fail_if_called)
 
     bare = parse_case_seed(_seed_body({}))
     assert module.derive_medical_assertions(bare, None) is None
+    # The gate lives in derive_medical_assertion_plan() (R32/R72 m19-1): the
+    # plan entry returns the empty plan — no ledger, no bindings — before any
+    # M2 or medical-story stream can exist.
+    bare_plan = module.derive_medical_assertion_plan(bare, None)
+    assert bare_plan.ledger is None
+    assert bare_plan.contention_documents == ()
 
     with_history = parse_case_seed(_seed_body({"medical_history": {}}))
     history = derive_medical_history(with_history)
     assert module.derive_medical_assertions(with_history, history) is None
+    gated_plan = module.derive_medical_assertion_plan(with_history, history)
+    assert gated_plan.ledger is None
+    assert gated_plan.contention_documents == ()
 
 
 def test_absent_gate_plan_has_no_assertion_ledger_warning_or_truth_channel() -> None:
