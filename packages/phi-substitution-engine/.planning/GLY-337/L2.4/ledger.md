@@ -30,3 +30,18 @@ Base: M1 merged `7a50418`. Branch `GLY-337-durable-reversal-store` (worktree `_g
 FIX: F(2nd)-1 (durable-vs-provisional mapping model + oracle), F(2nd)-2 (scrub-boundary + throwing-input oracles), F(2nd)-3-oracle+JSDoc.
 NO-CODE: F(2nd)-3-enforcement (governance ticket), F(2nd)-4 (C2-availability amendment).
 Cross-family split preserved: Claude Engineer authors the fixes; GPT-5.6-sol re-gates.
+
+## Fix round 2 applied — commit `7ee2e50` (orchestrator-authored, reviewer-prescribed; GPT re-gates)
+- Fix 1: dev spool durable-vs-provisional current-mapping split (`#durableMappings` written only by flush,
+  last-flush-wins, survives `crash()`; reads + attacker-sim follow it). Store unchanged.
+- Fix 2: moved `record().canonical` + `resolve()` batch-check/iteration inside the scrub `try`.
+- Fix 3: classifier port JSDoc determinism contract + operation-consistency oracle. Store unchanged.
+- Addendum: C2-availability + C3-determinism binding clarifications (findings 3,4 → no code change).
+- tsc clean; 303 tests.
+- **Mutation evidence — 23 guards each reverted → paired oracle RED → restored (tree @ 7ee2e50):**
+  core(5): RETURN-BEFORE-FLUSH, SKIP-READ-TTL, REUSE-GCM-NONCE, FALLBACK-TENANTLESS, IGNORE-GCM-TAG;
+  fix-round-1(4): F1-NONATOMIC, F2-WARMCACHE-DEK, F2-WARMCACHE-KEYID, F3-CONTAMINATED;
+  fix-round-2(4): DURABLE-MAPPING-STEAL, CLASSIFY-PER-TOKEN, MUT-INPUT-OUTSIDE-SCRUB(record), (resolve);
+  AAD injectivity(10): field 1..10 each drop → its oracle RED.
+  (AAD-tenant/-matter relocation oracles are backstopped by the KeyProvider bindingDigest — known
+  redundant survivors; the 10 injectivity oracles are the isolating guard.)
