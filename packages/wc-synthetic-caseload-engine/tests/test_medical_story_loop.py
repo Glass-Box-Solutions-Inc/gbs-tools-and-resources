@@ -29,6 +29,7 @@ import pytest
 import yaml
 
 from wc_caseload_engine import medical_assertions as assertion_module
+from wc_caseload_engine import planner as planner_module
 from wc_caseload_engine.medical_assertions import (
     ADVERSE_CONTEST_PATH_WEIGHTS,
     COMPLETION_PATH_WEIGHTS,
@@ -62,6 +63,7 @@ from wc_caseload_engine.medical_story import (
     PTP_CAUSATION_SURFACES,
     SUPPLEMENTAL_MEDLEGAL_SURFACES,
 )
+from wc_caseload_engine.planner import build_case_plan
 from wc_caseload_engine.seeds import (
     ContentionDocumentEntry,
     SeedValidationError,
@@ -2084,3 +2086,482 @@ def test_every_contention_document_kind_carries_exact_r35_bindings(
     # …and every carrier that is R8-governed sits in its governed set.
     assert advocacy.subtype in ADVOCACY_LETTER_SURFACES
     assert realization.subtype in INITIAL_MEDLEGAL_SURFACES
+
+
+# ---------------------------------------------------------------------------
+# R43 pipeline-position gate (R33, R77 step 6)
+# ---------------------------------------------------------------------------
+
+
+def _forced_full_chain() -> dict[str, Any]:
+    """The standard step-6 world: advocacy plus the complete O→R→S→D chain."""
+    forced = _contest_world("objection_supplemental_deposition")
+    forced["advocacy-incidence"] = _fire
+    return forced
+
+
+def test_contention_candidates_enter_after_perspective_before_controls_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R43's pipeline-position gate (R33): ``plan_medical_story_documents()``
+    runs exactly once, receives the exact perspective-RESOLVED candidate
+    list (a defense clone makes pre- and post-perspective lists observably
+    different), feeds the control resolver (so ``documents:`` controls see
+    the bound carriers), and no candidate passes through
+    ``apply_perspective()`` a second time — a bound applicant advocacy
+    letter therefore survives in a defense file whose unbound advocacy
+    weight is zero."""
+
+    def make_defense(case: dict[str, Any]) -> None:
+        case["perspective"] = "defense"
+
+    seed = _patched_seed("loop-applicant-rejected", make_defense)
+    _route_story_streams(monkeypatch, _forced_full_chain())
+
+    calls = {"perspective": 0, "story": 0}
+    captured: dict[str, Any] = {}
+    original_perspective = planner_module.apply_perspective
+    original_story = planner_module.plan_medical_story_documents
+    original_controls = planner_module.resolve_document_controls
+
+    def perspective_spy(seed_arg: Any, timeline: Any, candidates: Any) -> Any:
+        calls["perspective"] += 1
+        captured["pre"] = tuple(candidates)
+        result = original_perspective(seed_arg, timeline, candidates)
+        captured["pov"] = result
+        return result
+
+    def story_spy(seed_arg: Any, timeline: Any, plan: Any, candidates: Any) -> Any:
+        calls["story"] += 1
+        captured["story_arg"] = candidates
+        return original_story(seed_arg, timeline, plan, candidates)
+
+    def controls_spy(document_candidates: Any, *args: Any, **kwargs: Any) -> Any:
+        captured["controls_in"] = tuple(c.subtype for c in document_candidates)
+        return original_controls(document_candidates, *args, **kwargs)
+
+    monkeypatch.setattr(planner_module, "apply_perspective", perspective_spy)
+    monkeypatch.setattr(planner_module, "plan_medical_story_documents", story_spy)
+    monkeypatch.setattr(planner_module, "resolve_document_controls", controls_spy)
+    case_plan = build_case_plan(seed)
+    monkeypatch.undo()
+
+    assert calls["story"] == 1, "the insertion point must run exactly once"
+    assert calls["perspective"] == 1, "no second perspective pass may exist"
+    # The insertion consumed the perspective-RESOLVED list — the exact object
+    # apply_perspective returned, which on this defense file is observably
+    # different from the pre-perspective machine collection.
+    assert captured["story_arg"] is captured["pov"].candidates
+    assert tuple(captured["story_arg"]) != captured["pre"]
+    # …and it ran BEFORE the controls: the resolver's input already carries
+    # every bound carrier the chain materialized.
+    for carrier in (
+        "QME_COMPREHENSIVE_REPORT",
+        "ADVOCACY_LETTERS_QME",
+        "ADVOCACY_LETTERS_PTP_QME_AME",
+        "SUPPLEMENTAL_QME_AME_REPORT",
+        "DEPOSITION_TRANSCRIPT",
+    ):
+        assert carrier in captured["controls_in"], carrier
+
+    surfaces = {
+        document.contention_surface
+        for document in case_plan.documents
+        if document.contention_surface is not None
+    }
+    assert {"advocacy", "objection", "supplemental_request", "qme_deposition"} <= surfaces
+    served = [
+        document
+        for document in case_plan.documents
+        if document.contention_surface == "advocacy"
+    ]
+    assert served and all(
+        document.contention_actor_party == "applicant" for document in served
+    ), "the bound applicant letter must survive the defense file's zero weight"
+
+
+# ---------------------------------------------------------------------------
+# R43 candidate-survival gate (R36, R77 step 6)
+# ---------------------------------------------------------------------------
+
+
+def test_bound_candidate_metadata_survives_every_planner_transform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R43's candidate-survival gate (R36): every Part 1/Part 2 binding —
+    opinion id, spoken contentions, surface, template subtype, target,
+    actor, theories — survives controls, scenario shaping, discovery
+    shaping, cadence, sorting and final index assignment, landing on
+    exactly one PlannedDocument per binding while the transforms provably
+    ran. A raised exception is converted to a failure so the legacy tuple
+    reduction cannot escape as an error."""
+
+    def engage_every_transform(case: dict[str, Any]) -> None:
+        case["scenario"]["surgery"] = "none"  # scenario shaping runs
+        case["scenario"]["discovery"] = {"subpoena_sets": 2}  # discovery runs
+        case["documents"] = {
+            "overrides": [
+                {"subtype": "SUBPOENAED_RECORDS_MEDICAL", "count": 2},
+                {"subtype": "CLIENT_STATUS_LETTERS", "count": 3},  # cadence runs
+            ]
+        }
+
+    seed = _patched_seed("loop-applicant-rejected", engage_every_transform)
+    _route_story_streams(monkeypatch, _forced_full_chain())
+    _history, _trace, derive_plan = _derive(seed)
+    try:
+        case_plan = build_case_plan(seed)
+    except Exception as error:
+        pytest.fail(f"the metadata-preserving planner raised: {error!r}")
+    finally:
+        monkeypatch.undo()
+
+    bindings = derive_plan.contention_documents
+    assert {binding.document_kind for binding in bindings} == {
+        "opinion_report",
+        "advocacy",
+        "objection",
+        "supplemental_request",
+        "supplemental_report",
+        "qme_deposition",
+    }
+
+    # The transforms this gate claims survival through actually ran.
+    assert (
+        sum(1 for d in case_plan.documents if d.subtype == "SUBPOENAED_RECORDS_MEDICAL")
+        == 2
+    )
+    assert (
+        sum(1 for d in case_plan.documents if d.subtype == "CLIENT_STATUS_LETTERS") == 3
+    )
+
+    surface_of = {
+        "advocacy": "advocacy",
+        "objection": "objection",
+        "supplemental_request": "supplemental_request",
+        "qme_deposition": "qme_deposition",
+    }
+    for binding in bindings:
+        if binding.medical_opinion_id is not None:
+            matches = [
+                document
+                for document in case_plan.documents
+                if document.medical_opinion_id == binding.medical_opinion_id
+            ]
+        else:
+            matches = [
+                document
+                for document in case_plan.documents
+                if document.contention_surface == surface_of[binding.document_kind]
+                and document.target_medical_opinion_id
+                == binding.target_medical_opinion_id
+                and document.contention_actor_party == binding.actor_party
+            ]
+        assert len(matches) == 1, (
+            f"binding {binding.id} ({binding.document_kind}) must survive to "
+            f"exactly one planned document; found {len(matches)}"
+        )
+        document = matches[0]
+        assert document.subtype == binding.subtype
+        assert document.spoken_contention_ids == binding.spoken_contention_ids
+        assert document.template_subtype == binding.template_subtype
+        assert document.target_medical_opinion_id == binding.target_medical_opinion_id
+        assert document.defense_contest_theories == binding.defense_contest_theories
+        if binding.document_kind == "qme_deposition":
+            assert document.contention_surface == "qme_deposition"
+            assert document.contention_actor_party == binding.actor_party
+        # Survived sorting and indexing: the document sits where its index says.
+        assert case_plan.documents[document.index] is document
+
+
+# ---------------------------------------------------------------------------
+# R43 control-precedence gate (R36, R77 step 6)
+# ---------------------------------------------------------------------------
+
+
+def test_document_controls_remove_dependencies_without_orphaning_chains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R43's control-precedence gate (R36): ``documents:`` controls stay
+    authoritative over the loop, and ``reconcile_contention_document_
+    chains()`` removes every dependent of a controlled-away target without
+    orphaning a chain — excluding the base-report carrier removes the
+    objection, request, supplemental and deposition (with a prefixed
+    warning for the required realization); excluding only the letter
+    carrier removes the request, whose sampled supplemental response and
+    its deposition then fall in cascade while the base report survives.
+    Reconciliation never resurrects the excluded subtype."""
+    _route_story_streams(monkeypatch, _contest_world("objection_supplemental_deposition"))
+
+    def exclude_base(case: dict[str, Any]) -> None:
+        case["documents"] = {"exclude": ["QME_COMPREHENSIVE_REPORT"]}
+
+    orphan_plan = build_case_plan(_patched_seed("loop-applicant-rejected", exclude_base))
+
+    assert not any(
+        document.subtype == "QME_COMPREHENSIVE_REPORT"
+        for document in orphan_plan.documents
+    ), "reconciliation must not resurrect a controlled-away subtype"
+    assert not any(
+        document.medical_opinion_id is not None for document in orphan_plan.documents
+    ), "with the base report excluded no bound realization may remain"
+    assert not any(
+        document.contention_surface is not None for document in orphan_plan.documents
+    ), "no dependent objection/request/deposition may be orphaned"
+    prefixed = [
+        warning
+        for warning in orphan_plan.warnings
+        if warning.startswith("medical_story.contention_loop:")
+    ]
+    assert prefixed, "a dropped required realization must warn with the prefix"
+    assert any("opn-01" in warning for warning in prefixed)
+
+    def exclude_letters(case: dict[str, Any]) -> None:
+        case["documents"] = {"exclude": ["ADVOCACY_LETTERS_PTP_QME_AME"]}
+
+    cascade_plan = build_case_plan(
+        _patched_seed("loop-applicant-rejected", exclude_letters)
+    )
+    monkeypatch.undo()
+
+    base_docs = [
+        document
+        for document in cascade_plan.documents
+        if document.medical_opinion_id == "opn-01"
+    ]
+    assert len(base_docs) == 1, "the base report is not a dependent and survives"
+    assert not any(
+        document.contention_surface in ("objection", "supplemental_request")
+        for document in cascade_plan.documents
+    ), "the excluded letter carrier must remove the communications"
+    assert not any(
+        document.medical_opinion_id not in (None, "opn-01")
+        for document in cascade_plan.documents
+    ), "the sampled supplemental response must fall with its missing request"
+    assert not any(
+        document.contention_surface == "qme_deposition"
+        for document in cascade_plan.documents
+    ), "the deposition examining the fallen supplemental must fall in cascade"
+
+
+# ---------------------------------------------------------------------------
+# R43 unbound-synthesis gate (R36, R77 step 6)
+# ---------------------------------------------------------------------------
+
+
+def test_control_synthesized_copies_never_clone_medical_story_bindings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R43's unbound-synthesis gate (R36): a ``documents.overrides`` count
+    beyond the available candidates synthesizes UNBOUND copies — no cloned
+    opinion id, contention ids, actor, contest theory, surface or template
+    subtype — even when the donor of track and author role is itself a
+    bound candidate, while the semantic event keeps exactly one bound
+    instance."""
+
+    def force_extra_copies(case: dict[str, Any]) -> None:
+        case["documents"] = {
+            "overrides": [
+                {"subtype": "ADVOCACY_LETTERS_QME", "count": 3},
+                {"subtype": "QME_COMPREHENSIVE_REPORT", "count": 2},
+            ]
+        }
+
+    seed = _patched_seed("loop-applicant-rejected", force_extra_copies)
+    _route_story_streams(monkeypatch, _forced_full_chain())
+    case_plan = build_case_plan(seed)
+    monkeypatch.undo()
+
+    letters = [
+        document
+        for document in case_plan.documents
+        if document.subtype == "ADVOCACY_LETTERS_QME"
+    ]
+    assert len(letters) == 3
+    bound_letters = [
+        document for document in letters if document.contention_surface == "advocacy"
+    ]
+    assert len(bound_letters) == 1, "one semantic letter, however many copies"
+    for extra in (letter for letter in letters if letter not in bound_letters):
+        assert extra.medical_opinion_id is None
+        assert extra.spoken_contention_ids == ()
+        assert extra.contention_surface is None
+        assert extra.template_subtype is None
+        assert extra.target_medical_opinion_id is None
+        assert extra.contention_actor_party is None
+        assert extra.defense_contest_theories == ()
+
+    reports = [
+        document
+        for document in case_plan.documents
+        if document.subtype == "QME_COMPREHENSIVE_REPORT"
+    ]
+    assert len(reports) == 2
+    assert sum(1 for report in reports if report.medical_opinion_id == "opn-01") == 1
+    for extra in (report for report in reports if report.medical_opinion_id is None):
+        assert extra.spoken_contention_ids == ()
+        assert extra.template_subtype is None
+        assert extra.target_medical_opinion_id is None
+        assert extra.contention_actor_party is None
+        assert extra.defense_contest_theories == ()
+
+
+# ---------------------------------------------------------------------------
+# R43 hard-date gate (R34, R77 step 6)
+# ---------------------------------------------------------------------------
+
+
+def test_hard_opinion_and_explicit_dates_are_fixed_and_edges_strict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R43's hard-date gate (R34): opinion report dates land in the plan
+    exactly — never clamped, never fitted — while every causal edge stays
+    strictly ordered inside the ``injury + 1 .. horizon`` window with no
+    shared dates; a raw sampled advocacy lead that falls before the window
+    is FITTED into the strict segment rather than clamped onto the injury
+    date; and an explicit date the window cannot hold fails naming the
+    involved ``cdoc-*``/``opn-*`` ids."""
+    _route_story_streams(monkeypatch, _forced_full_chain())
+    _history, _trace, derive_plan = _derive(_matrix_seeds()["loop-applicant-rejected"])
+    try:
+        case_plan = build_case_plan(_matrix_seeds()["loop-applicant-rejected"])
+    except Exception as error:
+        pytest.fail(f"chronology planning raised: {error!r}")
+    finally:
+        monkeypatch.undo()
+
+    base, supplemental, deposition = derive_plan.ledger.medical_opinions
+    by_opinion = {
+        document.medical_opinion_id: document
+        for document in case_plan.documents
+        if document.medical_opinion_id is not None
+    }
+    # Hard anchors preserved exactly.
+    assert by_opinion[base.id].doc_date == base.report_date
+    assert by_opinion[supplemental.id].doc_date == supplemental.report_date
+    assert by_opinion[deposition.id].doc_date == deposition.report_date
+
+    by_surface = {
+        document.contention_surface: document
+        for document in case_plan.documents
+        if document.contention_surface is not None
+    }
+    chain = [
+        by_surface["advocacy"].doc_date,
+        by_opinion[base.id].doc_date,
+        by_surface["objection"].doc_date,
+        by_surface["supplemental_request"].doc_date,
+        by_opinion[supplemental.id].doc_date,
+        by_opinion[deposition.id].doc_date,
+    ]
+    assert chain == sorted(chain), f"every causal edge must be ordered: {chain}"
+    assert len(set(chain)) == len(chain), f"no related events share a date: {chain}"
+    window_floor = case_plan.timeline.injury_date + dt.timedelta(days=1)
+    for when in chain:
+        assert window_floor <= when <= case_plan.timeline.horizon
+
+    # A report ten days after the injury makes every raw advocacy lead
+    # (14-45 days) land before the window; the fit places the letter
+    # strictly inside [injury + 1, report - 1] instead of clamping it onto
+    # the injury date.
+    def early_report(case: dict[str, Any]) -> None:
+        case["scenario"]["medical_assertions"]["medical_opinions"][0][
+            "report_date"
+        ] = dt.date(2024, 3, 11)
+
+    _route_story_streams(monkeypatch, _forced_full_chain())
+    early_plan = build_case_plan(_patched_seed("loop-applicant-rejected", early_report))
+    monkeypatch.undo()
+    early_report_doc = next(
+        document
+        for document in early_plan.documents
+        if document.medical_opinion_id == "opn-01"
+    )
+    assert early_report_doc.doc_date == dt.date(2024, 3, 11)
+    early_letter = next(
+        document
+        for document in early_plan.documents
+        if document.contention_surface == "advocacy"
+    )
+    assert dt.date(2024, 3, 2) <= early_letter.doc_date < dt.date(2024, 3, 11)
+
+    # An explicit date outside the strict window fails, naming its ids.
+    def author_at_injury(case: dict[str, Any]) -> None:
+        case["scenario"]["medical_assertions"]["contention_documents"] = [
+            {
+                "id": "cdoc-01",
+                "document_kind": "advocacy",
+                "target_medical_opinion_id": "opn-01",
+                "actor_party": "applicant",
+                "spoken_contention_ids": ["ctn-01"],
+                "doc_date": dt.date(2024, 3, 1),  # the injury date itself
+            }
+        ]
+
+    bad = _patched_seed("loop-applicant-rejected", author_at_injury)
+    with pytest.raises(MedicalAssertionError) as failure:
+        build_case_plan(bad)
+    assert "cdoc-01" in str(failure.value)
+    assert "opn-01" in str(failure.value)
+
+
+# ---------------------------------------------------------------------------
+# R43 QME-panel gate (R34, R77 step 6)
+# ---------------------------------------------------------------------------
+
+
+def test_qme_panel_predecessors_refit_before_the_bound_base_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R43's QME-panel gate (R34): binding rewrites the walk's report slot to
+    the hard ``MedicalOpinion.report_date``; when that date precedes the
+    walk's own panel paperwork (drawn at injury + 180..365 days, here
+    against a July 1 opinion) the panel request and panel order are
+    re-fitted strictly before the bound base report, request before order,
+    inside the case window — and no unbound ``QME_REPORT_INITIAL`` twin of
+    the bound opinion event is left behind by the reuse."""
+
+    def early_opinion(case: dict[str, Any]) -> None:
+        case["scenario"]["medical_assertions"]["medical_opinions"][0][
+            "report_date"
+        ] = dt.date(2024, 7, 1)
+
+    quiet = {
+        "advocacy-incidence": _miss,
+        "applicant-contest-incidence": _miss,
+        "completion-incidence": _miss,
+        "defense-contest-incidence": _miss,
+    }
+    seed = _patched_seed("loop-applicant-rejected", early_opinion)
+    _route_story_streams(monkeypatch, quiet)
+    case_plan = build_case_plan(seed)
+    monkeypatch.undo()
+
+    report = next(
+        document
+        for document in case_plan.documents
+        if document.medical_opinion_id == "opn-01"
+    )
+    assert report.subtype == "QME_COMPREHENSIVE_REPORT"
+    assert report.doc_date == dt.date(2024, 7, 1), "the bound anchor is hard"
+
+    requests = [
+        document
+        for document in case_plan.documents
+        if document.subtype == "QME_PANEL_REQUEST_FORM_105"
+    ]
+    orders = [
+        document
+        for document in case_plan.documents
+        if document.subtype == "ORDER_APPOINTING_QME_PANEL"
+    ]
+    assert requests and orders, "the qme path proposes its panel paperwork"
+    window_floor = case_plan.timeline.injury_date + dt.timedelta(days=1)
+    for document in (*requests, *orders):
+        assert window_floor <= document.doc_date < report.doc_date, (
+            f"{document.subtype} of {document.doc_date} must precede the bound "
+            f"report of {report.doc_date}"
+        )
+    assert min(r.doc_date for r in requests) < min(o.doc_date for o in orders), (
+        "a panel order answers a request and cannot precede every request"
+    )

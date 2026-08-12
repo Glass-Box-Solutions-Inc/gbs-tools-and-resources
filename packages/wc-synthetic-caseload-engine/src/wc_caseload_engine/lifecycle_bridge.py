@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import random
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from itertools import pairwise
 from typing import TYPE_CHECKING, Any
@@ -365,14 +365,25 @@ class DatedCandidate:
     imr_application_content: ImrApplicationContent | None = None
 
     def to_candidate(self, parent_type: str | None = None) -> DocumentCandidate:
-        """Adapt to the control resolver's input type."""
+        """Adapt to the control resolver's input type.
+
+        The complete ``metadata`` mapping rides along (R36): the resolver's
+        view of a candidate must not erase the ``contention_loop_source``
+        provenance the medical-story planner stamped on it. Legacy candidates
+        carry an empty mapping, so their adapter output is unchanged byte for
+        byte.
+        """
         return DocumentCandidate(
             subtype=self.subtype,
             priority=self.priority,
             track=self.track,
             parent_type=parent_type,
             count=1,
-            metadata={"stage": self.stage, "author_role": self.author_role},
+            metadata={
+                "stage": self.stage,
+                "author_role": self.author_role,
+                **self.metadata,
+            },
         )
 
 
@@ -555,16 +566,12 @@ def fit_track(
         ceiling=ceiling,
         label=label,
     )
+    # ``replace`` rather than a field-by-field reconstruction: the M3 binding
+    # fields (R5/R35) must survive date fitting, and a rebuild that names only
+    # the pre-M3 seven would erase them silently. For legacy candidates the two
+    # spellings are identical.
     out = [
-        DatedCandidate(
-            subtype=candidate.subtype,
-            doc_date=doc_date,
-            track=candidate.track,
-            priority=candidate.priority,
-            author_role=candidate.author_role,
-            stage=candidate.stage,
-            metadata=candidate.metadata,
-        )
+        replace(candidate, doc_date=doc_date)
         for candidate, doc_date in zip(candidates, fitted, strict=True)
     ]
 

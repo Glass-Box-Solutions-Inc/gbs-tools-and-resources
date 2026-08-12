@@ -1041,10 +1041,11 @@ title = 'the refill clones past an exact documents.overrides packet count again'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_an_exact_override_count_is_not_padded_to_the_declared_count'
 find = '''        donor = next(
-            (entry for entry in reversed(packets) if entry[1] not in uncloneable), None
+            (entry for entry in reversed(packets) if entry.subtype not in uncloneable),
+            None,
         )'''
 replace = '        donor = packets[-1] if packets else None'
-note = 'Re-pointed in the review round: the donor guard moved from `pinned` to `uncloneable` when a type-level ceiling was found to forbid cloning too. The surviving logic is the same claim, so the mutant follows it rather than being retired.'
+note = 'Re-pointed in the review round: the donor guard moved from `pinned` to `uncloneable` when a type-level ceiling was found to forbid cloning too. The surviving logic is the same claim, so the mutant follows it rather than being retired. Re-pointed again at AJC-62 step 6, which replaced the tuple pipeline with DatedCandidate objects (`entry[1]` became `entry.subtype`); the mutation is unchanged in meaning.'
 
 [[mutant]]
 id = 'm12-2'
@@ -1117,9 +1118,11 @@ id = 'm12-8'
 title = 'the trim slices through an exact documents.overrides count again'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_the_trim_drops_no_pinned_subtype_entirely'
-find = '''        pinned_at = [index for index, entry in enumerate(packets) if entry[1] in pinned]'''
+find = '''        pinned_at = [
+            index for index, entry in enumerate(packets) if entry.subtype in pinned
+        ]'''
 replace = '''        pinned_at = []'''
-note = "Re-pointed in round 5. The trim now tracks kept-ness by position rather than tuple value (see m12-21), which renamed `pinned_entries` to `pinned_at` and left this find text matching nothing. Caught by the registry meta-guard, not by memory — a PATCH-MISS is a finding: it means a guard stopped reaching the thing it guards. The claim is unchanged: emptying the pinned set restores the blind date-ordered prefix that dropped a pinned subtype to zero."
+note = "Re-pointed in round 5. The trim now tracks kept-ness by position rather than tuple value (see m12-21), which renamed `pinned_entries` to `pinned_at` and left this find text matching nothing. Caught by the registry meta-guard, not by memory — a PATCH-MISS is a finding: it means a guard stopped reaching the thing it guards. The claim is unchanged: emptying the pinned set restores the blind date-ordered prefix that dropped a pinned subtype to zero. Re-pointed again at AJC-62 step 6 for the DatedCandidate pipeline (`entry[1]` became `entry.subtype`)."
 
 
 
@@ -1239,10 +1242,11 @@ id = 'm12-21'
 title = 'the floor restore identifies packets by tuple value again'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestTheShaperIdentifiesPacketsByPositionNotValue::test_a_floor_restores_both_copies_of_an_identical_packet'
-find = '''                if index not in kept_at and taxonomy_parent(packets[index][1]) == parent'''
+find = '''                if index not in kept_at
+                and taxonomy_parent(packets[index].subtype) == parent'''
 replace = '''                if packets[index] not in [packets[i] for i in kept_at]
-                and taxonomy_parent(packets[index][1]) == parent'''
-note = 'A packet is a plain `(date, subtype, track, role)` tuple and two of them can compare equal without being the same document. Under value equality one copy in the kept set hid both, so a floor could be reported short with a spare packet unused. Unreachable from any generated seed today — the reviewer could not reach it across 45 combinations and neither could I — so the guard calls `_shape_discovery` directly with the duplicate rather than hunting for a seed that makes one. An invariant no current seed violates is still an invariant.'
+                and taxonomy_parent(packets[index].subtype) == parent'''
+note = 'A packet is a frozen value object — a DatedCandidate since AJC-62 step 6, a plain `(date, subtype, track, role)` tuple before it — and two of them can compare equal without being the same document. Under value equality one copy in the kept set hid both, so a floor could be reported short with a spare packet unused. Unreachable from any generated seed today — the reviewer could not reach it across 45 combinations and neither could I — so the guard calls `_shape_discovery` directly with the duplicate rather than hunting for a seed that makes one. An invariant no current seed violates is still an invariant. Re-pointed at step 6 for the DatedCandidate spelling; the mutation is unchanged in meaning.'
 
 [[mutant]]
 id = 'm12-22'

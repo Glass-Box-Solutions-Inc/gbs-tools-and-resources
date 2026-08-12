@@ -86,6 +86,13 @@ from wc_caseload_engine.medical_history import (
     derive_medical_history,
     grounding_warnings,
 )
+from wc_caseload_engine.medical_story import (
+    CONTENTION_BINDING_ID_KEY,
+    CONTENTION_DOCUMENT_KIND_KEY,
+    CONTENTION_LOOP_SOURCE_KEY,
+    CONTENTION_LOOP_WARNING_PREFIX,
+    plan_medical_story_documents,
+)
 from wc_caseload_engine.money import MoneyFacts, derive_money_facts
 from wc_caseload_engine.perspective import apply_perspective, document_roles
 from wc_caseload_engine.recon_machine import ReconTrack, build_recon_track
@@ -973,7 +980,7 @@ def _delay_chain_candidates(facts: CaseFacts, timeline: CaseTimeline) -> list[Da
 
 def _penalty_control_warnings(
     facts: CaseFacts,
-    dated: list[tuple[date, str, str, str]],
+    dated: list[DatedCandidate],
     controls: DocumentControls,
 ) -> tuple[str, ...]:
     """Note when a petition the ledger earned is absent from the final plan.
@@ -999,7 +1006,7 @@ def _penalty_control_warnings(
     """
     if not facts.late_benefit_events:
         return ()
-    if any(subtype == "PETITION_FOR_PENALTIES" for _date, subtype, _track, _role in dated):
+    if any(entry.subtype == "PETITION_FOR_PENALTIES" for entry in dated):
         return ()
 
     # Name the likely route when one is identifiable — an author who wrote the
@@ -1146,8 +1153,8 @@ def _cadence_dates(
 def _apply_attorney_cadence(
     facts: CaseFacts,
     timeline: CaseTimeline,
-    dated: list[tuple[date, str, str, str]],
-) -> tuple[list[tuple[date, str, str, str]], tuple[str, ...]]:
+    dated: list[DatedCandidate],
+) -> tuple[list[DatedCandidate], tuple[str, ...]]:
     """ISC-123/124. Re-date counsel's client letters onto the resolved cadence.
 
     Reads ``facts.attorney_cadence`` — the *resolved* value — not
@@ -1162,19 +1169,19 @@ def _apply_attorney_cadence(
     controls decided.
     """
     letters = sorted(
-        (entry for entry in dated if entry[1] in ATTORNEY_CADENCE_SUBTYPES),
-        key=lambda entry: entry[0],
+        (entry for entry in dated if entry.subtype in ATTORNEY_CADENCE_SUBTYPES),
+        key=lambda entry: entry.doc_date,
     )
     if len(letters) < CADENCE_MIN_LETTERS:
         # One letter has no rhythm, and zero letters have nothing to re-date.
         return dated, ()
 
     cadence = facts.attorney_cadence
-    first = letters[0][0]
+    first = letters[0].doc_date
     # The events counsel would actually write *about*, taken from the file
     # itself so a reader can hold the letter beside the report that prompted it.
     anchors = sorted(
-        {entry[0] for entry in dated if entry[1] in CADENCE_ANCHOR_SUBTYPES}
+        {entry.doc_date for entry in dated if entry.subtype in CADENCE_ANCHOR_SUBTYPES}
     )
     intended = _cadence_dates(cadence, len(letters), first, anchors)
 
@@ -1184,7 +1191,7 @@ def _apply_attorney_cadence(
 
     moved = {id(entry): when for entry, when in zip(letters, fitted, strict=True)}
     shaped = [
-        (moved[id(entry)], entry[1], entry[2], entry[3]) if id(entry) in moved else entry
+        replace(entry, doc_date=moved[id(entry)]) if id(entry) in moved else entry
         for entry in dated
     ]
 
@@ -1350,7 +1357,7 @@ def taxonomy_parent(subtype: str) -> str | None:
 
 
 def _packets_a_type_floor_requires(
-    dated: list[tuple[date, str, str, str]],
+    dated: list[DatedCandidate],
     controls: DocumentControls,
 ) -> dict[str, int]:
     """``{parent_type: packets that must survive the trim}`` for each ``min`` bound.
@@ -1376,9 +1383,9 @@ def _packets_a_type_floor_requires(
         return {}
     taxonomy = effective_taxonomy()
     non_packet = Counter(
-        taxonomy.parent_of(entry[1])
+        taxonomy.parent_of(entry.subtype)
         for entry in dated
-        if entry[1] not in DISCOVERY_PACKET_SUBTYPES
+        if entry.subtype not in DISCOVERY_PACKET_SUBTYPES
     )
     return {
         parent: max(0, minimum - non_packet.get(parent, 0))
@@ -1387,7 +1394,7 @@ def _packets_a_type_floor_requires(
 
 
 def _type_headroom(
-    dated: list[tuple[date, str, str, str]],
+    dated: list[DatedCandidate],
     ceilinged: dict[str, tuple[str, int]],
 ) -> dict[str, int]:
     """How many more documents each ceilinged subtype's parent type may hold.
@@ -1401,7 +1408,7 @@ def _type_headroom(
     if not ceilinged:
         return {}
     taxonomy = effective_taxonomy()
-    under_type = Counter(taxonomy.parent_of(entry[1]) for entry in dated)
+    under_type = Counter(taxonomy.parent_of(entry.subtype) for entry in dated)
     return {
         subtype: maximum - under_type.get(parent, 0)
         for subtype, (parent, maximum) in ceilinged.items()
@@ -1628,11 +1635,11 @@ def _capitalized(sentence: str) -> str:
 def _shape_discovery(
     seed: CaseSeed,
     timeline: CaseTimeline,
-    dated: list[tuple[date, str, str, str]],
+    dated: list[DatedCandidate],
     controls: DocumentControls,
     *,
     proposed: frozenset[str],
-) -> tuple[list[tuple[date, str, str, str]], tuple[str, ...]]:
+) -> tuple[list[DatedCandidate], tuple[str, ...]]:
     """ISC-126/148. Make the file hold the packets the seed asked for — up to the controls.
 
     Trims from the end and extends by repeating a surviving packet's shape on a
@@ -1672,7 +1679,7 @@ def _shape_discovery(
     if declared is None:
         return dated, ()
 
-    packets = [entry for entry in dated if entry[1] in DISCOVERY_PACKET_SUBTYPES]
+    packets = [entry for entry in dated if entry.subtype in DISCOVERY_PACKET_SUBTYPES]
     if len(packets) == declared:
         return dated, ()
 
@@ -1698,8 +1705,8 @@ def _shape_discovery(
     headroom = _type_headroom(dated, ceilinged)
     uncloneable = set(pinned)
 
-    shaped = [entry for entry in dated if entry[1] not in DISCOVERY_PACKET_SUBTYPES]
-    packets.sort(key=lambda entry: entry[0])
+    shaped = [entry for entry in dated if entry.subtype not in DISCOVERY_PACKET_SUBTYPES]
+    packets.sort(key=lambda entry: entry.doc_date)
     overage: dict[str, int] = {}
     floors: list[tuple[str, int, int]] = []
     if len(packets) > declared:
@@ -1728,13 +1735,17 @@ def _shape_discovery(
         # the unpinned prefix, then whatever the floor restores — because the
         # sort is stable and packets sharing a date resolve their tie by it.
         # Changing that order would change bytes for tied dates.
-        pinned_at = [index for index, entry in enumerate(packets) if entry[1] in pinned]
+        pinned_at = [
+            index for index, entry in enumerate(packets) if entry.subtype in pinned
+        ]
         unpinned_at = [
-            index for index, entry in enumerate(packets) if entry[1] not in pinned
+            index for index, entry in enumerate(packets) if entry.subtype not in pinned
         ]
         room = declared - len(pinned_at)
         kept_at = pinned_at + (unpinned_at[:room] if room > 0 else [])
-        kept = sorted((packets[index] for index in kept_at), key=lambda entry: entry[0])
+        kept = sorted(
+            (packets[index] for index in kept_at), key=lambda entry: entry.doc_date
+        )
         # A `{type: T, min: N}` floor is the other half of `type_bounds`, and the
         # trim used to cut straight through it — a floor holding 12 documents
         # dropped to 10 under `subpoena_sets: 1`, silently. Restore whichever
@@ -1744,17 +1755,22 @@ def _shape_discovery(
         required = _packets_a_type_floor_requires(dated, controls)
         floors_binding: list[str] = []
         for parent, need in sorted(required.items()):
-            held = sum(1 for index in kept_at if taxonomy_parent(packets[index][1]) == parent)
+            held = sum(
+                1
+                for index in kept_at
+                if taxonomy_parent(packets[index].subtype) == parent
+            )
             if held >= need:
                 continue
             spare = [
                 index
                 for index in range(len(packets))
-                if index not in kept_at and taxonomy_parent(packets[index][1]) == parent
+                if index not in kept_at
+                and taxonomy_parent(packets[index].subtype) == parent
             ]
             kept_at = kept_at + spare[: need - held]
             kept = sorted(
-                (packets[index] for index in kept_at), key=lambda entry: entry[0]
+                (packets[index] for index in kept_at), key=lambda entry: entry.doc_date
             )
             floors_binding.append(parent)
         if room < 0 or floors_binding:
@@ -1762,7 +1778,7 @@ def _shape_discovery(
             # happen to govern — `{type: DISCOVERY, max: 2}` is one line.
             overage = {
                 pinned[subtype][0]: pinned[subtype][1]
-                for subtype in sorted({entry[1] for entry in kept})
+                for subtype in sorted({entry.subtype for entry in kept})
                 if subtype in pinned
             }
             # A floor is NOT a pin, and its number is not counted in the same
@@ -1777,7 +1793,9 @@ def _shape_discovery(
             # own unit, reporting what the file actually holds.
             for parent in floors_binding:
                 held_documents = sum(
-                    1 for entry in shaped + kept if taxonomy_parent(entry[1]) == parent
+                    1
+                    for entry in shaped + kept
+                    if taxonomy_parent(entry.subtype) == parent
                 )
                 floors.append(
                     (parent, controls.type_bounds[parent][0] or 0, held_documents)
@@ -1788,21 +1806,24 @@ def _shape_discovery(
         # The latest packet whose count no control pinned. With no overrides at
         # all this is `packets[-1]` — the pre-ISC-148 donor, byte for byte.
         donor = next(
-            (entry for entry in reversed(packets) if entry[1] not in uncloneable), None
+            (entry for entry in reversed(packets) if entry.subtype not in uncloneable),
+            None,
         )
         if donor is not None:
-            last_date, subtype, track, role = donor
+            subtype = donor.subtype
             ceiling = timeline.horizon
             # Clone up to the shortfall, but never past the donor's own type
             # allowance. A subtype reaches this line only with headroom > 0, and
             # the headroom is how many more the type may hold — so a shortfall
             # larger than the spare room is filled as far as the control permits
-            # and then reported, rather than met by breaching it.
+            # and then reported, rather than met by breaching it. The clone is a
+            # ``replace`` of the donor: a records packet is never contention-
+            # bound, so the copy carries no medical-story binding to clone.
             wanted = declared - len(packets)
             allowed = min(wanted, headroom[subtype]) if subtype in headroom else wanted
             for step in range(allowed):
-                when = min(last_date + timedelta(days=14 * (step + 1)), ceiling)
-                kept.append((when, subtype, track, role))
+                when = min(donor.doc_date + timedelta(days=14 * (step + 1)), ceiling)
+                kept.append(replace(donor, doc_date=when))
 
     if len(kept) == declared:
         return shaped + kept, ()
@@ -1894,7 +1915,7 @@ def _shape_discovery(
     # reported whether or not a packet survived it: unlike a pin, `max: 2` can
     # bind hard enough to leave none, and staying silent then would hand the
     # shortfall to the unattributable branch and name no control at all.
-    present = {entry[1] for entry in kept}
+    present = {entry.subtype for entry in kept}
     capping = {key: count for subtype, (key, count) in pinned.items() if subtype in present}
     capping.update(
         {
@@ -1919,8 +1940,8 @@ def _shape_for_scenario(
     seed: CaseSeed,
     timeline: CaseTimeline,
     facts: CaseFacts,
-    dated: list[tuple[date, str, str, str]],
-) -> tuple[list[tuple[date, str, str, str]], tuple[str, ...]]:
+    dated: list[DatedCandidate],
+) -> tuple[list[DatedCandidate], tuple[str, ...]]:
     """Apply the seed's treatment and surgery scenario to the candidate set.
 
     Shaping happens *here*, on candidates, rather than through the document
@@ -1949,8 +1970,8 @@ def _shape_for_scenario(
         kept = [
             entry
             for entry in shaped
-            if entry[1] in NEVER_TREATED_TIER
-            or taxonomy.parent_of(entry[1]) not in NEVER_TREATED_SUPPRESSED_TYPES
+            if entry.subtype in NEVER_TREATED_TIER
+            or taxonomy.parent_of(entry.subtype) not in NEVER_TREATED_SUPPRESSED_TYPES
         ]
         dropped = len(shaped) - len(kept)
         if dropped:
@@ -1967,7 +1988,8 @@ def _shape_for_scenario(
             after = [
                 entry
                 for entry in shaped
-                if entry[1] in POST_DISCHARGE_FORBIDDEN and entry[0] > discharge
+                if entry.subtype in POST_DISCHARGE_FORBIDDEN
+                and entry.doc_date > discharge
             ]
             if after:
                 shaped = [entry for entry in shaped if entry not in after]
@@ -1975,20 +1997,34 @@ def _shape_for_scenario(
                     f"scenario.treatment.status is 'discharged': dropped {len(after)} "
                     f"treating document(s) dated after the discharge of {discharge}"
                 )
-            if not any(entry[1] == "DISCHARGE_SUMMARY" for entry in shaped):
-                shaped.append((discharge, "DISCHARGE_SUMMARY", TRACK_CORE, "treating_physician"))
+            if not any(entry.subtype == "DISCHARGE_SUMMARY" for entry in shaped):
+                shaped.append(
+                    DatedCandidate(
+                        subtype="DISCHARGE_SUMMARY",
+                        doc_date=discharge,
+                        track=TRACK_CORE,
+                        author_role="treating_physician",
+                    )
+                )
 
     # ISC-109. A *stated* surgery floors the operative document; a derived one
     # keeps the substrate's probabilistic emission untouched, which is what
     # leaves v0.3.0 bytes alone for every seed that states nothing.
     if scenario.surgery == "performed" and not any(
-        entry[1] in OPERATIVE_SUBTYPES for entry in shaped
+        entry.subtype in OPERATIVE_SUBTYPES for entry in shaped
     ):
         when = facts.surgery.date or timeline.injury_date + timedelta(days=210)
-        shaped.append((when, "OPERATIVE_HOSPITAL_RECORDS", TRACK_CORE, "treating_physician"))
+        shaped.append(
+            DatedCandidate(
+                subtype="OPERATIVE_HOSPITAL_RECORDS",
+                doc_date=when,
+                track=TRACK_CORE,
+                author_role="treating_physician",
+            )
+        )
 
     if surgery_status in ("none", "recommended", "denied_by_ur"):
-        operative = [entry for entry in shaped if entry[1] in OPERATIVE_SUBTYPES]
+        operative = [entry for entry in shaped if entry.subtype in OPERATIVE_SUBTYPES]
         if operative:
             shaped = [entry for entry in shaped if entry not in operative]
             warnings.append(
@@ -2010,6 +2046,175 @@ def _shape_for_scenario(
             )
 
     return shaped, tuple(warnings)
+
+
+#: R36's instance-selection classes, in selection order: explicit bound
+#: candidates, required opinion realizations, sampled contention-loop
+#: candidates, then unbound legacy candidates.
+_CONTENTION_SOURCE_RANK: dict[str, int] = {
+    "explicit": 0,
+    "required_opinion": 1,
+    "sampled": 2,
+}
+
+
+def _order_pool_for_selection(entries: list[DatedCandidate]) -> None:
+    """R36 — order one subtype's candidate pool for count materialization.
+
+    Bound contention-loop candidates rank first — explicit, then required
+    opinion realizations, then sampled — ordered within each class by
+    priority, date, subtype and their stable binding id, so a control that
+    permits fewer instances than are available trims unbound legacy paper
+    before it trims semantic events. Unbound legacy candidates keep the
+    pre-M3 ``(doc_date, track)`` order byte for byte: the feature-absent
+    identity contract (R25) freezes their relative selection, and every
+    absent-path pool is unbound-only.
+    """
+    bound = [
+        entry for entry in entries if CONTENTION_LOOP_SOURCE_KEY in entry.metadata
+    ]
+    unbound = [
+        entry for entry in entries if CONTENTION_LOOP_SOURCE_KEY not in entry.metadata
+    ]
+    unbound.sort(key=lambda item: (item.doc_date, item.track))
+    bound.sort(
+        key=lambda item: (
+            _CONTENTION_SOURCE_RANK[item.metadata[CONTENTION_LOOP_SOURCE_KEY]],
+            item.priority,
+            item.doc_date,
+            item.subtype,
+            str(item.metadata.get(CONTENTION_BINDING_ID_KEY, "")),
+        )
+    )
+    entries[:] = bound + unbound
+
+
+def reconcile_contention_document_chains(
+    dated: list[DatedCandidate],
+    contention_documents: Sequence[object],
+) -> tuple[list[DatedCandidate], tuple[str, ...]]:
+    """R36 — remove dependencies the controls broke, without orphaning chains.
+
+    Runs after scenario/discovery shaping and cadence, on the collection that
+    becomes the final plan. Controls and shaping stay higher authority: this
+    pass only *removes* documents whose dependency is gone — it never adds a
+    document, resurrects a controlled-away subtype, or exceeds a control —
+    and every dropped explicit or required binding emits an actionable
+    warning prefixed ``medical_story.contention_loop:``.
+
+    *contention_documents* is the plan's binding tuple; it supplies the one
+    fact the surviving candidate set cannot: whether a sampled supplemental
+    response was ever planned for a request's predecessor, which is what
+    separates "its response was removed" from "an authored standalone
+    request that never had one".
+    """
+    if not contention_documents:
+        return dated, ()
+
+    planned_sampled_responses = {
+        getattr(binding, "target_medical_opinion_id", None)
+        for binding in contention_documents
+        if getattr(binding, "document_kind", None) == "supplemental_report"
+        and getattr(binding, "source", None) == "sampled"
+    }
+
+    current = list(dated)
+    removal_reasons: dict[str, str] = {}
+    while True:
+        realized = {
+            entry.medical_opinion_id
+            for entry in current
+            if entry.medical_opinion_id is not None
+        }
+        surviving_requests = {
+            entry.target_medical_opinion_id
+            for entry in current
+            if entry.metadata.get(CONTENTION_DOCUMENT_KIND_KEY)
+            == "supplemental_request"
+        }
+        surviving_responses = {
+            entry.target_medical_opinion_id
+            for entry in current
+            if entry.metadata.get(CONTENTION_DOCUMENT_KIND_KEY)
+            == "supplemental_report"
+            and entry.metadata.get(CONTENTION_LOOP_SOURCE_KEY) == "sampled"
+        }
+        kept: list[DatedCandidate] = []
+        removed = False
+        for entry in current:
+            kind = entry.metadata.get(CONTENTION_DOCUMENT_KIND_KEY)
+            reason: str | None = None
+            if kind in (
+                "objection",
+                "supplemental_request",
+                "supplemental_report",
+                "qme_deposition",
+            ):
+                target = entry.target_medical_opinion_id
+                if target is not None and target not in realized:
+                    reason = (
+                        f"its target report for opinion '{target}' is absent "
+                        "from the final plan"
+                    )
+                elif (
+                    kind == "supplemental_report"
+                    and entry.metadata.get(CONTENTION_LOOP_SOURCE_KEY) == "sampled"
+                    and target not in surviving_requests
+                ):
+                    reason = (
+                        "its supplemental request is absent from the final plan"
+                    )
+                elif (
+                    kind == "supplemental_request"
+                    and target in planned_sampled_responses
+                    and target not in surviving_responses
+                ):
+                    reason = (
+                        "its sampled supplemental response is absent from the "
+                        "final plan; the preceding objection is the valid "
+                        "truncation point"
+                    )
+            if reason is None:
+                kept.append(entry)
+                continue
+            removed = True
+            binding_id = entry.metadata.get(CONTENTION_BINDING_ID_KEY)
+            if binding_id is not None:
+                removal_reasons[str(binding_id)] = reason
+        current = kept
+        if removed:
+            continue
+        # The final accounting (R36/R40): every explicit or required binding
+        # that did not survive — whether a control suppressed its carrier
+        # outright or this pass removed it as a broken dependency — warns
+        # once, actionably. Sampled losses stay silent by contract.
+        surviving = {
+            entry.metadata.get(CONTENTION_BINDING_ID_KEY)
+            for entry in current
+            if CONTENTION_BINDING_ID_KEY in entry.metadata
+        }
+        warnings: list[str] = []
+        for binding in contention_documents:
+            source = getattr(binding, "source", None)
+            if source not in ("explicit", "required_opinion"):
+                continue
+            binding_id = getattr(binding, "id", None)
+            if binding_id in surviving:
+                continue
+            reason = removal_reasons.get(
+                str(binding_id),
+                "a document control or scenario shaping suppressed its carrier",
+            )
+            kind = getattr(binding, "document_kind", "document")
+            opinion_ref = getattr(binding, "medical_opinion_id", None)
+            about = f" for opinion '{opinion_ref}'" if opinion_ref else ""
+            warnings.append(
+                f"{CONTENTION_LOOP_WARNING_PREFIX} {source} {kind} "
+                f"'{binding_id}'{about} is absent from the final plan: {reason}. "
+                "The document controls stay authoritative; lift the control to "
+                "keep the bound document and its chain"
+            )
+        return current, tuple(warnings)
 
 
 def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
@@ -2052,12 +2257,11 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # fails HERE, at generation time — a dangling reference must never survive
     # into a rendered corpus — while divergence from world truth passes through
     # to be graded. The nonfatal grounding warnings land beside M1's.
-    # R32: build_case_plan calls the IDs-last plan entry point; at R77 step 3
-    # the plan carries the byte-identical M2 ledger and no bindings yet — the
-    # contention-document bindings materialize through steps 5-6.
-    medical_assertions = derive_medical_assertion_plan(
-        seed, medical_history, timeline
-    ).ledger
+    # R32: build_case_plan calls the IDs-last plan entry point. The plan
+    # carries the completed ledger AND the contention-document bindings the
+    # R33 insertion point below materializes as bound candidates.
+    assertion_plan = derive_medical_assertion_plan(seed, medical_history, timeline)
+    medical_assertions = assertion_plan.ledger
     medical_assertion_warnings: tuple[str, ...] = ()
     if medical_assertions is not None and medical_history is not None:
         context = assertion_context(seed, timeline)
@@ -2077,7 +2281,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     lien_tracks = build_lien_tracks(seed, timeline)
     recon = build_recon_track(seed, timeline)
 
-    candidates: list[DatedCandidate] = [
+    machine_candidates: list[DatedCandidate] = [
         *core,
         *lien_candidates(lien_tracks),
         *recon.documents,
@@ -2085,13 +2289,26 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         *_penalty_candidates(case_facts, timeline),
         *_delay_chain_candidates(case_facts, timeline),
     ]
-    candidates.extend(_money_candidates(seed, money_facts, timeline, candidates))
+    machine_candidates.extend(
+        _money_candidates(seed, money_facts, timeline, machine_candidates)
+    )
 
     # Whose file is this? The three machines above are perspective-blind on
     # purpose — they model the *claim*, which both sides share. Only here does
     # the claim become one side's folder.
-    pov = apply_perspective(seed, timeline, candidates)
-    candidates = list(pov.candidates)
+    pov = apply_perspective(seed, timeline, machine_candidates)
+
+    # R33: the medical-story insertion point — after perspective, before the
+    # controls, exactly once. It receives the perspective-RESOLVED list (an
+    # earlier insertion would let the applicant-only advocacy weights suppress
+    # served defense paper; a later one would evade the controls the seed
+    # owns), binds or adds the required opinion-report candidates, and
+    # materializes every contention-document binding. Loop candidates never
+    # pass through apply_perspective() a second time.
+    story_planning = plan_medical_story_documents(
+        seed, timeline, assertion_plan, pov.candidates
+    )
+    candidates = list(story_planning.candidates)
 
     control = resolve_document_controls(
         to_document_candidates(candidates),
@@ -2105,24 +2322,36 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     for candidate in candidates:
         pool[candidate.subtype].append(candidate)
     for entries in pool.values():
-        entries.sort(key=lambda item: (item.doc_date, item.track))
+        _order_pool_for_selection(entries)
 
-    dated: list[tuple[date, str, str, str]] = []
+    # R36: the post-control collection stays list[DatedCandidate] — the
+    # legacy (date, subtype, track, author_role) tuple reduction would erase
+    # every Part 1/Part 2 binding before shaping could see it. A selected
+    # candidate keeps its complete metadata; only the subtype the control
+    # planned is stamped on. A count beyond the available candidates is
+    # synthesized UNBOUND: the fresh construction below carries no opinion
+    # ID, contention IDs, actor, contest theory, contention_surface or
+    # template_subtype, whatever bound candidate donated its track and role.
+    dated: list[DatedCandidate] = []
     for entry in control.planned:
         if entry.count <= 0:
             continue
         available = pool.get(entry.subtype, [])
         chosen = available[: entry.count]
-        for candidate in chosen:
-            dated.append(
-                (candidate.doc_date, entry.subtype, candidate.track, candidate.author_role)
-            )
+        dated.extend(chosen)
         shortfall = entry.count - len(chosen)
         if shortfall > 0:
             role = chosen[-1].author_role if chosen else author_role_for(entry.subtype)
             track = chosen[-1].track if chosen else TRACK_CORE
             for extra in _synthesize_dates(seed, timeline, entry.subtype, available, shortfall):
-                dated.append((extra, entry.subtype, track, role))
+                dated.append(
+                    DatedCandidate(
+                        subtype=entry.subtype,
+                        doc_date=extra,
+                        track=track,
+                        author_role=role,
+                    )
+                )
 
     dated, scenario_warnings = _shape_for_scenario(seed, timeline, case_facts, dated)
     # After shaping: `never_treated` and `discharged` both drop documents, and
@@ -2146,16 +2375,26 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # ISC-126. The page budget is drawn only once the packet count is final, so
     # the ledger, the cover sheet and the rendered pages are three readings of
     # one number rather than three independent draws.
-    packet_count = sum(1 for entry in dated if entry[1] in DISCOVERY_PACKET_SUBTYPES)
+    packet_count = sum(
+        1 for entry in dated if entry.subtype in DISCOVERY_PACKET_SUBTYPES
+    )
     case_facts = case_facts.model_copy(
         update={"packet_pages": derive_packet_pages(seed, packet_count)}
     )
     dated, cadence_warnings = _apply_attorney_cadence(case_facts, timeline, dated)
+    # R36: after scenario/discovery shaping and cadence, the contention chains
+    # are reconciled against whatever the controls actually left standing —
+    # dependents whose target report is gone are removed, never orphaned, and
+    # the floor/forced/cap verification below runs on the reconciled plan.
+    dated, reconcile_warnings = reconcile_contention_document_chains(
+        dated, assertion_plan.contention_documents
+    )
     penalty_warnings = _penalty_control_warnings(case_facts, dated, controls)
-    dated.sort(key=lambda item: (item[0], item[1], item[2]))
+    dated.sort(key=lambda item: (item.doc_date, item.subtype, item.track))
 
     documents: list[PlannedDocument] = []
-    for index, (doc_date, subtype, track, role) in enumerate(dated):
+    for index, candidate in enumerate(dated):
+        subtype = candidate.subtype
         if not taxonomy.is_canonical(subtype):
             # Fail closed. ``normalize_control_keys`` above is the gate; this is
             # the assertion that catches a *future* path into the planner that
@@ -2167,19 +2406,30 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
                 f"{subtype!r}, which is not classifier vocabulary and must never "
                 "reach a manifest"
             )
-        roles = document_roles(subtype, role, seed.perspective)
+        roles = document_roles(subtype, candidate.author_role, seed.perspective)
         documents.append(
             PlannedDocument(
                 index=index,
                 subtype=subtype,
                 parent_type=taxonomy.parent_of(subtype),
-                doc_date=doc_date,
+                doc_date=candidate.doc_date,
                 doc_format=choose_format(seed, index),
-                track=track,
+                track=candidate.track,
                 author_role=roles.author_role,
                 title=taxonomy.label(subtype) or subtype.replace("_", " ").title(),
                 recipient_role=roles.recipient_role,
                 content_flags=content_flags_for(seed.lifecycle.doctrine_hooks, subtype),
+                # The R5/R35 bindings survive to the final indexed document —
+                # this is the seam derive_medical_story() resolves from.
+                medical_opinion_id=candidate.medical_opinion_id,
+                spoken_contention_ids=candidate.spoken_contention_ids,
+                contention_surface=candidate.contention_surface,
+                template_subtype=candidate.template_subtype,
+                target_medical_opinion_id=candidate.target_medical_opinion_id,
+                contention_actor_party=candidate.contention_actor_party,
+                defense_contest_theories=candidate.defense_contest_theories,
+                imr_target_denial_date=candidate.imr_target_denial_date,
+                imr_application_content=candidate.imr_application_content,
             )
         )
 
@@ -2200,7 +2450,9 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # the time the manifest was written. Counted off `dated`, which is exactly
     # what becomes `plan.documents`.
     held_by_type = Counter(
-        parent for entry in dated if (parent := taxonomy.parent_of(entry[1])) is not None
+        parent
+        for entry in dated
+        if (parent := taxonomy.parent_of(entry.subtype)) is not None
     )
     floor_warnings = verify_type_floors(
         control.floor_checks, held_by_type, control.type_totals()
@@ -2213,7 +2465,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # Both parentheticals describe the file too: the pinned count is what
     # SURVIVED, not what the resolver pinned, and whether a forced subtype's
     # control "won" is a question only the finished file can answer.
-    held_by_subtype = Counter(entry[1] for entry in dated)
+    held_by_subtype = Counter(entry.subtype for entry in dated)
     floor_warnings.extend(
         verify_global_cap(
             control.cap_check,
@@ -2258,6 +2510,10 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         # Same discipline one layer up: silent unless the seed opened the
         # assertion layer, because a warning is a manifest byte.
         *medical_assertion_warnings,
+        # Contention-loop planning and reconciliation notes (R33/R36): empty
+        # tuples on every medical-story-absent path, so no byte moves.
+        *story_planning.warnings,
+        *reconcile_warnings,
     )
 
     log.debug(
@@ -2300,4 +2556,5 @@ __all__ = [
     "build_case_plan",
     "canonical_control_key",
     "normalize_control_keys",
+    "reconcile_contention_document_chains",
 ]
