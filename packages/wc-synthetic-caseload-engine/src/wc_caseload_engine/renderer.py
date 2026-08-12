@@ -79,6 +79,7 @@ from wc_caseload_engine.determinism import (
 )
 from wc_caseload_engine.doctrine import (
     DOCTRINE_CONTENT,
+    MEDICAL_STORY_SIBTF_SECTION_4751_PARAGRAPHS,
     content_flags_for,
     heading_for_register,
     register_for_subtype,
@@ -530,6 +531,7 @@ def doctrine_flowables(
     rng_seed: int,
     index: int,
     content_flags: Sequence[str],
+    medical_story_enabled: bool = False,
 ) -> list[Any]:
     """The authorities section appended to a flagged document's story.
 
@@ -552,7 +554,11 @@ def doctrine_flowables(
         if content is None:
             log.warning("render.unknown_doctrine_hook", hook=hook, subtype=subtype)
             continue
-        pool = content.paragraphs_for(subtype)
+        pool = (
+            MEDICAL_STORY_SIBTF_SECTION_4751_PARAGRAPHS
+            if medical_story_enabled and hook == "sibtf"
+            else content.paragraphs_for(subtype)
+        )
         if not pool:
             continue
         rng = random.Random(derive_seed(rng_seed, f"doctrine:{index}:{hook}"))
@@ -699,6 +705,7 @@ def render_document(
                 rng_seed=seed.rng_seed,
                 index=index,
                 content_flags=flags,
+                medical_story_enabled=medical_story is not None,
             ),
         )
 
