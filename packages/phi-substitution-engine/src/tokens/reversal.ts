@@ -8,7 +8,7 @@ import type {
   TenantId,
   TokenizedText,
 } from "../core/brands";
-import type { ReversalHandle, ReversalStore } from "../core/contracts";
+import type { ReversalHandle, ReversalRecordInput, ReversalStore, ReversalWriteStore } from "../core/contracts";
 import type { EscapedTokenLiteral, TokenGrammar, TokenGrammarPolicy, TokenReverser } from "./ports";
 import { ReversalFailedError, ReversalHandleNotSerializableError } from "./errors";
 import { restoreSentinelLiterals, SENTINEL_CLOSE, SENTINEL_OPEN } from "./escaper";
@@ -97,22 +97,29 @@ export class InProcessReversalHandle implements ReversalHandle {
   }
 }
 
-interface ReversalRecordInput {
-  readonly tenantId: TenantId;
-  readonly matterId: MatterId;
-  readonly dictionaryVersion: DictionaryVersion;
-  readonly token: SubstitutionToken;
-  readonly canonical: string;
-}
+/**
+ * In-process dev store write input. The frozen `ReversalWriteStore` interface requires
+ * `attemptId` (its durable idempotency key); here it is OPTIONAL so existing in-process
+ * seeders and oracles that hold the CONCRETE store type may omit it. Method-parameter
+ * bivariance keeps the class assignable to the interface either way.
+ */
+type InMemoryReversalRecordInput = Omit<ReversalRecordInput, "attemptId"> & {
+  readonly attemptId?: OperationAttemptId;
+};
 
 /**
- * Tenant-scoped reversal store (CONTRACT-phase1 §7, L8, N2).
+ * Tenant-scoped reversal store (CONTRACT-phase1 §7, L8, N2) — the in-process dev
+ * implementation of the frozen `ReversalWriteStore` write seam (GLY-335 Wave 0).
  *
  * The ONLY read surface is the bounded `resolveEncounteredTokens`; there is no
  * list-all API. Every key includes the tenant id, so a cross-tenant lookup
- * misses even when matter, version, and token text collide.
+ * misses even when matter, version, and token text collide. The map is keyed by
+ * tenant+matter+version+token, so `record` is inherently idempotent: replaying a
+ * write (any attempt) overwrites the same key with the same value — never a
+ * duplicate mapping. `attemptId` is accepted to satisfy the frozen write contract;
+ * the durable §6 store uses it as its upsert idempotency key.
  */
-export class InMemoryReversalStore implements ReversalStore {
+export class InMemoryReversalStore implements ReversalWriteStore {
   readonly maximumEncounteredTokenBatch: number;
   private readonly canonicalByKey = new Map<string, string>();
 
@@ -129,8 +136,12 @@ export class InMemoryReversalStore implements ReversalStore {
     return `${tenantId}${SEP}${matterId}${SEP}${dictionaryVersion.toString()}${SEP}${token}`;
   }
 
-  /** Write the current canonical value for a token (compiler-side truth write). */
-  record(input: ReversalRecordInput): void {
+  /**
+   * Write the current canonical value for a token (compiler-side truth write). Idempotent
+   * by the tenant+matter+version+token key: a replay under the same or a later attempt
+   * re-sets the same key, so the store never holds a duplicate or divergent mapping.
+   */
+  record(input: InMemoryReversalRecordInput): void {
     this.canonicalByKey.set(
       this.key(input.tenantId, input.matterId, input.dictionaryVersion, input.token),
       input.canonical,

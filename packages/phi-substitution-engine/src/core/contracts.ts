@@ -159,3 +159,45 @@ export interface ReversalStore {
     tokens: readonly SubstitutionToken[];
   }>): Promise<ReadonlyMap<SubstitutionToken, string>>;
 }
+
+/**
+ * One reversal mapping write (CONTRACT-phase1 §3.1.3 reversal, §6 persistence, N5, L8).
+ * A token reverses to its CURRENT canonical value; every write carries the full
+ * tenant/matter/version scope (L8) plus the attempt it was written under.
+ */
+export interface ReversalRecordInput {
+  readonly tenantId: TenantId;
+  readonly matterId: MatterId;
+  readonly dictionaryVersion: DictionaryVersion;
+  readonly token: SubstitutionToken;
+  /** The current canonical value the token reverses to before display/storage (N5). */
+  readonly canonical: string;
+  /**
+   * Idempotency key (§6 durable PREPARE, §3.1.3). Recording the same (attemptId, token)
+   * again MUST be a no-op — a replay/retry never creates a duplicate or divergent mapping,
+   * so a token can never egress without exactly one durable reversible mapping. Durable
+   * implementations key their idempotent upsert on this; the in-process dev store is
+   * inherently idempotent because its map is keyed by tenant+matter+version+token.
+   */
+  readonly attemptId: OperationAttemptId;
+}
+
+/**
+ * WRITE seam of the reversal store (GLY-335 Wave 0 seam-freeze; roadmap defect A#3).
+ *
+ * The orchestrator depends on THIS port, never on a concrete store class: it writes each
+ * `token → current canonical` mapping through `record` and reads it back only through the
+ * encounter-bounded `resolveEncounteredTokens` it inherits from `ReversalStore`. Freezing
+ * the write as an interface lets the durable, tenant-scoped, envelope-encrypted store (§6,
+ * later lane L2.4) be swapped in without re-typing core; `InMemoryReversalStore` stays the
+ * in-process dev implementation.
+ *
+ * §7 / N2 (frozen): there is deliberately NO list-all / enumerate-all / snapshot method —
+ * the only read is the bounded, encountered-tokens-only `resolveEncounteredTokens`. A durable
+ * implementation MUST NOT widen this surface. `record` is synchronous to match how the
+ * orchestrator writes today; a durable store that needs async durability drains behind this
+ * signature rather than changing the call site.
+ */
+export interface ReversalWriteStore extends ReversalStore {
+  record(input: ReversalRecordInput): void;
+}
