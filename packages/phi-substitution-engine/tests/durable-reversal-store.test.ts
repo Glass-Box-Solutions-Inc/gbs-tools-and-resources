@@ -10,8 +10,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ReversalFailedError } from "../src/tokens/index";
 import { InMemoryReversalStore } from "../src/tokens/index";
-import { buildReversalAad, mappingKeyOf } from "../src/tokens/durable/index";
-import type { DurableReversalRecordMeta, EncryptedReversalRecordBlob } from "../src/tokens/durable/index";
+import { buildReversalAad, DurableReversalStore, InMemoryKeyProvider, mappingKeyOf } from "../src/tokens/durable/index";
+import type { DurableReversalRecordMeta, EncryptedReversalRecordBlob, SpoolVolume } from "../src/tokens/durable/index";
 import {
   brand,
   DEFAULT_MATTER,
@@ -486,6 +486,61 @@ describe("L2.4 DurableReversalStore — resolve semantics (addendum C2/C4, §7/N
     const map = await h.store.resolveEncounteredTokens(resolveInput({ tokens: [] }));
     expect(map.size).toBe(0);
     expect(h.spy.counts.readCurrent).toBe(0);
+  });
+});
+
+describe("L2.4 DurableReversalStore — contaminated dependency errors never ride out (F3, C1)", () => {
+  const MARKER = "CONTAMINANT-Maria García-078-05-1120";
+  function contaminate(): never {
+    const error = new ReversalFailedError();
+    (error as unknown as { cause: unknown }).cause = MARKER; // an injected dep smuggles PHI on a `cause`
+    (error as unknown as { smuggled: unknown }).smuggled = MARKER;
+    throw error;
+  }
+  function assertCleanEscape(caught: unknown): void {
+    expect(caught).toBeInstanceOf(ReversalFailedError);
+    const err = caught as ReversalFailedError & { cause?: unknown; smuggled?: unknown };
+    expect(err.cause).toBeUndefined();
+    expect(err.smuggled).toBeUndefined();
+    const serialized = `${JSON.stringify({ message: err.message, code: err.code, ...err })}${String(err)}${err.stack ?? ""}`;
+    expect(serialized).not.toContain("CONTAMINANT");
+    expectNoCanary([serialized]);
+  }
+
+  it("record(): a contaminated classifier error escapes as a FRESH, cause-free REVERSAL_FAILED", async () => {
+    const h = makeHarness({ retention: () => contaminate() });
+    let caught: unknown;
+    try {
+      await h.store.record(recordInput());
+    } catch (error) {
+      caught = error;
+    }
+    assertCleanEscape(caught);
+  });
+
+  it("resolveEncounteredTokens(): a contaminated spool error escapes as a FRESH, cause-free REVERSAL_FAILED", async () => {
+    const throwingSpool = {
+      readCurrent: () => contaminate(),
+      ensureDekGeneration: () => contaminate(),
+      reserveNonce: () => contaminate(),
+      prepare: () => contaminate(),
+      publish: () => contaminate(),
+      flush: () => contaminate(),
+    } as unknown as SpoolVolume;
+    const store = new DurableReversalStore({
+      keyProvider: new InMemoryKeyProvider(),
+      spoolVolume: throwingSpool,
+      classifyRetention: async () => "matter",
+      nowEpochMilliseconds: () => T0,
+      maximumEncounteredTokenBatch: 256,
+    });
+    let caught: unknown;
+    try {
+      await store.resolveEncounteredTokens(resolveInput());
+    } catch (error) {
+      caught = error;
+    }
+    assertCleanEscape(caught);
   });
 });
 

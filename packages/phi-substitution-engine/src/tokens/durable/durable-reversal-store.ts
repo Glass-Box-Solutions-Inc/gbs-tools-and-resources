@@ -177,12 +177,11 @@ export class DurableReversalStore implements ReversalWriteStore {
       // mapping survives process death / replica loss / remount. Removing this is MUT-RETURN-BEFORE-FLUSH.
       await this.#spool.flush(published.commit);
       return;
-    } catch (error) {
-      // Fixed, safe surface only. No underlying error, message, `cause`, or PHI ever escapes
-      // (MUT-LEAK-UNDERLYING-ERROR). Deliberate rejections above are already `ReversalFailedError`.
-      if (error instanceof ReversalFailedError) {
-        throw error;
-      }
+    } catch {
+      // Fixed, safe surface only (C1 / finding F3). DISCARD every caught value — never inspect,
+      // preserve, or re-throw it, not even a `ReversalFailedError` (an injected dependency can throw
+      // one carrying a `cause` / provider / DB text). Always construct a FRESH error so no underlying
+      // message, `cause`, or PHI can ride out. (MUT-LEAK-UNDERLYING-ERROR / contaminated-error oracle.)
       throw new ReversalFailedError();
     }
   }
@@ -241,12 +240,10 @@ export class DurableReversalStore implements ReversalWriteStore {
           resolved.set(token, canonical);
         }
       }
-    } catch (error) {
-      // (b) crypto-integrity / tamper already threw `ReversalFailedError`; scrub any other (infra)
-      // error into the same fixed, safe surface and fail closed — never a partial map on a throw.
-      if (error instanceof ReversalFailedError) {
-        throw error;
-      }
+    } catch {
+      // (b) crypto-integrity / tamper and any other (infra) failure fail closed identically (C1 / F3):
+      // DISCARD the caught value and throw a FRESH fixed, safe surface — never a partial map on a
+      // throw, never a preserved/`cause`-bearing error. (contaminated-error oracle.)
       throw new ReversalFailedError();
     }
     return resolved;
