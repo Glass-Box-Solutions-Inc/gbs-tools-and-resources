@@ -257,9 +257,12 @@ export class MatterDictionaryCompiler implements DictionaryCompiler {
 
 /** In-memory tagged-truth source keyed by tenant/matter/version/revision. */
 export class InMemoryCaseTruthReader implements CaseTruthReader {
-  private readonly byKey = new Map<string, readonly TaggedValue[]>();
+  // §7/N2 (GLY-336 gate): TRUE runtime-private (#). This map holds RAW tagged case-truth
+  // (canonicalDisplayValue, approved aliases). A TS `private` field is still enumerable via
+  // reflection, so the backing MUST be a #field — a returned reader instance never leaks values.
+  readonly #byKey = new Map<string, readonly TaggedValue[]>();
 
-  private key(input: Readonly<{
+  #key(input: Readonly<{
     tenantId: TenantId;
     matterId: MatterId;
     dictionaryVersion: DictionaryVersion;
@@ -282,7 +285,7 @@ export class InMemoryCaseTruthReader implements CaseTruthReader {
     }>,
     values: readonly TaggedValue[],
   ): void {
-    this.byKey.set(this.key(input), values);
+    this.#byKey.set(this.#key(input), values);
   }
 
   public readTaggedValues(input: Readonly<{
@@ -291,6 +294,6 @@ export class InMemoryCaseTruthReader implements CaseTruthReader {
     dictionaryVersion: DictionaryVersion;
     sourceTruthRevision: string;
   }>): Promise<readonly TaggedValue[]> {
-    return Promise.resolve(this.byKey.get(this.key(input)) ?? []);
+    return Promise.resolve(this.#byKey.get(this.#key(input)) ?? []);
   }
 }

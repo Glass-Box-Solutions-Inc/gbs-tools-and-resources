@@ -122,15 +122,19 @@ type InMemoryReversalRecordInput = Omit<ReversalRecordInput, "attemptId"> & {
  */
 export class InMemoryReversalStore implements ReversalWriteStore {
   readonly maximumEncounteredTokenBatch: number;
-  private readonly canonicalByKey = new Map<string, string>();
+  // §7/N2 (GLY-336 gate): TRUE runtime-private (#), not TS `private`. Own named fields declared
+  // with TS `private` are still reflectively enumerable at runtime under ES2022
+  // (Object.keys / Object.getOwnPropertyNames / Reflect.ownKeys / JSON.stringify), so the raw
+  // token→canonical map MUST be a #field — otherwise a returned store instance leaks the mappings.
+  readonly #canonicalByKey = new Map<string, string>();
   /** (tenant+matter+version+token)+attemptId pairs already written — for replay no-op (§3.1.3). */
-  private readonly recordedAttempts = new Set<string>();
+  readonly #recordedAttempts = new Set<string>();
 
   constructor(maximumEncounteredTokenBatch = 256) {
     this.maximumEncounteredTokenBatch = maximumEncounteredTokenBatch;
   }
 
-  private key(
+  #key(
     tenantId: TenantId,
     matterId: MatterId,
     dictionaryVersion: DictionaryVersion,
@@ -146,18 +150,18 @@ export class InMemoryReversalStore implements ReversalWriteStore {
    * holds a duplicate mapping — one canonical per tenant+matter+version+token.
    */
   record(input: InMemoryReversalRecordInput): void {
-    const key = this.key(input.tenantId, input.matterId, input.dictionaryVersion, input.token);
+    const key = this.#key(input.tenantId, input.matterId, input.dictionaryVersion, input.token);
     if (input.attemptId !== undefined) {
       const attemptKey = `${key}${SEP}${input.attemptId}`;
-      if (this.recordedAttempts.has(attemptKey)) {
+      if (this.#recordedAttempts.has(attemptKey)) {
         // Idempotent replay: the same (attemptId, token) was already written — no-op that keeps
         // the FIRST canonical, so a retry never overwrites the mapping a token egressed under
         // (even if the replay carries a divergent payload).
         return;
       }
-      this.recordedAttempts.add(attemptKey);
+      this.#recordedAttempts.add(attemptKey);
     }
-    this.canonicalByKey.set(key, input.canonical);
+    this.#canonicalByKey.set(key, input.canonical);
   }
 
   async resolveEncounteredTokens(input: {
@@ -176,8 +180,8 @@ export class InMemoryReversalStore implements ReversalWriteStore {
         continue;
       }
       seen.add(token);
-      const canonical = this.canonicalByKey.get(
-        this.key(input.tenantId, input.matterId, input.dictionaryVersion, token),
+      const canonical = this.#canonicalByKey.get(
+        this.#key(input.tenantId, input.matterId, input.dictionaryVersion, token),
       );
       if (canonical !== undefined) {
         resolved.set(token, canonical);

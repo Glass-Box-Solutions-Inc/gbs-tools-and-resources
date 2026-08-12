@@ -33,54 +33,60 @@ interface Assignment {
  * reused.
  */
 export class InMemoryTokenAssignmentStore implements TokenAssignmentStore {
-  private readonly assigned = new Map<string, Assignment>();
-  private readonly nextOrdinal = new Map<string, number>();
-  private readonly retired = new Set<string>();
+  // §7/N2 (GLY-336 gate): TRUE runtime-private (#), not TS `private`. This store is returned by
+  // `createTokensModule`, so its backing collections and the injected grammar/policy references
+  // must NOT be reflectively enumerable off the returned instance. (It pairs tokens with subject
+  // identities, never raw values — but the #-hardening keeps the whole returned surface opaque.)
+  readonly #assigned = new Map<string, Assignment>();
+  readonly #nextOrdinal = new Map<string, number>();
+  readonly #retired = new Set<string>();
+  readonly #grammar: TokenGrammar;
+  readonly #policy: TokenGrammarPolicy;
 
-  constructor(
-    private readonly grammar: TokenGrammar,
-    private readonly policy: TokenGrammarPolicy,
-  ) {}
+  constructor(grammar: TokenGrammar, policy: TokenGrammarPolicy) {
+    this.#grammar = grammar;
+    this.#policy = policy;
+  }
 
-  private identityKey(input: IdentityInput): string {
+  #identityKey(input: IdentityInput): string {
     return `${input.tenantId}${SEP}${input.matterId}${SEP}${input.subjectId}${SEP}${input.role}`;
   }
 
-  private roleKey(input: IdentityInput): string {
+  #roleKey(input: IdentityInput): string {
     return `${input.tenantId}${SEP}${input.matterId}${SEP}${input.role}`;
   }
 
-  private retiredKey(roleKey: string, ordinal: number): string {
+  #retiredKey(roleKey: string, ordinal: number): string {
     return `${roleKey}${SEP}${ordinal}`;
   }
 
   async getOrAllocate(input: IdentityInput): Promise<SubstitutionToken> {
-    const identityKey = this.identityKey(input);
-    const existing = this.assigned.get(identityKey);
+    const identityKey = this.#identityKey(input);
+    const existing = this.#assigned.get(identityKey);
     if (existing !== undefined) {
       // Stable across versions: identity is subject+role, not text and not version.
       return existing.token;
     }
-    const roleKey = this.roleKey(input);
-    let ordinal = this.nextOrdinal.get(roleKey) ?? 1;
-    while (this.retired.has(this.retiredKey(roleKey, ordinal))) {
+    const roleKey = this.#roleKey(input);
+    let ordinal = this.#nextOrdinal.get(roleKey) ?? 1;
+    while (this.#retired.has(this.#retiredKey(roleKey, ordinal))) {
       ordinal += 1;
     }
-    const token = this.grammar.format(input.role, ordinal === 1 ? null : ordinal, this.policy);
-    this.nextOrdinal.set(roleKey, ordinal + 1);
-    this.assigned.set(identityKey, { token, ordinal });
+    const token = this.#grammar.format(input.role, ordinal === 1 ? null : ordinal, this.#policy);
+    this.#nextOrdinal.set(roleKey, ordinal + 1);
+    this.#assigned.set(identityKey, { token, ordinal });
     return token;
   }
 
   async retire(input: IdentityInput): Promise<void> {
-    const identityKey = this.identityKey(input);
-    const existing = this.assigned.get(identityKey);
+    const identityKey = this.#identityKey(input);
+    const existing = this.#assigned.get(identityKey);
     if (existing === undefined) {
       return;
     }
     // The subject relinquishes its label and the ordinal is burned forever, so
     // no future subject can inherit the retired token.
-    this.retired.add(this.retiredKey(this.roleKey(input), existing.ordinal));
-    this.assigned.delete(identityKey);
+    this.#retired.add(this.#retiredKey(this.#roleKey(input), existing.ordinal));
+    this.#assigned.delete(identityKey);
   }
 }
