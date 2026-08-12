@@ -88,6 +88,21 @@ in ACA). Fan out the 7 lanes to GPT-5.6-sol implementers (Alex directive) + Opus
 gate (GPT author / Claude review). Lane A (reclamation + dev double = GLY-344 core) is unblocked & self-
 contained; C (KeyProvider), B1 (PG schema/migrations) also unblocked; B2←B1, B3←A+B1+B2, D←B1+B2+C, E←B3.**
 
+## Stage 6 — Lane A IMPLEMENTED (sol) → **Opus-5 APPROVE** (commit 6450299)
+GPT-5.6-sol authored 3 new files (maintenance.ts, dev/in-memory-control-plane.ts, tests/durable-control-
+plane.test.ts); NO frozen file touched. Orchestrator re-ran gates clean: tsc clean, 324 tests (308+16).
+Opus-5 (claude-opus-4-8) cross-family review: **APPROVE** — ran 6 mutations (A-F), verified all 9 invariants
+at file:line, confirmed frozen integrity via git diff 8f339b1, re-ran gates. B8 durable-pending proven
+non-vacuous by Mutation C. **Carry-forward (non-blocking):** (1) **B3 MUST preserve the single-global-`limit`
+budget semantic** across reclamation passes (dev uses one `remaining` budget across all 5 passes, not
+per-path LIMIT) OR the shared conformance suite must not assert per-path counts near the cap — else dev/
+adapter diverge. (2) MUT-RECLAIM-COMMITTED is an end-state assertion, not a tight single-mutant oracle
+(finalized/orphaned are structurally unreferenced; Mutations E/F survive) — add an explicit "finalized/
+orphaned ⇒ unreferenced" invariant test when extending the conformance suite (guard-moves-when-code-moves).
+(3) coverage gaps (flush-sees-expired-pending, intra-finishPathTwo crash gates, Path-1 mark-then-crash,
+pending-absent-from-readCurrent) — correct code, add oracles as the suite grows. **Lane A DONE. NEXT WAVE:
+C (AzureKeyVaultKeyProvider, deps staged) + B1 (PG schema/migrations) in parallel.**
+
 ## Parallel — data-retention legal audit (Sonnet agent, background)
 Launched per Alex to review our data-retention policy vs law (HIPAA/CMIA/CCPA-CPRA/§632/State-Bar/WC).
 Report → scratchpad/retention-audit.md. Relevant to this lane: the 7-day soft-delete tail + the

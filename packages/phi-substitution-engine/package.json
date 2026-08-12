@@ -32,5 +32,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.13.1",
+    "@azure/keyvault-keys": "^4.10.2"
   }
 }
