@@ -799,6 +799,28 @@ describe("L2.4 boundary input is read INSIDE the scrub try — a throwing getter
   });
 });
 
+describe("L2.4 resolve snapshots its scope inputs — no TOCTOU between mapping-key and AAD scope (Silas F1)", () => {
+  it("a flipping `dictionaryVersion` getter is read once, so a v1 record resolves consistently (MUT-RESOLVE-SCOPE-TOCTOU)", async () => {
+    const h = makeHarness();
+    await h.store.record(recordInput({ dictionaryVersion: brand<DictionaryVersion>(1n), canonical: "Maria García" }));
+    let reads = 0;
+    // The scope field flips AFTER its first read. A single snapshot pins the whole resolution to v1
+    // (mapping key AND AAD reconstruction); re-reading `input.dictionaryVersion` per use would build the
+    // mapping key under v1 but reconstruct the AAD under v2 → byte-mismatch → spurious REVERSAL_FAILED.
+    const hostile = {
+      ...resolveInput({ dictionaryVersion: brand<DictionaryVersion>(1n) }),
+      get dictionaryVersion(): DictionaryVersion {
+        reads += 1;
+        return brand<DictionaryVersion>(reads === 1 ? 1n : 2n);
+      },
+    };
+    const resolved = await h.store.resolveEncounteredTokens(
+      hostile as unknown as Parameters<DurableReversalStore["resolveEncounteredTokens"]>[0],
+    );
+    expect(resolved.get(CLAIMANT)).toBe("Maria García");
+  });
+});
+
 // Silence unused-import lint in transpile-only test runs while keeping the symbols available.
 void DEFAULT_MATTER;
 void DEFAULT_VERSION;

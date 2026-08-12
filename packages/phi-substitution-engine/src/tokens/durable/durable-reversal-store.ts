@@ -205,9 +205,12 @@ export class DurableReversalStore implements ReversalWriteStore {
     }>,
   ): Promise<ReadonlyMap<SubstitutionToken, string>> {
     try {
-      // Snapshot + validate ALL boundary input INSIDE the scrub boundary (finding F3-boundary): a throwing
-      // `length` getter or a throwing `tokens` iterator must reject with the fixed REVERSAL_FAILED surface,
-      // never escape carrying its own message/cause/PHI.
+      // Snapshot ALL boundary input INSIDE the scrub boundary (finding F3-boundary + resolve/record
+      // symmetry). Read each passed-in SCOPE field ONCE into a local so a hostile flipping getter cannot
+      // make the mapping-key scope diverge from the AAD-reconstruction scope, i.e. a TOCTOU confused-deputy
+      // read (MUT-RESOLVE-SCOPE-TOCTOU). A throwing `length` getter or `tokens` iterator likewise rejects
+      // with the fixed REVERSAL_FAILED surface, never escaping with its own message/cause/PHI.
+      const { tenantId, matterId, dictionaryVersion } = input;
       // (a) Batch-size violation rejects BEFORE any I/O (parity with InMemoryReversalStore).
       if (input.tokens.length > this.maximumEncounteredTokenBatch) {
         throw new ReversalFailedError();
@@ -227,7 +230,7 @@ export class DurableReversalStore implements ReversalWriteStore {
 
       const keyToToken = new Map<string, SubstitutionToken>();
       const requests = distinct.map((token) => {
-        const mappingKey = mappingKeyOf(input.tenantId, input.matterId, input.dictionaryVersion, token);
+        const mappingKey = mappingKeyOf(tenantId, matterId, dictionaryVersion, token);
         keyToToken.set(mappingKey as unknown as string, token);
         // Exact, TENANT-SCOPED key only. There is NO tenantless fallback (MUT-FALLBACK-TENANTLESS-LOOKUP).
         return { mappingKey };
@@ -240,7 +243,7 @@ export class DurableReversalStore implements ReversalWriteStore {
         if (token === undefined) {
           continue;
         }
-        const canonical = await this.#openRecord(input.tenantId, input.matterId, input.dictionaryVersion, token, result.encryptedRecord, nowEpochMs);
+        const canonical = await this.#openRecord(tenantId, matterId, dictionaryVersion, token, result.encryptedRecord, nowEpochMs);
         if (canonical !== undefined) {
           resolved.set(token, canonical);
         }

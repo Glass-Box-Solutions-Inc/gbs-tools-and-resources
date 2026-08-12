@@ -14,6 +14,7 @@
  * Test-internal DEEP imports (from ../src/...) are legitimate — the boundary under test is the
  * PUBLIC package root (../src/index), and a test is allowed to reach internals to probe them.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   createProtectedAiProvider,
@@ -64,12 +65,38 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
       "frozenRoleSet",
       "SENTINEL_OPEN",
       "SENTINEL_CLOSE",
+      // L2.4 durable concrete surface — MUST stay behind the factory wiring / port types, never at the
+      // runtime root (a value export here would leak a reversal or decryption capability past the barrel).
+      "DurableReversalStore",
+      "InMemoryKeyProvider",
+      "InMemoryReversalSpoolBackend",
+      "InMemoryReversalSpoolVolume",
+      "gcmEncrypt",
+      "gcmDecrypt",
+      "buildReversalAad",
+      "mappingKeyOf",
     ]) {
       expect(mod[name], `${name} MUST NOT be a root export`).toBeUndefined();
     }
     expect(REVERSAL_FAILED).toBe("REVERSAL_FAILED");
     expect(new ReversalFailedError()).toBeInstanceOf(Error);
     expect(new PhiEngineError("REVERSAL_FAILED").code).toBe("REVERSAL_FAILED");
+  });
+
+  it("package.json `exports` fences the deep barrels — no subpath re-exposes the concrete store / crypto / key material", () => {
+    // The runtime-root guard above proves the concrete durable surface is not re-exported from src/index.
+    // But the deep barrels (src/tokens/index, src/tokens/durable/index) DO export DurableReversalStore /
+    // gcmDecrypt / InMemoryKeyProvider; today they are unreachable to an external consumer ONLY because
+    // the package `exports` map has no subpath for them. A wildcard ("./*") or an added deep subpath would
+    // silently re-open that capability boundary — this locks the allowlist against that regression.
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+      exports?: Record<string, unknown>;
+    };
+    const keys = Object.keys(pkg.exports ?? {}).sort();
+    expect(keys).toEqual([".", "./package.json"]);
+    for (const key of keys) {
+      expect(key, "no wildcard subpath may be added to `exports`").not.toContain("*");
+    }
   });
 
   it("the provider facade is unforgeable (null prototype, no recoverable constructor, no leaked internals)", () => {
