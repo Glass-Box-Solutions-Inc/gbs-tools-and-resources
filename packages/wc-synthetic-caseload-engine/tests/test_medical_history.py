@@ -90,6 +90,14 @@ from wc_caseload_engine.medical_history import (
     sibtf_requirement,
     surfacing_conditional,
 )
+from wc_caseload_engine.medical_story import (
+    ADVOCACY_LETTER_SURFACES,
+    INITIAL_MEDLEGAL_SURFACES,
+    PSYCH_MEDLEGAL_SURFACES,
+    PTP_APPORTIONMENT_SURFACES,
+    PTP_CAUSATION_SURFACES,
+    SUPPLEMENTAL_MEDLEGAL_SURFACES,
+)
 from wc_caseload_engine.planner import build_case_plan
 from wc_caseload_engine.seeds import ANCHOR_DATE, ApplicantProfile, parse_case_seed
 
@@ -2888,7 +2896,33 @@ class TestTheLedgerMovesNoBytes:
         assert absent.plan.medical_story is None
         assert present.plan.medical_story is not None
 
-        governed_indexes = set(present.plan.medical_story.by_document_index)
+        report_surfaces = (
+            INITIAL_MEDLEGAL_SURFACES
+            | PSYCH_MEDLEGAL_SURFACES
+            | SUPPLEMENTAL_MEDLEGAL_SURFACES
+            | PTP_CAUSATION_SURFACES
+            | PTP_APPORTIONMENT_SURFACES
+        )
+        governed_indexes = {
+            document.index
+            for document in present.plan.documents
+            if document.subtype in report_surfaces
+            or (
+                document.subtype in ADVOCACY_LETTER_SURFACES
+                and document.contention_surface
+                in {"advocacy", "objection", "supplemental_request"}
+            )
+            or (
+                document.subtype == "DEPOSITION_TRANSCRIPT"
+                and document.contention_surface == "qme_deposition"
+            )
+        }
+        projected_indexes = set(present.plan.medical_story.by_document_index)
+        assert projected_indexes == governed_indexes, (
+            "the medical-story projection governed documents outside frozen R8: "
+            f"extra={sorted(projected_indexes - governed_indexes)}, "
+            f"missing={sorted(governed_indexes - projected_indexes)}"
+        )
         governed_paths = {
             f"TC-650/documents/{render.path.name}"
             for document, render in zip(

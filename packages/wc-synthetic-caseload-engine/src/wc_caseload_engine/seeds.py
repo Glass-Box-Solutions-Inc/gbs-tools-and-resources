@@ -1953,7 +1953,7 @@ class MedicalHistoryScenario(_Model):
         "resilient", "metabolic", "degenerative", "psych_burdened", "multimorbid"
     ] | None = None
     """``None`` means *draw it* from the demographic mixture. Pin it to author a
-    specific health profile. Not yet honoured (M3)."""
+    specific health profile."""
 
     sample_conditions: bool = True
     """Whether to draw conditions from the archetype on top of any stated above.

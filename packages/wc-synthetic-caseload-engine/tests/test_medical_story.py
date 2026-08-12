@@ -18,6 +18,7 @@ mutated path assert through it rather than erroring.
 from __future__ import annotations
 
 import dataclasses
+import random
 import re
 import tempfile
 from functools import cache
@@ -29,6 +30,8 @@ import pytest
 import yaml
 
 from wc_caseload_engine import medical_assertions as medical_assertions_module
+from wc_caseload_engine import medical_story as medical_story_module
+from wc_caseload_engine import renderer as renderer_module
 from wc_caseload_engine.doctrine import DOCTRINE_CONTENT
 from wc_caseload_engine.fact_templates import fact_aware_templates
 from wc_caseload_engine.medical_assertions import (
@@ -37,8 +40,19 @@ from wc_caseload_engine.medical_assertions import (
     MedicalAssertionError,
     MedicalOpinion,
 )
+from wc_caseload_engine.medical_history import (
+    ApplicantDemographics,
+    MedicalCondition,
+    PriorAward,
+    PriorClaim,
+)
 from wc_caseload_engine.medical_story import (
+    ADVOCACY_LETTER_SURFACES,
     CONTENTION_SURFACE_TEMPLATE_PAIRS,
+    INITIAL_MEDLEGAL_SURFACES,
+    PSYCH_MEDLEGAL_SURFACES,
+    PTP_APPORTIONMENT_SURFACES,
+    PTP_CAUSATION_SURFACES,
     RECORD_REFERENCE_PARENT_TYPES,
     SUPPLEMENTAL_MEDLEGAL_SURFACES,
     StoryContention,
@@ -52,7 +66,7 @@ from wc_caseload_engine.renderer import (
     ajc66_variant_content,
     render_document,
 )
-from wc_caseload_engine.seeds import parse_caseload_spec
+from wc_caseload_engine.seeds import parse_case_seed, parse_caseload_spec
 from wc_caseload_engine.taxonomy import effective_taxonomy
 
 _FIXTURE_PATH = (
@@ -68,12 +82,22 @@ _IMR_MATRIX_PATH = (
 _CASE_IDS = (
     "surface-initial-medlegal",
     "surface-psych-medlegal",
-    "surface-supplemental",
-    "surface-ptp-interim",
-    "surface-ptp-final",
-    "surface-advocacy",
+    "surface-supplemental-medlegal",
+    "surface-ptp-causation",
+    "surface-ptp-apportionment",
+    "surface-advocacy-registers",
     "surface-contention-loop",
 )
+
+_FROZEN_SURFACE_CASE_SEEDS = {
+    "surface-initial-medlegal": 620101,
+    "surface-psych-medlegal": 620102,
+    "surface-supplemental-medlegal": 620103,
+    "surface-ptp-causation": 620104,
+    "surface-ptp-apportionment": 620105,
+    "surface-advocacy-registers": 620106,
+    "surface-contention-loop": 620107,
+}
 
 #: R8 member -> the exact engine-owned subclass that must serve it. The four
 #: raw-substrate mounts and the two-mount mixin design are R1's requirement,
@@ -230,6 +254,62 @@ def _without_page_furniture(text: str) -> str:
     return "\n".join(kept)
 
 
+def test_surface_matrix_uses_the_frozen_r67_case_ids_and_seeds():
+    """R67 — the seven fixture identities are contract, not descriptive labels."""
+    actual = {
+        entry["case_id"]: entry["rng_seed"] for entry in _fixture_payload()["cases"]
+    }
+    assert actual == _FROZEN_SURFACE_CASE_SEEDS
+
+
+def test_r8_governed_surface_sets_equal_the_frozen_spec():
+    """R8 — pin all six exact sets; membership loops cannot detect deletion."""
+    expected = {
+        "initial": frozenset(
+            {
+                "QME_REPORT_INITIAL",
+                "QME_COMPREHENSIVE_REPORT",
+                "AME_REPORT",
+                "AME_COMPREHENSIVE_REPORT",
+                "MEDICAL_LEGAL_QME_AME_IME",
+                "APPORTIONMENT_REPORT",
+            }
+        ),
+        "psych": frozenset({"PSYCH_EVAL_REPORT_QME_AME"}),
+        "supplemental": frozenset(
+            {"QME_REPORT_SUPPLEMENTAL", "SUPPLEMENTAL_QME_AME_REPORT"}
+        ),
+        "ptp_causation": frozenset(
+            {
+                "TREATING_PHYSICIAN_REPORT",
+                "TREATING_PHYSICIAN_REPORT_PR2",
+                "TREATING_PHYSICIAN_REPORT_PR4",
+                "TREATING_PHYSICIAN_REPORT_FINAL",
+            }
+        ),
+        "ptp_apportionment": frozenset(
+            {"TREATING_PHYSICIAN_REPORT_PR4", "TREATING_PHYSICIAN_REPORT_FINAL"}
+        ),
+        "advocacy": frozenset(
+            {
+                "ADVOCACY_LETTERS_PTP",
+                "ADVOCACY_LETTERS_QME",
+                "ADVOCACY_LETTERS_AME",
+                "ADVOCACY_LETTERS_PTP_QME_AME",
+            }
+        ),
+    }
+    actual = {
+        "initial": INITIAL_MEDLEGAL_SURFACES,
+        "psych": PSYCH_MEDLEGAL_SURFACES,
+        "supplemental": SUPPLEMENTAL_MEDLEGAL_SURFACES,
+        "ptp_causation": PTP_CAUSATION_SURFACES,
+        "ptp_apportionment": PTP_APPORTIONMENT_SURFACES,
+        "advocacy": ADVOCACY_LETTER_SURFACES,
+    }
+    assert actual == expected
+
+
 def test_contention_template_subtypes_keep_canonical_manifest_carriers_and_provenance():
     """R2 — canonical subtype stays the manifest carrier; the substrate-only
     dispatch key rides ``template_subtype`` and resolves the registered
@@ -310,8 +390,8 @@ def test_initial_medlegal_sections_follow_the_frozen_order():
         ("surface-initial-medlegal", "opn-02"),
         ("surface-initial-medlegal", "opn-03"),
         ("surface-initial-medlegal", "opn-04"),
-        ("surface-advocacy", "opn-02"),
-        ("surface-advocacy", "opn-03"),
+        ("surface-advocacy-registers", "opn-02"),
+        ("surface-advocacy-registers", "opn-03"),
     ):
         document, _story = _bound(case_id, opinion_id)
         text = _rendered(case_id, document.index).text
@@ -445,7 +525,7 @@ def test_psych_triad_renders_world_framing_rederivation_and_section_4660_1_c():
 
 def test_hikida_justice_variants_render_the_frozen_four_cell_semantics():
     """R7 — all four treatment-causation/result cells render their own law."""
-    seed, plan = _case("surface-advocacy")
+    seed, plan = _case("surface-advocacy-registers")
     assert plan.medical_story is not None
     document = next(
         item
@@ -676,14 +756,14 @@ def test_ptp_sections_follow_the_frozen_order():
     causation conclusion, then the plan; the apportionment statement exists
     only on the P&S surfaces, immediately after the impairment rating."""
     for opinion_id in ("opn-01", "opn-02"):
-        document, _story = _bound("surface-ptp-interim", opinion_id)
-        text = _rendered("surface-ptp-interim", document.index).text
+        document, _story = _bound("surface-ptp-causation", opinion_id)
+        text = _rendered("surface-ptp-causation", document.index).text
         _assert_ordered(text, "ASSESSMENT", "INDUSTRIAL CAUSATION", "TREATMENT PLAN")
         assert "IMPAIRMENT RATING" not in text
         assert "APPORTIONMENT OF PERMANENT DISABILITY" not in text
     for opinion_id in ("opn-01", "opn-02"):
-        document, _story = _bound("surface-ptp-final", opinion_id)
-        text = _rendered("surface-ptp-final", document.index).text
+        document, _story = _bound("surface-ptp-apportionment", opinion_id)
+        text = _rendered("surface-ptp-apportionment", document.index).text
         _assert_ordered(
             text,
             "ASSESSMENT",
@@ -698,7 +778,7 @@ def test_ptp_sections_follow_the_frozen_order():
 def test_contention_surface_sections_follow_the_frozen_order():
     """R9 — the four contention-surface skeletons, one frozen order each."""
     checked = 0
-    for case_id in ("surface-advocacy", "surface-contention-loop"):
+    for case_id in ("surface-advocacy-registers", "surface-contention-loop"):
         for document, story in _governed(case_id):
             surface = story.contention_surface
             if surface is None:
@@ -780,7 +860,7 @@ def test_supplemental_reports_contain_only_delta_history_records_and_issues():
     only. No fresh HPI, no fresh complaints, no fresh examination — the scope
     section says so — and an empty delta window is stated, never padded."""
     checked = 0
-    for case_id in ("surface-supplemental", "surface-contention-loop"):
+    for case_id in ("surface-supplemental-medlegal", "surface-contention-loop"):
         for document, story in _governed(case_id):
             if (
                 document.subtype not in SUPPLEMENTAL_MEDLEGAL_SURFACES
@@ -812,7 +892,7 @@ def test_every_surface_uses_bound_author_role_not_file_perspective():
     letterhead and signature inside a defense-owned file, and the deposition
     examiner is the bound examining party, not the file owner."""
     checked = 0
-    for case_id in ("surface-advocacy", "surface-contention-loop"):
+    for case_id in ("surface-advocacy-registers", "surface-contention-loop"):
         for perspective in ("applicant", "defense"):
             _seed, plan = _case(case_id, perspective)
             applicant_firm = plan.cast.applicant_firm
@@ -879,13 +959,13 @@ def test_ajc65_projection_is_coherent_for_every_apportionment_shape():
     assert "75%" in text
 
     # -- equal plural: one common scalar plus a per-body-part sentence each.
-    document, story = _bound("surface-supplemental", "opn-01")
+    document, story = _bound("surface-supplemental-medlegal", "opn-01")
     block = ajc65_story_governance(story)["apportionment"]
     assert block["register"] == "apportioned"
     assert block["nonindustrial_pct"] == 20
     assert "As to the lumbar spine, 20 percent" in block["opinion"]
     assert "As to the shoulder, 20 percent" in block["opinion"]
-    text = _flat(_rendered("surface-supplemental", document.index).text)
+    text = _flat(_rendered("surface-supplemental-medlegal", document.index).text)
     assert "Apportionment — LC §4663" in text
     assert "20% of the current permanent disability" in text
 
@@ -973,11 +1053,25 @@ def test_ajc66_activates_only_the_bound_letter_or_deposition_family():
     """R13/AJC-66 — the variant-content switch is namespaced to exactly the
     bound family ({'letter': True} or {'deposition_transcript': True}), never
     the global True, and the activated register actually reaches the page."""
-    for key in sorted(AJC66_LETTER_TEMPLATE_SUBTYPES):
+    expected_letters = frozenset(
+        {
+            "ADVOCACY_LETTERS_PTP",
+            "ADVOCACY_LETTERS_QME",
+            "ADVOCACY_LETTERS_AME",
+            "ADVOCACY_LETTERS_PTP_QME_AME",
+            "OBJECTION_TO_QME_AME_REPORT",
+            "REQUEST_SUPPLEMENTAL_QME_AME_REPORT",
+        }
+    )
+    expected_depositions = frozenset({"DEPOSITION_TRANSCRIPT_QME_AME"})
+    assert expected_letters == AJC66_LETTER_TEMPLATE_SUBTYPES
+    assert expected_depositions == AJC66_DEPOSITION_TEMPLATE_SUBTYPES
+
+    for key in sorted(expected_letters):
         switch = ajc66_variant_content(key)
         assert switch == {"letter": True}, f"{key} -> {switch!r}"
         assert switch is not True
-    for key in sorted(AJC66_DEPOSITION_TEMPLATE_SUBTYPES):
+    for key in sorted(expected_depositions):
         switch = ajc66_variant_content(key)
         assert switch == {"deposition_transcript": True}, f"{key} -> {switch!r}"
 
@@ -1002,7 +1096,7 @@ def test_ajc66_absent_false_and_empty_contexts_are_inert():
     assert ajc66_variant_content("QME_REPORT_INITIAL") is None
     assert ajc66_variant_content("TREATING_PHYSICIAN_REPORT_PR4") is None
 
-    _seed, plan = _case("surface-advocacy")
+    _seed, plan = _case("surface-advocacy-registers")
     letter_class = fact_aware_templates()["ADVOCACY_LETTERS_PTP"]
     template = letter_class(plan.cast.case)
     for context in (
@@ -1021,13 +1115,54 @@ def test_ajc66_absent_false_and_empty_contexts_are_inert():
 
     # Story-absent render of a governed letter subtype: the substrate default,
     # with neither the engine's story sections nor any register prose.
-    seed, plan = _case("surface-advocacy")
+    seed, plan = _case("surface-advocacy-registers")
     document = next(
-        d for d, s in _governed("surface-advocacy") if s.contention_surface == "advocacy"
+        d
+        for d, s in _governed("surface-advocacy-registers")
+        if s.contention_surface == "advocacy"
     )
     absent = _flat(_render(seed, plan, document, None, "ajc66-story-absent").text)
     assert "RECORDS AND FACTS FOR REVIEW" not in absent
     assert "being served simultaneously on opposing counsel" not in absent
+
+
+def test_absent_medical_story_gate_constructs_no_context_projection_or_story_rng():
+    """R1/R68 — the absent gate returns before projection or story RNG and the
+    renderer constructs no M3 governance context."""
+    seed = parse_case_seed(
+        {
+            "case_id": "medical-story-absent",
+            "rng_seed": 620199,
+            "injury": {
+                "type": "specific",
+                "date_of_injury": "2024-03-01",
+                "body_parts": [{"part": "lumbar_spine"}],
+            },
+            "lifecycle": {"target_stage": "medical_legal", "eval_type": "qme"},
+            "documents": {"format_mix": {"pdf": 1.0}},
+            "output": {"formats": ["pdf"]},
+        }
+    )
+    plan = build_case_plan(seed)
+    assert seed.scenario.medical_history is None
+    assert plan.medical_story is None
+
+    def fail(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("the absent medical-story gate constructed M3 state")
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(medical_story_module, "_project_demographics", fail)
+        patcher.setattr(random, "Random", fail)
+        assert derive_medical_story(seed, None, None, plan.documents) is None
+
+    document = next(
+        entry for entry in plan.documents if entry.subtype in INITIAL_MEDLEGAL_SURFACES
+    )
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(renderer_module, "ajc65_story_governance", fail)
+        patcher.setattr(renderer_module, "ajc66_variant_content", fail)
+        rendered = _render(seed, plan, document, None, "medical-story-gate-absent")
+    assert rendered.fallback is False
 
 
 def test_governed_medical_facts_are_identical_across_every_bound_surface():
@@ -1086,7 +1221,15 @@ def test_medical_story_projection_uses_literal_allowlists_and_never_model_dump()
         return fail
 
     with pytest.MonkeyPatch.context() as patcher:
-        for model in (MedicalOpinion, Contention, ApportionmentAssertion):
+        for model in (
+            ApplicantDemographics,
+            MedicalCondition,
+            PriorClaim,
+            PriorAward,
+            MedicalOpinion,
+            Contention,
+            ApportionmentAssertion,
+        ):
             patcher.setattr(model, "model_dump", _spy(model.__name__))
             patcher.setattr(model, "model_dump_json", _spy(model.__name__))
         story_plan = derive_medical_story(

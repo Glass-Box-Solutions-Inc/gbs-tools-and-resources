@@ -175,12 +175,6 @@ INERT_PROBES: dict[str, InertProbe] = {
     # ledger and renders none of it: M3 owns every document surface, M4 owns the
     # scorer channel, M5 owns the section 4664 arithmetic. Each entry below is a
     # tripwire on one of those milestones.
-    "MedicalHistoryScenario.archetype": InertProbe(
-        plain=_medical(),
-        varied=_medical(archetype="multimorbid"),
-        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
-        witness=_MEDICAL_WITNESS,
-    ),
     "PriorClaimEntry.employer": InertProbe(
         plain=_medical(prior_claims=[_PRIOR_CLAIM]),
         varied=_medical(prior_claims=[{**_PRIOR_CLAIM, "employer": "Ridgeline Foods"}]),

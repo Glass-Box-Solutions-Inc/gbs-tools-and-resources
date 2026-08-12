@@ -242,7 +242,7 @@ cases:
   # heterogeneous split on the first supplemental, and an unchanged
   # additional-reasoning response on the second (its delta window holds no
   # interposed records, and the delta form must say so honestly).
-  - case_id: surface-supplemental
+  - case_id: surface-supplemental-medlegal
     rng_seed: 620103
     scenario:
       medical_history:
@@ -378,7 +378,7 @@ cases:
   # explicit override. The treating register speaks its own AOE/COE
   # conclusion; the interim apportionment posture is deferred (§C forbids
   # omitted on an interim), and no interim surface renders a scalar block.
-  - case_id: surface-ptp-interim
+  - case_id: surface-ptp-causation
     rng_seed: 620104
     scenario:
       medical_history:
@@ -425,7 +425,7 @@ cases:
   # PTP final apportionment surfaces: the default PR-4 carrier with an
   # equal-plural allocation, and the explicit final override with a single
   # row. The final register adds the §4660.1-consequence language.
-  - case_id: surface-ptp-final
+  - case_id: surface-ptp-apportionment
     rng_seed: 620105
     scenario:
       medical_history:
@@ -509,7 +509,7 @@ cases:
   # role carrier, and the combined carrier under a defense actor. Every
   # letter strictly precedes the report it advocates to (R34) and speaks
   # only its own party's contentions (R28).
-  - case_id: surface-advocacy
+  - case_id: surface-advocacy-registers
     rng_seed: 620106
     lifecycle:
       eval_type: ame
