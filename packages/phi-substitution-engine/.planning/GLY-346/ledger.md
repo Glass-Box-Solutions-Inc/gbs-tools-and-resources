@@ -121,6 +121,27 @@ suite vs real PG) needs the phi_reversal Postgres → provisioning + the dedicat
 surfaced to Alex. Lanes remaining: B1, B2 (Files adapter ←B1), B3 (Azure SpoolMaintenance ←A+B1+B2), D (Q6
 smoke ←B1+B2+C), E (cron ←B3).**
 
+## Stage 8 — Control plane PROVISIONED + Lane B1 IMPLEMENTED (sol) → **Opus-5 APPROVE** (commit 5c8422c)
+Alex chose DEDICATED Postgres. Provisioned `psql-phi-reversal` (B1ms Burstable, PG16.14, westus2,
+GBS-Platform, Ready); db `phi_reversal`; firewall this-VM(20.245.127.237)+AzureServices; admin pw →
+kv-gbs-platform secret `phi-reversal-pg-admin-password` (user phipgadmin). ~$12-15/mo. (2 az flag quirks:
+`--database-name` is elastic-only on server create → create DB separately; firewall-rule uses `--server-name`
+not `--name` → created DB + verified connectivity via node-pg from this VM instead.) B1: sol authored
+migrations/0001 + azure/control-plane.ts (ControlPlane iface) + azure/postgres-control-plane.ts (pg impl) +
+tests/postgres-control-plane.test.ts (env-guarded, skips w/o live DB). **Orchestrator ran LIVE conformance
+from this VM: 8/8 PASS** (racing publish first-writer-wins, ordinal CAS no-rollback, expired-pending
+tombstone+detach+orphan, SKIP LOCKED reclaim, Path-2 crash recovery, atomic nonce first=0 no-reuse, NUMERIC
+2^64-1). tsc clean, 331 sandbox + 8 skipped. **Opus-5 APPROVE** — RE-RAN the live 8/8 itself, verified all 8
+checks at file:line, tx hygiene (COMMIT/ROLLBACK/release all paths), NUL→base64url encode injective +
+consistent on every write AND read (no raw-NUL path). Key design: Postgres TEXT rejects NUL, so
+mappingKey/idempotencyKey (NUL-separated per keys.ts) are base64url-encoded at the TEXT boundary. Non-blocking:
+unreachable defensive branch :345; no deadlock. **B1 DONE — transactional core proven on real Postgres.**
+**NEXT: B2 (AzureFilesSpoolVolume — implements frozen SpoolVolume by composing B1 ControlPlane + a Files
+blob store on phi-spool via @azure/storage-file-share; prepare=uploading-row→upload→rename→markFinalized,
+flush=HEAD blob+etag/len verify→ControlPlane.flushClaim, readCurrent=pointers→GET blobs). Needs the storage
+dep + live validation vs real PG + phi-spool from this VM (has both). Then B3 (reclamation Files ops; MUST
+keep single-global-limit budget), D (Q6 in-ACA smoke), E (cron).**
+
 ## Parallel — data-retention legal audit (Sonnet agent, background)
 Launched per Alex to review our data-retention policy vs law (HIPAA/CMIA/CCPA-CPRA/§632/State-Bar/WC).
 Report → scratchpad/retention-audit.md. Relevant to this lane: the 7-day soft-delete tail + the
