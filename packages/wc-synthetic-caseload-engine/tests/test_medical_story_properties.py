@@ -107,39 +107,61 @@ EXPECTED_MEDICAL_STORY_FAMILIES: tuple[str, ...] = (
 #: defect. This literal is the ratchet that forces each step to expand it
 #: with exactly what the frozen cohort then observes, or go red.
 #:
-#: R77 step 4 landed ALL EIGHT disposition/response consumers, but the frozen
-#: cohort composition (R61 — untunable) can reach only two of their
-#: eligibility gates today, so the honest measured expansion is two families:
+#: R77 step 5 landed the contention loop, and the frozen cohort now
+#: exercises seventeen loop families beyond step 4's two — measured from a
+#: completed cohort run (``.venv/bin/python tests/assertion_cohort.py``),
+#: never predicted:
 #:
-#:   ptp-aoe-coe-finding             every cell with a sampled PTP opinion
-#:   qme-ame-indeterminate-disposition  qme/ame cells with an
-#:                                      indeterminate-evidence contention
+#:   ptp-aoe-coe-finding / qme-ame-indeterminate-disposition — step 4's two,
+#:       unchanged;
+#:   advocacy-incidence / advocacy-bundle-size / advocacy-lead — sampled
+#:       standalone advocacy over every R28-eligible pair (R52), each letter
+#:       dated through its advocacy-lead band draw (R56);
+#:   defense-contest-incidence / applicant-contest-incidence /
+#:       completion-incidence / contest-path — the R29/R30 decision table
+#:       firing opportunities and selecting ContestPaths (R50);
+#:   defense-theory-count / defense-theory-selection — sampled defense
+#:       chains drawing their ordered theory tuples (R51);
+#:   objection-lag / supplemental-request-lag / supplemental-report-lag /
+#:       deposition-lag — the four contest date bands (R56);
+#:   qme-ame-responsive-adoption — step 4's channel, cohort-eligible now
+#:       that sampled advocacy creates R38 qualifying communications;
+#:   revision-kind / revision-percentage-register /
+#:       revision-percentage-value — step 4's response consumers, exercised
+#:       by the sampled supplemental and deposition opinions.
 #:
-#: The other six step-4 consumers exist and are draw-law-gated below, but
-#: their cohort eligibility awaits later producers or fixtures (deviation
-#: from the step-3 prediction table, recorded for sol's post-PR review):
+#: Still awaiting later producers or fixtures (fifteen families):
 #:
-#:   qme-ame-responsive-adoption — needs a qualifying R38 communication
-#:       targeting the sampled evaluator; only step 5's sampled advocacy can
-#:       create one (an explicit document cannot reference a sampled opinion)
-#:   revision-kind, revision-percentage-register, revision-percentage-value —
-#:       consumed by sampled response opinions, which step 5 introduces
 #:   applicant-psych-framing, ptp-psych-classification — need a world
 #:       condition classified compensable_consequence; no frozen cohort seed
 #:       authors one and M1 samples none, so the render/psych fixtures
-#:       (steps 7-8) supply their positive exercise
+#:       (steps 7-8) supply their positive exercise;
+#:   the eight UR/IMR families — step 8's derivation;
+#:   the five document families — step 9's rendering.
 #:
-#: Remaining schedule: step 5 — advocacy-incidence, advocacy-bundle-size,
-#: defense-contest-incidence, applicant-contest-incidence,
-#: completion-incidence, contest-path, defense-theory-count,
-#: defense-theory-selection (plus adoption/revision cohort eligibility);
-#: step 6 — the five lag/lead date bands; step 8 — the eight UR/IMR
-#: families; step 9 — the five document families. By step 9 the observed set
-#: (cohort plus focused render fixtures) MUST equal the full registry.
+#: By step 9 the observed set (cohort plus focused render fixtures) MUST
+#: equal the full registry.
 EXERCISED_STORY_FAMILIES_TODAY: frozenset[str] = frozenset(
     {
         "ptp-aoe-coe-finding",
         "qme-ame-indeterminate-disposition",
+        "advocacy-incidence",
+        "advocacy-bundle-size",
+        "advocacy-lead",
+        "defense-contest-incidence",
+        "applicant-contest-incidence",
+        "completion-incidence",
+        "contest-path",
+        "defense-theory-count",
+        "defense-theory-selection",
+        "objection-lag",
+        "supplemental-request-lag",
+        "supplemental-report-lag",
+        "deposition-lag",
+        "qme-ame-responsive-adoption",
+        "revision-kind",
+        "revision-percentage-register",
+        "revision-percentage-value",
     }
 )
 
@@ -480,9 +502,16 @@ def test_m2_baseline_stream_calls_ids_counts_and_digests_are_byte_identical() ->
         baseline = trace.m2_baseline_ledger
         assert baseline is not None
         assert plan.ledger is not None
-        # Step-3 shape: the plan carries no bindings yet (they arrive with
-        # steps 5-6) and the recorded baseline is the graded M2 ledger.
-        assert plan.contention_documents == ()
+        # Step-5 shape (evolved from step 3's "no bindings yet"): the plan
+        # now carries the loop's bound documents — every ledger opinion is
+        # realized (R27) — while the recorded baseline stays the graded M2
+        # ledger and every M2 instrument below stays byte-identical.
+        realized = {
+            binding.medical_opinion_id
+            for binding in plan.contention_documents
+            if binding.medical_opinion_id is not None
+        }
+        assert realized == {opinion.id for opinion in plan.ledger.medical_opinions}
 
         # Every constructed stream lives in the M2 namespace under a
         # registered M2 family; no medical-story stream may be constructed
@@ -1001,8 +1030,12 @@ def test_ptp_remodel_has_exact_findings_complement_and_no_sampled_endorsement(
         baseline = trace.m2_baseline_ledger
         assert baseline is not None
         assert plan.ledger is not None
+        # Step-5 responses append strictly AFTER the base entries, so the
+        # base-opinion pairing reads the base prefix, still strict.
         for base_opinion, plan_opinion in zip(
-            baseline.medical_opinions, plan.ledger.medical_opinions, strict=True
+            baseline.medical_opinions,
+            plan.ledger.medical_opinions[: len(baseline.medical_opinions)],
+            strict=True,
         ):
             if base_opinion.author_role != "ptp":
                 continue
@@ -1102,64 +1135,144 @@ def test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication(
     """R70's adoption gate (R38/R53).
 
     Adoption requires ALL THREE: supporting evidence, an earlier qualifying
-    communication targeting the opinion, and the 0.25 channel firing. Without
-    a communication the result is concurrence WITHOUT an adoption draw; a
-    missed draw is concurrence; contradicted evidence stays in the preserved
-    M2 rejection result whatever communications exist; indeterminate evidence
-    defers or stays unaddressed through its own stream and can never be
-    adopted or concurred.
+    communication targeting the opinion, and the 0.25 channel firing. Since
+    R77 step 5 the qualifying communications are REAL — sampled advocacy
+    letters targeting the sampled evaluator — so the channel is exercised
+    end to end: a supported pair without a communication concurs with no
+    adoption draw; a supported pair with one goes through the exact 0.25
+    channel; a missed draw is concurrence; contradicted evidence stays in
+    the preserved M2 rejection result whatever communications exist;
+    indeterminate evidence defers or stays unaddressed through its own
+    stream and can never be adopted or concurred.
     """
     import random as random_module
 
+    from wc_caseload_engine.medical_assertions import (
+        assertion_context,
+        contention_evidence,
+        project_medical_history,
+    )
     from wc_caseload_engine.seeds import derive_seed
 
-    # End-to-end, communication-free world (step 4): every sampled QME/AME
-    # opinion classifies every pair deterministically from evidence — all
-    # supports concur, nothing is adopted, the M2 rejects stand — and the
-    # adoption stream is never constructed.
+    # End-to-end (step 5): the adoption stream exists exactly where a
+    # supported pair carries a qualifying communication, and cohort-0081 is
+    # the pinned positive witness — its 0.25 draw hits, so the final plan
+    # ledger carries a sampled endorsement reachable ONLY through the
+    # advocacy -> communication -> adoption path.
     constructed = _record_story_streams(monkeypatch)
     checked_opinions = 0
-    for index in (3, 9, 4, 10, 5283, 5763, 5523, 5043):
+    adoption_witnessed = False
+    for index in (3, 9, 4, 10, 5283, 5763, 5523, 5043, 81):
+        before = len(constructed)
         seed, history, trace, plan = _derive_case(index)
+        case_streams = list(constructed[before:])
         baseline = trace.m2_baseline_ledger
         assert baseline is not None and plan.ledger is not None
-        from wc_caseload_engine.medical_assertions import (
-            assertion_context,
-            contention_evidence,
-            project_medical_history,
-        )
-
         context = assertion_context(seed)
         projection = project_medical_history(history, context.current_body_parts)
+        # The qualifying communications, re-derived at the production seam:
+        # sampled advocacy letters targeting the sampled evaluator (R38).
+        contention_keys = {
+            contention.id: assertion_module._story_contention_key(
+                seed, contention, frozenset()
+            )
+            for contention in baseline.contentions
+        }
+        communications = assertion_module._derive_advocacy(
+            seed,
+            seed.scenario.medical_assertions,
+            context,
+            baseline,
+            contention_keys,
+            frozenset(),
+        ).qualifying_communications
+        communicated_supported = any(
+            communications.get(contention.id)
+            and contention_evidence(projection, context, contention) == "supports"
+            for contention in baseline.contentions
+        )
+        # Step-5 responses append strictly AFTER the base entries, so the
+        # base-opinion pairing reads the base prefix, still strict.
         for base_opinion, plan_opinion in zip(
-            baseline.medical_opinions, plan.ledger.medical_opinions, strict=True
+            baseline.medical_opinions,
+            plan.ledger.medical_opinions[: len(baseline.medical_opinions)],
+            strict=True,
         ):
             if base_opinion.author_role not in ("qme", "ame"):
                 continue
             checked_opinions += 1
-            assert plan_opinion.endorses_contention_ids == ()
             assert plan_opinion.rejects_contention_ids == (
                 base_opinion.rejects_contention_ids
             )
+            endorsed = set(plan_opinion.endorses_contention_ids)
             concurred = set(plan_opinion.concurs_with_contention_ids)
             deferred = set(plan_opinion.defers_contention_ids)
             rejected = set(plan_opinion.rejects_contention_ids)
-            for contention in plan.ledger.contentions:
+            assert endorsed <= {
+                contention.id
+                for contention in baseline.contentions
+                if communications.get(contention.id)
+            }, "an endorsement appeared without a qualifying communication"
+            for contention in baseline.contentions:
                 evidence = contention_evidence(projection, context, contention)
                 if contention.id in rejected:
                     assert evidence == "contradicts"
+                    assert contention.id not in endorsed | concurred
                     continue
                 if evidence == "supports":
-                    assert contention.id in concurred
+                    if communications.get(contention.id):
+                        assert (contention.id in endorsed) != (
+                            contention.id in concurred
+                        )
+                        if contention.id in endorsed:
+                            adoption_witnessed = True
+                    else:
+                        assert contention.id not in endorsed
+                        assert contention.id in concurred
                     assert contention.id not in deferred
                 elif evidence == "indeterminate":
-                    assert contention.id not in concurred
+                    assert contention.id not in endorsed | concurred
                 else:
-                    assert contention.id not in concurred | deferred
+                    assert contention.id not in endorsed | concurred | deferred
+        adoption_constructed = any(
+            family == "qme-ame-responsive-adoption" for family, _key in case_streams
+        )
+        assert adoption_constructed == communicated_supported, (
+            "the adoption stream exists exactly when a supported pair "
+            "carries a qualifying communication"
+        )
     assert checked_opinions >= 6
-    assert all(
-        family != "qme-ame-responsive-adoption" for family, _key in constructed
-    ), "an adoption stream was constructed with no qualifying communication"
+    assert adoption_witnessed, (
+        "no communicated supported pair adopted across the sweep; "
+        "cohort-0081's pinned witness disappeared"
+    )
+
+    # The pinned witness in full: the endorsement and its qualifying
+    # communication are BOTH visible in one plan — the sampled advocacy
+    # binding speaks the adopted contention at the endorsing evaluator.
+    seed, history, trace, plan = _derive_case(81)
+    baseline = trace.m2_baseline_ledger
+    assert baseline is not None and plan.ledger is not None
+    context = assertion_context(seed)
+    projection = project_medical_history(history, context.current_body_parts)
+    evaluator = next(
+        opinion
+        for opinion in plan.ledger.medical_opinions[: len(baseline.medical_opinions)]
+        if opinion.author_role in ("qme", "ame")
+    )
+    assert "ctn-01" in evaluator.endorses_contention_ids
+    adopted = plan.ledger.contention("ctn-01")
+    assert adopted is not None
+    assert contention_evidence(projection, context, adopted) == "supports"
+    witnesses = [
+        binding
+        for binding in plan.contention_documents
+        if binding.document_kind == "advocacy"
+        and binding.source == "sampled"
+        and binding.target_medical_opinion_id == evaluator.id
+        and "ctn-01" in binding.spoken_contention_ids
+    ]
+    assert witnesses, "the qualifying communication left no advocacy binding"
 
     # Unit half — the classifier itself. Without a communication: concurrence
     # and NO stream construction at all.
@@ -1266,11 +1379,6 @@ def test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication(
     seed, history, trace, plan = _derive_case(5763)
     baseline = trace.m2_baseline_ledger
     assert baseline is not None
-    from wc_caseload_engine.medical_assertions import (
-        assertion_context,
-        project_medical_history,
-    )
-
     context = assertion_context(seed)
     projection = project_medical_history(history, context.current_body_parts)
     base_evaluator = next(
@@ -1647,3 +1755,175 @@ def test_percentage_register_pool_continuous_remainder_and_predecessor_exclusion
     assert set(common).isdisjoint(granular)
     assert set(common) | set(granular) == set(range(1, 100))
     assert len(granular) == 78
+
+
+# ---------------------------------------------------------------------------
+# R56 — the five loop date bands: inclusive, causal, never redrawn
+# ---------------------------------------------------------------------------
+
+
+def test_raw_date_band_draws_are_inclusive_causal_and_never_redrawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R70's date-band gate, scoped to the five R56 loop bands that R77
+    step 5 owns: ``advocacy-lead``, ``objection-lag``,
+    ``supplemental-request-lag``, ``supplemental-report-lag`` and
+    ``deposition-lag``.
+
+    Each raw draw is exactly one inclusive ``randint(lower, upper)`` with
+    both endpoints reachable; each drawn offset is applied to its CAUSE's
+    date (the target report, the objection, the request, the response
+    report, the examined report); and no ``(family, key)`` stream is ever
+    constructed twice — a truncated stage's draw stays burned, never
+    redrawn, which the branch/truncation gate witnesses from the other
+    side. The two IMR bands (``imr-application-lag``, ``imr-decision-lag``)
+    belong to R77 step 8's UR/IMR derivation and are asserted with it.
+    """
+    from test_medical_story_loop import (
+        _contest_world,
+        _fire,
+        _matrix_seeds,
+        _route_story_streams,
+    )
+
+    bands = {
+        "advocacy-lead": assertion_module.ADVOCACY_LEAD_DAYS.value,
+        "objection-lag": assertion_module.OBJECTION_LAG_DAYS.value,
+        "supplemental-request-lag": (
+            assertion_module.SUPPLEMENTAL_REQUEST_LAG_DAYS.value
+        ),
+        "supplemental-report-lag": (
+            assertion_module.SUPPLEMENTAL_REPORT_LAG_DAYS.value
+        ),
+        "deposition-lag": assertion_module.DEPOSITION_LAG_DAYS.value,
+    }
+    assert bands == {
+        "advocacy-lead": (14, 45),
+        "objection-lag": (10, 30),
+        "supplemental-request-lag": (7, 21),
+        "supplemental-report-lag": (30, 90),
+        "deposition-lag": (30, 120),
+    }
+
+    # Inclusive, one draw per offset: swept at the production helper with
+    # every constructed stream counted — every offset comes from exactly one
+    # randint, every value stays inside the band, and BOTH endpoints are
+    # positively observed for every family.
+    class _CountingStream:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+            self.randints = 0
+
+        def randint(self, lower: int, upper: int) -> int:
+            self.randints += 1
+            return self._inner.randint(lower, upper)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+    original = assertion_module._medical_story_rng
+    streams: list[_CountingStream] = []
+
+    def counting(seed: Any, family: str, semantic_key: Any) -> Any:
+        stream = _CountingStream(original(seed, family, semantic_key))
+        streams.append(stream)
+        return stream
+
+    monkeypatch.setattr(assertion_module, "_medical_story_rng", counting)
+    seed3 = parse_case_seed(cohort_seed_body(3))
+    unit_trace = AssertionTrace()
+    observed: dict[str, set[int]] = {family: set() for family in bands}
+    probes = 1000
+    for family, band in bands.items():
+        for probe in range(probes):
+            offset = assertion_module._band_offset(
+                seed3,
+                family,
+                ("case", seed3.case_id, "band-probe", family, probe),
+                band,
+                unit_trace,
+            )
+            assert band[0] <= offset <= band[1]
+            observed[family].add(offset)
+    monkeypatch.undo()
+    for family, band in bands.items():
+        assert band[0] in observed[family], (family, "lower endpoint unreached")
+        assert band[1] in observed[family], (family, "upper endpoint unreached")
+    assert len(streams) == probes * len(bands)
+    assert all(stream.randints == 1 for stream in streams)
+    assert [family for family, _offset in unit_trace.story_raw_date_offsets] == [
+        family for family in bands for _ in range(probes)
+    ]
+
+    # Causal, end to end: one forced full chain draws each band exactly
+    # once, in causal order, and every proposed date is its cause's date
+    # plus (or minus, for the lead) exactly the recorded raw offset.
+    forced = _contest_world("objection_supplemental_deposition")
+    forced["advocacy-incidence"] = _fire
+    recorded: list[tuple[str, Any]] = []
+    _route_story_streams(monkeypatch, forced, recorded)
+    seed = _matrix_seeds()["loop-applicant-rejected"]
+    history = derive_medical_history(seed)
+    trace = AssertionTrace()
+    plan = derive_medical_assertion_plan(seed, history, trace=trace)
+    monkeypatch.undo()
+
+    assert [family for family, _offset in trace.story_raw_date_offsets] == [
+        "advocacy-lead",
+        "objection-lag",
+        "supplemental-request-lag",
+        "supplemental-report-lag",
+        "deposition-lag",
+    ]
+    offsets = dict(trace.story_raw_date_offsets)
+    for family, offset in trace.story_raw_date_offsets:
+        lower, upper = bands[family]
+        assert lower <= offset <= upper
+
+    ledger = plan.ledger
+    assert ledger is not None
+    base, supplemental, deposition = ledger.medical_opinions
+    by_kind = {
+        binding.document_kind: binding
+        for binding in plan.contention_documents
+        if binding.source == "sampled"
+    }
+    assert by_kind["advocacy"].proposed_date == base.report_date - dt.timedelta(
+        days=offsets["advocacy-lead"]
+    )
+    assert by_kind["objection"].proposed_date == base.report_date + dt.timedelta(
+        days=offsets["objection-lag"]
+    )
+    assert by_kind["supplemental_request"].proposed_date == by_kind[
+        "objection"
+    ].proposed_date + dt.timedelta(days=offsets["supplemental-request-lag"])
+    assert by_kind["supplemental_report"].proposed_date == by_kind[
+        "supplemental_request"
+    ].proposed_date + dt.timedelta(days=offsets["supplemental-report-lag"])
+    assert by_kind["supplemental_report"].proposed_date == supplemental.report_date
+    assert by_kind[
+        "qme_deposition"
+    ].proposed_date == supplemental.report_date + dt.timedelta(
+        days=offsets["deposition-lag"]
+    )
+    assert by_kind["qme_deposition"].proposed_date == deposition.report_date
+
+    # Never redrawn: no (family, key) pair is constructed twice within the
+    # derivation, and a second derivation replays byte-identical raw draws.
+    band_streams = [
+        (family, canonical_story_key(key))
+        for family, key in recorded
+        if family in bands
+    ]
+    assert len(band_streams) == 5
+    assert len(band_streams) == len(set(band_streams))
+    _route_story_streams(monkeypatch, forced)
+    trace_again = AssertionTrace()
+    plan_again = derive_medical_assertion_plan(
+        seed, derive_medical_history(seed), trace=trace_again
+    )
+    monkeypatch.undo()
+    assert trace_again.story_raw_date_offsets == trace.story_raw_date_offsets
+    assert [b.model_dump() for b in plan_again.contention_documents] == [
+        b.model_dump() for b in plan.contention_documents
+    ]

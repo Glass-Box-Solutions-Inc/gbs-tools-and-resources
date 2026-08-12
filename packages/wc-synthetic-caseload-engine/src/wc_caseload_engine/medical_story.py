@@ -64,6 +64,65 @@ when its surface is ``qme_deposition``; ordinary depositions keep their
 pre-M3 path (R8).
 """
 
+# ---------------------------------------------------------------------------
+# R8 — the frozen governed subtype sets (AJC-62 Part 1)
+# ---------------------------------------------------------------------------
+# Landed at R77 step 5 because R27/R40 carrier-compatibility validation in the
+# contention loop consumes them; the surface MAP that renders them (R9,
+# fact-aware subclasses) remains step-7 material. ``DEPOSITION_TRANSCRIPT`` is
+# governed only when its ``contention_surface`` is ``qme_deposition``;
+# ``IME_REPORT`` and specialty treatment records outside these sets are not
+# M3 medical-story surfaces.
+
+INITIAL_MEDLEGAL_SURFACES = frozenset(
+    {
+        "QME_REPORT_INITIAL",
+        "QME_COMPREHENSIVE_REPORT",
+        "AME_REPORT",
+        "AME_COMPREHENSIVE_REPORT",
+        "MEDICAL_LEGAL_QME_AME_IME",
+        "APPORTIONMENT_REPORT",
+    }
+)
+
+PSYCH_MEDLEGAL_SURFACES = frozenset(
+    {
+        "PSYCH_EVAL_REPORT_QME_AME",
+    }
+)
+
+SUPPLEMENTAL_MEDLEGAL_SURFACES = frozenset(
+    {
+        "QME_REPORT_SUPPLEMENTAL",
+        "SUPPLEMENTAL_QME_AME_REPORT",
+    }
+)
+
+PTP_CAUSATION_SURFACES = frozenset(
+    {
+        "TREATING_PHYSICIAN_REPORT",
+        "TREATING_PHYSICIAN_REPORT_PR2",
+        "TREATING_PHYSICIAN_REPORT_PR4",
+        "TREATING_PHYSICIAN_REPORT_FINAL",
+    }
+)
+
+PTP_APPORTIONMENT_SURFACES = frozenset(
+    {
+        "TREATING_PHYSICIAN_REPORT_PR4",
+        "TREATING_PHYSICIAN_REPORT_FINAL",
+    }
+)
+
+ADVOCACY_LETTER_SURFACES = frozenset(
+    {
+        "ADVOCACY_LETTERS_PTP",
+        "ADVOCACY_LETTERS_QME",
+        "ADVOCACY_LETTERS_AME",
+        "ADVOCACY_LETTERS_PTP_QME_AME",
+    }
+)
+
 _STORY_MODEL_CONFIG = ConfigDict(extra="forbid", frozen=True)
 
 
@@ -296,6 +355,12 @@ class MedicalUrPlan(BaseModel):
 
 
 __all__ = [
+    "ADVOCACY_LETTER_SURFACES",
+    "INITIAL_MEDLEGAL_SURFACES",
+    "PSYCH_MEDLEGAL_SURFACES",
+    "PTP_APPORTIONMENT_SURFACES",
+    "PTP_CAUSATION_SURFACES",
+    "SUPPLEMENTAL_MEDLEGAL_SURFACES",
     "ContentionSurface",
     "DocumentMedicalStory",
     "ImrApplicationContent",

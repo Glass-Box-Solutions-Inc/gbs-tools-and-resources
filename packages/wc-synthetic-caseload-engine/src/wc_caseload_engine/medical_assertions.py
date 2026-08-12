@@ -36,8 +36,9 @@ from __future__ import annotations
 import datetime as dt
 import json
 import random
+from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Final, Literal
 
@@ -496,7 +497,14 @@ class ContentionDocumentBinding(BaseModel):
     doc_date: dt.date | None = None
     medical_opinion_id: str | None = None
     target_medical_opinion_id: str | None = None
-    spoken_contention_ids: tuple[str, ...] = Field(default=(), max_length=3)
+    spoken_contention_ids: tuple[str, ...] = ()
+    """Unbounded on the internal binding by design: an authored
+    :class:`~wc_caseload_engine.seeds.ContentionDocumentEntry` keeps R26's
+    three-member cap, and every loop *communication* is bundled at
+    :data:`MAX_CONTENTIONS_PER_LOOP_DOCUMENT`, but a base opinion report's
+    derived binding MUST speak the union of its four disposition collections
+    in ledger order (R35) — a docket larger than three is legal there."""
+
     actor_party: ContentionParty | None = None
     defense_contest_theories: tuple[DefenseContestTheory, ...] = ()
     template_subtype: str | None = None
@@ -3653,6 +3661,11 @@ class AssertionTrace:
     eligible_candidates: dict[str, int] = None  # type: ignore[assignment]
     lifecycle: list[str] = None  # type: ignore[assignment]
     m2_baseline_ledger: MedicalAssertionLedger | None = None
+    story_raw_date_offsets: list[tuple[str, int]] = field(default_factory=list)
+    """R61 ``story_*`` member (R77 step 5): every raw R56 date-band draw the
+    contention loop makes, as ``(family, offset)`` — the R70 date-band gate's
+    instrument for "inclusive, causal, never redrawn". A truncated stage's
+    burned draw stays recorded; nothing here is an M2 counter."""
 
     def __post_init__(self) -> None:
         self.recipes = [] if self.recipes is None else self.recipes
@@ -5349,6 +5362,2118 @@ def _apply_story_semantics(
     )
 
 
+# ---------------------------------------------------------------------------
+# R77 step 5 — contention-loop topology, decision table, contest paths, caps
+# ---------------------------------------------------------------------------
+
+MAX_CONTENTION_CHAINS_PER_CASE: Final[int] = 3
+MAX_BOUND_CONTENTION_DOCUMENTS_PER_CASE: Final[int] = 15
+MAX_CONTENTIONS_PER_LOOP_DOCUMENT: Final[int] = 3
+MAX_ADVOCACY_LETTERS_PER_CASE: Final[int] = 3
+MAX_OBJECTIONS_PER_CASE: Final[int] = 2
+MAX_SUPPLEMENTAL_REQUESTS_PER_CASE: Final[int] = 2
+MAX_SUPPLEMENTAL_REPORTS_PER_CASE: Final[int] = 2
+MAX_QME_AME_DEPOSITIONS_PER_CASE: Final[int] = 1
+"""R31's exact per-case and per-chain caps. A contention chain is keyed by
+``(actor_party, target_medical_opinion_id, path)``; bundled contentions do not
+consume additional chain slots. The 15-document cap counts every BOUND opinion
+report, advocacy letter, objection, supplemental request, supplemental report
+and QME/AME deposition — never unbound legacy candidates or copies forced only
+by ordinary ``documents:`` controls. Explicit cap violations FAIL; sampled
+infeasibility truncates from the tail without redraw. The three-contention cap
+governs loop communications (advocacy bundles and contest chunks); a base
+report realization speaks its full disposition union per R35."""
+
+ROLE_COURT_REPORTER: Final[str] = "court_reporter"
+"""R35 — a deposition transcript's base document author. The examining party
+remains separately available through ``contention_actor_party``."""
+
+#: R29's complete disposition x party decision table:
+#: (contention party, disposition) -> (eligible actor, disposition class).
+#: A "determined_adverse" row proceeds through an objection-led path; a
+#: "completion" row has no conclusion to object to and begins with a
+#: supplemental request. The table is total: every cell names its one actor.
+_R29_DECISION_TABLE: Final[dict[tuple[str, str], tuple[str, str]]] = {
+    ("applicant", "adopted"): ("defense", "determined_adverse"),
+    ("applicant", "concurred"): ("defense", "determined_adverse"),
+    ("applicant", "rejected"): ("applicant", "determined_adverse"),
+    ("applicant", "deferred"): ("applicant", "completion"),
+    ("applicant", "unaddressed"): ("applicant", "completion"),
+    ("defense", "adopted"): ("applicant", "determined_adverse"),
+    ("defense", "concurred"): ("applicant", "determined_adverse"),
+    ("defense", "rejected"): ("defense", "determined_adverse"),
+    ("defense", "deferred"): ("defense", "completion"),
+    ("defense", "unaddressed"): ("defense", "completion"),
+}
+
+#: The stage sequence each ContestPath proposes (R29's permitted chains).
+_PATH_STAGES: Final[dict[str, tuple[str, ...]]] = {
+    "objection_only": ("objection",),
+    "objection_supplemental": (
+        "objection",
+        "supplemental_request",
+        "supplemental_report",
+    ),
+    "objection_deposition": ("objection", "qme_deposition"),
+    "objection_supplemental_deposition": (
+        "objection",
+        "supplemental_request",
+        "supplemental_report",
+        "qme_deposition",
+    ),
+    "supplemental_only": ("supplemental_request", "supplemental_report"),
+    "supplemental_deposition": (
+        "supplemental_request",
+        "supplemental_report",
+        "qme_deposition",
+    ),
+}
+
+#: The four objection-led (determined-adverse) ContestPath literals; the two
+#: completion paths begin at the supplemental request.
+_ADVERSE_CONTEST_PATHS: Final[frozenset[str]] = frozenset(
+    {
+        "objection_only",
+        "objection_supplemental",
+        "objection_deposition",
+        "objection_supplemental_deposition",
+    }
+)
+
+#: R2/R35 exact carrier bindings for the loop communications.
+_LOOP_LETTER_CARRIER: Final[str] = "ADVOCACY_LETTERS_PTP_QME_AME"
+_OBJECTION_TEMPLATE_SUBTYPE: Final[str] = "OBJECTION_TO_QME_AME_REPORT"
+_REQUEST_TEMPLATE_SUBTYPE: Final[str] = "REQUEST_SUPPLEMENTAL_QME_AME_REPORT"
+_DEPOSITION_TEMPLATE_SUBTYPE: Final[str] = "DEPOSITION_TRANSCRIPT_QME_AME"
+_DEPOSITION_CARRIER: Final[str] = "DEPOSITION_TRANSCRIPT"
+_SUPPLEMENTAL_DEFAULT_CARRIER: Final[str] = "SUPPLEMENTAL_QME_AME_REPORT"
+
+#: R28 sampled advocacy carriers by target role; the combined carrier is
+#: available to explicit entries but is never the sampled default.
+_ADVOCACY_SAMPLED_CARRIERS: Final[dict[str, str]] = {
+    "ptp": "ADVOCACY_LETTERS_PTP",
+    "qme": "ADVOCACY_LETTERS_QME",
+    "ame": "ADVOCACY_LETTERS_AME",
+}
+
+#: R27 default canonical carriers for base opinion realizations, by
+#: (author_role, report_stage). The psych carrier overrides for a QME/AME
+#: opinion carrying a bound psych finding.
+_DEFAULT_BASE_CARRIERS: Final[dict[tuple[str, str], str]] = {
+    ("ptp", "interim"): "TREATING_PHYSICIAN_REPORT_PR2",
+    ("ptp", "final"): "TREATING_PHYSICIAN_REPORT_PR4",
+    ("qme", "interim"): "QME_REPORT_INITIAL",
+    ("qme", "final"): "QME_COMPREHENSIVE_REPORT",
+    ("ame", "interim"): "AME_REPORT",
+    ("ame", "final"): "AME_COMPREHENSIVE_REPORT",
+}
+_PSYCH_BASE_CARRIER: Final[str] = "PSYCH_EVAL_REPORT_QME_AME"
+
+#: Substrate-only registry keys an explicit ``subtype`` may never state (R40);
+#: R2 supplies them internally as ``template_subtype``.
+_SUBSTRATE_ONLY_LOOP_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        _OBJECTION_TEMPLATE_SUBTYPE,
+        _REQUEST_TEMPLATE_SUBTYPE,
+        _DEPOSITION_TEMPLATE_SUBTYPE,
+    }
+)
+
+
+def _loop_surfaces():  # pragma: no cover - trivial import indirection
+    """The R8 governed surface sets, imported lazily.
+
+    ``medical_story`` imports this module at top level, so the R27/R40 carrier
+    compatibility checks reach R8's frozen sets through a deferred import —
+    the same pattern ``_condition_targets`` uses for the clinical catalog.
+    """
+    from wc_caseload_engine import medical_story as story_module
+
+    return story_module
+
+
+def _compatible_realization_carriers(opinion: MedicalOpinion) -> frozenset[str]:
+    """The R27 carrier compatibility set for one opinion event."""
+    surfaces = _loop_surfaces()
+    if opinion.event_kind == "deposition":
+        return frozenset({_DEPOSITION_CARRIER})
+    if opinion.event_kind == "supplemental_report":
+        return frozenset(surfaces.SUPPLEMENTAL_MEDLEGAL_SURFACES)
+    if opinion.author_role == "ptp":
+        return frozenset(surfaces.PTP_CAUSATION_SURFACES)
+    return frozenset(
+        surfaces.INITIAL_MEDLEGAL_SURFACES | surfaces.PSYCH_MEDLEGAL_SURFACES
+    )
+
+
+def _default_realization_carrier(opinion: MedicalOpinion) -> str:
+    """R27's default carrier selection for one opinion event."""
+    if opinion.event_kind == "deposition":
+        return _DEPOSITION_CARRIER
+    if opinion.event_kind == "supplemental_report":
+        return _SUPPLEMENTAL_DEFAULT_CARRIER
+    if opinion.author_role in ("qme", "ame") and opinion.psych_injury_kind is not None:
+        return _PSYCH_BASE_CARRIER
+    return _DEFAULT_BASE_CARRIERS[(opinion.author_role, opinion.report_stage)]
+
+
+def _realization_document_kind(opinion: MedicalOpinion) -> str:
+    return {
+        "base_report": "opinion_report",
+        "supplemental_report": "supplemental_report",
+        "deposition": "qme_deposition",
+    }[opinion.event_kind]
+
+
+def _story_opinion_key(
+    seed: CaseSeed,
+    opinion: MedicalOpinion,
+    explicit_opinion_ids: frozenset[str],
+) -> StorySemanticKey:
+    """The R45 ``O`` identity for one ledger opinion (explicit or sampled base).
+
+    Sampled response opinions never route through here — their
+    ``sampled_response`` keys are composed at draft time from the predecessor
+    key and the revisited ``C`` keys, before any ID exists.
+    """
+    if opinion.id in explicit_opinion_ids:
+        return ("case", seed.case_id, "opinion", "explicit", opinion.id)
+    return _story_sampled_base_opinion_key(seed, opinion)
+
+
+def _classification_of(opinion_view: _OpinionView, contention_id: str) -> str:
+    if contention_id in opinion_view.endorses:
+        return "adopted"
+    if contention_id in opinion_view.concurs:
+        return "concurred"
+    if contention_id in opinion_view.rejects:
+        return "rejected"
+    if contention_id in opinion_view.defers:
+        return "deferred"
+    return "unaddressed"
+
+
+def _concerns_apportionment_or_psych(
+    contention: Contention,
+    ledger: MedicalAssertionLedger,
+    history: AssertionWorldProjection,
+) -> bool:
+    """R30's "concerning apportionment or psych" predicate, all six arms.
+
+    The "addressed by a relevant ApportionmentAssertion" arm reads a row that
+    links the contention directly or cites the contention's own target entity
+    — the implemented reading of "relevant", flagged for the spec author.
+    """
+    if contention.claim_type in ("apportionment_defense", "psych_add_on"):
+        return True
+    if contention.requested_apportionment is not None:
+        return True
+    if contention.psych_injury_kind is not None:
+        return True
+    if contention.target_body_part == "psyche":
+        return True
+    if contention.target_condition_id is not None:
+        condition = history.condition(contention.target_condition_id)
+        if condition is not None and condition.body_system == "psychiatric":
+            return True
+    for row in ledger.apportionment_assertions:
+        if row.linked_contention_id == contention.id:
+            return True
+        if (
+            contention.target_condition_id is not None
+            and contention.target_condition_id in row.condition_ids
+        ):
+            return True
+        if (
+            contention.target_prior_claim_id is not None
+            and contention.target_prior_claim_id in row.prior_claim_ids
+        ):
+            return True
+        if (
+            contention.target_prior_award_id is not None
+            and contention.target_prior_award_id in row.prior_award_ids
+        ):
+            return True
+    return False
+
+
+@dataclass(frozen=True, slots=True)
+class _OpinionView:
+    """One predecessor's semantic surface — ledger opinion or sampled draft.
+
+    The response builder reads predecessors through this one shape so a
+    deposition examining a sampled supplemental (whose opinion has no final ID
+    yet) uses exactly the machinery a ledger predecessor uses.
+    """
+
+    ref: str
+    author_role: str
+    report_stage: str
+    report_date: dt.date
+    apportionment_state: str
+    determination_kind: str | None
+    determination_rationale: str | None
+    reviewed_condition_ids: tuple[str, ...]
+    reviewed_prior_claim_ids: tuple[str, ...]
+    reviewed_prior_award_ids: tuple[str, ...]
+    endorses: frozenset[str]
+    concurs: frozenset[str]
+    rejects: frozenset[str]
+    defers: frozenset[str]
+    psych_injury_kind: str | None
+    aoe_coe_finding: str | None
+    aoe_coe_rationale: str | None
+    rows: tuple[ApportionmentAssertion, ...]
+    event_kind: str
+    key: StorySemanticKey
+    explicit: bool
+
+
+def _view_of_ledger_opinion(
+    opinion: MedicalOpinion,
+    ledger: MedicalAssertionLedger,
+    key: StorySemanticKey,
+    *,
+    explicit: bool,
+) -> _OpinionView:
+    return _OpinionView(
+        ref=opinion.id,
+        author_role=opinion.author_role,
+        report_stage=opinion.report_stage,
+        report_date=opinion.report_date,
+        apportionment_state=opinion.apportionment_state,
+        determination_kind=opinion.determination_kind,
+        determination_rationale=opinion.determination_rationale,
+        reviewed_condition_ids=opinion.reviewed_condition_ids,
+        reviewed_prior_claim_ids=opinion.reviewed_prior_claim_ids,
+        reviewed_prior_award_ids=opinion.reviewed_prior_award_ids,
+        endorses=frozenset(opinion.endorses_contention_ids),
+        concurs=frozenset(opinion.concurs_with_contention_ids),
+        rejects=frozenset(opinion.rejects_contention_ids),
+        defers=frozenset(opinion.defers_contention_ids),
+        psych_injury_kind=opinion.psych_injury_kind,
+        aoe_coe_finding=opinion.aoe_coe_finding,
+        aoe_coe_rationale=opinion.aoe_coe_rationale,
+        rows=ledger.assertions_of(opinion.id),
+        event_kind=opinion.event_kind,
+        key=key,
+        explicit=explicit,
+    )
+
+
+@dataclass(slots=True)
+class _ResponseDraft:
+    """One sampled response opinion, complete except for its final ID."""
+
+    placeholder: str
+    opinion: MedicalOpinion
+    rows: list[ApportionmentAssertion]
+    key: StorySemanticKey
+    responds_to_ref: str
+    supersedes_ref: str | None
+
+    def view(self) -> _OpinionView:
+        return _OpinionView(
+            ref=self.placeholder,
+            author_role=self.opinion.author_role,
+            report_stage=self.opinion.report_stage,
+            report_date=self.opinion.report_date,
+            apportionment_state=self.opinion.apportionment_state,
+            determination_kind=self.opinion.determination_kind,
+            determination_rationale=self.opinion.determination_rationale,
+            reviewed_condition_ids=self.opinion.reviewed_condition_ids,
+            reviewed_prior_claim_ids=self.opinion.reviewed_prior_claim_ids,
+            reviewed_prior_award_ids=self.opinion.reviewed_prior_award_ids,
+            endorses=frozenset(self.opinion.endorses_contention_ids),
+            concurs=frozenset(self.opinion.concurs_with_contention_ids),
+            rejects=frozenset(self.opinion.rejects_contention_ids),
+            defers=frozenset(self.opinion.defers_contention_ids),
+            psych_injury_kind=self.opinion.psych_injury_kind,
+            aoe_coe_finding=self.opinion.aoe_coe_finding,
+            aoe_coe_rationale=self.opinion.aoe_coe_rationale,
+            rows=tuple(self.rows),
+            event_kind=self.opinion.event_kind,
+            key=self.key,
+            explicit=False,
+        )
+
+
+@dataclass(slots=True)
+class _BindingDraft:
+    """One contention-document decision before the final ID pass."""
+
+    document_kind: str
+    subtype: str | None
+    template_subtype: str | None
+    proposed_date: dt.date | None
+    doc_date: dt.date | None
+    medical_opinion_ref: str | None
+    target_ref: str | None
+    spoken: tuple[str, ...]
+    actor_party: str | None
+    theories: tuple[str, ...]
+    source: str
+    explicit_id: str | None = None
+    d_key: StorySemanticKey | None = None
+
+
+@dataclass(slots=True)
+class _AdvocacyLetter:
+    """One sampled standalone advocacy letter (R28/R52)."""
+
+    actor: str
+    target_ref: str
+    target_key: StorySemanticKey
+    target_role: str
+    target_report_date: dt.date
+    contention_refs: tuple[str, ...]
+    d_key: StorySemanticKey
+    subtype: str
+
+
+@dataclass(slots=True)
+class _AdvocacyPlan:
+    letters: list[_AdvocacyLetter] = field(default_factory=list)
+    qualifying_communications: dict[str, tuple[StorySemanticKey, ...]] = field(
+        default_factory=dict
+    )
+
+
+def _advocacy_d_key(
+    seed: CaseSeed,
+    actor: str,
+    target_key: StorySemanticKey,
+    spoken_c_keys: tuple[StorySemanticKey, ...],
+) -> StorySemanticKey:
+    return (
+        "case",
+        seed.case_id,
+        "contention_document",
+        "advocacy",
+        actor,
+        None,
+        target_key,
+        tuple(sorted(spoken_c_keys, key=canonical_story_key)),
+    )
+
+
+def _contest_d_key(
+    seed: CaseSeed,
+    document_kind: str,
+    actor: str | None,
+    current_key: StorySemanticKey | None,
+    target_key: StorySemanticKey | None,
+    spoken_c_keys: tuple[StorySemanticKey, ...],
+) -> StorySemanticKey:
+    return (
+        "case",
+        seed.case_id,
+        "contention_document",
+        document_kind,
+        actor,
+        current_key,
+        target_key,
+        tuple(sorted(spoken_c_keys, key=canonical_story_key)),
+    )
+
+
+def _derive_advocacy(
+    seed: CaseSeed,
+    scenario: object,
+    context: AssertionValidationContext,
+    ledger: MedicalAssertionLedger,
+    contention_keys: dict[str, StorySemanticKey],
+    explicit_opinion_ids: frozenset[str],
+) -> _AdvocacyPlan:
+    """R28/R52 — sampled standalone advocacy, derived before dispositions.
+
+    One ``advocacy-incidence`` draw per R28-eligible contention/target pair;
+    provisional winners stable-sorted by contention semantic key; one
+    ``advocacy-bundle-size`` draw per provisional bundle (a single winner
+    forms a size-one letter without a draw); explicitly reserved contention
+    IDs removed from the formed bundles WITHOUT redraw or repacking; empty
+    bundles suppressed without replacement. Eligibility never inspects
+    evidence disposition or quality (R52), and a sampled PTP letter is
+    applicant-authored (R28).
+
+    The qualifying-communication map covers exactly the letters that target
+    the sampled QME/AME evaluator opinion — R38's advocacy channel; explicit
+    letters can only reference explicit opinions and explicit opinions keep
+    their authored dispositions, so neither enters the map.
+    """
+    plan = _AdvocacyPlan()
+    if not getattr(scenario, "sample_contention_documents", True):
+        return plan
+    reserved: dict[tuple[str, str], set[str]] = {}
+    for entry in getattr(scenario, "contention_documents", []):
+        if entry.document_kind != "advocacy":
+            continue
+        reserved.setdefault(
+            (entry.actor_party, entry.target_medical_opinion_id), set()
+        ).update(entry.spoken_contention_ids)
+
+    minimum_window_start = context.date_of_injury + dt.timedelta(days=1)
+    for opinion in ledger.medical_opinions:
+        if opinion.event_kind != "base_report":
+            continue
+        role = opinion.author_role
+        target_key = _story_opinion_key(seed, opinion, explicit_opinion_ids)
+        for actor in ("applicant", "defense"):
+            rate = ADVOCACY_INCIDENCE.value.get((role, actor))
+            if rate is None:
+                continue
+            # A letter must be able to strictly precede its target within the
+            # case window (injury + 1 day .. horizon): a strictly earlier day
+            # must exist at or after the window start.
+            if opinion.report_date <= minimum_window_start:
+                continue
+            winners: list[Contention] = []
+            for contention in ledger.contentions:
+                if contention.party != actor:
+                    continue
+                incidence = _medical_story_rng(
+                    seed,
+                    "advocacy-incidence",
+                    (
+                        "case",
+                        seed.case_id,
+                        target_key,
+                        contention_keys[contention.id],
+                        actor,
+                    ),
+                )
+                if _fraction_draw(incidence, rate):
+                    winners.append(contention)
+            winners.sort(
+                key=lambda c: canonical_story_key(contention_keys[c.id])
+            )
+            remaining = list(winners)
+            bundles: list[list[Contention]] = []
+            while remaining:
+                if len(remaining) == 1:
+                    bundles.append([remaining.pop(0)])
+                    continue
+                sizes = tuple(
+                    (size, weight)
+                    for size, weight in ADVOCACY_BUNDLE_SIZE_WEIGHTS.value
+                    if size <= len(remaining)
+                )
+                total = sum(weight for _size, weight in sizes)
+                chooser = _medical_story_rng(
+                    seed,
+                    "advocacy-bundle-size",
+                    (
+                        "case",
+                        seed.case_id,
+                        target_key,
+                        actor,
+                        contention_keys[remaining[0].id],
+                        tuple(
+                            contention_keys[c.id] for c in remaining
+                        ),
+                    ),
+                )
+                index = _weighted_index(
+                    chooser, tuple(weight / total for _size, weight in sizes)
+                )
+                size = sizes[index][0]
+                bundles.append(remaining[:size])
+                remaining = remaining[size:]
+            reserved_ids = reserved.get((actor, opinion.id), set())
+            for bundle in bundles:
+                kept = [c for c in bundle if c.id not in reserved_ids]
+                if not kept:
+                    continue
+                spoken_keys = tuple(contention_keys[c.id] for c in kept)
+                letter = _AdvocacyLetter(
+                    actor=actor,
+                    target_ref=opinion.id,
+                    target_key=target_key,
+                    target_role=role,
+                    target_report_date=opinion.report_date,
+                    contention_refs=tuple(c.id for c in kept),
+                    d_key=_advocacy_d_key(seed, actor, target_key, spoken_keys),
+                    subtype=_ADVOCACY_SAMPLED_CARRIERS[role],
+                )
+                plan.letters.append(letter)
+                if role in ("qme", "ame") and opinion.id not in explicit_opinion_ids:
+                    for contention in kept:
+                        existing = plan.qualifying_communications.get(
+                            contention.id, ()
+                        )
+                        plan.qualifying_communications[contention.id] = tuple(
+                            sorted(
+                                (*existing, letter.d_key),
+                                key=canonical_story_key,
+                            )
+                        )
+    return plan
+
+
+@dataclass(slots=True)
+class _ChainChunk:
+    """One bundled chunk of one sampled contest chain."""
+
+    actor: str
+    target: MedicalOpinion
+    target_key: StorySemanticKey
+    target_explicit: bool
+    path: str
+    disposition_class: str
+    contentions: tuple[Contention, ...]
+    theories: tuple[str, ...] = ()
+
+
+def _derive_contest_chunks(
+    seed: CaseSeed,
+    scenario: object,
+    context: AssertionValidationContext,
+    history: AssertionWorldProjection,
+    ledger: MedicalAssertionLedger,
+    contention_keys: dict[str, StorySemanticKey],
+    explicit_opinion_ids: frozenset[str],
+) -> list[_ChainChunk]:
+    """R29/R30/R50/R51 — opportunities, incidence, paths, chunks, theories.
+
+    Opportunities enumerate QME/AME base reports plus EXPLICIT supplemental
+    reports only: a sampled supplemental never becomes the source of another
+    sampled chain (R29 non-recursion), and a deposition is terminal. Each
+    ``(actor, opinion, contention)`` opportunity draws once from its own
+    incidence family; a fired opportunity draws its path once; contentions
+    sharing ``(actor, target, path)`` are bundled deterministically — sorted
+    by contention semantic key, chunked at three, membership retained through
+    every stage. A sampled defense chain draws its theory count and its
+    weighted-without-replacement theory selection from two chain-keyed
+    streams and copies the ordered tuple to every attorney-authored document.
+    """
+    chunks: list[_ChainChunk] = []
+    if not getattr(scenario, "sample_contention_documents", True):
+        return chunks
+    fired: dict[tuple[str, str, str], list[Contention]] = {}
+    targets: dict[str, tuple[MedicalOpinion, StorySemanticKey, bool]] = {}
+    for opinion in ledger.medical_opinions:
+        if opinion.author_role == "ptp":
+            continue
+        explicit = opinion.id in explicit_opinion_ids
+        if opinion.event_kind == "deposition":
+            continue
+        if opinion.event_kind == "supplemental_report" and not explicit:
+            continue
+        opinion_key = _story_opinion_key(seed, opinion, explicit_opinion_ids)
+        view = _view_of_ledger_opinion(
+            opinion, ledger, opinion_key, explicit=explicit
+        )
+        for contention in ledger.contentions:
+            disposition = _classification_of(view, contention.id)
+            actor, disposition_class = _R29_DECISION_TABLE[
+                (contention.party, disposition)
+            ]
+            if actor == "defense":
+                if not _concerns_apportionment_or_psych(
+                    contention, ledger, history
+                ):
+                    continue  # outside R30: zero probability, no stream
+                family = "defense-contest-incidence"
+                rate = P_DEFENSE_CONTEST.value
+            elif disposition_class == "determined_adverse":
+                family = "applicant-contest-incidence"
+                rate = P_APPLICANT_CONTEST.value
+            else:
+                family = "completion-incidence"
+                rate = P_APPLICANT_COMPLETION_REQUEST.value
+            x_key: StorySemanticKey = (
+                "case",
+                seed.case_id,
+                "opportunity",
+                actor,
+                disposition_class,
+                opinion_key,
+                contention_keys[contention.id],
+            )
+            incidence = _medical_story_rng(
+                seed, family, ("case", seed.case_id, x_key)
+            )
+            if not _fraction_draw(incidence, rate):
+                continue
+            weights_table = (
+                ADVERSE_CONTEST_PATH_WEIGHTS.value[actor]
+                if disposition_class == "determined_adverse"
+                else COMPLETION_PATH_WEIGHTS.value[actor]
+            )
+            chooser = _medical_story_rng(
+                seed, "contest-path", ("case", seed.case_id, x_key)
+            )
+            index = _weighted_index(
+                chooser, tuple(weight for _path, weight in weights_table)
+            )
+            path = weights_table[index][0]
+            fired.setdefault((actor, opinion.id, path), []).append(contention)
+            targets[opinion.id] = (opinion, opinion_key, explicit)
+
+    def chain_sort_key(item: tuple[str, str, str]) -> tuple[str, str, str]:
+        actor, target_ref, path = item
+        _opinion, target_key, _explicit = targets[target_ref]
+        return (actor, canonical_story_key(target_key), path)
+
+    for actor, target_ref, path in sorted(fired, key=chain_sort_key):
+        opinion, target_key, explicit = targets[target_ref]
+        members = sorted(
+            fired[(actor, target_ref, path)],
+            key=lambda c: canonical_story_key(contention_keys[c.id]),
+        )
+        for start in range(0, len(members), MAX_CONTENTIONS_PER_LOOP_DOCUMENT):
+            chunk_members = tuple(
+                members[start : start + MAX_CONTENTIONS_PER_LOOP_DOCUMENT]
+            )
+            chunk = _ChainChunk(
+                actor=actor,
+                target=opinion,
+                target_key=target_key,
+                target_explicit=explicit,
+                path=path,
+                disposition_class=(
+                    "determined_adverse"
+                    if path in _ADVERSE_CONTEST_PATHS
+                    else "completion"
+                ),
+                contentions=chunk_members,
+            )
+            if actor == "defense":
+                first_kind = (
+                    "objection"
+                    if chunk.disposition_class == "determined_adverse"
+                    else "supplemental_request"
+                )
+                spoken_keys = tuple(
+                    contention_keys[c.id] for c in chunk.contentions
+                )
+                chain_d_key = _contest_d_key(
+                    seed, first_kind, actor, None, target_key, spoken_keys
+                )
+                counts = DEFENSE_THEORY_COUNT_WEIGHTS.value
+                count_rng = _medical_story_rng(
+                    seed,
+                    "defense-theory-count",
+                    ("case", seed.case_id, chain_d_key),
+                )
+                count = counts[
+                    _weighted_index(
+                        count_rng, tuple(weight for _n, weight in counts)
+                    )
+                ][0]
+                selection_rng = _medical_story_rng(
+                    seed,
+                    "defense-theory-selection",
+                    ("case", seed.case_id, chain_d_key),
+                )
+                pool = list(DEFENSE_THEORY_WEIGHTS.value)
+                selected: list[str] = []
+                for _ in range(count):
+                    total = sum(weight for _theory, weight in pool)
+                    index = _weighted_index(
+                        selection_rng,
+                        tuple(weight / total for _theory, weight in pool),
+                    )
+                    selected.append(pool[index][0])
+                    pool.pop(index)
+                chunk.theories = tuple(selected)
+            chunks.append(chunk)
+    return chunks
+
+
+def _predecessor_row_key(
+    view: _OpinionView, row: ApportionmentAssertion
+) -> StorySemanticKey:
+    """The R55 predecessor-assertion identity for one changed row."""
+    if view.explicit:
+        return ("apportionment", "explicit", row.id)
+    if view.event_kind == "base_report":
+        return ("apportionment", "sampled", view.author_role, row.body_part)
+    return ("apportionment", "sampled_response", view.key, row.body_part)
+
+
+def _new_record_candidate(
+    history: AssertionWorldProjection, view: _OpinionView
+) -> tuple[str, str] | None:
+    """R54's deterministic newly-acknowledged record, or ``None``.
+
+    Selected by record family, source date, and stable ledger ID from the
+    visible world entities the predecessor never reviewed, respecting R37's
+    reviewed-ID caps (8/5/5, combined 12). No stream is consumed.
+    """
+    reviewed = {
+        ("condition", ref) for ref in view.reviewed_condition_ids
+    } | {("prior_claim", ref) for ref in view.reviewed_prior_claim_ids} | {
+        ("prior_award", ref) for ref in view.reviewed_prior_award_ids
+    }
+    combined = len(reviewed)
+    if combined >= REVIEWED_IDS_COMBINED_CAP:
+        return None
+    candidates: list[tuple[str, str, str]] = []
+    for condition in history.conditions:
+        if condition.surfaces_in_file and len(view.reviewed_condition_ids) < 8:
+            onset = condition.onset.isoformat() if condition.onset else ""
+            candidates.append(("condition", onset, condition.id))
+    for claim in history.prior_claims:
+        if len(view.reviewed_prior_claim_ids) < 5:
+            candidates.append(
+                ("prior_claim", claim.date_of_injury.isoformat(), claim.id)
+            )
+    for award in history.awards:
+        if len(view.reviewed_prior_award_ids) < 5:
+            candidates.append(
+                ("prior_award", award.award_date.isoformat(), award.id)
+            )
+    for family, _date, ref in sorted(candidates):
+        if (family, ref) not in reviewed:
+            return (family, ref)
+    return None
+
+
+_RESPONSE_RATIONALES: Final[dict[str, str]] = {
+    "unchanged_additional_reasoning": (
+        "the prior conclusions stand; additional reasoning addresses the "
+        "questions presented"
+    ),
+    "new_records_no_change": (
+        "the newly received records were reviewed and do not change the "
+        "stated conclusions"
+    ),
+    "revised_causation": (
+        "the revised conclusions rest on further review of the record"
+    ),
+    "revised_apportionment": (
+        "the revised percentages rest on further review of the documented "
+        "pathology"
+    ),
+    "revised_causation_and_apportionment": (
+        "the revised conclusions and percentages rest on further review of "
+        "the record"
+    ),
+}
+
+_RESPONSE_REVISION_RATIONALES: Final[dict[str, str]] = {
+    "revised_causation": (
+        "the causation analysis is revised on further review of the record"
+    ),
+    "revised_apportionment": (
+        "the apportionment percentages are revised on further review"
+    ),
+    "revised_causation_and_apportionment": (
+        "the causation and apportionment conclusions are revised on further "
+        "review"
+    ),
+}
+
+_REVISED_AOE_RATIONALE: Final[str] = (
+    "on further consideration the causal analysis is restated with revised "
+    "reasoning"
+)
+
+
+def _draft_response_opinion(
+    seed: CaseSeed,
+    context: AssertionValidationContext,
+    history: AssertionWorldProjection,
+    chunk: _ChainChunk,
+    predecessor: _OpinionView,
+    contention_keys: dict[str, StorySemanticKey],
+    *,
+    event_kind: str,
+    trigger_class: str,
+    report_date: dt.date,
+    request_d_key: StorySemanticKey | None,
+    placeholder: str,
+) -> _ResponseDraft:
+    """R37/R38/R53/R54/R55 — one sampled supplemental or deposition opinion.
+
+    Adoption draws come first (one per eligible revisited pair — R53's
+    structural denominator; the qualifying communication is the bound
+    supplemental request), then the trigger-conditioned compatible revision
+    kind (a prospective disposition change restricts the pool to
+    causation-capable kinds), then the content that realizes exactly that
+    kind's R37 predicate: no-change kinds restate the predecessor's complete
+    semantic surface; causation kinds apply the drawn classifications (an
+    indeterminate revisited pair re-draws deferred-versus-unaddressed) and
+    fall back to a revised causation rationale when the applied results
+    happen to equal the predecessor's; apportionment kinds change exactly one
+    allocated row through the R55 register/value streams with the
+    predecessor's percentage excluded. A deposition revision is a new
+    ``MedicalOpinion(event_kind="deposition")``, never an in-place mutation.
+    """
+    revisited_keys = tuple(
+        sorted(
+            (contention_keys[c.id] for c in chunk.contentions),
+            key=canonical_story_key,
+        )
+    )
+    response_key: StorySemanticKey = (
+        "case",
+        seed.case_id,
+        "opinion",
+        "sampled_response",
+        event_kind,
+        predecessor.author_role,
+        predecessor.key,
+        revisited_keys,
+    )
+
+    prospective: dict[str, str | None] = {}
+    for contention in chunk.contentions:
+        evidence = contention_evidence(history, context, contention)
+        if evidence == "supports":
+            if event_kind == "supplemental_report" and request_d_key is not None:
+                prospective[contention.id] = _qme_ame_supported_disposition(
+                    seed,
+                    response_key,
+                    contention_keys[contention.id],
+                    (request_d_key,),
+                )
+            else:
+                prospective[contention.id] = "concurred"
+        elif evidence == "contradicts":
+            prospective[contention.id] = "rejected"
+        else:
+            prospective[contention.id] = None  # indeterminate: kind-gated draw
+
+    prospective_changed = any(
+        result is not None
+        and result != _classification_of(predecessor, contention_id)
+        for contention_id, result in prospective.items()
+    )
+    record_candidate = _new_record_candidate(history, predecessor)
+    can_change_apportionment = (
+        predecessor.determination_kind == "allocated" and bool(predecessor.rows)
+    )
+    kind = _draw_revision_kind(
+        seed,
+        response_key,
+        predecessor.key,
+        trigger_class,
+        can_acknowledge_new_records=record_candidate is not None,
+        can_change_apportionment=can_change_apportionment,
+        can_change_causation=True,
+        adoption_changed_disposition=prospective_changed,
+    )
+
+    endorses = set(predecessor.endorses)
+    concurs = set(predecessor.concurs)
+    rejects = set(predecessor.rejects)
+    defers = set(predecessor.defers)
+    aoe_coe_rationale = predecessor.aoe_coe_rationale
+    causation_capable = kind in _CAUSATION_CAPABLE_REVISION_KINDS
+    if causation_capable:
+        for contention in chunk.contentions:
+            result = prospective[contention.id]
+            if result is None:
+                result = _qme_ame_indeterminate_disposition(
+                    seed, response_key, contention_keys[contention.id]
+                )
+            for collection in (endorses, concurs, rejects, defers):
+                collection.discard(contention.id)
+            if result == "adopted":
+                endorses.add(contention.id)
+            elif result == "concurred":
+                concurs.add(contention.id)
+            elif result == "rejected":
+                rejects.add(contention.id)
+            elif result == "deferred":
+                defers.add(contention.id)
+        unchanged_sets = (
+            endorses == predecessor.endorses
+            and concurs == predecessor.concurs
+            and rejects == predecessor.rejects
+            and defers == predecessor.defers
+        )
+        if unchanged_sets:
+            revised = _REVISED_AOE_RATIONALE
+            if revised == predecessor.aoe_coe_rationale:
+                revised = f"{revised} (supplemental restatement)"
+            aoe_coe_rationale = revised
+
+    reviewed_conditions = list(predecessor.reviewed_condition_ids)
+    reviewed_claims = list(predecessor.reviewed_prior_claim_ids)
+    reviewed_awards = list(predecessor.reviewed_prior_award_ids)
+    if kind == "new_records_no_change" and record_candidate is not None:
+        family, ref = record_candidate
+        {
+            "condition": reviewed_conditions,
+            "prior_claim": reviewed_claims,
+            "prior_award": reviewed_awards,
+        }[family].append(ref)
+
+    rows: list[ApportionmentAssertion] = []
+    if predecessor.determination_kind == "allocated":
+        ordered_rows = sorted(predecessor.rows, key=lambda row: row.body_part)
+        change_rows = kind in (
+            "revised_apportionment",
+            "revised_causation_and_apportionment",
+        )
+        for index, row in enumerate(ordered_rows):
+            if change_rows and index == 0:
+                new_percent = _draw_revision_percentage(
+                    seed,
+                    response_key,
+                    row.body_part,
+                    _predecessor_row_key(predecessor, row),
+                    predecessor_nonindustrial=row.nonindustrial_percent,
+                    require_change=True,
+                )
+                rows.append(
+                    row.model_copy(
+                        update={
+                            "id": "app-99",
+                            "opinion_id": "opn-99",
+                            "industrial_percent": 100 - new_percent,
+                            "nonindustrial_percent": new_percent,
+                            "revised_from_percent": row.nonindustrial_percent,
+                            "revision_rationale": (
+                                "the revised share follows the supplemental "
+                                "analysis of the record"
+                            ),
+                        }
+                    )
+                )
+            else:
+                rows.append(
+                    row.model_copy(
+                        update={
+                            "id": "app-99",
+                            "opinion_id": "opn-99",
+                            "revised_from_percent": None,
+                            "revision_rationale": None,
+                        }
+                    )
+                )
+
+    revising = kind in (
+        "revised_causation",
+        "revised_apportionment",
+        "revised_causation_and_apportionment",
+    )
+    supersedes_ref = predecessor.ref if revising else None
+    opinion = MedicalOpinion(
+        id="opn-99",  # labelled in the final subphased pass
+        author_role=predecessor.author_role,  # type: ignore[arg-type]
+        report_stage=predecessor.report_stage,  # type: ignore[arg-type]
+        report_date=report_date,
+        apportionment_state=predecessor.apportionment_state,  # type: ignore[arg-type]
+        determination_kind=predecessor.determination_kind,  # type: ignore[arg-type]
+        determination_rationale=predecessor.determination_rationale,
+        examination_performed=False,
+        reviewed_condition_ids=tuple(reviewed_conditions),
+        reviewed_prior_claim_ids=tuple(reviewed_claims),
+        reviewed_prior_award_ids=tuple(reviewed_awards),
+        endorses_contention_ids=tuple(
+            ref for ref in _ordered_refs(endorses, predecessor, chunk)
+        ),
+        concurs_with_contention_ids=tuple(
+            ref for ref in _ordered_refs(concurs, predecessor, chunk)
+        ),
+        rejects_contention_ids=tuple(
+            ref for ref in _ordered_refs(rejects, predecessor, chunk)
+        ),
+        defers_contention_ids=tuple(
+            ref for ref in _ordered_refs(defers, predecessor, chunk)
+        ),
+        responds_to_opinion_id="opn-98",  # placeholder; resolved at labeling
+        supersedes_opinion_id="opn-98" if supersedes_ref is not None else None,
+        rationale=_RESPONSE_RATIONALES[kind],
+        revision_rationale=_RESPONSE_REVISION_RATIONALES.get(kind),
+        event_kind=event_kind,  # type: ignore[arg-type]
+        revision_kind=kind,  # type: ignore[arg-type]
+        psych_injury_kind=predecessor.psych_injury_kind,  # type: ignore[arg-type]
+        aoe_coe_finding=predecessor.aoe_coe_finding,  # type: ignore[arg-type]
+        aoe_coe_rationale=aoe_coe_rationale,
+        quality="supported",
+    )
+    return _ResponseDraft(
+        placeholder=placeholder,
+        opinion=opinion,
+        rows=rows,
+        key=response_key,
+        responds_to_ref=predecessor.ref,
+        supersedes_ref=supersedes_ref,
+    )
+
+
+def _ordered_refs(
+    selected: set[str], predecessor: _OpinionView, chunk: _ChainChunk
+) -> list[str]:
+    """Deterministic collection order for a response's disposition tuples.
+
+    Predecessor-classified IDs first (sorted — a frozenset carries no order),
+    then the revisited chunk members in their chunk order; each ID once.
+    """
+    ordered: list[str] = []
+    seen: set[str] = set()
+    predecessor_ids = (
+        predecessor.endorses
+        | predecessor.concurs
+        | predecessor.rejects
+        | predecessor.defers
+    )
+    for ref in (*sorted(predecessor_ids), *(c.id for c in chunk.contentions)):
+        if ref in selected and ref not in seen:
+            ordered.append(ref)
+            seen.add(ref)
+    return ordered
+
+
+def _explicit_chain_signature(
+    kinds: frozenset[str],
+) -> str:
+    """The chain-cap grouping label for one explicit attorney-document set.
+
+    Maps the present contest kinds onto the ContestPath literal they spell;
+    an explicit shape outside the six sampled literals (a lone deposition)
+    keys under its own deterministic label — explicit authoring is free-form,
+    and the label only groups documents for the R31 chain cap.
+    """
+    has_objection = "objection" in kinds
+    has_supplemental = "supplemental_request" in kinds
+    has_deposition = "qme_deposition" in kinds
+    mapping = {
+        (True, False, False): "objection_only",
+        (True, True, False): "objection_supplemental",
+        (True, False, True): "objection_deposition",
+        (True, True, True): "objection_supplemental_deposition",
+        (False, True, False): "supplemental_only",
+        (False, True, True): "supplemental_deposition",
+        (False, False, True): "deposition_only",
+    }
+    return mapping[(has_objection, has_supplemental, has_deposition)]
+
+
+def _r41_collision_key(entry: object) -> tuple[object, ...]:
+    """R41's exact collision identity for one explicit document entry."""
+    return (
+        entry.document_kind,  # type: ignore[attr-defined]
+        entry.actor_party,  # type: ignore[attr-defined]
+        entry.medical_opinion_id,  # type: ignore[attr-defined]
+        entry.target_medical_opinion_id,  # type: ignore[attr-defined]
+        tuple(sorted(entry.spoken_contention_ids)),  # type: ignore[attr-defined]
+    )
+
+
+def _explicit_contention_document_problems(scenario: object) -> list[str]:
+    """R40's per-kind validation of every explicit contention document.
+
+    Everything here fails BEFORE sampling (R41: explicit IDs and references
+    resolve first) and fails rather than truncates (R31): kind/field matrix
+    compatibility with the referenced opinion events, carrier compatibility
+    under R27/R8, the substrate-only-key prohibition, exact date equality and
+    strict ordering for authored dates, actor/party agreement for advocacy,
+    duplicate semantic documents under the R41 collision key, and the
+    explicit per-kind, chain, and opinion caps.
+    """
+    entries = list(getattr(scenario, "contention_documents", []))
+    opinions = {
+        entry.id: entry
+        for entry in getattr(scenario, "medical_opinions", [])
+    }
+    contentions = {
+        entry.id: entry for entry in getattr(scenario, "contentions", [])
+    }
+    problems: list[str] = []
+    seen_collisions: dict[tuple[object, ...], str] = {}
+    surfaces = _loop_surfaces() if entries else None
+
+    for entry in entries:
+        prefix = f"contention document '{entry.id}' ({entry.document_kind})"
+        current = (
+            opinions.get(entry.medical_opinion_id)
+            if entry.medical_opinion_id is not None
+            else None
+        )
+        target = (
+            opinions.get(entry.target_medical_opinion_id)
+            if entry.target_medical_opinion_id is not None
+            else None
+        )
+        collision = _r41_collision_key(entry)
+        if collision in seen_collisions:
+            problems.append(
+                f"{prefix} duplicates the semantic document "
+                f"'{seen_collisions[collision]}'; duplicate semantic "
+                "documents are forbidden"
+            )
+        else:
+            seen_collisions[collision] = entry.id
+        if entry.subtype is not None and entry.subtype in _SUBSTRATE_ONLY_LOOP_KEYS:
+            problems.append(
+                f"{prefix} states substrate-only key '{entry.subtype}' as its "
+                "subtype; R2 supplies the internal template_subtype"
+            )
+            continue
+        if entry.document_kind == "opinion_report" and current is not None:
+            if current.event_kind != "base_report":
+                problems.append(
+                    f"{prefix} names medical opinion '{current.id}' whose "
+                    f"event_kind is '{current.event_kind}'; an opinion_report "
+                    "realizes a base_report"
+                )
+            if entry.doc_date is not None and entry.doc_date != current.report_date:
+                problems.append(
+                    f"{prefix} states doc_date {entry.doc_date.isoformat()} "
+                    f"but opinion '{current.id}' reports on "
+                    f"{current.report_date.isoformat()}; an opinion report's "
+                    "date equals its opinion date"
+                )
+            if entry.subtype is not None and surfaces is not None:
+                compatible = (
+                    frozenset(surfaces.PTP_CAUSATION_SURFACES)
+                    if current.author_role == "ptp"
+                    else frozenset(
+                        surfaces.INITIAL_MEDLEGAL_SURFACES
+                        | surfaces.PSYCH_MEDLEGAL_SURFACES
+                    )
+                )
+                if entry.subtype not in compatible:
+                    problems.append(
+                        f"{prefix} selects carrier '{entry.subtype}', which is "
+                        f"not a compatible R8 carrier for a "
+                        f"{current.author_role} base report"
+                    )
+        if entry.document_kind == "advocacy":
+            if target is not None and target.event_kind != "base_report":
+                problems.append(
+                    f"{prefix} targets opinion '{target.id}' whose event_kind "
+                    f"is '{target.event_kind}'; standalone advocacy precedes a "
+                    "base report only (R28)"
+                )
+            for ref in entry.spoken_contention_ids:
+                spoken = contentions.get(ref)
+                if spoken is not None and spoken.party != entry.actor_party:
+                    problems.append(
+                        f"{prefix} is authored by '{entry.actor_party}' but "
+                        f"speaks contention '{ref}' advanced by "
+                        f"'{spoken.party}'; the letter actor equals the party "
+                        "advancing the spoken contentions (R28)"
+                    )
+            if (
+                entry.doc_date is not None
+                and target is not None
+                and entry.doc_date >= target.report_date
+            ):
+                problems.append(
+                    f"{prefix} states doc_date {entry.doc_date.isoformat()} "
+                    f"but its target opinion '{target.id}' reports on "
+                    f"{target.report_date.isoformat()}; a letter strictly "
+                    "precedes its target report (R34)"
+                )
+            if entry.subtype is not None and surfaces is not None:
+                if entry.subtype not in surfaces.ADVOCACY_LETTER_SURFACES:
+                    problems.append(
+                        f"{prefix} selects carrier '{entry.subtype}', which is "
+                        "not an R8 advocacy carrier"
+                    )
+                elif (
+                    target is not None
+                    and entry.subtype != _LOOP_LETTER_CARRIER
+                    and entry.subtype
+                    != _ADVOCACY_SAMPLED_CARRIERS[target.author_role]
+                ):
+                    problems.append(
+                        f"{prefix} selects role carrier '{entry.subtype}' for "
+                        f"a {target.author_role}-authored target; use the "
+                        "matching role carrier or the combined carrier"
+                    )
+        if entry.document_kind in ("objection", "supplemental_request"):
+            if target is not None and target.author_role == "ptp":
+                problems.append(
+                    f"{prefix} targets PTP opinion '{target.id}'; PTP reports "
+                    "never generate an M3 objection, supplemental request, or "
+                    "QME/AME deposition (R29)"
+                )
+            if target is not None and target.event_kind == "deposition":
+                problems.append(
+                    f"{prefix} targets deposition opinion '{target.id}'; a "
+                    "deposition is terminal (R29)"
+                )
+            if (
+                entry.doc_date is not None
+                and target is not None
+                and entry.doc_date <= target.report_date
+            ):
+                problems.append(
+                    f"{prefix} states doc_date {entry.doc_date.isoformat()} "
+                    f"on or before target opinion '{target.id}''s "
+                    f"{target.report_date.isoformat()}; the contest strictly "
+                    "follows the report it challenges (R34)"
+                )
+            if entry.subtype is not None and entry.subtype != _LOOP_LETTER_CARRIER:
+                problems.append(
+                    f"{prefix} selects carrier '{entry.subtype}'; the "
+                    "objection/request canonical carrier is "
+                    f"'{_LOOP_LETTER_CARRIER}' (R35)"
+                )
+        if entry.document_kind == "supplemental_report" and current is not None:
+            if current.event_kind != "supplemental_report":
+                problems.append(
+                    f"{prefix} names medical opinion '{current.id}' whose "
+                    f"event_kind is '{current.event_kind}'; a supplemental "
+                    "report realizes a supplemental opinion"
+                )
+            elif entry.target_medical_opinion_id != current.responds_to_opinion_id:
+                problems.append(
+                    f"{prefix} targets "
+                    f"'{entry.target_medical_opinion_id}' but opinion "
+                    f"'{current.id}' responds to "
+                    f"'{current.responds_to_opinion_id}'; the target is the "
+                    "immediate predecessor (R40)"
+                )
+            if entry.doc_date is not None and entry.doc_date != current.report_date:
+                problems.append(
+                    f"{prefix} states doc_date {entry.doc_date.isoformat()} "
+                    f"but opinion '{current.id}' reports on "
+                    f"{current.report_date.isoformat()}; the date equals the "
+                    "opinion date"
+                )
+            if (
+                entry.subtype is not None
+                and surfaces is not None
+                and entry.subtype not in surfaces.SUPPLEMENTAL_MEDLEGAL_SURFACES
+            ):
+                problems.append(
+                    f"{prefix} selects carrier '{entry.subtype}', which is "
+                    "not an R8 supplemental carrier"
+                )
+        if entry.document_kind == "qme_deposition" and current is not None:
+            if current.event_kind != "deposition":
+                problems.append(
+                    f"{prefix} names medical opinion '{current.id}' whose "
+                    f"event_kind is '{current.event_kind}'; a QME/AME "
+                    "deposition realizes a deposition opinion"
+                )
+            elif entry.target_medical_opinion_id != current.responds_to_opinion_id:
+                problems.append(
+                    f"{prefix} targets "
+                    f"'{entry.target_medical_opinion_id}' but deposition "
+                    f"opinion '{current.id}' examines "
+                    f"'{current.responds_to_opinion_id}'; the target is the "
+                    "examined report (R40)"
+                )
+            if entry.doc_date is not None and entry.doc_date != current.report_date:
+                problems.append(
+                    f"{prefix} states doc_date {entry.doc_date.isoformat()} "
+                    f"but deposition opinion '{current.id}' is taken on "
+                    f"{current.report_date.isoformat()}; the date equals the "
+                    "opinion date"
+                )
+            if entry.subtype is not None and entry.subtype != _DEPOSITION_CARRIER:
+                problems.append(
+                    f"{prefix} selects carrier '{entry.subtype}'; a deposition "
+                    f"binds exactly '{_DEPOSITION_CARRIER}' (R27)"
+                )
+
+    # Explicit caps fail rather than truncate (R31). Per-kind document counts
+    # include the required realizations the explicit opinions themselves
+    # force; opinion-bound entries replace realizations and never add.
+    kind_counts = Counter(entry.document_kind for entry in entries)
+    supplemental_opinions = sum(
+        1 for o in opinions.values() if o.event_kind == "supplemental_report"
+    )
+    deposition_opinions = sum(
+        1 for o in opinions.values() if o.event_kind == "deposition"
+    )
+    explicit_kind_totals = {
+        "advocacy": kind_counts["advocacy"],
+        "objection": kind_counts["objection"],
+        "supplemental_request": kind_counts["supplemental_request"],
+        "supplemental_report": supplemental_opinions,
+        "qme_deposition": deposition_opinions,
+    }
+    for kind, cap in (
+        ("advocacy", MAX_ADVOCACY_LETTERS_PER_CASE),
+        ("objection", MAX_OBJECTIONS_PER_CASE),
+        ("supplemental_request", MAX_SUPPLEMENTAL_REQUESTS_PER_CASE),
+        ("supplemental_report", MAX_SUPPLEMENTAL_REPORTS_PER_CASE),
+        ("qme_deposition", MAX_QME_AME_DEPOSITIONS_PER_CASE),
+    ):
+        if explicit_kind_totals[kind] > cap:
+            problems.append(
+                f"explicit contention documents state "
+                f"{explicit_kind_totals[kind]} {kind} documents; the per-case "
+                f"cap is {cap} and explicit cap violations fail rather than "
+                "truncate (R31)"
+            )
+    bound_total = (
+        len(opinions)
+        + kind_counts["advocacy"]
+        + kind_counts["objection"]
+        + kind_counts["supplemental_request"]
+    )
+    if bound_total > MAX_BOUND_CONTENTION_DOCUMENTS_PER_CASE:
+        problems.append(
+            f"explicit opinions and contention documents bind {bound_total} "
+            "documents; the per-case bound-document cap is "
+            f"{MAX_BOUND_CONTENTION_DOCUMENTS_PER_CASE} (R31)"
+        )
+    explicit_chains: dict[tuple[str | None, str | None], set[str]] = {}
+    for entry in entries:
+        if entry.document_kind in ("objection", "supplemental_request", "qme_deposition"):
+            explicit_chains.setdefault(
+                (entry.actor_party, entry.target_medical_opinion_id), set()
+            ).add(entry.document_kind)
+    if len(explicit_chains) > MAX_CONTENTION_CHAINS_PER_CASE:
+        problems.append(
+            f"explicit contention documents form {len(explicit_chains)} "
+            "contest chains; the per-case chain cap is "
+            f"{MAX_CONTENTION_CHAINS_PER_CASE} (R31)"
+        )
+    return problems
+
+
+def _band_offset(
+    seed: CaseSeed,
+    family: str,
+    key: StorySemanticKey,
+    band: tuple[int, int],
+    trace: AssertionTrace | None,
+) -> int:
+    """One inclusive R56 raw offset: exactly one ``randint(lower, upper)``."""
+    rng = _medical_story_rng(seed, family, key)
+    offset = rng.randint(band[0], band[1])
+    if trace is not None:
+        trace.story_raw_date_offsets.append((family, offset))
+    return offset
+
+
+@dataclass(slots=True)
+class _StageRecord:
+    stage: str
+    binding: _BindingDraft | None
+    response: _ResponseDraft | None
+
+
+def _derive_contention_loop(
+    seed: CaseSeed,
+    scenario: object,
+    context: AssertionValidationContext,
+    history: AssertionWorldProjection,
+    ledger: MedicalAssertionLedger,
+    advocacy: _AdvocacyPlan,
+    contention_keys: dict[str, StorySemanticKey],
+    explicit_opinion_ids: frozenset[str],
+    trace: AssertionTrace | None,
+) -> tuple[MedicalAssertionLedger, tuple[ContentionDocumentBinding, ...]]:
+    """R77 step 5 — compose the bound contention-document set, IDs last.
+
+    R31 composition order is exact: (1) required realizations for explicit
+    opinions — replaced in place by an explicit opinion-bound document entry;
+    (2) explicit contention documents, which consume every cap first and FAIL
+    on violation; (3) required realizations for sampled base opinions; (4)
+    sampled advocacy letters, then sampled responsive chains in stable
+    chain-key order, truncating from the tail without redraw wherever a cap,
+    the eight-opinion allowance, or the anchor ceiling on a response
+    opinion's proposed date makes a stage infeasible. The final subphased
+    labeling pass then assigns response ``opn-``/``app-`` suffixes after all
+    base entries and ``cdoc-`` suffixes after the explicit ones, and resolves
+    every draft reference — no stochastic decision follows it (R32/R47).
+    """
+    entries = list(getattr(scenario, "contention_documents", []))
+    entry_by_opinion = {
+        entry.medical_opinion_id: entry
+        for entry in entries
+        if entry.medical_opinion_id is not None
+    }
+    counters: Counter[str] = Counter()
+    caps = {
+        "advocacy": MAX_ADVOCACY_LETTERS_PER_CASE,
+        "objection": MAX_OBJECTIONS_PER_CASE,
+        "supplemental_request": MAX_SUPPLEMENTAL_REQUESTS_PER_CASE,
+        "supplemental_report": MAX_SUPPLEMENTAL_REPORTS_PER_CASE,
+        "qme_deposition": MAX_QME_AME_DEPOSITIONS_PER_CASE,
+    }
+    drafts: list[_BindingDraft] = []
+    chain_keys: set[tuple[str, str, str]] = set()
+
+    def fits(kind: str) -> bool:
+        if counters["total"] >= MAX_BOUND_CONTENTION_DOCUMENTS_PER_CASE:
+            return False
+        cap = caps.get(kind)
+        return cap is None or counters[kind] < cap
+
+    def commit(draft: _BindingDraft, *, explicit: bool) -> None:
+        if not fits(draft.document_kind):
+            if explicit:
+                raise MedicalAssertionError(
+                    f"explicit contention document "
+                    f"'{draft.explicit_id or draft.document_kind}' exceeds a "
+                    "frozen R31 cap once required opinion realizations are "
+                    "composed; explicit cap violations fail rather than "
+                    "truncate"
+                )
+            raise MedicalAssertionError(  # pragma: no cover - guarded by callers
+                "sampled contention document composed past a cap; sampled "
+                "callers must check caps before committing"
+            )
+        counters[draft.document_kind] += 1
+        counters["total"] += 1
+        drafts.append(draft)
+
+    def entry_binding(entry: object) -> _BindingDraft:
+        kind = entry.document_kind  # type: ignore[attr-defined]
+        subtype = entry.subtype  # type: ignore[attr-defined]
+        template: str | None = None
+        current_ref = entry.medical_opinion_id  # type: ignore[attr-defined]
+        current = (
+            ledger.opinion(current_ref) if current_ref is not None else None
+        )
+        if kind == "opinion_report" and current is not None:
+            subtype = subtype or _default_realization_carrier(current)
+        elif kind == "advocacy":
+            target = ledger.opinion(entry.target_medical_opinion_id)  # type: ignore[attr-defined]
+            if subtype is None:
+                subtype = (
+                    _ADVOCACY_SAMPLED_CARRIERS[target.author_role]
+                    if target is not None
+                    else _LOOP_LETTER_CARRIER
+                )
+            template = subtype
+        elif kind == "objection":
+            subtype = subtype or _LOOP_LETTER_CARRIER
+            template = _OBJECTION_TEMPLATE_SUBTYPE
+        elif kind == "supplemental_request":
+            subtype = subtype or _LOOP_LETTER_CARRIER
+            template = _REQUEST_TEMPLATE_SUBTYPE
+        elif kind == "supplemental_report":
+            subtype = subtype or _SUPPLEMENTAL_DEFAULT_CARRIER
+            template = subtype
+        elif kind == "qme_deposition":
+            subtype = subtype or _DEPOSITION_CARRIER
+            template = _DEPOSITION_TEMPLATE_SUBTYPE
+        doc_date = entry.doc_date  # type: ignore[attr-defined]
+        if doc_date is None and current is not None:
+            doc_date = current.report_date
+        return _BindingDraft(
+            document_kind=kind,
+            subtype=subtype,
+            template_subtype=template,
+            proposed_date=doc_date,
+            doc_date=entry.doc_date,  # type: ignore[attr-defined]
+            medical_opinion_ref=current_ref,
+            target_ref=entry.target_medical_opinion_id,  # type: ignore[attr-defined]
+            spoken=tuple(entry.spoken_contention_ids),  # type: ignore[attr-defined]
+            actor_party=entry.actor_party,  # type: ignore[attr-defined]
+            theories=tuple(entry.defense_contest_theories),  # type: ignore[attr-defined]
+            source="explicit",
+            explicit_id=entry.id,  # type: ignore[attr-defined]
+        )
+
+    def realization_binding(opinion: MedicalOpinion) -> _BindingDraft:
+        spoken = _ordered_disposition_union(opinion, ledger)
+        kind = _realization_document_kind(opinion)
+        subtype = _default_realization_carrier(opinion)
+        template = None
+        if kind == "supplemental_report":
+            template = subtype
+        elif kind == "qme_deposition":
+            template = _DEPOSITION_TEMPLATE_SUBTYPE
+        return _BindingDraft(
+            document_kind=kind,
+            subtype=subtype,
+            template_subtype=template,
+            proposed_date=opinion.report_date,
+            doc_date=None,
+            medical_opinion_ref=opinion.id,
+            target_ref=opinion.responds_to_opinion_id
+            if kind != "opinion_report"
+            else None,
+            spoken=spoken,
+            actor_party=None,
+            theories=(),
+            source="required_opinion",
+        )
+
+    # Groups 1-2 — explicit opinions' realizations (replaced in place by an
+    # explicit opinion-bound entry), then the remaining explicit documents.
+    for opinion in ledger.medical_opinions:
+        if opinion.id not in explicit_opinion_ids:
+            continue
+        entry = entry_by_opinion.get(opinion.id)
+        if entry is not None:
+            commit(entry_binding(entry), explicit=True)
+        else:
+            commit(realization_binding(opinion), explicit=True)
+    for entry in entries:
+        if entry.medical_opinion_id is not None:
+            continue
+        commit(entry_binding(entry), explicit=True)
+
+    # Explicit chains occupy chain slots by (actor, target, derived shape),
+    # so a sampled chain sharing that identity does not open a new slot.
+    explicit_chain_members: dict[tuple[str, str], set[str]] = {}
+    for entry in entries:
+        if entry.document_kind in ("objection", "supplemental_request", "qme_deposition"):
+            explicit_chain_members.setdefault(
+                (entry.actor_party, entry.target_medical_opinion_id), set()
+            ).add(entry.document_kind)
+    for (actor, target_ref), kinds in explicit_chain_members.items():
+        chain_keys.add((actor, target_ref, _explicit_chain_signature(frozenset(kinds))))
+
+    # Group 3 — required realizations for sampled base opinions.
+    for opinion in ledger.medical_opinions:
+        if opinion.id in explicit_opinion_ids:
+            continue
+        if not fits(_realization_document_kind(opinion)):
+            raise MedicalAssertionError(
+                f"required realization for sampled opinion '{opinion.id}' "
+                "cannot fit inside the frozen R31 caps beside the explicit "
+                "documents; reduce the explicit document set or disable "
+                "sampling"
+            )
+        commit(realization_binding(opinion), explicit=False)
+
+    # Group 4 — sampled advocacy letters, then sampled responsive chains.
+    response_drafts: list[_ResponseDraft] = []
+    if getattr(scenario, "sample_contention_documents", True):
+        for letter in advocacy.letters:
+            if not fits("advocacy"):
+                continue  # suppressed at the semantic cap, never redrawn
+            lead = _band_offset(
+                seed,
+                "advocacy-lead",
+                ("case", seed.case_id, letter.d_key, letter.target_key),
+                ADVOCACY_LEAD_DAYS.value,
+                trace,
+            )
+            commit(
+                _BindingDraft(
+                    document_kind="advocacy",
+                    subtype=letter.subtype,
+                    template_subtype=letter.subtype,
+                    proposed_date=letter.target_report_date
+                    - dt.timedelta(days=lead),
+                    doc_date=None,
+                    medical_opinion_ref=None,
+                    target_ref=letter.target_ref,
+                    spoken=letter.contention_refs,
+                    actor_party=letter.actor,
+                    theories=(),
+                    source="sampled",
+                    d_key=letter.d_key,
+                ),
+                explicit=False,
+            )
+
+        reserved: dict[tuple[str, str, str], set[str]] = {}
+        for entry in entries:
+            if entry.document_kind in (
+                "objection",
+                "supplemental_request",
+                "qme_deposition",
+            ):
+                reserved.setdefault(
+                    (
+                        entry.document_kind,
+                        entry.actor_party,
+                        entry.target_medical_opinion_id,
+                    ),
+                    set(),
+                ).update(entry.spoken_contention_ids)
+        explicit_request_dates = {
+            (entry.actor_party, entry.target_medical_opinion_id, entry.document_kind):
+            entry.doc_date
+            for entry in entries
+            if entry.document_kind in ("objection", "supplemental_request")
+        }
+
+        chunks = _derive_contest_chunks(
+            seed,
+            scenario,
+            context,
+            history,
+            ledger,
+            contention_keys,
+            explicit_opinion_ids,
+        )
+        opinion_total = len(ledger.medical_opinions)
+        for chunk in chunks:
+            chain_key = (chunk.actor, chunk.target.id, chunk.path)
+            new_chain = chain_key not in chain_keys
+            if new_chain and len(chain_keys) >= MAX_CONTENTION_CHAINS_PER_CASE:
+                continue  # the whole sampled chain is suppressed
+            records, opinion_total = _build_chain_stages(
+                seed,
+                context,
+                history,
+                chunk,
+                ledger,
+                contention_keys,
+                counters,
+                caps,
+                reserved,
+                explicit_request_dates,
+                opinion_total,
+                len(response_drafts),
+                trace,
+            )
+            if not records:
+                continue
+            for record in records:
+                if record.binding is not None:
+                    commit(record.binding, explicit=False)
+                if record.response is not None:
+                    response_drafts.append(record.response)
+            if new_chain:
+                chain_keys.add(chain_key)
+
+    # --- the final subphased labeling pass (R32/R47 subphases 4-5) ---------
+    if not drafts and not response_drafts:
+        return ledger, ()
+    used_opinion_ids = {o.id for o in ledger.medical_opinions}
+    reference_map: dict[str, str] = {o.id: o.id for o in ledger.medical_opinions}
+    for draft in response_drafts:
+        assigned = _first_unused("opn", used_opinion_ids)
+        used_opinion_ids.add(assigned)
+        reference_map[draft.placeholder] = assigned
+    used_row_ids = {a.id for a in ledger.apportionment_assertions}
+    labelled_opinions: list[MedicalOpinion] = []
+    labelled_rows: list[ApportionmentAssertion] = []
+    for draft in response_drafts:
+        assigned = reference_map[draft.placeholder]
+        labelled_opinions.append(
+            draft.opinion.model_copy(
+                update={
+                    "id": assigned,
+                    "responds_to_opinion_id": reference_map[draft.responds_to_ref],
+                    "supersedes_opinion_id": (
+                        reference_map[draft.supersedes_ref]
+                        if draft.supersedes_ref is not None
+                        else None
+                    ),
+                }
+            )
+        )
+        for row in draft.rows:
+            row_id = _first_unused("app", used_row_ids)
+            used_row_ids.add(row_id)
+            labelled_rows.append(
+                row.model_copy(update={"id": row_id, "opinion_id": assigned})
+            )
+    final_ledger = (
+        ledger
+        if not labelled_opinions
+        else MedicalAssertionLedger(
+            contentions=ledger.contentions,
+            medical_opinions=(*ledger.medical_opinions, *labelled_opinions),
+            apportionment_assertions=(
+                *ledger.apportionment_assertions,
+                *labelled_rows,
+            ),
+        )
+    )
+    used_cdoc_ids = {
+        draft.explicit_id for draft in drafts if draft.explicit_id is not None
+    }
+    bindings: list[ContentionDocumentBinding] = []
+    for draft in drafts:
+        if draft.explicit_id is not None:
+            binding_id = draft.explicit_id
+        else:
+            binding_id = _first_unused("cdoc", used_cdoc_ids)
+            used_cdoc_ids.add(binding_id)
+        bindings.append(
+            ContentionDocumentBinding(
+                id=binding_id,
+                document_kind=draft.document_kind,  # type: ignore[arg-type]
+                subtype=draft.subtype,
+                doc_date=draft.doc_date,
+                medical_opinion_id=(
+                    reference_map.get(
+                        draft.medical_opinion_ref, draft.medical_opinion_ref
+                    )
+                    if draft.medical_opinion_ref is not None
+                    else None
+                ),
+                target_medical_opinion_id=(
+                    reference_map.get(draft.target_ref, draft.target_ref)
+                    if draft.target_ref is not None
+                    else None
+                ),
+                spoken_contention_ids=draft.spoken,
+                actor_party=draft.actor_party,  # type: ignore[arg-type]
+                defense_contest_theories=draft.theories,  # type: ignore[arg-type]
+                template_subtype=draft.template_subtype,
+                proposed_date=draft.proposed_date,
+                source=draft.source,  # type: ignore[arg-type]
+            )
+        )
+    return final_ledger, tuple(bindings)
+
+
+def _ordered_disposition_union(
+    opinion: MedicalOpinion, ledger: MedicalAssertionLedger
+) -> tuple[str, ...]:
+    """R35 — a report realization speaks its disposition union in ledger order."""
+    classified = (
+        set(opinion.endorses_contention_ids)
+        | set(opinion.concurs_with_contention_ids)
+        | set(opinion.rejects_contention_ids)
+        | set(opinion.defers_contention_ids)
+    )
+    return tuple(c.id for c in ledger.contentions if c.id in classified)
+
+
+def _build_chain_stages(
+    seed: CaseSeed,
+    context: AssertionValidationContext,
+    history: AssertionWorldProjection,
+    chunk: _ChainChunk,
+    ledger: MedicalAssertionLedger,
+    contention_keys: dict[str, StorySemanticKey],
+    counters: Counter,
+    caps: dict[str, int],
+    reserved: dict[tuple[str, str, str], set[str]],
+    explicit_request_dates: dict[tuple[str, str, str], dt.date | None],
+    opinion_total: int,
+    response_index: int,
+    trace: AssertionTrace | None,
+) -> tuple[list[_StageRecord], int]:
+    """One chunk's stage walk: caps, raw dates, drafts, tail truncation.
+
+    The R31 collapse law is exact and re-draw-free: a failing deposition
+    drops alone; a failing supplemental report (or request) takes the request
+    with it — ``R`` never survives sampled truncation without its ``S`` — so
+    an adverse chain collapses ``O→R→S→D → O→R→S → O`` and a completion chain
+    collapses ``R→S→D → R→S`` and then to nothing. Draws already made for a
+    truncated stage stay burned. Explicit reservation (R41) removes only the
+    reserved contention IDs from a stage's spoken set, without redraw and
+    without repacking; a fully reserved stage document is suppressed as the
+    explicit document's semantic duplicate while the chain continues around
+    the authored paper.
+    """
+    stages = _PATH_STAGES[chunk.path]
+    tentative: Counter[str] = Counter()
+    records: list[_StageRecord] = []
+    spoken_keys = tuple(contention_keys[c.id] for c in chunk.contentions)
+    target_view = _view_of_ledger_opinion(
+        chunk.target,
+        ledger,
+        chunk.target_key,
+        explicit=chunk.target_explicit,
+    )
+
+    def stage_fits(kind: str) -> bool:
+        if (
+            counters["total"] + tentative["total"]
+            >= MAX_BOUND_CONTENTION_DOCUMENTS_PER_CASE
+        ):
+            return False
+        cap = caps.get(kind)
+        return cap is None or counters[kind] + tentative[kind] < cap
+
+    def stage_spoken(kind: str) -> tuple[str, ...]:
+        reserved_ids = reserved.get((kind, chunk.actor, chunk.target.id), set())
+        return tuple(
+            c.id for c in chunk.contentions if c.id not in reserved_ids
+        )
+
+    objection_binding: _BindingDraft | None = None
+    request_binding: _BindingDraft | None = None
+    request_d_key: StorySemanticKey | None = None
+    supplemental_draft: _ResponseDraft | None = None
+    failed_stage: str | None = None
+    drafted = 0
+
+    for stage in stages:
+        if stage == "objection":
+            spoken = stage_spoken("objection")
+            if not spoken:
+                continue  # the explicit objection already carries this event
+            if not stage_fits("objection"):
+                failed_stage = "objection"
+                break
+            d_key = _contest_d_key(
+                seed,
+                "objection",
+                chunk.actor,
+                None,
+                chunk.target_key,
+                tuple(contention_keys[ref] for ref in spoken),
+            )
+            offset = _band_offset(
+                seed,
+                "objection-lag",
+                ("case", seed.case_id, d_key, chunk.target_key),
+                OBJECTION_LAG_DAYS.value,
+                trace,
+            )
+            objection_binding = _BindingDraft(
+                document_kind="objection",
+                subtype=_LOOP_LETTER_CARRIER,
+                template_subtype=_OBJECTION_TEMPLATE_SUBTYPE,
+                proposed_date=chunk.target.report_date
+                + dt.timedelta(days=offset),
+                doc_date=None,
+                medical_opinion_ref=None,
+                target_ref=chunk.target.id,
+                spoken=spoken,
+                actor_party=chunk.actor,
+                theories=chunk.theories,
+                source="sampled",
+                d_key=d_key,
+            )
+            tentative["objection"] += 1
+            tentative["total"] += 1
+            records.append(_StageRecord("objection", objection_binding, None))
+        elif stage == "supplemental_request":
+            spoken = stage_spoken("supplemental_request")
+            request_base_key: StorySemanticKey
+            if objection_binding is not None:
+                request_base_key = objection_binding.d_key  # type: ignore[assignment]
+                request_base_date = objection_binding.proposed_date
+            elif chunk.path in _ADVERSE_CONTEST_PATHS:
+                # The sampled objection was suppressed as an explicit
+                # duplicate: the request follows the authored objection.
+                request_base_key = chunk.target_key
+                request_base_date = (
+                    explicit_request_dates.get(
+                        (chunk.actor, chunk.target.id, "objection")
+                    )
+                    or chunk.target.report_date
+                )
+            else:
+                request_base_key = chunk.target_key
+                request_base_date = chunk.target.report_date
+            if not spoken:
+                request_d_key = _contest_d_key(
+                    seed,
+                    "supplemental_request",
+                    chunk.actor,
+                    None,
+                    chunk.target_key,
+                    spoken_keys,
+                )
+                continue
+            if not stage_fits("supplemental_request"):
+                failed_stage = "supplemental_request"
+                break
+            d_key = _contest_d_key(
+                seed,
+                "supplemental_request",
+                chunk.actor,
+                None,
+                chunk.target_key,
+                tuple(contention_keys[ref] for ref in spoken),
+            )
+            offset = _band_offset(
+                seed,
+                "supplemental-request-lag",
+                ("case", seed.case_id, d_key, request_base_key),
+                SUPPLEMENTAL_REQUEST_LAG_DAYS.value,
+                trace,
+            )
+            assert request_base_date is not None
+            request_binding = _BindingDraft(
+                document_kind="supplemental_request",
+                subtype=_LOOP_LETTER_CARRIER,
+                template_subtype=_REQUEST_TEMPLATE_SUBTYPE,
+                proposed_date=request_base_date + dt.timedelta(days=offset),
+                doc_date=None,
+                medical_opinion_ref=None,
+                target_ref=chunk.target.id,
+                spoken=spoken,
+                actor_party=chunk.actor,
+                theories=chunk.theories,
+                source="sampled",
+                d_key=d_key,
+            )
+            request_d_key = d_key
+            tentative["supplemental_request"] += 1
+            tentative["total"] += 1
+            records.append(
+                _StageRecord("supplemental_request", request_binding, None)
+            )
+        elif stage == "supplemental_report":
+            if not stage_fits("supplemental_report") or opinion_total >= 8:
+                failed_stage = "supplemental_report"
+                break
+            if request_binding is not None:
+                report_base = request_binding.proposed_date
+            else:
+                report_base = (
+                    explicit_request_dates.get(
+                        (chunk.actor, chunk.target.id, "supplemental_request")
+                    )
+                    or chunk.target.report_date
+                )
+            revisited = tuple(
+                sorted(spoken_keys, key=canonical_story_key)
+            )
+            response_key: StorySemanticKey = (
+                "case",
+                seed.case_id,
+                "opinion",
+                "sampled_response",
+                "supplemental_report",
+                chunk.target.author_role,
+                chunk.target_key,
+                revisited,
+            )
+            assert report_base is not None
+            offset = _band_offset(
+                seed,
+                "supplemental-report-lag",
+                ("case", seed.case_id, response_key, request_d_key),
+                SUPPLEMENTAL_REPORT_LAG_DAYS.value,
+                trace,
+            )
+            report_date = report_base + dt.timedelta(days=offset)
+            if report_date > context.anchor_date:
+                failed_stage = "supplemental_report"
+                break
+            trigger = (
+                "supplemental_after_objection"
+                if chunk.path in _ADVERSE_CONTEST_PATHS
+                else "supplemental_after_completion"
+            )
+            supplemental_draft = _draft_response_opinion(
+                seed,
+                context,
+                history,
+                chunk,
+                target_view,
+                contention_keys,
+                event_kind="supplemental_report",
+                trigger_class=trigger,
+                report_date=report_date,
+                request_d_key=request_d_key,
+                placeholder=f"response:{response_index + drafted}",
+            )
+            supplemental_binding = _BindingDraft(
+                document_kind="supplemental_report",
+                subtype=_SUPPLEMENTAL_DEFAULT_CARRIER,
+                template_subtype=_SUPPLEMENTAL_DEFAULT_CARRIER,
+                proposed_date=report_date,
+                doc_date=None,
+                medical_opinion_ref=supplemental_draft.placeholder,
+                target_ref=chunk.target.id,
+                spoken=tuple(c.id for c in chunk.contentions),
+                actor_party=None,
+                theories=(),
+                source="sampled",
+                d_key=_contest_d_key(
+                    seed,
+                    "supplemental_report",
+                    None,
+                    supplemental_draft.key,
+                    chunk.target_key,
+                    spoken_keys,
+                ),
+            )
+            tentative["supplemental_report"] += 1
+            tentative["total"] += 1
+            opinion_total += 1
+            drafted += 1
+            records.append(
+                _StageRecord(
+                    "supplemental_report", supplemental_binding, supplemental_draft
+                )
+            )
+        elif stage == "qme_deposition":
+            if not stage_fits("qme_deposition") or opinion_total >= 8:
+                failed_stage = "qme_deposition"
+                break
+            examined = (
+                supplemental_draft.view()
+                if supplemental_draft is not None
+                else target_view
+            )
+            spoken = (
+                stage_spoken("qme_deposition")
+                if examined is target_view
+                else tuple(c.id for c in chunk.contentions)
+            )
+            if not spoken:
+                continue  # fully reserved: the explicit deposition stands
+            trigger = (
+                "deposition_examining_supplemental"
+                if examined.event_kind == "supplemental_report"
+                else "deposition_examining_base"
+            )
+            revisited = tuple(sorted(spoken_keys, key=canonical_story_key))
+            deposition_key: StorySemanticKey = (
+                "case",
+                seed.case_id,
+                "opinion",
+                "sampled_response",
+                "deposition",
+                examined.author_role,
+                examined.key,
+                revisited,
+            )
+            d_key = _contest_d_key(
+                seed,
+                "qme_deposition",
+                chunk.actor,
+                deposition_key,
+                examined.key,
+                tuple(contention_keys[ref] for ref in spoken),
+            )
+            offset = _band_offset(
+                seed,
+                "deposition-lag",
+                ("case", seed.case_id, d_key, examined.key),
+                DEPOSITION_LAG_DAYS.value,
+                trace,
+            )
+            deposition_date = examined.report_date + dt.timedelta(days=offset)
+            if deposition_date > context.anchor_date:
+                failed_stage = "qme_deposition"
+                break
+            deposition_draft = _draft_response_opinion(
+                seed,
+                context,
+                history,
+                chunk,
+                examined,
+                contention_keys,
+                event_kind="deposition",
+                trigger_class=trigger,
+                report_date=deposition_date,
+                request_d_key=None,
+                placeholder=f"response:{response_index + drafted}",
+            )
+            deposition_binding = _BindingDraft(
+                document_kind="qme_deposition",
+                subtype=_DEPOSITION_CARRIER,
+                template_subtype=_DEPOSITION_TEMPLATE_SUBTYPE,
+                proposed_date=deposition_date,
+                doc_date=None,
+                medical_opinion_ref=deposition_draft.placeholder,
+                target_ref=examined.ref,
+                spoken=spoken,
+                actor_party=chunk.actor,
+                theories=chunk.theories,
+                source="sampled",
+                d_key=d_key,
+            )
+            tentative["qme_deposition"] += 1
+            tentative["total"] += 1
+            opinion_total += 1
+            drafted += 1
+            records.append(
+                _StageRecord("qme_deposition", deposition_binding, deposition_draft)
+            )
+
+    if failed_stage is not None:
+        # R31's exact tail collapse. A failing deposition already left the
+        # accepted prefix intact by breaking before it was recorded.
+        if failed_stage in ("supplemental_report", "supplemental_request"):
+            kept = [r for r in records if r.stage == "objection"]
+            removed = [r for r in records if r.stage != "objection"]
+            for record in removed:
+                if record.response is not None:
+                    opinion_total -= 1
+            records = kept
+        elif failed_stage == "objection":
+            records = []
+    return records, opinion_total
+
+
 def derive_medical_assertion_plan(
     seed: CaseSeed,
     history: MedicalHistory | None,
@@ -5398,6 +7523,9 @@ def derive_medical_assertion_plan(
     reference_problems = _explicit_reference_problems(scenario)
     if reference_problems:
         raise MedicalAssertionError("\n".join(reference_problems))
+    document_problems = _explicit_contention_document_problems(scenario)
+    if document_problems:
+        raise MedicalAssertionError("\n".join(document_problems))
 
     contentions = [_contention_from_entry(entry) for entry in scenario.contentions]
     opinions = [_opinion_from_entry(entry) for entry in scenario.medical_opinions]
@@ -5440,14 +7568,51 @@ def derive_medical_assertion_plan(
         # recipe grades above are M2 counters and therefore read the
         # baseline, never the remodeled plan ledger.
         trace.m2_baseline_ledger = graded
-    # R77 step 4: the M3 base-disposition remodel, strictly after the
-    # baseline snapshot, followed by the R32 subphase-10 grading of the
-    # completed ledger. Grading stays the frozen M2 rubric — it reads no
-    # M3-only field, which is exactly what keeps the writer's stated quality
-    # reproducible from the frozen channel-1.0.0 projection (Amendment A1).
-    story = _apply_story_semantics(seed, scenario, context, projection, graded)
-    completed = graded if story is graded else grade_ledger(context, projection, story)
-    return MedicalAssertionPlan(ledger=completed, contention_documents=())
+    # R77 steps 4-5: sampled advocacy is derived FIRST (R32 semantic order —
+    # its letters are the R38 qualifying communications), then the M3
+    # base-disposition remodel runs strictly after the baseline snapshot,
+    # then the contention loop derives contest chains, response opinions and
+    # every document binding, labels IDs last, and the completed ledger is
+    # graded (R32 subphase 10). Grading stays the frozen M2 rubric — it
+    # reads no M3-only field, which is exactly what keeps the writer's
+    # stated quality reproducible from the frozen channel-1.0.0 projection
+    # (Amendment A1).
+    explicit_contention_ids = frozenset(entry.id for entry in scenario.contentions)
+    explicit_opinion_ids = frozenset(entry.id for entry in scenario.medical_opinions)
+    contention_keys = {
+        contention.id: _story_contention_key(seed, contention, explicit_contention_ids)
+        for contention in graded.contentions
+    }
+    advocacy = _derive_advocacy(
+        seed, scenario, context, graded, contention_keys, explicit_opinion_ids
+    )
+    story = _apply_story_semantics(
+        seed,
+        scenario,
+        context,
+        projection,
+        graded,
+        qualifying_communications=advocacy.qualifying_communications,
+    )
+    loop_ledger, contention_documents = _derive_contention_loop(
+        seed,
+        scenario,
+        context,
+        projection,
+        story,
+        advocacy,
+        contention_keys,
+        explicit_opinion_ids,
+        trace,
+    )
+    completed = (
+        graded
+        if loop_ledger is graded
+        else grade_ledger(context, projection, loop_ledger)
+    )
+    return MedicalAssertionPlan(
+        ledger=completed, contention_documents=contention_documents
+    )
 
 
 def derive_medical_assertions(
@@ -5482,6 +7647,14 @@ __all__ = [
     "GRANULAR_NONINDUSTRIAL_PERCENTAGES",
     "GROUNDABLE_HOOKS",
     "HOOK_TO_BASIS",
+    "MAX_ADVOCACY_LETTERS_PER_CASE",
+    "MAX_BOUND_CONTENTION_DOCUMENTS_PER_CASE",
+    "MAX_CONTENTIONS_PER_LOOP_DOCUMENT",
+    "MAX_CONTENTION_CHAINS_PER_CASE",
+    "MAX_OBJECTIONS_PER_CASE",
+    "MAX_QME_AME_DEPOSITIONS_PER_CASE",
+    "MAX_SUPPLEMENTAL_REPORTS_PER_CASE",
+    "MAX_SUPPLEMENTAL_REQUESTS_PER_CASE",
     "MEDICAL_STORY_ASSERTION_LOOP_FAMILIES",
     "MEDICAL_STORY_HASH_SEEDS",
     "MEDICAL_STORY_KNOBS",
@@ -5491,6 +7664,7 @@ __all__ = [
     "MEDICAL_STORY_TZ_MATRIX",
     "OPINION_ID_PATTERN",
     "REVIEWED_IDS_COMBINED_CAP",
+    "ROLE_COURT_REPORTER",
     "UNCONDITIONAL_HARD_INVALID_BASES",
     "AoeCoeFinding",
     "ApportionmentAssertion",
