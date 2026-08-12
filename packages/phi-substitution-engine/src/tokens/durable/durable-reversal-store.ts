@@ -315,7 +315,7 @@ export class DurableReversalStore implements ReversalWriteStore {
     wrappingKeyVersion: string,
   ): Promise<Uint8Array> {
     const cacheKey = createHash("sha256")
-      .update(`${scope.tenantId} ${scope.matterId} ${dekGenerationId} ${wrappingKeyVersion} ${keyHandle.keyId} `, "utf8")
+      .update(`${scope.tenantId}\0${scope.matterId}\0${dekGenerationId}\0${wrappingKeyVersion}\0${keyHandle.keyId}\0`, "utf8")
       .update(wrappedDek as unknown as Uint8Array)
       .digest("hex");
     const cached = this.#dekCache.get(cacheKey);
