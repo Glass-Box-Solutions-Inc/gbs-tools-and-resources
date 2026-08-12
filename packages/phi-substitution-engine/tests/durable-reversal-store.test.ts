@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { ReversalFailedError } from "../src/tokens/index";
 import { InMemoryReversalStore } from "../src/tokens/index";
 import { buildReversalAad, DurableReversalStore, InMemoryKeyProvider, mappingKeyOf } from "../src/tokens/durable/index";
-import type { DurableReversalRecordMeta, EncryptedReversalRecordBlob, SpoolVolume } from "../src/tokens/durable/index";
+import type { DurableReversalRecordMeta, EncryptedReversalRecordBlob, ReversalAadFields, SpoolVolume } from "../src/tokens/durable/index";
 import {
   brand,
   DEFAULT_MATTER,
@@ -594,6 +594,47 @@ describe("L2.4 DurableReversalStore — capability boundary (§7/N2, req 18/19)"
     expect(buildReversalAad).toBeTypeOf("function");
     expect(mappingKeyOf).toBeTypeOf("function");
   });
+});
+
+describe("L2.4 AAD — injective over every one of the 10 authenticated fields (§B.6)", () => {
+  // A DIRECT injectivity oracle isolating each AAD field from the DEK-wrap bindingDigest layer.
+  // The relocation oracles above are backstopped by the KeyProvider bindingDigest (which itself binds
+  // tenant+matter+purpose+keyId+keyVersion), so a cross-tenant/cross-matter relocation is rejected at
+  // the unwrap even if the record AAD dropped that field — MUT-AAD-DROP-TENANT / -MATTER SURVIVE those
+  // oracles. This pins every field's binding at the AAD itself: two inputs one field apart must yield
+  // different bytes, so dropping any field (`field(k, "")`) collapses that pair and fails HERE — no DEK
+  // involved. Kills all ten MUT-AAD-DROP-* directly (see [[guard moves when the code moves]]).
+  const base: ReversalAadFields = {
+    tenantId: "tenant-a",
+    matterId: "matter-1",
+    dictionaryVersion: "1",
+    token: "[[Claimant]]",
+    attemptId: "attempt-1",
+    retentionClass: "detector-only",
+    createdAtEpochMs: 1_700_000_000_000,
+    expiresAtEpochMs: 1_700_000_086_400_000n,
+    dekGenerationId: "gen-a",
+    wrappingKeyVersion: "kek-v1",
+  };
+  const variants: ReadonlyArray<readonly [string, Partial<ReversalAadFields>]> = [
+    ["field(1) tenantId (MUT-AAD-DROP-TENANT)", { tenantId: "tenant-b" }],
+    ["field(2) matterId (MUT-AAD-DROP-MATTER)", { matterId: "matter-2" }],
+    ["field(3) dictionaryVersion (MUT-AAD-DROP-VERSION)", { dictionaryVersion: "2" }],
+    ["field(4) token (MUT-AAD-DROP-TOKEN)", { token: "[[Witness]]" }],
+    ["field(5) attemptId (MUT-AAD-DROP-ATTEMPT)", { attemptId: "attempt-2" }],
+    ["field(6) retentionClass (MUT-AAD-DROP-RETENTION)", { retentionClass: "matter" }],
+    ["field(7) createdAtEpochMs (MUT-AAD-DROP-CREATED)", { createdAtEpochMs: 1_700_000_000_001 }],
+    ["field(8) expiresAtEpochMs (MUT-AAD-DROP-TTL)", { expiresAtEpochMs: 1_700_000_086_400_001n }],
+    ["field(9) dekGenerationId (MUT-AAD-DROP-DEKGEN)", { dekGenerationId: "gen-b" }],
+    ["field(10) wrappingKeyVersion (MUT-AAD-DROP-KEKVER)", { wrappingKeyVersion: "kek-v2" }],
+  ];
+  const baseHex = Buffer.from(buildReversalAad(base)).toString("hex");
+  for (const [label, patch] of variants) {
+    it(`changing ${label} changes the AAD bytes`, () => {
+      const variantHex = Buffer.from(buildReversalAad({ ...base, ...patch })).toString("hex");
+      expect(variantHex, "an AAD field must be injective — dropping it collapses this pair").not.toBe(baseHex);
+    });
+  }
 });
 
 // Silence unused-import lint in transpile-only test runs while keeping the symbols available.
