@@ -71,8 +71,12 @@ interface StoredMapping {
   readonly mappingKey: ReversalMappingKey;
   readonly preparedHandle: PreparedWriteHandle;
   readonly commit: PublishedCommitHandle;
-  /** Atomic-publication ordinal of `commit` (§9/§10): the current record is the HIGHEST-ordinal one. */
-  readonly ordinal: number;
+  /**
+   * Atomic-publication ordinal of `commit` (§9/§10): the current record is the HIGHEST-ordinal one. A
+   * `bigint` so the monotonic sequence NEVER saturates (an IEEE-754 `number` stops incrementing at 2^53,
+   * which would tie ordinals and repeat handles — `MUT-ORDINAL-NUMBER-OVERFLOW`).
+   */
+  readonly ordinal: bigint;
   readonly flushed: boolean;
 }
 
@@ -122,9 +126,11 @@ export class InMemoryReversalSpoolBackend {
    * Monotonic publication ordinal per commit (assigned at atomic publish). The durable current pointer
    * compares against it so publication order — not flush-completion order — decides the current record.
    */
-  readonly #commitOrdinal = new Map<string, number>();
-  #handleSeq = 0;
-  #publishSeq = 0;
+  readonly #commitOrdinal = new Map<string, bigint>();
+  // `bigint` monotonic counters — arbitrary precision, so handles never repeat and ordinals never tie
+  // (a `number` saturates at 2^53; the nonce counter above is already bigint for the same reason).
+  #handleSeq = 0n;
+  #publishSeq = 0n;
 
   public mount(faults: SpoolFaults = {}, nowEpochMilliseconds: () => number = Date.now): InMemoryReversalSpoolVolume {
     return new InMemoryReversalSpoolVolume(this, faults, nowEpochMilliseconds);
@@ -152,7 +158,7 @@ export class InMemoryReversalSpoolBackend {
 
   // ---- internal substrate API used only by the volume ----
   nextPreparedHandle(): PreparedWriteHandle {
-    this.#handleSeq += 1;
+    this.#handleSeq += 1n;
     return `prep-${this.#handleSeq}` as unknown as PreparedWriteHandle;
   }
   getDekGeneration(scopeKey: string): DekGeneration | undefined {
@@ -185,10 +191,10 @@ export class InMemoryReversalSpoolBackend {
       const expired = BigInt(nowEpochMs) >= existing.expiresAtEpochMs;
       return { kind: "existing", commit: existing.commit, immutableScopeDigest: existing.scopeDigest, expired };
     }
-    this.#handleSeq += 1;
+    this.#handleSeq += 1n;
     const commit = `commit-${this.#handleSeq}` as unknown as PublishedCommitHandle;
     // Atomic publication ordinal: this establishes commit order for "current record" (§9/§10).
-    this.#publishSeq += 1;
+    this.#publishSeq += 1n;
     const ordinal = this.#publishSeq;
     const claim: StoredClaim = {
       idempotencyKey: ctx.idempotencyKey,
@@ -248,7 +254,7 @@ export class InMemoryReversalSpoolBackend {
     // NOT roll the current canonical back over a newer publication (MUT-DURABLE-ROLLBACK). Because the
     // pointer only moves forward and survives crash, an acknowledged commit's durable mapping is never
     // absent nor superseded by an unflushed successor.
-    const ordinal = this.#commitOrdinal.get(commitStr) ?? 0;
+    const ordinal = this.#commitOrdinal.get(commitStr) ?? 0n;
     const durableCurrent = this.#durableMappings.get(ctx.mappingKey as unknown as string);
     if (durableCurrent === undefined || ordinal > durableCurrent.ordinal) {
       this.#durableMappings.set(ctx.mappingKey as unknown as string, {
