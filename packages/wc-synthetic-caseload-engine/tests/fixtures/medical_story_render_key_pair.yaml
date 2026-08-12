@@ -19,7 +19,7 @@ cases:
       doctrine_hooks: [escobedo]
     documents:
       global_cap: 20
-      format_mix: {pdf: 0.5, scanned_pdf: 0.25, eml: 0.15, docx: 0.1}
+      format_mix: {pdf: 0.3, scanned_pdf: 0.45, eml: 0.15, docx: 0.1}
       include_only:
         - FIRST_REPORT_OF_INJURY_PHYSICIAN
         - EMPLOYER_REPORT_INJURY

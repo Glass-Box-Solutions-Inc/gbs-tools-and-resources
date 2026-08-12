@@ -94,7 +94,9 @@ from wc_caseload_engine.medical_story import (
     CONTENTION_LOOP_WARNING_PREFIX,
     MedicalStoryPlan,
     MedicalUrPlan,
+    _is_loop_bound,
     derive_medical_story,
+    is_governed_medical_story_surface,
     plan_medical_story_documents,
 )
 from wc_caseload_engine.money import MoneyFacts, derive_money_facts
@@ -2520,10 +2522,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         render_key: tuple[object, ...] | None = None
         if medical_history is not None:
             render_key = candidate.medical_story_render_key
-            if (
-                render_key is None
-                and CONTENTION_LOOP_SOURCE_KEY in candidate.metadata
-            ):
+            if render_key is None and _is_loop_bound(candidate):
                 raise MedicalAssertionError(
                     "contention-bound planned document reached final rendering "
                     "without its R45 semantic D key"
@@ -2544,7 +2543,14 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
                 doc_format=choose_format(
                     seed,
                     index,
-                    medical_story_render_key=render_key,
+                    medical_story_render_key=(
+                        render_key
+                        if is_governed_medical_story_surface(
+                            subtype,
+                            candidate.contention_surface,
+                        )
+                        else None
+                    ),
                 ),
                 track=candidate.track,
                 author_role=roles.author_role,

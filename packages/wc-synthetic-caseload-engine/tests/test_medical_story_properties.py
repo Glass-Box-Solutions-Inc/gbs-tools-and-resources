@@ -297,6 +297,7 @@ def test_medical_story_stream_registry_is_exact_complete_and_namespaced(
     # families; the focused witnesses below close only the fifteen known gaps.
     result = build_cohort()
     assert result.story_families_seen == EXERCISED_STORY_FAMILIES_TODAY
+    observed.update(result.story_families_seen)
 
     render_payload = yaml.safe_load(_RENDER_KEY_FIXTURE.read_text(encoding="utf-8"))
     render_spec = parse_caseload_spec(render_payload)
@@ -435,9 +436,56 @@ def test_inserting_an_unrelated_document_cannot_move_semantic_render_outputs(
         and document.spoken_contention_ids == ("ctn-02",)
     ]
     assert len(added_advocacy) == 1
+    added_advocacy_key = added_advocacy[0].medical_story_render_key
+    assert added_advocacy_key is not None
+    assert added_advocacy_key[2] == "contention_document"
+    assert added_advocacy_key == (
+        "case",
+        "render-key-stability",
+        "contention_document",
+        "advocacy",
+        "defense",
+        None,
+        (
+            "case",
+            "render-key-stability",
+            "opinion",
+            "explicit",
+            "opn-01",
+        ),
+        (
+            (
+                "case",
+                "render-key-stability",
+                "contention",
+                "explicit",
+                "ctn-02",
+            ),
+        ),
+    )
     assert canonical_story_key(
-        added_advocacy[0].medical_story_render_key
+        added_advocacy_key
     ) not in base
+
+    qme_key_prefix = (
+        "case",
+        "render-key-stability",
+        "contention_document",
+    )
+    base_qme = next(
+        document
+        for document, _render, _payload in base.values()
+        if document.subtype == "QME_COMPREHENSIVE_REPORT"
+    )
+    inserted_qme = next(
+        document
+        for document, _render, _payload in inserted.values()
+        if document.subtype == "QME_COMPREHENSIVE_REPORT"
+    )
+    assert base_qme.medical_story_render_key is not None
+    assert inserted_qme.medical_story_render_key is not None
+    assert base_qme.medical_story_render_key[:3] == qme_key_prefix
+    assert inserted_qme.medical_story_render_key[:3] == qme_key_prefix
 
     moved = [
         key for key in common if base[key][0].index != inserted[key][0].index
@@ -461,11 +509,11 @@ def test_semantic_format_replaces_but_does_not_skip_the_legacy_format_draw(
 ) -> None:
     """R59 consumes ``format:{index}``, discards it, then uses family R."""
     seed, _inserted = _render_key_seed_pair()
-    document = build_case_plan(seed).documents[1]
-    assert document.subtype == "FIRST_REPORT_OF_INJURY_PHYSICIAN"
+    document = build_case_plan(seed).documents[8]
+    assert document.subtype == "QME_COMPREHENSIVE_REPORT"
     assert document.medical_story_render_key is not None
 
-    legacy_seed = derive_seed(seed.rng_seed, "format:1")
+    legacy_seed = derive_seed(seed.rng_seed, "format:8")
     semantic_seed = assertion_module._medical_story_seed(
         seed,
         "document-format",
@@ -493,7 +541,7 @@ def test_semantic_format_replaces_but_does_not_skip_the_legacy_format_draw(
     assert renderer_module._format_from_roll(
         seed.effective_format_mix(), original_random(legacy_seed).random()
     ) == "pdf"
-    assert selected == "scanned_pdf"
+    assert selected == "eml"
 
 
 # ---------------------------------------------------------------------------

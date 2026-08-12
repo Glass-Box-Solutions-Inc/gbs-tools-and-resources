@@ -310,6 +310,11 @@ def generate_case(
     story_plan = plan.medical_story
     for document in plan.documents:
         filename = filename_for(seed, case_number, document)
+        medical_story = (
+            story_plan.by_document_index.get(document.index)
+            if story_plan is not None
+            else None
+        )
         result = render_document(
             seed=seed,
             cast=plan.cast,
@@ -329,16 +334,16 @@ def generate_case(
             letter_ordinal=letter_counter,
             cadence_anchors=cadence_anchors,
             template_subtype=document.template_subtype,
-            medical_story=(
-                story_plan.by_document_index.get(document.index)
-                if story_plan is not None
-                else None
-            ),
+            medical_story=medical_story,
             contention_actor_party=document.contention_actor_party,
             defense_contest_theories=document.defense_contest_theories,
             imr_application_content=document.imr_application_content,
             imr_outcome=document.imr_outcome,
-            medical_story_render_key=document.medical_story_render_key,
+            medical_story_render_key=(
+                document.medical_story_render_key
+                if medical_story is not None
+                else None
+            ),
         )
         if document.subtype in SUBPOENAED_RECORDS_SUBTYPES:
             packet_counter += 1

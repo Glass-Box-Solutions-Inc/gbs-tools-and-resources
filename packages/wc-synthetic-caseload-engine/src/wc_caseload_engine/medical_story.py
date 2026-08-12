@@ -1342,8 +1342,11 @@ _REPORT_SURFACE_SETS: tuple[frozenset[str], ...] = (
 )
 
 
-def _is_governed_document(document: PlannedDocument) -> bool:
-    """Whether *document* is an R8 medical-story surface.
+def is_governed_medical_story_surface(
+    subtype: str,
+    contention_surface: ContentionSurface | None,
+) -> bool:
+    """Whether a subtype/carrier pair is an R8 medical-story surface.
 
     Report surfaces are governed whenever the gate is open — a history-present
     case gets history-only expression on them even without a bound opinion
@@ -1351,17 +1354,25 @@ def _is_governed_document(document: PlannedDocument) -> bool:
     ``contention_surface``: an unbound legacy advocacy letter and an ordinary
     applicant/employer/witness deposition keep their exact pre-M3 path (R8).
     """
-    if any(document.subtype in surface_set for surface_set in _REPORT_SURFACE_SETS):
+    if any(subtype in surface_set for surface_set in _REPORT_SURFACE_SETS):
         return True
-    if document.subtype in ADVOCACY_LETTER_SURFACES:
-        return document.contention_surface in (
+    if subtype in ADVOCACY_LETTER_SURFACES:
+        return contention_surface in (
             "advocacy",
             "objection",
             "supplemental_request",
         )
-    if document.subtype == "DEPOSITION_TRANSCRIPT":
-        return document.contention_surface == "qme_deposition"
+    if subtype == "DEPOSITION_TRANSCRIPT":
+        return contention_surface == "qme_deposition"
     return False
+
+
+def _is_governed_document(document: PlannedDocument) -> bool:
+    """Whether *document* is an R8 medical-story surface."""
+    return is_governed_medical_story_surface(
+        document.subtype,
+        document.contention_surface,
+    )
 
 
 def _project_demographics(demographics: ApplicantDemographics) -> StoryDemographics:

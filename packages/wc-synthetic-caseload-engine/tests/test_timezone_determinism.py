@@ -155,6 +155,16 @@ _MEDICAL_STORY_RENDER_FIXTURE = (
     / "medical_story_render_key_pair.yaml"
 )
 
+_R65_OBSERVATION_FIELDS: tuple[str, ...] = (
+    "plan_digest",
+    "bindings",
+    "dates",
+    "truth_assertion_channel",
+    "output_tree_bytes",
+    "leakage_findings",
+    "story_trace_counters",
+)
+
 
 def _medical_story_seed() -> Any:
     payload = __import__("yaml").safe_load(
@@ -390,15 +400,8 @@ def _assert_medical_story_observations_equal(
     """Compare every R65 surface explicitly, with the changed label named."""
     assert len(observations) == 2
     (first_label, first), (second_label, second) = observations.items()
-    for field in (
-        "plan_digest",
-        "bindings",
-        "dates",
-        "truth_assertion_channel",
-        "output_tree_bytes",
-        "leakage_findings",
-        "story_trace_counters",
-    ):
+    assert set(first) == set(_R65_OBSERVATION_FIELDS)
+    for field in _R65_OBSERVATION_FIELDS:
         assert first[field] == second[field], (
             f"medical-story {field} drifted between {first_label} and "
             f"{second_label}"
