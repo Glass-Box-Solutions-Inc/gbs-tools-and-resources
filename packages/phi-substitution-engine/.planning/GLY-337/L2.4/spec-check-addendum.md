@@ -69,6 +69,35 @@ diverge from the dev store. Do not block the lane on it. (The #private requireme
   decisions (rotation policy, tombstone horizon, deletion lifecycle) as follow-ups; do not silently
   decide them in code.
 
+## C2-availability — infra/availability failures fail closed as REVERSAL_FAILED (amendment, 2026-08-12)
+Raised by the GPT-5.6-sol gate round 2: `resolveEncounteredTokens` catches `readCurrent` outages and
+non-authentication key-provider failures and converts them to `REVERSAL_FAILED`, whereas C2 enumerates
+store-throw only for (a) batch-size and (b) crypto-integrity. **Ruling: current behavior is correct and
+binding.** C2's enumeration was written to distinguish TAMPER (throw) from ABSENCE (partial map) — it did
+not contemplate a third category, transport/availability failure. Under the sole consumer of the store's
+map — `reverseText`, which enforces N5 all-or-nothing and throws `REVERSAL_FAILED` on ANY absent token —
+throwing at the store on an infra failure is END-TO-END IDENTICAL to returning a partial map and letting
+the reverser throw (both yield a whole-reversal `REVERSAL_FAILED`, no partial DisplayText). The F3 scrub
+discards the underlying cause, so no PHI/provider/DB text egresses either way. An explicit
+`REVERSAL_FAILED` on a genuine outage is a clearer fail-closed signal than silently omitting a token.
+**Constraint:** this equivalence holds ONLY while every consumer of the store's partial map is
+all-or-nothing. If a future caller consumes partial maps WITHOUT all-or-nothing (e.g. best-effort
+resolve), this MUST be revisited with typed integrity-vs-availability outcomes so a transient outage is
+not misread as "token absent." Ticket that as a precondition of any such caller.
+
+## C3-determinism — classifier determinism is a trusted-seam contract (clarification, 2026-08-12)
+Same gate round raised per-token retention drift. `classifyRetention` is invoked with
+`{tenantId, matterId, attemptId}` ONLY (never the token), so it is operation-scoped by construction and a
+DETERMINISTIC classifier yields one class for every `record()` of an operation — satisfying C3's
+"determined once, consistent across every record()". The store relies on classifier determinism rather
+than pinning + enforcing a per-operation class in durable cross-record state. That reliance is acceptable
+under the bounded threat model (the classifier is a trusted injected seam; a non-deterministic classifier
+is a misbehaving trusted dependency, and mixed retention is a TTL/governance inconsistency, not PHI
+egress). **Binding:** the `classifyRetention` port contract REQUIRES determinism/operation-consistency
+(documented in its JSDoc); an operation-consistency oracle records the invariant. Store-enforced
+operation-retention binding (first-seen class per (tenant,attempt), reject mismatch, cross-replica
+consistent) is a GOVERNANCE follow-up ticket, not an M2 blocker.
+
 ## Everything else in sol's spec is ADOPTED as written
 Exact surface (no listAll/snapshot), AES-256-GCM envelope, the 10-field binary AAD + rationale,
 durable prepare→publish→flush, nonce durability, tenant-scoped keys, idempotency (first-write-wins,

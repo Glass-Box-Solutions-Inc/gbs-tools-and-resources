@@ -74,9 +74,11 @@ export class DurableReversalStore implements ReversalWriteStore {
    * surface — no `cause`, no canonical/token/tenant/provider/db/path/ciphertext/nonce/key text.
    */
   public async record(input: ReversalRecordInput): Promise<void> {
-    // The plaintext canonical stays a lexical local for this method's scope only — never a field.
-    const canonical = input.canonical;
     try {
+      // Snapshot ALL boundary input INSIDE the scrub boundary (finding F3-boundary): a throwing getter on
+      // a passed-in field must reject with the fixed REVERSAL_FAILED surface, never escape carrying its
+      // own message/cause/PHI. The plaintext canonical stays a lexical local — never a field.
+      const canonical = input.canonical;
       const { tenantId, matterId, dictionaryVersion, token, attemptId } = input;
       // The durable store's idempotency key REQUIRES an attemptId (frozen ReversalRecordInput carries
       // it). A write without one cannot be made idempotent — fail closed.
@@ -202,24 +204,27 @@ export class DurableReversalStore implements ReversalWriteStore {
       tokens: readonly SubstitutionToken[];
     }>,
   ): Promise<ReadonlyMap<SubstitutionToken, string>> {
-    // (a) Batch-size violation rejects BEFORE any I/O (parity with InMemoryReversalStore).
-    if (input.tokens.length > this.maximumEncounteredTokenBatch) {
-      throw new ReversalFailedError();
-    }
-    const resolved = new Map<SubstitutionToken, string>();
-    const distinct: SubstitutionToken[] = [];
-    const seen = new Set<string>();
-    for (const token of input.tokens) {
-      if (!seen.has(token)) {
-        seen.add(token);
-        distinct.push(token);
-      }
-    }
-    if (distinct.length === 0) {
-      return resolved;
-    }
-
     try {
+      // Snapshot + validate ALL boundary input INSIDE the scrub boundary (finding F3-boundary): a throwing
+      // `length` getter or a throwing `tokens` iterator must reject with the fixed REVERSAL_FAILED surface,
+      // never escape carrying its own message/cause/PHI.
+      // (a) Batch-size violation rejects BEFORE any I/O (parity with InMemoryReversalStore).
+      if (input.tokens.length > this.maximumEncounteredTokenBatch) {
+        throw new ReversalFailedError();
+      }
+      const resolved = new Map<SubstitutionToken, string>();
+      const distinct: SubstitutionToken[] = [];
+      const seen = new Set<string>();
+      for (const token of input.tokens) {
+        if (!seen.has(token)) {
+          seen.add(token);
+          distinct.push(token);
+        }
+      }
+      if (distinct.length === 0) {
+        return resolved;
+      }
+
       const keyToToken = new Map<string, SubstitutionToken>();
       const requests = distinct.map((token) => {
         const mappingKey = mappingKeyOf(input.tenantId, input.matterId, input.dictionaryVersion, token);
@@ -240,13 +245,13 @@ export class DurableReversalStore implements ReversalWriteStore {
           resolved.set(token, canonical);
         }
       }
+      return resolved;
     } catch {
       // (b) crypto-integrity / tamper and any other (infra) failure fail closed identically (C1 / F3):
       // DISCARD the caught value and throw a FRESH fixed, safe surface — never a partial map on a
       // throw, never a preserved/`cause`-bearing error. (contaminated-error oracle.)
       throw new ReversalFailedError();
     }
-    return resolved;
   }
 
   /**

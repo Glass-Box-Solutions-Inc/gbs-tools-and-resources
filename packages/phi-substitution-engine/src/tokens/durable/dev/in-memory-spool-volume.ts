@@ -102,7 +102,20 @@ export class InMemoryReversalSpoolBackend {
   /** Record bytes made durable by a completed flush — the ONLY blobs readCurrent returns. */
   readonly #committedRecords = new Map<string, EncryptedReversalRecordBlob>();
   readonly #claims = new Map<string, StoredClaim>();
+  /** PROVISIONAL current pointer (last-writer). Pre-crash bookkeeping only — NOT what reads follow. */
   readonly #mappings = new Map<string, StoredMapping>();
+  /**
+   * DURABLE current pointer — the ONLY mapping reads follow. Written EXCLUSIVELY by a completed flush
+   * (last-durable-flush-wins) and NEVER by publish or discarded by `crash()`. This is what makes an
+   * acknowledged write survive a concurrent different-attempt publisher: two operations of one matter
+   * tokenize the same canonical → same mappingKey, different attemptId. A later `publish` overwrites the
+   * PROVISIONAL pointer, but a flushed commit's durable pointer stands until another flush replaces it,
+   * so `record()` never acknowledges while the durable-readable mapping is absent or points at an
+   * unflushed successor (§6/N4). Deterministic tokenization makes either commit's canonical identical, so
+   * whichever durable pointer wins decrypts correctly. Dropping this (reads follow `#mappings`, or flush
+   * not writing here) is the named mutation `MUT-DURABLE-MAPPING-STEAL`.
+   */
+  readonly #durableMappings = new Map<string, StoredMapping>();
   readonly #commitIndex = new Map<string, CommitContext>();
   #handleSeq = 0;
 
@@ -213,6 +226,17 @@ export class InMemoryReversalSpoolBackend {
     if (claim !== undefined && (claim.commit as unknown as string) === commitStr) {
       this.#claims.set(ctx.idempotencyKey as unknown as string, { ...claim, flushed: true });
     }
+    // Promote THIS flushed commit to the durable current pointer UNCONDITIONALLY (last-durable-flush-wins):
+    // the record bytes are now durable, so its mapping is a valid durable pointer even if a later
+    // different-attempt publish already stole the provisional pointer. Reads follow ONLY this map, so the
+    // acknowledgment that follows this flush can never expose an absent/unflushed current mapping.
+    this.#durableMappings.set(ctx.mappingKey as unknown as string, {
+      mappingKey: ctx.mappingKey,
+      preparedHandle: ctx.preparedHandle,
+      commit,
+      flushed: true,
+    });
+    // Keep the provisional pointer's flushed flag consistent when it still points here (bookkeeping only).
     const mapping = this.#mappings.get(ctx.mappingKey as unknown as string);
     if (mapping !== undefined && (mapping.commit as unknown as string) === commitStr) {
       this.#mappings.set(ctx.mappingKey as unknown as string, { ...mapping, flushed: true });
@@ -220,7 +244,10 @@ export class InMemoryReversalSpoolBackend {
   }
 
   readMapping(mappingKey: ReversalMappingKey): StoredMapping | undefined {
-    return this.#mappings.get(mappingKey as unknown as string);
+    // Reads follow the DURABLE pointer only — a published-but-unflushed commit is not readable, and an
+    // acknowledged commit's durable pointer survives a concurrent successor's publish and a `crash()`.
+    // Pointing this at `#mappings` is MUT-DURABLE-MAPPING-STEAL.
+    return this.#durableMappings.get(mappingKey as unknown as string);
   }
   /** Only a committed (durably flushed) record is readable. */
   readCommittedBlob(handle: PreparedWriteHandle): EncryptedReversalRecordBlob | undefined {
@@ -230,7 +257,8 @@ export class InMemoryReversalSpoolBackend {
   // ---- dev/attacker-simulation affordances (NOT part of the SpoolVolume port) ----
 
   #blobFor(mappingKey: ReversalMappingKey): { handle: PreparedWriteHandle; blob: EncryptedReversalRecordBlob } {
-    const m = this.#mappings.get(mappingKey as unknown as string);
+    // Attacker-sim operates on the DURABLE pointer — the same one reads follow.
+    const m = this.#durableMappings.get(mappingKey as unknown as string);
     if (m === undefined) {
       throw new Error("debug_mapping_absent");
     }
@@ -255,11 +283,11 @@ export class InMemoryReversalSpoolBackend {
 
   /** Simulates raw-storage relocation of an envelope to another mapping key. */
   public debugRelocate(from: ReversalMappingKey, to: ReversalMappingKey): void {
-    const m = this.#mappings.get(from as unknown as string);
+    const m = this.#durableMappings.get(from as unknown as string);
     if (m === undefined) {
       throw new Error("debug_relocate_source_absent");
     }
-    this.#mappings.set(to as unknown as string, { ...m, mappingKey: to });
+    this.#durableMappings.set(to as unknown as string, { ...m, mappingKey: to });
   }
 
   /** Simulates tampering of stored (authenticated) record metadata. */

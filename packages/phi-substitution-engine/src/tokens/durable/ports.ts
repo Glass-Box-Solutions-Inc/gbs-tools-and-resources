@@ -198,9 +198,14 @@ export interface DurableReversalStoreDependencies {
   readonly keyProvider: KeyProvider;
   readonly spoolVolume: SpoolVolume;
   /**
-   * Identifier-only retention classifier (addendum C3). Determined once from trusted operation
-   * context, consistent per attemptId, fail-closed on unknown/error, NEVER inferred from token/matter
-   * shape. Receives identifiers only — never canonical or token.
+   * Identifier-only retention classifier (addendum C3 + C3-determinism amendment). A TRUSTED injected
+   * seam. Receives identifiers ONLY — `{tenantId, matterId, attemptId}`, never canonical or token — so
+   * it is operation-scoped by construction. CONTRACT (relied on, not re-enforced by the store): it MUST
+   * be DETERMINISTIC — identical `{tenantId, matterId, attemptId}` yields the SAME class for every
+   * `record()` of an operation — so retention is "determined once, consistent across every record()"
+   * without the store keeping cross-record state. Fail-closed on unknown/error (the store rejects). A
+   * non-deterministic classifier is a misbehaving trusted dependency (out of the bounded threat model);
+   * store-enforced operation-retention binding is a governance follow-up, not an M2 requirement.
    */
   readonly classifyRetention: (input: RetentionClassificationInput) => Promise<ReversalRetentionClass>;
   readonly nowEpochMilliseconds: () => number;

@@ -637,6 +637,111 @@ describe("L2.4 AAD — injective over every one of the 10 authenticated fields (
   }
 });
 
+describe("L2.4 durable current mapping survives a concurrent different-attempt publisher (§6/N4)", () => {
+  it("an acknowledged commit stays resolvable after a later same-mappingKey attempt publishes, fails to flush, then the replica crashes (MUT-DURABLE-MAPPING-STEAL)", async () => {
+    // Two operations of ONE matter tokenize the same canonical → SAME mappingKey, DIFFERENT attemptId.
+    const hA = makeHarness({ retention: "matter" });
+    // Second live replica over the SAME durable backend + KEK; its flush always fails (publishes, never
+    // durably flushes), so it steals the PROVISIONAL current pointer without establishing a durable one.
+    const hB = makeHarness({
+      retention: "matter",
+      backend: hA.backend,
+      keyProvider: hA.keyProvider,
+      faults: { failAt: "flush" },
+    });
+    const CANON = "Maria García";
+    // Attempt A fully records (publish + durable flush) → acknowledged; durable pointer = A.
+    await hA.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-A"), canonical: CANON }));
+    // Attempt B (same mappingKey, different attempt) publishes on replica B, then fails to flush.
+    await expect(
+      hB.store.record(recordInput({ attemptId: brand<OperationAttemptId>("att-B"), canonical: CANON })),
+    ).rejects.toBeInstanceOf(ReversalFailedError);
+    // Replica loss: every published-but-unflushed claim/mapping is discarded.
+    hA.backend.crash();
+    // A's acknowledgment MUST hold: the token is still resolvable via the surviving durable pointer.
+    const resolved = await hA.store.resolveEncounteredTokens(resolveInput());
+    expect(resolved.get(CLAIMANT)).toBe(CANON);
+  });
+});
+
+describe("L2.4 retention is operation-scoped — classifier sees identifiers only, identically per operation (C3)", () => {
+  it("both record()s of one operation pass ONLY {tenantId,matterId,attemptId} — never a token/canonical — and the same values (MUT-CLASSIFY-PER-TOKEN)", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const h = makeHarness({
+      retention: (input) => {
+        calls.push({ ...(input as unknown as Record<string, unknown>) });
+        return "matter";
+      },
+    });
+    const att = brand<OperationAttemptId>("att-op1");
+    // Two DIFFERENT tokens under ONE operation (same tenant/matter/attempt).
+    await h.store.record(recordInput({ attemptId: att, token: CLAIMANT, canonical: "Maria García" }));
+    await h.store.record(recordInput({ attemptId: att, token: WITNESS, canonical: "Bob Jones" }));
+    expect(calls.length).toBe(2);
+    for (const c of calls) {
+      // The classifier is operation-scoped: it receives EXACTLY the operation identifiers, never a token
+      // or canonical — so retention can never be inferred per-token. Passing the token is MUT-CLASSIFY-PER-TOKEN.
+      expect(Object.keys(c).sort()).toEqual(["attemptId", "matterId", "tenantId"]);
+      expect("token" in c).toBe(false);
+      expect("canonical" in c).toBe(false);
+    }
+    // Same operation → identical classifier input both times → a deterministic classifier yields ONE class.
+    expect(calls[0]).toEqual(calls[1]);
+  });
+});
+
+describe("L2.4 boundary input is read INSIDE the scrub try — a throwing getter/iterator fails closed (F3-boundary, C1)", () => {
+  const MARKER = "CONTAMINANT-Maria García-078-05-1120";
+  function poison(): never {
+    // A hostile passed-in field access smuggles PHI on the thrown error's cause (NOT intrinsic poisoning).
+    throw Object.assign(new ReversalFailedError(), { cause: MARKER, smuggled: MARKER });
+  }
+  function assertCleanEscape(caught: unknown): void {
+    expect(caught).toBeInstanceOf(ReversalFailedError);
+    const err = caught as ReversalFailedError & { cause?: unknown; smuggled?: unknown };
+    expect(err.cause).toBeUndefined();
+    expect(err.smuggled).toBeUndefined();
+    const dump = `${JSON.stringify({ message: err.message, ...err })}${String(err)}${err.stack ?? ""}`;
+    expect(dump).not.toContain("CONTAMINANT");
+    expectNoCanary([dump]);
+  }
+
+  it("record(): a throwing `canonical` getter rejects with a FRESH, cause-free REVERSAL_FAILED (MUT-INPUT-OUTSIDE-SCRUB)", async () => {
+    const h = makeHarness();
+    const hostile = { ...recordInput() } as Record<string, unknown>;
+    Object.defineProperty(hostile, "canonical", { get: poison, enumerable: true, configurable: true });
+    let caught: unknown;
+    try {
+      await h.store.record(hostile as unknown as Parameters<DurableReversalStore["record"]>[0]);
+    } catch (e) {
+      caught = e;
+    }
+    assertCleanEscape(caught);
+  });
+
+  it("resolveEncounteredTokens(): a throwing `tokens` iterator rejects with a FRESH, cause-free REVERSAL_FAILED (MUT-INPUT-OUTSIDE-SCRUB)", async () => {
+    const h = makeHarness();
+    const hostile = {
+      ...resolveInput(),
+      tokens: {
+        get length() {
+          return 1;
+        },
+        [Symbol.iterator]() {
+          poison();
+        },
+      },
+    };
+    let caught: unknown;
+    try {
+      await h.store.resolveEncounteredTokens(hostile as unknown as Parameters<DurableReversalStore["resolveEncounteredTokens"]>[0]);
+    } catch (e) {
+      caught = e;
+    }
+    assertCleanEscape(caught);
+  });
+});
+
 // Silence unused-import lint in transpile-only test runs while keeping the symbols available.
 void DEFAULT_MATTER;
 void DEFAULT_VERSION;
