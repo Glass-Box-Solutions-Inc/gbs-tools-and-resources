@@ -110,8 +110,19 @@ describe("AzureKeyVaultKeyProvider", () => {
   });
 
   it.each([
-    ["64-byte plaintext", Uint8Array.from({ length: 64 }, () => 0x01)],
-    ["wrong encoding version", Uint8Array.from({ length: 65 }, (_, index) => (index === 0 ? 0x02 : 0x00))],
+    // Both fixtures embed the SAME digest the caller presents (digest(0x11)) at offset 1, so the
+    // constant-time digest compare would PASS — the length/version guard is the SOLE catcher. This
+    // makes each an isolating oracle for that guard (removing it → RED), per the mutation-evidence
+    // doctrine (a malformed fixture that also fails the digest compare cannot prove the length/version
+    // guard). Layout: version(1) || bindingDigest(32) || dek(rest).
+    [
+      "64-byte plaintext (correct version + matching digest, short dek)",
+      Uint8Array.from([0x01, ...new Uint8Array(32).fill(0x11), ...new Uint8Array(31)]),
+    ],
+    [
+      "wrong encoding version (matching digest + full dek)",
+      Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x11), ...new Uint8Array(32)]),
+    ],
   ])("rejects %s returned by the KEK client", async (_description, malformedPlaintext) => {
     const client = new FakeKekCryptoClient();
     const fixture = await wrappedFixture(client);
