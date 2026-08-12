@@ -146,6 +146,32 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
     expect(Object.isFrozen(roles)).toBe(true);
   });
 
+  it("the role allow-list is READ-poison-resistant (a replaced Set.prototype.has cannot admit a role)", () => {
+    // GLY-336 R4 (killed-gate finding): R3 sealed the WRITE path (Set.prototype.add can't mutate the
+    // frozen policy) but the security-critical membership READ must ALSO not route through the
+    // globally-replaceable `Set.prototype.has`. A consumer that replaces it — even before this module
+    // is imported — must not be able to make an unauthorized (PHI-bearing) role pass the allow-list and
+    // be emitted as a token label. Membership is a null-prototype record read directly, so the poison
+    // is inert. Mutation-proof: back `frozenRoleSet.has` with a live Set again and this test goes red.
+    const roles = BOUNDARY_TOKEN_GRAMMAR_POLICY.allowedRoles as unknown as { has: (v: string) => boolean };
+    const originalHas = Set.prototype.has;
+    try {
+      // Most aggressive poison: every Set membership check answers true.
+      (Set.prototype as unknown as { has: (this: unknown, v: unknown) => boolean }).has = function (): boolean {
+        return true;
+      };
+      // Sanity: the poison is genuinely live on a real Set.
+      expect(new Set<string>().has("anything")).toBe(true);
+      // The allow-list is unmoved: unauthorized role still rejected, authorized role still admitted.
+      expect(roles.has("Jordan Smith PHI role")).toBe(false);
+      expect(roles.has("Claimant")).toBe(true);
+    } finally {
+      (Set.prototype as unknown as { has: unknown }).has = originalHas;
+    }
+    // Poison fully restored — a real Set behaves normally again.
+    expect(new Set<string>(["x"]).has("y")).toBe(false);
+  });
+
   it("regression (#private): the concrete reversal store's raw map is NOT reflectively enumerable", async () => {
     const store = new InMemoryReversalStore() as unknown as {
       record: (input: unknown) => void;
