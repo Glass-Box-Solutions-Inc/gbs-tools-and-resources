@@ -624,6 +624,8 @@ def render_document(
     medical_story: Any = None,
     contention_actor_party: str | None = None,
     defense_contest_theories: Sequence[str] = (),
+    imr_application_content: Any = None,
+    imr_outcome: str | None = None,
 ) -> RenderResult:
     """Render one planned document to *out_path*, reproducibly.
 
@@ -661,6 +663,8 @@ def render_document(
             the story context (R14/R35).
         defense_contest_theories: the bound defense theories, in their frozen
             tuple order (R30).
+        imr_application_content: R39's sparse, denial-bound application fields.
+        imr_outcome: the one R57 outcome carried by the governed IMR decision.
 
     Returns:
         A :class:`RenderResult` with the checksum and size for the manifest.
@@ -776,6 +780,10 @@ def render_document(
         variant_switch = ajc66_variant_content(template_subtype)
         if variant_switch is not None:
             context["variant_content"] = variant_switch
+    if imr_application_content is not None:
+        context["imr_application_content"] = imr_application_content
+    if imr_outcome is not None:
+        context["imr_outcome"] = imr_outcome
 
     spec = _DocumentSpec(
         subtype=_SubtypeProxy(subtype),

@@ -673,8 +673,57 @@ def _story_psych_causation_text(opinion: Any) -> str:
     return " ".join(sentences)
 
 
-def _story_psych_4660_text(opinion: Any) -> str:
-    """The §4660.1(c) consequence of the stated classification, one register."""
+def _story_psych_3208_text(story: DocumentMedicalStory) -> str:
+    """R17's complete statutory walk in deliberately generic step-8 prose.
+
+    Part 5 owns the exact registers.  This structure nevertheless states the
+    corrected McCullough rule now: quality never selects legal law, and
+    §3208.3(d) is only the six-month employment rule.
+    """
+    opinion = story.medical_opinion
+    consequence = bool(
+        opinion is not None
+        and opinion.psych_injury_kind == "compensable_consequence"
+    )
+    opening = (
+        "Labor Code section 3208.3(b)(1)'s predominant-cause threshold "
+        "applies to this compensable-consequence psychiatric claim. The "
+        "industrial physical injury and its medical effects are treated as "
+        "the qualifying actual events of employment and are weighed against "
+        "all causes combined."
+        if consequence
+        else (
+            "Labor Code section 3208.3(b)(1)'s predominant-cause threshold "
+            "has been applied to the actual events of employment and all "
+            "other causes combined."
+        )
+    )
+    return (
+        f"{opening} Labor Code section 3208.3(d) is considered only as the "
+        "six-month employment rule and is not authority for bypassing "
+        "predominant cause. The violent-act standard under section "
+        "3208.3(b)(2), any good-faith-personnel-action issue, and any "
+        "post-termination issue are analyzed separately when supported by "
+        "the facts presented."
+    )
+
+
+def _story_psych_4660_text(
+    story: DocumentMedicalStory, date_of_injury: Any
+) -> str:
+    """The DOI-anchored §4660.1(c) structure from existing semantic fields."""
+    opinion = story.medical_opinion
+    if opinion is None:
+        return (
+            "The application of Labor Code section 4660.1(c) turns on the "
+            "direct-versus-consequence classification of the psychiatric injury."
+        )
+    if getattr(date_of_injury, "year", 9999) < 2013:
+        return (
+            "The date of injury predates January 1, 2013, so Labor Code "
+            "section 4660.1(c)'s limitation does not apply by date; the "
+            "direct-versus-consequence and section 3208.3 analyses remain separate."
+        )
     if opinion.psych_injury_kind == "direct":
         return (
             "Because the psychiatric injury is classified as a direct injury, "
@@ -682,6 +731,23 @@ def _story_psych_4660_text(opinion: Any) -> str:
             "psychiatric impairment rating on that ground."
         )
     if opinion.psych_injury_kind == "compensable_consequence":
+        exception = next(
+            (
+                row.psych_exception_analysis
+                for row in story.apportionments
+                if row.psych_exception_analysis is not None
+            ),
+            None,
+        )
+        if exception in {"violent_act", "direct_exposure", "catastrophic_injury"}:
+            label = exception.replace("_", " ")
+            return (
+                "The psychiatric injury is classified as a compensable "
+                "consequence of the physical injury. The existing "
+                f"{label} exception analysis is applied before deciding "
+                "whether Labor Code section 4660.1(c)(1) limits an additional "
+                "psychiatric impairment rating."
+            )
         return (
             "Because the psychiatric injury is classified as a compensable "
             "consequence of the physical injury, Labor Code section "
@@ -790,6 +856,48 @@ def _story_contention_sentence(position: int, contention: Any) -> str:
             " Apportionment of permanent disability should be refused on "
             "this record."
         )
+    if (
+        "hikida_treatment_carveout" in contention.doctrine_hooks
+        or contention.treatment_causation is not None
+    ):
+        if (
+            contention.treatment_causation == "contributing_cause"
+            and contention.requested_apportionment == "apply"
+        ):
+            sentence += (
+                " Industrial medical treatment contributed to the permanent "
+                "disability, but other pathology also contributes; under "
+                "Justice's narrowing of Hikida, statutory apportionment applies."
+            )
+        elif (
+            contention.treatment_causation == "contributing_cause"
+            and contention.requested_apportionment == "refuse"
+        ):
+            sentence += (
+                " Industrial medical treatment contributed to the permanent "
+                "disability, and the requested refusal of apportionment invokes "
+                "Hikida even though Justice limits the carveout to disability "
+                "caused solely by that treatment."
+            )
+        elif (
+            contention.treatment_causation == "sole_cause"
+            and contention.requested_apportionment == "apply"
+        ):
+            sentence += (
+                " Industrial medical treatment is stated to be the sole cause "
+                "of the permanent disability, while the requested result still "
+                "applies apportionment contrary to the Hikida carveout as "
+                "narrowed by Justice."
+            )
+        elif (
+            contention.treatment_causation == "sole_cause"
+            and contention.requested_apportionment == "refuse"
+        ):
+            sentence += (
+                " Industrial medical treatment is stated to be the sole cause "
+                "of the permanent disability; Hikida, as narrowed by Justice, "
+                "therefore requires compensation without apportionment."
+            )
     if contention.rationale:
         sentence += f" {contention.rationale.rstrip('.')}."
     return sentence
@@ -2279,17 +2387,15 @@ def build_fact_aware_templates() -> dict[str, type]:
             elements.extend(
                 self.make_section(
                     "LABOR CODE §3208.3 ANALYSIS",
-                    "The predominant-cause standard of Labor Code section "
-                    "3208.3 has been considered as to all causes of the "
-                    "psychiatric injury combined, and the causation "
-                    "conclusions stated in this report are reached under "
-                    "that standard.",
+                    _story_psych_3208_text(story),
                 )
             )
             elements.extend(
                 self.make_section(
                     "LABOR CODE §4660.1(c) ANALYSIS",
-                    _story_psych_4660_text(opinion),
+                    _story_psych_4660_text(
+                        story, self.case.timeline.date_of_injury
+                    ),
                 )
             )
             return elements
@@ -2480,6 +2586,16 @@ def build_fact_aware_templates() -> dict[str, type]:
             if not forced.fired:
                 log.warning("fact_templates.ur_procedure_not_forced", cpt=surgery.cpt_code)
             return story
+
+        def _pick_decision(self, is_imr: bool) -> str:
+            """R57 — one governed IMR outcome, never a second render draw."""
+            context = getattr(getattr(self, "doc_spec", None), "context", None)
+            outcome = context.get("imr_outcome") if isinstance(context, dict) else None
+            if is_imr and outcome == "upheld":
+                return "UPHELD — NOT MEDICALLY NECESSARY"
+            if is_imr and outcome == "overturned":
+                return "OVERTURNED — APPROVED"
+            return str(super()._pick_decision(is_imr))
 
     class FactAwareDischargeSummary(FactAwareOperativeRecord):
         """A discharge summary that does not call itself an operative report.
@@ -4076,6 +4192,8 @@ def build_fact_aware_templates() -> dict[str, type]:
         "UTILIZATION_REVIEW_DECISION": FactAwareUtilizationReview,
         "UTILIZATION_REVIEW_DECISION_REGULAR": FactAwareUtilizationReview,
         "UTILIZATION_REVIEW_DECISION_EXPEDITED": FactAwareUtilizationReview,
+        "IMR_APPLICATION_FORM": FactAwareUtilizationReview,
+        "INDEPENDENT_MEDICAL_REVIEW_DECISION": FactAwareUtilizationReview,
         "OPERATIVE_HOSPITAL_RECORDS": FactAwareOperativeRecord,
         "DIAGNOSTICS_IMAGING": FactAwareDiagnosticReport,
         "QME_COMPREHENSIVE_REPORT": FactAwareNeuroQmeReport,

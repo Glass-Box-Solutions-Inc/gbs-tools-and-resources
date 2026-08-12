@@ -336,6 +336,8 @@ def generate_case(
             ),
             contention_actor_party=document.contention_actor_party,
             defense_contest_theories=document.defense_contest_theories,
+            imr_application_content=document.imr_application_content,
+            imr_outcome=document.imr_outcome,
         )
         if document.subtype in SUBPOENAED_RECORDS_SUBTYPES:
             packet_counter += 1

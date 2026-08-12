@@ -31,7 +31,8 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Literal
+from fractions import Fraction
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -74,7 +75,13 @@ from wc_caseload_engine.medical_history import (
     PriorClaim,
     PsychInjuryKind,
 )
-from wc_caseload_engine.seeds import CaseSeed, DoctrineGrounding, DoctrineHook, UrDecision
+from wc_caseload_engine.seeds import (
+    CaseSeed,
+    DoctrineGrounding,
+    DoctrineHook,
+    ImrOutcome,
+    UrDecision,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard (planner imports us)
     from wc_caseload_engine.planner import PlannedDocument
@@ -380,7 +387,237 @@ class MedicalUrPlan(BaseModel):
     decision_was_authored: bool
     imr_requested: bool
     imr_was_authored: bool
+    effective_imr_outcome: ImrOutcome | None = None
     imr_application: ImrApplicationContent | None = None
+
+
+def medical_ur_semantic_key(seed: CaseSeed) -> tuple[object, ...]:
+    """R45's exact structural ``U`` identity for one UR dispute."""
+    return (
+        "case",
+        seed.case_id,
+        "ur",
+        seed.injury.onset_date,
+        seed.scenario.surgery,
+        tuple(sorted(part.part for part in seed.injury.body_parts)),
+    )
+
+
+def _medical_ur_stream_key(seed: CaseSeed, *suffix: object) -> tuple[object, ...]:
+    """R46 family key with the structural ``U`` embedded as one identity."""
+    return ("case", seed.case_id, medical_ur_semantic_key(seed), *suffix)
+
+
+def _fraction_hit(rng: Any, probability: Fraction) -> bool:
+    """Use the engine's frozen Fraction draw convention (R49/R57)."""
+    return rng.random() < float(probability)
+
+
+def _weighted_member(rng: Any, rows: Sequence[tuple[Any, Fraction]]) -> Any:
+    """Use the engine's frozen ordered weighted-choice convention."""
+    draw = rng.random()
+    cursor = 0.0
+    for member, weight in rows:
+        cursor += float(weight)
+        if draw < cursor:
+            return member
+    return rows[-1][0]
+
+
+def derive_medical_ur_plan(
+    seed: CaseSeed,
+    *,
+    target_denial_date: dt.date | None = None,
+    resolved_decision: UrDecision | None = None,
+) -> MedicalUrPlan | None:
+    """Resolve the gated R39/R57 UR decision, IMR request, and outcome once.
+
+    The feature-absent path returns before constructing an M3 stream.  The IMR
+    request waits for the actual denial date because R46 keys that draw by
+    ``(U, denial_date)``; callers therefore resolve once before the lifecycle
+    walk for its UR decision, then once with that hard date before supplying
+    the completed answer to both substrate parameters and guaranteed paper.
+    Both calls are pure and entity-private, so they return the same decision.
+    """
+    if seed.scenario.medical_history is None:
+        return None
+    ur = seed.lifecycle.ur_dispute
+    if not ur.enabled:
+        return None
+
+    # Import through the module attribute so R68/R70's production stream
+    # recorder observes every construction (R44).
+    from wc_caseload_engine import medical_assertions as assertions_module
+
+    decision_was_authored = (
+        "decision" in ur.model_fields_set and ur.decision is not None
+    )
+    if resolved_decision is not None:
+        effective_decision = resolved_decision
+    elif decision_was_authored:
+        effective_decision = ur.decision
+    else:
+        effective_decision = _weighted_member(
+            assertions_module._medical_story_rng(
+                seed, "ur-decision", _medical_ur_stream_key(seed)
+            ),
+            assertions_module.UR_DECISION_WEIGHTS_WHEN_UNSTATED.value,
+        )
+
+    imr_was_authored = "imr" in ur.model_fields_set
+    if imr_was_authored:
+        imr_requested = ur.imr
+    elif effective_decision == "upheld" and target_denial_date is not None:
+        imr_requested = _fraction_hit(
+            assertions_module._medical_story_rng(
+                seed,
+                "imr-request",
+                _medical_ur_stream_key(seed, target_denial_date),
+            ),
+            assertions_module.P_IMR_REQUEST_GIVEN_UPHELD_DENIAL.value,
+        )
+    else:
+        imr_requested = False
+
+    if imr_requested and effective_decision != "upheld":
+        raise MedicalAssertionError(
+            "medical-story IMR request requires an effective upheld UR denial; "
+            f"case {seed.case_id!r} authored imr=true against "
+            f"{effective_decision!r} (R39)"
+        )
+    if ur.imr_application is not None and not imr_requested:
+        raise MedicalAssertionError(
+            "medical-story explicit imr_application requires an effective IMR "
+            f"request in case {seed.case_id!r} (R39)"
+        )
+
+    effective_outcome: ImrOutcome | None = None
+    if imr_requested:
+        if ur.imr_outcome is not None:
+            effective_outcome = ur.imr_outcome
+        elif target_denial_date is not None:
+            effective_outcome = _weighted_member(
+                assertions_module._medical_story_rng(
+                    seed,
+                    "imr-outcome",
+                    _medical_ur_stream_key(seed, target_denial_date),
+                ),
+                assertions_module.IMR_OUTCOME_WEIGHTS_WHEN_UNSTATED.value,
+            )
+
+    return MedicalUrPlan(
+        effective_decision=effective_decision,
+        decision_was_authored=decision_was_authored,
+        imr_requested=imr_requested,
+        imr_was_authored=imr_was_authored,
+        effective_imr_outcome=effective_outcome,
+    )
+
+
+def resolve_imr_application_content(
+    seed: CaseSeed,
+    plan: MedicalUrPlan,
+    *,
+    target_denial_date: dt.date,
+    medical_history: MedicalHistory | None,
+    earlier_record_subtypes: Sequence[str],
+    disputed_treatment: str,
+) -> ImrApplicationContent | None:
+    """Resolve R58's authored or sampled sparse application fields.
+
+    This is structural content only.  Part 5/R90 owns the visible application
+    register and exact prose; step 8 merely decides which existing fields are
+    populated and binds them to the actual denial.  No grade or quality-like
+    state is read or produced.
+    """
+    if not plan.imr_requested:
+        return None
+    ur = seed.lifecycle.ur_dispute
+    if ur.imr_application is not None:
+        entry = ur.imr_application
+        return ImrApplicationContent(
+            disputed_treatment=entry.disputed_treatment,
+            diagnosis_icd10=entry.diagnosis_icd10,
+            ur_determination_attached=entry.ur_determination_attached,
+            supporting_record_subtypes=tuple(entry.supporting_record_subtypes),
+            clinical_rebuttal=entry.clinical_rebuttal,
+            mtus_citations=tuple(entry.mtus_citations),
+            target_denial_subtype="MEDICAL_TREATMENT_DENIAL_UR",
+            target_denial_date=target_denial_date,
+        )
+
+    from wc_caseload_engine import medical_assertions as assertions_module
+
+    occupancy = assertions_module.IMR_APPLICATION_FIELD_OCCUPANCY.value
+
+    def populated(field_name: str) -> bool:
+        return _fraction_hit(
+            assertions_module._medical_story_rng(
+                seed,
+                "imr-field-occupancy",
+                _medical_ur_stream_key(seed, field_name),
+            ),
+            occupancy[field_name],
+        )
+
+    visible_diagnoses = tuple(
+        condition
+        for condition in (medical_history.surfaced_conditions() if medical_history else ())
+        if condition.icd10
+    )
+    records = tuple(dict.fromkeys(earlier_record_subtypes))
+
+    diagnosis_icd10 = None
+    if visible_diagnoses and populated("diagnosis_icd10"):
+        diagnosis_icd10 = visible_diagnoses[0].icd10
+
+    support: tuple[str, ...] = ()
+    if records and populated("supporting_record_subtypes"):
+        count = _weighted_member(
+            assertions_module._medical_story_rng(
+                seed,
+                "imr-field-count",
+                _medical_ur_stream_key(seed, "supporting_record_subtypes"),
+            ),
+            assertions_module.SUPPORTING_RECORD_COUNT_WEIGHTS.value,
+        )
+        support = records[:count]
+
+    rebuttal = None
+    if populated("clinical_rebuttal"):
+        case_specific = _fraction_hit(
+            assertions_module._medical_story_rng(
+                seed, "imr-rebuttal-substance", _medical_ur_stream_key(seed)
+            ),
+            assertions_module.P_IMR_CASE_SPECIFIC_REBUTTAL.value,
+        )
+        if case_specific and visible_diagnoses:
+            rebuttal = (
+                "The utilization-review determination does not account for "
+                f"the documented {visible_diagnoses[0].label}."
+            )
+        else:
+            rebuttal = (
+                "Reconsideration of the utilization-review determination is requested."
+            )
+
+    # R58 makes MTUS occupancy eligible only when Part 5 supplies a grounded,
+    # treatment-relevant citation.  Step 8 deliberately has no phrase pool, so
+    # no citation is eligible yet and no occupancy/count draw occurs here.
+    return ImrApplicationContent(
+        disputed_treatment=(
+            disputed_treatment if populated("disputed_treatment") else None
+        ),
+        diagnosis_icd10=diagnosis_icd10,
+        ur_determination_attached=(
+            True if populated("ur_determination_attached") else None
+        ),
+        supporting_record_subtypes=support,
+        clinical_rebuttal=rebuttal,
+        mtus_citations=(),
+        target_denial_subtype="MEDICAL_TREATMENT_DENIAL_UR",
+        target_denial_date=target_denial_date,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1539,5 +1776,8 @@ __all__ = [
     "StoryPriorClaim",
     "StoryRecordReference",
     "derive_medical_story",
+    "derive_medical_ur_plan",
+    "medical_ur_semantic_key",
     "plan_medical_story_documents",
+    "resolve_imr_application_content",
 ]

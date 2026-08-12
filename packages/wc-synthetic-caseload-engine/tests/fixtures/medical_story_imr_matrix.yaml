@@ -1,0 +1,67 @@
+# AJC-62 R67/R77 step 8 — explicit authority and sampled IMR structure.
+caseload_id: medical-story-imr-matrix
+
+defaults:
+  injury:
+    type: specific
+    date_of_injury: 2024-03-01
+    body_parts:
+      - {part: lumbar_spine}
+  lifecycle:
+    target_stage: medical_legal
+    claim_response: accepted
+    eval_type: qme
+  scenario:
+    medical_history:
+      sample_conditions: false
+      conditions:
+        - label: lumbar disc disorder
+          origin: industrial
+          body_part: lumbar_spine
+          icd10: M51.26
+          severity: moderate
+          trajectory: progressive
+          symptomatic_before_doi: false
+
+cases:
+  - case_id: imr-authored-false-upheld
+    rng_seed: 620311
+    lifecycle:
+      ur_dispute:
+        enabled: true
+        decision: upheld
+        imr: false
+
+  - case_id: imr-authored-true-upheld
+    rng_seed: 620312
+    lifecycle:
+      ur_dispute:
+        enabled: true
+        decision: upheld
+        imr: true
+        imr_outcome: upheld
+
+  - case_id: imr-sampled-upheld
+    rng_seed: 620313
+    lifecycle:
+      ur_dispute:
+        enabled: true
+        decision: upheld
+
+  - case_id: imr-overturned
+    rng_seed: 620314
+    lifecycle:
+      ur_dispute:
+        enabled: true
+        decision: overturned
+
+  - case_id: imr-sparse-explicit
+    rng_seed: 620315
+    lifecycle:
+      ur_dispute:
+        enabled: true
+        decision: upheld
+        imr: true
+        imr_outcome: overturned
+        imr_application:
+          disputed_treatment: lumbar epidural steroid injection

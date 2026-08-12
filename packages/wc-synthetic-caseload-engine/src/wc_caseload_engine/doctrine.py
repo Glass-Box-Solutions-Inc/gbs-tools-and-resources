@@ -398,6 +398,18 @@ _AOE_COE_DEFENSE: frozenset[str] = frozenset(
 """Where a threshold compensability defense is first stated in writing."""
 
 
+_SIBTF_SECTION_4751_RULE = (
+    "Labor Code section 4751 requires a preexisting permanent partial disability; "
+    "a subsequent compensable injury producing additional permanent partial "
+    "disability; combined permanent disability greater than that from the subsequent "
+    "injury alone; combined permanent disability of at least seventy percent; and "
+    "either prior disability affecting a hand, arm, foot, leg, or eye with subsequent "
+    "injury to the opposite and corresponding member and subsequent disability alone, "
+    "unadjusted for age or occupation, of at least five percent, or subsequent "
+    "disability alone, unadjusted for age or occupation, of at least thirty-five percent."
+)
+
+
 DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
     "ogilvie": DoctrineContent(
         hook="ogilvie",
@@ -697,31 +709,45 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "whether a preexisting condition, if established, was labor disabling before the "
             "industrial injury, and what the combined effect of it and the current impairment "
             "would be. I have answered on the records provided and identified what a section "
-            "4751 claim would still need.",
+            "4751 claim would still need. "
+            + _SIBTF_SECTION_4751_RULE,
             "Section 4751 requires that the preexisting disability be labor disabling rather than "
-            "merely present, and that the subsequent industrial injury combine with it to produce "
-            "a substantially greater disability. Where the records establish a prior condition I "
-            "have stated it as a whole person figure with the basis for it, so the section 4751 "
-            "threshold can be tested against evidence rather than asserted.",
+            "merely present, that the subsequent compensable injury produce additional permanent "
+            "partial disability, and that the combined disability be greater than the subsequent "
+            "disability alone and at least seventy percent. Where the records establish a prior "
+            "condition I have identified the available medical evidence so those thresholds can "
+            "be tested rather than asserted. "
+            + _SIBTF_SECTION_4751_RULE,
             "Where a prior labor-disabling condition is established, my opinion on whether its "
-            "combined effect with the current industrial injury exceeds the sum of their separate "
-            "effects is stated above with the reasoning. Whether that satisfies the thresholds of "
-            "section 4751 is a legal determination that I do not make.",
+            "combined effect with the current industrial injury exceeds the disability from the "
+            "subsequent injury alone is stated above with the reasoning. The statutory alternative "
+            "also requires either opposite and corresponding hand, arm, foot, leg, or eye "
+            "disabilities with the subsequent disability alone and unadjusted at least five "
+            "percent, or subsequent disability alone and unadjusted at least thirty-five percent. "
+            "Whether the complete section 4751 thresholds are satisfied is a legal determination "
+            "that I do not make. "
+            + _SIBTF_SECTION_4751_RULE,
         ),
         legal_paragraphs=(
             "Labor Code section 4751 provides benefits from the Subsequent Injuries Benefits "
             "Trust Fund where an employee with a preexisting permanent partial disability "
-            "sustains a subsequent industrial injury and the combined permanent disability "
-            "reaches seventy percent or more. The section 4751 thresholds must be pleaded and "
-            "proved.",
-            "A claim under section 4751 requires either a preexisting disability of at least "
-            "thirty-five percent, or a subsequent injury to an opposite and corresponding member "
-            "producing at least five percent, together with the statutory combined threshold. The "
-            "Fund is a separate party and must be joined; a case in chief resolved without "
-            "joinder does not resolve the claim against it.",
+            "sustains a subsequent compensable injury producing additional permanent partial "
+            "disability, and the combined permanent disability is greater than that from the "
+            "subsequent injury alone and reaches at least seventy percent. These section 4751 "
+            "thresholds must be pleaded and proved. "
+            + _SIBTF_SECTION_4751_RULE,
+            "Section 4751 then requires one of two alternatives. First, the prior disability may "
+            "affect a hand, arm, foot, leg, or eye while the subsequent injury affects the "
+            "opposite and corresponding member, with the subsequent disability considered alone "
+            "and unadjusted for age or occupation at least five percent. Alternatively, the "
+            "subsequent disability considered alone and unadjusted for age or occupation must be "
+            "at least thirty-five percent. The Fund is a separate party and must be joined; a "
+            "case in chief resolved without joinder does not resolve the claim against it. "
+            + _SIBTF_SECTION_4751_RULE,
             "The applicant is on notice that the section 4751 claim will require evidence of the "
             "labor-disabling character of the preexisting condition at the time of the subsequent "
-            "injury, independent of the medical evidence supporting the case in chief.",
+            "injury, independent of the medical evidence supporting the case in chief. "
+            + _SIBTF_SECTION_4751_RULE,
         ),
         medical_targets=frozenset(
             {

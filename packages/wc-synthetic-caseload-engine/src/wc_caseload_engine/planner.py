@@ -67,7 +67,7 @@ from wc_caseload_engine.lifecycle_bridge import (
     CaseTimeline,
     DatedCandidate,
     author_role_for,
-    build_core_candidates,
+    build_core_candidates_with_medical_ur_plan,
     build_timeline,
     fit_dates,
     to_document_candidates,
@@ -92,6 +92,7 @@ from wc_caseload_engine.medical_story import (
     CONTENTION_LOOP_SOURCE_KEY,
     CONTENTION_LOOP_WARNING_PREFIX,
     MedicalStoryPlan,
+    MedicalUrPlan,
     derive_medical_story,
     plan_medical_story_documents,
 )
@@ -99,7 +100,7 @@ from wc_caseload_engine.money import MoneyFacts, derive_money_facts
 from wc_caseload_engine.perspective import apply_perspective, document_roles
 from wc_caseload_engine.recon_machine import ReconTrack, build_recon_track
 from wc_caseload_engine.renderer import choose_format
-from wc_caseload_engine.seeds import CaseSeed, DocumentControls
+from wc_caseload_engine.seeds import CaseSeed, DocumentControls, ImrOutcome
 from wc_caseload_engine.taxonomy import Taxonomy, effective_taxonomy, parent_type_of
 
 log = structlog.get_logger(__name__)
@@ -166,6 +167,7 @@ class PlannedDocument:
     defense_contest_theories: tuple[DefenseContestTheory, ...] = ()
     imr_target_denial_date: date | None = None
     imr_application_content: ImrApplicationContent | None = None
+    imr_outcome: ImrOutcome | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +236,9 @@ class CasePlan:
     :class:`~wc_caseload_engine.medical_story.DocumentMedicalStory` by final
     document index.
     """
+
+    medical_ur_plan: MedicalUrPlan | None = None
+    """The gated R39 UR/IMR resolution, internal and never manifest-visible."""
 
     money_facts: MoneyFacts | None = None
     """The money spine, when the seed asked for one. ``None`` when it did not.
@@ -2230,6 +2235,53 @@ def reconcile_contention_document_chains(
         return current, tuple(warnings)
 
 
+def reconcile_medical_ur_documents(
+    dated: list[DatedCandidate],
+) -> tuple[list[DatedCandidate], tuple[str, ...]]:
+    """R39 — remove governed IMR dependents whose upstream paper was removed."""
+    denial_dates = {
+        entry.doc_date
+        for entry in dated
+        if entry.subtype == "MEDICAL_TREATMENT_DENIAL_UR"
+    }
+    live = list(dated)
+    warnings: list[str] = []
+    orphaned = [
+        entry
+        for entry in live
+        if entry.imr_target_denial_date is not None
+        and entry.imr_target_denial_date not in denial_dates
+    ]
+    if orphaned:
+        live = [entry for entry in live if entry not in orphaned]
+        warnings.append(
+            "medical_story.imr: controls removed the target UR denial; removed "
+            f"{len(orphaned)} dependent IMR document(s) rather than leave an "
+            "orphaned application or decision (R39)"
+        )
+
+    application_targets = {
+        entry.imr_target_denial_date
+        for entry in live
+        if entry.subtype == "IMR_APPLICATION_FORM"
+        and entry.imr_target_denial_date is not None
+    }
+    orphaned_decisions = [
+        entry
+        for entry in live
+        if entry.subtype == "INDEPENDENT_MEDICAL_REVIEW_DECISION"
+        and entry.imr_target_denial_date is not None
+        and entry.imr_target_denial_date not in application_targets
+    ]
+    if orphaned_decisions:
+        live = [entry for entry in live if entry not in orphaned_decisions]
+        warnings.append(
+            "medical_story.imr: controls removed the IMR application; removed "
+            "its dependent decision while preserving the upstream UR denial (R39)"
+        )
+    return live, tuple(warnings)
+
+
 def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     """Turn one seed into a fully decided case plan.
 
@@ -2290,7 +2342,12 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # ``employer.hourly_rate``; none of them were fact-aware.
     align_employer_wage(cast.case, money_facts)
 
-    core = build_core_candidates(seed, timeline)
+    core, medical_ur_plan = build_core_candidates_with_medical_ur_plan(
+        seed,
+        timeline,
+        medical_history=medical_history,
+        case_facts=case_facts,
+    )
     lien_tracks = build_lien_tracks(seed, timeline)
     recon = build_recon_track(seed, timeline)
 
@@ -2402,6 +2459,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     dated, reconcile_warnings = reconcile_contention_document_chains(
         dated, assertion_plan.contention_documents
     )
+    dated, imr_reconcile_warnings = reconcile_medical_ur_documents(dated)
     penalty_warnings = _penalty_control_warnings(case_facts, dated, controls)
     dated.sort(key=lambda item: (item.doc_date, item.subtype, item.track))
 
@@ -2443,6 +2501,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
                 defense_contest_theories=candidate.defense_contest_theories,
                 imr_target_denial_date=candidate.imr_target_denial_date,
                 imr_application_content=candidate.imr_application_content,
+                imr_outcome=candidate.imr_outcome,
             )
         )
 
@@ -2533,6 +2592,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         # tuples on every medical-story-absent path, so no byte moves.
         *story_planning.warnings,
         *reconcile_warnings,
+        *imr_reconcile_warnings,
     )
 
     log.debug(
@@ -2562,6 +2622,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         medical_history=medical_history,
         medical_assertions=medical_assertions,
         medical_story=medical_story,
+        medical_ur_plan=medical_ur_plan,
     )
 
 
