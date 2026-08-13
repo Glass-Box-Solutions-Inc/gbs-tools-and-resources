@@ -26,6 +26,8 @@ import type {
   MarkQuarantinedInput,
   PublishPreparedInput,
   ReclaimBlobRow,
+  ReclaimFinalizedOrphansSelection,
+  ReclaimLimitInput,
   ReclaimQueryInput,
   ReclaimUploadRow,
   StaleUploadReclaimInput,
@@ -110,6 +112,11 @@ interface ReclaimBlobSqlRow extends QueryResultRow {
 
 interface ReclaimUploadSqlRow extends ReclaimBlobSqlRow {
   readonly staging_path: string;
+}
+
+interface ReclaimCandidateSqlRow extends ReclaimBlobSqlRow {
+  readonly state: "finalized" | "orphaned" | "reclaim_marked";
+  readonly is_referenced: boolean;
 }
 
 function encodeTextKey(value: string): string {
@@ -615,6 +622,68 @@ export class PostgresControlPlane implements ControlPlane {
     });
   }
 
+  public selectFinalizedOrphansForReclaim(
+    input: ReclaimQueryInput,
+  ): Promise<ReclaimFinalizedOrphansSelection> {
+    safeEpochMs(input.olderThanEpochMs, "older_than_ms");
+    const limit = safeLimit(input.limit);
+    return transaction(this.#pool, async (client) => {
+      const candidates = await client.query<ReclaimCandidateSqlRow>(
+        `SELECT p.prepared_blob_id, p.blob_path, p.state,
+                (
+                  EXISTS (
+                    SELECT 1 FROM reversal_claim c WHERE c.prepared_blob_id = p.prepared_blob_id
+                  )
+                  OR EXISTS (
+                    SELECT 1 FROM reversal_current c WHERE c.prepared_blob_id = p.prepared_blob_id
+                  )
+                ) AS is_referenced
+         FROM reversal_prepared p
+         WHERE p.state = 'reclaim_marked'
+            OR (
+              p.state IN ('finalized', 'orphaned')
+              AND p.created_at_ms < $1
+            )
+         ORDER BY CASE WHEN p.state = 'reclaim_marked' THEN 0 ELSE 1 END,
+                  p.created_at_ms,
+                  p.prepared_blob_id
+         FOR UPDATE OF p SKIP LOCKED
+         LIMIT $2`,
+        [input.olderThanEpochMs, limit],
+      );
+
+      const rows: ReclaimBlobRow[] = [];
+      let skippedReferenced = 0;
+      for (const candidate of candidates.rows) {
+        if (candidate.is_referenced) {
+          skippedReferenced += 1;
+          continue;
+        }
+        if (candidate.state !== "reclaim_marked") {
+          const marked = await client.query(
+            `UPDATE reversal_prepared p
+             SET state = 'reclaim_marked'
+             WHERE p.prepared_blob_id = $1
+               AND p.state IN ('finalized', 'orphaned')
+               AND p.created_at_ms < $2
+               AND NOT EXISTS (
+                 SELECT 1 FROM reversal_claim c WHERE c.prepared_blob_id = p.prepared_blob_id
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM reversal_current c WHERE c.prepared_blob_id = p.prepared_blob_id
+               )`,
+            [candidate.prepared_blob_id, input.olderThanEpochMs],
+          );
+          if (marked.rowCount !== 1) {
+            throw new Error("reclaim_finalized_orphan_transition_lost");
+          }
+        }
+        rows.push(this.#reclaimBlob(candidate));
+      }
+      return { rows, skippedReferenced };
+    });
+  }
+
   public async markQuarantined(input: MarkQuarantinedInput): Promise<void> {
     safeEpochMs(input.quarantinedAtEpochMs, "quarantined_at_ms");
     const result = await this.#pool.query(
@@ -668,6 +737,42 @@ export class PostgresControlPlane implements ControlPlane {
         stagingPath: row.staging_path,
         blobPath: row.blob_path,
       }));
+    });
+  }
+
+  public markStaleUploads(input: StaleUploadReclaimInput): Promise<readonly ReclaimUploadRow[]> {
+    safeEpochMs(input.uploadHorizonEpochMs, "upload_horizon_ms");
+    const limit = safeLimit(input.limit);
+    return transaction(this.#pool, async (client) => {
+      const result = await client.query<ReclaimUploadSqlRow>(
+        `UPDATE reversal_prepared
+         SET state = 'upload_reclaim_marked'
+         WHERE prepared_blob_id IN (
+           SELECT prepared_blob_id
+           FROM reversal_prepared
+           WHERE state = 'uploading' AND created_at_ms < $1
+           FOR UPDATE SKIP LOCKED
+           LIMIT $2
+         )
+         RETURNING prepared_blob_id, staging_path, blob_path`,
+        [input.uploadHorizonEpochMs, limit],
+      );
+      return result.rows.map((row) => this.#reclaimUpload(row));
+    });
+  }
+
+  public recoverStaleUploads(input: ReclaimLimitInput): Promise<readonly ReclaimUploadRow[]> {
+    const limit = safeLimit(input.limit);
+    return transaction(this.#pool, async (client) => {
+      const result = await client.query<ReclaimUploadSqlRow>(
+        `SELECT prepared_blob_id, staging_path, blob_path
+         FROM reversal_prepared
+         WHERE state = 'upload_reclaim_marked'
+         FOR UPDATE SKIP LOCKED
+         LIMIT $1`,
+        [limit],
+      );
+      return result.rows.map((row) => this.#reclaimUpload(row));
     });
   }
 
@@ -782,5 +887,13 @@ export class PostgresControlPlane implements ControlPlane {
 
   #reclaimBlob(row: ReclaimBlobSqlRow): ReclaimBlobRow {
     return { preparedBlobId: preparedHandle(row.prepared_blob_id), blobPath: row.blob_path };
+  }
+
+  #reclaimUpload(row: ReclaimUploadSqlRow): ReclaimUploadRow {
+    return {
+      preparedBlobId: preparedHandle(row.prepared_blob_id),
+      stagingPath: row.staging_path,
+      blobPath: row.blob_path,
+    };
   }
 }

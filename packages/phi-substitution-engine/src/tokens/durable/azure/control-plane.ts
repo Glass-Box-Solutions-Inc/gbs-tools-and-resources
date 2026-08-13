@@ -132,6 +132,16 @@ export interface MarkQuarantinedInput {
   readonly quarantinedAtEpochMs: number;
 }
 
+export interface ReclaimLimitInput {
+  readonly limit: number;
+}
+
+/** Path-1 inspection result, including candidates rejected by the live-reference invariant. */
+export interface ReclaimFinalizedOrphansSelection {
+  readonly rows: readonly ReclaimBlobRow[];
+  readonly skippedReferenced: number;
+}
+
 /**
  * Transactional metadata seam for the Azure Files SpoolVolume and its least-authority maintenance
  * worker. Files operations deliberately stay outside this interface; state markers make each
@@ -153,9 +163,22 @@ export interface ControlPlane {
   reclaimFinalizedOrphans(input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]>;
   markQuarantined(input: MarkQuarantinedInput): Promise<void>;
 
+  /**
+   * Path 1 with inspection accounting. The global maintenance budget counts both selected rows
+   * and eligible rows excluded because a claim/current pointer still references them.
+   */
+  selectFinalizedOrphansForReclaim(
+    input: ReclaimQueryInput,
+  ): Promise<ReclaimFinalizedOrphansSelection>;
+
   /** Path 2a + v5 Path 2b recovery. Files must be absent before completion. */
   reclaimStaleUploads(input: StaleUploadReclaimInput): Promise<readonly ReclaimUploadRow[]>;
   completeStaleUploadReclaim(preparedBlobId: PreparedWriteHandle): Promise<void>;
+
+  /** Path 2a only: exclusively transition newly stale uploading rows. */
+  markStaleUploads(input: StaleUploadReclaimInput): Promise<readonly ReclaimUploadRow[]>;
+  /** Path 2b only: recover marked rows regardless of their age. */
+  recoverStaleUploads(input: ReclaimLimitInput): Promise<readonly ReclaimUploadRow[]>;
 
   /** Path 3 selector; caller deletes Files bytes before completing the row deletion. */
   hardDeleteQuarantined(input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]>;

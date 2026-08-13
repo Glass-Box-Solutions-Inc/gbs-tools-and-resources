@@ -23,6 +23,8 @@ import type {
   MarkQuarantinedInput,
   PublishPreparedInput,
   ReclaimBlobRow,
+  ReclaimFinalizedOrphansSelection,
+  ReclaimLimitInput,
   ReclaimQueryInput,
   ReclaimUploadRow,
   StaleUploadReclaimInput,
@@ -245,8 +247,13 @@ class MemoryControlPlane implements ControlPlane {
   }
 
   public reclaimFinalizedOrphans(_input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]> { return Promise.resolve([]); }
+  public selectFinalizedOrphansForReclaim(_input: ReclaimQueryInput): Promise<ReclaimFinalizedOrphansSelection> {
+    return Promise.resolve({ rows: [], skippedReferenced: 0 });
+  }
   public markQuarantined(_input: MarkQuarantinedInput): Promise<void> { return Promise.resolve(); }
   public reclaimStaleUploads(_input: StaleUploadReclaimInput): Promise<readonly ReclaimUploadRow[]> { return Promise.resolve([]); }
+  public markStaleUploads(_input: StaleUploadReclaimInput): Promise<readonly ReclaimUploadRow[]> { return Promise.resolve([]); }
+  public recoverStaleUploads(_input: ReclaimLimitInput): Promise<readonly ReclaimUploadRow[]> { return Promise.resolve([]); }
   public completeStaleUploadReclaim(_preparedBlobId: PreparedWriteHandle): Promise<void> { return Promise.resolve(); }
   public hardDeleteQuarantined(_input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]> { return Promise.resolve([]); }
   public completeHardDeleteQuarantined(_preparedBlobId: PreparedWriteHandle): Promise<void> { return Promise.resolve(); }
