@@ -769,8 +769,13 @@ def test_ptp_sections_follow_the_frozen_order():
     only on the P&S surfaces, immediately after the impairment rating."""
     _seed, apportionment_plan = _case("surface-ptp-apportionment")
     assert apportionment_plan.medical_story is not None
-    governed_document, _story = _bound("surface-ptp-apportionment", "opn-01")
-    assert governed_document.index in apportionment_plan.medical_story.by_document_index
+    documents_by_index = {
+        document.index: document for document in apportionment_plan.documents
+    }
+    assert documents_by_index[54].subtype == "TREATING_PHYSICIAN_REPORT_PR4"
+    assert documents_by_index[54].medical_opinion_id == "opn-01"
+    assert 54 in apportionment_plan.medical_story.by_document_index
+    assert documents_by_index[63].subtype == "DEPOSITION_TRANSCRIPT"
     assert 63 not in apportionment_plan.medical_story.by_document_index
 
     for opinion_id in ("opn-01", "opn-02"):
@@ -1399,6 +1404,126 @@ def test_part5_rolda_threshold_six_month_post_termination_and_gfpa_walk_is_exact
     # R79 is a prohibition, not merely a required corrective sentence. Scan
     # every rendered Part-5 psych surface, exempting only the exact frozen
     # negation frame above so a nearby affirmative bypass statement cannot hide.
+    rolda_application = (
+        "Whether the reported employment events occurred, and whether a personnel "
+        "action was lawful, nondiscriminatory, and in good faith, are factual/legal "
+        "questions. Assuming the trier of fact finds that the reported employment "
+        "events occurred, it is my opinion within reasonable medical probability "
+        "that those actual events were predominant as to all causes combined."
+    )
+    ordinary_threshold = (
+        "Actual events of employment must be predominant as to all causes combined, "
+        "meaning greater than 50 percent."
+    )
+    consequence_threshold = (
+        "The industrial physical injury and its medical effects are qualifying "
+        "actual events and must be predominant as to all causes combined."
+    )
+    corrected_mccullough = (
+        "Labor Code section 3208.3(b)(1)'s predominant-cause threshold applies. "
+        "The industrial physical injury and its medical effects are treated as "
+        "qualifying actual events of employment. Those events must be predominant "
+        "as to all causes combined unless Labor Code section 3208.3(b)(2)'s "
+        "violent-act standard applies."
+    )
+    six_month = (
+        "Labor Code section 3208.3(d) requires six months of employment unless the "
+        "injury was caused by a sudden and extraordinary employment condition."
+    )
+    sudden_extraordinary_reservation = (
+        "The available dates require the six-month issue to be addressed; the "
+        "sudden-and-extraordinary exception is not inferred from a violent-act "
+        "contention."
+    )
+    gfpa_threshold = (
+        "Labor Code section 3208.3(h) places the burden on the party asserting that "
+        "lawful, nondiscriminatory, good-faith personnel actions substantially "
+        "caused the injury."
+    )
+    ordinary_dsm = (
+        "The psychiatric condition is diagnosed using terminology and criteria "
+        "generally approved and accepted nationally; Labor Code section 3208.3 "
+        "does not itself expressly name DSM-5."
+    )
+    safety_presumption = (
+        "Labor Code section 3212.15 applies to post-traumatic stress disorder "
+        "diagnosed according to the most recent edition of the Diagnostic and "
+        "Statistical Manual and developing or manifesting during qualifying service. "
+        "The presumption is disputable. Once its predicates are established, the "
+        "burden shifts to the defendant to affirmatively controvert industrial "
+        "causation. In the absence of evidence affirmatively controverting the "
+        "presumption, the ordinary Rolda analysis, including the "
+        "good-faith-personnel-action contention, is not reached. The diagnosis is "
+        "addressed under DSM-5-TR, as the most recent DSM edition. Labor Code section "
+        "3212.15 remains in force through January 1, 2029."
+    )
+    expected_analysis_paragraphs = {
+        "opn-01": (
+            " ".join(
+                (
+                    rolda,
+                    rolda_application,
+                    ordinary_threshold,
+                    corrective_3208_3d,
+                    six_month,
+                    sudden_extraordinary_reservation,
+                    ordinary_dsm,
+                )
+            ),
+        ),
+        "opn-02": (
+            " ".join(
+                (
+                    rolda,
+                    rolda_application,
+                    ordinary_threshold,
+                    corrective_3208_3d,
+                    six_month,
+                    sudden_extraordinary_reservation,
+                    gfpa_threshold,
+                    ordinary_dsm,
+                )
+            ),
+        ),
+        "opn-03": (
+            " ".join(
+                (
+                    rolda,
+                    rolda_application,
+                    consequence_threshold,
+                    corrected_mccullough,
+                    corrective_3208_3d,
+                    six_month,
+                    sudden_extraordinary_reservation,
+                    ordinary_dsm,
+                )
+            ),
+        ),
+        "opn-04": (safety_presumption,),
+    }
+    footer = re.compile(
+        r"GBS Generated CONFIDENTIAL — Workers' Compensation Medical/Legal "
+        r"Record Page \d+"
+    )
+    rendered_reports = {
+        opinion_id: _part5_psych_report(opinion_id)[2]
+        for opinion_id in expected_analysis_paragraphs
+    }
+    actual_analysis_paragraphs = {
+        opinion_id: (
+            _flat(
+                footer.sub(
+                    "",
+                    text.split("LABOR CODE §3208.3 ANALYSIS", maxsplit=1)[1].split(
+                        "LABOR CODE §4660.1(c) ANALYSIS", maxsplit=1
+                    )[0],
+                )
+            ).strip(),
+        )
+        for opinion_id, text in rendered_reports.items()
+    }
+    assert actual_analysis_paragraphs == expected_analysis_paragraphs
+
     rendered_surfaces = [
         _flat(_rendered("surface-psych-medlegal", document.index).text)
         for document, _story in _governed("surface-psych-medlegal")
