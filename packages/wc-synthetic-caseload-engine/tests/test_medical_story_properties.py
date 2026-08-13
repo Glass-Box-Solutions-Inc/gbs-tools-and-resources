@@ -397,13 +397,15 @@ def test_medical_story_stream_registry_is_exact_complete_and_namespaced(
 def test_inserting_an_unrelated_document_cannot_move_semantic_render_outputs(
     tmp_path: Path,
 ) -> None:
-    """R59/R70: one inserted D cannot perturb any surviving R output.
+    """R59/R70: one inserted D cannot perturb surviving R8-governed bytes.
 
     This is an insertion-controlled invariant, not repeat rendering: both plans
     retain the exact frozen case ID and RNG seed, and the only seed-definition
-    delta is one explicit advocacy document. At least one common semantic
-    document must move to a different final index, after which its complete
-    rendered bytes still have to match.
+    delta is one explicit advocacy document. Every document has an R, but only
+    R8-governed surfaces use it to drive rendering; ungoverned documents retain
+    legacy index salts and are outside this invariant. At least one common
+    governed surface must move to a different final index, after which its
+    complete rendered bytes still have to match.
     """
     base_seed, inserted_seed = _render_key_seed_pair()
     base_result = generate_case(base_seed, tmp_path / "base")
