@@ -24,6 +24,8 @@ import type {
   ReclaimBlobRow,
   ReclaimFinalizedOrphansSelection,
   ReclaimLimitInput,
+  ReclaimPreviewInput,
+  ReclaimPreviewOutcome,
   ReclaimQueryInput,
   ReclaimUploadRow,
   StaleUploadReclaimInput,
@@ -852,6 +854,57 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     }
     this.#prepared.delete(key);
     return Promise.resolve();
+  }
+
+  public previewReclamation(input: ReclaimPreviewInput): Promise<ReclaimPreviewOutcome> {
+    checkedDuration(input.olderThanEpochMs, "older_than_ms");
+    checkedDuration(input.uploadHorizonEpochMs, "upload_horizon_ms");
+    checkedDuration(input.quarantinedBeforeEpochMs, "quarantined_before_ms");
+    let remaining = checkedLimit(input.limit);
+    let scanned = 0;
+    let reclaimed = 0;
+    let skippedReferenced = 0;
+    const pathOne = [...this.#prepared.values()]
+      .filter((row) =>
+        row.state === "reclaim_marked" ||
+        ((row.state === "finalized" || row.state === "orphaned") && row.createdAtMs < input.olderThanEpochMs)
+      )
+      .sort((left, right) => {
+        const stateOrder = Number(left.state !== "reclaim_marked") - Number(right.state !== "reclaim_marked");
+        if (stateOrder !== 0) return stateOrder;
+        if (left.createdAtMs !== right.createdAtMs) return left.createdAtMs - right.createdAtMs;
+        const leftId = asString(left.preparedBlobId);
+        const rightId = asString(right.preparedBlobId);
+        return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+      })
+      .slice(0, remaining);
+    scanned += pathOne.length;
+    remaining -= pathOne.length;
+    for (const row of pathOne) {
+      if (this.#isReferenced(row.preparedBlobId)) {
+        skippedReferenced += 1;
+      } else {
+        reclaimed += 1;
+      }
+    }
+
+    const count = (predicate: (row: PreparedRow) => boolean): void => {
+      if (remaining === 0) return;
+      const selected = [...this.#prepared.values()].filter(predicate).slice(0, remaining).length;
+      scanned += selected;
+      reclaimed += selected;
+      remaining -= selected;
+    };
+    count((row) => row.state === "upload_reclaim_marked");
+    count((row) => row.state === "uploading" && row.createdAtMs < input.uploadHorizonEpochMs);
+    if (input.includeHardDelete) {
+      count((row) =>
+        row.state === "quarantined" &&
+        row.quarantinedAtMs !== undefined &&
+        row.quarantinedAtMs < input.quarantinedBeforeEpochMs
+      );
+    }
+    return Promise.resolve({ scanned, reclaimed, skippedReferenced });
   }
 
   #finishPathOne(row: PreparedRow, nowEpochMs: number): void {

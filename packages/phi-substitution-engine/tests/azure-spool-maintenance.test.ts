@@ -311,6 +311,26 @@ describe("AzureSpoolMaintenance unit", () => {
     expect(blobs.has(`reclaim-quarantine/${old.handle as unknown as string}`)).toBe(false);
   });
 
+  it("quarantine mode runs without Path 3 hard deletion", async () => {
+    const controlPlane = new InMemoryControlPlane();
+    const blobs = new FakeBlobStore();
+    const old = await seedQuarantined(controlPlane, blobs, T0 + 700);
+    const worker = new AzureSpoolMaintenance({
+      controlPlane,
+      blobStore: blobs,
+      uploadHorizonMs: 100,
+      graceMs: 100,
+      now: () => T0 + 1_000,
+      includeHardDelete: false,
+    });
+
+    const outcome = await worker.reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 });
+
+    expect(outcome).toEqual({ scanned: 0, reclaimed: 0, skippedReferenced: 0 });
+    expect(controlPlane.debugPrepared(old.handle)?.state).toBe("quarantined");
+    expect(blobs.has(`reclaim-quarantine/${old.handle as unknown as string}`)).toBe(true);
+  });
+
   it("shares one global inspection budget across Paths 1, 2, and 3", async () => {
     const controlPlane = new InMemoryControlPlane();
     const blobs = new FakeBlobStore();

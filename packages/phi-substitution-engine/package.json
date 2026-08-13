@@ -20,6 +20,9 @@
   ],
   "scripts": {
     "build": "tsc",
+    "build:executables": "tsc -p tsconfig.executables.json",
+    "smoke:q6": "tsx smoke/q6-smoke.ts",
+    "job:reclaim": "tsx jobs/reclaim-entrypoint.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

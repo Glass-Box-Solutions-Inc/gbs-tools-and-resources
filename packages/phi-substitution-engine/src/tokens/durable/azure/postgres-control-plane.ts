@@ -28,6 +28,8 @@ import type {
   ReclaimBlobRow,
   ReclaimFinalizedOrphansSelection,
   ReclaimLimitInput,
+  ReclaimPreviewInput,
+  ReclaimPreviewOutcome,
   ReclaimQueryInput,
   ReclaimUploadRow,
   StaleUploadReclaimInput,
@@ -117,6 +119,10 @@ interface ReclaimUploadSqlRow extends ReclaimBlobSqlRow {
 interface ReclaimCandidateSqlRow extends ReclaimBlobSqlRow {
   readonly state: "finalized" | "orphaned" | "reclaim_marked";
   readonly is_referenced: boolean;
+}
+
+interface ReclaimIdSqlRow extends QueryResultRow {
+  readonly prepared_blob_id: string;
 }
 
 function encodeTextKey(value: string): string {
@@ -800,6 +806,92 @@ export class PostgresControlPlane implements ControlPlane {
 
   public completeHardDeleteQuarantined(preparedBlobId: PreparedWriteHandle): Promise<void> {
     return this.#deleteInState(preparedBlobId, "quarantined", "complete_hard_delete_invalid_state");
+  }
+
+  public previewReclamation(input: ReclaimPreviewInput): Promise<ReclaimPreviewOutcome> {
+    safeEpochMs(input.olderThanEpochMs, "older_than_ms");
+    safeEpochMs(input.uploadHorizonEpochMs, "upload_horizon_ms");
+    safeEpochMs(input.quarantinedBeforeEpochMs, "quarantined_before_ms");
+    const limit = safeLimit(input.limit);
+    return transaction(this.#pool, async (client) => {
+      await client.query("SET TRANSACTION READ ONLY");
+      let remaining = limit;
+      let scanned = 0;
+      let reclaimed = 0;
+      let skippedReferenced = 0;
+
+      const pathOne = await client.query<ReclaimCandidateSqlRow>(
+        `SELECT p.prepared_blob_id, p.blob_path, p.state,
+                (
+                  EXISTS (
+                    SELECT 1 FROM reversal_claim c WHERE c.prepared_blob_id = p.prepared_blob_id
+                  )
+                  OR EXISTS (
+                    SELECT 1 FROM reversal_current c WHERE c.prepared_blob_id = p.prepared_blob_id
+                  )
+                ) AS is_referenced
+         FROM reversal_prepared p
+         WHERE p.state = 'reclaim_marked'
+            OR (p.state IN ('finalized', 'orphaned') AND p.created_at_ms < $1)
+         ORDER BY CASE WHEN p.state = 'reclaim_marked' THEN 0 ELSE 1 END,
+                  p.created_at_ms,
+                  p.prepared_blob_id
+         LIMIT $2`,
+        [input.olderThanEpochMs, remaining],
+      );
+      scanned += pathOne.rows.length;
+      remaining -= pathOne.rows.length;
+      for (const row of pathOne.rows) {
+        if (row.is_referenced) {
+          skippedReferenced += 1;
+        } else {
+          reclaimed += 1;
+        }
+      }
+
+      if (remaining > 0) {
+        const uploadRecovery = await client.query<ReclaimIdSqlRow>(
+          `SELECT prepared_blob_id
+           FROM reversal_prepared
+           WHERE state = 'upload_reclaim_marked'
+           ORDER BY created_at_ms, prepared_blob_id
+           LIMIT $1`,
+          [remaining],
+        );
+        scanned += uploadRecovery.rows.length;
+        reclaimed += uploadRecovery.rows.length;
+        remaining -= uploadRecovery.rows.length;
+      }
+
+      if (remaining > 0) {
+        const staleUploads = await client.query<ReclaimIdSqlRow>(
+          `SELECT prepared_blob_id
+           FROM reversal_prepared
+           WHERE state = 'uploading' AND created_at_ms < $1
+           ORDER BY created_at_ms, prepared_blob_id
+           LIMIT $2`,
+          [input.uploadHorizonEpochMs, remaining],
+        );
+        scanned += staleUploads.rows.length;
+        reclaimed += staleUploads.rows.length;
+        remaining -= staleUploads.rows.length;
+      }
+
+      if (input.includeHardDelete && remaining > 0) {
+        const quarantined = await client.query<ReclaimIdSqlRow>(
+          `SELECT prepared_blob_id
+           FROM reversal_prepared
+           WHERE state = 'quarantined' AND quarantined_at_ms < $1
+           ORDER BY quarantined_at_ms, prepared_blob_id
+           LIMIT $2`,
+          [input.quarantinedBeforeEpochMs, remaining],
+        );
+        scanned += quarantined.rows.length;
+        reclaimed += quarantined.rows.length;
+      }
+
+      return { scanned, reclaimed, skippedReferenced };
+    });
   }
 
   async #computeExpiredAndDetach(client: PoolClient, claim: ClaimRow): Promise<boolean> {

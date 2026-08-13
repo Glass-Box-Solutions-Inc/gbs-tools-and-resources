@@ -109,6 +109,23 @@ function nonceValue(nonce: GcmNonce96): bigint {
 }
 
 describe("GLY-346 Lane A — reclamation oracles", () => {
+  it("previews reclamation with the global budget without mutating candidates", async () => {
+    const controlPlane = new InMemoryControlPlane();
+    const { prepared } = await prepare(controlPlane, { createdAtMs: T0 });
+
+    const outcome = await controlPlane.previewReclamation({
+      olderThanEpochMs: T0 + 1,
+      uploadHorizonEpochMs: 0,
+      quarantinedBeforeEpochMs: 0,
+      limit: 1,
+      includeHardDelete: true,
+    });
+
+    expect(outcome).toEqual({ scanned: 1, reclaimed: 1, skippedReferenced: 0 });
+    expect(controlPlane.debugPrepared(prepared.handle)?.state).toBe("finalized");
+    expect(controlPlane.debugPrepared(prepared.handle)?.blobPresent).toBe(true);
+  });
+
   it("MUT-RECLAIM-COMMITTED: a committed/current-referenced blob is never reclaimed", async () => {
     const c = clock(T0 + 100);
     const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });

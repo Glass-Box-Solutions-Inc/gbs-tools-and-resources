@@ -142,6 +142,20 @@ export interface ReclaimFinalizedOrphansSelection {
   readonly skippedReferenced: number;
 }
 
+export interface ReclaimPreviewInput {
+  readonly olderThanEpochMs: number;
+  readonly uploadHorizonEpochMs: number;
+  readonly quarantinedBeforeEpochMs: number;
+  readonly limit: number;
+  readonly includeHardDelete: boolean;
+}
+
+export interface ReclaimPreviewOutcome {
+  readonly scanned: number;
+  readonly reclaimed: number;
+  readonly skippedReferenced: number;
+}
+
 /**
  * Transactional metadata seam for the Azure Files SpoolVolume and its least-authority maintenance
  * worker. Files operations deliberately stay outside this interface; state markers make each
@@ -183,4 +197,7 @@ export interface ControlPlane {
   /** Path 3 selector; caller deletes Files bytes before completing the row deletion. */
   hardDeleteQuarantined(input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]>;
   completeHardDeleteQuarantined(preparedBlobId: PreparedWriteHandle): Promise<void>;
+
+  /** Read-only, globally-budgeted preview used by the dry-run reclamation job. */
+  previewReclamation(input: ReclaimPreviewInput): Promise<ReclaimPreviewOutcome>;
 }

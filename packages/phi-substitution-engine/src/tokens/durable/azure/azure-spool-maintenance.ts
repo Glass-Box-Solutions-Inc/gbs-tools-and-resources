@@ -18,6 +18,8 @@ export interface AzureSpoolMaintenanceOptions {
   readonly uploadHorizonMs: number;
   readonly graceMs: number;
   readonly now?: () => number;
+  /** Defaults true. Quarantine-mode jobs disable only Path 3 hard deletion. */
+  readonly includeHardDelete?: boolean;
 }
 
 function checkedDuration(value: number, label: string): number {
@@ -52,6 +54,7 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
   readonly #uploadHorizonMs: number;
   readonly #graceMs: number;
   readonly #now: () => number;
+  readonly #includeHardDelete: boolean;
 
   public constructor(options: AzureSpoolMaintenanceOptions) {
     this.#controlPlane = options.controlPlane;
@@ -59,6 +62,7 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
     this.#uploadHorizonMs = checkedDuration(options.uploadHorizonMs, "upload_horizon");
     this.#graceMs = checkedDuration(options.graceMs, "grace");
     this.#now = options.now ?? Date.now;
+    this.#includeHardDelete = options.includeHardDelete ?? true;
   }
 
   public async reclaimOrphanedPrepared(input: ReclaimOrphanedPreparedInput): Promise<ReclaimOutcome> {
@@ -112,7 +116,7 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
     }
 
     // Path 3: grace is based only on the authoritative quarantined_at timestamp.
-    if (remaining > 0) {
+    if (this.#includeHardDelete && remaining > 0) {
       const hardDelete = await this.#controlPlane.hardDeleteQuarantined({
         olderThanEpochMs: Math.max(0, nowEpochMs - this.#graceMs),
         limit: remaining,

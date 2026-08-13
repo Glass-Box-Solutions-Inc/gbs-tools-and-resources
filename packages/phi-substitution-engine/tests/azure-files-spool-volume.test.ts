@@ -25,6 +25,8 @@ import type {
   ReclaimBlobRow,
   ReclaimFinalizedOrphansSelection,
   ReclaimLimitInput,
+  ReclaimPreviewInput,
+  ReclaimPreviewOutcome,
   ReclaimQueryInput,
   ReclaimUploadRow,
   StaleUploadReclaimInput,
@@ -257,6 +259,9 @@ class MemoryControlPlane implements ControlPlane {
   public completeStaleUploadReclaim(_preparedBlobId: PreparedWriteHandle): Promise<void> { return Promise.resolve(); }
   public hardDeleteQuarantined(_input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]> { return Promise.resolve([]); }
   public completeHardDeleteQuarantined(_preparedBlobId: PreparedWriteHandle): Promise<void> { return Promise.resolve(); }
+  public previewReclamation(_input: ReclaimPreviewInput): Promise<ReclaimPreviewOutcome> {
+    return Promise.resolve({ scanned: 0, reclaimed: 0, skippedReferenced: 0 });
+  }
 }
 
 describe("reversal blob codec", () => {
