@@ -30,6 +30,7 @@ import yaml
 
 from wc_caseload_engine import medical_assertions as assertion_module
 from wc_caseload_engine import planner as planner_module
+from wc_caseload_engine.fact_templates import IMR_APPLICATION_REGISTER
 from wc_caseload_engine.medical_assertions import (
     ADVERSE_CONTEST_PATH_WEIGHTS,
     COMPLETION_PATH_WEIGHTS,
@@ -2593,6 +2594,11 @@ def _part5_imr_case(case_id: str) -> tuple[Any, Any, Any, Any, str]:
 
 def test_part5_imr_authored_grounded_authored_conclusory_and_sampled_sparse_prose_is_exact():
     """R90 — explicit fields stay authoritative and sampled misses stay blank."""
+    assert tuple(key for key, _clauses in IMR_APPLICATION_REGISTER) == (
+        "case_specific_rebuttal",
+        "generic_rebuttal",
+        "mtus",
+    )
     _seed, grounded_plan, grounded_doc, grounded, grounded_text = _part5_imr_case(
         "imr-authored-true-upheld"
     )

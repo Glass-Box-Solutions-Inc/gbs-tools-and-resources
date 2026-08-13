@@ -3076,6 +3076,12 @@ def test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary(
         "underworked",
         "quality",
     )
+    private_register_keys = (
+        "harassment_gfpa",
+        "direct_physical_event",
+        "compensable_consequence",
+        "safety_officer_ptsd",
+    )
 
     def leaked(label: str, value: Any) -> list[str]:
         text = value if isinstance(value, str) else json.dumps(value, default=str)
@@ -3121,6 +3127,41 @@ def test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary(
         )
         surfaces.append((f"imr-content:{case_id}", content.model_dump(mode="json")))
         surfaces.append((f"imr-application:{case_id}", rendered))
+
+    # The private selector keys may name register rows in source, but may never
+    # cross into any plan, content model, rendered document, or other artifact.
+    def private_key_leaks(label: str, value: Any, path: str = "") -> list[str]:
+        findings: list[str] = []
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                if key in private_register_keys:
+                    findings.append(f"{label}:{child_path}")
+                if isinstance(child, str) and child in private_register_keys:
+                    if not (
+                        key == "psych_injury_kind"
+                        and child == "compensable_consequence"
+                    ):
+                        findings.append(f"{label}:{child_path}={child}")
+                    continue
+                findings.extend(private_key_leaks(label, child, child_path))
+        elif isinstance(value, (list, tuple)):
+            for index, child in enumerate(value):
+                findings.extend(private_key_leaks(label, child, f"{path}[{index}]"))
+        elif isinstance(value, str):
+            findings.extend(
+                f"{label}:{path}:{key}"
+                for key in private_register_keys
+                if re.search(rf"\b{re.escape(key)}\b", value)
+            )
+        return findings
+
+    private_key_findings = [
+        finding
+        for label, value in surfaces
+        for finding in private_key_leaks(label, value)
+    ]
+    assert private_key_findings == []
 
     for constant_name in (
         "PSYCH_HISTORY_REGISTER",

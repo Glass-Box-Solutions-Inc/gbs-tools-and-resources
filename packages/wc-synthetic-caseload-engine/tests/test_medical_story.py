@@ -767,6 +767,12 @@ def test_ptp_sections_follow_the_frozen_order():
     """R9 — the treating register: assessment, then the physician's own
     causation conclusion, then the plan; the apportionment statement exists
     only on the P&S surfaces, immediately after the impairment rating."""
+    _seed, apportionment_plan = _case("surface-ptp-apportionment")
+    assert apportionment_plan.medical_story is not None
+    governed_document, _story = _bound("surface-ptp-apportionment", "opn-01")
+    assert governed_document.index in apportionment_plan.medical_story.by_document_index
+    assert 63 not in apportionment_plan.medical_story.by_document_index
+
     for opinion_id in ("opn-01", "opn-02"):
         document, _story = _bound("surface-ptp-causation", opinion_id)
         text = _rendered("surface-ptp-causation", document.index).text
@@ -1362,8 +1368,12 @@ def test_part5_rolda_threshold_six_month_post_termination_and_gfpa_walk_is_exact
         "lawful, nondiscriminatory, good-faith personnel actions substantially caused "
         "the injury."
     ) in gfpa
-    assert "section 3208.3(d) is considered only as the six-month employment rule" in gfpa
-    assert "is not authority for bypassing predominant cause" in gfpa
+    corrective_3208_3d = (
+        "Labor Code section 3208.3(d) is considered only as the six-month "
+        "employment rule and is not authority for bypassing predominant cause "
+        "under Labor Code section 3208.3(b)(1)."
+    )
+    assert corrective_3208_3d in gfpa
     assert "predominant-cause threshold applies" in consequence
     assert "physical injury and its medical effects are treated as qualifying" in consequence
     assert rolda not in safety
@@ -1385,6 +1395,31 @@ def test_part5_rolda_threshold_six_month_post_termination_and_gfpa_walk_is_exact
     for clause in dict(PSYCH_DEFENSE_CONTEST_REGISTER)["post_termination"]:
         assert clause in post
     assert "sudden-and-extraordinary exception is not inferred from a violent-act" in gfpa
+
+    # R79 is a prohibition, not merely a required corrective sentence. Scan
+    # every rendered Part-5 psych surface, exempting only the exact frozen
+    # negation frame above so a nearby affirmative bypass statement cannot hide.
+    rendered_surfaces = [
+        _flat(_rendered("surface-psych-medlegal", document.index).text)
+        for document, _story in _governed("surface-psych-medlegal")
+    ]
+    assert any(corrective_3208_3d in text for text in rendered_surfaces)
+    bypass_findings: list[str] = []
+    for text in rendered_surfaces:
+        for sentence in re.split(r"(?<=[.!?])\s+", text):
+            lowered = sentence.lower()
+            if lowered == corrective_3208_3d.lower():
+                continue
+            if (
+                "3208.3(d)" in lowered
+                and "predominant" in lowered
+                and any(
+                    token in lowered
+                    for token in ("permits", "without", "does not apply", "bypass")
+                )
+            ):
+                bypass_findings.append(sentence)
+    assert bypass_findings == []
 
 
 def test_part5_actual_events_percentages_never_become_disability_apportionment():
@@ -1408,6 +1443,19 @@ def test_part5_actual_events_percentages_never_become_disability_apportionment()
     )[0]
     assert "70 percent" in pd_section and "30 percent" in pd_section
     assert "45%" not in pd_section
+    causation_section = rendered.split(
+        "PSYCHIATRIC INJURY CAUSATION", maxsplit=1
+    )[1].split("LABOR CODE §3208.3 ANALYSIS", maxsplit=1)[0]
+    for percentage in (
+        story.apportionments[0].industrial_percent,
+        story.apportionments[0].nonindustrial_percent,
+    ):
+        assert f"{percentage} percent" not in causation_section
+        assert not re.search(
+            rf"\b{percentage}%\s+(?:industrial|nonindustrial)\b",
+            causation_section,
+            flags=re.IGNORECASE,
+        )
     assert (
         "The percentages above address causation of the psychiatric injury under "
         "Labor Code section 3208.3. Apportionment of permanent disability under "
@@ -1423,6 +1471,11 @@ def test_part5_actual_events_percentages_never_become_disability_apportionment()
     )
     assert allocation in changed
     assert "60 percent" in changed and "40 percent" in changed
+    changed_causation_section = changed.split(
+        "PSYCHIATRIC INJURY CAUSATION", maxsplit=1
+    )[1].split("LABOR CODE §3208.3 ANALYSIS", maxsplit=1)[0]
+    assert "60 percent" not in changed_causation_section
+    assert "40 percent" not in changed_causation_section
     changed_pd_section = changed.split(
         "PSYCHIATRIC APPORTIONMENT", maxsplit=1
     )[1].split("FUTURE MEDICAL TREATMENT RECOMMENDATIONS", maxsplit=1)[0]
@@ -1642,6 +1695,17 @@ def test_part5_psych_defense_and_contention_surface_phrase_pools_are_exact():
     }
     assert dict(PSYCH_CONTENTION_SURFACE_REGISTER) == contention_register
     assert dict(PSYCH_DEFENSE_CONTEST_REGISTER) == defense_register
+    assert tuple(key for key, _clauses in PSYCH_CONTENTION_SURFACE_REGISTER) == (
+        "advocacy",
+        "objection",
+        "supplemental_request",
+        "qme_deposition",
+    )
+    assert tuple(key for key, _clauses in PSYCH_DEFENSE_CONTEST_REGISTER) == (
+        "insufficient_investigation",
+        "post_termination",
+        "lack_of_substantial_medical_evidence",
+    )
     seed, plan = _case("surface-contention-loop")
     governed = list(_governed("surface-contention-loop"))
     for surface in ("advocacy", "objection", "supplemental_request", "qme_deposition"):
