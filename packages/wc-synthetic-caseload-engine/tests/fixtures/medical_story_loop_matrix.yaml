@@ -9,9 +9,11 @@
 # ledger). Tests may replace the entity-private RNG result with a
 # deterministic test choice; they MUST NOT alter production constants.
 #
-# Applicant rows carry a psych_add_on contention and defense rows an
-# apportionment_defense contention so every defense-actor row satisfies R30's
-# "concerning apportionment or psych" gate — outside R30 the defense channel
+# Applicant rows keep their psych_add_on contention and defense rows keep their
+# apportionment_defense contention. The defense rows add only the speaking
+# layer's consequence characterization so the existing matrix exercises the
+# Part 5 psych carrier voices without changing frozen incidence families.
+# Outside R30 the defense channel
 # is probability zero and constructs no stream, which is itself asserted by
 # the decision-table test.
 #
@@ -215,6 +217,8 @@ cases:
             claim_type: apportionment_defense
             party: defense
             target_condition_id: cond-00
+            target_body_part: psyche
+            psych_injury_kind: compensable_consequence
             rationale: a nonindustrial factor contributes to the present disability
         medical_opinions:
           - id: opn-01
@@ -248,6 +252,8 @@ cases:
             claim_type: apportionment_defense
             party: defense
             target_condition_id: cond-00
+            target_body_part: psyche
+            psych_injury_kind: compensable_consequence
             rationale: a nonindustrial factor contributes to the present disability
         medical_opinions:
           - id: opn-01
@@ -281,6 +287,8 @@ cases:
             claim_type: apportionment_defense
             party: defense
             target_condition_id: cond-00
+            target_body_part: psyche
+            psych_injury_kind: compensable_consequence
             rationale: a nonindustrial factor contributes to the present disability
         medical_opinions:
           - id: opn-01
@@ -314,6 +322,8 @@ cases:
             claim_type: apportionment_defense
             party: defense
             target_condition_id: cond-00
+            target_body_part: psyche
+            psych_injury_kind: compensable_consequence
             rationale: a nonindustrial factor contributes to the present disability
         medical_opinions:
           - id: opn-01
@@ -347,6 +357,8 @@ cases:
             claim_type: apportionment_defense
             party: defense
             target_condition_id: cond-00
+            target_body_part: psyche
+            psych_injury_kind: compensable_consequence
             rationale: a nonindustrial factor contributes to the present disability
         medical_opinions:
           - id: opn-01

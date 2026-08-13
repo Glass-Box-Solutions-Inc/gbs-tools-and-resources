@@ -33,7 +33,12 @@ from wc_caseload_engine import medical_assertions as medical_assertions_module
 from wc_caseload_engine import medical_story as medical_story_module
 from wc_caseload_engine import renderer as renderer_module
 from wc_caseload_engine.doctrine import DOCTRINE_CONTENT
-from wc_caseload_engine.fact_templates import fact_aware_templates
+from wc_caseload_engine.fact_templates import (
+    PSYCH_CONTENTION_SURFACE_REGISTER,
+    PSYCH_DEFENSE_CONTEST_REGISTER,
+    PSYCH_HISTORY_REGISTER,
+    fact_aware_templates,
+)
 from wc_caseload_engine.medical_assertions import (
     ApportionmentAssertion,
     Contention,
@@ -202,6 +207,8 @@ def _render(seed: Any, plan: Any, document: Any, story: Any, stem: str) -> _Rend
         medical_story=story,
         contention_actor_party=document.contention_actor_party,
         defense_contest_theories=document.defense_contest_theories,
+        imr_application_content=document.imr_application_content,
+        imr_outcome=document.imr_outcome,
         medical_story_render_key=document.medical_story_render_key,
     )
     with fitz.open(path) as pdf:
@@ -748,7 +755,11 @@ def test_sampled_imr_fields_are_sparse_without_quality_like_state():
     assert explicit_application.diagnosis_icd10 is None
     assert explicit_application.ur_determination_attached is None
     assert explicit_application.supporting_record_subtypes == ()
-    assert explicit_application.clinical_rebuttal is None
+    assert explicit_application.clinical_rebuttal == (
+        "The requested treatment is medically necessary for the industrial "
+        "condition. Reconsideration of the utilization-review determination "
+        "is requested."
+    )
     assert explicit_application.mtus_citations == ()
 
 
@@ -1270,3 +1281,456 @@ def test_unbound_or_missing_opinion_id_fails_instead_of_guessing_by_date():
     assert "'opn-99'" in message
     assert "does not exist in the completed ledger" in message
     assert "fails instead of guessing by date (R5)" in message
+
+
+def _part5_psych_report(opinion_id: str) -> tuple[Any, Any, str]:
+    document, story = _bound("surface-psych-medlegal", opinion_id)
+    return document, story, _flat(
+        _rendered("surface-psych-medlegal", document.index).text
+    )
+
+
+def test_part5_psych_complaint_registers_are_exact_and_fact_grounded():
+    """R82 — all four speaking-layer registers render exact grounded slots."""
+    _direct_doc, _direct_story, direct = _part5_psych_report("opn-01")
+    _gfpa_doc, _gfpa_story, gfpa = _part5_psych_report("opn-02")
+    _consequence_doc, _consequence_story, consequence = _part5_psych_report(
+        "opn-03"
+    )
+    _safety_doc, _safety_story, safety = _part5_psych_report("opn-04")
+
+    assert (
+        "The reported psychiatric symptoms are attributed to industrial event "
+        "itself rather than solely to the later effects of the physical injuries."
+    ) in direct
+    assert (
+        "The applicant reports performance evaluation, progressive discipline, "
+        "discipline, termination, reported mistreatment, reported discrimination, "
+        "harassment, humiliation and describes the work environment as hostile work "
+        "environment."
+    ) in gfpa
+    assert (
+        "The psychiatric condition developed in the course of the applicant's "
+        "response to pain, treatment, sleep disruption, loss of function, disability "
+        "following the physical injury."
+    ) in consequence
+    assert (
+        "The applicant reports trauma-related symptoms following traumatic assault "
+        "while serving as Firefighter."
+    ) in safety
+    rendered = (direct, gfpa, consequence, safety)
+    assert all("[" not in text and "]" not in text for text in rendered)
+    assert all("public safety" not in text.lower() for text in rendered)
+    assert tuple(key for key, _clauses in PSYCH_HISTORY_REGISTER) == (
+        "harassment_gfpa",
+        "direct_physical_event",
+        "compensable_consequence",
+        "safety_officer_ptsd",
+    )
+
+
+def test_part5_rolda_threshold_six_month_post_termination_and_gfpa_walk_is_exact():
+    """R79/R83 — corrected McCullough, Rolda, dates, GFPA, and reservation."""
+    _gfpa_doc, _gfpa_story, gfpa = _part5_psych_report("opn-02")
+    _consequence_doc, _consequence_story, consequence = _part5_psych_report(
+        "opn-03"
+    )
+    _safety_doc, _safety_story, safety = _part5_psych_report("opn-04")
+    rolda = (
+        "After consideration of the medical, documentary, and testimonial "
+        "evidence, the trier of fact must determine: (1) whether the alleged "
+        "psychiatric injury involves actual events of employment, a factual/legal "
+        "determination; (2) if so, whether those actual events were the predominant "
+        "cause of the psychiatric injury, a determination requiring medical "
+        "evidence; (3) if so, whether any actual employment events were personnel "
+        "actions that were lawful, nondiscriminatory, and in good faith, a "
+        "factual/legal determination; and (4) if so, whether those lawful, "
+        "nondiscriminatory, good-faith personnel actions were a substantial cause "
+        "of the psychiatric injury, a determination requiring medical evidence."
+    )
+    assert rolda in gfpa
+    assert (
+        "Actual events of employment must be predominant as to all causes combined, "
+        "meaning greater than 50 percent."
+    ) in gfpa
+    assert (
+        "Labor Code section 3208.3(d) requires six months of employment unless the "
+        "injury was caused by a sudden and extraordinary employment condition."
+    ) in gfpa
+    assert (
+        "Labor Code section 3208.3(h) places the burden on the party asserting that "
+        "lawful, nondiscriminatory, good-faith personnel actions substantially caused "
+        "the injury."
+    ) in gfpa
+    assert "section 3208.3(d) is considered only as the six-month employment rule" in gfpa
+    assert "is not authority for bypassing predominant cause" in gfpa
+    assert "predominant-cause threshold applies" in consequence
+    assert "physical injury and its medical effects are treated as qualifying" in consequence
+    assert rolda not in safety
+    assert (
+        "In the absence of evidence affirmatively controverting the presumption, "
+        "the ordinary Rolda analysis, including the good-faith-personnel-action "
+        "contention, is not reached."
+    ) in safety
+
+    seed, plan = _case("surface-psych-medlegal")
+    post_document, post_story = next(
+        (document, story)
+        for document, story in _governed("surface-psych-medlegal")
+        if document.defense_contest_theories == ("post_termination",)
+    )
+    post = _flat(
+        _render(seed, plan, post_document, post_story, "part5-post-termination").text
+    )
+    for clause in dict(PSYCH_DEFENSE_CONTEST_REGISTER)["post_termination"]:
+        assert clause in post
+    assert "sudden-and-extraordinary exception is not inferred from a violent-act" in gfpa
+
+
+def test_part5_actual_events_percentages_never_become_disability_apportionment():
+    """R84 — authored injury percentages and §4663 rows coexist independently."""
+    seed, plan = _case("surface-psych-medlegal")
+    document, story, rendered = _part5_psych_report("opn-02")
+    assert story.medical_opinion is not None
+    allocation = (
+        "45% reported harassment/humiliation/hostile-work-environment events; "
+        "30% personnel actions; 25% outside or preexisting factors"
+    )
+    assert allocation in rendered
+    assert len(story.apportionments) == 1
+    assert (
+        story.apportionments[0].industrial_percent,
+        story.apportionments[0].nonindustrial_percent,
+    ) == (70, 30)
+    assert "70 percent" in rendered and "30 percent" in rendered
+    pd_section = rendered.split("PSYCHIATRIC APPORTIONMENT", maxsplit=1)[1].split(
+        "FUTURE MEDICAL TREATMENT RECOMMENDATIONS", maxsplit=1
+    )[0]
+    assert "70 percent" in pd_section and "30 percent" in pd_section
+    assert "45%" not in pd_section
+    assert (
+        "The percentages above address causation of the psychiatric injury under "
+        "Labor Code section 3208.3. Apportionment of permanent disability under "
+        "section 4663 is a separate analysis."
+    ) in rendered
+
+    changed_row = story.apportionments[0].model_copy(
+        update={"industrial_percent": 60, "nonindustrial_percent": 40}
+    )
+    changed_story = story.model_copy(update={"apportionments": (changed_row,)})
+    changed = _flat(
+        _render(seed, plan, document, changed_story, "part5-pd-row-changed").text
+    )
+    assert allocation in changed
+    assert "60 percent" in changed and "40 percent" in changed
+    changed_pd_section = changed.split(
+        "PSYCHIATRIC APPORTIONMENT", maxsplit=1
+    )[1].split("FUTURE MEDICAL TREATMENT RECOMMENDATIONS", maxsplit=1)[0]
+    assert "60 percent" in changed_pd_section and "40 percent" in changed_pd_section
+    assert "45%" not in changed_pd_section
+
+    changed_allocation = (
+        "55% chronic adverse-work/discrimination circumstances; "
+        "25% acute workplace events; "
+        "20% cannabis or another specifically grounded nonindustrial factor"
+    )
+    changed_rationale = changed_allocation + "."
+    changed_opinion = story.medical_opinion.model_copy(
+        update={"aoe_coe_rationale": changed_rationale}
+    )
+    changed_causation_story = story.model_copy(
+        update={"medical_opinion": changed_opinion}
+    )
+    changed_causation = _flat(
+        _render(
+            seed,
+            plan,
+            document,
+            changed_causation_story,
+            "part5-injury-causation-changed",
+        ).text
+    )
+    assert changed_allocation in changed_causation
+    assert "70 percent" in changed_causation and "30 percent" in changed_causation
+    changed_causation_pd = changed_causation.split(
+        "PSYCHIATRIC APPORTIONMENT", maxsplit=1
+    )[1].split("FUTURE MEDICAL TREATMENT RECOMMENDATIONS", maxsplit=1)[0]
+    assert "70 percent" in changed_causation_pd
+    assert "55%" not in changed_causation_pd
+
+
+def test_part5_safety_officer_ptsd_presumption_and_wilson_register_is_exact():
+    """R85 — structured coverage, dated DSM, presumption, Larsen, and Wilson."""
+    _safety_doc, _safety_story, safety = _part5_psych_report("opn-04")
+    presumption_clauses = (
+        "Labor Code section 3212.15 applies to post-traumatic stress disorder "
+        "diagnosed according to the most recent edition of the Diagnostic and "
+        "Statistical Manual and developing or manifesting during qualifying service.",
+        "The presumption is disputable. Once its predicates are established, the "
+        "burden shifts to the defendant to affirmatively controvert industrial "
+        "causation.",
+        "In the absence of evidence affirmatively controverting the presumption, "
+        "the ordinary Rolda analysis, including the good-faith-personnel-action "
+        "contention, is not reached.",
+    )
+    for clause in presumption_clauses:
+        assert clause in safety
+    assert "DSM-5-TR, as the most recent DSM edition" in safety
+    assert "remains in force through January 1, 2029" in safety
+
+    seed, plan = _case("surface-psych-medlegal")
+    document, story, catastrophic = _part5_psych_report("opn-03")
+    assert (
+        "The factors are nonexclusive, and not every factor must apply. The inquiry "
+        "concerns the physical injury independently of the psychiatric condition."
+    ) in catastrophic
+    violent_row = story.apportionments[0].model_copy(
+        update={"psych_exception_analysis": "violent_act"}
+    )
+    violent_story = story.model_copy(update={"apportionments": (violent_row,)})
+    violent = _flat(
+        _render(seed, plan, document, violent_story, "part5-violent-act").text
+    )
+    assert (
+        "The violent-act inquiry concerns the mechanism: strong physical force, "
+        "extreme or intense force, or an act that was vehemently or passionately "
+        "threatening."
+    ) in violent
+    assert "dispatchers" not in safety.lower()
+
+
+def test_part5_gaf_to_wpi_is_report_prose_not_rating_state():
+    """R86 — one substrate-produced pair is repeated only in physician prose."""
+    _document, story, rendered = _part5_psych_report("opn-01")
+    pair = re.search(
+        r"assign a current GAF of (\d+).*?a GAF of \1 corresponds to (\d+) percent",
+        rendered,
+    )
+    assert pair is not None
+    assert (
+        "Starting at the top level of the GAF scale, I evaluated each range by asking "
+        "whether either symptom severity or level of functioning was worse than the "
+        "range description. I moved downward until reaching the range that best "
+        "matched whichever was worse, checked the next lower range against stopping "
+        "prematurely, and selected the specific score within the ten-point range "
+        "according to the severity and frequency of the supported findings."
+    ) in rendered
+    assert "DSM-IV-TR/GAF terminology is retained only" in rendered
+    serialized = story.model_dump(mode="json")
+    assert "gaf" not in str(serialized).lower()
+    assert "whole_person_impairment" not in str(serialized).lower()
+    assert not {"gaf", "wpi"}.intersection(type(story).model_fields)
+
+
+def test_part5_direct_consequence_honest_and_mischaracterizing_registers_are_exact():
+    """R87 — advocacy may diverge; PTP/QME remain independent speaking layers."""
+    seed, plan = _fixture_case(
+        str(_PSYCH_TRIAD_PATH), "psych-triad-consequence-as-direct"
+    )
+    rendered: dict[str, str] = {}
+    for document in plan.documents:
+        story = plan.medical_story.by_document_index.get(document.index)
+        if story is None:
+            continue
+        key = story.contention_surface or (
+            story.medical_opinion.id if story.medical_opinion is not None else ""
+        )
+        if key in {"advocacy", "opn-01", "opn-02"}:
+            rendered[key] = _flat(
+                _render(seed, plan, document, story, f"part5-triad-{document.index}").text
+            )
+    applicant_lead = (
+        "Applicant contends that the psychiatric injury was directly caused by the "
+        "events of employment and that Labor Code section 4660.1(c) therefore does "
+        "not bar an increased impairment rating. Alternatively, applicant relies on "
+        "[the existing violent-act or catastrophic-injury theory]."
+    )
+    assert applicant_lead.split(" Alternatively,", maxsplit=1)[0] in rendered["advocacy"]
+    assert "independently based" not in rendered["advocacy"]
+    assert "direct injury arising from the events of employment themselves" in rendered["opn-01"]
+    consequence = (
+        "Within reasonable medical probability, the psychiatric injury is a sequela "
+        "of and derivative of the industrial physical injury, specifically [grounded "
+        "physical-injury effects]. The condition may remain industrial and compensable "
+        "even though Labor Code section 4660.1(c)(1) limits an additional psychiatric "
+        "impairment rating."
+    )
+    assert consequence.replace(
+        "[grounded physical-injury effects]",
+        "pain, treatment, disability",
+    ) in rendered["opn-02"]
+    assert "section 3208.3(b)(1)'s predominant-cause threshold applies" in rendered["opn-02"]
+    assert "section 3208.3(d) does not apply" not in rendered["opn-02"]
+    assert (
+        "The condition may remain industrial and compensable for treatment and "
+        "temporary disability."
+    ) in rendered["opn-02"]
+
+
+def test_part5_psych_defense_and_contention_surface_phrase_pools_are_exact():
+    """R88/R89 — four carrier voices and three theories stay ordered."""
+    contention_register = {
+        "advocacy": (
+            "Please state whether the psychiatric injury was caused by the "
+            "employment event itself rather than by later pain, disability, or "
+            "treatment.",
+            "Please state the percentage of total psychiatric-injury causation "
+            "attributable to actual events of employment.",
+            "Please address separately whether Labor Code section 4660.1(c)(1) "
+            "applies and whether either paragraph (c)(2) exception is supported.",
+        ),
+        "objection": (
+            "The report's history attributes the psychiatric symptoms to [grounded "
+            "consequence facts], but the conclusion characterizes the injury as "
+            "direct without reconciling that history.",
+            "The report does not separate causation of psychiatric injury under "
+            "section 3208.3 from apportionment of permanent disability under section "
+            "4663.",
+        ),
+        "supplemental_request": (
+            "1. Identify the actual events of employment assumed in forming your "
+            "opinion.",
+            "2. State the percentage of total causation resulting from those events.",
+            "3. Distinguish event-focused symptoms from symptoms arising from pain, "
+            "disability, treatment, or other physical-injury effects.",
+            "4. State whether the psychiatric injury is direct or a compensable "
+            "consequence and explain why.",
+            "5. Address the six-month, post-termination, good-faith-personnel-action, "
+            "violent-act, and section 4660.1(c) issues that are actually presented by "
+            "the record.",
+        ),
+        "qme_deposition": (
+            "Doctor, is your opinion that the psychiatric condition arose from the "
+            "event itself or from the medical effects of the physical injury?",
+            "What history supports that distinction?",
+            "What percentage of total injury causation do you assign to actual events "
+            "of employment?",
+            "Which parts of your answer are medical opinions, and which predicates do "
+            "you leave to the trier of fact?",
+        ),
+    }
+    defense_register = {
+        "insufficient_investigation": (
+            "The report does not identify the personnel records, performance "
+            "materials, disciplinary documents, or sworn statements necessary to "
+            "evaluate the alleged employment events.",
+            "The evaluator should identify which events are assumed to have occurred, "
+            "which records support those assumptions, and what information remains "
+            "unavailable.",
+            "Without that factual development, the medical percentage cannot resolve "
+            "whether the alleged events occurred or whether a personnel action was "
+            "lawful, nondiscriminatory, and in good faith.",
+        ),
+        "post_termination": (
+            "The psychiatric claim was presented after notice of termination or "
+            "layoff, and Labor Code section 3208.3(e) must be addressed.",
+            "The present record must identify the dates of notice, filing, and injury "
+            "and must identify evidence supporting any statutory exception.",
+            "Absent those dates and records, the evaluator should reserve the "
+            "post-termination analysis rather than assume that an exception applies.",
+        ),
+        "lack_of_substantial_medical_evidence": (
+            "A compensability opinion must be stated within reasonable medical "
+            "probability, rest on an adequate examination and history, consider the "
+            "pertinent facts, and explain the reasoning supporting its conclusion.",
+            "The report does not adequately explain how the identified employment "
+            "events produced the diagnosis or how the stated percentage was selected.",
+            "An opinion based on speculation, an incomplete history, facts no longer "
+            "germane, or an incorrect legal theory does not constitute substantial "
+            "medical evidence.",
+        ),
+    }
+    assert dict(PSYCH_CONTENTION_SURFACE_REGISTER) == contention_register
+    assert dict(PSYCH_DEFENSE_CONTEST_REGISTER) == defense_register
+    seed, plan = _case("surface-contention-loop")
+    governed = list(_governed("surface-contention-loop"))
+    for surface in ("advocacy", "objection", "supplemental_request", "qme_deposition"):
+        document, story = next(
+            (document, story)
+            for document, story in governed
+            if story.contention_surface == surface
+        )
+        psych_contention = story.contentions[0].model_copy(
+            update={
+                "claim_type": "psych_add_on",
+                "target_body_part": "psyche",
+                "psych_injury_kind": "direct",
+            }
+        )
+        updates: dict[str, Any] = {"contentions": (psych_contention,)}
+        if story.medical_opinion is not None:
+            updates["medical_opinion"] = story.medical_opinion.model_copy(
+                update={"psych_injury_kind": "direct"}
+            )
+        psych_story = story.model_copy(update=updates)
+        if surface in {"objection", "qme_deposition"}:
+            document = dataclasses.replace(
+                document,
+                defense_contest_theories=(
+                    "insufficient_investigation",
+                    "post_termination",
+                    "lack_of_substantial_medical_evidence",
+                ),
+            )
+        text = _flat(
+            _render(
+                seed,
+                plan,
+                document,
+                psych_story,
+                f"part5-contention-{surface}",
+            ).text
+        )
+        for clause in contention_register[surface]:
+            if "[grounded consequence facts]" not in clause:
+                assert clause in text
+        if surface == "objection":
+            positions = []
+            for theory in document.defense_contest_theories:
+                first = defense_register[theory][0]
+                assert first in text
+                positions.append(text.index(first))
+            assert positions == sorted(positions)
+
+
+def test_part5_register_gaps_render_only_generic_grounded_prose():
+    """R81/R82/R85 — missing details reserve; they never become inventions."""
+    seed, plan = _case("surface-psych-medlegal")
+    document, story = _bound("surface-psych-medlegal", "opn-01")
+    assert story.medical_opinion is not None
+    generic_opinion = story.medical_opinion.model_copy(
+        update={
+            "psych_injury_kind": None,
+            "aoe_coe_rationale": None,
+            "endorses_contention_ids": (),
+        }
+    )
+    generic_story = story.model_copy(
+        update={
+            "contentions": (),
+            "medical_opinion": generic_opinion,
+            "apportionments": (),
+        }
+    )
+    text = _flat(
+        _render(seed, plan, document, generic_story, "part5-register-gaps").text
+    )
+    assert (
+        "The available history identifies no more specific psychiatric mechanism "
+        "than the facts stated in the records reviewed."
+    ) in text
+    assert "[" not in text and "]" not in text
+    for invented in (
+        "MMPI",
+        "T-score",
+        "validity-scale",
+        "malingering",
+        "psych-specific TTD",
+        "return-to-work restriction",
+        "billing code",
+    ):
+        assert invented.lower() not in text.lower()
+    assert (
+        "Psychological testing was performed and considered together with the "
+        "clinical interview, mental-status examination, and records reviewed."
+    ) in text

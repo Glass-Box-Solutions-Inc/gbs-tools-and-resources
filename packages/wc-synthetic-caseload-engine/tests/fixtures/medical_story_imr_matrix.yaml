@@ -40,6 +40,19 @@ cases:
         decision: upheld
         imr: true
         imr_outcome: upheld
+        imr_application:
+          disputed_treatment: lumbar epidural steroid injection
+          diagnosis_icd10: M51.26
+          ur_determination_attached: true
+          supporting_record_subtypes: [TREATING_PHYSICIAN_REPORT_PR2]
+          clinical_rebuttal: >-
+            The utilization-review determination denied lumbar epidural steroid
+            injection because the submitted record did not establish the cited
+            criterion. The treating physician report documents persistent
+            lumbar symptoms, which addresses the stated criterion because the
+            authored request identifies that report as its clinical support.
+          mtus_citations:
+            - MTUS Low Back Disorders Guideline — epidural injection criterion
 
   - case_id: imr-sampled-upheld
     rng_seed: 620313
@@ -65,3 +78,7 @@ cases:
         imr_outcome: overturned
         imr_application:
           disputed_treatment: lumbar epidural steroid injection
+          clinical_rebuttal: >-
+            The requested treatment is medically necessary for the industrial
+            condition. Reconsideration of the utilization-review determination
+            is requested.

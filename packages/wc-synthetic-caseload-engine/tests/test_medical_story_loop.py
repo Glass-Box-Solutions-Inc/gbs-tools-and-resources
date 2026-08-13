@@ -2565,3 +2565,141 @@ def test_qme_panel_predecessors_refit_before_the_bound_base_report(
     assert min(r.doc_date for r in requests) < min(o.doc_date for o in orders), (
         "a panel order answers a request and cannot precede every request"
     )
+
+
+def _part5_imr_case(case_id: str) -> tuple[Any, Any, Any, Any, str]:
+    """Fixture seed/plan/application/content/rendered text for the R90 gates."""
+    from test_medical_story import _flat, _render
+
+    path = Path(__file__).resolve().parent / "fixtures" / "medical_story_imr_matrix.yaml"
+    spec = parse_caseload_spec(yaml.safe_load(path.read_text(encoding="utf-8")))
+    seed = next(case for case in spec.cases if case.case_id == case_id)
+    plan = build_case_plan(seed)
+    document = next(
+        item for item in plan.documents if item.subtype == "IMR_APPLICATION_FORM"
+    )
+    content = document.imr_application_content
+    assert content is not None
+    story = (
+        plan.medical_story.by_document_index.get(document.index)
+        if plan.medical_story is not None
+        else None
+    )
+    rendered = _flat(
+        _render(seed, plan, document, story, f"part5-{case_id}").text
+    )
+    return seed, plan, document, content, rendered
+
+
+def test_part5_imr_authored_grounded_authored_conclusory_and_sampled_sparse_prose_is_exact():
+    """R90 — explicit fields stay authoritative and sampled misses stay blank."""
+    _seed, grounded_plan, grounded_doc, grounded, grounded_text = _part5_imr_case(
+        "imr-authored-true-upheld"
+    )
+    assert grounded.disputed_treatment == "lumbar epidural steroid injection"
+    assert grounded.diagnosis_icd10 == "M51.26"
+    assert grounded.ur_determination_attached is True
+    assert grounded.supporting_record_subtypes == (
+        "TREATING_PHYSICIAN_REPORT_PR2",
+    )
+    assert grounded.mtus_citations == (
+        "MTUS Low Back Disorders Guideline — epidural injection criterion",
+    )
+    for authored in (
+        grounded.disputed_treatment,
+        grounded.diagnosis_icd10,
+        grounded.clinical_rebuttal,
+        grounded.mtus_citations[0],
+    ):
+        assert authored in grounded_text
+    denial_index = next(
+        item.index
+        for item in grounded_plan.documents
+        if item.subtype == grounded.target_denial_subtype
+        and item.doc_date == grounded.target_denial_date
+    )
+    supporting_indices = [
+        item.index
+        for item in grounded_plan.documents
+        if item.subtype in grounded.supporting_record_subtypes
+        and item.index < grounded_doc.index
+    ]
+    assert denial_index < grounded_doc.index
+    assert supporting_indices
+
+    _seed, _plan, _doc, conclusory, conclusory_text = _part5_imr_case(
+        "imr-sparse-explicit"
+    )
+    assert conclusory.disputed_treatment == "lumbar epidural steroid injection"
+    assert conclusory.clinical_rebuttal == (
+        "The requested treatment is medically necessary for the industrial "
+        "condition. Reconsideration of the utilization-review determination "
+        "is requested."
+    )
+    assert conclusory.supporting_record_subtypes == ()
+    assert conclusory.ur_determination_attached is None
+    assert conclusory.mtus_citations == ()
+    assert conclusory.clinical_rebuttal in conclusory_text
+    for omitted_heading in (
+        "PRIMARY DIAGNOSIS",
+        "ATTACHMENT",
+        "SUPPORTING MEDICAL RECORDS",
+        "MTUS SUPPORT",
+    ):
+        assert omitted_heading not in conclusory_text
+
+    _seed, _plan, _doc, sampled, sampled_text = _part5_imr_case(
+        "imr-sampled-upheld"
+    )
+    assert sampled.disputed_treatment == "requested treatment for the lumbar spine"
+    assert sampled.disputed_treatment in sampled_text
+    assert sampled.diagnosis_icd10 is None
+    assert sampled.ur_determination_attached is None
+    assert sampled.supporting_record_subtypes == ()
+    assert sampled.clinical_rebuttal is None
+    assert sampled.mtus_citations == ()
+    for omitted_heading in (
+        "PRIMARY DIAGNOSIS",
+        "ATTACHMENT",
+        "SUPPORTING MEDICAL RECORDS",
+        "CLINICAL REBUTTAL",
+        "MTUS SUPPORT",
+    ):
+        assert omitted_heading not in sampled_text
+
+
+def test_part5_imr_mtus_and_record_language_never_exceeds_bound_fields():
+    """R90 — citations, records, attachments, and facts never exceed fields."""
+    cases = {
+        case_id: _part5_imr_case(case_id)
+        for case_id in (
+            "imr-authored-true-upheld",
+            "imr-sparse-explicit",
+            "imr-sampled-upheld",
+        )
+    }
+    for case_id, (_seed, plan, _document, content, text) in cases.items():
+        if content.mtus_citations:
+            assert "MTUS SUPPORT" in text
+            for citation in content.mtus_citations:
+                assert f"The request is submitted under {citation}." in text
+        else:
+            assert "MTUS SUPPORT" not in text
+        if content.supporting_record_subtypes:
+            assert "SUPPORTING MEDICAL RECORDS" in text
+            for subtype in content.supporting_record_subtypes:
+                assert subtype.replace("_", " ") in text
+        else:
+            assert "SUPPORTING MEDICAL RECORDS" not in text
+        assert ("ATTACHMENT" in text) is (
+            content.ur_determination_attached is not None
+        )
+
+        decision = next(
+            item
+            for item in plan.documents
+            if item.subtype == "INDEPENDENT_MEDICAL_REVIEW_DECISION"
+        )
+        assert decision.imr_application_content is None, case_id
+        for editorial in ("application omission", "missing application field"):
+            assert editorial not in text.lower()

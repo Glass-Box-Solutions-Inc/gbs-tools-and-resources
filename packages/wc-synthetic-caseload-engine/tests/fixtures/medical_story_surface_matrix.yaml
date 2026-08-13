@@ -184,11 +184,26 @@ cases:
             medical_opinion_id: opn-04
             subtype: MEDICAL_LEGAL_QME_AME_IME
 
-  # The psych med-legal surface: a psych-bound QME opinion rides the psych
-  # default carrier and renders through the R81 psych section order with the
-  # deferred AJC-65 posture. Content registers stay current-generic.
+  # The psych med-legal surface: four speaking opinions exercise the direct,
+  # GFPA, consequence, and structured safety-officer registers. The GFPA
+  # opinion authors the R84 45/30/25 injury-causation allocation beside an
+  # independent 70/30 permanent-disability apportionment row.
   - case_id: surface-psych-medlegal
     rng_seed: 620102
+    profile:
+      applicant:
+        occupation: Firefighter
+        tenure_years: 0.25
+      employer:
+        industry: government
+      physicians:
+        qme_specialty: Psychiatry
+    injury:
+      type: specific
+      date_of_injury: 2024-03-01
+      body_parts:
+        - {part: lumbar_spine}
+        - {part: psyche}
     scenario:
       medical_history:
         sample_conditions: false
@@ -206,6 +221,14 @@ cases:
             severity: moderate
             trajectory: progressive
             symptomatic_before_doi: true
+          - label: post-traumatic stress disorder
+            body_system: psychiatric
+            origin: industrial
+            body_part: psyche
+            icd10: F43.10
+            severity: moderate
+            trajectory: fluctuating
+            symptomatic_before_doi: false
       medical_assertions:
         sample_assertions: false
         sample_contention_documents: false
@@ -217,7 +240,36 @@ cases:
             psych_injury_kind: direct
             rationale: >-
               The psychiatric condition arose directly from the industrial
-              events and is compensable in its own right.
+              employment event and is compensable in its own right.
+          - id: ctn-02
+            claim_type: psych_add_on
+            party: applicant
+            target_condition_id: cond-00
+            target_body_part: psyche
+            doctrine_hooks: [gfpa]
+            psych_injury_kind: direct
+            rationale: >-
+              The applicant reports harassment, humiliation, a hostile work
+              environment, a performance evaluation, progressive discipline,
+              termination, reported mistreatment, and reported discrimination.
+          - id: ctn-03
+            claim_type: psych_add_on
+            party: applicant
+            target_condition_id: cond-00
+            target_body_part: psyche
+            psych_injury_kind: compensable_consequence
+            rationale: >-
+              The psychiatric condition followed chronic pain, disability,
+              treatment, sleep disruption, and loss of function after the
+              industrial physical injury.
+          - id: ctn-04
+            claim_type: psych_add_on
+            party: applicant
+            target_condition_id: cond-02
+            target_body_part: psyche
+            psych_injury_kind: direct
+            rationale: >-
+              PTSD followed a traumatic assault during qualifying service.
         medical_opinions:
           - id: opn-01
             author_role: qme
@@ -230,11 +282,99 @@ cases:
             psych_injury_kind: direct
             aoe_coe_finding: industrial
             aoe_coe_rationale: >-
-              The psychiatric injury arose from the employment events
-              themselves rather than from the medical consequences of the
-              physical injury, and the predominant cause of the condition is
-              the actual events of employment.
+              The psychiatric injury arose from the industrial event itself
+              rather than from the medical consequences of the physical injury,
+              and the predominant cause is the actual events of employment.
             rationale: the conclusions rest on the examination and the record reviewed
+          - id: opn-02
+            author_role: qme
+            report_stage: final
+            report_date: 2025-01-10
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00, cond-01]
+            endorses_contention_ids: [ctn-02]
+            psych_injury_kind: direct
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              45% reported harassment/humiliation/hostile-work-environment events;
+              30% personnel actions; 25% outside or preexisting factors. The
+              report assumes only that the trier of fact finds the performance
+              evaluation, progressive discipline, termination, reported
+              mistreatment, and reported discrimination occurred.
+            rationale: the conclusions rest on the examination and the record reviewed
+          - id: opn-03
+            author_role: qme
+            report_stage: final
+            report_date: 2025-02-14
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00, cond-01]
+            endorses_contention_ids: [ctn-03]
+            psych_injury_kind: compensable_consequence
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              Chronic pain, disability, treatment, sleep disruption, and loss
+              of function from the industrial physical injury are greater than
+              50 percent of all causes combined.
+            rationale: the conclusions rest on the examination and the record reviewed
+          - id: opn-04
+            author_role: qme
+            report_stage: final
+            report_date: 2025-03-21
+            apportionment_state: determined
+            determination_kind: no_nonindustrial_share
+            determination_rationale: >-
+              No nonindustrial cause of permanent disability is established on
+              the examination and record reviewed.
+            examination_performed: true
+            reviewed_condition_ids: [cond-02]
+            endorses_contention_ids: [ctn-04]
+            psych_injury_kind: direct
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              Post-traumatic stress disorder followed a traumatic assault during
+              qualifying service as a firefighter.
+            rationale: the conclusions rest on the examination and the record reviewed
+        apportionment_assertions:
+          - id: app-01
+            opinion_id: opn-03
+            body_part: psyche
+            industrial_percent: 90
+            nonindustrial_percent: 10
+            basis_kinds: [psych_impairment_add_on]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+            causal_rationale: >-
+              The physical-injury outcome must be evaluated independently of
+              the psychiatric condition.
+            percentage_rationale: >-
+              The disability allocation rests on the examined psychiatric history.
+            psych_exception_analysis: catastrophic_injury
+          - id: app-02
+            opinion_id: opn-02
+            body_part: psyche
+            industrial_percent: 70
+            nonindustrial_percent: 30
+            basis_kinds: [nonindustrial_medical_condition]
+            condition_ids: [cond-00]
+            reasonable_medical_probability: true
+            causal_rationale: >-
+              A preexisting psychiatric contribution independently causes part
+              of the current permanent disability.
+            percentage_rationale: >-
+              The 70/30 disability allocation rests on the examination and
+              records, independently of injury-causation percentages.
+        contention_documents:
+          - id: cdoc-01
+            document_kind: objection
+            actor_party: defense
+            target_medical_opinion_id: opn-02
+            spoken_contention_ids: [ctn-02]
+            defense_contest_theories: [post_termination]
+            doc_date: 2025-01-24
 
   # The supplemental family: one base report, then both R8 supplemental
   # carriers in series — the default carrier on the first response and the

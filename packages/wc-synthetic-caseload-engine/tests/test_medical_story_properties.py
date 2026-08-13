@@ -37,6 +37,7 @@ from assertion_cohort import (
     build_cohort,
     cohort_seed_body,
 )
+from wc_caseload_engine import fact_templates as fact_templates_module
 from wc_caseload_engine import medical_assertions as assertion_module
 from wc_caseload_engine import renderer as renderer_module
 from wc_caseload_engine.manifests import generate_case
@@ -2236,4 +2237,64 @@ def test_raw_date_band_draws_are_inclusive_causal_and_never_redrawn(
     assert trace_again.story_raw_date_offsets == trace.story_raw_date_offsets
     assert [b.model_dump() for b in plan_again.contention_documents] == [
         b.model_dump() for b in plan.contention_documents
+    ]
+
+
+def test_part5_phrase_pools_are_deterministic_without_new_streams_or_draws(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R80/R91 — immutable projection over existing pinned stream traces."""
+    register_names = (
+        "PSYCH_HISTORY_REGISTER",
+        "PSYCH_QME_PROTOCOL_REGISTER",
+        "PSYCH_ROLDA_REGISTER",
+        "PSYCH_THRESHOLD_REGISTER",
+        "PSYCH_ACTUAL_EVENTS_REGISTER",
+        "PSYCH_SAFETY_OFFICER_REGISTER",
+        "PSYCH_GAF_PDRS_REGISTER",
+        "PSYCH_SECTION_4660_1C_REGISTER",
+        "PSYCH_DEFENSE_CONTEST_REGISTER",
+        "PSYCH_CONTENTION_SURFACE_REGISTER",
+        "IMR_APPLICATION_REGISTER",
+    )
+    for name in register_names:
+        register = getattr(fact_templates_module, name)
+        assert isinstance(register, tuple) and register
+        assert all(
+            isinstance(row, tuple)
+            and len(row) == 2
+            and isinstance(row[0], str)
+            and isinstance(row[1], tuple)
+            for row in register
+        )
+    assert set(register_names).isdisjoint(MEDICAL_STORY_KNOBS)
+    assert MEDICAL_STORY_RNG_FAMILIES == EXPECTED_MEDICAL_STORY_FAMILIES
+    assert len(MEDICAL_STORY_RNG_FAMILIES) == 34
+
+    # Existing independent pins, not a before/after derivation comparison.
+    cohort = build_cohort()
+    assert cohort.stream_trace_digests == MEASURED_M2_STREAM_TRACE_DIGESTS
+    assert cohort.ledger_digests == MEASURED_LEDGER_DIGESTS
+
+    from test_medical_story import _bound, _case
+
+    _seed, plan = _case("surface-psych-medlegal")
+
+    class _NoPart5Draw:
+        def __getattr__(self, name: str) -> Any:
+            raise AssertionError(f"Part 5 attempted random.{name}")
+
+    monkeypatch.setattr(fact_templates_module, "random", _NoPart5Draw())
+    template = typing.cast(Any, type("Template", (), {"case": plan.cast.case})())
+    observed = []
+    for opinion_id in ("opn-01", "opn-02", "opn-03", "opn-04"):
+        _document, story = _bound("surface-psych-medlegal", opinion_id)
+        observed.append(fact_templates_module._psych_register_key(template, story))
+        prose = fact_templates_module._story_psych_complaint_text(template, story)
+        assert prose
+    assert observed == [
+        "direct_physical_event",
+        "harassment_gfpa",
+        "compensable_consequence",
+        "safety_officer_ptsd",
     ]

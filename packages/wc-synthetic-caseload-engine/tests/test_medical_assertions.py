@@ -3057,3 +3057,89 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
     )
     assert "bare token at cli:stdout" in findings
     assert "reserved key cli-stream:quality" in findings
+
+
+def test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary():
+    """R90/R93 — production-visible Part 5 prose carries no hidden labels."""
+    from test_medical_story import _case, _part5_psych_report
+    from test_medical_story_loop import _part5_imr_case
+    from wc_caseload_engine import fact_templates as templates
+
+    forbidden = (
+        "real",
+        "bogus",
+        "good",
+        "bad",
+        "adequate",
+        "inadequate",
+        "thin",
+        "underworked",
+        "quality",
+    )
+
+    def leaked(label: str, value: Any) -> list[str]:
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        # Statutory "good faith" and R88's examination-foundation phrase are
+        # mandated legal text, not an IMR-work-product classifier.
+        normalized = (
+            text.lower()
+            .replace("good-faith", "")
+            .replace("good faith", "")
+            .replace("adequate examination", "")
+        )
+        return [
+            f"{label}:{word}"
+            for word in forbidden
+            if re.search(rf"\b{re.escape(word)}\b", normalized)
+        ]
+
+    surfaces: list[tuple[str, Any]] = []
+    _seed, psych_plan = _case("surface-psych-medlegal")
+    assert psych_plan.medical_story is not None
+    surfaces.append(
+        (
+            "psych-plan",
+            psych_plan.medical_story.model_dump(mode="json"),
+        )
+    )
+    for opinion_id in ("opn-01", "opn-02", "opn-03", "opn-04"):
+        _document, _story, rendered = _part5_psych_report(opinion_id)
+        surfaces.append((f"psych-report:{opinion_id}", rendered))
+
+    for case_id in (
+        "imr-authored-true-upheld",
+        "imr-sparse-explicit",
+        "imr-sampled-upheld",
+    ):
+        _seed, plan, _document, content, rendered = _part5_imr_case(case_id)
+        assert plan.medical_ur_plan is not None
+        surfaces.append(
+            (
+                f"imr-plan:{case_id}",
+                plan.medical_ur_plan.model_dump(mode="json"),
+            )
+        )
+        surfaces.append((f"imr-content:{case_id}", content.model_dump(mode="json")))
+        surfaces.append((f"imr-application:{case_id}", rendered))
+
+    for constant_name in (
+        "PSYCH_HISTORY_REGISTER",
+        "PSYCH_QME_PROTOCOL_REGISTER",
+        "PSYCH_ROLDA_REGISTER",
+        "PSYCH_THRESHOLD_REGISTER",
+        "PSYCH_ACTUAL_EVENTS_REGISTER",
+        "PSYCH_SAFETY_OFFICER_REGISTER",
+        "PSYCH_GAF_PDRS_REGISTER",
+        "PSYCH_SECTION_4660_1C_REGISTER",
+        "PSYCH_DEFENSE_CONTEST_REGISTER",
+        "PSYCH_CONTENTION_SURFACE_REGISTER",
+        "IMR_APPLICATION_REGISTER",
+    ):
+        surfaces.append((constant_name, getattr(templates, constant_name)))
+
+    findings = [
+        finding
+        for label, value in surfaces
+        for finding in leaked(label, value)
+    ]
+    assert findings == []

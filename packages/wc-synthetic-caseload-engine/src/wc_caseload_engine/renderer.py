@@ -861,6 +861,7 @@ def render_document(
             context["variant_content"] = variant_switch
     if imr_application_content is not None:
         context["imr_application_content"] = imr_application_content
+        context["imr_applicant_firm"] = cast.applicant_firm
     if imr_outcome is not None:
         context["imr_outcome"] = imr_outcome
 
