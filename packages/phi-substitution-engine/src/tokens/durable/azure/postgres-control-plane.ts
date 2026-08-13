@@ -684,24 +684,26 @@ export class PostgresControlPlane implements ControlPlane {
     });
   }
 
-  public async markQuarantined(input: MarkQuarantinedInput): Promise<void> {
+  public markQuarantined(input: MarkQuarantinedInput): Promise<void> {
     safeEpochMs(input.quarantinedAtEpochMs, "quarantined_at_ms");
-    const result = await this.#pool.query(
-      `UPDATE reversal_prepared
-       SET state = 'quarantined', quarantined_at_ms = $2
-       WHERE prepared_blob_id = $1 AND state = 'reclaim_marked'`,
-      [input.preparedBlobId, input.quarantinedAtEpochMs],
-    );
-    if (result.rowCount === 1) {
-      return;
-    }
-    const current = await this.#pool.query<{ readonly state: string }>(
-      `SELECT state FROM reversal_prepared WHERE prepared_blob_id = $1`,
-      [input.preparedBlobId],
-    );
-    if (current.rows[0]?.state !== "quarantined") {
-      throw new Error("mark_quarantined_invalid_state");
-    }
+    return transaction(this.#pool, async (client) => {
+      const result = await client.query(
+        `UPDATE reversal_prepared
+         SET state = 'quarantined', quarantined_at_ms = $2
+         WHERE prepared_blob_id = $1 AND state = 'reclaim_marked'`,
+        [input.preparedBlobId, input.quarantinedAtEpochMs],
+      );
+      if (result.rowCount === 1) {
+        return;
+      }
+      const current = await client.query<{ readonly state: string }>(
+        `SELECT state FROM reversal_prepared WHERE prepared_blob_id = $1`,
+        [input.preparedBlobId],
+      );
+      if (current.rows[0]?.state !== "quarantined") {
+        throw new Error("mark_quarantined_invalid_state");
+      }
+    });
   }
 
   public reclaimStaleUploads(input: StaleUploadReclaimInput): Promise<readonly ReclaimUploadRow[]> {
@@ -861,21 +863,23 @@ export class PostgresControlPlane implements ControlPlane {
   }
 
   async #deleteInState(preparedBlobId: PreparedWriteHandle, state: string, error: string): Promise<void> {
-    const deleted = await this.#pool.query(
-      `DELETE FROM reversal_prepared
-       WHERE prepared_blob_id = $1 AND state = $2`,
-      [preparedBlobId, state],
-    );
-    if (deleted.rowCount === 1) {
-      return;
-    }
-    const present = await this.#pool.query(
-      `SELECT 1 FROM reversal_prepared WHERE prepared_blob_id = $1`,
-      [preparedBlobId],
-    );
-    if (present.rowCount !== 0) {
-      throw new Error(error);
-    }
+    return transaction(this.#pool, async (client) => {
+      const deleted = await client.query(
+        `DELETE FROM reversal_prepared
+         WHERE prepared_blob_id = $1 AND state = $2`,
+        [preparedBlobId, state],
+      );
+      if (deleted.rowCount === 1) {
+        return;
+      }
+      const present = await client.query(
+        `SELECT 1 FROM reversal_prepared WHERE prepared_blob_id = $1`,
+        [preparedBlobId],
+      );
+      if (present.rowCount !== 0) {
+        throw new Error(error);
+      }
+    });
   }
 
   #dekGeneration(row: DekRow): DekGeneration {

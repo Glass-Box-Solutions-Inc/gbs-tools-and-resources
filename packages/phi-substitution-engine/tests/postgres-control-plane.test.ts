@@ -50,6 +50,125 @@ function nonceValue(nonce: Uint8Array): bigint {
   return (bytes.readBigUInt64BE(0) << 32n) | BigInt(bytes.readUInt32BE(8));
 }
 
+interface ScriptedQueryResult {
+  readonly rowCount: number;
+  readonly rows: readonly unknown[];
+}
+
+function scriptedControlPlane(results: readonly ScriptedQueryResult[]): {
+  readonly controlPlane: PostgresControlPlane;
+  readonly statements: string[];
+} {
+  const pending = [...results];
+  const statements: string[] = [];
+  const client = {
+    query: (sql: string): Promise<ScriptedQueryResult> => {
+      statements.push(sql.trim());
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return Promise.resolve({ rowCount: 0, rows: [] });
+      }
+      const result = pending.shift();
+      if (result === undefined) {
+        return Promise.reject(new Error("unexpected_scripted_query"));
+      }
+      return Promise.resolve(result);
+    },
+    release: (): void => undefined,
+  };
+  const pool = { connect: () => Promise.resolve(client) } as unknown as Pool;
+  return { controlPlane: new PostgresControlPlane(pool), statements };
+}
+
+describe("PostgresControlPlane maintenance completion idempotency", () => {
+  const handle = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000001");
+
+  it("accepts markQuarantined after another worker already reached quarantined", async () => {
+    const fixture = scriptedControlPlane([
+      { rowCount: 0, rows: [] },
+      { rowCount: 1, rows: [{ state: "quarantined" }] },
+    ]);
+
+    await expect(fixture.controlPlane.markQuarantined({
+      preparedBlobId: handle,
+      quarantinedAtEpochMs: T0,
+    })).resolves.toBeUndefined();
+    expect(fixture.statements).toEqual([
+      "BEGIN",
+      expect.stringContaining("UPDATE reversal_prepared"),
+      expect.stringContaining("SELECT state FROM reversal_prepared"),
+      "COMMIT",
+    ]);
+  });
+
+  it("accepts completeStaleUploadReclaim after another worker already deleted the row", async () => {
+    const fixture = scriptedControlPlane([
+      { rowCount: 0, rows: [] },
+      { rowCount: 0, rows: [] },
+    ]);
+
+    await expect(fixture.controlPlane.completeStaleUploadReclaim(handle)).resolves.toBeUndefined();
+    expect(fixture.statements).toEqual([
+      "BEGIN",
+      expect.stringContaining("DELETE FROM reversal_prepared"),
+      expect.stringContaining("SELECT 1 FROM reversal_prepared"),
+      "COMMIT",
+    ]);
+  });
+
+  it("accepts completeHardDeleteQuarantined after another worker already deleted the row", async () => {
+    const fixture = scriptedControlPlane([
+      { rowCount: 0, rows: [] },
+      { rowCount: 0, rows: [] },
+    ]);
+
+    await expect(fixture.controlPlane.completeHardDeleteQuarantined(handle)).resolves.toBeUndefined();
+    expect(fixture.statements).toEqual([
+      "BEGIN",
+      expect.stringContaining("DELETE FROM reversal_prepared"),
+      expect.stringContaining("SELECT 1 FROM reversal_prepared"),
+      "COMMIT",
+    ]);
+  });
+
+  it.each([
+    {
+      name: "markQuarantined",
+      expectedError: "mark_quarantined_invalid_state",
+      results: [
+        { rowCount: 0, rows: [] },
+        { rowCount: 1, rows: [{ state: "finalized" }] },
+      ],
+      complete: (controlPlane: PostgresControlPlane) => controlPlane.markQuarantined({
+        preparedBlobId: handle,
+        quarantinedAtEpochMs: T0,
+      }),
+    },
+    {
+      name: "completeStaleUploadReclaim",
+      expectedError: "complete_stale_upload_invalid_state",
+      results: [
+        { rowCount: 0, rows: [] },
+        { rowCount: 1, rows: [{}] },
+      ],
+      complete: (controlPlane: PostgresControlPlane) => controlPlane.completeStaleUploadReclaim(handle),
+    },
+    {
+      name: "completeHardDeleteQuarantined",
+      expectedError: "complete_hard_delete_invalid_state",
+      results: [
+        { rowCount: 0, rows: [] },
+        { rowCount: 1, rows: [{}] },
+      ],
+      complete: (controlPlane: PostgresControlPlane) => controlPlane.completeHardDeleteQuarantined(handle),
+    },
+  ])("keeps $name loud when the row remains in an unexpected state", async ({ complete, expectedError, results }) => {
+    const fixture = scriptedControlPlane(results);
+
+    await expect(complete(fixture.controlPlane)).rejects.toThrow(expectedError);
+    expect(fixture.statements.at(-1)).toBe("ROLLBACK");
+  });
+});
+
 describe.skipIf(!LIVE)("PostgresControlPlane live conformance", () => {
   const schema = `phi_reversal_${process.pid}_${Date.now()}`;
   let adminPool: Pool;

@@ -723,7 +723,18 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
         (row.state === "finalized" || row.state === "orphaned") &&
         row.createdAtMs < input.olderThanEpochMs
       ),
-    ];
+    ].sort((left, right) => {
+      const stateOrder = Number(left.state !== "reclaim_marked") - Number(right.state !== "reclaim_marked");
+      if (stateOrder !== 0) {
+        return stateOrder;
+      }
+      if (left.createdAtMs !== right.createdAtMs) {
+        return left.createdAtMs - right.createdAtMs;
+      }
+      const leftId = asString(left.preparedBlobId);
+      const rightId = asString(right.preparedBlobId);
+      return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+    });
     for (const row of candidates) {
       if (inspected === limit) {
         break;

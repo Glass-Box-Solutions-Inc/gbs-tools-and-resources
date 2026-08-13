@@ -5,6 +5,7 @@ import type {
   GcmNonce96,
   PrepareReversalWriteInput,
   PreparedReversalWrite,
+  PreparedWriteHandle,
   ReversalIdempotencyKey,
   ReversalMappingKey,
   ReversalScopeDigest,
@@ -218,6 +219,41 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
 });
 
 describe("GLY-346 Lane A — control-plane state-machine conformance", () => {
+  it("orders Path-1 recovery and fresh candidates like Postgres, not insertion order", async () => {
+    const controlPlane = new InMemoryControlPlane();
+    const freshLaterId = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000002");
+    const freshEarlierId = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000001");
+    const recoveryId = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000003");
+    const insert = async (handle: PreparedWriteHandle, suffix: string): Promise<void> => {
+      await controlPlane.insertPreparedUploading({
+        preparedBlobId: handle,
+        tenantId: TENANT,
+        mappingKey: brand<ReversalMappingKey>(`mapping-${suffix}`),
+        idempotencyKey: brand<ReversalIdempotencyKey>(`idempotency-${suffix}`),
+        immutableScopeDigest: brand<ReversalScopeDigest>(`scope-${suffix}`),
+        stagingPath: `staging/${handle as unknown as string}`,
+        blobPath: `blobs/${handle as unknown as string}`,
+        createdAtEpochMs: T0,
+      });
+      await controlPlane.markFinalized({ preparedBlobId: handle, blobEtag: `etag-${suffix}`, blobLength: 1n });
+    };
+    await insert(freshLaterId, "later");
+    await insert(freshEarlierId, "earlier");
+    await insert(recoveryId, "recovery");
+    controlPlane.debugSetPreparedState(recoveryId, "reclaim_marked");
+
+    const selected = await controlPlane.selectFinalizedOrphansForReclaim({
+      olderThanEpochMs: T0 + 1,
+      limit: 3,
+    });
+
+    expect(selected.rows.map((row) => row.preparedBlobId)).toEqual([
+      recoveryId,
+      freshEarlierId,
+      freshLaterId,
+    ]);
+  });
+
   it("publish-loss then crash preserves pending claim and retry recovers through flush", async () => {
     const c = clock(T0);
     const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });
