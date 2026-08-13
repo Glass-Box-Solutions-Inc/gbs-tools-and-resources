@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { AzureSpoolMaintenance } from "../src/tokens/durable/azure/azure-spool-maintenance";
-import { PostgresControlPlane } from "../src/tokens/durable/azure/postgres-control-plane";
+import { PostgresControlPlane, runMigrations } from "../src/tokens/durable/azure/postgres-control-plane";
 import {
   azureFilesBlobStoreFromEnvironment,
   postgresConfigFromEnvironment,
@@ -30,11 +30,18 @@ function modeFromEnvironment(): ReclaimMode {
   return mode;
 }
 
+function errorDetail(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/[\r\n]+/g, " ").slice(0, 300);
+}
+
 async function main(): Promise<void> {
   const startedAt = Date.now();
   let mode: ReclaimMode = "dry-run";
   let horizonMs = DEFAULT_HORIZON_MS;
   let pool: Pool | undefined;
+  let outcome: { readonly scanned: number; readonly reclaimed: number; readonly skippedReferenced: number } | undefined;
+  let failure: unknown;
   try {
     mode = modeFromEnvironment();
     horizonMs = integerEnvironment("RECLAIM_HORIZON_MS", DEFAULT_HORIZON_MS, true);
@@ -47,9 +54,10 @@ async function main(): Promise<void> {
     const limit = integerEnvironment("RECLAIM_LIMIT", DEFAULT_LIMIT, false);
     const nowEpochMs = Date.now();
     pool = new Pool(postgresConfigFromEnvironment());
+    await runMigrations(pool);
     const controlPlane = new PostgresControlPlane(pool);
 
-    const outcome = mode === "dry-run"
+    outcome = mode === "dry-run"
       ? await controlPlane.previewReclamation({
         olderThanEpochMs: Math.max(0, nowEpochMs - horizonMs),
         uploadHorizonEpochMs: Math.max(0, nowEpochMs - uploadHorizonMs),
@@ -69,15 +77,19 @@ async function main(): Promise<void> {
         limit,
       });
 
-    console.log(JSON.stringify({
-      mode,
-      scanned: outcome.scanned,
-      reclaimed: outcome.reclaimed,
-      skippedReferenced: outcome.skippedReferenced,
-      horizonMs,
-      durationMs: Date.now() - startedAt,
-    }));
-  } catch {
+  } catch (error: unknown) {
+    failure = error;
+  } finally {
+    if (pool !== undefined) {
+      try {
+        await pool.end();
+      } catch (error: unknown) {
+        failure ??= error;
+      }
+    }
+  }
+
+  if (failure !== undefined || outcome === undefined) {
     console.error(JSON.stringify({
       mode,
       scanned: 0,
@@ -86,10 +98,18 @@ async function main(): Promise<void> {
       horizonMs,
       durationMs: Date.now() - startedAt,
       error: "reclamation_failed",
+      detail: errorDetail(failure ?? "missing_reclamation_outcome"),
     }));
     process.exitCode = 1;
-  } finally {
-    await pool?.end().catch(() => undefined);
+  } else {
+    console.log(JSON.stringify({
+      mode,
+      scanned: outcome.scanned,
+      reclaimed: outcome.reclaimed,
+      skippedReferenced: outcome.skippedReferenced,
+      horizonMs,
+      durationMs: Date.now() - startedAt,
+    }));
   }
 }
 

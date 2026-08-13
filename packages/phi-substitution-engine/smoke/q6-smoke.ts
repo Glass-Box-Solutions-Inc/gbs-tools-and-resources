@@ -201,7 +201,7 @@ function durableStore(
   });
 }
 
-async function crashRecoveryCheck(context: SmokeContext): Promise<Record<string, number>> {
+async function crashRecoveryCheck(context: SmokeContext): Promise<Record<string, unknown>> {
   const matterId = brand<MatterId>(`${context.tenantId}-recovery`);
   const token = brand<SubstitutionToken>("[[Witness]]");
   const attemptId = brand<OperationAttemptId>(`${context.tenantId}-recovery-attempt`);
@@ -220,10 +220,12 @@ async function crashRecoveryCheck(context: SmokeContext): Promise<Record<string,
     () => FIXED_NOW,
   );
   let abandoned = false;
+  let abandonedDetail = "missing_expected_failure";
   try {
     await durableStore(abandoningFlush(firstVolume), kek).record(record);
-  } catch {
+  } catch (error: unknown) {
     abandoned = true;
+    abandonedDetail = sanitizedErrorMessage(error);
   }
   assertSmoke(abandoned, "recovery_first_replica_was_not_abandoned");
 
@@ -244,7 +246,7 @@ async function crashRecoveryCheck(context: SmokeContext): Promise<Record<string,
     mappingKeyOf(context.tenantId, matterId, record.dictionaryVersion, token),
   ]);
   assertSmoke(pointers.length === 1, "recovery_pointer_count");
-  return { abandonedReplicas: 1, recoveredRecords: 1, resolvedRecords: 1 };
+  return { abandonedReplicas: 1, recoveredRecords: 1, resolvedRecords: 1, abandonedDetail };
 }
 
 async function noPinnedPartialsCheck(context: SmokeContext): Promise<Record<string, number>> {
@@ -354,12 +356,24 @@ async function cleanupBlobs(pool: Pool, blobStore: AzureFilesBlobStore): Promise
     paths.add(row.blob_path);
     paths.add(`reclaim-quarantine/${row.prepared_blob_id}`);
   }
-  await Promise.all([...paths].map(async (path) => blobStore.remove(path).catch(() => undefined)));
+  const removals = await Promise.allSettled([...paths].map(async (path) => blobStore.remove(path)));
+  const failed = removals.find((result) => result.status === "rejected");
+  if (failed?.status === "rejected") {
+    throw new Error(`blob_cleanup_failed: ${sanitizedErrorMessage(failed.reason)}`);
+  }
+}
+
+function sanitizedErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/[\r\n]+/g, " ").slice(0, 300);
 }
 
 function failureDetail(error: unknown): string {
-  const message = error instanceof Error ? error.message : "unknown_failure";
-  return JSON.stringify({ error: message.replace(/[\r\n]+/g, " ").slice(0, 300) });
+  return JSON.stringify({ error: sanitizedErrorMessage(error) });
+}
+
+function logCleanupFailure(stage: string, error: unknown): void {
+  console.log(`SMOKE CLEANUP FAIL ${JSON.stringify({ stage, detail: sanitizedErrorMessage(error) })}`);
 }
 
 async function main(): Promise<void> {
@@ -387,7 +401,7 @@ async function main(): Promise<void> {
       tenantId: identity.tenantId,
       concurrency: concurrencyFromEnvironment(),
     };
-    const checks: ReadonlyArray<readonly [string, () => Promise<Record<string, number>>]> = [
+    const checks: ReadonlyArray<readonly [string, () => Promise<Record<string, unknown>>]> = [
       ["CONCURRENCY", () => concurrencyCheck(context)],
       ["CRASH_RECOVERY", () => crashRecoveryCheck(context)],
       ["NO_PINNED_PARTIALS", () => noPinnedPartialsCheck(context)],
@@ -410,11 +424,31 @@ async function main(): Promise<void> {
   process.exitCode = passed ? 0 : 1;
 
   if (scopedPool !== undefined && blobStore !== undefined) {
-    await cleanupBlobs(scopedPool, blobStore).catch(() => undefined);
+    try {
+      await cleanupBlobs(scopedPool, blobStore);
+    } catch (error: unknown) {
+      logCleanupFailure("blobs", error);
+    }
   }
-  await scopedPool?.end().catch(() => undefined);
-  await basePool?.query(`DROP SCHEMA IF EXISTS "${identity.schema}" CASCADE`).catch(() => undefined);
-  await basePool?.end().catch(() => undefined);
+  if (scopedPool !== undefined) {
+    try {
+      await scopedPool.end();
+    } catch (error: unknown) {
+      logCleanupFailure("scoped_pool", error);
+    }
+  }
+  if (basePool !== undefined) {
+    try {
+      await basePool.query(`DROP SCHEMA IF EXISTS "${identity.schema}" CASCADE`);
+    } catch (error: unknown) {
+      logCleanupFailure("schema", error);
+    }
+    try {
+      await basePool.end();
+    } catch (error: unknown) {
+      logCleanupFailure("base_pool", error);
+    }
+  }
 }
 
 void main();
