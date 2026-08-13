@@ -146,3 +146,39 @@ keep single-global-limit budget), D (Q6 in-ACA smoke), E (cron).**
 Launched per Alex to review our data-retention policy vs law (HIPAA/CMIA/CCPA-CPRA/§632/State-Bar/WC).
 Report → scratchpad/retention-audit.md. Relevant to this lane: the 7-day soft-delete tail + the
 detector-24h/matter-until-deletion retention classes + indefinite tombstone horizon.
+
+## Stage 9 — Lane B2 cross-family review (2026-08-13)
+Reviewer change of record: Claude subagent quota exhausted (resets 2026-08-18); spawned reviewer =
+**Gemini (agy, Antigravity)** — still cross-family vs the GPT-5.6-sol author. Optional terminal Opus
+pass deferrable to post-08-18 before merge.
+- Orchestrator gate re-run on b1f8867: `tsc --noEmit` clean; `Tests 334 passed | 12 skipped (346)`.
+- Gemini verdict: **APPROVE, zero findings** (scratchpad b2-gemini-review.md). Notes traced
+  #readPointer fail-closed etag/len verify (§G/B4), §L attrs capture, codec 2^64-1 round-trip,
+  frozen-file invariance. First agy attempt produced empty output (headless read_file auto-denied);
+  re-run with fully-inline prompt (spec v3+v5 + diff, 63.5KB) from /tmp/azwork.
+
+## Stage 10 — Lane B3: AzureSpoolMaintenance (2026-08-13)
+Author: GPT-5.6-sol (codex MCP thread 019ffc2b-…-0470), orchestrator-committed.
+- **68f8c4c**: additive ControlPlane maintenance ops (selectFinalizedOrphansForReclaim w/
+  skippedReferenced accounting, markStaleUploads + recoverStaleUploads = §O Phase-2a/2b split,
+  markQuarantined, completeStaleUploadReclaim, hardDeleteQuarantined ops); AzureSpoolMaintenance
+  runs Path 1 → 2b → 2a → 3 under ONE global inspection budget; dev double extended (publish
+  overload preserves frozen signature). Sol also stubbed B2's fake ControlPlane for the wider
+  interface (7 additive lines — in scope).
+- Orchestrator gates: tsc clean; sandbox `340 passed | 13 skipped`; frozen zero-diff vs b1f8867.
+- **Mutation A**: neutralize dev #isReferenced → invariant test "finalized/orphaned ⇒ unreferenced"
+  RED (2 failed); restore → green. Oracle non-vacuous.
+- LIVE conformance: maintenance + control-plane + spool-volume = **22/22** vs real
+  psql-phi-reversal + stgbsphispool/phi-spool.
+- Gemini review: **APPROVE-WITH-NOTES** (b3-gemini-review.md). MEDIUM: Postgres completion ops
+  crashed the losing worker of a concurrent-maintenance race (0 rows affected) where the dev double
+  succeeded idempotently — Phase-2b re-selection makes the race real. Classified: legitimately
+  better design (align Postgres to idempotent-success on already-terminal; unexpected states stay
+  loud). LOW: dev-double Path-1 ordering nondeterministic.
+- **47ef7c8**: sol fix round (same thread). Transactional post-race state verification; deterministic
+  dev ordering (reclaim_marked, createdAtMs, id); race/unexpected-state/ordering-parity tests.
+  Gates: tsc clean; `347 passed | 13 skipped (360)`.
+- **Mutation B** (live): restore strict-throw in markQuarantined → race test RED (1 failed | 13
+  passed); restore → green.
+- Gemini delta re-check: **APPROVE, both findings RESOLVED** (b3-delta-review.md).
+Lane B3 CLOSED. Remaining: Lane D (in-ACA smoke), Lane E (reclamation cron ACA Job), one push → PR.
