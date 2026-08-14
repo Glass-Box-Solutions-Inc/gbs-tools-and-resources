@@ -840,12 +840,12 @@ export class PostgresControlPlane implements ControlPlane {
         [input.olderThanEpochMs, remaining],
       );
       scanned += pathOne.rows.length;
-      remaining -= pathOne.rows.length;
       for (const row of pathOne.rows) {
         if (row.is_referenced) {
           skippedReferenced += 1;
         } else {
           reclaimed += 1;
+          remaining -= 1;
         }
       }
 

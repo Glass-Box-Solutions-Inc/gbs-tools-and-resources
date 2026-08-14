@@ -879,12 +879,12 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       })
       .slice(0, remaining);
     scanned += pathOne.length;
-    remaining -= pathOne.length;
     for (const row of pathOne) {
       if (this.#isReferenced(row.preparedBlobId)) {
         skippedReferenced += 1;
       } else {
         reclaimed += 1;
+        remaining -= 1;
       }
     }
 
@@ -941,6 +941,7 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     let scanned = 0;
     let reclaimed = 0;
     let skippedReferenced = 0;
+    let pathOneInspected = 0;
     const visit = (): boolean => {
       if (remaining === 0) {
         return false;
@@ -949,33 +950,44 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       scanned += 1;
       return true;
     };
+    const inspectPathOne = (): boolean => {
+      if (pathOneInspected === scrubbed.limit) {
+        return false;
+      }
+      pathOneInspected += 1;
+      scanned += 1;
+      return true;
+    };
 
     // Recovery selector: reclaim_marked is age-independent after a worker has exclusively claimed it.
     for (const row of [...this.#prepared.values()]) {
-      if (row.state !== "reclaim_marked" || !visit()) {
+      if (row.state !== "reclaim_marked") {
         continue;
       }
+      if (!inspectPathOne()) break;
       if (this.#isReferenced(row.preparedBlobId)) {
         skippedReferenced += 1;
         continue;
       }
+      remaining -= 1;
       this.#finishPathOne(row, now);
       reclaimed += 1;
     }
 
     // Path 1: only finalized/orphaned rows past the caller's strict horizon may be marked.
     for (const row of [...this.#prepared.values()]) {
-      if (remaining === 0) {
+      if (remaining === 0 || pathOneInspected === scrubbed.limit) {
         break;
       }
       if ((row.state !== "finalized" && row.state !== "orphaned") || row.createdAtMs >= scrubbed.olderThanEpochMs) {
         continue;
       }
-      visit();
+      inspectPathOne();
       if (this.#isReferenced(row.preparedBlobId)) {
         skippedReferenced += 1;
         continue;
       }
+      remaining -= 1;
       row.state = "reclaim_marked";
       this.#fault("reclaimAfterPathOneMark");
       this.#finishPathOne(row, now);

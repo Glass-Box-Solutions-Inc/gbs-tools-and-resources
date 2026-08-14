@@ -266,6 +266,46 @@ describe("AzureSpoolMaintenance unit", () => {
     expect(blobs.renameCalls).toEqual([]);
   });
 
+  it("does not let referenced Path 1 rows starve Path 3 across sweeps", async () => {
+    const controlPlane = new InMemoryControlPlane();
+    const blobs = new FakeBlobStore();
+    const quarantined = await seedQuarantined(controlPlane, blobs, T0 + 700);
+
+    for (let index = 0; index < 2; index += 1) {
+      const referenced = await seedFinalized(controlPlane, blobs);
+      const published = await controlPlane.publish({
+        prepared: { handle: referenced.handle },
+        expiresAtEpochMs: BigInt(T0 + 10_000),
+        nowEpochMilliseconds: T0,
+      });
+      if (published.kind !== "published") throw new Error("expected published");
+      await controlPlane.flushClaim({
+        commit: published.commit,
+        nowEpochMilliseconds: T0,
+        blobEtag: referenced.etag,
+        blobLength: referenced.length,
+      });
+      controlPlane.debugSetPreparedState(referenced.handle, "finalized");
+    }
+
+    await expect(controlPlane.previewReclamation({
+      olderThanEpochMs: T0 + 1,
+      uploadHorizonEpochMs: 0,
+      quarantinedBeforeEpochMs: T0 + 900,
+      limit: 2,
+      includeHardDelete: true,
+    })).resolves.toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
+
+    const worker = maintenance(controlPlane, blobs, T0 + 1_000, 100, 100);
+    const first = await worker.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
+    const second = await worker.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
+
+    expect(first).toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
+    expect(second).toEqual({ scanned: 2, reclaimed: 0, skippedReferenced: 2 });
+    expect(controlPlane.debugPrepared(quarantined.handle)).toBeUndefined();
+    expect(blobs.has(`reclaim-quarantine/${quarantined.handle as unknown as string}`)).toBe(false);
+  });
+
   it("Path 2b completes a crash-left upload mark and tolerates absent staging/blob paths", async () => {
     const controlPlane = new InMemoryControlPlane();
     const blobs = new FakeBlobStore();

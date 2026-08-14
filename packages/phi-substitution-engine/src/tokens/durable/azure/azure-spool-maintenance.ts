@@ -79,10 +79,9 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
       olderThanEpochMs: scrubbed.olderThanEpochMs,
       limit: remaining,
     });
-    const pathOneInspected = pathOne.rows.length + pathOne.skippedReferenced;
-    this.#assertWithinBudget(pathOneInspected, remaining, "path_one");
-    remaining -= pathOneInspected;
-    scanned += pathOneInspected;
+    this.#assertWithinBudget(pathOne.rows.length, remaining, "path_one");
+    remaining -= pathOne.rows.length;
+    scanned += pathOne.rows.length + pathOne.skippedReferenced;
     skippedReferenced += pathOne.skippedReferenced;
     for (const row of pathOne.rows) {
       await this.#quarantine(row);

@@ -126,6 +126,38 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
     expect(controlPlane.debugPrepared(prepared.handle)?.blobPresent).toBe(true);
   });
 
+  it("keeps referenced rows outside the in-memory maintenance budget", async () => {
+    const c = clock(T0 + 100);
+    const controlPlane = new InMemoryControlPlane({
+      nowEpochMilliseconds: c.now,
+      quarantineGraceMilliseconds: 100,
+    });
+    const { prepared: quarantined } = await prepare(controlPlane, {
+      attempt: "quarantine-candidate",
+      createdAtMs: T0,
+    });
+    await controlPlane.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 1 });
+
+    for (let index = 0; index < 2; index += 1) {
+      const { prepared: referenced } = await prepare(controlPlane, {
+        attempt: `referenced-${index}`,
+        createdAtMs: T0,
+      });
+      const published = await controlPlane.publish(referenced);
+      if (published.kind !== "published") throw new Error("expected published");
+      await controlPlane.flush(published.commit);
+      controlPlane.debugSetPreparedState(referenced.handle, "finalized");
+    }
+    c.advance(101);
+
+    const first = await controlPlane.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
+    const second = await controlPlane.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
+
+    expect(first).toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
+    expect(second).toEqual({ scanned: 2, reclaimed: 0, skippedReferenced: 2 });
+    expect(controlPlane.debugPrepared(quarantined.handle)).toBeUndefined();
+  });
+
   it("MUT-RECLAIM-COMMITTED: a committed/current-referenced blob is never reclaimed", async () => {
     const c = clock(T0 + 100);
     const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });
