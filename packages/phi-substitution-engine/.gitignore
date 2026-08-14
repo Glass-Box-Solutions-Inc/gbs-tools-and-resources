@@ -3,3 +3,6 @@
 # src/coverage/contracts.ts (imported by the frozen src/index.ts) untracked and broke fresh
 # checkouts / CI. Re-include the directory here so it and future N7 files are tracked.
 !/src/coverage/
+
+# Local/Docker executable compilation output.
+/dist-runtime/
