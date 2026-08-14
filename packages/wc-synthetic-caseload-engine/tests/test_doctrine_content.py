@@ -969,7 +969,7 @@ class TestTheDoctrineShowcaseSpecCoversEveryHookCleanly:
 
     Three separate claims, each asserted on its own so a break names itself:
 
-    1. Every legacy-pool hook is seeded somewhere in the spec.
+    1. Every medical-story-pool hook is seeded somewhere in the spec.
     2. Every seeded hook's prerequisite is satisfied — the whole run is warning
        free, which is the property that distinguishes it from the demo.
     3. Every hook actually reaches a document that targets it. A hook can be
@@ -977,17 +977,8 @@ class TestTheDoctrineShowcaseSpecCoversEveryHookCleanly:
        same as rendered"), and a showcase that demonstrates no content is not a
        showcase — so the naturally-emitted flag is asserted rather than assumed.
 
-    **Transitional AJC-62 coverage note.** The frozen R77 build order adds the
-    gated ``showcase-hikida-justice`` case — and its addition-only
-    ``doctrine-showcase`` golden re-record — at step 13, and forbids touching
-    the showcase before it. Until that step lands, the spec's coverage claim is
-    exactly :data:`~wc_caseload_engine.seeds.LEGACY_DOCTRINE_POOL` (the frozen
-    pre-M3 fourteen); step 13 flips these assertions to the full
-    ``MEDICAL_STORY_DOCTRINE_POOL`` in the same commit that seeds the
-    fifteenth hook.
-
     Asserted against the plan rather than a render: the plan already carries the
-    content flags, and rendering six cases costs ~40 s for no extra signal.
+    content flags, and rendering seven cases costs ~40 s for no extra signal.
     """
 
     pytestmark = requires_substrate
@@ -1003,12 +994,11 @@ class TestTheDoctrineShowcaseSpecCoversEveryHookCleanly:
 
     def test_every_hook_is_seeded_somewhere(self) -> None:
         seeded = {hook for seed in self._seeds() for hook in seed.lifecycle.doctrine_hooks}
-        assert seeded == set(LEGACY_DOCTRINE_POOL), (
+        assert seeded == set(MEDICAL_STORY_DOCTRINE_POOL), (
             "examples/doctrine-showcase.yaml is the guide's every-doctrine spec. "
-            "Its frozen pre-step-13 coverage is exactly the legacy pool (see the "
-            "class docstring for the AJC-62 transition). "
-            f"Missing: {sorted(set(LEGACY_DOCTRINE_POOL) - seeded)}; "
-            f"unexpected: {sorted(seeded - set(LEGACY_DOCTRINE_POOL))}."
+            "Its coverage is exactly the medical-story doctrine pool. "
+            f"Missing: {sorted(set(MEDICAL_STORY_DOCTRINE_POOL) - seeded)}; "
+            f"unexpected: {sorted(seeded - set(MEDICAL_STORY_DOCTRINE_POOL))}."
         )
 
     def test_the_whole_run_is_warning_free(self) -> None:
@@ -1026,18 +1016,12 @@ class TestTheDoctrineShowcaseSpecCoversEveryHookCleanly:
                 for hook in document.content_flags:
                     flagged.setdefault(hook, set()).add(document.subtype)
 
-        missing = sorted(set(LEGACY_DOCTRINE_POOL) - set(flagged))
+        missing = sorted(set(MEDICAL_STORY_DOCTRINE_POOL) - set(flagged))
         assert not missing, (
             f"{missing} are supported by their showcase case but reach no document that "
             "targets them, so the spec demonstrates nothing for them. Advance that case's "
             "lifecycle until a target subtype is emitted naturally — do not add a "
             "documents.overrides entry, which would itself warn."
-        )
-        unexpected = sorted(set(flagged) - set(LEGACY_DOCTRINE_POOL))
-        assert not unexpected, (
-            f"{unexpected} reached a showcase document before R77 step 13 seeds the "
-            "fifteenth hook — the showcase must not gain cases outside the frozen "
-            "build order"
         )
 
     def test_the_showcase_forces_no_subtypes(self) -> None:

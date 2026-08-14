@@ -1,11 +1,11 @@
-# wc-caseload doctrine showcase — all fourteen landmark doctrines, every one supported.
+# wc-caseload doctrine showcase — all fifteen landmark doctrines, every one supported.
 #
 #   wc-caseload generate --spec examples/doctrine-showcase.yaml --out /tmp/wcce-doctrine
 #   wc-caseload validate --out /tmp/wcce-doctrine
 #
 # The demo caseload (examples/demo-caseload.yaml) deliberately carries two
 # doctrine hooks their cases cannot support, to exercise the kept-and-warned
-# path. This spec is the opposite exercise: six cases whose facts satisfy every
+# path. This spec is the opposite exercise: seven cases whose facts satisfy every
 # hook's prerequisite, so a full run emits **zero** doctrine warnings.
 #
 # Each case is grouped by what its doctrines need, which is also the fastest way
@@ -19,6 +19,7 @@
 #   4. psychiatric        psyche in body_parts              -> lc3208_3_psych, gfpa
 #   5. safety-member      employer.industry: government     -> firefighter_presumption
 #   6. imr-challenge      ur_dispute.enabled + imr: true    -> imr_constitutionality
+#   7. treatment-result   medical_history + eval_type: qme  -> hikida_treatment_carveout
 #
 # There is deliberately not a single `documents.overrides` entry in this file.
 # Each case's own lifecycle emits at least one target document for every hook it
@@ -188,5 +189,50 @@ cases:
         imr_outcome: upheld
       resolution: {type: pending}
       doctrine_hooks: [imr_constitutionality]
+    documents:
+      global_cap: 30
+
+  # 7. The Hikida treatment-result carveout, narrowed by Justice. A QME rating
+  #    supports the doctrine hook, while the M3-gated history states both the
+  #    industrial treatment consequence and the nonindustrial contributor that
+  #    makes multifactorial causation — and therefore apportionment — coherent.
+  - case_id: showcase-hikida-justice
+    rng_seed: 622101
+    profile:
+      applicant: {name: Nadia Serrano, age: 46, occupation: Surgical Supply Technician, tenure_years: 8.0}
+      employer: {name: Lindenmere Clinical Logistics, industry: healthcare, county: Contra Costa}
+      carrier: {name: Hawthorne Vale Compensation Insurance Company}
+    injury:
+      type: specific
+      date_of_injury: 2022-03-16
+      mechanism: acute lumbar strain while transferring a loaded surgical supply cart
+      body_parts:
+        - {part: lumbar_spine, icd10: M54.5, detail: lumbar strain followed by decompression surgery}
+    lifecycle:
+      target_stage: medical_legal
+      claim_response: accepted
+      eval_type: qme
+      resolution: {type: pending}
+      doctrine_hooks: [hikida_treatment_carveout]
+    scenario:
+      surgery: performed
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: preexisting lumbar degenerative disc disease
+            body_part: lumbar_spine
+            icd10: M51.36
+            origin: nonindustrial
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+          - label: post-surgical complex regional pain syndrome
+            body_part: lumbar_spine
+            icd10: G90.50
+            origin: industrial
+            onset: 2022-08-01
+            severity: severe
+            trajectory: fluctuating
+            symptomatic_before_doi: false
     documents:
       global_cap: 30

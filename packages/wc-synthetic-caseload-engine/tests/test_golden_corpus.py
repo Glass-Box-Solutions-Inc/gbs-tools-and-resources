@@ -284,6 +284,89 @@ def test_pre_m3_unchanged_corpus_golden_files_match_the_frozen_ajc62_baseline() 
     assert doctrine["cases"], "the embedded pre-M3 doctrine payload lost its cases"
 
 
+def test_doctrine_showcase_rerecord_is_addition_only_for_preexisting_cases() -> None:
+    """AJC-62 R73: the one doctrine re-record adds one case and changes no old case.
+
+    The expected side is the complete pre-M3 payload captured before M3. It is
+    deliberately not derived from the current golden: comparing the re-record
+    with itself would be the oracle-integrity doctrine's forbidden Form A.
+    """
+    contract = json.loads(AJC62_GOLDEN_CONTRACT.read_text(encoding="utf-8"))
+    before = contract["doctrine_showcase_pre_m3"]
+    golden = Path(__file__).resolve().parent / "golden" / "doctrine-showcase.json"
+    after = json.loads(golden.read_text(encoding="utf-8"))
+
+    preexisting_cases = {
+        "showcase-death-dependency",
+        "showcase-firefighter-presumption",
+        "showcase-imr-challenge",
+        "showcase-psychiatric",
+        "showcase-rating-doctrines",
+        "showcase-threshold-defences",
+    }
+    added_cases = {"showcase-hikida-justice"}
+    assert set(before["cases"]) == preexisting_cases
+    assert set(after["cases"]) == preexisting_cases | added_cases
+    assert set(after["cases"]) - set(before["cases"]) == added_cases
+
+    case_keys = {
+        "documentCount",
+        "distinctSubtypes",
+        "fileCount",
+        "tree",
+        "documents",
+        "manifest",
+        "seed",
+        "facts",
+    }
+
+    def canonical_json(value: Any) -> bytes:
+        return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    changed_preexisting: list[str] = []
+    for case_id in sorted(preexisting_cases):
+        assert set(before["cases"][case_id]) == case_keys
+        assert set(after["cases"][case_id]) == case_keys
+        if canonical_json(after["cases"][case_id]) != canonical_json(
+            before["cases"][case_id]
+        ):
+            changed_preexisting.append(case_id)
+    assert not changed_preexisting, (
+        "the doctrine re-record changed pre-existing case dictionaries: "
+        f"{changed_preexisting}"
+    )
+
+    allowed_top_level_changes = {
+        "cases",
+        "caseCount",
+        "documentCount",
+        "fileCount",
+        "rootFiles",
+        "caseload",
+        "corpusTree",
+    }
+    assert set(after) == set(before)
+    assert allowed_top_level_changes < set(before)
+    stable_top_level = set(before) - allowed_top_level_changes
+    assert canonical_json({key: after[key] for key in stable_top_level}) == canonical_json(
+        {key: before[key] for key in stable_top_level}
+    )
+
+    new_truth_file = "truth/showcase-hikida-justice.truth.json"
+    assert set(after["rootFiles"]) - set(before["rootFiles"]) == {new_truth_file}
+    assert set(before["rootFiles"]) - set(after["rootFiles"]) == set()
+    assert after["rootFiles"] == sorted(after["rootFiles"])
+
+    final_cases = after["cases"]
+    assert after["caseCount"] == len(final_cases)
+    assert after["documentCount"] == sum(
+        case["documentCount"] for case in final_cases.values()
+    )
+    assert after["fileCount"] == len(after["rootFiles"]) + sum(
+        case["fileCount"] for case in final_cases.values()
+    )
+
+
 # ---------------------------------------------------------------------------
 # The exemption list
 # ---------------------------------------------------------------------------
