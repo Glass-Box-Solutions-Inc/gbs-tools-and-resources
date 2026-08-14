@@ -182,3 +182,23 @@ Author: GPT-5.6-sol (codex MCP thread 019ffc2b-…-0470), orchestrator-committed
   passed); restore → green.
 - Gemini delta re-check: **APPROVE, both findings RESOLVED** (b3-delta-review.md).
 Lane B3 CLOSED. Remaining: Lane D (in-ACA smoke), Lane E (reclamation cron ACA Job), one push → PR.
+
+## Stage 11 — Lanes D + E: Q6 smoke + reclamation cron (2026-08-13/14)
+Author: GPT-5.6-sol (same thread); orchestrator committed fccf49b (harness+entrypoint+Dockerfile)
+and ab36e47 (fix: entrypoints run idempotent migrations; sanitized error detail — root cause of the
+first dry-run failure was `relation "reversal_prepared" does not exist` hidden by a bare catch{}).
+- Local live: Q6 smoke ALL FOUR checks PASS; reclaim dry-run `{"mode":"dry-run","scanned":0,...}` exit 0.
+- Image: `az acr build` → acrgbsadjudicawus.azurecr.io/phi-engine/reclaim:gly346-ab36e47 (Run cf11, 55s).
+- AcrPull granted to id-phi-engine on the registry.
+- **Lane D exit criterion (in-ACA, real adapters)**: job-phi-q6-smoke execution g0su6qe **Succeeded**;
+  Log Analytics: CONCURRENCY PASS {8 publishers, 1 published, 7 existing, 1 current}; CRASH_RECOVERY
+  PASS; NO_PINNED_PARTIALS PASS {1 reclaimed, 1 detached, 1 quarantined}; NONCE_MONOTONICITY PASS;
+  Q6_SMOKE_RESULT PASS.
+- **Lane E**: job-phi-reclaim created in cae-gbs-wp, Schedule "0 3 * * *", RECLAIM_MODE=dry-run
+  (spec §7 ships dry-run first), id-phi-engine identity, KV-sourced secrets as job secrets.
+  Manual execution whz5qlv **Succeeded**: `{"mode":"dry-run","scanned":0,"reclaimed":0,
+  "skippedReferenced":0,"horizonMs":86400000,"durationMs":128}`.
+- Gemini review of the D+E delta: **APPROVE, zero findings** (de-gemini-review.md) — non-vacuous
+  smoke oracles, read-only dry-run, no secret leakage, Path-3 gated by includeHardDelete.
+Mode promotion dry-run → quarantine → full is a deliberate later gesture (not part of this PR).
+ALL LANES CLOSED (A, C, B1, B2, B3, D, E). Next: one push → PR → green CI → merge.
