@@ -76,13 +76,17 @@ SCENARIO_CLASSES = (
     "ApplicantProfile",
     # The assertion layer (AJC-61, M2). In scope from the day the classes exist,
     # and — unlike the medical-history block above — none of their fields
-    # carries a "not yet honoured" marker: every field drives the truth
-    # manifest's assertions channel, which is output. A marker here would be
-    # the opposite lie to the one this guard usually catches.
+    # carries a "not yet honoured" marker: the AJC-61 vocabulary drives the
+    # truth manifest's assertions channel, which is output, and the AJC-62/M3
+    # fields (event kinds, dispositions, psych/AOE-COE axes, contention
+    # documents) parse, validate and populate the internal ledger that the
+    # M3 build steps consume — Amendment A1 deliberately freezes them OUT of
+    # the 1.0.0 channel, which is a frozen boundary, not an unwired knob.
     "MedicalAssertionsScenario",
     "ContentionEntry",
     "MedicalOpinionEntry",
     "ApportionmentAssertionEntry",
+    "ContentionDocumentEntry",
 )
 
 @dataclass(frozen=True)
@@ -171,18 +175,6 @@ INERT_PROBES: dict[str, InertProbe] = {
     # ledger and renders none of it: M3 owns every document surface, M4 owns the
     # scorer channel, M5 owns the section 4664 arithmetic. Each entry below is a
     # tripwire on one of those milestones.
-    "ScenarioSpec.medical_history": InertProbe(
-        plain={},
-        varied=_medical(),
-        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
-        witness=_MEDICAL_WITNESS,
-    ),
-    "MedicalHistoryScenario.archetype": InertProbe(
-        plain=_medical(),
-        varied=_medical(archetype="multimorbid"),
-        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
-        witness=_MEDICAL_WITNESS,
-    ),
     "PriorClaimEntry.employer": InertProbe(
         plain=_medical(prior_claims=[_PRIOR_CLAIM]),
         varied=_medical(prior_claims=[{**_PRIOR_CLAIM, "employer": "Ridgeline Foods"}]),
@@ -195,27 +187,6 @@ INERT_PROBES: dict[str, InertProbe] = {
     # truth projection), so it is honoured now and the reverse guard would
     # reject a probe whose marker is gone. No replacement probe — that is the
     # rule working, not a gap.
-    "ApplicantProfile.sex": InertProbe(
-        plain=_medical(),
-        varied=_medical(),
-        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
-        witness=_MEDICAL_WITNESS,
-        profile={"sex": "female"},
-    ),
-    "ApplicantProfile.bmi_band": InertProbe(
-        plain=_medical(),
-        varied=_medical(),
-        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
-        witness=_MEDICAL_WITNESS,
-        profile={"bmi_band": "severely_obese"},
-    ),
-    "ApplicantProfile.smoking_status": InertProbe(
-        plain=_medical(),
-        varied=_medical(),
-        lifecycle={"target_stage": "medical_legal", "eval_type": "qme"},
-        witness=_MEDICAL_WITNESS,
-        profile={"smoking_status": "current"},
-    ),
 }
 
 

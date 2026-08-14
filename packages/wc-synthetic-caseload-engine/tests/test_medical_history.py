@@ -2,10 +2,10 @@
 
 Four claims are under test here, and they fail in different directions on purpose.
 
-**The gate moves no bytes.** A seed with no ``scenario.medical_history`` block must
-generate exactly what it generated before the block existed, and a seed *with* one
-must still move no rendered byte in M1, because nothing renders the ledger yet. The
-first half is back-compat; the second is the M3 tripwire.
+**The gate contains its byte movement.** A seed with no
+``scenario.medical_history`` block must generate exactly what it generated before
+the block existed. With the M3 gate open, only the governed document surfaces may
+render the ledger; every ungoverned artifact remains byte-identical.
 
 **The marginals reproduce their sources.** The sampler is calibrated rather than
 hand-tuned, so this is a real invariant rather than a fixture: change an archetype
@@ -89,6 +89,14 @@ from wc_caseload_engine.medical_history import (
     reference_age_weights,
     sibtf_requirement,
     surfacing_conditional,
+)
+from wc_caseload_engine.medical_story import (
+    ADVOCACY_LETTER_SURFACES,
+    INITIAL_MEDLEGAL_SURFACES,
+    PSYCH_MEDLEGAL_SURFACES,
+    PTP_APPORTIONMENT_SURFACES,
+    PTP_CAUSATION_SURFACES,
+    SUPPLEMENTAL_MEDLEGAL_SURFACES,
 )
 from wc_caseload_engine.planner import build_case_plan
 from wc_caseload_engine.seeds import ANCHOR_DATE, ApplicantProfile, parse_case_seed
@@ -2857,7 +2865,9 @@ def _tree(directory: Path) -> dict[str, bytes]:
 class TestTheLedgerMovesNoBytes:
     """Gate 1, at case scope. ``golden_gate.py --check`` is the corpus-scope half."""
 
-    def _generate(self, out: Path, scenario: dict[str, Any] | None) -> dict[str, bytes]:
+    def _generate(
+        self, out: Path, scenario: dict[str, Any] | None
+    ) -> tuple[dict[str, bytes], Any]:
         body = {
             "case_id": "TC-650",
             "rng_seed": 31337,
@@ -2872,42 +2882,77 @@ class TestTheLedgerMovesNoBytes:
         }
         if scenario is not None:
             body["scenario"] = {"medical_history": scenario}
-        generate_case(parse_case_seed(body), out, case_number=1)
-        return _tree(out)
+        result = generate_case(parse_case_seed(body), out, case_number=1)
+        return _tree(out), result
 
-    def test_a_present_block_changes_nothing_but_the_seed(self, tmp_path: Path) -> None:
-        """The M3 tripwire.
-
-        Everything the ledger holds is byte-inert today, so opting in must move
-        exactly one file: ``seed.yaml``, which is the input and is *supposed* to
-        differ. The moment M3 renders a past-medical-history section this goes red,
-        which is the signal to delete the ``not yet honoured`` marker from the gate's
-        docstring — the edit that otherwise gets forgotten.
-        """
-        without = self._generate(tmp_path / "without", None)
-        with_block = self._generate(tmp_path / "with", {})
+    def test_the_ledger_moves_bytes_only_through_governed_m3_surfaces(
+        self, tmp_path: Path
+    ) -> None:
+        """The absent-gate tree is the byte baseline; M3 has one narrow outlet."""
+        without, absent = self._generate(tmp_path / "without", None)
+        with_block, present = self._generate(tmp_path / "with", {})
 
         assert set(without) == set(with_block), "opting in changed the file tree's shape"
-        moved = sorted(name for name in without if without[name] != with_block[name])
-        assert moved == ["TC-650/manifest.json", "TC-650/seed.yaml"], (
-            f"opting into scenario.medical_history moved {moved}; only the seed and "
-            "the hash of the seed may differ while nothing renders the ledger"
+        assert absent.plan.medical_story is None
+        assert present.plan.medical_story is not None
+
+        report_surfaces = (
+            INITIAL_MEDLEGAL_SURFACES
+            | PSYCH_MEDLEGAL_SURFACES
+            | SUPPLEMENTAL_MEDLEGAL_SURFACES
+            | PTP_CAUSATION_SURFACES
+            | PTP_APPORTIONMENT_SURFACES
+        )
+        governed_indexes = {
+            document.index
+            for document in present.plan.documents
+            if document.subtype in report_surfaces
+            or (
+                document.subtype in ADVOCACY_LETTER_SURFACES
+                and document.contention_surface
+                in {"advocacy", "objection", "supplemental_request"}
+            )
+            or (
+                document.subtype == "DEPOSITION_TRANSCRIPT"
+                and document.contention_surface == "qme_deposition"
+            )
+        }
+        projected_indexes = set(present.plan.medical_story.by_document_index)
+        assert projected_indexes == governed_indexes, (
+            "the medical-story projection governed documents outside frozen R8: "
+            f"extra={sorted(projected_indexes - governed_indexes)}, "
+            f"missing={sorted(governed_indexes - projected_indexes)}"
+        )
+        governed_paths = {
+            f"TC-650/documents/{render.path.name}"
+            for document, render in zip(
+                present.plan.documents, present.renders, strict=True
+            )
+            if document.index in governed_indexes
+        }
+        moved = {name for name in without if without[name] != with_block[name]}
+        moved_documents = moved & governed_paths
+        assert moved_documents, "opening the M3 gate moved no governed document byte"
+        allowed = governed_paths | {"TC-650/manifest.json", "TC-650/seed.yaml"}
+        assert moved <= allowed, (
+            "scenario.medical_history moved bytes outside its governed M3 surfaces: "
+            f"{sorted(moved - allowed)}"
         )
 
-        # Two files may move, and exactly one reason is admissible for each. The seed
-        # is the input and is *supposed* to differ. The manifest records a hash of
-        # that input, so it follows — but nothing else in it may, and asserting the
-        # whole manifest minus one key is what keeps "only the seed changed" from
-        # quietly covering a published ledger field.
+        # The copied input is supposed to differ. The manifest may follow only through
+        # that seed hash and the byte metadata of documents in the realized governed
+        # set; all other published metadata must remain identical.
         before = json.loads(without["TC-650/manifest.json"])
         after = json.loads(with_block["TC-650/manifest.json"])
         assert before["provenance"].pop("seedHash") != after["provenance"].pop("seedHash")
+        for index in governed_indexes:
+            for key in ("md5Checksum", "fileSize"):
+                before["documents"][index].pop(key)
+                after["documents"][index].pop(key)
         assert before == after, (
-            "the manifest moved for a reason other than the seed's own hash — "
-            "something about the medical-history ledger has reached a published "
-            "artifact"
+            "the manifest changed outside the seed hash or governed-document byte "
+            "metadata"
         )
-        assert without["TC-650/case_facts.yaml"] == with_block["TC-650/case_facts.yaml"]
 
     def test_the_ledger_reaches_neither_published_copy(self, tmp_path: Path) -> None:
         """World truth in the manifest would collapse the two-level design.
@@ -2931,8 +2976,10 @@ class TestTheLedgerMovesNoBytes:
 
     def test_the_probe_can_see_a_change_at_all(self, tmp_path: Path) -> None:
         """Anti-vacuity: a comparison that never differs would pass everything."""
-        plain = self._generate(tmp_path / "plain", None)
-        seeded = self._generate(tmp_path / "seeded", {"conditions": [{"label": "x"}]})
+        plain, _ = self._generate(tmp_path / "plain", None)
+        seeded, _ = self._generate(
+            tmp_path / "seeded", {"conditions": [{"label": "x"}]}
+        )
         assert plain != seeded, "the tree comparison cannot detect a seed change"
 
 

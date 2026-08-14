@@ -8,7 +8,7 @@ matching content flags into the document plan", and half of that was true.
 
 This file is the other half, probed at each of the three places it can fail:
 
-* the **table** (21.1, 21.2) — fourteen hooks, each with content and with
+* the **table** (21.1, 21.2) — fifteen hooks, each with content and with
   targets that are real classifier subtypes. A target key with a typo matches
   nothing and renders nothing, silently, which is the failure mode that made
   the original criterion unverifiable;
@@ -35,7 +35,9 @@ the same reason every other text probe in this suite does.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
+import random
 import re
 import typing
 from datetime import date
@@ -68,23 +70,53 @@ from wc_caseload_engine.renderer import (
     render_document,
 )
 from wc_caseload_engine.seeds import (
-    _DOCTRINE_POOL,
+    DISTRIBUTIONS,
+    LEGACY_DOCTRINE_POOL,
+    MEDICAL_STORY_DOCTRINE_POOL,
     ClaimResponse,
     DoctrineHook,
     EvalType,
+    InjurySpec,
     InjuryType,
+    _derive_doctrine_hooks,
     load_caseload_spec,
     parse_case_seed,
     resolve_caseload,
 )
 from wc_caseload_engine.taxonomy import effective_taxonomy
 
+EXPECTED_DOCTRINE_HOOKS = (
+    "ogilvie",
+    "almaraz_guzman",
+    "benson",
+    "escobedo",
+    "kite",
+    "going_and_coming",
+    "sibtf",
+    "death_dependency",
+    "lc3208_3_psych",
+    "gfpa",
+    "firefighter_presumption",
+    "imr_constitutionality",
+    "ab5_dynamex",
+    "lc4664_prior_award",
+    "hikida_treatment_carveout",
+)
+"""The frozen fifteen-member doctrine oracle, in declaration order (AJC-62 R72).
+
+A deliberate independent literal — never derived from the enum, the content
+table or a pool, because those are exactly the things it exists to pin. Both
+doctrine test modules freeze this same tuple.
+"""
+
 ENUM_HOOKS: tuple[str, ...] = tuple(sorted(typing.get_args(DoctrineHook.__value__)))
-"""The fourteen hooks the seed schema accepts, read from the type alias itself.
+"""The fifteen hooks the seed schema accepts, read from the type alias itself.
 
 Read rather than transcribed: a list copied into this file would keep passing
-after someone added a fifteenth hook to ``seeds.py`` without content for it,
-which is precisely the drift 21.1 exists to catch.
+after someone added a sixteenth hook to ``seeds.py`` without content for it,
+which is precisely the drift 21.1 exists to catch. Pinned against the frozen
+:data:`EXPECTED_DOCTRINE_HOOKS` oracle by 21.1's in-order test, so the derived
+convenience view and the independent literal cannot drift apart silently.
 """
 
 DOCTRINE_HEADINGS: tuple[str, ...] = (MEDICAL_HEADING, LEGAL_HEADING)
@@ -188,16 +220,180 @@ def unflagged_case(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# AJC-62 R72 — the frozen pre-M3 draw oracle
+#
+# Captured from the shipped FOURTEEN-member code at the merged M2 baseline
+# eedad1093, before the fifteenth hook and the pool split landed — the real
+# pre-change behaviour, not a re-derivation from the code under test. Inputs:
+# the DoctrineFacts constructed in test_legacy_doctrine_pool_draws_exactly_
+# what_pre_m3_drew, DISTRIBUTIONS["complex_litigation"], and rng streams
+# random.Random(0..29). Regenerating these constants from current code would
+# make the oracle circular; they change only with a deliberate spec amendment.
+# ---------------------------------------------------------------------------
+
+PRE_M3_SURVIVORS: dict[str, tuple[str, ...]] = {
+    "specific": (
+        "ogilvie",
+        "almaraz_guzman",
+        "benson",
+        "escobedo",
+        "kite",
+        "sibtf",
+        "lc3208_3_psych",
+        "gfpa",
+        "firefighter_presumption",
+        "imr_constitutionality",
+        "lc4664_prior_award",
+    ),
+    "cumulative_trauma": (
+        "ogilvie",
+        "almaraz_guzman",
+        "benson",
+        "escobedo",
+        "kite",
+        "sibtf",
+        "lc3208_3_psych",
+        "gfpa",
+        "firefighter_presumption",
+        "imr_constitutionality",
+        "lc4664_prior_award",
+    ),
+    "death": (
+        "ogilvie",
+        "almaraz_guzman",
+        "benson",
+        "escobedo",
+        "kite",
+        "sibtf",
+        "lc3208_3_psych",
+        "gfpa",
+        "firefighter_presumption",
+        "imr_constitutionality",
+        "lc4664_prior_award",
+    ),
+}
+"""The ordered prerequisite-filter survivors, per injury type (see below)."""
+
+PRE_M3_DRAWS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "specific": (
+        ("almaraz_guzman", "imr_constitutionality"),
+        ("firefighter_presumption", "benson"),
+        (),
+        ("escobedo", "imr_constitutionality"),
+        ("kite", "lc4664_prior_award"),
+        ("benson", "escobedo"),
+        ("lc3208_3_psych", "sibtf"),
+        ("gfpa",),
+        ("imr_constitutionality", "lc4664_prior_award"),
+        ("imr_constitutionality", "almaraz_guzman"),
+        ("kite", "sibtf"),
+        ("benson", "sibtf"),
+        ("imr_constitutionality", "kite"),
+        ("firefighter_presumption", "gfpa"),
+        ("imr_constitutionality", "almaraz_guzman"),
+        (),
+        ("almaraz_guzman", "imr_constitutionality"),
+        ("almaraz_guzman", "escobedo"),
+        ("ogilvie", "benson"),
+        ("imr_constitutionality", "ogilvie"),
+        (),
+        ("sibtf", "ogilvie"),
+        (),
+        (),
+        ("kite", "firefighter_presumption"),
+        ("firefighter_presumption", "almaraz_guzman"),
+        ("kite",),
+        ("lc3208_3_psych", "firefighter_presumption"),
+        ("lc3208_3_psych", "imr_constitutionality"),
+        ("gfpa", "lc4664_prior_award"),
+    ),
+    "cumulative_trauma": (
+        ("almaraz_guzman", "imr_constitutionality"),
+        ("firefighter_presumption", "benson"),
+        (),
+        ("escobedo", "imr_constitutionality"),
+        ("kite", "lc4664_prior_award"),
+        ("benson", "escobedo"),
+        ("lc3208_3_psych", "sibtf"),
+        ("gfpa",),
+        ("imr_constitutionality", "lc4664_prior_award"),
+        ("imr_constitutionality", "almaraz_guzman"),
+        ("kite", "sibtf"),
+        ("benson", "sibtf"),
+        ("imr_constitutionality", "kite"),
+        ("firefighter_presumption", "gfpa"),
+        ("imr_constitutionality", "almaraz_guzman"),
+        (),
+        ("almaraz_guzman", "imr_constitutionality"),
+        ("almaraz_guzman", "escobedo"),
+        ("ogilvie", "benson"),
+        ("imr_constitutionality", "ogilvie"),
+        (),
+        ("sibtf", "ogilvie"),
+        (),
+        (),
+        ("kite", "firefighter_presumption"),
+        ("firefighter_presumption", "almaraz_guzman"),
+        ("kite",),
+        ("lc3208_3_psych", "firefighter_presumption"),
+        ("lc3208_3_psych", "imr_constitutionality"),
+        ("gfpa", "lc4664_prior_award"),
+    ),
+    "death": (
+        ("death_dependency", "almaraz_guzman", "imr_constitutionality"),
+        ("death_dependency", "firefighter_presumption", "benson"),
+        ("death_dependency",),
+        ("death_dependency", "escobedo", "imr_constitutionality"),
+        ("death_dependency", "kite", "lc4664_prior_award"),
+        ("death_dependency", "benson", "escobedo"),
+        ("death_dependency", "lc3208_3_psych", "sibtf"),
+        ("death_dependency", "gfpa"),
+        ("death_dependency", "imr_constitutionality", "lc4664_prior_award"),
+        ("death_dependency", "imr_constitutionality", "almaraz_guzman"),
+        ("death_dependency", "kite", "sibtf"),
+        ("death_dependency", "benson", "sibtf"),
+        ("death_dependency", "imr_constitutionality", "kite"),
+        ("death_dependency", "firefighter_presumption", "gfpa"),
+        ("death_dependency", "imr_constitutionality", "almaraz_guzman"),
+        ("death_dependency",),
+        ("death_dependency", "almaraz_guzman", "imr_constitutionality"),
+        ("death_dependency", "almaraz_guzman", "escobedo"),
+        ("death_dependency", "ogilvie", "benson"),
+        ("death_dependency", "imr_constitutionality", "ogilvie"),
+        ("death_dependency",),
+        ("death_dependency", "sibtf", "ogilvie"),
+        ("death_dependency",),
+        ("death_dependency",),
+        ("death_dependency", "kite", "firefighter_presumption"),
+        ("death_dependency", "firefighter_presumption", "almaraz_guzman"),
+        ("death_dependency", "kite"),
+        ("death_dependency", "lc3208_3_psych", "firefighter_presumption"),
+        ("death_dependency", "lc3208_3_psych", "imr_constitutionality"),
+        ("death_dependency", "gfpa", "lc4664_prior_award"),
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
 # ISC-21.1 — the content table covers every hook
 # ---------------------------------------------------------------------------
 
 
 class TestContentTableIsComplete:
-    """ISC-21.1: fourteen hooks, each with usable content."""
+    """ISC-21.1: fifteen hooks, each with usable content."""
 
-    def test_the_hook_list_under_test_is_the_whole_enum(self) -> None:
-        """Guards this file: a shrunken hook list would make everything pass."""
-        assert len(ENUM_HOOKS) == 14, f"the seed schema now declares {len(ENUM_HOOKS)} hooks"
+    def test_the_fifteen_hook_list_under_test_is_the_whole_enum_in_order(self) -> None:
+        """Guards this file: the declaration is compared to the frozen oracle, in order.
+
+        Declaration order is load-bearing — the content table mirrors it and
+        the LEGACY/MEDICAL_STORY pool split slices it — so the enum is compared
+        to :data:`EXPECTED_DOCTRINE_HOOKS` directly rather than through a
+        sorted or counted view a reordering could slip past (AJC-62 R72).
+        """
+        assert typing.get_args(DoctrineHook.__value__) == EXPECTED_DOCTRINE_HOOKS
+        assert tuple(sorted(EXPECTED_DOCTRINE_HOOKS)) == ENUM_HOOKS, (
+            "the derived convenience view no longer covers the frozen oracle"
+        )
 
     def test_every_enum_hook_has_content(self) -> None:
         assert set(DOCTRINE_CONTENT) == set(ENUM_HOOKS), (
@@ -205,52 +401,60 @@ class TestContentTableIsComplete:
             f"content for unknown hooks {sorted(set(DOCTRINE_CONTENT) - set(ENUM_HOOKS))}"
         )
 
-    def test_the_derivation_pool_is_the_whole_content_table(self) -> None:
-        """AJC-60. The third list of hooks must not drift from the other two.
+    def test_legacy_and_medical_story_doctrine_pools_are_exact_and_ordered(self) -> None:
+        """AJC-62 R72: the pool split is pinned to the frozen oracle, order included.
 
-        ``DoctrineHook`` and ``DOCTRINE_CONTENT`` are already pinned to each
-        other above. ``_DOCTRINE_POOL`` was a third, hand-maintained copy and
-        it had already drifted: thirteen entries against the table's fourteen,
-        with ``death_dependency`` reachable only by explicit seeding.
+        ``LEGACY_DOCTRINE_POOL`` is exactly the first fourteen frozen members —
+        the pre-M3 pool, byte for byte — and stays the feature-absent draw
+        path, which is what keeps every medical-story-absent corpus
+        byte-identical while the fifteenth hook exists.
+        ``MEDICAL_STORY_DOCTRINE_POOL`` is all fifteen and is selected only
+        under the medical-story gate. The content table must mirror the enum's
+        declaration order exactly, because both pools are slices of it.
 
         Order is asserted as well as membership, and that is not pedantry.
-        ``_derive_doctrine_hooks`` shuffles this sequence, so two tuples with
-        the same members in a different order draw *different hooks* from the
-        same ``rng_seed`` — which would move every ``auto:`` caseload's bytes.
+        ``_derive_doctrine_hooks`` shuffles the legacy sequence, so two tuples
+        with the same members in a different order draw *different hooks* from
+        the same ``rng_seed`` — which would move every ``auto:`` caseload's
+        bytes.
         """
-        assert tuple(DOCTRINE_CONTENT) == _DOCTRINE_POOL, (
-            "the auto-derivation pool and the content table have drifted; a hook "
-            "in the table but not the pool can never be drawn, and a reordering "
-            "changes what every auto-derived seed draws"
+        assert EXPECTED_DOCTRINE_HOOKS[:14] == LEGACY_DOCTRINE_POOL, (
+            "the feature-absent pool drifted from the frozen first fourteen; "
+            "either a member moved (re-rolling every auto: draw) or Hikida "
+            "leaked into the absent-gate path"
+        )
+        assert MEDICAL_STORY_DOCTRINE_POOL == EXPECTED_DOCTRINE_HOOKS, (
+            "the medical-story pool must be all fifteen frozen members in order"
+        )
+        assert tuple(DOCTRINE_CONTENT) == EXPECTED_DOCTRINE_HOOKS, (
+            "the content table's insertion order drifted from the frozen enum "
+            "order; both pools are slices of it, so this moves draws"
         )
 
-    def test_closing_the_drift_draws_exactly_what_it_drew_before(self) -> None:
-        """AJC-60. The repair is a consistency fix, and it has to prove it.
+    def test_legacy_doctrine_pool_draws_exactly_what_pre_m3_drew(self) -> None:
+        """AJC-62 R72: the fifteenth member must not move one feature-absent draw.
 
-        Restoring ``death_dependency`` to the pool would be a *behavioural*
-        change — and a golden-moving one — if the hook could ever survive the
-        filter ``_derive_doctrine_hooks`` applies before shuffling. It cannot,
-        for two independent reasons, and both are asserted rather than argued:
+        The oracle below was **captured from the shipped fourteen-member code
+        at the merged M2 baseline eedad1093, before the pool split landed** —
+        it is the real pre-M3 behaviour, not a re-derivation from the code
+        under test. Two layers are compared for specific, cumulative-trauma
+        and death cases:
 
-        * on a non-death case ``hook_is_supported`` rejects it, so the filter
-          drops it;
-        * on a death case the derivation has *already* appended it, so the
-          ``hook not in hooks`` clause drops it.
+        * the complete survivor sequence — the ordered filter
+          ``_derive_doctrine_hooks`` applies to the pool before shuffling; and
+        * the sampled results — the production draw itself, across thirty
+          fixed rng streams through ``DISTRIBUTIONS["complex_litigation"]``
+          (the highest hook rate, so most streams reach the shuffle).
 
-        There is therefore no reachable configuration where the fourteenth
-        entry reaches the shuffle, which is why the pool could be wrong for as
-        long as it was without anybody noticing — and why the goldens do not
-        move when it is put right.
+        The facts satisfy every prerequisite a QME'd, IMR'd, psych-bearing
+        government-firefighter case can satisfy — including Hikida's rating
+        prerequisite, which is the vacuity guard asserted last: the fifteenth
+        hook is kept out of these draws *only* by the legacy pool, so a pool
+        regression cannot hide behind a failed prerequisite.
         """
-        thirteen = tuple(h for h in _DOCTRINE_POOL if h != "death_dependency")
-        assert len(thirteen) == len(_DOCTRINE_POOL) - 1, "the pool no longer holds the hook"
 
-        def survivors(pool: tuple[str, ...], facts: DoctrineFacts, already: list[str]) -> list[str]:
-            """The filter ``_derive_doctrine_hooks`` applies before it shuffles."""
-            return [h for h in pool if h not in already and hook_is_supported(h, facts)]
-
-        for injury_type in ("specific", "cumulative_trauma", "death"):
-            facts = DoctrineFacts(
+        def facts_for(injury_type: str) -> DoctrineFacts:
+            return DoctrineFacts(
                 injury_type=injury_type,
                 body_part_count=2,
                 has_psych_body_part=True,
@@ -260,16 +464,67 @@ class TestContentTableIsComplete:
                 occupation="firefighter",
                 industry="government",
             )
+
+        body_parts = {
+            "specific": [
+                {"part": "lumbar_spine", "icd10": "M54.5"},
+                {"part": "shoulder", "icd10": "M75.100"},
+            ],
+            "cumulative_trauma": [
+                {"part": "lumbar_spine", "icd10": "M54.5"},
+                {"part": "shoulder", "icd10": "M75.100"},
+            ],
+            "death": [
+                {"part": "head", "icd10": "S06.0X0A"},
+                {"part": "internal_organs", "icd10": "S26.00XA"},
+            ],
+        }
+
+        profile = DISTRIBUTIONS["complex_litigation"]
+        for injury_type in ("specific", "cumulative_trauma", "death"):
+            facts = facts_for(injury_type)
+
             # The derivation appends the hook itself on a death claim, so the
             # pool's copy is excluded there by the `hook not in hooks` clause.
             already = ["death_dependency"] if injury_type == "death" else []
-            assert survivors(_DOCTRINE_POOL, facts, already) == survivors(
-                thirteen, facts, already
-            ), (
-                f"injury.type={injury_type!r}: the fourteenth entry reached the "
-                "shuffle, so this is a behaviour change and every auto-derived "
-                "corpus needs re-recording"
+            survivors = tuple(
+                hook
+                for hook in LEGACY_DOCTRINE_POOL
+                if hook not in already and hook_is_supported(hook, facts)
             )
+            assert survivors == PRE_M3_SURVIVORS[injury_type], (
+                f"injury.type={injury_type!r}: the ordered survivor sequence no "
+                "longer matches the frozen fourteen-member behaviour — the pool "
+                "changed, so every auto-derived corpus would re-roll"
+            )
+
+            extra: dict[str, Any] = (
+                {"ct_start": dt.date(2020, 4, 11), "ct_end": dt.date(2022, 4, 11)}
+                if injury_type == "cumulative_trauma"
+                else {}
+            )
+            injury = InjurySpec(
+                type=injury_type,
+                date_of_injury=dt.date(2022, 4, 11),
+                body_parts=body_parts[injury_type],
+                **extra,
+            )
+            draws = tuple(
+                tuple(_derive_doctrine_hooks(random.Random(rng_seed), profile, injury, facts))
+                for rng_seed in range(30)
+            )
+            assert draws == PRE_M3_DRAWS[injury_type], (
+                f"injury.type={injury_type!r}: the production draw diverged from "
+                "the frozen pre-M3 sample — feature-absent sampling moved"
+            )
+
+            # Vacuity guard: only the pool keeps Hikida out of these draws.
+            assert hook_is_supported("hikida_treatment_carveout", facts), (
+                "the fixture facts no longer satisfy Hikida's prerequisite, so "
+                "the survivor comparison would pass even if the legacy pool "
+                "admitted the fifteenth hook"
+            )
+            assert "hikida_treatment_carveout" not in survivors
 
     @pytest.mark.parametrize("hook", ENUM_HOOKS)
     def test_each_entry_is_usable(self, hook: str) -> None:
@@ -714,13 +969,22 @@ class TestTheDoctrineShowcaseSpecCoversEveryHookCleanly:
 
     Three separate claims, each asserted on its own so a break names itself:
 
-    1. Every one of the fourteen hooks is seeded somewhere in the spec.
+    1. Every legacy-pool hook is seeded somewhere in the spec.
     2. Every seeded hook's prerequisite is satisfied — the whole run is warning
        free, which is the property that distinguishes it from the demo.
     3. Every hook actually reaches a document that targets it. A hook can be
        supported and still land nothing (see the guide's "supported is not the
        same as rendered"), and a showcase that demonstrates no content is not a
        showcase — so the naturally-emitted flag is asserted rather than assumed.
+
+    **Transitional AJC-62 coverage note.** The frozen R77 build order adds the
+    gated ``showcase-hikida-justice`` case — and its addition-only
+    ``doctrine-showcase`` golden re-record — at step 13, and forbids touching
+    the showcase before it. Until that step lands, the spec's coverage claim is
+    exactly :data:`~wc_caseload_engine.seeds.LEGACY_DOCTRINE_POOL` (the frozen
+    pre-M3 fourteen); step 13 flips these assertions to the full
+    ``MEDICAL_STORY_DOCTRINE_POOL`` in the same commit that seeds the
+    fifteenth hook.
 
     Asserted against the plan rather than a render: the plan already carries the
     content flags, and rendering six cases costs ~40 s for no extra signal.
@@ -739,10 +1003,12 @@ class TestTheDoctrineShowcaseSpecCoversEveryHookCleanly:
 
     def test_every_hook_is_seeded_somewhere(self) -> None:
         seeded = {hook for seed in self._seeds() for hook in seed.lifecycle.doctrine_hooks}
-        assert seeded == set(DOCTRINE_CONTENT), (
-            "examples/doctrine-showcase.yaml is the guide's 'all fourteen doctrines' spec. "
-            f"Missing: {sorted(set(DOCTRINE_CONTENT) - seeded)}; "
-            f"unknown: {sorted(seeded - set(DOCTRINE_CONTENT))}."
+        assert seeded == set(LEGACY_DOCTRINE_POOL), (
+            "examples/doctrine-showcase.yaml is the guide's every-doctrine spec. "
+            "Its frozen pre-step-13 coverage is exactly the legacy pool (see the "
+            "class docstring for the AJC-62 transition). "
+            f"Missing: {sorted(set(LEGACY_DOCTRINE_POOL) - seeded)}; "
+            f"unexpected: {sorted(seeded - set(LEGACY_DOCTRINE_POOL))}."
         )
 
     def test_the_whole_run_is_warning_free(self) -> None:
@@ -760,12 +1026,18 @@ class TestTheDoctrineShowcaseSpecCoversEveryHookCleanly:
                 for hook in document.content_flags:
                     flagged.setdefault(hook, set()).add(document.subtype)
 
-        missing = sorted(set(DOCTRINE_CONTENT) - set(flagged))
+        missing = sorted(set(LEGACY_DOCTRINE_POOL) - set(flagged))
         assert not missing, (
             f"{missing} are supported by their showcase case but reach no document that "
             "targets them, so the spec demonstrates nothing for them. Advance that case's "
             "lifecycle until a target subtype is emitted naturally — do not add a "
             "documents.overrides entry, which would itself warn."
+        )
+        unexpected = sorted(set(flagged) - set(LEGACY_DOCTRINE_POOL))
+        assert not unexpected, (
+            f"{unexpected} reached a showcase document before R77 step 13 seeds the "
+            "fifteenth hook — the showcase must not gain cases outside the frozen "
+            "build order"
         )
 
     def test_the_showcase_forces_no_subtypes(self) -> None:
@@ -853,7 +1125,7 @@ class TestPlannerCarriesContentFlags:
 
         Per ISC-29 an explicit ``documents.overrides`` entry emits its subtype
         whether or not the lifecycle proposed it, with a WARN. That is what lets
-        this assert all fourteen hooks against one seed shape instead of hunting
+        this assert all fifteen hooks against one seed shape instead of hunting
         for a lifecycle that naturally emits each hook's targets.
         """
         subtype = self._target_for(DOCTRINE_CONTENT[hook])
@@ -1265,7 +1537,7 @@ class TestManifestAndDeterminism:
             pytest.param(("kite", "not_a_hook"), ("kite",), id="unknown-dropped-partially"),
             # A hook that targets nothing on this subtype is covered by
             # ``test_a_flag_whose_hook_does_not_target_the_subtype_appends_nothing``
-            # above: every one of the fourteen targets AME_COMPREHENSIVE_REPORT,
+            # above: every one of the fifteen targets AME_COMPREHENSIVE_REPORT,
             # so the skip case cannot be expressed against this subtype.
         ],
     )
@@ -1431,6 +1703,9 @@ class TestPrerequisiteDescriptionsNameRealEnumValues:
             "going_and_coming",
             "ab5_dynamex",
             "death_dependency",
+            # AJC-62: shares _RATING_PREREQUISITE, whose description the
+            # matcher reads ("lifecycle.eval_type to be qme or ame").
+            "hikida_treatment_carveout",
         }
     )
 

@@ -29,7 +29,7 @@ import wc_caseload_engine.fact_templates as fact_templates
 from conftest import extract_text, requires_substrate
 from wc_caseload_engine.case_facts import TRAJECTORY_PHRASES
 from wc_caseload_engine.fact_templates import ANCHOR_REFERENCE_MARKER
-from wc_caseload_engine.lifecycle_bridge import CaseTimeline
+from wc_caseload_engine.lifecycle_bridge import CaseTimeline, DatedCandidate
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
 from wc_caseload_engine.message_audit import DIRECTIVE_VERBS, clauses, first_word
 from wc_caseload_engine.planner import (
@@ -1628,13 +1628,14 @@ class TestDiscoveryShapingRespectsDocumentControls:
 
 
 class TestTheShaperIdentifiesPacketsByPositionNotValue:
-    """Review round 5, finding 4: two equal tuples are not one document.
+    """Review round 5, finding 4: two equal candidates are not one document.
 
-    A packet travels through the shaper as a ``(date, subtype, track, role)``
-    tuple, and nothing about it is unique — two documents of one subtype dated
-    alike produce two tuples that compare equal. The floor restore asked ``entry
-    not in kept``, which is value equality, so one copy already kept made *both*
-    copies invisible and the second could never be restored.
+    A packet travels through the shaper as a value object — a frozen
+    ``DatedCandidate`` since R77 step 6, a plain tuple before it — and nothing
+    about it is unique: two documents of one subtype dated alike compare
+    equal. The floor restore asked ``entry not in kept``, which is value
+    equality, so one copy already kept made *both* copies invisible and the
+    second could never be restored.
 
     The reviewer could not reach this from a generated seed and neither could I,
     which is exactly why it is pinned here instead: ``_shape_discovery`` reads
@@ -1663,11 +1664,21 @@ class TestTheShaperIdentifiesPacketsByPositionNotValue:
                 "overrides": [{"type": "DISCOVERY", "min": 3}],
             },
         )
-        twin = (date(2025, 3, 1), "SUBPOENAED_RECORDS_MEDICAL", "core", "applicant")
+        twin = DatedCandidate(
+            subtype="SUBPOENAED_RECORDS_MEDICAL",
+            doc_date=date(2025, 3, 1),
+            track="core",
+            author_role="applicant",
+        )
         dated = [
             twin,
             twin,
-            (date(2025, 4, 1), "SUBPOENAED_RECORDS_EMPLOYMENT", "core", "applicant"),
+            DatedCandidate(
+                subtype="SUBPOENAED_RECORDS_EMPLOYMENT",
+                doc_date=date(2025, 4, 1),
+                track="core",
+                author_role="applicant",
+            ),
         ]
         assert dated[0] == dated[1] and dated[0] is dated[1], (
             "the premise is two entries that compare equal; without it this test "
@@ -1678,7 +1689,7 @@ class TestTheShaperIdentifiesPacketsByPositionNotValue:
             seed, self._timeline(), list(dated), seed.documents, proposed=frozenset()
         )
 
-        packets = [entry for entry in kept if entry[1] in DISCOVERY_PACKET_SUBTYPES]
+        packets = [entry for entry in kept if entry.subtype in DISCOVERY_PACKET_SUBTYPES]
         assert len(packets) == 3, (
             "the floor of 3 needs all three packets and one of them is a duplicate "
             f"of a packet already kept; value equality hides it: {packets}"

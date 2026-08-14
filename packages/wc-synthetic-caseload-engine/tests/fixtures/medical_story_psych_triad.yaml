@@ -1,0 +1,88 @@
+# AJC-62 R67/R77 step 8 — the frozen consequence-as-direct psych triad.
+caseload_id: medical-story-psych-triad
+
+cases:
+  - case_id: psych-triad-consequence-as-direct
+    rng_seed: 620301
+    injury:
+      type: specific
+      date_of_injury: 2024-03-01
+      body_parts:
+        - {part: lumbar_spine}
+        - {part: psyche}
+    lifecycle:
+      target_stage: medical_legal
+      claim_response: accepted
+      eval_type: qme
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: adjustment disorder with mixed anxiety and depressed mood
+            body_system: psychiatric
+            origin: industrial
+            body_part: psyche
+            icd10: F43.23
+            severity: moderate
+            trajectory: fluctuating
+            symptomatic_before_doi: false
+            psych_injury_kind: compensable_consequence
+          - label: lumbar disc injury with chronic pain
+            origin: industrial
+            body_part: lumbar_spine
+            icd10: M51.26
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: false
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        contentions:
+          - id: ctn-01
+            claim_type: psych_add_on
+            party: applicant
+            target_condition_id: cond-00
+            target_body_part: psyche
+            psych_injury_kind: direct
+            rationale: >-
+              The psychiatric injury arose from the employment event itself
+              rather than as a sequela of the physical injury.
+        medical_opinions:
+          - id: opn-01
+            author_role: ptp
+            report_stage: interim
+            report_date: 2024-08-15
+            apportionment_state: deferred
+            examination_performed: true
+            reviewed_condition_ids: [cond-00, cond-01]
+            concurs_with_contention_ids: [ctn-01]
+            psych_injury_kind: direct
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The treatment history, examination, mechanism, and clinical
+              course support an industrial direct psychiatric injury.
+            rationale: the conclusion rests on treatment and examination
+          - id: opn-02
+            author_role: qme
+            report_stage: interim
+            report_date: 2024-11-20
+            apportionment_state: deferred
+            examination_performed: true
+            reviewed_condition_ids: [cond-00, cond-01]
+            rejects_contention_ids: [ctn-01]
+            psych_injury_kind: compensable_consequence
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The psychiatric condition followed the chronic pain,
+              disability, and treatment course caused by the industrial
+              physical injury; those medical effects are the predominant
+              actual events of employment.
+            rationale: the conclusion rests on examination and record review
+        contention_documents:
+          - id: cdoc-01
+            document_kind: advocacy
+            actor_party: applicant
+            target_medical_opinion_id: opn-01
+            spoken_contention_ids: [ctn-01]
+            subtype: ADVOCACY_LETTERS_PTP
+            doc_date: 2024-07-20

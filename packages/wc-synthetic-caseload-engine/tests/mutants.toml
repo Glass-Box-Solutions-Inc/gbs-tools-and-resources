@@ -1041,10 +1041,11 @@ title = 'the refill clones past an exact documents.overrides packet count again'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_an_exact_override_count_is_not_padded_to_the_declared_count'
 find = '''        donor = next(
-            (entry for entry in reversed(packets) if entry[1] not in uncloneable), None
+            (entry for entry in reversed(packets) if entry.subtype not in uncloneable),
+            None,
         )'''
 replace = '        donor = packets[-1] if packets else None'
-note = 'Re-pointed in the review round: the donor guard moved from `pinned` to `uncloneable` when a type-level ceiling was found to forbid cloning too. The surviving logic is the same claim, so the mutant follows it rather than being retired.'
+note = 'Re-pointed in the review round: the donor guard moved from `pinned` to `uncloneable` when a type-level ceiling was found to forbid cloning too. The surviving logic is the same claim, so the mutant follows it rather than being retired. Re-pointed again at AJC-62 step 6, which replaced the tuple pipeline with DatedCandidate objects (`entry[1]` became `entry.subtype`); the mutation is unchanged in meaning.'
 
 [[mutant]]
 id = 'm12-2'
@@ -1117,9 +1118,11 @@ id = 'm12-8'
 title = 'the trim slices through an exact documents.overrides count again'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestDiscoveryShapingRespectsDocumentControls::test_the_trim_drops_no_pinned_subtype_entirely'
-find = '''        pinned_at = [index for index, entry in enumerate(packets) if entry[1] in pinned]'''
+find = '''        pinned_at = [
+            index for index, entry in enumerate(packets) if entry.subtype in pinned
+        ]'''
 replace = '''        pinned_at = []'''
-note = "Re-pointed in round 5. The trim now tracks kept-ness by position rather than tuple value (see m12-21), which renamed `pinned_entries` to `pinned_at` and left this find text matching nothing. Caught by the registry meta-guard, not by memory — a PATCH-MISS is a finding: it means a guard stopped reaching the thing it guards. The claim is unchanged: emptying the pinned set restores the blind date-ordered prefix that dropped a pinned subtype to zero."
+note = "Re-pointed in round 5. The trim now tracks kept-ness by position rather than tuple value (see m12-21), which renamed `pinned_entries` to `pinned_at` and left this find text matching nothing. Caught by the registry meta-guard, not by memory — a PATCH-MISS is a finding: it means a guard stopped reaching the thing it guards. The claim is unchanged: emptying the pinned set restores the blind date-ordered prefix that dropped a pinned subtype to zero. Re-pointed again at AJC-62 step 6 for the DatedCandidate pipeline (`entry[1]` became `entry.subtype`)."
 
 
 
@@ -1239,10 +1242,11 @@ id = 'm12-21'
 title = 'the floor restore identifies packets by tuple value again'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_scenario_p3b.py::TestTheShaperIdentifiesPacketsByPositionNotValue::test_a_floor_restores_both_copies_of_an_identical_packet'
-find = '''                if index not in kept_at and taxonomy_parent(packets[index][1]) == parent'''
+find = '''                if index not in kept_at
+                and taxonomy_parent(packets[index].subtype) == parent'''
 replace = '''                if packets[index] not in [packets[i] for i in kept_at]
-                and taxonomy_parent(packets[index][1]) == parent'''
-note = 'A packet is a plain `(date, subtype, track, role)` tuple and two of them can compare equal without being the same document. Under value equality one copy in the kept set hid both, so a floor could be reported short with a spare packet unused. Unreachable from any generated seed today — the reviewer could not reach it across 45 combinations and neither could I — so the guard calls `_shape_discovery` directly with the duplicate rather than hunting for a seed that makes one. An invariant no current seed violates is still an invariant.'
+                and taxonomy_parent(packets[index].subtype) == parent'''
+note = 'A packet is a frozen value object — a DatedCandidate since AJC-62 step 6, a plain `(date, subtype, track, role)` tuple before it — and two of them can compare equal without being the same document. Under value equality one copy in the kept set hid both, so a floor could be reported short with a spare packet unused. Unreachable from any generated seed today — the reviewer could not reach it across 45 combinations and neither could I — so the guard calls `_shape_discovery` directly with the duplicate rather than hunting for a seed that makes one. An invariant no current seed violates is still an invariant. Re-pointed at step 6 for the DatedCandidate spelling; the mutation is unchanged in meaning.'
 
 [[mutant]]
 id = 'm12-22'
@@ -1882,14 +1886,14 @@ note = 'AJC-60. R4 re-pointed twice over: the divisor moved from the applicant o
 
 [[mutant]]
 id = 'm17-7'
-title = 'the auto-derivation pool drifts from the doctrine content table again'
+title = 'the legacy doctrine pool drifts from the frozen first fourteen again'
 file = 'src/wc_caseload_engine/seeds.py'
-test = 'tests/test_doctrine_content.py::TestContentTableIsComplete::test_the_derivation_pool_is_the_whole_content_table'
-find = '''_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)'''
-replace = '''_DOCTRINE_POOL: tuple[str, ...] = tuple(
-    _h for _h in DOCTRINE_CONTENT if _h != "death_dependency"
+test = 'tests/test_doctrine_content.py::TestContentTableIsComplete::test_legacy_and_medical_story_doctrine_pools_are_exact_and_ordered'
+find = '''LEGACY_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)[:14]'''
+replace = '''LEGACY_DOCTRINE_POOL: tuple[str, ...] = tuple(
+    _h for _h in tuple(DOCTRINE_CONTENT)[:14] if _h != "death_dependency"
 )'''
-note = 'AJC-60. Restores the drift exactly as it stood: thirteen entries against the fourteen in the content table, with death_dependency reachable only by explicit seeding. Harmless today, because the hook cannot survive the filter the derivation applies before shuffling — and that is the point. It was harmless for as long as it existed, which is why nobody noticed, and the next hook added to the table would have inherited it without the accident of being unreachable.'
+note = 'AJC-60, repointed by AJC-62 R72 at the pool split. Restores the original drift under the new shape: thirteen entries against the frozen first fourteen, with death_dependency reachable only by explicit seeding. The guard moved with the code (the old whole-table equality is now WRONG by design — the table holds fifteen while the feature-absent pool must stay the frozen fourteen), so the pool-exactness test is the single node that must go red: LEGACY_DOCTRINE_POOL no longer equals EXPECTED_DOCTRINE_HOOKS[:14]. The draw-identity oracle beside it would redden too, but the exactness assertion names the defect rather than its symptom.'
 
 # ---------------------------------------------------------------------------
 # AJC-60 round 2 — the three findings review found, each with the mutation that
@@ -2276,7 +2280,7 @@ find = '''    scenario = seed.scenario.medical_assertions
 replace = '''    scenario = seed.scenario.medical_assertions
     _assertion_rng(seed, "gate-probe", "case")
     if scenario is None:'''
-note = 'AJC-61. The gate is the byte-identity instrument: any rng constructed above it runs for every assertion-absent case. The guard monkeypatches the module attribute with pytest.fail, so the reintroduced construction fails RED rather than ERROR.'
+note = 'AJC-61; re-pointed for AJC-62 R77 step 3 (R72): the gate now lives in derive_medical_assertion_plan(), the R32 entry seam build_case_plan calls — the find block matches there and only there (the derive_medical_assertions wrapper carries no gate of its own). Any rng constructed above the gate runs for every assertion-absent case. The guard monkeypatches the module attribute with pytest.fail and drives BOTH the plan entry and the wrapper, so the reintroduced construction fails RED rather than ERROR.'
 
 [[mutant]]
 id = 'm19-2'
@@ -2393,7 +2397,7 @@ note = 'AJC-61. The guard asserts on raw-JSON .get("channelVersion"), not throug
 id = 'm19-12'
 title = 'the sampled evaluator endorses unconditionally'
 file = 'src/wc_caseload_engine/medical_assertions.py'
-test = 'tests/test_medical_assertion_properties.py::test_qme_disposition_is_completely_conditioned_on_ledger_evidence'
+test = 'tests/test_medical_assertion_properties.py::test_m2_qme_disposition_is_completely_conditioned_on_ledger_evidence'
 find = '''    if evidence == "supports":
         disposition = "endorse"
     elif evidence == "contradicts":
@@ -2401,7 +2405,7 @@ find = '''    if evidence == "supports":
     else:
         disposition = "neither"'''
 replace = '''    disposition = "endorse"'''
-note = 'AJC-61. QME/AME disposition is a pure function of the ledger evidence — no draw, no flat endorsement rate. The guard asserts the tri-state mapping directly and then the wiring over a deterministic cohort slice.'
+note = 'AJC-61; re-pointed for AJC-62 R77 step 3 (R72): the guard is the renamed test_m2_qme_disposition_..., which asserts the tri-state mapping directly and then the wiring over a deterministic cohort slice read from AssertionTrace.m2_baseline_ledger — the PRESERVED M2 base-disposition block, not the step-4 adoption/concurrence remodel. The find block is the retained qme_disposition body.'
 
 [[mutant]]
 id = 'm19-13'
@@ -2515,7 +2519,7 @@ note = 'AJC-61, fix round 1 (sol H1). document.metadata exposes only standard ke
 id = 'm19-22'
 title = 'endorsement grades collapse onto the shared suppression tuple'
 file = 'src/wc_caseload_engine/medical_assertions.py'
-test = 'tests/test_medical_assertion_properties.py::test_two_explicit_contentions_sharing_a_suppression_key_keep_their_own_grades'
+test = 'tests/test_medical_assertion_properties.py::test_two_explicit_contentions_sharing_a_suppression_key_keep_their_own_grades_and_concurrence'
 find = '''            would_be = {
                 ref: contention_quality(history, context, c)
                 for ref, c, _key in supportable

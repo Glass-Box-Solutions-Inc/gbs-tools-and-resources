@@ -1,0 +1,373 @@
+# AJC-62 (M3) — the frozen R29 contention-party x disposition loop matrix (R67).
+#
+# Exactly the ten R29 rows, one case per row, seeds 620201-620210. Each case
+# AUTHORS the base contention and the opinion's disposition of it — the
+# explicit collections place ctn-01 in endorses / concurs_with / rejects /
+# defers, or in none of them for the unaddressed row — and LEAVES loop
+# incidence and path selection sampled (sample_contention_documents keeps its
+# default true; sample_assertions is false so the authored pair is the whole
+# ledger). Tests may replace the entity-private RNG result with a
+# deterministic test choice; they MUST NOT alter production constants.
+#
+# Applicant rows keep their psych_add_on contention and defense rows keep their
+# apportionment_defense contention. The defense rows add only the speaking
+# layer's consequence characterization so the existing matrix exercises the
+# Part 5 psych carrier voices without changing frozen incidence families.
+# Outside R30 the defense channel
+# is probability zero and constructs no stream, which is itself asserted by
+# the decision-table test.
+#
+# @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+
+caseload_id: medical-story-loop-matrix
+
+defaults:
+  injury:
+    type: specific
+    date_of_injury: 2024-03-01
+    body_parts:
+      - {part: lumbar_spine}
+      - {part: shoulder}
+  lifecycle:
+    target_stage: medical_legal
+    claim_response: accepted
+    eval_type: qme
+
+cases:
+  - case_id: loop-applicant-adopted
+    rng_seed: 620201
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: mixed-etiology degenerative lumbar disease
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        contentions:
+          - id: ctn-01
+            claim_type: psych_add_on
+            party: applicant
+            target_body_part: psyche
+            rationale: a psychiatric consequence accompanies the physical injury
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-20
+            apportionment_state: determined
+            determination_kind: unable_to_approximate
+            determination_rationale: the contributions cannot be approximated on this record
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            endorses_contention_ids: [ctn-01]
+            rationale: the conclusions rest on the examination and the record reviewed
+
+  - case_id: loop-applicant-concurred
+    rng_seed: 620202
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: mixed-etiology degenerative lumbar disease
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        contentions:
+          - id: ctn-01
+            claim_type: psych_add_on
+            party: applicant
+            target_body_part: psyche
+            rationale: a psychiatric consequence accompanies the physical injury
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-20
+            apportionment_state: determined
+            determination_kind: unable_to_approximate
+            determination_rationale: the contributions cannot be approximated on this record
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            concurs_with_contention_ids: [ctn-01]
+            rationale: the conclusions rest on the examination and the record reviewed
+
+  - case_id: loop-applicant-rejected
+    rng_seed: 620203
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: mixed-etiology degenerative lumbar disease
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        contentions:
+          - id: ctn-01
+            claim_type: psych_add_on
+            party: applicant
+            target_body_part: psyche
+            rationale: a psychiatric consequence accompanies the physical injury
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-20
+            apportionment_state: determined
+            determination_kind: unable_to_approximate
+            determination_rationale: the contributions cannot be approximated on this record
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            rejects_contention_ids: [ctn-01]
+            rationale: the conclusions rest on the examination and the record reviewed
+
+  - case_id: loop-applicant-deferred
+    rng_seed: 620204
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: mixed-etiology degenerative lumbar disease
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        contentions:
+          - id: ctn-01
+            claim_type: psych_add_on
+            party: applicant
+            target_body_part: psyche
+            rationale: a psychiatric consequence accompanies the physical injury
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-20
+            apportionment_state: determined
+            determination_kind: unable_to_approximate
+            determination_rationale: the contributions cannot be approximated on this record
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            defers_contention_ids: [ctn-01]
+            rationale: the conclusions rest on the examination and the record reviewed
+
+  - case_id: loop-applicant-unaddressed
+    rng_seed: 620205
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: mixed-etiology degenerative lumbar disease
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        contentions:
+          - id: ctn-01
+            claim_type: psych_add_on
+            party: applicant
+            target_body_part: psyche
+            rationale: a psychiatric consequence accompanies the physical injury
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-20
+            apportionment_state: determined
+            determination_kind: unable_to_approximate
+            determination_rationale: the contributions cannot be approximated on this record
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            rationale: the conclusions rest on the examination and the record reviewed
+
+  - case_id: loop-defense-adopted
+    rng_seed: 620206
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: mixed-etiology degenerative lumbar disease
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        contentions:
+          - id: ctn-01
+            claim_type: apportionment_defense
+            party: defense
+            target_condition_id: cond-00
+            target_body_part: psyche
+            psych_injury_kind: compensable_consequence
+            rationale: a nonindustrial factor contributes to the present disability
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-20
+            apportionment_state: determined
+            determination_kind: unable_to_approximate
+            determination_rationale: the contributions cannot be approximated on this record
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            endorses_contention_ids: [ctn-01]
+            rationale: the conclusions rest on the examination and the record reviewed
+
+  - case_id: loop-defense-concurred
+    rng_seed: 620207
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: mixed-etiology degenerative lumbar disease
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        contentions:
+          - id: ctn-01
+            claim_type: apportionment_defense
+            party: defense
+            target_condition_id: cond-00
+            target_body_part: psyche
+            psych_injury_kind: compensable_consequence
+            rationale: a nonindustrial factor contributes to the present disability
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-20
+            apportionment_state: determined
+            determination_kind: unable_to_approximate
+            determination_rationale: the contributions cannot be approximated on this record
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            concurs_with_contention_ids: [ctn-01]
+            rationale: the conclusions rest on the examination and the record reviewed
+
+  - case_id: loop-defense-rejected
+    rng_seed: 620208
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: mixed-etiology degenerative lumbar disease
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        contentions:
+          - id: ctn-01
+            claim_type: apportionment_defense
+            party: defense
+            target_condition_id: cond-00
+            target_body_part: psyche
+            psych_injury_kind: compensable_consequence
+            rationale: a nonindustrial factor contributes to the present disability
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-20
+            apportionment_state: determined
+            determination_kind: unable_to_approximate
+            determination_rationale: the contributions cannot be approximated on this record
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            rejects_contention_ids: [ctn-01]
+            rationale: the conclusions rest on the examination and the record reviewed
+
+  - case_id: loop-defense-deferred
+    rng_seed: 620209
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: mixed-etiology degenerative lumbar disease
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        contentions:
+          - id: ctn-01
+            claim_type: apportionment_defense
+            party: defense
+            target_condition_id: cond-00
+            target_body_part: psyche
+            psych_injury_kind: compensable_consequence
+            rationale: a nonindustrial factor contributes to the present disability
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-20
+            apportionment_state: determined
+            determination_kind: unable_to_approximate
+            determination_rationale: the contributions cannot be approximated on this record
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            defers_contention_ids: [ctn-01]
+            rationale: the conclusions rest on the examination and the record reviewed
+
+  - case_id: loop-defense-unaddressed
+    rng_seed: 620210
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: mixed-etiology degenerative lumbar disease
+            origin: mixed
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        contentions:
+          - id: ctn-01
+            claim_type: apportionment_defense
+            party: defense
+            target_condition_id: cond-00
+            target_body_part: psyche
+            psych_injury_kind: compensable_consequence
+            rationale: a nonindustrial factor contributes to the present disability
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-12-20
+            apportionment_state: determined
+            determination_kind: unable_to_approximate
+            determination_rationale: the contributions cannot be approximated on this record
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            rationale: the conclusions rest on the examination and the record reviewed

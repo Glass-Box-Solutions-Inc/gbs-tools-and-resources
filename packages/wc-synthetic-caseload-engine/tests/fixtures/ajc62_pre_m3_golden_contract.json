@@ -1,0 +1,117 @@
+{
+  "_meta": {
+    "ticket": "AJC-62",
+    "requirements": [
+      "R67",
+      "R73"
+    ],
+    "baseline": "eedad10930c1d8405414d2381eb4435da976f524",
+    "shape": "golden_sha256 maps each unchanged corpus name to the raw SHA-256 of its committed tests/golden/<name>.json bytes at the pre-M3 baseline; doctrine_showcase_pre_m3 embeds the complete committed pre-M3 tests/golden/doctrine-showcase.json payload for the step-13 addition-only re-record proof."
+  },
+  "golden_sha256": {
+    "demo-caseload": "f56160aa08dd6e6660a593b4d2e463c6a630c24277f5a6a6135b48ac41dd0e66",
+    "money-showcase": "40beeaf1b7a0e6458c0ad9cd1536fb945459049c6ef62f367921f2870a3f6f73",
+    "personas-showcase": "f89280b194ef08877b81a9876e38c9752e8460ad3cd5d7441cd4e156c4dd8275"
+  },
+  "doctrine_showcase_pre_m3": {
+    "format": 3,
+    "corpus": "doctrine-showcase",
+    "spec": "examples/doctrine-showcase.yaml",
+    "tier": "suite",
+    "recordedWith": {
+      "engine": "0.9.0",
+      "substratePin": "cb485354f16164ca2d422804fe9d40f9a2250920",
+      "substrateSha": "70c8f3bed4c8df9b352e557e4128460798c62bfb",
+      "python": "3.12.13",
+      "dependencies": {
+        "reportlab": "4.5.1",
+        "python-docx": "1.2.0",
+        "pymupdf": "1.28.2",
+        "pillow": "11.3.0",
+        "faker": "34.0.2",
+        "pyyaml": "6.0.3",
+        "pydantic": "2.13.4"
+      },
+      "systemFonts": {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf": "39c29931201f08dd"
+      }
+    },
+    "caseCount": 6,
+    "documentCount": 210,
+    "fileCount": 236,
+    "rootFiles": [
+      "caseload_manifest.json",
+      "truth/caseload.truth.json",
+      "truth/showcase-death-dependency.truth.json",
+      "truth/showcase-firefighter-presumption.truth.json",
+      "truth/showcase-imr-challenge.truth.json",
+      "truth/showcase-psychiatric.truth.json",
+      "truth/showcase-rating-doctrines.truth.json",
+      "truth/showcase-threshold-defences.truth.json"
+    ],
+    "corpusTree": "fd1d13fe0dacfc9d11f749be05da78e694e65e8f29eb4c19d6850260c2ea180c",
+    "caseload": "ce973ccd45fe576276fb9b2eb587656cfc34cfc69124a711c37b85a8cdc3e758",
+    "cases": {
+      "showcase-death-dependency": {
+        "documentCount": 30,
+        "distinctSubtypes": 26,
+        "fileCount": 33,
+        "tree": "61f2f20d05e7e94b8fd0c323555adb549ba68969caea2707c7a5ac4927639bbb",
+        "documents": "5fa8bf3fab509bec992f275ffe399cfc3842c5545ee0da1d991b4ef3336e6858",
+        "manifest": "a0ad9777382988466cbf4cbf52f6d6902ba71b9f62bbd4e2e47bf531b3e325f8",
+        "seed": "4d5b6ec8bed55bd97f573edcff725b25d9457d17c1fce61bc829a881f10a71c6",
+        "facts": "25687ff9a5aecc892761fb6880501222917e5289e224083e7e24940ba2b2fee6"
+      },
+      "showcase-firefighter-presumption": {
+        "documentCount": 30,
+        "distinctSubtypes": 19,
+        "fileCount": 33,
+        "tree": "c1fa6c0387262e7967dcd5d557bf0fa50205b12ca1f323287b25a85679230efa",
+        "documents": "25448a8cb8d4f75abd1eb19db74c311a5b7efcb1b0697ffda058743363b26270",
+        "manifest": "7395650d5ab1061413d657099c2c5354e1440d3a14e6dee5b9310149f8eee78c",
+        "seed": "881e3c7a31892415b7f38e5dc9dfdafbae078c8af21dbd51bff0b6bea6297edd",
+        "facts": "adc73094e74f6759d519f8d8a6be2ebb7f4a8fb7f443009aeec27c386449db98"
+      },
+      "showcase-imr-challenge": {
+        "documentCount": 30,
+        "distinctSubtypes": 19,
+        "fileCount": 33,
+        "tree": "edcbf545a7a38b58e7994e31570512dc11a1c2c7b8414f9ea3428d9aae046b50",
+        "documents": "ad77d8ea69a92e15769c3a807590704727b98da675abbe3d3aa2f4a1741da7e8",
+        "manifest": "210ed37be0632687e2c850282646e9e60886adb916d48c9832d1ca80c756c37f",
+        "seed": "21437b2fa454d98f3fce6967f88f40960ee2bde674a31678e3673a1063c073ae",
+        "facts": "c5a228772922851c7f406340a7b1f5e0d493839176576290755630133031fd25"
+      },
+      "showcase-psychiatric": {
+        "documentCount": 30,
+        "distinctSubtypes": 15,
+        "fileCount": 33,
+        "tree": "7c750cb228a2b29dd615dd329a623dc0d92d237e8e8cd29ba71b65090a825246",
+        "documents": "c72e40b44eaae779ba8edc53925ccb6dcc47a4cb76d44d731396eaa46c1a10f3",
+        "manifest": "da874dc0753858a44aa4c7a9a0c2654b0438a3e03f7d4888979de14823c93f21",
+        "seed": "3167b1c529cac4aba4f05417f59fff352f6734cb7ef14b0945f334736cf75f99",
+        "facts": "78e624131c53426aa72d6e3691bd6dbdc7a13c1477c33a52801453501c1a994c"
+      },
+      "showcase-rating-doctrines": {
+        "documentCount": 60,
+        "distinctSubtypes": 30,
+        "fileCount": 63,
+        "tree": "1a93940b5d00bcf2aa84ab63cf14071cb4cbd596952496540b6684009fb3c76d",
+        "documents": "007b3b53d3e3f966a7c15323a04334be8e695e754ab4939cc17daf82c7f67e25",
+        "manifest": "410a0c42c437510eeb443d3127a79ae8db03fbad375eda377dd397ca5ca5d068",
+        "seed": "fd2032976e8a68e5fa888be150241d69b6bd77a09f20c7f7e1a44378318fe2ec",
+        "facts": "4ada897a7709949606dfdcd9306f4411db2713a60876fc68d4d97dc5eb2d542d"
+      },
+      "showcase-threshold-defences": {
+        "documentCount": 30,
+        "distinctSubtypes": 15,
+        "fileCount": 33,
+        "tree": "85f9e84cc8fc80441405e6d20db04b6f9aeacc7d5eae6c78faead6f3412a23d0",
+        "documents": "815daab0599b334bff0bfc8fd257f6c22793bc5f4d4a97b8316a25cf95f1f9a9",
+        "manifest": "abec2e9af9aa821aa9c14b2b7f339d42e9bb046e613565233f68194f5a51b75c",
+        "seed": "7fe9a3863ca236a1a824076a2052f315973683c03398637f5f478c5e3c2f7130",
+        "facts": "d8c792c1337c5bdd179b196179525c697cb543bd549770b5bea5329d133bceb2"
+      }
+    }
+  }
+}

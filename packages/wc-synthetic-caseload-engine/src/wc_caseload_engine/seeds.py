@@ -119,6 +119,7 @@ type DoctrineHook = Literal[
     "imr_constitutionality",
     "ab5_dynamex",
     "lc4664_prior_award",
+    "hikida_treatment_carveout",
 ]
 type DocumentFormat = Literal["pdf", "scanned_pdf", "eml", "docx"]
 type FilenameStyle = Literal["neutral", "corpus"]
@@ -269,8 +270,7 @@ class ApplicantProfile(_Model):
 
     Added because note C's grounding tables are sex-conditioned and the engine had
     nowhere to record the answer: SEER incidence, facet arthropathy and hypertension
-    all report a split, and every one of them was stranded. Not yet honoured — no
-    document renders it (M3), and the archetype mixture that reads it only runs when
+    all report a split. The archetype mixture that reads it only runs when
     ``scenario.medical_history`` is present.
     """
 
@@ -278,11 +278,11 @@ class ApplicantProfile(_Model):
     """``None`` means *derive it*, calibrated to CDC obesity prevalence for the age.
 
     A risk factor, not a disease state — the design record draws that line and this
-    field is which side of it body mass sits on. Not yet honoured (M3).
+    field is which side of it body mass sits on.
     """
 
     smoking_status: SmokingStatus | None = None
-    """``None`` means *derive it*. Not yet honoured (M3).
+    """``None`` means *derive it*.
 
     ``former`` is worth distinguishing from ``never`` because cessation of a year or
     more returns spinal-fusion outcomes to the never-smoker baseline: a former smoker
@@ -423,6 +423,23 @@ class InjurySpec(_Model):
         return self.date_of_injury
 
 
+class ImrApplicationEntry(_Model):
+    """Explicit content for one Independent Medical Review application (AJC-62, M3).
+
+    Every field is optional and omitted fields REMAIN omitted: sparse content
+    is the register applicant-attorney under-working is expressed through — a
+    missing attachment, record list, rebuttal or MTUS citation. No
+    adequacy/quality-style field exists here, by design; M4 owns detection.
+    """
+
+    disputed_treatment: str | None = None
+    diagnosis_icd10: str | None = None
+    ur_determination_attached: bool | None = None
+    supporting_record_subtypes: list[str] = Field(default_factory=list, max_length=8)
+    clinical_rebuttal: str | None = None
+    mtus_citations: list[str] = Field(default_factory=list, max_length=5)
+
+
 class UrDispute(_Model):
     """Utilization review dispute and its optional IMR appeal."""
 
@@ -430,17 +447,34 @@ class UrDispute(_Model):
     decision: UrDecision | None = None
     imr: bool = False
     imr_outcome: ImrOutcome | None = None
+    imr_application: ImrApplicationEntry | None = None
+    """Explicit IMR application content (AJC-62, M3). Requires an effective IMR
+    request and is field-authoritative where present; the
+    medical-story-absent path leaves it unread."""
 
     @model_validator(mode="after")
     def _check_consistency(self) -> UrDispute:
-        if not self.enabled and (self.decision or self.imr or self.imr_outcome):
+        if not self.enabled and (
+            self.decision or self.imr or self.imr_outcome or self.imr_application
+        ):
             raise ValueError(
-                "lifecycle.ur_dispute.enabled must be true to set decision/imr/imr_outcome"
+                "lifecycle.ur_dispute.enabled must be true to set "
+                "decision/imr/imr_outcome/imr_application"
             )
         if self.imr and not self.enabled:
             raise ValueError("lifecycle.ur_dispute.imr requires ur_dispute.enabled: true")
         if self.imr_outcome is not None and not self.imr:
             raise ValueError("lifecycle.ur_dispute.imr_outcome requires ur_dispute.imr: true")
+        if (
+            self.imr_application is not None
+            and "imr" in self.model_fields_set
+            and not self.imr
+        ):
+            raise ValueError(
+                "lifecycle.ur_dispute.imr_application is present but imr is "
+                "explicitly false; an IMR application cannot exist without an "
+                "IMR request"
+            )
         return self
 
 
@@ -1722,6 +1756,28 @@ class MedicalConditionEntry(_Model):
     billing_coded: bool = False
     """Coded in this claim's own billing. Implies ``surfaces_in_file``."""
 
+    psych_injury_kind: Literal["direct", "compensable_consequence"] | None = None
+    """Direct psychiatric injury versus compensable consequence of a physical one.
+
+    World truth for the §4660.1(c) axis (AJC-62, M3): both kinds may be
+    industrial — the classification decides whether added permanent-disability
+    impairment is barred, not whether the condition is AOE/COE. A party's
+    characterisation of the kind is an assertion and lives on the M2 layer,
+    which is what lets an applicant frame a consequence as direct while the
+    world record stays what it is.
+    """
+
+    @model_validator(mode="after")
+    def _psych_kind_describes_a_psychiatric_condition(self) -> MedicalConditionEntry:
+        if self.psych_injury_kind is not None and self.body_system != "psychiatric":
+            raise ValueError(
+                "scenario.medical_history.conditions[] sets psych_injury_kind "
+                f"{self.psych_injury_kind!r} but body_system is "
+                f"{self.body_system!r}; the direct-versus-consequence axis "
+                "describes a psychiatric condition only."
+            )
+        return self
+
     @model_validator(mode="after")
     def _key_is_a_catalog_key(self) -> MedicalConditionEntry:
         if self.key is not None and self.key not in CONDITION_CATALOG:
@@ -1897,7 +1953,7 @@ class MedicalHistoryScenario(_Model):
         "resilient", "metabolic", "degenerative", "psych_burdened", "multimorbid"
     ] | None = None
     """``None`` means *draw it* from the demographic mixture. Pin it to author a
-    specific health profile. Not yet honoured (M3)."""
+    specific health profile."""
 
     sample_conditions: bool = True
     """Whether to draw conditions from the archetype on top of any stated above.
@@ -2007,6 +2063,11 @@ class ContentionEntry(_Model):
     treatment_causation: Literal["sole_cause", "contributing_cause"] | None = None
     requested_apportionment: Literal["apply", "refuse"] | None = None
     groundings: list[DoctrineGrounding] = Field(default_factory=list)
+    psych_injury_kind: Literal["direct", "compensable_consequence"] | None = None
+    """The party's direct-versus-consequence characterisation (AJC-62, M3) —
+    an assertion, free to diverge from the world condition's own kind. Requires
+    a psychiatric anchor: a psychiatric target condition, a psyche target body
+    part, or a psyche claim body part; the ledger validator holds that line."""
 
 
 class MedicalOpinionEntry(_Model):
@@ -2031,6 +2092,41 @@ class MedicalOpinionEntry(_Model):
     supersedes_opinion_id: str | None = None
     rationale: str | None = None
     revision_rationale: str | None = None
+    event_kind: Literal["base_report", "supplemental_report", "deposition"] = (
+        "base_report"
+    )
+    """Which report event this opinion is (AJC-62, M3). Supplemental and
+    deposition events are responses: they carry a QME/AME author, a
+    responds_to_opinion_id naming the exact predecessor, a revision_kind, and
+    no fresh examination — the validator below holds that structure."""
+
+    revision_kind: (
+        Literal[
+            "unchanged_additional_reasoning",
+            "new_records_no_change",
+            "revised_causation",
+            "revised_apportionment",
+            "revised_causation_and_apportionment",
+        ]
+        | None
+    ) = None
+    concurs_with_contention_ids: list[str] = Field(default_factory=list)
+    """Independent agreement — the evaluator reached the advocated result on
+    its own (AJC-62, M3). Distinct from endorses_contention_ids, which is
+    responsive adoption of the advocated theory; the four disposition
+    collections are pairwise disjoint and a contention in none of them is
+    unaddressed."""
+
+    defers_contention_ids: list[str] = Field(default_factory=list)
+    """Contentions the report expressly reserved rather than resolved."""
+
+    psych_injury_kind: Literal["direct", "compensable_consequence"] | None = None
+    aoe_coe_finding: Literal["industrial", "nonindustrial", "deferred"] | None = None
+    """The physician's own AOE/COE conclusion (AJC-62, M3) — an independent
+    finding grounded in treatment history, examination, mechanism and clinical
+    course, never a response to advocacy."""
+
+    aoe_coe_rationale: str | None = None
 
     @model_validator(mode="after")
     def _combined_review_cap(self) -> MedicalOpinionEntry:
@@ -2043,6 +2139,49 @@ class MedicalOpinionEntry(_Model):
             raise ValueError(
                 f"scenario.medical_assertions.medical_opinions[] entry '{self.id}' "
                 f"reviews {combined} records combined; the combined cap is 12"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _event_kind_is_structurally_coherent(self) -> MedicalOpinionEntry:
+        prefix = f"scenario.medical_assertions.medical_opinions[] entry '{self.id}'"
+        if self.event_kind == "base_report":
+            if self.revision_kind is not None:
+                raise ValueError(
+                    f"{prefix} sets revision_kind {self.revision_kind!r} but "
+                    "event_kind is 'base_report'; revision kinds describe "
+                    "supplemental and deposition response events."
+                )
+            return self
+        if self.author_role == "ptp":
+            raise ValueError(
+                f"{prefix} has event_kind {self.event_kind!r} but author_role "
+                "'ptp'; PTP opinions may only be base reports — supplemental "
+                "and deposition opinions carry a QME or AME author."
+            )
+        if self.revision_kind is None:
+            raise ValueError(
+                f"{prefix} has event_kind {self.event_kind!r} but no "
+                "revision_kind; a response opinion states how it relates to "
+                "its predecessor."
+            )
+        if self.responds_to_opinion_id is None:
+            raise ValueError(
+                f"{prefix} has event_kind {self.event_kind!r} but no "
+                "responds_to_opinion_id; a response opinion names its exact "
+                "immediate predecessor."
+            )
+        if self.examination_performed:
+            raise ValueError(
+                f"{prefix} has event_kind {self.event_kind!r} but "
+                "examination_performed is true; a response opinion reviews and "
+                "reasons without a fresh examination."
+            )
+        if not (self.rationale or self.revision_rationale):
+            raise ValueError(
+                f"{prefix} has event_kind {self.event_kind!r} but neither "
+                "rationale nor revision_rationale; a response opinion states a "
+                "nonempty reason appropriate to its revision kind."
             )
         return self
 
@@ -2092,6 +2231,122 @@ class ApportionmentAssertionEntry(_Model):
     groundings: list[DoctrineGrounding] = Field(default_factory=list)
 
 
+class ContentionDocumentEntry(_Model):
+    """One explicitly authored contention-loop document event (AJC-62, M3).
+
+    Authoritative within the loop (R40): it controls existence, kind, hard
+    date, carrier, opinion bindings, spoken contentions, actor party and
+    defense theories. Reference resolution, chronology, caps and carrier
+    compatibility are enforced at derivation and planning time; this model
+    owns the per-kind field matrix. No quality field exists here, by design.
+    """
+
+    id: str = Field(pattern=r"^cdoc-(0[1-9]|[1-9][0-9])$")
+    document_kind: Literal[
+        "opinion_report",
+        "advocacy",
+        "objection",
+        "supplemental_request",
+        "supplemental_report",
+        "qme_deposition",
+    ]
+    subtype: str | None = None
+    """A compatible canonical carrier, when the default is not wanted.
+    Substrate-only registry keys are forbidden here — the engine supplies the
+    internal template_subtype for the objection/request/deposition variants."""
+
+    doc_date: date | None = None
+    medical_opinion_id: str | None = None
+    target_medical_opinion_id: str | None = None
+    spoken_contention_ids: list[str] = Field(default_factory=list, max_length=3)
+    actor_party: Literal["applicant", "defense"] | None = None
+    defense_contest_theories: list[
+        Literal[
+            "insufficient_investigation",
+            "post_termination",
+            "lack_of_substantial_medical_evidence",
+        ]
+    ] = Field(default_factory=list)
+
+    #: The R40 per-kind field matrix: (requires current opinion, requires
+    #: target opinion, requires actor, requires spoken contentions).
+    _KIND_MATRIX: ClassVar[dict[str, tuple[bool, bool, bool, bool]]] = {
+        "opinion_report": (True, False, False, False),
+        "advocacy": (False, True, True, True),
+        "objection": (False, True, True, True),
+        "supplemental_request": (False, True, True, True),
+        "supplemental_report": (True, True, False, False),
+        "qme_deposition": (True, True, True, True),
+    }
+
+    @model_validator(mode="after")
+    def _kind_field_matrix(self) -> ContentionDocumentEntry:
+        prefix = (
+            "scenario.medical_assertions.contention_documents[] entry "
+            f"'{self.id}' ({self.document_kind})"
+        )
+        needs_current, needs_target, needs_actor, needs_spoken = self._KIND_MATRIX[
+            self.document_kind
+        ]
+        if needs_current and self.medical_opinion_id is None:
+            raise ValueError(
+                f"{prefix} carries no medical_opinion_id; this document kind is "
+                "an opinion's own realization and names its current opinion."
+            )
+        if not needs_current and self.medical_opinion_id is not None:
+            raise ValueError(
+                f"{prefix} carries medical_opinion_id "
+                f"{self.medical_opinion_id!r}; an attorney communication has a "
+                "target opinion, never a current one."
+            )
+        if needs_target and self.target_medical_opinion_id is None:
+            raise ValueError(
+                f"{prefix} carries no target_medical_opinion_id; this document "
+                "kind exists only in relation to the opinion it targets."
+            )
+        if self.document_kind == "opinion_report" and (
+            self.target_medical_opinion_id is not None
+        ):
+            raise ValueError(
+                f"{prefix} carries target_medical_opinion_id "
+                f"{self.target_medical_opinion_id!r}; a base opinion report has "
+                "no earlier report to target."
+            )
+        if needs_actor and self.actor_party is None:
+            raise ValueError(
+                f"{prefix} carries no actor_party; the acting party is what "
+                "this document kind speaks for."
+            )
+        if not needs_actor and self.actor_party is not None:
+            raise ValueError(
+                f"{prefix} carries actor_party {self.actor_party!r}; a report "
+                "authored by the evaluator has no contention actor."
+            )
+        if needs_spoken and not self.spoken_contention_ids:
+            raise ValueError(
+                f"{prefix} carries no spoken_contention_ids; this document kind "
+                "advances at least one contention."
+            )
+        if (
+            self.actor_party == "defense"
+            and self.document_kind
+            in ("objection", "supplemental_request", "qme_deposition")
+            and not self.defense_contest_theories
+        ):
+            raise ValueError(
+                f"{prefix} is defense-authored but states no "
+                "defense_contest_theories; a defense contest names at least one "
+                "of the three theories."
+            )
+        if self.actor_party != "defense" and self.defense_contest_theories:
+            raise ValueError(
+                f"{prefix} states defense_contest_theories but its actor_party "
+                f"is {self.actor_party!r}; contest theories belong to a defense "
+                "actor only."
+            )
+        return self
+
+
 #: Structured keys the seed schema reserves for the truth manifest. A seed that
 #: states one is trying to author a grade, and grades are derived, truth-only
 #: values. Ordinary English in free-form rationale is untouched — this scans
@@ -2134,6 +2389,15 @@ class MedicalAssertionsScenario(_Model):
         default_factory=list, max_length=12
     )
     sample_assertions: bool = True
+    contention_documents: list[ContentionDocumentEntry] = Field(
+        default_factory=list,
+        max_length=15,
+    )
+    sample_contention_documents: bool = True
+    """Whether the M3 contention loop may sample advocacy, contest paths,
+    supplemental opinions and deposition opinions around the explicit entries
+    (AJC-62). ``False`` keeps exactly the explicit contention documents plus
+    required realizations of the opinions that exist."""
 
     @model_validator(mode="before")
     @classmethod
@@ -2160,6 +2424,7 @@ class MedicalAssertionsScenario(_Model):
             ("contentions", self.contentions),
             ("medical_opinions", self.medical_opinions),
             ("apportionment_assertions", self.apportionment_assertions),
+            ("contention_documents", self.contention_documents),
         ):
             seen: set[str] = set()
             for entry in entries:
@@ -2215,7 +2480,7 @@ class ScenarioSpec(_Model):
     penalties: PenaltyScenario | None = None
     """Automatic late-indemnity increases. Requires ``wages`` — see the same validator."""
     medical_history: MedicalHistoryScenario | None = None
-    """The world-truth gate. Not yet honoured — no document renders it (M3).
+    """The world-truth gate.
 
     ``None`` — the default — means this case has no medical-history layer: no
     comorbidities, no prior claims, nothing an apportionment opinion could concretely
@@ -3007,20 +3272,36 @@ _LIEN_RESOLUTIONS: tuple[str, ...] = (
     "mixed",
 )
 
-_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)
-"""Hooks ``auto:`` derivation may draw, in content-table order (AJC-60).
+LEGACY_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)[:14]
+"""Hooks the feature-absent ``auto:`` draw may pull, in content-table order.
+
+Exactly the first fourteen table entries — the pre-M3 pool, byte for byte
+(AJC-62 R7). ``hikida_treatment_carveout`` is deliberately outside it: adding
+the fifteenth enum member must not re-roll doctrine hooks in any case without
+the medical-story gate, because feature-absent corpora are pinned byte-identical
+by the golden gate. Every existing draw path reads this pool.
 
 Read from :data:`~wc_caseload_engine.doctrine.DOCTRINE_CONTENT` rather than
-transcribed, because the transcription had already drifted: thirteen entries
-against the table's fourteen, with ``death_dependency`` present in the table,
-accepted by the schema, and reachable only by naming it in a seed. A hand-kept
-third copy of a list two other places already agree on is a drift waiting to
-happen, and the next hook added is the one that would have inherited it.
+transcribed, because the transcription had already drifted once (AJC-60):
+thirteen entries against the table's then-fourteen, with ``death_dependency``
+present in the table, accepted by the schema, and reachable only by naming it
+in a seed. A hand-kept copy of a list other places already agree on is a drift
+waiting to happen. The slice is pinned against the frozen fifteen-member oracle
+by ``tests/test_doctrine_content.py``.
 
 Derived in **insertion order, not sorted**. ``_derive_doctrine_hooks`` shuffles
 this sequence, so its order is an input to every ``auto:`` draw — sorting it
-would silently re-roll every auto-derived caseload. Insertion order preserves
-the thirteen entries' existing relative positions exactly.
+would silently re-roll every auto-derived caseload.
+"""
+
+MEDICAL_STORY_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)
+"""All fifteen hooks, in content-table order — the medical-story-gated pool.
+
+Selected only when the M3 medical-story gate (``scenario.medical_history``) is
+present, and wired in by a later AJC-62 build step; no additional RNG draw may
+be introduced to choose between the pools (AJC-62 R7). Defined beside its
+legacy sibling so the pair is one reviewable seam rather than two lists that
+can drift apart silently.
 """
 
 _MECHANISMS: Mapping[str, tuple[str, ...]] = {
@@ -3327,7 +3608,7 @@ def _derive_doctrine_hooks(
     if rng.random() < profile.doctrine_hook_rate:
         pool = [
             hook
-            for hook in _DOCTRINE_POOL
+            for hook in LEGACY_DOCTRINE_POOL
             if hook not in hooks and hook_is_supported(hook, facts)
         ]
         rng.shuffle(pool)

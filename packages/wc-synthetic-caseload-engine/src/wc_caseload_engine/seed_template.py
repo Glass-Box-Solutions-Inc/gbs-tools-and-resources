@@ -164,10 +164,28 @@ lifecycle:
 # and loads cleanly; only internal incoherence (dangling references,
 # impossible lifecycles, percentages that cannot sum) fails validation.
 #
-# Hikida/King is TYPED, never an enum hook: claim_type
+# Hikida/King semantics are TYPED, not carried by the enum hook: claim_type
 # compensable_consequence + treatment_causation (sole_cause |
 # contributing_cause) + requested_apportionment (apply | refuse) state the
-# narrowed Justice rule, and both wrong directions grade unsupportable.
+# narrowed Justice rule, and both wrong directions grade unsupportable. The
+# hikida_treatment_carveout hook (AJC-62) is doctrine content/pool machinery
+# and never drawn on a case without scenario.medical_history.
+#
+# AJC-62 (M3) extends the explicit vocabulary. Conditions may state
+# psych_injury_kind (direct | compensable_consequence, psychiatric body_system
+# only); contentions and opinions may characterise it too, and may diverge —
+# divergence is case content. Opinions gain event_kind (base_report |
+# supplemental_report | deposition; responses carry a QME/AME author,
+# responds_to_opinion_id, revision_kind, and no fresh examination),
+# concurs_with_contention_ids / defers_contention_ids (pairwise disjoint with
+# endorses/rejects), and aoe_coe_finding (industrial | nonindustrial |
+# deferred) + aoe_coe_rationale. contention_documents (up to 15 cdoc-NN
+# entries: opinion_report | advocacy | objection | supplemental_request |
+# supplemental_report | qme_deposition) author the contention loop explicitly;
+# sample_contention_documents: false keeps exactly those. A defense-authored
+# objection/request/deposition names at least one defense contest theory.
+# lifecycle.ur_dispute.imr_application states explicit IMR application
+# content; omitted fields REMAIN omitted — sparse content is the register.
 #
 # scenario:
 #   medical_history:
