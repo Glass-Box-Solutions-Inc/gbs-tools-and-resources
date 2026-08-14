@@ -2553,6 +2553,7 @@ def _without_legal_phrase_exemptions(text: str) -> str:
         .replace("good faith", "")
         .replace("adequate examination", "")
         .replace("adequate history", "")
+        .replace("adequate effort", "")
         .replace("adequate understanding", "")
     )
 
@@ -2599,6 +2600,9 @@ def test_r90_allows_clinical_adequate_phrases_but_rejects_quality_commentary() -
         "adequate understanding."
     )
     assert _r90_text_findings(clinical, "probe") == []
+    assert (
+        _r90_text_findings("The testing also showed adequate effort.", "probe") == []
+    )
     assert _r90_text_findings("adequate report", "probe") == [
         "forbidden production vocabulary at probe:adequate"
     ]
@@ -2710,6 +2714,9 @@ def _scan_assertion_leakage(
     def note_reserved(payload: Any, where: str) -> None:
         findings.extend(_leakage_reserved_key_findings(payload, where))
         findings.extend(_private_psych_register_findings(payload, where))
+        short = Path(where).name
+        if short in ("seed.yaml", "case_facts.yaml"):
+            findings.extend(_private_psych_register_findings(payload, short))
 
     def note_r90_vocabulary(payload: Any, where: str) -> None:
         findings.extend(_r90_text_findings(json.dumps(payload, default=str), where))

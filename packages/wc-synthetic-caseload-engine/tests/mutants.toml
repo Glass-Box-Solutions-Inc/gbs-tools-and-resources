@@ -2696,7 +2696,25 @@ id = 'm20-10'
 title = 'clinical adequate phrases lose their R90 exemptions'
 file = 'tests/test_medical_assertions.py'
 test = 'tests/test_medical_assertions.py::test_r90_allows_clinical_adequate_phrases_but_rejects_quality_commentary'
-find = '''        .replace("adequate history", "")
+find = '''        .replace("adequate examination", "")
+        .replace("adequate history", "")
+        .replace("adequate effort", "")
         .replace("adequate understanding", "")'''
 replace = '''        # clinical adequate phrases are no longer exempt'''
-note = 'AJC-62 step 11. OCR proved adequate history and adequate understanding are clinical foundation phrases rather than renderer-quality commentary; the fast polarity guard permits both while still rejecting adequate report.'
+note = 'AJC-62 step 11. OCR proved adequate history, adequate effort, and adequate understanding are clinical foundation phrases rather than renderer-quality commentary; the fast polarity guard permits all three while still rejecting adequate report.'
+
+[[mutant]]
+id = 'm20-11'
+title = 'copied-seed private key positions report only full paths'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
+find = '''    def note_reserved(payload: Any, where: str) -> None:
+        findings.extend(_leakage_reserved_key_findings(payload, where))
+        findings.extend(_private_psych_register_findings(payload, where))
+        short = Path(where).name
+        if short in ("seed.yaml", "case_facts.yaml"):
+            findings.extend(_private_psych_register_findings(payload, short))'''
+replace = '''    def note_reserved(payload: Any, where: str) -> None:
+        findings.extend(_leakage_reserved_key_findings(payload, where))
+        findings.extend(_private_psych_register_findings(payload, where))'''
+note = 'AJC-62 step 11. If basename-only private-register reporting is removed, copied-seed and copied-case_facts plants still emit reserved-key tokens in raw bytes but lose the structured-key/value position assertions in the copied-tree positive-control test.'
