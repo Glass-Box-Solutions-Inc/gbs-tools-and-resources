@@ -33,12 +33,23 @@ from __future__ import annotations
 
 import random
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from itertools import pairwise
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from wc_caseload_engine.medical_assertions import (
+        ContentionParty,
+        DefenseContestTheory,
+    )
+    from wc_caseload_engine.medical_story import (
+        ContentionSurface,
+        ImrApplicationContent,
+        MedicalUrPlan,
+    )
 
 from wc_caseload_engine.case_facts import resolve_has_surgery
 from wc_caseload_engine.doc_controls import (
@@ -47,7 +58,7 @@ from wc_caseload_engine.doc_controls import (
     TRACK_SUPPORTING,
     DocumentCandidate,
 )
-from wc_caseload_engine.seeds import ANCHOR_DATE, BODY_PART_CATALOG, CaseSeed
+from wc_caseload_engine.seeds import ANCHOR_DATE, BODY_PART_CATALOG, CaseSeed, ImrOutcome
 from wc_caseload_engine.substrate import import_substrate
 from wc_caseload_engine.taxonomy import effective_taxonomy
 
@@ -64,6 +75,10 @@ ROLE_PHYSICIAN = "physician"
 ROLE_COURT = "court"
 ROLE_EMPLOYER = "employer"
 ROLE_LIEN_CLAIMANT = "lien_claimant"
+ROLE_COURT_REPORTER = "court_reporter"
+"""A deposition transcript's base-document author (AJC-62 R35). The examining
+party stays separately available through the candidate's
+``contention_actor_party`` binding."""
 
 # ---------------------------------------------------------------------------
 # Seed -> substrate parameter mapping
@@ -320,7 +335,15 @@ def author_role_for(subtype: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class DatedCandidate:
-    """One proposed document with its date, track and provenance."""
+    """One proposed document with its date, track and provenance.
+
+    The ``medical_opinion_id`` block below is the AJC-62 (M3) explicit
+    document-to-assertion binding (R5/R35): internal planning state that must
+    survive controls, perspective resolution, date fitting, sorting and final
+    index assignment, and must never be exported to the ordinary manifest.
+    All fields default to their absent state, so every pre-M3 construction
+    site and every history-only document is unchanged.
+    """
 
     subtype: str
     doc_date: date
@@ -329,16 +352,47 @@ class DatedCandidate:
     author_role: str = ROLE_APPLICANT_ATTORNEY
     stage: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    medical_opinion_id: str | None = None
+    spoken_contention_ids: tuple[str, ...] = ()
+    contention_surface: ContentionSurface | None = None
+    template_subtype: str | None = None
+    """Internal substrate dispatch key (R2/R35). Never replaces the canonical
+    subtype in ``manifest.json``, filenames, controls or taxonomy checks."""
+
+    target_medical_opinion_id: str | None = None
+    contention_actor_party: ContentionParty | None = None
+    defense_contest_theories: tuple[DefenseContestTheory, ...] = ()
+    imr_target_denial_date: date | None = None
+    imr_application_content: ImrApplicationContent | None = None
+    imr_outcome: ImrOutcome | None = None
+    medical_story_render_key: tuple[object, ...] | None = None
+    """R45/R59 semantic render identity for a bound M3 document.
+
+    Unbound candidates receive their final identity only after sorting and
+    author-role resolution. This field carries a binding's pre-ID ``D`` key
+    through controls, date fitting, shaping, and reconciliation.
+    """
 
     def to_candidate(self, parent_type: str | None = None) -> DocumentCandidate:
-        """Adapt to the control resolver's input type."""
+        """Adapt to the control resolver's input type.
+
+        The complete ``metadata`` mapping rides along (R36): the resolver's
+        view of a candidate must not erase the ``contention_loop_source``
+        provenance the medical-story planner stamped on it. Legacy candidates
+        carry an empty mapping, so their adapter output is unchanged byte for
+        byte.
+        """
         return DocumentCandidate(
             subtype=self.subtype,
             priority=self.priority,
             track=self.track,
             parent_type=parent_type,
             count=1,
-            metadata={"stage": self.stage, "author_role": self.author_role},
+            metadata={
+                "stage": self.stage,
+                "author_role": self.author_role,
+                **self.metadata,
+            },
         )
 
 
@@ -521,16 +575,12 @@ def fit_track(
         ceiling=ceiling,
         label=label,
     )
+    # ``replace`` rather than a field-by-field reconstruction: the M3 binding
+    # fields (R5/R35) must survive date fitting, and a rebuild that names only
+    # the pre-M3 seven would erase them silently. For legacy candidates the two
+    # spellings are identical.
     out = [
-        DatedCandidate(
-            subtype=candidate.subtype,
-            doc_date=doc_date,
-            track=candidate.track,
-            priority=candidate.priority,
-            author_role=candidate.author_role,
-            stage=candidate.stage,
-            metadata=candidate.metadata,
-        )
+        replace(candidate, doc_date=doc_date)
         for candidate, doc_date in zip(candidates, fitted, strict=True)
     ]
 
@@ -651,7 +701,9 @@ def _body_part_category(seed: CaseSeed) -> str:
     return "spine"
 
 
-def seed_to_case_parameters(seed: CaseSeed) -> Any:
+def seed_to_case_parameters(
+    seed: CaseSeed, medical_ur_plan: MedicalUrPlan | None = None
+) -> Any:
     """Build the substrate's :class:`CaseParameters` from a seed.
 
     ``has_liens`` is deliberately forced to ``False``: the substrate's lien
@@ -672,13 +724,26 @@ def seed_to_case_parameters(seed: CaseSeed) -> Any:
     )
 
     ur = lifecycle.ur_dispute
+    effective_decision = (
+        medical_ur_plan.effective_decision
+        if medical_ur_plan is not None
+        else ur.decision
+    )
+    effective_imr = (
+        medical_ur_plan.imr_requested if medical_ur_plan is not None else ur.imr
+    )
+    effective_imr_outcome = (
+        medical_ur_plan.effective_imr_outcome
+        if medical_ur_plan is not None
+        else ur.imr_outcome
+    )
     return lifecycle_engine.CaseParameters(
         claim_response=lifecycle.claim_response,
         has_attorney=True,
         has_ur_dispute=ur.enabled,
-        ur_decision=UR_DECISION_MAP.get(ur.decision or "", "random"),
-        imr_filed=ur.imr,
-        imr_outcome=ur.imr_outcome or "random",
+        ur_decision=UR_DECISION_MAP.get(effective_decision or "", "random"),
+        imr_filed=effective_imr,
+        imr_outcome=effective_imr_outcome or "random",
         eval_type=lifecycle.eval_type,
         resolution_type=RESOLUTION_MAP[lifecycle.resolution.type],
         # Resolved in one place so the ledger and the planned document set can
@@ -737,10 +802,14 @@ def _priority_for(subtype: str, stage: str) -> tuple[int, str]:
 # ---------------------------------------------------------------------------
 
 
-def walk_core_track(seed: CaseSeed, timeline: CaseTimeline) -> list[DatedCandidate]:
+def walk_core_track(
+    seed: CaseSeed,
+    timeline: CaseTimeline,
+    medical_ur_plan: MedicalUrPlan | None = None,
+) -> list[DatedCandidate]:
     """Walk the substrate DAG and return normalized, dated core-track candidates."""
     lifecycle_engine = import_substrate("data.lifecycle_engine")
-    params = seed_to_case_parameters(seed)
+    params = seed_to_case_parameters(seed, medical_ur_plan)
     walk_rng = seed.rng("walk")
     date_rng = seed.rng("walk-dates")
 
@@ -936,6 +1005,212 @@ def _guaranteed_ur_documents(
         ceiling=timeline.horizon,
         label=f"ur:{seed.case_id}",
     )
+
+
+_GATED_UR_WALK_SUBTYPES = frozenset(
+    {
+        "MEDICAL_TREATMENT_AUTHORIZATION_RFA",
+        "UTILIZATION_REVIEW_DECISION_REGULAR",
+        "MEDICAL_TREATMENT_DENIAL_UR",
+        "MEDICAL_TREATMENT_AUTHORIZATION",
+        "IMR_APPLICATION_FORM",
+        "IMR_DETERMINATION_FORM",
+        "INDEPENDENT_MEDICAL_REVIEW_DECISION",
+    }
+)
+
+
+def _gated_ur_documents(
+    seed: CaseSeed,
+    timeline: CaseTimeline,
+    rng: random.Random,
+) -> tuple[list[DatedCandidate], MedicalUrPlan]:
+    """R39's one governed UR/IMR chain and its completed semantic plan.
+
+    This is intentionally separate from :func:`_guaranteed_ur_documents`.
+    The old function is the feature-absent byte path and remains untouched;
+    this branch uses the same guarantee draws for the existing RFA/UR/denial
+    spine, then semantic M3 streams for request/outcome/date decisions.
+    """
+    from wc_caseload_engine import medical_assertions as assertions_module
+    from wc_caseload_engine.medical_assertions import MedicalAssertionError
+    from wc_caseload_engine.medical_story import (
+        _medical_ur_stream_key,
+        derive_medical_ur_plan,
+    )
+
+    initial = derive_medical_ur_plan(seed)
+    if initial is None:  # pragma: no cover - caller checks both gates
+        raise MedicalAssertionError("gated UR derivation returned no plan")
+
+    rfa_date = timeline.injury_date + timedelta(days=rng.randint(60, 240))
+    ur_date = rfa_date + timedelta(days=rng.randint(3, 5))
+    decision_notice_date = ur_date + timedelta(
+        days=rng.randint(1, 2) if initial.effective_decision == "upheld" else rng.randint(1, 10)
+    )
+    completed = derive_medical_ur_plan(
+        seed,
+        target_denial_date=(
+            decision_notice_date if initial.effective_decision == "upheld" else None
+        ),
+        resolved_decision=initial.effective_decision,
+    )
+    if completed is None:  # pragma: no cover - same gate as initial
+        raise MedicalAssertionError("gated UR completion returned no plan")
+
+    docs = [
+        DatedCandidate(
+            subtype="MEDICAL_TREATMENT_AUTHORIZATION_RFA",
+            doc_date=rfa_date,
+            priority=14,
+            author_role=ROLE_PHYSICIAN,
+            stage="ur_dispute",
+        ),
+        DatedCandidate(
+            subtype="UTILIZATION_REVIEW_DECISION_REGULAR",
+            doc_date=ur_date,
+            priority=12,
+            author_role=ROLE_CARRIER,
+            stage="ur_dispute",
+        ),
+        DatedCandidate(
+            subtype=(
+                "MEDICAL_TREATMENT_DENIAL_UR"
+                if completed.effective_decision == "upheld"
+                else "MEDICAL_TREATMENT_AUTHORIZATION"
+            ),
+            doc_date=decision_notice_date,
+            priority=12 if completed.effective_decision == "upheld" else 16,
+            author_role=ROLE_CARRIER,
+            stage=(
+                "ur_dispute"
+                if completed.effective_decision == "upheld"
+                else "ur_decision"
+            ),
+        ),
+    ]
+
+    if completed.imr_requested:
+        denial_date = decision_notice_date
+        # Authored legacy IMR chains consumed these two guarantee draws before
+        # M3 existed. Draw-and-discard keeps every later guarantee decision at
+        # the exact old position; a request created only by M3 consumes none.
+        if completed.imr_was_authored:
+            rng.randint(10, 30)
+            rng.randint(30, 60)
+
+        application_lag = assertions_module._medical_story_rng(
+            seed,
+            "imr-application-lag",
+            _medical_ur_stream_key(seed, denial_date),
+        ).randint(*assertions_module.IMR_APPLICATION_LAG_DAYS.value)
+        application_date = denial_date + timedelta(days=application_lag)
+        decision_lag = assertions_module._medical_story_rng(
+            seed,
+            "imr-decision-lag",
+            _medical_ur_stream_key(seed, application_date),
+        ).randint(*assertions_module.IMR_DECISION_LAG_DAYS.value)
+        docs.extend(
+            (
+                DatedCandidate(
+                    subtype="IMR_APPLICATION_FORM",
+                    doc_date=application_date,
+                    priority=12,
+                    author_role=ROLE_APPLICANT_ATTORNEY,
+                    stage="imr_appeal",
+                    imr_target_denial_date=denial_date,
+                ),
+                DatedCandidate(
+                    subtype="INDEPENDENT_MEDICAL_REVIEW_DECISION",
+                    doc_date=application_date + timedelta(days=decision_lag),
+                    priority=12,
+                    author_role=ROLE_CARRIER,
+                    stage="imr_appeal",
+                    imr_target_denial_date=denial_date,
+                    imr_outcome=completed.effective_imr_outcome,
+                ),
+            )
+        )
+
+    fitted = fit_track(
+        docs,
+        floor=timeline.injury_date + timedelta(days=1),
+        ceiling=timeline.horizon,
+        label=f"medical-story:ur:{seed.case_id}",
+    )
+    fitted_denial = next(
+        (
+            item.doc_date
+            for item in fitted
+            if item.subtype == "MEDICAL_TREATMENT_DENIAL_UR"
+        ),
+        None,
+    )
+    if completed.imr_requested and fitted_denial != decision_notice_date:
+        raise TimelineInvariantError(
+            "the governed UR/IMR runway moved its hard denial anchor; semantic "
+            "IMR keys must bind the actual denial date"
+        )
+    return fitted, completed
+
+
+def _attach_imr_application_content(
+    seed: CaseSeed,
+    candidates: list[DatedCandidate],
+    plan: MedicalUrPlan,
+    medical_history: Any,
+    case_facts: Any,
+) -> tuple[list[DatedCandidate], MedicalUrPlan]:
+    """Populate the application after the full earlier-record set is known."""
+    from wc_caseload_engine.medical_story import resolve_imr_application_content
+
+    application = next(
+        (item for item in candidates if item.subtype == "IMR_APPLICATION_FORM"),
+        None,
+    )
+    if application is None or application.imr_target_denial_date is None:
+        return candidates, plan
+    denial_date = application.imr_target_denial_date
+    taxonomy = effective_taxonomy()
+    earlier_records = tuple(
+        item.subtype
+        for item in sorted(candidates, key=lambda entry: (entry.doc_date, entry.subtype))
+        if item.doc_date < denial_date
+        and item.subtype != "MEDICAL_TREATMENT_DENIAL_UR"
+        and (
+            taxonomy.parent_of(item.subtype) in {"MEDICAL_CLINICAL", "MEDICAL_LEGAL"}
+            or item.subtype
+            in {
+                "MEDICAL_TREATMENT_AUTHORIZATION_RFA",
+                "UTILIZATION_REVIEW_DECISION_REGULAR",
+            }
+        )
+    )
+    surgery = getattr(case_facts, "surgery", None)
+    if surgery is not None and getattr(surgery, "names_a_procedure", False):
+        body_part = getattr(surgery, "body_part", None) or "the injured body part"
+        disputed_treatment = (
+            getattr(surgery, "cpt_description", None)
+            or f"unlisted surgical treatment of {body_part}"
+        )
+    else:
+        region = seed.injury.body_parts[0].part.replace("_", " ")
+        disputed_treatment = f"requested treatment for the {region}"
+    content = resolve_imr_application_content(
+        seed,
+        plan,
+        target_denial_date=denial_date,
+        medical_history=medical_history,
+        earlier_record_subtypes=earlier_records,
+        disputed_treatment=disputed_treatment,
+    )
+    updated = [
+        replace(item, imr_application_content=content)
+        if item is application
+        else item
+        for item in candidates
+    ]
+    return updated, plan.model_copy(update={"imr_application": content})
 
 
 def _guaranteed_death_documents(
@@ -1164,16 +1439,34 @@ def _enforce_singletons(candidates: list[DatedCandidate]) -> list[DatedCandidate
     return out
 
 
-def build_core_candidates(seed: CaseSeed, timeline: CaseTimeline) -> list[DatedCandidate]:
-    """Full core track: the substrate walk plus the seed's deterministic guarantees.
-
-    Guarantees are appended after the walk and de-duplicated by
-    ``(subtype, date)`` so a probabilistic hit and a guarantee do not double up.
-    """
+def build_core_candidates_with_medical_ur_plan(
+    seed: CaseSeed,
+    timeline: CaseTimeline,
+    *,
+    medical_history: Any = None,
+    case_facts: Any = None,
+) -> tuple[list[DatedCandidate], MedicalUrPlan | None]:
+    """Build the core track and, only behind R1's gate, its R39 UR plan."""
     rng = seed.rng("guarantees")
-    candidates = walk_core_track(seed, timeline)
-    candidates.extend(_guaranteed_denial_documents(seed, timeline, rng))
-    candidates.extend(_guaranteed_ur_documents(seed, timeline, rng))
+    medical_ur_plan: MedicalUrPlan | None = None
+    if seed.scenario.medical_history is not None and seed.lifecycle.ur_dispute.enabled:
+        # Preserve the guarantees stream's old order: claim-denial guarantees
+        # consume first, then the UR chain. The substrate walk has its own RNG.
+        denial_documents = _guaranteed_denial_documents(seed, timeline, rng)
+        ur_documents, medical_ur_plan = _gated_ur_documents(seed, timeline, rng)
+        candidates = [
+            item
+            for item in walk_core_track(seed, timeline, medical_ur_plan)
+            if item.subtype not in _GATED_UR_WALK_SUBTYPES
+        ]
+        candidates.extend(denial_documents)
+        candidates.extend(ur_documents)
+    else:
+        # Exact pre-M3 path. Do not reorder or factor these calls: the shared
+        # guarantee RNG and output bytes are frozen when the history gate is absent.
+        candidates = walk_core_track(seed, timeline)
+        candidates.extend(_guaranteed_denial_documents(seed, timeline, rng))
+        candidates.extend(_guaranteed_ur_documents(seed, timeline, rng))
     candidates.extend(_guaranteed_death_documents(seed, timeline, rng))
     candidates.extend(_guaranteed_eval_documents(seed, timeline, rng))
     candidates.extend(_guaranteed_resolution_documents(seed, timeline, rng))
@@ -1187,6 +1480,14 @@ def build_core_candidates(seed: CaseSeed, timeline: CaseTimeline) -> list[DatedC
         seen.add(key)
         unique.append(candidate)
     unique = _enforce_singletons(unique)
+    if medical_ur_plan is not None:
+        unique, medical_ur_plan = _attach_imr_application_content(
+            seed,
+            unique,
+            medical_ur_plan,
+            medical_history,
+            case_facts,
+        )
     unique.sort(key=lambda item: (item.doc_date, item.subtype))
     log.debug(
         "lifecycle.core_built",
@@ -1194,7 +1495,15 @@ def build_core_candidates(seed: CaseSeed, timeline: CaseTimeline) -> list[DatedC
         candidates=len(unique),
         stage=seed.lifecycle.target_stage,
     )
-    return unique
+    return unique, medical_ur_plan
+
+
+def build_core_candidates(seed: CaseSeed, timeline: CaseTimeline) -> list[DatedCandidate]:
+    """Full core track, preserving the historical list-returning API."""
+    candidates, _medical_ur_plan = build_core_candidates_with_medical_ur_plan(
+        seed, timeline
+    )
+    return candidates
 
 
 def to_document_candidates(
@@ -1227,6 +1536,7 @@ __all__ = [
     "TimelineInvariantError",
     "author_role_for",
     "build_core_candidates",
+    "build_core_candidates_with_medical_ur_plan",
     "build_timeline",
     "fit_dates",
     "fit_track",

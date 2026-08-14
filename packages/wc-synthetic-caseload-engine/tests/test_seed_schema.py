@@ -686,7 +686,10 @@ class TestFirefighterPresumptionCannotBeAutoDrawn:
             ):
                 drawn.update(seed.lifecycle.doctrine_hooks)
 
-        never = set(seeds._DOCTRINE_POOL) - drawn
+        # The feature-absent draw reads LEGACY_DOCTRINE_POOL (AJC-62 R7):
+        # hikida_treatment_carveout is outside it by design, so the sweep's
+        # universe is the legacy fourteen, not the fifteen-member enum.
+        never = set(seeds.LEGACY_DOCTRINE_POOL) - drawn
         assert never == {"firefighter_presumption"}, (
             "the set of never-auto-drawn hooks changed. If firefighter_presumption "
             "is now drawn, derivation learned to supply occupation/industry and this "

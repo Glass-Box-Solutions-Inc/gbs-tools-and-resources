@@ -1,0 +1,84 @@
+# AJC-62 R67/R77 step 8 — explicit authority and sampled IMR structure.
+caseload_id: medical-story-imr-matrix
+
+defaults:
+  injury:
+    type: specific
+    date_of_injury: 2024-03-01
+    body_parts:
+      - {part: lumbar_spine}
+  lifecycle:
+    target_stage: medical_legal
+    claim_response: accepted
+    eval_type: qme
+  scenario:
+    medical_history:
+      sample_conditions: false
+      conditions:
+        - label: lumbar disc disorder
+          origin: industrial
+          body_part: lumbar_spine
+          icd10: M51.26
+          severity: moderate
+          trajectory: progressive
+          symptomatic_before_doi: false
+
+cases:
+  - case_id: imr-authored-false-upheld
+    rng_seed: 620311
+    lifecycle:
+      ur_dispute:
+        enabled: true
+        decision: upheld
+        imr: false
+
+  - case_id: imr-authored-true-upheld
+    rng_seed: 620312
+    lifecycle:
+      ur_dispute:
+        enabled: true
+        decision: upheld
+        imr: true
+        imr_outcome: upheld
+        imr_application:
+          disputed_treatment: lumbar epidural steroid injection
+          diagnosis_icd10: M51.26
+          ur_determination_attached: true
+          supporting_record_subtypes: [TREATING_PHYSICIAN_REPORT_PR2]
+          clinical_rebuttal: >-
+            The utilization-review determination denied lumbar epidural steroid
+            injection because the submitted record did not establish the cited
+            criterion. The treating physician report documents persistent
+            lumbar symptoms, which addresses the stated criterion because the
+            authored request identifies that report as its clinical support.
+          mtus_citations:
+            - MTUS Low Back Disorders Guideline — epidural injection criterion
+
+  - case_id: imr-sampled-upheld
+    rng_seed: 620313
+    lifecycle:
+      ur_dispute:
+        enabled: true
+        decision: upheld
+
+  - case_id: imr-overturned
+    rng_seed: 620314
+    lifecycle:
+      ur_dispute:
+        enabled: true
+        decision: overturned
+
+  - case_id: imr-sparse-explicit
+    rng_seed: 620315
+    lifecycle:
+      ur_dispute:
+        enabled: true
+        decision: upheld
+        imr: true
+        imr_outcome: overturned
+        imr_application:
+          disputed_treatment: lumbar epidural steroid injection
+          clinical_rebuttal: >-
+            The requested treatment is medically necessary for the industrial
+            condition. Reconsideration of the utilization-review determination
+            is requested.

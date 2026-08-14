@@ -53,6 +53,30 @@ from wc_caseload_engine.seeds import (
 DOI = dt.date(2022, 4, 11)
 ANCHOR = dt.date(2026, 1, 1)
 
+EXPECTED_DOCTRINE_HOOKS = (
+    "ogilvie",
+    "almaraz_guzman",
+    "benson",
+    "escobedo",
+    "kite",
+    "going_and_coming",
+    "sibtf",
+    "death_dependency",
+    "lc3208_3_psych",
+    "gfpa",
+    "firefighter_presumption",
+    "imr_constitutionality",
+    "ab5_dynamex",
+    "lc4664_prior_award",
+    "hikida_treatment_carveout",
+)
+"""The frozen fifteen-member doctrine oracle, in declaration order (AJC-62 R72).
+
+A deliberate independent literal — never derived from the enum it checks. Both
+doctrine test modules freeze this exact tuple so a drifted declaration cannot
+re-derive its own oracle green.
+"""
+
 
 def _context(**overrides: Any) -> AssertionValidationContext:
     values: dict[str, Any] = {
@@ -234,10 +258,57 @@ def _seed_body(scenario: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _m3_model_inventory() -> tuple[type, ...]:
+    """Every AJC-62 step-2 model: internal records plus story projections."""
+    from wc_caseload_engine.medical_assertions import (
+        ContentionDocumentBinding,
+        MedicalAssertionPlan,
+    )
+    from wc_caseload_engine.medical_story import (
+        DocumentMedicalStory,
+        ImrApplicationContent,
+        MedicalStoryPlan,
+        MedicalUrPlan,
+        StoryApportionment,
+        StoryCondition,
+        StoryContention,
+        StoryDemographics,
+        StoryMedicalOpinion,
+        StoryPriorAward,
+        StoryPriorClaim,
+        StoryRecordReference,
+    )
+
+    return (
+        ContentionDocumentBinding,
+        MedicalAssertionPlan,
+        StoryDemographics,
+        StoryCondition,
+        StoryPriorClaim,
+        StoryPriorAward,
+        StoryRecordReference,
+        StoryContention,
+        StoryMedicalOpinion,
+        StoryApportionment,
+        DocumentMedicalStory,
+        MedicalStoryPlan,
+        ImrApplicationContent,
+        MedicalUrPlan,
+    )
+
+
 def test_assertion_models_are_frozen_strict_and_bound_their_fields() -> None:
-    for model in (Contention, MedicalOpinion, ApportionmentAssertion, MedicalAssertionLedger):
-        assert model.model_config.get("frozen") is True
-        assert model.model_config.get("extra") == "forbid"
+    from wc_caseload_engine.medical_story import StoryCondition
+
+    for model in (
+        Contention,
+        MedicalOpinion,
+        ApportionmentAssertion,
+        MedicalAssertionLedger,
+        *_m3_model_inventory(),
+    ):
+        assert model.model_config.get("frozen") is True, model.__name__
+        assert model.model_config.get("extra") == "forbid", model.__name__
     with pytest.raises(ValidationError):
         Contention(**{**_contention().model_dump(), "surprise": 1})
     frozen = _contention()
@@ -247,29 +318,64 @@ def test_assertion_models_are_frozen_strict_and_bound_their_fields() -> None:
         _assertion(industrial_percent=101)
     with pytest.raises(ValidationError):
         _opinion(reviewed_condition_ids=tuple(f"cond-{i:02d}" for i in range(9)))
+    story_condition = StoryCondition(
+        id="cond-01",
+        label="lumbar disc degeneration",
+        body_system="musculoskeletal",
+        severity="moderate",
+        trajectory="stable",
+    )
+    with pytest.raises(ValidationError):
+        StoryCondition(**{**story_condition.model_dump(), "quality": "supported"})
+    with pytest.raises(ValidationError):
+        story_condition.label = "edited"  # type: ignore[misc]
 
 
 def test_seed_assertion_models_have_no_quality_field() -> None:
-    """The copied seed is analyzer-visible; a seed quality field is a leak."""
+    """The copied seed is analyzer-visible; a seed quality field is a leak.
+
+    Expanded for AJC-62 step 2: every new seed entry, internal binding record
+    and story projection model is quality-free — R26 forbids any new field
+    carrying ``quality``, a derived quality synonym, or an analyzer verdict,
+    and R39 forbids the ``thin``/``underworked``/``adequacy`` spellings too.
+    """
+    from wc_caseload_engine.seeds import ContentionDocumentEntry, ImrApplicationEntry
+
     for model in (
         ContentionEntry,
         MedicalOpinionEntry,
         ApportionmentAssertionEntry,
         MedicalAssertionsScenario,
+        ContentionDocumentEntry,
+        ImrApplicationEntry,
+        *_m3_model_inventory(),
     ):
-        assert "quality" not in model.model_fields, model.__name__
-        assert "rubric" not in model.model_fields, model.__name__
+        for reserved in (
+            "quality",
+            "rubric",
+            "thin",
+            "underworked",
+            "adequacy",
+            "grade",
+            "verdict",
+        ):
+            assert reserved not in model.model_fields, (model.__name__, reserved)
 
 
-def test_contention_doctrine_hooks_accept_exactly_the_shipped_fourteen_members() -> None:
-    """The fifteenth hook is AJC-62's; M2 types Hikida instead of enumerating it."""
-    hooks = tuple(sorted(typing.get_args(DoctrineHook.__value__)))
-    assert len(hooks) == 14
-    assert "hikida_treatment_carveout" not in hooks
-    for hook in hooks:
+def test_contention_doctrine_hooks_accept_exactly_the_frozen_fifteen_members_in_order() -> None:
+    """AJC-62 R72: the declaration IS the frozen oracle, order included.
+
+    Declaration order is load-bearing — the content table mirrors it and the
+    LEGACY/MEDICAL_STORY pool split slices it — so the comparison is against
+    the declaration directly, not a sorted view. Every member must also
+    round-trip through ``Contention``, proving the schema accepts exactly the
+    frozen vocabulary and nothing beside it.
+    """
+    assert typing.get_args(DoctrineHook.__value__) == EXPECTED_DOCTRINE_HOOKS
+    for hook in EXPECTED_DOCTRINE_HOOKS:
         assert _contention(doctrine_hooks=(hook,)).doctrine_hooks == (hook,)
     with pytest.raises(ValidationError):
-        _contention(doctrine_hooks=("hikida_treatment_carveout",))
+        _contention(doctrine_hooks=("not_a_doctrine_hook",))
 
 
 def test_typed_doctrine_grounding_union_round_trips_all_four_variants() -> None:
@@ -1481,13 +1587,23 @@ def test_absent_gate_returns_before_any_assertion_rng_is_constructed(
         pytest.fail("assertion RNG constructed while medical_assertions gate was absent")
 
     monkeypatch.setattr(module, "_assertion_rng", fail_if_called)
+    monkeypatch.setattr(module, "_medical_story_rng", fail_if_called)
 
     bare = parse_case_seed(_seed_body({}))
     assert module.derive_medical_assertions(bare, None) is None
+    # The gate lives in derive_medical_assertion_plan() (R32/R72 m19-1): the
+    # plan entry returns the empty plan — no ledger, no bindings — before any
+    # M2 or medical-story stream can exist.
+    bare_plan = module.derive_medical_assertion_plan(bare, None)
+    assert bare_plan.ledger is None
+    assert bare_plan.contention_documents == ()
 
     with_history = parse_case_seed(_seed_body({"medical_history": {}}))
     history = derive_medical_history(with_history)
     assert module.derive_medical_assertions(with_history, history) is None
+    gated_plan = module.derive_medical_assertion_plan(with_history, history)
+    assert gated_plan.ledger is None
+    assert gated_plan.contention_documents == ()
 
 
 def test_absent_gate_plan_has_no_assertion_ledger_warning_or_truth_channel() -> None:
@@ -1506,7 +1622,13 @@ def test_absent_gate_plan_has_no_assertion_ledger_warning_or_truth_channel() -> 
     assert "assertions" not in truth["channels"]
 
 
-def test_reasoned_revision_chain_is_valid() -> None:
+def test_reasoned_supplemental_revision_chain_is_valid() -> None:
+    """R72's stronger revision witness (replacing the M2 chain test): a true
+    R37 supplemental response — ``event_kind="supplemental_report"``, the
+    compatible ``revision_kind="revised_apportionment"``, the exact
+    responds-to/supersedes predecessor relationship, same QME author, no fresh
+    examination — is coherent, and the reasoned revision itself (item 10) is
+    not a defect (*Lindh*)."""
     first = _opinion(
         report_stage="interim",
         apportionment_state="deferred",
@@ -1516,7 +1638,11 @@ def test_reasoned_revision_chain_is_valid() -> None:
     revised = _opinion(
         "opn-02",
         report_date=dt.date(2023, 9, 1),
+        event_kind="supplemental_report",
+        revision_kind="revised_apportionment",
+        responds_to_opinion_id="opn-01",
         supersedes_opinion_id="opn-01",
+        examination_performed=False,
         revision_rationale="after reviewing all the previous data again",
     )
     assertion = _assertion(
@@ -1526,7 +1652,582 @@ def test_reasoned_revision_chain_is_valid() -> None:
     )
     ledger = _ledger(opinions=(first, revised), assertions=(assertion,))
     assert not _problems(ledger)
-    assert apportionment_quality(_world(), _context(), ledger, assertion) == "supported"
+    # The frozen M2 rubric predates response events: item 5a fires on ANY
+    # no-examination owner, and R37 forbids a fresh examination on a
+    # supplemental response, so this chain's single miss is exactly 5a and it
+    # grades thin under the shipped checklist. The reasoned revision (item 10)
+    # is NOT among the misses — that is the *Lindh* half the old test proved.
+    # Step 4's response-semantics remodel owns any response-aware 5a change;
+    # step 2 changes no grading.
+    assert escobedo_misses(_world(), ledger, assertion) == ("5a",)
+    assert apportionment_quality(_world(), _context(), ledger, assertion) == "thin"
+
+
+# ---------------------------------------------------------------------------
+# AJC-62 (M3) step 2 — model deltas, seed mirrors, and strict validation
+# ---------------------------------------------------------------------------
+
+EXPECTED_OPINION_EVENT_KINDS = ("base_report", "supplemental_report", "deposition")
+EXPECTED_OPINION_REVISION_KINDS = (
+    "unchanged_additional_reasoning",
+    "new_records_no_change",
+    "revised_causation",
+    "revised_apportionment",
+    "revised_causation_and_apportionment",
+)
+EXPECTED_OPINION_CONTENTION_DISPOSITIONS = (
+    "adopted",
+    "concurred",
+    "rejected",
+    "deferred",
+    "unaddressed",
+)
+EXPECTED_DEFENSE_CONTEST_THEORIES = (
+    "insufficient_investigation",
+    "post_termination",
+    "lack_of_substantial_medical_evidence",
+)
+EXPECTED_CONTEST_PATHS = (
+    "objection_only",
+    "objection_supplemental",
+    "objection_deposition",
+    "objection_supplemental_deposition",
+    "supplemental_only",
+    "supplemental_deposition",
+)
+EXPECTED_CONTENTION_DOCUMENT_KINDS = (
+    "opinion_report",
+    "advocacy",
+    "objection",
+    "supplemental_request",
+    "supplemental_report",
+    "qme_deposition",
+)
+EXPECTED_PSYCH_INJURY_KINDS = ("direct", "compensable_consequence")
+EXPECTED_AOE_COE_FINDINGS = ("industrial", "nonindustrial", "deferred")
+
+
+def test_m3_literals_are_exactly_the_frozen_vocabularies_in_order() -> None:
+    """R6/R26/R4: the declarations ARE the frozen vocabularies, order included."""
+    import wc_caseload_engine.medical_assertions as module
+    from wc_caseload_engine.medical_history import PsychInjuryKind
+    from wc_caseload_engine.medical_story import ContentionSurface
+
+    assert (
+        typing.get_args(module.OpinionEventKind.__value__)
+        == EXPECTED_OPINION_EVENT_KINDS
+    )
+    assert (
+        typing.get_args(module.OpinionRevisionKind.__value__)
+        == EXPECTED_OPINION_REVISION_KINDS
+    )
+    assert (
+        typing.get_args(module.OpinionContentionDisposition.__value__)
+        == EXPECTED_OPINION_CONTENTION_DISPOSITIONS
+    )
+    assert (
+        typing.get_args(module.DefenseContestTheory.__value__)
+        == EXPECTED_DEFENSE_CONTEST_THEORIES
+    )
+    assert typing.get_args(module.ContestPath.__value__) == EXPECTED_CONTEST_PATHS
+    assert (
+        typing.get_args(module.ContentionDocumentKind.__value__)
+        == EXPECTED_CONTENTION_DOCUMENT_KINDS
+    )
+    assert typing.get_args(PsychInjuryKind.__value__) == EXPECTED_PSYCH_INJURY_KINDS
+    assert typing.get_args(module.AoeCoeFinding.__value__) == EXPECTED_AOE_COE_FINDINGS
+    assert module.CDOC_ID_PATTERN == r"^cdoc-(0[1-9]|[1-9][0-9])$"
+    assert typing.get_args(ContentionSurface.__value__) == (
+        "advocacy",
+        "objection",
+        "supplemental_request",
+        "qme_deposition",
+    )
+
+
+def test_condition_psych_injury_kind_requires_a_psychiatric_body_system() -> None:
+    from wc_caseload_engine.medical_history import MedicalCondition
+    from wc_caseload_engine.seeds import MedicalConditionEntry
+
+    psychiatric = MedicalCondition(
+        id="cond-09",
+        key="seeded",
+        label="post-traumatic stress disorder",
+        body_system="psychiatric",
+        body_part="psyche",
+        psych_injury_kind="compensable_consequence",
+    )
+    assert psychiatric.psych_injury_kind == "compensable_consequence"
+    with pytest.raises(ValidationError, match="psychiatric"):
+        MedicalCondition(
+            id="cond-09",
+            key="seeded",
+            label="lumbar strain",
+            body_system="musculoskeletal",
+            psych_injury_kind="direct",
+        )
+    entry = MedicalConditionEntry(
+        label="post-traumatic stress disorder",
+        body_system="psychiatric",
+        body_part="psyche",
+        psych_injury_kind="direct",
+    )
+    assert entry.psych_injury_kind == "direct"
+    with pytest.raises(ValidationError, match="psychiatric"):
+        MedicalConditionEntry(label="lumbar strain", psych_injury_kind="direct")
+
+
+def _psych_world() -> AssertionWorldProjection:
+    return _world(
+        conditions=(
+            _condition(),
+            _condition(
+                "cond-02",
+                key="seeded",
+                label="post-traumatic stress disorder",
+                body_system="psychiatric",
+                body_part="psyche",
+                apportionment_targets=("psyche",),
+                wholly_unrelated=False,
+                symptomatic_before_doi=False,
+            ),
+        )
+    )
+
+
+def test_contention_and_opinion_psych_kind_require_a_psychiatric_anchor() -> None:
+    """R6: an anchored psych kind validates; an unanchored one fails §C."""
+    psych_world = _psych_world()
+    anchored = _contention(psych_injury_kind="direct", target_condition_id="cond-02")
+    assert not _problems(_ledger(contentions=(anchored,)), psych_world)
+    by_part = _contention(
+        psych_injury_kind="direct", target_condition_id=None, target_body_part="psyche"
+    )
+    assert not _problems(_ledger(contentions=(by_part,)), psych_world)
+    by_claim = _contention(psych_injury_kind="direct")
+    assert not _problems(
+        _ledger(contentions=(by_claim,)),
+        context=_context(current_body_parts=("lumbar_spine", "psyche")),
+    )
+    unanchored = _contention(psych_injury_kind="direct")
+    problems = _problems(_ledger(contentions=(unanchored,)))
+    assert (
+        "contention 'ctn-01' sets psych_injury_kind 'direct' without a "
+        "psychiatric target condition, a psyche target body part, or a psyche "
+        "claim body part"
+    ) in problems
+
+    reviewed = _opinion(
+        psych_injury_kind="compensable_consequence",
+        determination_kind="no_nonindustrial_share",
+        reviewed_condition_ids=("cond-02",),
+    )
+    assert not _problems(_ledger(opinions=(reviewed,)), psych_world)
+    via_contention = _opinion(
+        psych_injury_kind="compensable_consequence",
+        determination_kind="no_nonindustrial_share",
+        reviewed_condition_ids=(),
+        rejects_contention_ids=("ctn-01",),
+    )
+    assert not _problems(
+        _ledger(contentions=(anchored,), opinions=(via_contention,)), psych_world
+    )
+    stray = _opinion(
+        psych_injury_kind="direct", determination_kind="no_nonindustrial_share"
+    )
+    assert (
+        "medical opinion 'opn-01' sets psych_injury_kind 'direct' without a "
+        "psychiatric reviewed condition, a psyche claim body part, or a "
+        "referenced psychiatric contention"
+    ) in _problems(_ledger(opinions=(stray,)))
+
+
+def test_psych_kind_divergence_across_layers_is_legal_case_content() -> None:
+    """R6/R17: world consequence, applicant/PTP direct framing, QME consequence
+    re-derivation — all three layers disagree and the ledger stays coherent.
+    Divergence grades and renders; it never fails."""
+    psych_world = _psych_world()
+    applicant_direct = _contention(
+        claim_type="psych_add_on",
+        target_condition_id="cond-02",
+        target_body_part="psyche",
+        psych_injury_kind="direct",
+    )
+    ptp_direct = _opinion(
+        author_role="ptp",
+        report_stage="interim",
+        apportionment_state="deferred",
+        determination_kind=None,
+        report_date=dt.date(2023, 2, 1),
+        psych_injury_kind="direct",
+        aoe_coe_finding="industrial",
+        aoe_coe_rationale="the mechanism and clinical course support causation",
+        reviewed_condition_ids=("cond-02",),
+    )
+    qme_consequence = _opinion(
+        "opn-02",
+        report_date=dt.date(2023, 6, 1),
+        determination_kind="no_nonindustrial_share",
+        psych_injury_kind="compensable_consequence",
+        aoe_coe_finding="industrial",
+        reviewed_condition_ids=("cond-02",),
+    )
+    ledger = _ledger(
+        contentions=(applicant_direct,), opinions=(ptp_direct, qme_consequence)
+    )
+    assert not _problems(ledger, psych_world)
+
+
+def test_four_disposition_collections_are_pairwise_disjoint_and_resolve() -> None:
+    """R26: pairwise disjointness across all four collections, dangling refs
+    fail, and the M2 endorses/rejects template survives byte for byte."""
+    base = _contention()
+    for first, second in (
+        ("endorses_contention_ids", "concurs_with_contention_ids"),
+        ("endorses_contention_ids", "defers_contention_ids"),
+        ("concurs_with_contention_ids", "rejects_contention_ids"),
+        ("concurs_with_contention_ids", "defers_contention_ids"),
+        ("rejects_contention_ids", "defers_contention_ids"),
+    ):
+        overlapping = _opinion(**{first: ("ctn-01",), second: ("ctn-01",)})
+        problems = _problems(_ledger(contentions=(base,), opinions=(overlapping,)))
+        assert any("both" in p and "'ctn-01'" in p for p in problems), (first, second)
+    for collection, verb in (
+        ("concurs_with_contention_ids", "concurs with"),
+        ("defers_contention_ids", "defers"),
+    ):
+        dangling = _opinion(**{collection: ("ctn-77",)})
+        assert (
+            f"medical opinion 'opn-01' {verb} unknown contention 'ctn-77'"
+            in _problems(_ledger(opinions=(dangling,)))
+        )
+    both = _opinion(
+        endorses_contention_ids=("ctn-01",), rejects_contention_ids=("ctn-01",)
+    )
+    assert (
+        "medical opinion 'opn-01' both endorses and rejects contention 'ctn-01'"
+        in _problems(_ledger(contentions=(base,), opinions=(both,)))
+    )
+
+
+def test_response_opinion_structure_is_strict_and_base_reports_stay_free() -> None:
+    """R26/R27/R37 structure: each required response-opinion property has an
+    independent reject, and the ledger-level author-parity rule fires."""
+    with pytest.raises(ValidationError, match="base_report"):
+        _opinion(revision_kind="revised_causation")
+    with pytest.raises(ValidationError, match="PTP"):
+        _opinion(
+            author_role="ptp",
+            event_kind="supplemental_report",
+            revision_kind="new_records_no_change",
+            responds_to_opinion_id="opn-09",
+            examination_performed=False,
+        )
+    with pytest.raises(ValidationError, match="revision_kind"):
+        _opinion(
+            event_kind="supplemental_report",
+            responds_to_opinion_id="opn-09",
+            examination_performed=False,
+        )
+    with pytest.raises(ValidationError, match="responds_to_opinion_id"):
+        _opinion(
+            event_kind="supplemental_report",
+            revision_kind="new_records_no_change",
+            examination_performed=False,
+        )
+    with pytest.raises(ValidationError, match="examination"):
+        _opinion(
+            event_kind="deposition",
+            revision_kind="unchanged_additional_reasoning",
+            responds_to_opinion_id="opn-09",
+            examination_performed=True,
+        )
+    with pytest.raises(ValidationError, match="rationale"):
+        _opinion(
+            event_kind="deposition",
+            revision_kind="unchanged_additional_reasoning",
+            responds_to_opinion_id="opn-09",
+            examination_performed=False,
+            rationale=None,
+            revision_rationale=None,
+        )
+    # The seed mirror rejects the same shapes with its own dotted path.
+    with pytest.raises(ValidationError, match="medical_opinions"):
+        MedicalOpinionEntry(
+            id="opn-01",
+            author_role="ptp",
+            report_stage="final",
+            report_date=dt.date(2023, 6, 1),
+            apportionment_state="determined",
+            determination_kind="no_nonindustrial_share",
+            event_kind="deposition",
+            revision_kind="unchanged_additional_reasoning",
+            responds_to_opinion_id="opn-02",
+            rationale="testimony",
+        )
+    # §C: a response opinion keeps its predecessor's author role.
+    first = _opinion(
+        author_role="ame",
+        report_date=dt.date(2023, 2, 1),
+        determination_kind="no_nonindustrial_share",
+    )
+    mismatched = _opinion(
+        "opn-02",
+        author_role="qme",
+        event_kind="supplemental_report",
+        revision_kind="new_records_no_change",
+        responds_to_opinion_id="opn-01",
+        examination_performed=False,
+        report_date=dt.date(2023, 6, 1),
+        determination_kind="no_nonindustrial_share",
+    )
+    problems = _problems(
+        _ledger(opinions=(first, mismatched)), context=_context(eval_type="none")
+    )
+    assert (
+        "medical opinion 'opn-02' has author_role 'qme' but its predecessor "
+        "'opn-01' has author_role 'ame'; a supplemental or deposition opinion "
+        "keeps its predecessor's author"
+    ) in problems
+
+
+def _cdoc(**overrides: Any) -> Any:
+    from wc_caseload_engine.seeds import ContentionDocumentEntry
+
+    values: dict[str, Any] = {
+        "id": "cdoc-01",
+        "document_kind": "advocacy",
+        "target_medical_opinion_id": "opn-01",
+        "actor_party": "applicant",
+        "spoken_contention_ids": ["ctn-01"],
+    }
+    values.update(overrides)
+    return ContentionDocumentEntry(**values)
+
+
+def test_contention_document_entries_enforce_the_r40_field_matrix() -> None:
+    """R26/R40: the per-kind required/forbidden matrix, the defense-theory
+    rule, the cdoc ID pattern and the three-contention bundle cap."""
+    assert _cdoc().document_kind == "advocacy"
+    assert (
+        _cdoc(
+            id="cdoc-02",
+            document_kind="objection",
+            actor_party="defense",
+            defense_contest_theories=["post_termination"],
+        ).actor_party
+        == "defense"
+    )
+    assert (
+        _cdoc(
+            id="cdoc-03",
+            document_kind="opinion_report",
+            medical_opinion_id="opn-01",
+            target_medical_opinion_id=None,
+            actor_party=None,
+            spoken_contention_ids=[],
+        ).medical_opinion_id
+        == "opn-01"
+    )
+    assert (
+        _cdoc(
+            id="cdoc-04",
+            document_kind="supplemental_report",
+            medical_opinion_id="opn-02",
+            target_medical_opinion_id="opn-01",
+            actor_party=None,
+            spoken_contention_ids=[],
+        ).target_medical_opinion_id
+        == "opn-01"
+    )
+    assert (
+        _cdoc(
+            id="cdoc-05",
+            document_kind="qme_deposition",
+            medical_opinion_id="opn-03",
+            target_medical_opinion_id="opn-02",
+            actor_party="defense",
+            defense_contest_theories=["insufficient_investigation"],
+        ).document_kind
+        == "qme_deposition"
+    )
+
+    with pytest.raises(ValidationError):
+        _cdoc(id="cdoc-00")
+    with pytest.raises(ValidationError, match="medical_opinion_id"):
+        _cdoc(
+            document_kind="opinion_report",
+            target_medical_opinion_id=None,
+            actor_party=None,
+            spoken_contention_ids=[],
+        )
+    with pytest.raises(ValidationError, match="target_medical_opinion_id"):
+        _cdoc(target_medical_opinion_id=None)
+    with pytest.raises(ValidationError, match="target_medical_opinion_id"):
+        _cdoc(
+            document_kind="opinion_report",
+            medical_opinion_id="opn-01",
+            actor_party=None,
+            spoken_contention_ids=[],
+        )
+    with pytest.raises(ValidationError, match="actor_party"):
+        _cdoc(actor_party=None)
+    with pytest.raises(ValidationError, match="actor_party"):
+        _cdoc(
+            document_kind="supplemental_report",
+            medical_opinion_id="opn-02",
+            target_medical_opinion_id="opn-01",
+            spoken_contention_ids=[],
+        )
+    with pytest.raises(ValidationError, match="spoken_contention_ids"):
+        _cdoc(spoken_contention_ids=[])
+    with pytest.raises(ValidationError, match="medical_opinion_id"):
+        _cdoc(medical_opinion_id="opn-01")
+    with pytest.raises(ValidationError, match="defense_contest_theories"):
+        _cdoc(id="cdoc-02", document_kind="objection", actor_party="defense")
+    with pytest.raises(ValidationError, match="defense_contest_theories"):
+        _cdoc(defense_contest_theories=["post_termination"])
+    with pytest.raises(ValidationError):
+        _cdoc(spoken_contention_ids=["ctn-01", "ctn-02", "ctn-03", "ctn-04"])
+
+
+def test_contention_documents_collection_caps_ids_and_references() -> None:
+    """R26/R40: the scenario collection parses, caps at 15, rejects duplicate
+    ids, rejects reserved truth-label keys anywhere beneath it, and resolves
+    every explicit reference before sampling."""
+    body = _seed_body(
+        {
+            "medical_history": {},
+            "medical_assertions": {
+                "sample_assertions": False,
+                "contentions": [
+                    {
+                        "id": "ctn-01",
+                        "claim_type": "industrial_causation",
+                        "party": "applicant",
+                        "rationale": "the injury is industrial",
+                    }
+                ],
+                "medical_opinions": [
+                    {
+                        "id": "opn-01",
+                        "author_role": "qme",
+                        "report_stage": "final",
+                        "report_date": "2023-06-01",
+                        "apportionment_state": "determined",
+                        "determination_kind": "no_nonindustrial_share",
+                        "rationale": "reasoned industrial conclusion",
+                    }
+                ],
+                "contention_documents": [
+                    {
+                        "id": "cdoc-01",
+                        "document_kind": "advocacy",
+                        "target_medical_opinion_id": "opn-01",
+                        "actor_party": "applicant",
+                        "spoken_contention_ids": ["ctn-01"],
+                    }
+                ],
+            },
+        }
+    )
+    seed = parse_case_seed(body)
+    scenario = seed.scenario.medical_assertions
+    assert scenario is not None
+    assert scenario.sample_contention_documents is True
+    assert scenario.contention_documents[0].id == "cdoc-01"
+
+    duplicate = json.loads(json.dumps(body))
+    duplicate["scenario"]["medical_assertions"]["contention_documents"].append(
+        {
+            "id": "cdoc-01",
+            "document_kind": "advocacy",
+            "target_medical_opinion_id": "opn-01",
+            "actor_party": "defense",
+            "spoken_contention_ids": ["ctn-01"],
+        }
+    )
+    with pytest.raises(Exception, match="duplicate id 'cdoc-01'"):
+        parse_case_seed(duplicate)
+
+    labelled = json.loads(json.dumps(body))
+    labelled["scenario"]["medical_assertions"]["contention_documents"][0][
+        "quality"
+    ] = "thin"
+    with pytest.raises(Exception, match="reserved truth-label field"):
+        parse_case_seed(labelled)
+
+    overflowing = json.loads(json.dumps(body))
+    overflowing["scenario"]["medical_assertions"]["contention_documents"] = [
+        {
+            "id": f"cdoc-{index:02d}",
+            "document_kind": "advocacy",
+            "target_medical_opinion_id": "opn-01",
+            "actor_party": "applicant",
+            "spoken_contention_ids": ["ctn-01"],
+        }
+        for index in range(1, 17)
+    ]
+    with pytest.raises(Exception, match="at most 15"):
+        parse_case_seed(overflowing)
+
+    from wc_caseload_engine.medical_assertions import (
+        MedicalAssertionError,
+        derive_medical_assertions,
+    )
+    from wc_caseload_engine.medical_history import derive_medical_history
+
+    dangling = json.loads(json.dumps(body))
+    dangling["scenario"]["medical_assertions"]["contention_documents"][0][
+        "spoken_contention_ids"
+    ] = ["ctn-09"]
+    bad_seed = parse_case_seed(dangling)
+    with pytest.raises(MedicalAssertionError, match="ctn-09"):
+        derive_medical_assertions(bad_seed, derive_medical_history(bad_seed))
+
+    unresolved = json.loads(json.dumps(body))
+    unresolved["scenario"]["medical_assertions"]["contention_documents"][0][
+        "target_medical_opinion_id"
+    ] = "opn-09"
+    bad_seed = parse_case_seed(unresolved)
+    with pytest.raises(MedicalAssertionError, match="opn-09"):
+        derive_medical_assertions(bad_seed, derive_medical_history(bad_seed))
+
+
+def test_imr_application_entry_parses_and_guards_its_gate() -> None:
+    """R39: the explicit IMR application block parses sparse or full, requires
+    the UR dispute, and cannot coexist with an authored ``imr: false``."""
+    from wc_caseload_engine.seeds import ImrApplicationEntry, UrDispute
+
+    entry = ImrApplicationEntry(
+        disputed_treatment="lumbar epidural steroid injection",
+        diagnosis_icd10="M54.5",
+        ur_determination_attached=True,
+        supporting_record_subtypes=["TREATING_PHYSICIAN_REPORT_PR2"],
+        clinical_rebuttal="the denial misreads the imaging",
+        mtus_citations=["MTUS 2016, Low Back Complaints"],
+    )
+    assert entry.ur_determination_attached is True
+    sparse = ImrApplicationEntry()
+    assert sparse.disputed_treatment is None
+    assert sparse.supporting_record_subtypes == []
+    assert "disputed_treatment" not in sparse.model_dump(exclude_none=True)
+
+    dispute = UrDispute(
+        enabled=True, decision="upheld", imr=True, imr_application=ImrApplicationEntry()
+    )
+    assert dispute.imr_application is not None
+    with pytest.raises(ValidationError, match="enabled"):
+        UrDispute(imr_application=ImrApplicationEntry())
+    with pytest.raises(ValidationError, match="explicitly false"):
+        UrDispute(
+            enabled=True,
+            decision="upheld",
+            imr=False,
+            imr_application=ImrApplicationEntry(),
+        )
+    unauthored = UrDispute(enabled=True, decision="upheld")
+    assert "imr" not in unauthored.model_fields_set
 
 
 # ---------------------------------------------------------------------------
@@ -2356,3 +3057,130 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
     )
     assert "bare token at cli:stdout" in findings
     assert "reserved key cli-stream:quality" in findings
+
+
+def test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary():
+    """R90/R93 — production-visible Part 5 prose carries no hidden labels."""
+    from test_medical_story import _case, _part5_psych_report
+    from test_medical_story_loop import _part5_imr_case
+    from wc_caseload_engine import fact_templates as templates
+
+    forbidden = (
+        "real",
+        "bogus",
+        "good",
+        "bad",
+        "adequate",
+        "inadequate",
+        "thin",
+        "underworked",
+        "quality",
+    )
+    private_register_keys = (
+        "harassment_gfpa",
+        "direct_physical_event",
+        "compensable_consequence",
+        "safety_officer_ptsd",
+    )
+
+    def leaked(label: str, value: Any) -> list[str]:
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        # Statutory "good faith" and R88's examination-foundation phrase are
+        # mandated legal text, not an IMR-work-product classifier.
+        normalized = (
+            text.lower()
+            .replace("good-faith", "")
+            .replace("good faith", "")
+            .replace("adequate examination", "")
+        )
+        return [
+            f"{label}:{word}"
+            for word in forbidden
+            if re.search(rf"\b{re.escape(word)}\b", normalized)
+        ]
+
+    surfaces: list[tuple[str, Any]] = []
+    _seed, psych_plan = _case("surface-psych-medlegal")
+    assert psych_plan.medical_story is not None
+    surfaces.append(
+        (
+            "psych-plan",
+            psych_plan.medical_story.model_dump(mode="json"),
+        )
+    )
+    for opinion_id in ("opn-01", "opn-02", "opn-03", "opn-04"):
+        _document, _story, rendered = _part5_psych_report(opinion_id)
+        surfaces.append((f"psych-report:{opinion_id}", rendered))
+
+    for case_id in (
+        "imr-authored-true-upheld",
+        "imr-sparse-explicit",
+        "imr-sampled-upheld",
+    ):
+        _seed, plan, _document, content, rendered = _part5_imr_case(case_id)
+        assert plan.medical_ur_plan is not None
+        surfaces.append(
+            (
+                f"imr-plan:{case_id}",
+                plan.medical_ur_plan.model_dump(mode="json"),
+            )
+        )
+        surfaces.append((f"imr-content:{case_id}", content.model_dump(mode="json")))
+        surfaces.append((f"imr-application:{case_id}", rendered))
+
+    # The private selector keys may name register rows in source, but may never
+    # cross into any plan, content model, rendered document, or other artifact.
+    def private_key_leaks(label: str, value: Any, path: str = "") -> list[str]:
+        findings: list[str] = []
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                if key in private_register_keys:
+                    findings.append(f"{label}:{child_path}")
+                if isinstance(child, str) and child in private_register_keys:
+                    if not (
+                        key == "psych_injury_kind"
+                        and child == "compensable_consequence"
+                    ):
+                        findings.append(f"{label}:{child_path}={child}")
+                    continue
+                findings.extend(private_key_leaks(label, child, child_path))
+        elif isinstance(value, (list, tuple)):
+            for index, child in enumerate(value):
+                findings.extend(private_key_leaks(label, child, f"{path}[{index}]"))
+        elif isinstance(value, str):
+            findings.extend(
+                f"{label}:{path}:{key}"
+                for key in private_register_keys
+                if re.search(rf"\b{re.escape(key)}\b", value)
+            )
+        return findings
+
+    private_key_findings = [
+        finding
+        for label, value in surfaces
+        for finding in private_key_leaks(label, value)
+    ]
+    assert private_key_findings == []
+
+    for constant_name in (
+        "PSYCH_HISTORY_REGISTER",
+        "PSYCH_QME_PROTOCOL_REGISTER",
+        "PSYCH_ROLDA_REGISTER",
+        "PSYCH_THRESHOLD_REGISTER",
+        "PSYCH_ACTUAL_EVENTS_REGISTER",
+        "PSYCH_SAFETY_OFFICER_REGISTER",
+        "PSYCH_GAF_PDRS_REGISTER",
+        "PSYCH_SECTION_4660_1C_REGISTER",
+        "PSYCH_DEFENSE_CONTEST_REGISTER",
+        "PSYCH_CONTENTION_SURFACE_REGISTER",
+        "IMR_APPLICATION_REGISTER",
+    ):
+        surfaces.append((constant_name, getattr(templates, constant_name)))
+
+    findings = [
+        finding
+        for label, value in surfaces
+        for finding in leaked(label, value)
+    ]
+    assert findings == []

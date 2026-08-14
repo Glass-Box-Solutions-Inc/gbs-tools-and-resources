@@ -976,13 +976,888 @@ def _assertion_truth(case_id: str = "assertions-truth") -> dict[str, Any]:
     return json.loads(json.dumps(build_case_truth_manifest(_assertion_plan(case_id))))
 
 
-def test_assertions_channel_round_trips_the_complete_ledger() -> None:
-    plan = _assertion_plan()
+# ---------------------------------------------------------------------------
+# AJC-62 Amendment A1 — the frozen assertions-channel 1.0.0 projection
+#
+# Every tuple below is an INDEPENDENT literal (A1-R7): never derived from and
+# never imported into production. The anti-expansion test compares them with
+# the production ASSERTIONS_V1_* constants for exact equality, so neither side
+# can drift the other green.
+# ---------------------------------------------------------------------------
+
+AJC61_CASE_CHANNEL_KEYS = (
+    "channelVersion",
+    "kind",
+    "audience",
+    "leakageRule",
+    "validationContext",
+    "medicalHistory",
+    "contentions",
+    "medicalOpinions",
+    "apportionmentAssertions",
+    "ledgerDigest",
+)
+
+AJC61_VALIDATION_CONTEXT_KEYS = (
+    "dateOfInjury",
+    "anchorDate",
+    "currentBodyParts",
+    "targetStage",
+    "claimResponse",
+)
+
+AJC61_OPTIONAL_VALIDATION_CONTEXT_KEYS = ("evalType",)
+
+AJC61_MEDICAL_HISTORY_KEYS = ("conditions", "priorClaims")
+
+AJC61_CONDITION_FIELDS = (
+    "id",
+    "key",
+    "label",
+    "causal_ground_truth",
+    "onset",
+    "body_system",
+    "body_part",
+    "apportionment_targets",
+    "wholly_unrelated",
+    "severity",
+    "trajectory",
+    "symptomatic_before_doi",
+    "surfaces_in_file",
+)
+
+AJC61_PRIOR_CLAIM_FIELDS = (
+    "id",
+    "date_of_injury",
+    "body_parts",
+    "resolution_type",
+    "overlaps_current",
+    "award",
+)
+
+AJC61_PRIOR_AWARD_FIELDS = (
+    "id",
+    "prior_claim_id",
+    "body_parts",
+    "pd_percent",
+    "award_date",
+    "resolution_type",
+    "conclusively_presumed",
+)
+
+AJC61_CONTENTION_FIELDS = (
+    "id",
+    "claim_type",
+    "party",
+    "position",
+    "target_condition_id",
+    "target_prior_claim_id",
+    "target_prior_award_id",
+    "target_body_part",
+    "doctrine_hooks",
+    "rationale",
+    "treatment_causation",
+    "requested_apportionment",
+    "groundings",
+    "quality",
+)
+
+AJC61_MEDICAL_OPINION_FIELDS = (
+    "id",
+    "author_role",
+    "report_stage",
+    "report_date",
+    "apportionment_state",
+    "determination_kind",
+    "determination_rationale",
+    "examination_performed",
+    "reviewed_condition_ids",
+    "reviewed_prior_claim_ids",
+    "reviewed_prior_award_ids",
+    "endorses_contention_ids",
+    "rejects_contention_ids",
+    "responds_to_opinion_id",
+    "supersedes_opinion_id",
+    "rationale",
+    "revision_rationale",
+    "quality",
+)
+
+AJC61_APPORTIONMENT_ASSERTION_FIELDS = (
+    "id",
+    "opinion_id",
+    "body_part",
+    "industrial_percent",
+    "nonindustrial_percent",
+    "basis_kinds",
+    "condition_ids",
+    "prior_claim_ids",
+    "prior_award_ids",
+    "description",
+    "disability_causation_stated",
+    "reasonable_medical_probability",
+    "causal_rationale",
+    "percentage_rationale",
+    "prior_award_analysis",
+    "revised_from_percent",
+    "revision_rationale",
+    "psych_exception_analysis",
+    "linked_contention_id",
+    "groundings",
+    "quality",
+)
+
+AJC61_CASELOAD_CHANNEL_KEYS = (
+    "channelVersion",
+    "caseCount",
+    "assertionCaseCount",
+    "counts",
+    "qualityCounts",
+    "apportionmentStateCounts",
+    "determinationKindCounts",
+    "cases",
+)
+
+AJC61_CASELOAD_CASE_KEYS = (
+    "caseId",
+    "truthFile",
+    "contentionCount",
+    "medicalOpinionCount",
+    "apportionmentAssertionCount",
+)
+
+#: M3-only vocabulary that must NEVER appear in channel 1.0.0, in both
+#: spellings (A1-R3). Scanned as exact quoted JSON keys so ``opinionId`` (an
+#: AJC-61 apportionment field) cannot shadow ``medicalOpinionId``.
+M3_FORBIDDEN_CHANNEL_FIELDS = (
+    "psych_injury_kind",
+    "aoe_coe_finding",
+    "aoe_coe_rationale",
+    "event_kind",
+    "revision_kind",
+    "concurs_with_contention_ids",
+    "defers_contention_ids",
+    "contention_documents",
+    "sample_contention_documents",
+    "medical_opinion_id",
+    "target_medical_opinion_id",
+    "spoken_contention_ids",
+    "contention_surface",
+    "actor_party",
+    "contention_actor_party",
+    "defense_contest_theories",
+    "contest_path",
+    "document_kind",
+    "template_subtype",
+    "proposed_date",
+    "contention_loop_source",
+    "imr_application",
+    "imr_application_content",
+    "imr_target_denial_date",
+    "target_denial_subtype",
+    "target_denial_date",
+    "disputed_treatment",
+    "ur_determination_attached",
+    "supporting_record_subtypes",
+    "clinical_rebuttal",
+    "mtus_citations",
+    "by_document_index",
+    "record_references",
+    "preceding_report",
+)
+
+
+def _camel_case(name: str) -> str:
+    """Independent camelizer for the expected-projection helper."""
+    head, *rest = name.split("_")
+    return head + "".join(part[:1].upper() + part[1:] for part in rest)
+
+
+def _camelize_expected(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            _camel_case(str(key)): _camelize_expected(item)
+            for key, item in value.items()
+            if item is not None and item != [] and item != ()
+        }
+    if isinstance(value, list | tuple):
+        return [_camelize_expected(item) for item in value]
+    return value
+
+
+def _ajc61_projection(model: Any, fields: tuple[str, ...]) -> dict[str, Any]:
+    """The independently constructed AJC-61 projection of one ledger model.
+
+    Filters a full JSON-mode dump down to the frozen field tuple, then applies
+    the local camelize/omission rules — never the production helper, and never
+    a complete-M3 ``model_dump()`` comparison (A1-R6 points 2/7).
+    """
+    dumped = model.model_dump(mode="json")
+    return _camelize_expected({name: dumped[name] for name in fields if name in dumped})
+
+
+def _assert_channel_collections_match_ajc61_projection(
+    channel: dict[str, Any], ledger: Any
+) -> None:
+    assert channel["contentions"] == [
+        _ajc61_projection(c, AJC61_CONTENTION_FIELDS) for c in ledger.contentions
+    ]
+    assert channel["medicalOpinions"] == [
+        _ajc61_projection(o, AJC61_MEDICAL_OPINION_FIELDS)
+        for o in ledger.medical_opinions
+    ]
+    assert channel["apportionmentAssertions"] == [
+        _ajc61_projection(a, AJC61_APPORTIONMENT_ASSERTION_FIELDS)
+        for a in ledger.apportionment_assertions
+    ]
+
+
+def _m3_complete_scenario() -> dict[str, Any]:
+    """The A1-R6 fixture: every optional AJC-61 field, plus the M3 vocabulary.
+
+    Exercises non-default psych classifications, AOE/COE finding and rationale,
+    base/supplemental/deposition opinion events, revision kinds, all five
+    disposition classes (adopted ``ctn-01`` / rejected ``ctn-02`` / deferred
+    ``ctn-03`` / concurred ``ctn-04`` / unaddressed ``ctn-05``), and explicit
+    contention-document bindings — none of which may reach channel ``1.0.0``.
+    """
+    return {
+        "medical_history": {
+            "sample_conditions": False,
+            "conditions": [
+                {
+                    "label": "nonindustrial lumbar degenerative disease",
+                    "origin": "nonindustrial",
+                    "body_part": "lumbar_spine",
+                    "icd10": "M51.36",
+                    "severity": "moderate",
+                    "trajectory": "progressive",
+                    "symptomatic_before_doi": True,
+                    "billing_coded": True,
+                },
+                {
+                    "label": "post-traumatic stress disorder",
+                    "body_system": "psychiatric",
+                    "body_part": "psyche",
+                    "origin": "mixed",
+                    "severity": "moderate",
+                    "symptomatic_before_doi": False,
+                    "psych_injury_kind": "compensable_consequence",
+                },
+                {
+                    "label": "invasive ductal carcinoma, right breast",
+                    "body_system": "oncologic",
+                    "body_part": "breast",
+                    "wholly_unrelated": True,
+                    "severity": "severe",
+                },
+            ],
+            "prior_claims": [
+                {
+                    "body_parts": ["lumbar_spine"],
+                    "date_of_injury": "2015-01-05",
+                    "resolution_type": "stipulated_award",
+                    "resolution_date": "2016-02-01",
+                    "award": {
+                        "body_parts": ["lumbar_spine"],
+                        "pd_percent": 12,
+                        "award_date": "2016-02-01",
+                        "conclusively_presumed": True,
+                    },
+                }
+            ],
+        },
+        "medical_assertions": {
+            "sample_assertions": False,
+            "contentions": [
+                {
+                    "id": "ctn-01",
+                    "claim_type": "industrial_causation",
+                    "party": "applicant",
+                    "position": "affirm",
+                    "target_condition_id": "cond-00",
+                    "target_body_part": "lumbar_spine",
+                    "rationale": "the lumbar condition arose from the industrial injury",
+                },
+                {
+                    "id": "ctn-02",
+                    "claim_type": "apportionment_defense",
+                    "party": "defense",
+                    "position": "affirm",
+                    "target_prior_claim_id": "prior-00",
+                    "target_prior_award_id": "prior-00-award",
+                    "doctrine_hooks": ["lc4664_prior_award"],
+                    "rationale": "the prior stipulated award conclusively presumes",
+                    "groundings": [
+                        {
+                            "hook": "lc4664_prior_award",
+                            "prior_award_id": "prior-00-award",
+                        }
+                    ],
+                },
+                {
+                    "id": "ctn-03",
+                    "claim_type": "compensable_consequence",
+                    "party": "applicant",
+                    "position": "affirm",
+                    "target_condition_id": "cond-00",
+                    "treatment_causation": "contributing_cause",
+                    "requested_apportionment": "apply",
+                    "doctrine_hooks": ["hikida_treatment_carveout"],
+                    "rationale": "industrial treatment contributed to the disability",
+                },
+                {
+                    "id": "ctn-04",
+                    "claim_type": "psych_add_on",
+                    "party": "applicant",
+                    "position": "affirm",
+                    "target_condition_id": "cond-01",
+                    "target_body_part": "psyche",
+                    "psych_injury_kind": "direct",
+                    "rationale": "the psychiatric injury flows directly from the event",
+                },
+                {
+                    "id": "ctn-05",
+                    "claim_type": "aggravation",
+                    "party": "applicant",
+                    "position": "affirm",
+                    "target_condition_id": "cond-00",
+                    "rationale": "the injury aggravated the preexisting condition",
+                },
+            ],
+            "medical_opinions": [
+                {
+                    "id": "opn-01",
+                    "author_role": "ptp",
+                    "report_stage": "interim",
+                    "report_date": "2022-09-15",
+                    "apportionment_state": "deferred",
+                    "examination_performed": True,
+                    "reviewed_condition_ids": ["cond-00"],
+                    "aoe_coe_finding": "industrial",
+                    "aoe_coe_rationale": (
+                        "the treatment course and mechanism support industrial causation"
+                    ),
+                    "psych_injury_kind": "direct",
+                    "rationale": "treatment course reviewed; causation addressed",
+                },
+                {
+                    "id": "opn-02",
+                    "author_role": "qme",
+                    "report_stage": "final",
+                    "report_date": "2023-06-01",
+                    "apportionment_state": "determined",
+                    "determination_kind": "allocated",
+                    "determination_rationale": (
+                        "the split follows the imaging severity and prior award"
+                    ),
+                    "examination_performed": True,
+                    "reviewed_condition_ids": ["cond-00", "cond-01"],
+                    "reviewed_prior_claim_ids": ["prior-00"],
+                    "reviewed_prior_award_ids": ["prior-00-award"],
+                    "endorses_contention_ids": ["ctn-01"],
+                    "rejects_contention_ids": ["ctn-02"],
+                    "concurs_with_contention_ids": ["ctn-04"],
+                    "defers_contention_ids": ["ctn-03"],
+                    "aoe_coe_finding": "industrial",
+                    "aoe_coe_rationale": (
+                        "records, examination and mechanism reviewed to reasonable "
+                        "medical probability"
+                    ),
+                    "psych_injury_kind": "compensable_consequence",
+                    "rationale": "examined the applicant and reviewed the record",
+                },
+                {
+                    # R37 (enforced at R77 step 4): a revised_apportionment
+                    # response changes ONLY the apportionment family — it
+                    # restates the predecessor's disposition results, AOE/COE
+                    # and psych classification unchanged.
+                    "id": "opn-03",
+                    "author_role": "qme",
+                    "report_stage": "final",
+                    "report_date": "2023-11-01",
+                    "apportionment_state": "determined",
+                    "determination_kind": "allocated",
+                    "determination_rationale": "the revised split follows the new records",
+                    "examination_performed": False,
+                    "event_kind": "supplemental_report",
+                    "revision_kind": "revised_apportionment",
+                    "reviewed_condition_ids": ["cond-00", "cond-01"],
+                    "reviewed_prior_claim_ids": ["prior-00"],
+                    "responds_to_opinion_id": "opn-02",
+                    "supersedes_opinion_id": "opn-02",
+                    "endorses_contention_ids": ["ctn-01"],
+                    "rejects_contention_ids": ["ctn-02"],
+                    "concurs_with_contention_ids": ["ctn-04"],
+                    "defers_contention_ids": ["ctn-03"],
+                    "aoe_coe_finding": "industrial",
+                    "aoe_coe_rationale": (
+                        "records, examination and mechanism reviewed to reasonable "
+                        "medical probability"
+                    ),
+                    "psych_injury_kind": "compensable_consequence",
+                    "rationale": "the newly produced records were reviewed",
+                    "revision_rationale": (
+                        "newly produced imaging changes the nonindustrial share"
+                    ),
+                },
+                {
+                    # R37: unchanged_additional_reasoning changes NOTHING —
+                    # same dispositions, AOE/COE, psych classification,
+                    # apportionment state/kind and percentages as opn-03.
+                    "id": "opn-04",
+                    "author_role": "qme",
+                    "report_stage": "final",
+                    "report_date": "2024-03-01",
+                    "apportionment_state": "determined",
+                    "determination_kind": "allocated",
+                    "determination_rationale": "the percentages stand as previously stated",
+                    "examination_performed": False,
+                    "event_kind": "deposition",
+                    "revision_kind": "unchanged_additional_reasoning",
+                    "reviewed_condition_ids": ["cond-00"],
+                    "responds_to_opinion_id": "opn-03",
+                    "endorses_contention_ids": ["ctn-01"],
+                    "rejects_contention_ids": ["ctn-02"],
+                    "concurs_with_contention_ids": ["ctn-04"],
+                    "defers_contention_ids": ["ctn-03"],
+                    "aoe_coe_finding": "industrial",
+                    "aoe_coe_rationale": (
+                        "records, examination and mechanism reviewed to reasonable "
+                        "medical probability"
+                    ),
+                    "psych_injury_kind": "compensable_consequence",
+                    "rationale": (
+                        "testimony under oath restates the written conclusions with "
+                        "additional reasoning"
+                    ),
+                },
+            ],
+            "apportionment_assertions": [
+                {
+                    "id": "app-01",
+                    "opinion_id": "opn-02",
+                    "body_part": "lumbar_spine",
+                    "industrial_percent": 80,
+                    "nonindustrial_percent": 20,
+                    "basis_kinds": ["preexisting_degenerative_pathology"],
+                    "condition_ids": ["cond-00"],
+                    "description": "chronic lumbar disability limiting weight-bearing",
+                    "disability_causation_stated": True,
+                    "reasonable_medical_probability": True,
+                    "causal_rationale": (
+                        "degenerative pathology contributes to present disability"
+                    ),
+                    "percentage_rationale": "the share reflects the imaging severity",
+                },
+                {
+                    "id": "app-02",
+                    "opinion_id": "opn-02",
+                    "body_part": "shoulder",
+                    "industrial_percent": 90,
+                    "nonindustrial_percent": 10,
+                    "basis_kinds": ["lc4664_prior_award"],
+                    "prior_claim_ids": ["prior-00"],
+                    "prior_award_ids": ["prior-00-award"],
+                    "description": "overlap with the previously awarded disability",
+                    "disability_causation_stated": True,
+                    "reasonable_medical_probability": True,
+                    "causal_rationale": "the prior award overlaps the present disability",
+                    "percentage_rationale": "the overlap is small but present",
+                    "prior_award_analysis": (
+                        "the section 4664(b) presumption is analyzed separately from "
+                        "section 4663 causation"
+                    ),
+                    "groundings": [
+                        {
+                            "hook": "lc4664_prior_award",
+                            "prior_award_id": "prior-00-award",
+                        }
+                    ],
+                },
+                {
+                    "id": "app-03",
+                    "opinion_id": "opn-03",
+                    "body_part": "lumbar_spine",
+                    "industrial_percent": 70,
+                    "nonindustrial_percent": 30,
+                    "basis_kinds": [
+                        "preexisting_degenerative_pathology",
+                        "industrial_treatment",
+                    ],
+                    "condition_ids": ["cond-00"],
+                    "linked_contention_id": "ctn-03",
+                    "description": "revised lumbar split after the new records",
+                    "disability_causation_stated": True,
+                    "reasonable_medical_probability": True,
+                    "causal_rationale": (
+                        "the new imaging shows greater degenerative contribution"
+                    ),
+                    "percentage_rationale": "the revised share follows the new imaging",
+                    "revised_from_percent": 20,
+                    "revision_rationale": (
+                        "newly produced imaging changes the nonindustrial share"
+                    ),
+                },
+                {
+                    # R37: the unchanged deposition row keeps opn-03's exact
+                    # percentages AND basis set, and claims no revision.
+                    "id": "app-04",
+                    "opinion_id": "opn-04",
+                    "body_part": "lumbar_spine",
+                    "industrial_percent": 70,
+                    "nonindustrial_percent": 30,
+                    "basis_kinds": [
+                        "preexisting_degenerative_pathology",
+                        "industrial_treatment",
+                    ],
+                    "condition_ids": ["cond-00"],
+                    "linked_contention_id": "ctn-03",
+                    "description": "the deposition restates the supplemental split",
+                    "disability_causation_stated": True,
+                    "reasonable_medical_probability": True,
+                    "causal_rationale": "the causal analysis stands as written",
+                    "percentage_rationale": "the percentages stand as written",
+                    "psych_exception_analysis": "none_applies",
+                },
+            ],
+            "contention_documents": [
+                {
+                    "id": "cdoc-01",
+                    "document_kind": "advocacy",
+                    "target_medical_opinion_id": "opn-02",
+                    "actor_party": "applicant",
+                    "spoken_contention_ids": ["ctn-01", "ctn-03"],
+                    "doc_date": "2023-04-01",
+                },
+                {
+                    "id": "cdoc-02",
+                    "document_kind": "objection",
+                    "target_medical_opinion_id": "opn-02",
+                    "actor_party": "defense",
+                    "spoken_contention_ids": ["ctn-02"],
+                    "defense_contest_theories": [
+                        "insufficient_investigation",
+                        "lack_of_substantial_medical_evidence",
+                    ],
+                },
+                {
+                    "id": "cdoc-03",
+                    "document_kind": "supplemental_report",
+                    "medical_opinion_id": "opn-03",
+                    "target_medical_opinion_id": "opn-02",
+                },
+            ],
+        },
+    }
+
+
+def _m3_seed_body(case_id: str) -> dict[str, Any]:
+    body = _seed_body(case_id, scenario=_m3_complete_scenario(), doi="2021-06-14")
+    body["injury"]["body_parts"] = [
+        {"part": "lumbar_spine"},
+        {"part": "shoulder"},
+        {"part": "psyche"},
+    ]
+    body["lifecycle"]["ur_dispute"] = {
+        "enabled": True,
+        "decision": "upheld",
+        "imr": True,
+        "imr_outcome": "upheld",
+        "imr_application": {
+            "disputed_treatment": "lumbar epidural steroid injection",
+            "diagnosis_icd10": "M54.5",
+            "ur_determination_attached": True,
+            "supporting_record_subtypes": ["TREATING_PHYSICIAN_REPORT_PR2"],
+            "clinical_rebuttal": "the denial misreads the current imaging",
+            "mtus_citations": ["MTUS 2016, Low Back Complaints"],
+        },
+    }
+    return body
+
+
+def _m3_plan(case_id: str = "assertions-m3-truth") -> Any:
+    return build_case_plan(parse_case_seed(_m3_seed_body(case_id)), case_number=1)
+
+
+def _exercise_m3_internal_state(plan: Any) -> None:
+    """Construct every step-2 internal M3 object the serializer must ignore.
+
+    A1-R6's fixture bullets beyond the ledger: contention-document bindings
+    with contest theories, document-scoped medical-story facts, and grounded /
+    conclusory / sampled-sparse IMR state. The planner does not carry these
+    yet (their derivations are later build steps), so the test constructs the
+    objects directly — the serializer's input plan and the anti-expansion
+    scans prove none of this vocabulary can reach channel ``1.0.0``.
+    """
+    import datetime as real_dt
+
+    from wc_caseload_engine.medical_assertions import (
+        ContentionDocumentBinding,
+        MedicalAssertionPlan,
+    )
+    from wc_caseload_engine.medical_story import (
+        DocumentMedicalStory,
+        ImrApplicationContent,
+        MedicalStoryPlan,
+        MedicalUrPlan,
+        StoryContention,
+        StoryDemographics,
+        StoryMedicalOpinion,
+        StoryRecordReference,
+    )
+
+    ledger = plan.medical_assertions
+    bindings = (
+        ContentionDocumentBinding(
+            id="cdoc-01",
+            document_kind="advocacy",
+            target_medical_opinion_id="opn-02",
+            spoken_contention_ids=("ctn-01", "ctn-03"),
+            actor_party="applicant",
+            proposed_date=real_dt.date(2023, 4, 1),
+            source="explicit",
+        ),
+        ContentionDocumentBinding(
+            id="cdoc-02",
+            document_kind="objection",
+            subtype="ADVOCACY_LETTERS_PTP_QME_AME",
+            template_subtype="OBJECTION_TO_QME_AME_REPORT",
+            target_medical_opinion_id="opn-02",
+            spoken_contention_ids=("ctn-02",),
+            actor_party="defense",
+            defense_contest_theories=(
+                "insufficient_investigation",
+                "lack_of_substantial_medical_evidence",
+            ),
+            source="explicit",
+        ),
+        ContentionDocumentBinding(
+            id="cdoc-03",
+            document_kind="supplemental_report",
+            medical_opinion_id="opn-03",
+            target_medical_opinion_id="opn-02",
+            source="required_opinion",
+        ),
+    )
+    assertion_plan = MedicalAssertionPlan(ledger=ledger, contention_documents=bindings)
+    assert assertion_plan.ledger is ledger
+    assert len(assertion_plan.contention_documents) == 3
+
+    grounded = ImrApplicationContent(
+        disputed_treatment="lumbar epidural steroid injection",
+        diagnosis_icd10="M54.5",
+        ur_determination_attached=True,
+        supporting_record_subtypes=("TREATING_PHYSICIAN_REPORT_PR2",),
+        clinical_rebuttal="the denial misreads the current imaging",
+        mtus_citations=("MTUS 2016, Low Back Complaints",),
+        target_denial_subtype="MEDICAL_TREATMENT_DENIAL_UR",
+        target_denial_date=real_dt.date(2023, 3, 1),
+    )
+    conclusory = ImrApplicationContent(
+        disputed_treatment="lumbar epidural steroid injection",
+        clinical_rebuttal="the treatment is necessary",
+        target_denial_subtype="MEDICAL_TREATMENT_DENIAL_UR",
+        target_denial_date=real_dt.date(2023, 3, 1),
+    )
+    sampled_sparse = ImrApplicationContent(
+        target_denial_subtype="MEDICAL_TREATMENT_DENIAL_UR",
+        target_denial_date=real_dt.date(2023, 3, 1),
+    )
+    ur_plan = MedicalUrPlan(
+        effective_decision="upheld",
+        decision_was_authored=True,
+        imr_requested=True,
+        imr_was_authored=True,
+        imr_application=grounded,
+    )
+    assert ur_plan.imr_application is grounded
+    assert conclusory.ur_determination_attached is None
+    assert sampled_sparse.disputed_treatment is None
+
+    opinion = next(o for o in ledger.medical_opinions if o.id == "opn-03")
+    story = DocumentMedicalStory(
+        document_index=7,
+        subtype="SUPPLEMENTAL_QME_AME_REPORT",
+        demographics=StoryDemographics(
+            age=44, sex="female", bmi_band="overweight", smoking_status="never"
+        ),
+        preceding_report=StoryRecordReference(
+            document_index=3,
+            subtype="QME_COMPREHENSIVE_REPORT",
+            title="QME Comprehensive Report",
+            doc_date=real_dt.date(2023, 6, 1),
+            author_role="physician",
+        ),
+        contentions=tuple(
+            StoryContention(
+                **{
+                    name: getattr(c, name)
+                    for name in StoryContention.model_fields
+                }
+            )
+            for c in ledger.contentions
+        ),
+        medical_opinion=StoryMedicalOpinion(
+            **{name: getattr(opinion, name) for name in StoryMedicalOpinion.model_fields}
+        ),
+    )
+    story_plan = MedicalStoryPlan(by_document_index={7: story})
+    assert story_plan.by_document_index[7].medical_opinion is not None
+    assert story_plan.by_document_index[7].medical_opinion.event_kind == (
+        "supplemental_report"
+    )
+    for record in (
+        *story.contentions,
+        story.medical_opinion,
+    ):
+        assert "quality" not in type(record).model_fields
+
+
+def test_assertions_channel_1_round_trips_the_complete_ajc61_projection() -> None:
+    """A1-R6: channel 1.0.0 round-trips exactly the AJC-61 projection.
+
+    The complete M3 plan serializes; each emitted collection equals an
+    independently constructed AJC-61 projection; the parsed ledger, projected
+    through the same frozen vocabulary, equals the source projection. Parsing
+    runs digest verification, the shared incoherence validator and quality
+    rederivation. Omitted M3 fields and bindings are NOT required to
+    round-trip, and no complete-M3 ``model_dump()`` comparison happens here.
+    """
+    plan = _m3_plan()
+    ledger = plan.medical_assertions
+    assert ledger is not None
+    _exercise_m3_internal_state(plan)
     truth = json.loads(json.dumps(build_case_truth_manifest(plan)))
+    channel = truth["channels"]["assertions"]
+
+    _assert_channel_collections_match_ajc61_projection(channel, ledger)
+    assert channel["ledgerDigest"] == assertion_ledger_digest(channel)
+
     parsed = medical_assertions_from_truth(truth)
     assert parsed is not None
-    _context, _projection, ledger = parsed
-    assert ledger.model_dump() == plan.medical_assertions.model_dump()
+    _context, _projection, parsed_ledger = parsed
+    for source_items, parsed_items, fields in (
+        (ledger.contentions, parsed_ledger.contentions, AJC61_CONTENTION_FIELDS),
+        (
+            ledger.medical_opinions,
+            parsed_ledger.medical_opinions,
+            AJC61_MEDICAL_OPINION_FIELDS,
+        ),
+        (
+            ledger.apportionment_assertions,
+            parsed_ledger.apportionment_assertions,
+            AJC61_APPORTIONMENT_ASSERTION_FIELDS,
+        ),
+    ):
+        assert [_ajc61_projection(item, fields) for item in parsed_items] == [
+            _ajc61_projection(item, fields) for item in source_items
+        ]
+
+
+def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> None:
+    """A1-R7: the anti-expansion witness for the frozen 1.0.0 channel.
+
+    Declares its expected tuples independently, asserts them equal to the
+    production constants, then proves the emitted channel carries exactly the
+    frozen key vocabulary — an unrestricted ``model_dump(mode="json",
+    exclude_none=True)`` serializer reddens this on the M3 fixture.
+    """
+    from wc_caseload_engine import truth_manifest as tm
+
+    assert tm.ASSERTIONS_V1_CASE_CHANNEL_KEYS == AJC61_CASE_CHANNEL_KEYS
+    assert tm.ASSERTIONS_V1_VALIDATION_CONTEXT_KEYS == AJC61_VALIDATION_CONTEXT_KEYS
+    assert (
+        tm.ASSERTIONS_V1_OPTIONAL_VALIDATION_CONTEXT_KEYS
+        == AJC61_OPTIONAL_VALIDATION_CONTEXT_KEYS
+    )
+    assert tm.ASSERTIONS_V1_MEDICAL_HISTORY_KEYS == AJC61_MEDICAL_HISTORY_KEYS
+    assert tm.ASSERTIONS_V1_CONDITION_FIELDS == AJC61_CONDITION_FIELDS
+    assert tm.ASSERTIONS_V1_PRIOR_CLAIM_FIELDS == AJC61_PRIOR_CLAIM_FIELDS
+    assert tm.ASSERTIONS_V1_PRIOR_AWARD_FIELDS == AJC61_PRIOR_AWARD_FIELDS
+    assert tm.ASSERTIONS_V1_CONTENTION_FIELDS == AJC61_CONTENTION_FIELDS
+    assert tm.ASSERTIONS_V1_MEDICAL_OPINION_FIELDS == AJC61_MEDICAL_OPINION_FIELDS
+    assert (
+        tm.ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS
+        == AJC61_APPORTIONMENT_ASSERTION_FIELDS
+    )
+    assert tm.ASSERTIONS_V1_CASELOAD_CHANNEL_KEYS == AJC61_CASELOAD_CHANNEL_KEYS
+    assert tm.ASSERTIONS_V1_CASELOAD_CASE_KEYS == AJC61_CASELOAD_CASE_KEYS
+
+    plan = _m3_plan()
+    ledger = plan.medical_assertions
+    assert ledger is not None
+    truth = json.loads(json.dumps(build_case_truth_manifest(plan)))
+    channel = truth["channels"]["assertions"]
+
+    assert tuple(channel) == AJC61_CASE_CHANNEL_KEYS
+    context_keys = set(channel["validationContext"])
+    assert set(AJC61_VALIDATION_CONTEXT_KEYS) <= context_keys
+    assert context_keys <= set(AJC61_VALIDATION_CONTEXT_KEYS) | set(
+        AJC61_OPTIONAL_VALIDATION_CONTEXT_KEYS
+    )
+    assert tuple(channel["medicalHistory"]) == AJC61_MEDICAL_HISTORY_KEYS
+    for record in channel["medicalHistory"]["conditions"]:
+        assert set(record) <= {_camel_case(f) for f in AJC61_CONDITION_FIELDS}
+    for record in channel["medicalHistory"]["priorClaims"]:
+        assert set(record) <= {_camel_case(f) for f in AJC61_PRIOR_CLAIM_FIELDS}
+        if "award" in record:
+            assert set(record["award"]) <= {
+                _camel_case(f) for f in AJC61_PRIOR_AWARD_FIELDS
+            }
+
+    for emitted_items, source_items, fields in (
+        (channel["contentions"], ledger.contentions, AJC61_CONTENTION_FIELDS),
+        (
+            channel["medicalOpinions"],
+            ledger.medical_opinions,
+            AJC61_MEDICAL_OPINION_FIELDS,
+        ),
+        (
+            channel["apportionmentAssertions"],
+            ledger.apportionment_assertions,
+            AJC61_APPORTIONMENT_ASSERTION_FIELDS,
+        ),
+    ):
+        allowed = {_camel_case(field) for field in fields}
+        for emitted, source in zip(emitted_items, source_items, strict=True):
+            assert emitted == _ajc61_projection(source, fields)
+            assert set(emitted) <= allowed
+            outside_allowlist = {
+                _camel_case(name)
+                for name in type(source).model_fields
+                if name not in fields
+            }
+            assert not (set(emitted) & outside_allowlist), sorted(
+                set(emitted) & outside_allowlist
+            )
+
+    channel_text = json.dumps(channel)
+    for name in M3_FORBIDDEN_CHANNEL_FIELDS:
+        for spelling in (name, _camel_case(name)):
+            assert f'"{spelling}"' not in channel_text, spelling
+
+    truth_dir = Path(__file__).parent
+    result = SimpleNamespace(
+        case_id=plan.seed.case_id,
+        plan=plan,
+        truth_path=truth_dir / "unused.truth.json",
+    )
+    rollup = json.loads(
+        json.dumps(build_caseload_truth_manifest("a1-anti-expansion", [result]))
+    )
+    caseload_channel = rollup["channels"]["assertions"]
+    assert tuple(caseload_channel) == AJC61_CASELOAD_CHANNEL_KEYS
+    for entry in caseload_channel["cases"]:
+        assert tuple(entry) == AJC61_CASELOAD_CASE_KEYS
+    caseload_text = json.dumps(caseload_channel)
+    for name in M3_FORBIDDEN_CHANNEL_FIELDS:
+        for spelling in (name, _camel_case(name)):
+            assert f'"{spelling}"' not in caseload_text, spelling
+
+    again = json.loads(json.dumps(build_case_truth_manifest(_m3_plan())))
+    assert again["channels"]["assertions"] == channel
+    assert again["channels"]["assertions"]["ledgerDigest"] == channel["ledgerDigest"]
 
 
 def test_assertion_bearing_case_keeps_envelope_1_and_uses_assertions_channel_1() -> None:

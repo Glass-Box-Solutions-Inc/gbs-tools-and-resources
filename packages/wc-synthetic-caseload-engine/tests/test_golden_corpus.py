@@ -36,6 +36,7 @@ retires the suspicion that would have found the drift.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import subprocess
@@ -230,6 +231,57 @@ def test_a_golden_records_the_provenance_needed_to_explain_a_drift() -> None:
         # package is absent, which substitutes different pixels into every
         # scanned PDF and would otherwise be an unexplainable golden failure.
         assert recorded["systemFonts"], "no system-font provenance recorded"
+
+
+# ---------------------------------------------------------------------------
+# The frozen AJC-62 pre-M3 baseline
+# ---------------------------------------------------------------------------
+
+AJC62_GOLDEN_CONTRACT = Path(__file__).resolve().parent / "fixtures" / (
+    "ajc62_pre_m3_golden_contract.json"
+)
+"""R67/R73: raw hashes of the three no-re-record goldens at eedad1093, plus the
+complete pre-M3 ``doctrine-showcase`` payload for step 13's addition-only proof."""
+
+
+def test_pre_m3_unchanged_corpus_golden_files_match_the_frozen_ajc62_baseline() -> None:
+    """AJC-62 R73: three corpora receive no re-record — not even a deliberate one.
+
+    The ordinary golden gate compares fresh generation against the committed
+    golden, so it goes green again the moment somebody re-records — which is
+    exactly the move this baseline exists to forbid for ``demo-caseload``,
+    ``money-showcase`` and ``personas-showcase`` during AJC-62. The comparison
+    is the raw SHA-256 of the committed golden files' own bytes against the
+    frozen fixture, so a re-record cannot ride through on a green ``--check``:
+    the file moved, and this says so regardless of what generated it.
+
+    ``doctrine-showcase`` is deliberately absent from the hash set — R73 grants
+    it exactly one addition-only re-record at build step 13, proved by its own
+    test against the complete payload this same fixture embeds.
+    """
+    contract = json.loads(AJC62_GOLDEN_CONTRACT.read_text(encoding="utf-8"))
+    frozen = contract["golden_sha256"]
+    assert set(frozen) == {"demo-caseload", "money-showcase", "personas-showcase"}, (
+        "the frozen contract must cover exactly the three no-re-record corpora"
+    )
+
+    golden_dir = Path(__file__).resolve().parent / "golden"
+    drifted: list[str] = []
+    for name, expected in sorted(frozen.items()):
+        actual = hashlib.sha256((golden_dir / f"{name}.json").read_bytes()).hexdigest()
+        if actual != expected:
+            drifted.append(f"{name}: recorded {expected}, committed file is {actual}")
+    assert not drifted, (
+        "a golden AJC-62 froze byte-identical has been rewritten — no build step "
+        "may re-record these corpora, deliberately or otherwise:\n  "
+        + "\n  ".join(drifted)
+    )
+
+    # The step-13 consumer's payload rides in the same fixture; a light shape
+    # guard keeps it from being mangled before that step needs it.
+    doctrine = contract["doctrine_showcase_pre_m3"]
+    assert doctrine["corpus"] == "doctrine-showcase"
+    assert doctrine["cases"], "the embedded pre-M3 doctrine payload lost its cases"
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ from __future__ import annotations
 import random
 import re
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 
 import structlog
 
@@ -27,6 +27,12 @@ from wc_caseload_engine.case_facts import (
     MODALITY_DISPLAY,
     SUBSTRATE_STATUS_PHRASES,
     CaseFacts,
+)
+from wc_caseload_engine.medical_story import (
+    PTP_APPORTIONMENT_SURFACES,
+    SUPPLEMENTAL_MEDLEGAL_SURFACES,
+    DocumentMedicalStory,
+    StoryRecordReference,
 )
 from wc_caseload_engine.money import (
     PD_ADVANCE_INTERVAL_DAYS,
@@ -425,6 +431,1309 @@ def _report_ordinal(template: Any) -> int:
         if isinstance(value, int):
             return value
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Medical story (AJC-62 / M3, R77 step 7)
+# ---------------------------------------------------------------------------
+
+
+type _ClauseRegister = tuple[tuple[str, tuple[str, ...]], ...]
+
+
+#: Source: ``psych-harassment-gfpa.md``,
+#: ``psych-compensable-consequence-vs-direct.md``, and the deliberately
+#: generic safety-officer gaps identified in ``psych-ptsd-safety-officers.md``.
+PSYCH_HISTORY_REGISTER: Final[_ClauseRegister] = (
+    (
+        "harassment_gfpa",
+        (
+            "The applicant reports [specific employment events] and describes "
+            "the work environment as [grounded description].",
+            "The history includes [performance review, discipline, transfer, "
+            "supervision, termination, reported mistreatment, or reported "
+            "discrimination], each of which is addressed separately rather than "
+            "collapsed into a generalized allegation.",
+            "Whether the reported events occurred and whether any event was a "
+            "lawful, nondiscriminatory, good-faith personnel action are reserved "
+            "for the trier of fact.",
+        ),
+    ),
+    (
+        "direct_physical_event",
+        (
+            "The reported psychiatric symptoms are attributed to [event] itself "
+            "rather than solely to the later effects of the physical injuries.",
+            "The history identifies the event, the reported onset, and the "
+            "event-focused symptoms actually present in the record.",
+            "The direct-versus-derivative analysis turns on whether the psychiatric "
+            "response is focused on the triggering event or on subsequent pain, "
+            "disability, treatment, or medical consequences.",
+        ),
+    ),
+    (
+        "compensable_consequence",
+        (
+            "The psychiatric condition developed in the course of the applicant's "
+            "response to [pain, physical limitation, treatment, surgery, sleep "
+            "disruption, medication effects, loss of function, or inability to "
+            "work] following the physical injury.",
+            "The history distinguishes the precipitating industrial physical injury "
+            "from the later medical effects to which the psychiatric symptoms are "
+            "attributed.",
+            "The physical injury and its medical effects remain actual events of "
+            "employment for the section 3208.3(b)(1) analysis.",
+        ),
+    ),
+    (
+        "safety_officer_ptsd",
+        (
+            "The applicant reports trauma-related symptoms following [specific event "
+            "or grounded repeated occupational exposure] while serving as [covered "
+            "role].",
+            "The diagnosis is addressed under the most recent applicable DSM edition; "
+            "the report does not infer a diagnosis from occupation or exposure alone.",
+            "The medical report addresses diagnosis and manifestation. Application of "
+            "the statutory presumption and the ultimate burden-of-proof result remain "
+            "legal determinations.",
+        ),
+    ),
+)
+
+#: Source: 8 CCR §§41, 43, and 49.8 plus the generic protocol gap documented
+#: in ``psych-qme-report-anatomy.md``; no instrument or scored result is added.
+PSYCH_QME_PROTOCOL_REGISTER: Final[_ClauseRegister] = (
+    (
+        "evaluation_protocol",
+        (
+            "The undersigned personally conducted the clinical interview, "
+            "mental-status examination, and psychiatric record review.",
+            "The evaluation considered the applicant's reported history, the records "
+            "identified below, the mental-status examination, and available diagnostic "
+            "testing.",
+            "Psychological testing was performed and considered together with the "
+            "clinical interview, mental-status examination, and records reviewed.",
+            "Testing was not treated as the sole basis for diagnosis or causation.",
+        ),
+    ),
+)
+
+#: Source: *Rolda v. Pitney Bowes, Inc.* and the medical-versus-legal role
+#: boundary collected in ``psych-harassment-gfpa.md``.
+PSYCH_ROLDA_REGISTER: Final[_ClauseRegister] = (
+    (
+        "four_step_walk",
+        (
+            "After consideration of the medical, documentary, and testimonial "
+            "evidence, the trier of fact must determine: (1) whether the alleged "
+            "psychiatric injury involves actual events of employment, a factual/legal "
+            "determination; (2) if so, whether those actual events were the predominant "
+            "cause of the psychiatric injury, a determination requiring medical "
+            "evidence; (3) if so, whether any actual employment events were personnel "
+            "actions that were lawful, nondiscriminatory, and in good faith, a "
+            "factual/legal determination; and (4) if so, whether those lawful, "
+            "nondiscriminatory, good-faith personnel actions were a substantial cause "
+            "of the psychiatric injury, a determination requiring medical evidence.",
+            "Whether [disputed events] occurred, and whether a personnel action was "
+            "lawful, nondiscriminatory, and in good faith, are factual/legal questions. "
+            "Assuming the trier of fact finds [predicate], it is my opinion within "
+            "reasonable medical probability that [medical causation finding].",
+        ),
+    ),
+)
+
+#: Source: Labor Code §3208.3(b), (d), (e), and (h), *McCullough*, and the
+#: §3212.15 displacement rule documented in the Part 5 research notes.
+PSYCH_THRESHOLD_REGISTER: Final[_ClauseRegister] = (
+    (
+        "ordinary_direct",
+        (
+            "Actual events of employment must be predominant as to all causes "
+            "combined, meaning greater than 50 percent.",
+        ),
+    ),
+    (
+        "compensable_consequence",
+        (
+            "The industrial physical injury and its medical effects are qualifying "
+            "actual events and must be predominant as to all causes combined.",
+        ),
+    ),
+    (
+        "violent_act",
+        (
+            "Actual events must be a substantial cause, meaning at least 35 to 40 "
+            "percent.",
+        ),
+    ),
+    (
+        "six_month",
+        (
+            "Labor Code section 3208.3(d) requires six months of employment unless "
+            "the injury was caused by a sudden and extraordinary employment condition.",
+        ),
+    ),
+    (
+        "gfpa",
+        (
+            "Labor Code section 3208.3(h) places the burden on the party asserting "
+            "that lawful, nondiscriminatory, good-faith personnel actions substantially "
+            "caused the injury.",
+        ),
+    ),
+    (
+        "post_termination",
+        (
+            "Labor Code section 3208.3(e) applies when the claim was filed after "
+            "notice of termination or layoff, subject to its enumerated exceptions.",
+        ),
+    ),
+)
+
+#: Source: the three authored case exemplars collected in
+#: ``psych-harassment-gfpa.md``; these are never sampled defaults.
+PSYCH_ACTUAL_EVENTS_REGISTER: Final[_ClauseRegister] = (
+    (
+        "harassment_personnel_outside",
+        (
+            "45% reported harassment/humiliation/hostile-work-environment events",
+            "30% personnel actions",
+            "25% outside or preexisting factors",
+        ),
+    ),
+    (
+        "assault_other_employment",
+        (
+            "65% traumatic assault itself",
+            "35% other employment events, including coworker/supervisor or "
+            "personnel-action events",
+        ),
+    ),
+    (
+        "adverse_work_acute_nonindustrial",
+        (
+            "55% chronic adverse-work/discrimination circumstances",
+            "25% acute workplace events",
+            "20% cannabis or another specifically grounded nonindustrial factor",
+        ),
+    ),
+)
+
+#: Source: Labor Code §3212.15 and the dated DSM table in
+#: ``psych-ptsd-safety-officers.md``.
+PSYCH_SAFETY_OFFICER_REGISTER: Final[_ClauseRegister] = (
+    (
+        "presumption",
+        (
+            "Labor Code section 3212.15 applies to post-traumatic stress disorder "
+            "diagnosed according to the most recent edition of the Diagnostic and "
+            "Statistical Manual and developing or manifesting during qualifying service.",
+            "The presumption is disputable. Once its predicates are established, the "
+            "burden shifts to the defendant to affirmatively controvert industrial "
+            "causation.",
+            "In the absence of evidence affirmatively controverting the presumption, "
+            "the ordinary Rolda analysis, including the good-faith-personnel-action "
+            "contention, is not reached.",
+        ),
+    ),
+    (
+        "violent_mechanism",
+        (
+            "The violent-act inquiry concerns the mechanism: strong physical force, "
+            "extreme or intense force, or an act that was vehemently or passionately "
+            "threatening.",
+        ),
+    ),
+    (
+        "catastrophic_nature",
+        (
+            "The factors are nonexclusive, and not every factor must apply. The "
+            "inquiry concerns the physical injury independently of the psychiatric "
+            "condition.",
+        ),
+    ),
+)
+
+#: Source: the 2005 Schedule for Rating Permanent Disabilities GAF-to-WPI
+#: instruction, retained as physician prose only.
+PSYCH_GAF_PDRS_REGISTER: Final[_ClauseRegister] = (
+    (
+        "post_2004",
+        (
+            "Starting at the top level of the GAF scale, I evaluated each range by "
+            "asking whether either symptom severity or level of functioning was worse "
+            "than the range description. I moved downward until reaching the range "
+            "that best matched whichever was worse, checked the next lower range "
+            "against stopping prematurely, and selected the specific score within the "
+            "ten-point range according to the severity and frequency of the supported "
+            "findings.",
+            "Using that method, I assign a current GAF of [GAF]. Under the 2005 "
+            "Schedule for Rating Permanent Disabilities GAF-to-WPI table, a GAF of "
+            "[GAF] corresponds to [WPI] percent whole person impairment.",
+        ),
+    ),
+    (
+        "pre_2005",
+        (
+            "Psychiatric impairment was evaluated under the protocol applicable to "
+            "the date of injury.",
+        ),
+    ),
+)
+
+#: Source: Labor Code §4660.1(c), *Larsen*, and *Wilson* as summarized in
+#: ``psych-compensable-consequence-vs-direct.md``.
+PSYCH_SECTION_4660_1C_REGISTER: Final[_ClauseRegister] = (
+    (
+        "direct_qme",
+        (
+            "Within reasonable medical probability, the psychiatric injury was "
+            "predominantly caused by [event] itself and not as a sequela of the "
+            "physical injuries sustained. It is therefore a primary injury, not a "
+            "derivative or secondary psychiatric injury.",
+        ),
+    ),
+    (
+        "consequence_qme",
+        (
+            "Within reasonable medical probability, the psychiatric injury is a "
+            "sequela of and derivative of the industrial physical injury, specifically "
+            "[grounded physical-injury effects]. The condition may remain industrial "
+            "and compensable even though Labor Code section 4660.1(c)(1) limits an "
+            "additional psychiatric impairment rating.",
+        ),
+    ),
+    (
+        "applicant_direct",
+        (
+            "Applicant contends that the psychiatric injury was directly caused by "
+            "the events of employment and that Labor Code section 4660.1(c) therefore "
+            "does not bar an increased impairment rating. Alternatively, applicant "
+            "relies on [the existing violent-act or catastrophic-injury theory].",
+        ),
+    ),
+)
+
+#: Source: the three counsel-supplied contest theories in Counsel Set Three;
+#: keys remain the frozen ``DefenseContestTheory`` members.
+PSYCH_DEFENSE_CONTEST_REGISTER: Final[_ClauseRegister] = (
+    (
+        "insufficient_investigation",
+        (
+            "The report does not identify the personnel records, performance "
+            "materials, disciplinary documents, or sworn statements necessary to "
+            "evaluate the alleged employment events.",
+            "The evaluator should identify which events are assumed to have occurred, "
+            "which records support those assumptions, and what information remains "
+            "unavailable.",
+            "Without that factual development, the medical percentage cannot resolve "
+            "whether the alleged events occurred or whether a personnel action was "
+            "lawful, nondiscriminatory, and in good faith.",
+        ),
+    ),
+    (
+        "post_termination",
+        (
+            "The psychiatric claim was presented after notice of termination or "
+            "layoff, and Labor Code section 3208.3(e) must be addressed.",
+            "The present record must identify the dates of notice, filing, and injury "
+            "and must identify evidence supporting any statutory exception.",
+            "Absent those dates and records, the evaluator should reserve the "
+            "post-termination analysis rather than assume that an exception applies.",
+        ),
+    ),
+    (
+        "lack_of_substantial_medical_evidence",
+        (
+            "A compensability opinion must be stated within reasonable medical "
+            "probability, rest on an adequate examination and history, consider the "
+            "pertinent facts, and explain the reasoning supporting its conclusion.",
+            "The report does not adequately explain how the identified employment "
+            "events produced the diagnosis or how the stated percentage was selected.",
+            "An opinion based on speculation, an incomplete history, facts no longer "
+            "germane, or an incorrect legal theory does not constitute substantial "
+            "medical evidence.",
+        ),
+    ),
+)
+
+#: Source: the carrier-specific advocacy, objection, supplemental, and sworn
+#: question forms in ``psych-qme-report-anatomy.md``.
+PSYCH_CONTENTION_SURFACE_REGISTER: Final[_ClauseRegister] = (
+    (
+        "advocacy",
+        (
+            "Please state whether the psychiatric injury was caused by the employment "
+            "event itself rather than by later pain, disability, or treatment.",
+            "Please state the percentage of total psychiatric-injury causation "
+            "attributable to actual events of employment.",
+            "Please address separately whether Labor Code section 4660.1(c)(1) applies "
+            "and whether either paragraph (c)(2) exception is supported.",
+        ),
+    ),
+    (
+        "objection",
+        (
+            "The report's history attributes the psychiatric symptoms to [grounded "
+            "consequence facts], but the conclusion characterizes the injury as direct "
+            "without reconciling that history.",
+            "The report does not separate causation of psychiatric injury under "
+            "section 3208.3 from apportionment of permanent disability under section "
+            "4663.",
+        ),
+    ),
+    (
+        "supplemental_request",
+        (
+            "1. Identify the actual events of employment assumed in forming your opinion.",
+            "2. State the percentage of total causation resulting from those events.",
+            "3. Distinguish event-focused symptoms from symptoms arising from pain, "
+            "disability, treatment, or other physical-injury effects.",
+            "4. State whether the psychiatric injury is direct or a compensable "
+            "consequence and explain why.",
+            "5. Address the six-month, post-termination, good-faith-personnel-action, "
+            "violent-act, and section 4660.1(c) issues that are actually presented by "
+            "the record.",
+        ),
+    ),
+    (
+        "qme_deposition",
+        (
+            "Doctor, is your opinion that the psychiatric condition arose from the "
+            "event itself or from the medical effects of the physical injury?",
+            "What history supports that distinction?",
+            "What percentage of total injury causation do you assign to actual events "
+            "of employment?",
+            "Which parts of your answer are medical opinions, and which predicates do "
+            "you leave to the trier of fact?",
+        ),
+    ),
+)
+
+#: Source: ``salerno-register-notes.md`` and the frozen R58 sparse-field
+#: contract; the two forms deliberately add no unbound clinical fact.
+IMR_APPLICATION_REGISTER: Final[_ClauseRegister] = (
+    (
+        "case_specific_rebuttal",
+        (
+            "The utilization-review determination denied [treatment] because "
+            "[grounded denial reason]. [Supporting record] documents [grounded "
+            "clinical fact], which addresses the stated criterion because [authored "
+            "or grounded explanation].",
+        ),
+    ),
+    (
+        "generic_rebuttal",
+        (
+            "The requested treatment is medically necessary for the industrial "
+            "condition. Reconsideration of the utilization-review determination is "
+            "requested.",
+        ),
+    ),
+    (
+        "mtus",
+        (
+            "The request is submitted under [grounded MTUS citation].",
+            "The cited criterion is addressed by [grounded case fact].",
+        ),
+    ),
+)
+
+
+_PSYCH_REGISTER_KEYS: Final[tuple[str, ...]] = (
+    "harassment_gfpa",
+    "direct_physical_event",
+    "compensable_consequence",
+    "safety_officer_ptsd",
+)
+_PSYCH_REGISTER_PRECEDENCE: Final[tuple[str, ...]] = (
+    "safety_officer_ptsd",
+    "harassment_gfpa",
+    "compensable_consequence",
+    "direct_physical_event",
+)
+
+
+def _register_clauses(register: _ClauseRegister, key: str) -> tuple[str, ...]:
+    """The first declared clause collection for *key*, or the empty tuple."""
+    return next((clauses for name, clauses in register if name == key), ())
+
+
+def _psych_visible_text(story: DocumentMedicalStory) -> str:
+    """All document-visible semantic prose, solely for grounded slot filling."""
+    values: list[str] = []
+    for condition in story.conditions:
+        values.append(condition.label)
+    for contention in story.contentions:
+        values.extend(contention.doctrine_hooks)
+        if contention.rationale:
+            values.append(contention.rationale)
+    opinion = story.medical_opinion
+    if opinion is not None:
+        for value in (
+            opinion.rationale,
+            opinion.revision_rationale,
+            opinion.aoe_coe_rationale,
+        ):
+            if value:
+                values.append(value)
+    for row in story.apportionments:
+        for value in (
+            row.description,
+            row.causal_rationale,
+            row.percentage_rationale,
+            row.revision_rationale,
+        ):
+            if value:
+                values.append(value)
+    return " ".join(values)
+
+
+def _psych_speaking_kind(story: DocumentMedicalStory) -> str | None:
+    """Direct/consequence value of the document's actual speaking layer."""
+    if story.contention_surface is not None:
+        return next(
+            (
+                contention.psych_injury_kind
+                for contention in story.contentions
+                if contention.psych_injury_kind is not None
+            ),
+            None,
+        )
+    opinion = story.medical_opinion
+    return opinion.psych_injury_kind if opinion is not None else None
+
+
+_SECTION_3212_15_ROLES: Final[frozenset[str]] = frozenset(
+    {
+        "firefighter",
+        "firefighter/paramedic",
+        "peace officer",
+        "police officer",
+        "sheriff's deputy",
+        "deputy sheriff",
+        "correctional officer",
+        "office of emergency services fire/rescue coordinator",
+    }
+)
+
+
+def _psych_safety_officer_role(template: Any, story: DocumentMedicalStory) -> str | None:
+    """A §3212.15 role from structured cast facts, never narrative matching."""
+    diagnoses = {
+        condition.id
+        for condition in story.conditions
+        if condition.body_system == "psychiatric"
+        and (
+            "post-traumatic stress disorder" in condition.label.lower()
+            or condition.label.strip().lower() == "ptsd"
+        )
+    }
+    if not diagnoses:
+        return None
+    opinion = story.medical_opinion
+    if opinion is not None and not diagnoses.intersection(opinion.reviewed_condition_ids):
+        return None
+    employer = getattr(getattr(template, "case", None), "employer", None)
+    role = str(getattr(employer, "position", "") or "").strip()
+    industry = str(getattr(employer, "department", "") or "").strip().lower()
+    if industry != "government" or role.lower() not in _SECTION_3212_15_ROLES:
+        return None
+    return role
+
+
+def _psych_register_key(template: Any, story: DocumentMedicalStory) -> str | None:
+    """First applicable private register key in R80's frozen precedence."""
+    applicable: set[str] = set()
+    if _psych_safety_officer_role(template, story) is not None:
+        applicable.add("safety_officer_ptsd")
+    if any("gfpa" in contention.doctrine_hooks for contention in story.contentions):
+        applicable.add("harassment_gfpa")
+    speaking_kind = _psych_speaking_kind(story)
+    if speaking_kind == "compensable_consequence":
+        applicable.add("compensable_consequence")
+    elif speaking_kind == "direct":
+        applicable.add("direct_physical_event")
+    return next((key for key in _PSYCH_REGISTER_PRECEDENCE if key in applicable), None)
+
+
+def _first_grounded_phrase(visible: str, phrases: tuple[str, ...]) -> str | None:
+    lowered = visible.lower()
+    return next((phrase for phrase in phrases if phrase in lowered), None)
+
+
+def _grounded_employment_events(visible: str) -> str:
+    found = [
+        phrase
+        for phrase in (
+            "performance evaluation",
+            "progressive discipline",
+            "discipline",
+            "transfer",
+            "supervision",
+            "termination",
+            "reported mistreatment",
+            "reported discrimination",
+            "harassment",
+            "humiliation",
+        )
+        if phrase in visible.lower()
+    ]
+    return ", ".join(dict.fromkeys(found)) or "the employment events described in the record"
+
+
+def _grounded_event(visible: str) -> str:
+    return _first_grounded_phrase(
+        visible,
+        (
+            "traumatic assault",
+            "workplace assault",
+            "violent workplace event",
+            "industrial event",
+            "employment event",
+            "reported employment events",
+        ),
+    ) or "the employment event described in the record"
+
+
+def _grounded_effects(visible: str) -> tuple[str, ...]:
+    lowered = visible.lower()
+    return tuple(
+        phrase
+        for phrase in (
+            "pain",
+            "physical limitation",
+            "treatment",
+            "surgery",
+            "sleep disruption",
+            "medication effects",
+            "loss of function",
+            "inability to work",
+            "disability",
+        )
+        if phrase in lowered
+    )
+
+
+def _story_psych_complaint_text(template: Any, story: DocumentMedicalStory) -> str:
+    """R82 complaint-family prose with only visible, deterministic slots."""
+    key = _psych_register_key(template, story)
+    if key is None:
+        return (
+            "The available history identifies no more specific psychiatric "
+            "mechanism than the facts stated in the records reviewed."
+        )
+    clauses = list(_register_clauses(PSYCH_HISTORY_REGISTER, key))
+    visible = _psych_visible_text(story)
+    if key == "harassment_gfpa":
+        events = _grounded_employment_events(visible)
+        description = _first_grounded_phrase(
+            visible,
+            (
+                "hostile work environment",
+                "pushed out",
+                "micromanaged",
+                "humiliation",
+                "mistreatment",
+                "discrimination",
+                "increased scrutiny",
+            ),
+        ) or "the work circumstances described in the record"
+        history = events
+        clauses[0] = clauses[0].replace("[specific employment events]", events).replace(
+            "[grounded description]", description
+        )
+        clauses[1] = clauses[1].replace(
+            "[performance review, discipline, transfer, supervision, termination, "
+            "reported mistreatment, or reported discrimination]",
+            history,
+        )
+    elif key == "direct_physical_event":
+        clauses[0] = clauses[0].replace("[event]", _grounded_event(visible))
+        has_onset = any(condition.onset is not None for condition in story.conditions)
+        symptom = _first_grounded_phrase(
+            visible,
+            ("fear", "anxiety", "depressed mood", "trauma-related symptoms"),
+        )
+        if symptom is None:
+            clauses[1] = (
+                "The history identifies the event and the reported onset."
+                if has_onset
+                else "The history identifies the event."
+            )
+    elif key == "compensable_consequence":
+        effects = _grounded_effects(visible)
+        if effects:
+            clauses[0] = clauses[0].replace(
+                "[pain, physical limitation, treatment, surgery, sleep disruption, "
+                "medication effects, loss of function, or inability to work]",
+                ", ".join(effects),
+            )
+        else:
+            clauses.pop(0)
+    else:
+        role = _psych_safety_officer_role(template, story)
+        event = _grounded_event(visible)
+        if role is None:
+            clauses.pop(0)
+        else:
+            clauses[0] = clauses[0].replace(
+                "[specific event or grounded repeated occupational exposure]", event
+            ).replace("[covered role]", role)
+    return " ".join(clauses)
+
+
+def _story_psych_protocol_text() -> str:
+    protocol = _register_clauses(PSYCH_QME_PROTOCOL_REGISTER, "evaluation_protocol")
+    return " ".join(
+        (
+            protocol[0],
+            protocol[1],
+            "Psychiatric disability or impairment was evaluated under 8 CCR §43. "
+            "Evaluator scope-of-training requirements are addressed by 8 CCR §41.",
+        )
+    )
+
+
+def _story_psych_testing_text() -> str:
+    protocol = _register_clauses(PSYCH_QME_PROTOCOL_REGISTER, "evaluation_protocol")
+    return " ".join(protocol[2:])
+
+
+def _story_actual_events_allocation(story: DocumentMedicalStory) -> str | None:
+    """An authored exemplar only when its complete literal is visible."""
+    rationale = (
+        story.medical_opinion.aoe_coe_rationale
+        if story.medical_opinion is not None
+        else None
+    )
+    if not rationale:
+        return None
+    for _name, clauses in PSYCH_ACTUAL_EVENTS_REGISTER:
+        if all(clause in rationale for clause in clauses):
+            return "; ".join(clauses) + "."
+    return None
+
+
+def _story_psych_adoption_text(story: DocumentMedicalStory) -> str | None:
+    opinion = story.medical_opinion
+    if opinion is None:
+        return None
+    contentions = {contention.id: contention for contention in story.contentions}
+    endorsed = [
+        contentions[contention_id]
+        for contention_id in opinion.endorses_contention_ids
+        if contention_id in contentions
+    ]
+    if endorsed:
+        theory = endorsed[0].rationale or "the psychiatric-injury characterization"
+        return (
+            "After review of the communication and the identified supporting "
+            f"evidence, I adopt {theory.rstrip('.')} as my own medical opinion for "
+            "the reasons stated here."
+        )
+    concurrence_ids = set(opinion.concurs_with_contention_ids)
+    if concurrence_ids.intersection(contentions):
+        return (
+            "My conclusion is independently based on the examination, records, and "
+            "medical reasoning stated in this report."
+        )
+    return None
+
+
+def _medical_story_of(doc_spec: Any) -> DocumentMedicalStory | None:
+    """The document-scoped medical story, when the renderer bound one (R11).
+
+    ``None`` is the ordinary answer for every medical-story-absent case and
+    for every ungoverned document, and every override below delegates to the
+    exact pre-M3 path on it — no new draw, flowable, context mutation or
+    normalization.
+    """
+    context = getattr(doc_spec, "context", None)
+    if isinstance(context, dict):
+        story = context.get("medical_story")
+        if isinstance(story, DocumentMedicalStory):
+            return story
+    return None
+
+
+def _story_of(template: Any) -> DocumentMedicalStory | None:
+    """The story for the document being rendered, via the captured spec."""
+    return _medical_story_of(getattr(template, "doc_spec", None))
+
+
+def _region_text(body_part: str | None) -> str:
+    return (body_part or "the affected region").replace("_", " ")
+
+
+_BMI_PHRASE = {
+    "normal_or_under": "a normal or under-weight body habitus",
+    "overweight": "an overweight body habitus",
+    "obese": "an obese body habitus",
+    "severely_obese": "a severely obese body habitus",
+}
+
+_SMOKING_PHRASE = {
+    "never": "has never smoked",
+    "former": "is a former smoker",
+    "current": "is a current smoker",
+}
+
+
+def _story_reference_line(reference: StoryRecordReference) -> str:
+    role = reference.author_role.replace("_", " ")
+    return (
+        f"• {reference.title} of "
+        f"{reference.doc_date.strftime('%B %d, %Y')} ({role})"
+    )
+
+
+def _story_records_text(story: DocumentMedicalStory, *, examined: bool = True) -> str:
+    """The R10 records list: actual earlier planned documents, or what is absent.
+
+    Never falls back to a generic provider pool and never fabricates a
+    provider, date, diagnostic or report: when no qualifying record exists the
+    section says so and states what the opinion rests on instead.
+    """
+    if not story.record_references:
+        basis = (
+            "the history obtained and the examination performed"
+            if examined
+            else "the history available and the prior evaluation in this matter"
+        )
+        return (
+            "No qualifying medical records were received for review. The "
+            f"opinions stated in this report rest on {basis}."
+        )
+    lines = "\n".join(
+        _story_reference_line(reference) for reference in story.record_references
+    )
+    return (
+        "The following records from this file were reviewed in preparation "
+        "for this evaluation:\n\n" + lines
+    )
+
+
+def _story_pmh_text(story: DocumentMedicalStory) -> str:
+    """The past-medical-history narrative, from visible facts only (R9)."""
+    demographics = story.demographics
+    sentences = [
+        f"The applicant is a {demographics.age}-year-old {demographics.sex} "
+        f"with {_BMI_PHRASE[demographics.bmi_band]} who "
+        f"{_SMOKING_PHRASE[demographics.smoking_status]}."
+    ]
+    for condition in story.conditions:
+        region = (
+            f" involving the {_region_text(condition.body_part)}"
+            if condition.body_part
+            else ""
+        )
+        onset = (
+            f", with onset in {condition.onset.strftime('%B %Y')}"
+            if condition.onset
+            else ""
+        )
+        sentence = (
+            f"The record documents {condition.label}{region}{onset}, "
+            f"{condition.severity} in severity and {condition.trajectory} in "
+            "course."
+        )
+        if condition.symptomatic_before_doi is True:
+            sentence += " This condition was symptomatic before the date of injury."
+        elif condition.symptomatic_before_doi is False:
+            sentence += (
+                " This condition was not symptomatic before the date of injury."
+            )
+        if condition.billing_coded:
+            sentence += " It is coded in this claim's own medical billing."
+        sentences.append(sentence)
+    if not story.conditions:
+        sentences.append(
+            "The available records do not document significant pre-existing "
+            "medical conditions."
+        )
+    sentences.extend(_story_prior_claim_sentences(story))
+    return " ".join(sentences)
+
+
+def _story_prior_claim_sentences(story: DocumentMedicalStory) -> list[str]:
+    sentences: list[str] = []
+    for claim in story.prior_claims:
+        parts = ", ".join(_region_text(part) for part in claim.body_parts)
+        sentences.append(
+            "The applicant filed a prior workers' compensation claim with a "
+            f"date of injury of {claim.date_of_injury.strftime('%B %d, %Y')} "
+            f"involving the {parts}, resolved by "
+            f"{claim.resolution_type.replace('_', ' ')}."
+        )
+    for award in story.prior_awards:
+        parts = ", ".join(_region_text(part) for part in award.body_parts)
+        sentences.append(
+            f"A prior permanent disability award of {award.pd_percent} percent "
+            f"issued on {award.award_date.strftime('%B %d, %Y')} covering the "
+            f"{parts}."
+        )
+    return sentences
+
+
+def _story_psych_history_text(story: DocumentMedicalStory) -> str:
+    psychiatric = [
+        condition
+        for condition in story.conditions
+        if condition.body_system == "psychiatric"
+    ]
+    if not psychiatric:
+        return (
+            "The available records do not document prior psychiatric "
+            "diagnosis or treatment."
+        )
+    sentences = []
+    for condition in psychiatric:
+        onset = (
+            f", with onset in {condition.onset.strftime('%B %Y')}"
+            if condition.onset
+            else ""
+        )
+        sentences.append(
+            f"The record documents {condition.label}{onset}, "
+            f"{condition.severity} in severity and {condition.trajectory} in "
+            "course."
+        )
+    return " ".join(sentences)
+
+
+def _story_psych_records_text(story: DocumentMedicalStory) -> str:
+    """R9 psych row — categorized REVIEW OF RECORDS with missing statements."""
+    taxonomy = effective_taxonomy()
+    treatment: list[StoryRecordReference] = []
+    medlegal: list[StoryRecordReference] = []
+    for reference in story.record_references:
+        if taxonomy.parent_of(reference.subtype) == "MEDICAL_CLINICAL":
+            treatment.append(reference)
+        else:
+            medlegal.append(reference)
+    blocks: list[str] = []
+    if treatment:
+        blocks.append(
+            "Medical treatment records reviewed:\n"
+            + "\n".join(_story_reference_line(reference) for reference in treatment)
+        )
+    else:
+        blocks.append(
+            "No medical treatment records were received for review; treatment "
+            "history rests on the applicant's account and the records "
+            "identified below, if any."
+        )
+    if medlegal:
+        blocks.append(
+            "Medical-legal reports reviewed:\n"
+            + "\n".join(_story_reference_line(reference) for reference in medlegal)
+        )
+    else:
+        blocks.append("No prior medical-legal reports were received for review.")
+    blocks.append(_story_psych_protocol_text())
+    return "\n\n".join(blocks)
+
+
+def _story_psych_causation_text(story: DocumentMedicalStory) -> str:
+    """The psych causation conclusion, from the opinion's semantic fields."""
+    opinion = story.medical_opinion
+    if opinion is None:
+        return (
+            "Psychiatric injury causation is addressed on the record reviewed, "
+            "the clinical interview, and the mental status examination."
+        )
+    sentences: list[str] = []
+    if opinion.psych_injury_kind == "direct":
+        sentences.append(
+            "Within reasonable medical probability, the psychiatric injury "
+            "was caused by the events of employment themselves and is a "
+            "primary psychiatric injury."
+        )
+    elif opinion.psych_injury_kind == "compensable_consequence":
+        sentences.append(
+            "Within reasonable medical probability, the psychiatric "
+            "condition developed as a consequence of the industrial physical "
+            "injury and its medical effects."
+        )
+    if opinion.aoe_coe_finding == "industrial":
+        sentences.append(
+            "The psychiatric condition arose out of and in the course of "
+            "employment."
+        )
+    elif opinion.aoe_coe_finding == "nonindustrial":
+        sentences.append(
+            "The psychiatric condition did not arise out of and in the "
+            "course of employment."
+        )
+    elif opinion.aoe_coe_finding == "deferred":
+        sentences.append(
+            "The AOE/COE determination for the psychiatric condition is "
+            "deferred pending the outstanding records identified in this "
+            "report."
+        )
+    if opinion.aoe_coe_rationale:
+        sentences.append(str(opinion.aoe_coe_rationale))
+    if _story_actual_events_allocation(story) is not None and story.apportionments:
+        sentences.append(
+            "The percentages above address causation of the psychiatric injury "
+            "under Labor Code section 3208.3. Apportionment of permanent disability "
+            "under section 4663 is a separate analysis."
+        )
+    adoption = _story_psych_adoption_text(story)
+    if adoption is not None:
+        sentences.append(adoption)
+    if not sentences:
+        sentences.append(
+            "Psychiatric injury causation is addressed on the record "
+            "reviewed, the clinical interview, and the mental status "
+            "examination."
+        )
+    return " ".join(sentences)
+
+
+def _story_psych_3208_text(template: Any, story: DocumentMedicalStory) -> str:
+    """R83/R85 statutory walk selected only by the speaking layer's facts."""
+    opinion = story.medical_opinion
+    key = _psych_register_key(template, story)
+    doc_date = getattr(getattr(template, "doc_spec", None), "doc_date", None)
+    before_sunset = doc_date is not None and doc_date.year < 2029
+    if key == "safety_officer_ptsd" and before_sunset:
+        clauses = list(
+            _register_clauses(PSYCH_SAFETY_OFFICER_REGISTER, "presumption")
+        )
+        dsm = (
+            "DSM-5-TR, as the most recent DSM edition."
+            if (doc_date.year, doc_date.month, doc_date.day) >= (2022, 3, 18)
+            else "DSM-5, as the most recent DSM edition."
+        )
+        clauses.append(f"The diagnosis is addressed under {dsm}")
+        clauses.append(
+            "Labor Code section 3212.15 remains in force through January 1, 2029."
+        )
+        return " ".join(clauses)
+
+    consequence = bool(
+        opinion is not None
+        and opinion.psych_injury_kind == "compensable_consequence"
+    )
+    paragraphs = list(_register_clauses(PSYCH_ROLDA_REGISTER, "four_step_walk"))
+    disputed = "the reported employment events"
+    finding = (
+        "those actual events were predominant as to all causes combined"
+        if consequence or (opinion is not None and opinion.aoe_coe_finding == "industrial")
+        else "the medical causation issue remains reserved on the present record"
+    )
+    paragraphs[1] = (
+        paragraphs[1]
+        .replace("[disputed events]", disputed)
+        .replace("[predicate]", "that the reported employment events occurred")
+        .replace("[medical causation finding]", finding)
+    )
+
+    exception = next(
+        (
+            row.psych_exception_analysis
+            for row in story.apportionments
+            if row.psych_exception_analysis not in (None, "none_applies")
+        ),
+        None,
+    )
+    threshold_key = (
+        "violent_act"
+        if exception in {"violent_act", "direct_exposure"}
+        else ("compensable_consequence" if consequence else "ordinary_direct")
+    )
+    paragraphs.extend(_register_clauses(PSYCH_THRESHOLD_REGISTER, threshold_key))
+    if consequence:
+        paragraphs.append(
+            "Labor Code section 3208.3(b)(1)'s predominant-cause threshold applies. "
+            "The industrial physical injury and its medical effects are treated as "
+            "qualifying actual events of employment. Those events must be predominant "
+            "as to all causes combined unless Labor Code section 3208.3(b)(2)'s "
+            "violent-act standard applies."
+        )
+    paragraphs.append(
+        "Labor Code section 3208.3(d) is considered only as the six-month "
+        "employment rule and is not authority for bypassing predominant cause "
+        "under Labor Code section 3208.3(b)(1)."
+    )
+
+    employer = getattr(getattr(template, "case", None), "employer", None)
+    hire_date = getattr(employer, "hire_date", None)
+    timeline = getattr(getattr(template, "case", None), "timeline", None)
+    doi = getattr(timeline, "date_of_injury", None)
+    if hire_date is not None and doi is not None and (doi - hire_date).days < 183:
+        paragraphs.extend(_register_clauses(PSYCH_THRESHOLD_REGISTER, "six_month"))
+        paragraphs.append(
+            "The available dates require the six-month issue to be addressed; the "
+            "sudden-and-extraordinary exception is not inferred from a violent-act "
+            "contention."
+        )
+    if key == "harassment_gfpa":
+        paragraphs.extend(_register_clauses(PSYCH_THRESHOLD_REGISTER, "gfpa"))
+    context = getattr(getattr(template, "doc_spec", None), "context", None)
+    theories = context.get("defense_contest_theories", ()) if isinstance(context, dict) else ()
+    if "post_termination" in theories:
+        paragraphs.extend(_register_clauses(PSYCH_THRESHOLD_REGISTER, "post_termination"))
+    paragraphs.append(
+        "The psychiatric condition is diagnosed using terminology and criteria "
+        "generally approved and accepted nationally; Labor Code section 3208.3 does "
+        "not itself expressly name DSM-5."
+    )
+    return " ".join(paragraphs)
+
+
+def _story_psych_4660_text(
+    template: Any, story: DocumentMedicalStory, date_of_injury: Any
+) -> str:
+    """The DOI-anchored §4660.1(c) structure from existing semantic fields."""
+    opinion = story.medical_opinion
+    if opinion is None:
+        return (
+            "The application of Labor Code section 4660.1(c) turns on the "
+            "direct-versus-consequence classification of the psychiatric injury."
+        )
+    if getattr(date_of_injury, "year", 9999) < 2013:
+        return (
+            "The date of injury predates January 1, 2013, so Labor Code "
+            "section 4660.1(c)'s limitation does not apply by date; the "
+            "direct-versus-consequence and section 3208.3 analyses remain separate."
+        )
+    if opinion.psych_injury_kind == "direct":
+        direct = _register_clauses(
+            PSYCH_SECTION_4660_1C_REGISTER, "direct_qme"
+        )[0].replace("[event]", _grounded_event(_psych_visible_text(story)))
+        conclusion = (
+            "Because the psychiatric injury is classified as a direct injury, "
+            "Labor Code section 4660.1(c)(1) does not bar an increased psychiatric "
+            "impairment rating on that ground."
+        )
+        return f"{direct} {conclusion}"
+    if opinion.psych_injury_kind == "compensable_consequence":
+        exception = next(
+            (
+                row.psych_exception_analysis
+                for row in story.apportionments
+                if row.psych_exception_analysis is not None
+            ),
+            None,
+        )
+        effects = _grounded_effects(_psych_visible_text(story))
+        consequence = (
+            _register_clauses(
+                PSYCH_SECTION_4660_1C_REGISTER, "consequence_qme"
+            )[0].replace(
+                "[grounded physical-injury effects]", ", ".join(effects)
+            )
+            if effects
+            else (
+                "The available record supports a consequential classification but "
+                "does not identify a more specific physical-injury effect."
+            )
+        )
+        consequence += (
+            " The impairment limitation does not decide whether the condition "
+            "itself is industrial or compensable for treatment. The condition may "
+            "remain industrial and compensable for treatment and temporary disability."
+        )
+        exception_text = ""
+        if exception in {"violent_act", "direct_exposure"}:
+            exception_text = " " + _register_clauses(
+                PSYCH_SAFETY_OFFICER_REGISTER, "violent_mechanism"
+            )[0]
+        elif exception == "catastrophic_injury":
+            exception_text = (
+                " The available record does not permit an unsupported finding on "
+                "treatment intensity, permanent physical outcome, activities of "
+                "daily living, analogous injuries, or progressive disease. "
+                + _register_clauses(
+                    PSYCH_SAFETY_OFFICER_REGISTER, "catastrophic_nature"
+                )[0]
+            )
+        return consequence + exception_text
+    return (
+        "The application of Labor Code section 4660.1(c) turns on the "
+        "direct-versus-consequence classification of the psychiatric injury, "
+        "which is addressed above on this record."
+    )
+
+
+def _story_tpr_causation_text(opinion: Any, final: bool) -> str:
+    """The treating physician's independent causation finding (R14/R16).
+
+    First-person clinical treatment voice: observed course, examinations,
+    mechanism, and an independent AOE/COE conclusion. Never an
+    attorney-responsive register — no communication is cited as the source of
+    the finding.
+    """
+    sentences: list[str] = []
+    if opinion.aoe_coe_finding == "industrial":
+        sentences.append(
+            "Based on the treatment course, the serial examinations, the "
+            "reported mechanism of injury, and the clinical findings, it is "
+            "my opinion that the condition arose out of and in the course of "
+            "employment."
+        )
+    elif opinion.aoe_coe_finding == "nonindustrial":
+        sentences.append(
+            "Based on the treatment course, the serial examinations, the "
+            "reported mechanism of injury, and the clinical findings, it is "
+            "my opinion that the condition did not arise out of and in the "
+            "course of employment."
+        )
+    elif opinion.aoe_coe_finding == "deferred":
+        sentences.append(
+            "The causation determination is deferred pending further records "
+            "and clinical course; my working assessment rests on the "
+            "treatment history and examinations to date."
+        )
+    else:
+        sentences.append(
+            "The causation conclusions stated in this report rest on the "
+            "treatment course, the examinations performed, the reported "
+            "mechanism of injury, and the clinical course observed."
+        )
+    if opinion.aoe_coe_rationale:
+        sentences.append(str(opinion.aoe_coe_rationale))
+    if opinion.psych_injury_kind == "direct":
+        sentences.append(
+            "The psychiatric component is assessed clinically as a direct "
+            "injury arising from the events of employment themselves."
+        )
+    elif opinion.psych_injury_kind == "compensable_consequence":
+        sentences.append(
+            "The psychiatric component is assessed clinically as a "
+            "compensable consequence of the physical injury and its effects."
+        )
+    if final and opinion.psych_injury_kind == "direct":
+        sentences.append(
+            "As classified, Labor Code section 4660.1(c) does not bar an "
+            "increased psychiatric impairment rating on that ground."
+        )
+    elif final and opinion.psych_injury_kind == "compensable_consequence":
+        sentences.append(
+            "As classified, Labor Code section 4660.1(c) limits an "
+            "additional psychiatric impairment rating; the condition may "
+            "remain industrial and compensable for treatment."
+        )
+    return " ".join(sentences)
+
+
+def _story_contention_sentence(position: int, contention: Any) -> str:
+    """One numbered issue, from the contention's semantic fields only (R15)."""
+    claim = contention.claim_type.replace("_", " ")
+    target = (
+        f" concerning the {_region_text(contention.target_body_part)}"
+        if contention.target_body_part
+        else ""
+    )
+    stance = "affirms" if contention.position == "affirm" else "denies"
+    sentence = (
+        f"{position}. The {contention.party} {stance} the issue of "
+        f"{claim}{target}."
+    )
+    if contention.psych_injury_kind == "direct":
+        sentence += (
+            " The psychiatric injury is characterized as a direct injury "
+            "caused by the events of employment themselves."
+        )
+    elif contention.psych_injury_kind == "compensable_consequence":
+        sentence += (
+            " The psychiatric injury is characterized as a compensable "
+            "consequence of the physical injury."
+        )
+    if contention.requested_apportionment == "apply":
+        sentence += (
+            " Apportionment of permanent disability should be applied on "
+            "this record."
+        )
+    elif contention.requested_apportionment == "refuse":
+        sentence += (
+            " Apportionment of permanent disability should be refused on "
+            "this record."
+        )
+    if (
+        "hikida_treatment_carveout" in contention.doctrine_hooks
+        or contention.treatment_causation is not None
+    ):
+        if (
+            contention.treatment_causation == "contributing_cause"
+            and contention.requested_apportionment == "apply"
+        ):
+            sentence += (
+                " Industrial medical treatment contributed to the permanent "
+                "disability, but other pathology also contributes; under "
+                "Justice's narrowing of Hikida, statutory apportionment applies."
+            )
+        elif (
+            contention.treatment_causation == "contributing_cause"
+            and contention.requested_apportionment == "refuse"
+        ):
+            sentence += (
+                " Industrial medical treatment contributed to the permanent "
+                "disability, and the requested refusal of apportionment invokes "
+                "Hikida even though Justice limits the carveout to disability "
+                "caused solely by that treatment."
+            )
+        elif (
+            contention.treatment_causation == "sole_cause"
+            and contention.requested_apportionment == "apply"
+        ):
+            sentence += (
+                " Industrial medical treatment is stated to be the sole cause "
+                "of the permanent disability, while the requested result still "
+                "applies apportionment contrary to the Hikida carveout as "
+                "narrowed by Justice."
+            )
+        elif (
+            contention.treatment_causation == "sole_cause"
+            and contention.requested_apportionment == "refuse"
+        ):
+            sentence += (
+                " Industrial medical treatment is stated to be the sole cause "
+                "of the permanent disability; Hikida, as narrowed by Justice, "
+                "therefore requires compensation without apportionment."
+            )
+    if contention.rationale:
+        sentence += f" {contention.rationale.rstrip('.')}."
+    return sentence
+
+
+#: R30 — one professional clause per frozen defense-contest theory, rendered
+#: in the tuple order the binding carries. Adversarial attorney prose, never
+#: an analyzer verdict; the psych-specific litigation registers land with P5.
+_DEFENSE_THEORY_SENTENCES: dict[str, str] = {
+    "insufficient_investigation": (
+        "The report does not identify the records, factual investigation, "
+        "and history necessary to evaluate the issues presented, and the "
+        "required investigation is incomplete."
+    ),
+    "post_termination": (
+        "The record presents post-termination defenses that the report does "
+        "not address, and the statutory analysis required for a claim "
+        "presented after notice of termination or layoff must be made."
+    ),
+    "lack_of_substantial_medical_evidence": (
+        "The report's conclusions are not stated upon an adequate history "
+        "and examination with reasoned explanation, and do not constitute "
+        "substantial medical evidence."
+    ),
+}
+
+
+def _defense_theory_sentences(theories: Any) -> list[str]:
+    return [_DEFENSE_THEORY_SENTENCES[theory] for theory in theories or ()]
+
+
+def _psych_defense_theory_sentences(theories: Any) -> list[str]:
+    """Every psych clause, preserving the binding's theory tuple order."""
+    register = dict(PSYCH_DEFENSE_CONTEST_REGISTER)
+    return [
+        clause
+        for theory in theories or ()
+        for clause in register[str(theory)]
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1291,8 +2600,10 @@ def build_fact_aware_templates() -> dict[str, type]:
     diagnostic_module = import_substrate("pdf_templates.medical.diagnostic_report")
     qme_module = import_substrate("pdf_templates.medical.qme_ame_report")
     tpr_module = import_substrate("pdf_templates.medical.treating_physician_report")
+    apportionment_module = import_substrate("data.apportionment")
 
-    from reportlab.platypus import Paragraph
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
 
     class FactAwareDiagnosticReport(_SpecCapture, diagnostic_module.DiagnosticReport):  # type: ignore[misc,name-defined]
         """Reports the study the ledger says was performed.
@@ -1438,7 +2749,68 @@ def build_fact_aware_templates() -> dict[str, type]:
                 )
             return elements
 
-    class FactAwareTreatingPhysicianReport(_SpecCapture, tpr_module.TreatingPhysicianReport):  # type: ignore[misc,name-defined]
+    class _MedicalStoryTprSections:
+        """R9's treating-physician section owners for the medical-story path.
+
+        The PTP register is a first-person clinical treatment voice with an
+        independent AOE/COE conclusion (R14/R16): the causation section rests
+        on the treatment course, examinations, mechanism and clinical course,
+        and never answers an attorney's theory as its causal source. Every
+        override delegates through ``super()`` on the story-absent path.
+        """
+
+        def _build_assessment(self, injury: Any) -> list[Any]:
+            elements = list(super()._build_assessment(injury))
+            story = _story_of(self)
+            opinion = story.medical_opinion if story is not None else None
+            if opinion is None:
+                return elements
+            # R9: INDUSTRIAL CAUSATION follows the assessment; PSYCHIATRIC
+            # CAUSATION replaces the generic heading for a psych finding.
+            psych = opinion.psych_injury_kind is not None
+            heading = "PSYCHIATRIC CAUSATION" if psych else "INDUSTRIAL CAUSATION"
+            final = _subtype_of(self) in PTP_APPORTIONMENT_SURFACES
+            elements.extend(
+                self.make_section(heading, _story_tpr_causation_text(opinion, final))
+            )
+            return elements
+
+        def impairment_rating_section(self, apportionment: Any = None) -> list[Any]:
+            story = _story_of(self)
+            if (
+                story is None
+                or story.medical_opinion is None
+                or _subtype_of(self) not in PTP_APPORTIONMENT_SURFACES
+            ):
+                return list(super().impairment_rating_section(apportionment))
+            # R12: the PR-4/final subclass parses and passes the same AJC-65
+            # decision into the impairment section, then states the
+            # apportionment immediately after the impairment block (R9).
+            context = getattr(getattr(self, "doc_spec", None), "context", None)
+            decision = (
+                apportionment
+                if apportionment is not None
+                else apportionment_module.parse_apportionment(context)
+            )
+            elements = list(super().impairment_rating_section(decision))
+            if decision is not None:
+                elements.extend(
+                    self.make_section(
+                        "APPORTIONMENT OF PERMANENT DISABILITY",
+                        decision.conclusion_sentence(),
+                    )
+                )
+                heterogeneous = _story_heterogeneous_rows(story)
+                if heterogeneous:
+                    elements.append(
+                        _story_apportionment_table(heterogeneous, self.styles)
+                    )
+                    elements.append(Spacer(1, 0.15 * inch))
+            return elements
+
+    class FactAwareTreatingPhysicianReport(
+        _MedicalStoryTprSections, _SpecCapture, tpr_module.TreatingPhysicianReport  # type: ignore[misc,name-defined]
+    ):
         """Describes post-operative care when the ledger says surgery happened.
 
         ``treatment_type`` drew from ``conservative`` / ``physical_therapy`` /
@@ -1545,6 +2917,20 @@ def build_fact_aware_templates() -> dict[str, type]:
             )
             return list(self.make_section("TREATMENT PLAN", content))
 
+    class FactAwareMedicalStoryTreatingReport(
+        _MedicalStoryTprSections, _SpecCapture, tpr_module.TreatingPhysicianReport  # type: ignore[misc,name-defined]
+    ):
+        """The R9 story sections over the RAW substrate treating report.
+
+        Mount for ``TREATING_PHYSICIAN_REPORT`` and
+        ``TREATING_PHYSICIAN_REPORT_FINAL``, which had no fact-aware
+        registration before M3: their exact pre-M3 path is the unmodified
+        substrate, so the story-absent delegation must land there — mounting
+        them on :class:`FactAwareTreatingPhysicianReport` would force the
+        ledger's trajectory phrase and surgical plan into documents whose
+        feature-absent bytes R1 freezes.
+        """
+
     operative_module = import_substrate("pdf_templates.medical.operative_record")
 
     class FactAwareOperativeRecord(_SpecCapture, operative_module.OperativeRecord):  # type: ignore[misc,name-defined]
@@ -1583,7 +2969,406 @@ def build_fact_aware_templates() -> dict[str, type]:
                 log.warning("fact_templates.cpt_not_forced", expected=sorted(codes))
             return story
 
-    class FactAwareNeuroQmeReport(FactAwareQmeAmeReport):
+    def _story_apportionment_table(rows: Any, styles: Any) -> Any:
+        """R12 — the body-part table for heterogeneous plural apportionment.
+
+        Rendered by the wcce subclass exactly where AJC-65 suppressed its
+        scalar block: the rows carry different nonindustrial percentages, so
+        the table states each split the evaluator actually made and no scalar
+        is invented anywhere.
+        """
+        data: list[list[Any]] = [
+            ["Body Part", "Industrial %", "Nonindustrial %", "Basis"]
+        ]
+        for row in rows:
+            basis = row.description or ", ".join(
+                kind.replace("_", " ") for kind in row.basis_kinds
+            ) or "nonindustrial factors"
+            data.append(
+                [
+                    _region_text(row.body_part).title(),
+                    f"{row.industrial_percent}%",
+                    f"{row.nonindustrial_percent}%",
+                    basis,
+                ]
+            )
+        return _money_table(
+            data, [1.3 * inch, 1.0 * inch, 1.1 * inch, 2.6 * inch], styles
+        )
+
+    def _story_heterogeneous_rows(story: DocumentMedicalStory) -> tuple[Any, ...]:
+        rows = story.apportionments
+        if len(rows) > 1 and len({row.nonindustrial_percent for row in rows}) > 1:
+            return rows
+        return ()
+
+    def _story_causation_paragraph(context: Any) -> str:
+        """The med-legal causation discussion, from the parsed AJC-65 block."""
+        causation = apportionment_module.parse_causation(context)
+        if causation is not None and causation.discussion:
+            return causation.discussion
+        attribution = (
+            causation.attribution if causation is not None else None
+        ) or "predominantly"
+        return (
+            f"The current condition is {attribution} attributable to the "
+            "industrial injury. This opinion rests on the history obtained, "
+            "the records reviewed, and the examination findings documented in "
+            "this report, and is stated to a reasonable degree of medical "
+            "probability."
+        )
+
+    _revision_kind_sentences: dict[str, str] = {
+        "unchanged_additional_reasoning": (
+            "The opinions stated in the prior report are unchanged; "
+            "additional reasoning is provided below."
+        ),
+        "new_records_no_change": (
+            "The newly received records were reviewed and acknowledged; the "
+            "opinions stated in the prior report are unchanged."
+        ),
+        "revised_causation": (
+            "Upon the further review stated in this report, the causation "
+            "opinion is revised."
+        ),
+        "revised_apportionment": (
+            "Upon the further review stated in this report, the "
+            "apportionment opinion is revised."
+        ),
+        "revised_causation_and_apportionment": (
+            "Upon the further review stated in this report, the causation "
+            "and apportionment opinions are both revised."
+        ),
+    }
+
+    class _MedicalStoryQmeSections:
+        """R9's QME/AME section owners for the medical-story path (AJC-62).
+
+        Mixed in FRONT of a governed QME/AME base class so the story-present
+        path owns the frozen R9 splice points while every story-absent call
+        delegates through ``super()`` to the exact pre-M3 MRO — the existing
+        fact-aware clinical overrides for the subtypes that had them, the raw
+        substrate for the subtypes that did not. One mixin, two mounts, zero
+        competing wrappers (R11).
+        """
+
+        def _story_supplemental(self) -> bool:
+            return _subtype_of(self) in SUPPLEMENTAL_MEDLEGAL_SURFACES
+
+        def _story_psych(self) -> bool:
+            return _subtype_of(self) == "PSYCH_EVAL_REPORT_QME_AME"
+
+        def _build_history(self, injury: Any, doc_spec: Any) -> list[Any]:
+            story = _medical_story_of(doc_spec)
+            if story is None:
+                return list(super()._build_history(injury, doc_spec))
+            if self._story_psych() and not self._story_supplemental():
+                elements = list(
+                    self.make_section(
+                        "HISTORY OF PRESENT INJURY",
+                        _story_psych_complaint_text(self, story),
+                    )
+                )
+                elements.append(Spacer(1, 0.15 * inch))
+                return elements
+            if not self._story_supplemental():
+                return list(super()._build_history(injury, doc_spec))
+            # R9 supplemental row: the "specific questions / new information"
+            # voice. No fresh HPI — the prior report owns the history, and
+            # only changed or new information appears here.
+            prior = story.preceding_report
+            cited = (
+                f"my {prior.title} of {prior.doc_date.strftime('%B %d, %Y')}"
+                if prior is not None
+                else "the prior medical-legal evaluation in this matter"
+            )
+            lead = (
+                f"This supplemental report responds to {cited}. It is limited "
+                "to the specific questions presented and the new information "
+                "received since that report; the history of the present "
+                "injury is not restated."
+            )
+            if story.contentions:
+                numbered = "\n".join(
+                    _story_contention_sentence(position + 1, contention)
+                    for position, contention in enumerate(story.contentions)
+                )
+                content = f"{lead}\n\nThe questions presented are:\n\n{numbered}"
+            else:
+                content = lead
+            elements = list(
+                self.make_section("QUESTIONS PRESENTED AND NEW INFORMATION", content)
+            )
+            elements.append(Spacer(1, 0.15 * inch))
+            return elements
+
+        def _build_records_review(self, doc_spec: Any) -> list[Any]:
+            story = _medical_story_of(doc_spec)
+            if story is None:
+                return list(super()._build_records_review(doc_spec))
+            elements: list[Any] = []
+            if self._story_supplemental():
+                # R9/R10: delta records only — the projector already limited
+                # the references to documents later than the prior report.
+                elements.extend(
+                    self.make_section(
+                        "RECORDS REVIEWED SINCE PRIOR REPORT",
+                        _story_records_text(story, examined=False),
+                    )
+                )
+            elif self._story_psych():
+                elements.extend(
+                    self.make_section(
+                        "REVIEW OF RECORDS", _story_psych_records_text(story)
+                    )
+                )
+                elements.extend(
+                    self.make_section(
+                        "PAST MEDICAL AND SURGICAL HISTORY", _story_pmh_text(story)
+                    )
+                )
+                elements.extend(
+                    self.make_section(
+                        "PAST PSYCHIATRIC HISTORY",
+                        _story_psych_history_text(story),
+                    )
+                )
+            else:
+                # R9 initial row: PMH prepended here, and the generic record
+                # pool replaced with the actual prior-file references.
+                elements.extend(
+                    self.make_section("PAST MEDICAL HISTORY", _story_pmh_text(story))
+                )
+                elements.extend(
+                    self.make_section(
+                        "REVIEW OF MEDICAL RECORDS", _story_records_text(story)
+                    )
+                )
+            elements.append(Spacer(1, 0.15 * inch))
+            return elements
+
+        def _build_chief_complaints(self, injury: Any) -> list[Any]:
+            story = _story_of(self)
+            if story is None or not self._story_supplemental():
+                return list(super()._build_chief_complaints(injury))
+            # R9 supplemental row: no fresh complaints are elicited.
+            return []
+
+        def _build_physical_exam(
+            self, specialty: Any, body_parts: Any, doc_spec: Any
+        ) -> list[Any]:
+            story = _medical_story_of(doc_spec)
+            if story is None:
+                return list(
+                    super()._build_physical_exam(specialty, body_parts, doc_spec)
+                )
+            if self._story_psych() and not self._story_supplemental():
+                content = (
+                    "A mental-status examination was performed and considered with "
+                    "the clinical interview and the records reviewed. "
+                    + _story_psych_testing_text()
+                )
+                elements = list(
+                    self.make_section("PHYSICAL EXAMINATION FINDINGS", content)
+                )
+                elements.append(Spacer(1, 0.15 * inch))
+                return elements
+            if not self._story_supplemental():
+                return list(
+                    super()._build_physical_exam(specialty, body_parts, doc_spec)
+                )
+            elements = list(
+                self.make_section(
+                    "SCOPE OF SUPPLEMENTAL REVIEW",
+                    "No new examination was performed for this supplemental "
+                    "report. The findings of the prior examination stand "
+                    "except as expressly revisited below; the opinions stated "
+                    "here rest on the record review and the reasoning set "
+                    "forth in this report.",
+                )
+            )
+            elements.append(Spacer(1, 0.15 * inch))
+            return elements
+
+        def _build_diagnostic_review(self, injury: Any) -> list[Any]:
+            elements = list(super()._build_diagnostic_review(injury))
+            story = _story_of(self)
+            if story is None or not self._story_psych():
+                return elements
+            opinion = story.medical_opinion
+            if opinion is None:
+                return elements
+            # R9 psych row / R81 order: the causation and statutory blocks
+            # follow the diagnostic impression and precede impairment and
+            # apportionment. Register CONTENT is Part 5's; the frozen heading
+            # structure and current-generic prose are this step's.
+            elements.extend(
+                self.make_section(
+                    "DIAGNOSTIC IMPRESSION",
+                    "The diagnostic impression is stated under the most "
+                    "recent applicable diagnostic criteria and rests on the "
+                    "clinical interview, the mental status findings above, "
+                    "and the records reviewed.",
+                )
+            )
+            elements.extend(
+                self.make_section(
+                    "PSYCHIATRIC INJURY CAUSATION",
+                    _story_psych_causation_text(story),
+                )
+            )
+            elements.extend(
+                self.make_section(
+                    "LABOR CODE §3208.3 ANALYSIS",
+                    _story_psych_3208_text(self, story),
+                )
+            )
+            elements.extend(
+                self.make_section(
+                    "LABOR CODE §4660.1(c) ANALYSIS",
+                    _story_psych_4660_text(
+                        self, story, self.case.timeline.date_of_injury
+                    ),
+                )
+            )
+            return elements
+
+        def impairment_rating_section(self, apportionment: Any = None) -> list[Any]:
+            """Retain the substrate's single psych pair for R86 report prose."""
+            story = _story_of(self)
+            if story is None or not self._story_psych():
+                return list(super().impairment_rating_section(apportionment))
+
+            ama_module = import_substrate("data.ama_guides_content")
+            body_parts = (
+                self.case.injuries[0].body_parts if self.case.injuries else []
+            )
+            specialty = (
+                getattr(self.case, "qme_physician", None)
+                and self.case.qme_physician.specialty
+            ) or self.case.treating_physician.specialty
+            drawn_pct = random.choice([0, 0, 0, 10, 15, 20, 25])
+            if apportionment is None:
+                narrative, _total_wpi, ratings = (
+                    ama_module.generate_impairment_narrative(
+                        body_parts, specialty, drawn_pct
+                    )
+                )
+            else:
+                narrative, _total_wpi, ratings = (
+                    ama_module.generate_impairment_narrative(
+                        body_parts,
+                        specialty,
+                        drawn_pct,
+                        governed_block=apportionment.impairment_block(body_parts),
+                    )
+                )
+            elements: list[Any] = [
+                Paragraph(
+                    "<b>IMPAIRMENT RATING — AMA GUIDES 5TH EDITION</b>",
+                    self.styles["SectionHeader"],
+                ),
+                Spacer(1, 0.1 * inch),
+            ]
+            for paragraph in narrative.split("\n"):
+                if paragraph.strip():
+                    elements.append(
+                        Paragraph(paragraph, self.styles["BodyText14"])
+                    )
+
+            date_of_injury = self.case.timeline.date_of_injury
+            if date_of_injury.year < 2005:
+                pdrs = _register_clauses(
+                    PSYCH_GAF_PDRS_REGISTER, "pre_2005"
+                )[0]
+                elements.append(Paragraph(pdrs, self.styles["BodyText14"]))
+            else:
+                pair = next(
+                    (
+                        (rating.get("gaf"), rating.get("wpi"))
+                        for rating in ratings
+                        if rating.get("gaf") is not None
+                        and rating.get("wpi") is not None
+                    ),
+                    None,
+                )
+                if pair is not None:
+                    method, result = _register_clauses(
+                        PSYCH_GAF_PDRS_REGISTER, "post_2004"
+                    )
+                    result = result.replace("[GAF]", str(pair[0])).replace(
+                        "[WPI]", str(pair[1])
+                    )
+                    elements.append(Paragraph(method, self.styles["BodyText14"]))
+                    elements.append(Paragraph(result, self.styles["BodyText14"]))
+                    elements.append(
+                        Paragraph(
+                            "DSM-IV-TR/GAF terminology is retained only for the 2005 "
+                            "PDRS impairment instruction, not as the current diagnostic "
+                            "standard.",
+                            self.styles["BodyText14"],
+                        )
+                    )
+            elements.append(Spacer(1, 0.15 * inch))
+            return elements
+
+        def _build_future_medical(self, body_parts: Any) -> list[Any]:
+            story = _story_of(self)
+            if story is None or story.medical_opinion is None:
+                return list(super()._build_future_medical(body_parts))
+            context = getattr(getattr(self, "doc_spec", None), "context", None)
+            decision = apportionment_module.parse_apportionment(context)
+            elements: list[Any] = []
+            if self._story_psych():
+                # R81: PSYCHIATRIC APPORTIONMENT sits after the impairment
+                # content; this splice point is immediately after it.
+                content = (
+                    decision.conclusion_sentence()
+                    if decision is not None
+                    else (
+                        "Psychiatric apportionment is addressed under Labor "
+                        "Code sections 4663 and 4664 on the record reviewed."
+                    )
+                )
+                elements.extend(
+                    self.make_section("PSYCHIATRIC APPORTIONMENT", content)
+                )
+            elif self._story_supplemental():
+                # R9 supplemental row: only issues actually revisited.
+                opinion = story.medical_opinion
+                sentences: list[str] = []
+                if opinion.revision_kind is not None:
+                    sentences.append(_revision_kind_sentences[opinion.revision_kind])
+                if opinion.revision_rationale:
+                    sentences.append(opinion.revision_rationale)
+                if decision is not None:
+                    sentences.append(decision.conclusion_sentence())
+                if sentences:
+                    elements.extend(
+                        self.make_section(
+                            "SUPPLEMENTAL CAUSATION AND APPORTIONMENT OPINIONS",
+                            " ".join(sentences),
+                        )
+                    )
+            else:
+                # R9 initial row: the discussion sits immediately after the
+                # impairment section and before future medical treatment.
+                sentences = [_story_causation_paragraph(context)]
+                if decision is not None:
+                    sentences.append(decision.conclusion_sentence())
+                elements.extend(
+                    self.make_section("CAUSATION AND APPORTIONMENT", " ".join(sentences))
+                )
+            heterogeneous = _story_heterogeneous_rows(story)
+            if heterogeneous:
+                elements.append(
+                    _story_apportionment_table(heterogeneous, self.styles)
+                )
+                elements.append(Spacer(1, 0.15 * inch))
+            elements.extend(super()._build_future_medical(body_parts))
+            return elements
+
+    class FactAwareNeuroQmeReport(_MedicalStoryQmeSections, FactAwareQmeAmeReport):
         """As above, and it does not electrodiagnose a study that never happened.
 
         ``_build_neuro_exam`` appended an EMG/NCV paragraph unconditionally,
@@ -1613,9 +3398,17 @@ def build_fact_aware_templates() -> dict[str, type]:
             independent sentence about what imaging was obtained — so a QME
             could still announce an MRI in paragraph two and review only X-rays
             four pages later. Same interception, same narrow target.
+
+            The supplemental medical-story path (AJC-62) replaces the history
+            with the delta form and never reaches the substrate's imaging
+            sentence, so the interception is skipped there — wrapping a path
+            that makes no draw would fire the not-forced warning on every
+            governed supplemental and drown the real diagnostic.
             """
             facts = _facts_of(self)
-            if facts is None:
+            if facts is None or (
+                _story_of(self) is not None and self._story_supplemental()
+            ):
                 return list(super()._build_history(*args, **kwargs))
 
             forced = _ForcedChoice(
@@ -1632,6 +3425,22 @@ def build_fact_aware_templates() -> dict[str, type]:
             if not forced.fired:
                 log.warning("fact_templates.history_imaging_not_forced")
             return story
+
+    class FactAwareMedicalStoryQmeReport(
+        _MedicalStoryQmeSections, _SpecCapture, qme_module.QmeAmeReport  # type: ignore[misc,name-defined]
+    ):
+        """The R9 story sections over the RAW substrate QME/AME report.
+
+        Mount for the R8 members that had no fact-aware registration before
+        M3 — ``AME_REPORT``, ``MEDICAL_LEGAL_QME_AME_IME``,
+        ``APPORTIONMENT_REPORT`` and ``PSYCH_EVAL_REPORT_QME_AME``. Their
+        exact pre-M3 path is the unmodified substrate, so the story-absent
+        delegation lands there rather than on the clinical overrides the
+        five previously registered QME subtypes carry — mounting these on
+        :class:`FactAwareNeuroQmeReport` would have changed their
+        feature-absent bytes, which R1 forbids (R11's "delegate through the
+        exact pre-M3 path").
+        """
 
     ur_module = import_substrate("pdf_templates.medical.utilization_review")
 
@@ -1650,6 +3459,115 @@ def build_fact_aware_templates() -> dict[str, type]:
         about something this ledger does not model, and inventing a subject for
         it would be worse than the substrate's own draw.
         """
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            context = doc_spec.context if isinstance(doc_spec.context, dict) else {}
+            content = context.get("imr_application_content")
+            if _subtype_of(self) != "IMR_APPLICATION_FORM" or content is None:
+                return list(super().build_story(doc_spec))
+
+            applicant_firm = str(
+                context.get("imr_applicant_firm") or "Counsel for the Applicant"
+            )
+            flow: list[Any] = []
+            flow.extend(
+                self.make_letterhead(
+                    applicant_firm,
+                    "Applicant Counsel Address on File",
+                    "Telephone on File",
+                )
+            )
+            flow.append(Spacer(1, 0.3 * inch))
+            flow.append(
+                Paragraph(
+                    "<b>INDEPENDENT MEDICAL REVIEW APPLICATION</b>",
+                    self.styles["CenterBold"],
+                )
+            )
+            flow.append(Spacer(1, 0.2 * inch))
+            claim_rows = [
+                ["Applicant:", self.case.applicant.full_name],
+                ["Claim Number:", self.case.insurance.claim_number],
+                [
+                    "Date of Injury:",
+                    self.case.timeline.date_of_injury.strftime("%m/%d/%Y"),
+                ],
+                ["Employer:", self.case.employer.company_name],
+                ["Application Date:", doc_spec.doc_date.strftime("%m/%d/%Y")],
+            ]
+            claim_table = Table(claim_rows, colWidths=[2 * inch, 4 * inch])
+            claim_table.setStyle(
+                TableStyle(
+                    [
+                        ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+                        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 9),
+                        ("TOPPADDING", (0, 0), (-1, -1), 3),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                    ]
+                )
+            )
+            flow.append(claim_table)
+            flow.append(Spacer(1, 0.3 * inch))
+
+            if content.disputed_treatment is not None:
+                flow.extend(
+                    self.make_section(
+                        "DISPUTED TREATMENT", content.disputed_treatment
+                    )
+                )
+            flow.extend(
+                self.make_section(
+                    "UTILIZATION-REVIEW DETERMINATION",
+                    f"{content.target_denial_subtype.replace('_', ' ')} dated "
+                    f"{content.target_denial_date.strftime('%B %d, %Y')}.",
+                )
+            )
+            if content.diagnosis_icd10 is not None:
+                flow.extend(
+                    self.make_section(
+                        "PRIMARY DIAGNOSIS", content.diagnosis_icd10
+                    )
+                )
+            if content.ur_determination_attached is not None:
+                attachment = (
+                    "The utilization-review determination is attached."
+                    if content.ur_determination_attached
+                    else "The utilization-review determination is not attached."
+                )
+                flow.extend(self.make_section("ATTACHMENT", attachment))
+            if content.supporting_record_subtypes:
+                records = "\n".join(
+                    f"• {subtype.replace('_', ' ')}"
+                    for subtype in content.supporting_record_subtypes
+                )
+                flow.extend(
+                    self.make_section("SUPPORTING MEDICAL RECORDS", records)
+                )
+            if content.clinical_rebuttal is not None:
+                flow.extend(
+                    self.make_section(
+                        "CLINICAL REBUTTAL", content.clinical_rebuttal
+                    )
+                )
+            if content.mtus_citations:
+                sentences = [
+                    _register_clauses(IMR_APPLICATION_REGISTER, "mtus")[0].replace(
+                        "[grounded MTUS citation]", citation
+                    )
+                    for citation in content.mtus_citations
+                ]
+                flow.extend(self.make_section("MTUS SUPPORT", " ".join(sentences)))
+
+            flow.append(Spacer(1, 0.3 * inch))
+            flow.extend(
+                self.make_signature_block(
+                    applicant_firm,
+                    "Attorneys for Applicant",
+                    "",
+                )
+            )
+            return flow
 
         def _build_request_details(self, body_parts: Any) -> list[Any]:
             facts = _facts_of(self)
@@ -1689,6 +3607,16 @@ def build_fact_aware_templates() -> dict[str, type]:
             if not forced.fired:
                 log.warning("fact_templates.ur_procedure_not_forced", cpt=surgery.cpt_code)
             return story
+
+        def _pick_decision(self, is_imr: bool) -> str:
+            """R57 — one governed IMR outcome, never a second render draw."""
+            context = getattr(getattr(self, "doc_spec", None), "context", None)
+            outcome = context.get("imr_outcome") if isinstance(context, dict) else None
+            if is_imr and outcome == "upheld":
+                return "UPHELD — NOT MEDICALLY NECESSARY"
+            if is_imr and outcome == "overturned":
+                return "OVERTURNED — APPROVED"
+            return str(super()._pick_decision(is_imr))
 
     class FactAwareDischargeSummary(FactAwareOperativeRecord):
         """A discharge summary that does not call itself an operative report.
@@ -2616,6 +4544,702 @@ def build_fact_aware_templates() -> dict[str, type]:
             log.warning("fact_templates.position_history_table_not_found")
             return story
 
+    letter_module = import_substrate("pdf_templates.correspondence.defense_counsel_letter")
+    depo_module = import_substrate("pdf_templates.discovery.deposition_transcript")
+    variant_module = import_substrate("data.variant_content")
+
+    class FactAwareMedicalStoryLetter(_SpecCapture, letter_module.DefenseCounselLetter):  # type: ignore[misc,name-defined]
+        """The contention-loop letter, written by its actual actor (AJC-62).
+
+        Rebuilds ``build_story`` (R11 permits it for letters): the substrate
+        mounts every letter on a fixed defense letterhead, and an
+        applicant-authored advocacy letter cannot be corrected by appending a
+        paragraph. Substrate letterhead, date-line, styles and signature
+        helpers are reused; the body is written from the bound assertions and
+        the R14 author register — the contention's party owns the voice, not
+        the file owner. Story-absent and surface-absent documents delegate to
+        the exact substrate path, byte for byte.
+        """
+
+        def _story_actor(self, context: dict[str, Any]) -> str:
+            actor = context.get("contention_actor_party")
+            if actor in ("applicant", "defense"):
+                return str(actor)
+            return (
+                "defense"
+                if context.get("author_role") == "defense_attorney"
+                else "applicant"
+            )
+
+        def _story_evaluator(self, story: DocumentMedicalStory) -> Any:
+            if story.subtype == "ADVOCACY_LETTERS_PTP":
+                return self.case.treating_physician
+            return (
+                getattr(self.case, "qme_physician", None)
+                or self.case.treating_physician
+            )
+
+        def _story_addressee(
+            self,
+            story: DocumentMedicalStory,
+            actor: str,
+            firms: dict[str, Any],
+        ) -> tuple[str, str]:
+            """(address block, salutation) for the surface's recipient."""
+            if story.contention_surface == "objection":
+                # Served on opposing counsel, with the evaluator copied.
+                if actor == "defense":
+                    block = (
+                        "Applicant's Attorney<br/>"
+                        f"{firms.get('applicant', 'Counsel for Applicant')}"
+                    )
+                else:
+                    # ``defense_attorney`` already carries its own ", Esq.".
+                    block = (
+                        f"{self.case.insurance.defense_attorney}<br/>"
+                        f"{self.case.insurance.defense_firm}"
+                    )
+                return block, "Dear Counsel:"
+            evaluator = self._story_evaluator(story)
+            block = (
+                f"{evaluator.full_name}<br/>"
+                + str(evaluator.address).replace("\n", "<br/>")
+            )
+            return block, "Dear Doctor:"
+
+        def _story_service_paragraph(
+            self, actor: str, register: Any, surface: str
+        ) -> str:
+            if actor == "defense" and register is not None:
+                # AJC-66 supplies the registered document register; the
+                # engine supplies the case-specific content below it.
+                return str(register.paragraphs[0])
+            served = {
+                "advocacy": (
+                    "This office represents the applicant in the "
+                    "above-referenced matter. This letter is served as an "
+                    "advocacy letter pursuant to 8 C.C.R. section 35, and a "
+                    "copy is served simultaneously on defense counsel in "
+                    "accordance with the simultaneous-exchange requirement "
+                    "of that section."
+                ),
+                "objection": (
+                    "This office represents the applicant in the "
+                    "above-referenced matter. The applicant hereby objects "
+                    "to the medical-legal report referenced below on the "
+                    "grounds set forth in this letter."
+                ),
+                "supplemental_request": (
+                    "This office represents the applicant in the "
+                    "above-referenced matter. The applicant respectfully "
+                    "requests a supplemental report from the medical-legal "
+                    "evaluator addressing the issues identified below, and "
+                    "serves a copy of this request simultaneously on defense "
+                    "counsel."
+                ),
+            }
+            return served[surface]
+
+        def _story_sections(
+            self,
+            story: DocumentMedicalStory,
+            actor: str,
+            theories: Any,
+        ) -> list[tuple[str, list[str]]]:
+            """(heading, paragraphs) per R9's frozen contention-surface map."""
+            numbered = [
+                _story_contention_sentence(position + 1, contention)
+                for position, contention in enumerate(story.contentions)
+            ]
+            psych_bound = any(
+                contention.psych_injury_kind is not None
+                or contention.claim_type == "psych_add_on"
+                for contention in story.contentions
+            )
+            surface = story.contention_surface
+            if surface == "advocacy":
+                # A letter encloses records for the evaluator; it does not
+                # "review them in preparation for this evaluation" — that is
+                # the report's voice, not counsel's (R14).
+                if story.record_references:
+                    records = (
+                        "The following records from this file are enclosed "
+                        "for your review:\n\n"
+                        + "\n".join(
+                            _story_reference_line(reference)
+                            for reference in story.record_references
+                        )
+                    )
+                else:
+                    records = (
+                        "The records available to date accompany this letter "
+                        "and are identified in the enclosure list."
+                    )
+                asks = [
+                    "Please state, with your reasoning, whether the claimed "
+                    "condition arose out of and in the course of employment.",
+                    "Please address apportionment of permanent disability "
+                    "under Labor Code sections 4663 and 4664, stating the "
+                    "approximate percentages and the basis for each.",
+                ]
+                if psych_bound:
+                    psych_asks = _register_clauses(
+                        PSYCH_CONTENTION_SURFACE_REGISTER, "advocacy"
+                    )
+                    asks.extend(psych_asks)
+                    direct = next(
+                        (
+                            contention
+                            for contention in story.contentions
+                            if contention.psych_injury_kind == "direct"
+                        ),
+                        None,
+                    )
+                    if direct is not None:
+                        lead = _register_clauses(
+                            PSYCH_SECTION_4660_1C_REGISTER, "applicant_direct"
+                        )[0]
+                        exception = next(
+                            (
+                                row.psych_exception_analysis
+                                for row in story.apportionments
+                                if row.psych_exception_analysis
+                                in {"violent_act", "catastrophic_injury"}
+                            ),
+                            None,
+                        )
+                        if exception is None:
+                            lead = lead.split(" Alternatively,", maxsplit=1)[0]
+                        else:
+                            theory = exception.replace("_", "-")
+                            lead = lead.replace(
+                                "[the existing violent-act or catastrophic-injury theory]",
+                                f"the existing {theory} theory",
+                            )
+                        asks.insert(0, lead)
+                return [
+                    ("RECORDS AND FACTS FOR REVIEW", [records]),
+                    (
+                        "ISSUES PRESENTED",
+                        numbered
+                        or ["The issues presented are set forth in the record."],
+                    ),
+                    ("REQUESTED OPINIONS", asks),
+                ]
+            prior = story.preceding_report
+            cited = (
+                f"the {prior.title} of {prior.doc_date.strftime('%B %d, %Y')}"
+                if prior is not None
+                else "the medical-legal report served in this matter"
+            )
+            if surface == "objection":
+                grounds = (
+                    _psych_defense_theory_sentences(theories)
+                    if psych_bound
+                    else list(_defense_theory_sentences(theories))
+                )
+                paragraphs = [f"This objection is directed to {cited}."]
+                paragraphs.extend(numbered)
+                if psych_bound:
+                    objection_clauses = list(
+                        _register_clauses(
+                            PSYCH_CONTENTION_SURFACE_REGISTER, "objection"
+                        )
+                    )
+                    effects = _grounded_effects(_psych_visible_text(story))
+                    if effects:
+                        objection_clauses[0] = objection_clauses[0].replace(
+                            "[grounded consequence facts]", ", ".join(effects)
+                        )
+                    else:
+                        objection_clauses.pop(0)
+                    paragraphs.extend(objection_clauses)
+                paragraphs.extend(grounds)
+                basis = [
+                    "The report's conclusions should be corrected or "
+                    "supplemented upon the complete record. The reviewed and "
+                    "missing evidence identified above must be addressed "
+                    "before the report can support the findings it states.",
+                ]
+                heading = (
+                    "OBJECTIONS TO THE "
+                    f"{prior.doc_date.strftime('%B %d, %Y')} REPORT"
+                    if prior is not None
+                    else "OBJECTIONS TO THE REPORT"
+                )
+                return [
+                    (heading, paragraphs),
+                    ("BASIS FOR SUPPLEMENTAL OPINION", basis),
+                ]
+            # supplemental_request
+            fresh = [
+                reference
+                for reference in story.record_references
+                if prior is None or reference.doc_date > prior.doc_date
+            ]
+            if fresh:
+                supplied = (
+                    "The following records, newly supplied since "
+                    f"{cited}, are enclosed for review:\n\n"
+                    + "\n".join(
+                        _story_reference_line(reference) for reference in fresh
+                    )
+                )
+            else:
+                supplied = (
+                    "No additional records have been received since "
+                    f"{cited}; the questions below arise from the report "
+                    "itself and the records already served."
+                )
+            questions = numbered or [
+                "1. Please state the basis for each conclusion reached in "
+                "the report."
+            ]
+            if psych_bound:
+                questions = list(
+                    _register_clauses(
+                        PSYCH_CONTENTION_SURFACE_REGISTER,
+                        "supplemental_request",
+                    )
+                )
+            theory_paragraphs = (
+                _psych_defense_theory_sentences(theories)
+                if psych_bound
+                else list(_defense_theory_sentences(theories))
+            )
+            return [
+                (
+                    "REQUEST FOR SUPPLEMENTAL REPORT",
+                    [
+                        f"This request is directed to {cited}.",
+                        supplied,
+                        *theory_paragraphs,
+                    ],
+                ),
+                ("ISSUES FOR SUPPLEMENTAL OPINION", questions),
+            ]
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            story = _medical_story_of(doc_spec)
+            if story is None or story.contention_surface is None:
+                return list(super().build_story(doc_spec))
+            context = doc_spec.context if isinstance(doc_spec.context, dict) else {}
+            actor = self._story_actor(context)
+            firms = dict(context.get("medical_story_firms") or {})
+            theories = context.get("defense_contest_theories") or ()
+            register = (
+                variant_module.letter_register(self.variant_of(doc_spec))
+                if self.variant_content_enabled(doc_spec)
+                else None
+            )
+
+            if actor == "defense":
+                firm = self.case.insurance.defense_firm
+                phone = self.case.insurance.defense_phone
+                # ``defense_attorney`` already carries its own ", Esq.".
+                signer = str(self.case.insurance.defense_attorney)
+                signer_title = "Attorney for Defendants"
+            else:
+                firm = str(firms.get("applicant") or "Counsel for the Applicant")
+                phone = f"(555) {random.randint(200, 999)}-{random.randint(1000, 9999)}"
+                signer = firm
+                signer_title = "Attorneys for Applicant"
+            firm_address = (
+                f"{random.randint(100, 9999)} Tower Boulevard\n"
+                f"Suite {random.randint(100, 900)}\n"
+                f"Los Angeles, CA 9001{random.randint(1, 9)}"
+            )
+
+            flow: list[Any] = []
+            flow.extend(self.make_letterhead(firm, firm_address, phone))
+            flow.append(Spacer(1, 0.3 * inch))
+            flow.append(self.make_date_line("Date", doc_spec.doc_date))
+            flow.append(Spacer(1, 0.2 * inch))
+            flow.append(
+                Paragraph("<i>Via Email and U.S. Mail</i>", self.styles["SmallItalic"])
+            )
+            flow.append(Spacer(1, 0.2 * inch))
+            addressee, salutation = self._story_addressee(story, actor, firms)
+            flow.append(Paragraph(addressee, self.styles["BodyText14"]))
+            flow.append(Spacer(1, 0.2 * inch))
+            re_text = (
+                f"<b>Re:</b> {self.case.applicant.full_name} v. "
+                f"{self.case.employer.company_name}<br/>"
+                f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ADJ "
+                f"{self.case.injuries[0].adj_number}<br/>"
+                f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Date of Injury: "
+                f"{self.case.injuries[0].date_of_injury.strftime('%m/%d/%Y')}"
+            )
+            flow.append(Paragraph(re_text, self.styles["BodyText14"]))
+            flow.append(Spacer(1, 0.3 * inch))
+            flow.append(Paragraph(salutation, self.styles["BodyText14"]))
+            flow.append(Spacer(1, 0.2 * inch))
+
+            flow.append(
+                Paragraph(
+                    self._story_service_paragraph(
+                        actor, register, story.contention_surface
+                    ),
+                    self.styles["DoubleSpaced"],
+                )
+            )
+            flow.append(Spacer(1, 0.15 * inch))
+            for heading, paragraphs in self._story_sections(story, actor, theories):
+                flow.append(Paragraph(f"<b>{heading}</b>", self.styles["SectionHeader"]))
+                flow.append(Spacer(1, 0.1 * inch))
+                for paragraph in paragraphs:
+                    flow.append(
+                        Paragraph(
+                            paragraph.replace("\n", "<br/>"),
+                            self.styles["DoubleSpaced"],
+                        )
+                    )
+                    flow.append(Spacer(1, 0.15 * inch))
+
+            flow.append(Spacer(1, 0.2 * inch))
+            flow.append(Paragraph("Very truly yours,", self.styles["BodyText14"]))
+            flow.append(Spacer(1, 0.5 * inch))
+            flow.extend(self.make_signature_block(signer, signer_title, ""))
+            return flow
+
+    class FactAwareMedicalStoryDepositionTranscript(_SpecCapture, depo_module.DepositionTranscript):  # type: ignore[misc,name-defined]
+        """The QME/AME deposition, examined by its bound party (AJC-62).
+
+        Rebuilds ``build_story`` (R11 permits it for depositions): the
+        substrate hardcodes the examining attorney to the defense and its
+        question pools carry no case percentages, and neither can be
+        corrected by appending flowables. The substrate cover, certification,
+        appearances, objection and reporter helpers are reused; the Q&A body
+        is the verbatim reporter register — attorney question, objection,
+        evaluator sworn answer — with every answer preserving the report's
+        percentages and any reasoned revision (R14). Ordinary depositions
+        (no ``qme_deposition`` surface) delegate byte for byte.
+        """
+
+        _REPORTER_NAMES = (
+            "Jennifer Martinez", "Robert Chen", "Sarah Williams",
+            "Michael Johnson", "Lisa Thompson", "Patricia Nguyen",
+            "David Morales", "Karen O'Brien",
+        )
+
+        def _story_exchanges(
+            self,
+            story: DocumentMedicalStory,
+            register: Any,
+            theories: Any,
+        ) -> list[tuple[str, str]]:
+            data = self._deponent_case_data()
+            exchanges: list[tuple[str, str]] = []
+            if register is not None:
+                for _topic, pairs, _low, _high in register.topic_pools[:1]:
+                    for question, answer in pairs[:2]:
+                        exchanges.append(
+                            (question.format(**data), answer.format(**data))
+                        )
+            prior = story.preceding_report
+            if prior is not None:
+                exchanges.append(
+                    (
+                        f"Doctor, you prepared the {prior.title} dated "
+                        f"{prior.doc_date.strftime('%B %d, %Y')} in this "
+                        "matter, is that correct?",
+                        "Yes. That is my report, and I reviewed it in "
+                        "preparation for today's testimony.",
+                    )
+                )
+            exchanges.append(
+                (
+                    "What records did you review in forming the opinions "
+                    "stated in that report?",
+                    "The records I reviewed are enumerated in the "
+                    "records-review section of my report; my opinions rest "
+                    "on those records together with the history and the "
+                    "examination.",
+                )
+            )
+            opinion = story.medical_opinion
+            if opinion is not None:
+                if opinion.aoe_coe_finding is not None:
+                    finding = {
+                        "industrial": (
+                            "My opinion, within reasonable medical "
+                            "probability, is that the condition arose out of "
+                            "and in the course of employment."
+                        ),
+                        "nonindustrial": (
+                            "My opinion, within reasonable medical "
+                            "probability, is that the condition did not "
+                            "arise out of and in the course of employment."
+                        ),
+                        "deferred": (
+                            "I deferred that determination pending the "
+                            "outstanding records identified in my report."
+                        ),
+                    }[opinion.aoe_coe_finding]
+                    exchanges.append(
+                        (
+                            "What is your opinion on industrial causation, "
+                            "Doctor?",
+                            finding,
+                        )
+                    )
+                if opinion.psych_injury_kind is not None:
+                    kind_answer = (
+                        "The psychiatric condition arose from the event "
+                        "itself; it is a primary psychiatric injury."
+                        if opinion.psych_injury_kind == "direct"
+                        else "The psychiatric condition arose from the "
+                        "medical effects of the physical injury; it is a "
+                        "compensable consequence rather than a primary "
+                        "psychiatric injury."
+                    )
+                    exchanges.append(
+                        (
+                            "Doctor, is your opinion that the psychiatric condition "
+                            "arose from the event itself or from the medical "
+                            "effects of the physical injury?",
+                            kind_answer,
+                        )
+                    )
+                    exchanges.append(
+                        (
+                            "What history supports that distinction?",
+                            opinion.aoe_coe_rationale
+                            or "The distinction rests on the history stated in my "
+                            "examined report; I do not add an unrecorded history here.",
+                        )
+                    )
+                    allocation = _story_actual_events_allocation(story)
+                    threshold = (
+                        allocation
+                        or (
+                            "At least 35 to 40 percent under the supported "
+                            "violent-act standard."
+                            if any(
+                                row.psych_exception_analysis
+                                in {"violent_act", "direct_exposure"}
+                                for row in story.apportionments
+                            )
+                            else "Greater than 50 percent under the "
+                            "predominant-cause standard."
+                        )
+                    )
+                    exchanges.append(
+                        (
+                            "What percentage of total injury causation do you assign "
+                            "to actual events of employment?",
+                            threshold,
+                        )
+                    )
+                    adoption = _story_psych_adoption_text(story)
+                    if adoption is not None:
+                        exchanges.append(
+                            (
+                                "Did you adopt counsel's characterization as your own "
+                                "medical opinion?",
+                                adoption,
+                            )
+                        )
+                for row in story.apportionments:
+                    part = _region_text(row.body_part)
+                    basis = row.description or ", ".join(
+                        kind.replace("_", " ") for kind in row.basis_kinds
+                    ) or "nonindustrial factors"
+                    exchanges.append(
+                        (
+                            f"As to the {part}, your report apportions "
+                            f"{row.nonindustrial_percent} percent of the "
+                            "permanent disability to nonindustrial factors, "
+                            "is that correct?",
+                            f"Yes. As stated in my report, "
+                            f"{row.nonindustrial_percent} percent is "
+                            f"apportioned to {basis} and "
+                            f"{row.industrial_percent} percent is caused by "
+                            "the industrial injury. That remains my opinion.",
+                        )
+                    )
+                    if row.revised_from_percent is not None:
+                        reason = row.revision_rationale or (
+                            "The basis for the revision is stated in the "
+                            "report itself."
+                        )
+                        exchanges.append(
+                            (
+                                "Your earlier report stated "
+                                f"{row.revised_from_percent} percent for the "
+                                f"{part}. Why the change, Doctor?",
+                                f"{reason}",
+                            )
+                        )
+                if opinion.event_kind == "deposition" and opinion.revision_kind is not None:
+                    revised = opinion.revision_kind not in (
+                        "unchanged_additional_reasoning",
+                        "new_records_no_change",
+                    )
+                    revision_answer = (
+                        (
+                            "Yes, to the extent stated on the record today: "
+                            + (
+                                opinion.revision_rationale
+                                or opinion.rationale
+                                or "the revision and its basis are as I have "
+                                "described them."
+                            )
+                        )
+                        if revised
+                        else (
+                            "No. My opinions are unchanged; I have provided "
+                            "additional reasoning under oath today."
+                        )
+                    )
+                    exchanges.append(
+                        (
+                            "Has anything you have reviewed or heard today "
+                            "changed the opinions stated in your report?",
+                            revision_answer,
+                        )
+                    )
+            psych_bound = bool(
+                opinion is not None and opinion.psych_injury_kind is not None
+            ) or any(
+                contention.psych_injury_kind is not None
+                or contention.claim_type == "psych_add_on"
+                for contention in story.contentions
+            )
+            for theory in theories or ():
+                question, answer = {
+                    "insufficient_investigation": (
+                        "Doctor, what investigation and records would be "
+                        "necessary to fully evaluate the issues presented?",
+                        "I identified the records I reviewed in my report, "
+                        "and I would review any additional records provided "
+                        "through the ordinary process.",
+                    ),
+                    "post_termination": (
+                        "Did your report address the timing of this claim "
+                        "relative to the notice of termination or layoff?",
+                        "My report addresses the medical record before me; "
+                        "the legal significance of that timing is for the "
+                        "trier of fact.",
+                    ),
+                    "lack_of_substantial_medical_evidence": (
+                        "Can you identify the records and reasoning "
+                        "supporting the percentage stated in your report?",
+                        "Yes. The basis and reasoning appear in the "
+                        "apportionment discussion of my report, and I have "
+                        "restated them today.",
+                    ),
+                }[theory]
+                if psych_bound:
+                    answer = " ".join(
+                        _register_clauses(
+                            PSYCH_DEFENSE_CONTEST_REGISTER, str(theory)
+                        )
+                    )
+                exchanges.append((question, answer))
+            exchanges.append(
+                (
+                    "Which parts of your answer are medical opinions, and which "
+                    "predicates do you leave to the trier of fact?",
+                    "The causation and apportionment conclusions are medical "
+                    "opinions stated within reasonable medical probability; "
+                    "whether the underlying events occurred is for the trier "
+                    "of fact.",
+                )
+            )
+            return exchanges
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            story = _medical_story_of(doc_spec)
+            if story is None or story.contention_surface != "qme_deposition":
+                return list(super().build_story(doc_spec))
+            context = doc_spec.context if isinstance(doc_spec.context, dict) else {}
+            register = (
+                variant_module.transcript_register(self.variant_of(doc_spec))
+                if self.variant_content_enabled(doc_spec)
+                else None
+            )
+            deponent_name, deponent_role = self._transcript_deponent(register)
+            reporter_name = random.choice(list(self._REPORTER_NAMES))
+            reporter_number = random.randint(5000, 15000)
+
+            actor = context.get("contention_actor_party")
+            firms = dict(context.get("medical_story_firms") or {})
+            theories = context.get("defense_contest_theories") or ()
+            if actor == "applicant":
+                examiner = (
+                    "COUNSEL FOR APPLICANT "
+                    f"({firms.get('applicant', 'Applicant')})"
+                )
+            else:
+                examiner = str(self.case.insurance.defense_attorney)
+
+            flow: list[Any] = []
+            flow.extend(
+                self._build_cover_page(
+                    doc_spec, reporter_name, reporter_number, deponent_name, deponent_role
+                )
+            )
+            flow.extend(
+                self._build_certification(doc_spec, reporter_name, reporter_number)
+            )
+            flow.extend(self._build_appearances(register))
+            flow.append(self.make_hr())
+            flow.append(Spacer(1, 0.2 * inch))
+            flow.append(
+                Paragraph(f"<b>EXAMINATION BY {examiner}</b>", self.styles["SectionHeader"])
+            )
+            flow.append(Spacer(1, 0.2 * inch))
+
+            exchanges = self._story_exchanges(story, register, theories)
+            line_number = 1
+            objection_at = min(4, max(len(exchanges) - 2, 0))
+            for position, (question, answer) in enumerate(exchanges):
+                flow.append(
+                    Paragraph(
+                        f"{line_number:>3}  Q. {question}", self.styles["Transcript"]
+                    )
+                )
+                line_number += 1
+                flow.append(Spacer(1, 0.1 * inch))
+                if position == objection_at:
+                    objection = depo_module.generate_objection()
+                    flow.append(
+                        Paragraph(
+                            f"{line_number:>3}  MR./MS. ATTORNEY: {objection}",
+                            self.styles["Transcript"],
+                        )
+                    )
+                    line_number += 1
+                    flow.append(
+                        Paragraph(
+                            f"{line_number:>3}  BY {examiner}: You may answer.",
+                            self.styles["Transcript"],
+                        )
+                    )
+                    line_number += 1
+                    flow.append(Spacer(1, 0.05 * inch))
+                flow.append(
+                    Paragraph(
+                        f"{line_number:>3}  A. {answer}", self.styles["Transcript"]
+                    )
+                )
+                line_number += 1
+                flow.append(Spacer(1, 0.15 * inch))
+
+            flow.append(Spacer(1, 0.3 * inch))
+            flow.append(
+                Paragraph(
+                    f"{line_number:>3}  (Deposition concluded.)",
+                    self.styles["Transcript"],
+                )
+            )
+            flow.append(depo_module.PageBreak())
+            flow.extend(
+                self._build_final_certification(doc_spec, reporter_name, reporter_number)
+            )
+            return flow
+
     # Two families are bound from the registry rather than listed by hand,
     # because a hand-written list is how a sibling gets missed and that is the
     # defect class this whole sweep exists to close.
@@ -2693,6 +5317,8 @@ def build_fact_aware_templates() -> dict[str, type]:
         "UTILIZATION_REVIEW_DECISION": FactAwareUtilizationReview,
         "UTILIZATION_REVIEW_DECISION_REGULAR": FactAwareUtilizationReview,
         "UTILIZATION_REVIEW_DECISION_EXPEDITED": FactAwareUtilizationReview,
+        "IMR_APPLICATION_FORM": FactAwareUtilizationReview,
+        "INDEPENDENT_MEDICAL_REVIEW_DECISION": FactAwareUtilizationReview,
         "OPERATIVE_HOSPITAL_RECORDS": FactAwareOperativeRecord,
         "DIAGNOSTICS_IMAGING": FactAwareDiagnosticReport,
         "QME_COMPREHENSIVE_REPORT": FactAwareNeuroQmeReport,
@@ -2702,6 +5328,25 @@ def build_fact_aware_templates() -> dict[str, type]:
         "SUPPLEMENTAL_QME_AME_REPORT": FactAwareNeuroQmeReport,
         "TREATING_PHYSICIAN_REPORT_PR2": FactAwareTreatingPhysicianReport,
         "TREATING_PHYSICIAN_REPORT_PR4": FactAwareTreatingPhysicianReport,
+        # AJC-62 (M3, R77 step 7) — the medical-story surfaces. Every R8
+        # member resolves to its exact fact-aware subclass with no fallback
+        # (R8's own rule). The four raw-substrate mounts are deliberate: the
+        # clinical overrides on FactAwareNeuroQmeReport /
+        # FactAwareTreatingPhysicianReport fire on the feature-absent path,
+        # and these subtypes were never registered before M3, so mounting the
+        # story mixins over the raw substrate is what keeps a storyless case
+        # byte-identical to the previous release (R1).
+        "AME_REPORT": FactAwareMedicalStoryQmeReport,
+        "MEDICAL_LEGAL_QME_AME_IME": FactAwareMedicalStoryQmeReport,
+        "APPORTIONMENT_REPORT": FactAwareMedicalStoryQmeReport,
+        "PSYCH_EVAL_REPORT_QME_AME": FactAwareMedicalStoryQmeReport,
+        "TREATING_PHYSICIAN_REPORT": FactAwareMedicalStoryTreatingReport,
+        "TREATING_PHYSICIAN_REPORT_FINAL": FactAwareMedicalStoryTreatingReport,
+        "ADVOCACY_LETTERS_PTP": FactAwareMedicalStoryLetter,
+        "ADVOCACY_LETTERS_QME": FactAwareMedicalStoryLetter,
+        "ADVOCACY_LETTERS_AME": FactAwareMedicalStoryLetter,
+        "ADVOCACY_LETTERS_PTP_QME_AME": FactAwareMedicalStoryLetter,
+        "DEPOSITION_TRANSCRIPT": FactAwareMedicalStoryDepositionTranscript,
     }
 
 

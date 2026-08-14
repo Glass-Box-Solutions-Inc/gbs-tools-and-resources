@@ -108,7 +108,7 @@ from functools import cache
 from typing import Any, Final, Literal
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from wc_caseload_engine.case_context import DERIVED_AGE_RANGE
 from wc_caseload_engine.clinical_grounding import (
@@ -186,6 +186,18 @@ class ApplicantDemographics(BaseModel):
         return self.bmi_band in OBESE_BANDS
 
 
+type PsychInjuryKind = Literal[
+    "direct",
+    "compensable_consequence",
+]
+"""The §4660.1(c) semantic axis (AJC-62, M3): a psychiatric injury is either a
+direct injury or a compensable consequence of a physical one. Both kinds may be
+industrial — the classification decides whether added permanent-disability
+impairment is barred, not whether the condition is AOE/COE. Deliberately
+distinct from ``PsychAddOnExceptionAnalysis.direct_exposure``, which is an
+exception-analysis value and is never reused as this classification."""
+
+
 class MedicalCondition(BaseModel):
     """One true pre-existing or concurrent condition — world truth, never rendered.
 
@@ -256,6 +268,26 @@ class MedicalCondition(BaseModel):
     correlates with anything mechanical a renderer also varies, an analyzer can learn
     to separate label classes on document counts instead of on legal reasoning.
     """
+
+    psych_injury_kind: PsychInjuryKind | None = None
+    """Direct psychiatric injury versus compensable consequence (AJC-62, M3).
+
+    World truth for the §4660.1(c) axis. A party's characterisation of the kind
+    is an assertion and lives on the M2 layer — an applicant may frame a
+    consequence condition as direct while this record stays what it is, and
+    that divergence is legal case content, never a validation failure.
+    """
+
+    @model_validator(mode="after")
+    def _psych_kind_describes_a_psychiatric_condition(self) -> MedicalCondition:
+        if self.psych_injury_kind is not None and self.body_system != "psychiatric":
+            raise ValueError(
+                f"medical condition '{self.id}' sets psych_injury_kind "
+                f"{self.psych_injury_kind!r} but body_system is "
+                f"{self.body_system!r}; the direct-versus-consequence axis "
+                "describes a psychiatric condition only"
+            )
+        return self
 
 
 class PriorAward(BaseModel):
@@ -1185,6 +1217,7 @@ def _condition_from_entry(entry: Any, index: int, injured: frozenset[str]) -> Me
         symptomatic_before_doi=entry.symptomatic_before_doi,
         billing_coded=entry.billing_coded,
         surfaces_in_file=entry.surfaces_in_file or entry.billing_coded,
+        psych_injury_kind=entry.psych_injury_kind,
     )
 
 
@@ -1482,6 +1515,7 @@ __all__ = [
     "MedicalHistory",
     "PriorAward",
     "PriorClaim",
+    "PsychInjuryKind",
     "archetype_weights",
     "billing_conditional",
     "calibrate",

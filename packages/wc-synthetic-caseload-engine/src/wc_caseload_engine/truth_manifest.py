@@ -27,9 +27,9 @@ import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from wc_caseload_engine import __version__
 from wc_caseload_engine.medical_assertions import (
@@ -77,7 +77,169 @@ MONEY_CHANNEL_VERSION = "1.1.0"
 ASSERTIONS_CHANNEL_VERSION = "1.0.0"
 """The assertions channel (AJC-61, M2). The ENVELOPE stays at 1.0.0 — the
 module contract above exists precisely so a new channel can arrive without
-breaking money-channel consumers, and this is that channel arriving."""
+breaking money-channel consumers, and this is that channel arriving.
+
+**FROZEN to the exact AJC-61 projection for all of AJC-62 (Amendment A1).**
+M3 adds always-present fields to the assertion models; none of them may enter
+this channel merely because they exist on a Pydantic model. Serialization goes
+through the literal ``ASSERTIONS_V1_*`` allowlists below, so adding a model
+field is inert with respect to channel ``1.0.0``. AJC-63/M4 exclusively owns
+the ``2.0.0`` transition and the first serialization of the M3 vocabulary."""
+
+# ---------------------------------------------------------------------------
+# Amendment A1 — the frozen assertions-channel 1.0.0 projection (AJC-62)
+# ---------------------------------------------------------------------------
+
+#: The exact case-level channel shape. Neither the case channel nor the
+#: caseload channel may gain a key during M3 (A1-R2/A1-R5).
+ASSERTIONS_V1_CASE_CHANNEL_KEYS: Final = (
+    "channelVersion",
+    "kind",
+    "audience",
+    "leakageRule",
+    "validationContext",
+    "medicalHistory",
+    "contentions",
+    "medicalOpinions",
+    "apportionmentAssertions",
+    "ledgerDigest",
+)
+
+ASSERTIONS_V1_VALIDATION_CONTEXT_KEYS: Final = (
+    "dateOfInjury",
+    "anchorDate",
+    "currentBodyParts",
+    "targetStage",
+    "claimResponse",
+)
+
+#: ``evalType`` keeps the AJC-61 rule: omitted when its value is ``"none"``.
+ASSERTIONS_V1_OPTIONAL_VALIDATION_CONTEXT_KEYS: Final = ("evalType",)
+
+ASSERTIONS_V1_MEDICAL_HISTORY_KEYS: Final = (
+    "conditions",
+    "priorClaims",
+)
+
+ASSERTIONS_V1_CONDITION_FIELDS: Final = (
+    "id",
+    "key",
+    "label",
+    "causal_ground_truth",
+    "onset",
+    "body_system",
+    "body_part",
+    "apportionment_targets",
+    "wholly_unrelated",
+    "severity",
+    "trajectory",
+    "symptomatic_before_doi",
+    "surfaces_in_file",
+)
+
+ASSERTIONS_V1_PRIOR_CLAIM_FIELDS: Final = (
+    "id",
+    "date_of_injury",
+    "body_parts",
+    "resolution_type",
+    "overlaps_current",
+    "award",
+)
+
+ASSERTIONS_V1_PRIOR_AWARD_FIELDS: Final = (
+    "id",
+    "prior_claim_id",
+    "body_parts",
+    "pd_percent",
+    "award_date",
+    "resolution_type",
+    "conclusively_presumed",
+)
+
+#: Ledger allowlists — the exact AJC-61 field vocabulary (A1-R3). Value-identical
+#: to the test-side ``M2_*_ORACLE_FIELDS`` literals (R62), which are declared
+#: independently: production never imports test constants, and the coordinated
+#: oracle compares the two tuples for exact equality.
+ASSERTIONS_V1_CONTENTION_FIELDS: Final = (
+    "id",
+    "claim_type",
+    "party",
+    "position",
+    "target_condition_id",
+    "target_prior_claim_id",
+    "target_prior_award_id",
+    "target_body_part",
+    "doctrine_hooks",
+    "rationale",
+    "treatment_causation",
+    "requested_apportionment",
+    "groundings",
+    "quality",
+)
+
+ASSERTIONS_V1_MEDICAL_OPINION_FIELDS: Final = (
+    "id",
+    "author_role",
+    "report_stage",
+    "report_date",
+    "apportionment_state",
+    "determination_kind",
+    "determination_rationale",
+    "examination_performed",
+    "reviewed_condition_ids",
+    "reviewed_prior_claim_ids",
+    "reviewed_prior_award_ids",
+    "endorses_contention_ids",
+    "rejects_contention_ids",
+    "responds_to_opinion_id",
+    "supersedes_opinion_id",
+    "rationale",
+    "revision_rationale",
+    "quality",
+)
+
+ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS: Final = (
+    "id",
+    "opinion_id",
+    "body_part",
+    "industrial_percent",
+    "nonindustrial_percent",
+    "basis_kinds",
+    "condition_ids",
+    "prior_claim_ids",
+    "prior_award_ids",
+    "description",
+    "disability_causation_stated",
+    "reasonable_medical_probability",
+    "causal_rationale",
+    "percentage_rationale",
+    "prior_award_analysis",
+    "revised_from_percent",
+    "revision_rationale",
+    "psych_exception_analysis",
+    "linked_contention_id",
+    "groundings",
+    "quality",
+)
+
+ASSERTIONS_V1_CASELOAD_CHANNEL_KEYS: Final = (
+    "channelVersion",
+    "caseCount",
+    "assertionCaseCount",
+    "counts",
+    "qualityCounts",
+    "apportionmentStateCounts",
+    "determinationKindCounts",
+    "cases",
+)
+
+ASSERTIONS_V1_CASELOAD_CASE_KEYS: Final = (
+    "caseId",
+    "truthFile",
+    "contentionCount",
+    "medicalOpinionCount",
+    "apportionmentAssertionCount",
+)
 
 LEDGER_DIGEST_MISMATCH = (
     "channels.assertions.ledgerDigest does not match the canonical assertions payload"
@@ -391,8 +553,81 @@ def assertion_ledger_digest(channel: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _assertions_v1_projection(
+    model: BaseModel,
+    fields: tuple[str, ...],
+) -> dict[str, object]:
+    """The A1-R4 restricted projection: allowlist first, serialization second.
+
+    The unrestricted ``model_dump(mode="json", exclude_none=True)`` this
+    replaced would serialize every field a model *has*, so an M3 field added to
+    :class:`~wc_caseload_engine.medical_assertions.MedicalOpinion` would leak
+    into the frozen ``1.0.0`` channel merely by existing. Selection happens
+    through the literal tuple; the restricted ``model_dump(include=...)`` is
+    only the value encoder inside that selection; the result is reconstructed
+    in allowlist order. Adding a model field is therefore inert here.
+    """
+    serialized = model.model_dump(
+        mode="json",
+        include=frozenset(fields),
+        exclude_none=True,
+    )
+    return {
+        field: serialized[field]
+        for field in fields
+        if field in serialized
+    }
+
+
+def _assertions_v1_record(source: object, fields: tuple[str, ...]) -> dict[str, Any]:
+    """One projection dataclass record, reduced to its frozen v1 field tuple.
+
+    The manually built ``validationContext``/``medicalHistory`` sections must
+    obey the same rule as the ledger models (A1-R4): membership comes from the
+    allowlist, never from the object's own attribute surface, so a new field on
+    :class:`~wc_caseload_engine.medical_assertions.ProjectedCondition` cannot
+    enter channel ``1.0.0``. ``None`` values survive here and are dropped by
+    ``_camelize`` exactly as before.
+    """
+    values: dict[str, Any] = {}
+    for name in fields:
+        value = getattr(source, name)
+        if isinstance(value, dt.date):
+            value = value.isoformat()
+        elif isinstance(value, tuple):
+            value = list(value)
+        values[name] = value
+    return values
+
+
+def _assertions_v1_prior_claim(claim: Any) -> dict[str, Any]:
+    """One prior-claim record with its nested award, both allowlist-driven."""
+    values: dict[str, Any] = {}
+    for name in ASSERTIONS_V1_PRIOR_CLAIM_FIELDS:
+        if name == "award":
+            values[name] = (
+                _assertions_v1_record(claim.award, ASSERTIONS_V1_PRIOR_AWARD_FIELDS)
+                if claim.award is not None
+                else None
+            )
+        else:
+            value = getattr(claim, name)
+            if isinstance(value, dt.date):
+                value = value.isoformat()
+            elif isinstance(value, tuple):
+                value = list(value)
+            values[name] = value
+    return values
+
+
 def _assertions_channel(plan: CasePlan) -> dict[str, Any]:
-    """The complete assertions channel for one plan — the ONLY quality surface."""
+    """The complete assertions channel for one plan — the ONLY quality surface.
+
+    FROZEN to the AJC-61 projection (Amendment A1): every section below is
+    built from an ``ASSERTIONS_V1_*`` literal allowlist, so an M3 model or
+    projection field serializes here only when a future channel ``2.0.0``
+    (AJC-63/M4) adds it on purpose.
+    """
     from wc_caseload_engine.medical_assertions import (
         assertion_context,
         project_medical_history,
@@ -405,60 +640,26 @@ def _assertions_channel(plan: CasePlan) -> dict[str, Any]:
         plan.medical_history, context.current_body_parts
     )
 
-    validation_context: dict[str, Any] = {
-        "dateOfInjury": context.date_of_injury.isoformat(),
-        "anchorDate": context.anchor_date.isoformat(),
-        "currentBodyParts": list(context.current_body_parts),
-        "targetStage": context.target_stage,
-        "claimResponse": context.claim_response,
-    }
-    if context.eval_type != "none":
-        validation_context["evalType"] = context.eval_type
+    validation_context: dict[str, Any] = {}
+    for key in ASSERTIONS_V1_VALIDATION_CONTEXT_KEYS:
+        value: Any = getattr(context, _snake(key))
+        if isinstance(value, dt.date):
+            value = value.isoformat()
+        elif isinstance(value, tuple):
+            value = list(value)
+        validation_context[key] = value
+    for key in ASSERTIONS_V1_OPTIONAL_VALIDATION_CONTEXT_KEYS:
+        optional = getattr(context, _snake(key))
+        if optional != "none":
+            validation_context[key] = optional
 
     medical_history = {
         "conditions": [
-            _camelize(
-                {
-                    "id": c.id,
-                    "key": c.key,
-                    "label": c.label,
-                    "causal_ground_truth": c.causal_ground_truth,
-                    "onset": c.onset.isoformat() if c.onset is not None else None,
-                    "body_system": c.body_system,
-                    "body_part": c.body_part,
-                    "apportionment_targets": list(c.apportionment_targets),
-                    "wholly_unrelated": c.wholly_unrelated,
-                    "severity": c.severity,
-                    "trajectory": c.trajectory,
-                    "symptomatic_before_doi": c.symptomatic_before_doi,
-                    "surfaces_in_file": c.surfaces_in_file,
-                }
-            )
+            _camelize(_assertions_v1_record(c, ASSERTIONS_V1_CONDITION_FIELDS))
             for c in projection.conditions
         ],
         "priorClaims": [
-            _camelize(
-                {
-                    "id": claim.id,
-                    "date_of_injury": claim.date_of_injury.isoformat(),
-                    "body_parts": list(claim.body_parts),
-                    "resolution_type": claim.resolution_type,
-                    "overlaps_current": claim.overlaps_current,
-                    "award": (
-                        {
-                            "id": claim.award.id,
-                            "prior_claim_id": claim.award.prior_claim_id,
-                            "body_parts": list(claim.award.body_parts),
-                            "pd_percent": claim.award.pd_percent,
-                            "award_date": claim.award.award_date.isoformat(),
-                            "resolution_type": claim.award.resolution_type,
-                            "conclusively_presumed": claim.award.conclusively_presumed,
-                        }
-                        if claim.award is not None
-                        else None
-                    ),
-                }
-            )
+            _camelize(_assertions_v1_prior_claim(claim))
             for claim in projection.prior_claims
         ],
     }
@@ -471,15 +672,17 @@ def _assertions_channel(plan: CasePlan) -> dict[str, Any]:
         "validationContext": validation_context,
         "medicalHistory": medical_history,
         "contentions": [
-            _camelize(c.model_dump(mode="json", exclude_none=True))
+            _camelize(_assertions_v1_projection(c, ASSERTIONS_V1_CONTENTION_FIELDS))
             for c in ledger.contentions
         ],
         "medicalOpinions": [
-            _camelize(o.model_dump(mode="json", exclude_none=True))
+            _camelize(_assertions_v1_projection(o, ASSERTIONS_V1_MEDICAL_OPINION_FIELDS))
             for o in ledger.medical_opinions
         ],
         "apportionmentAssertions": [
-            _camelize(a.model_dump(mode="json", exclude_none=True))
+            _camelize(
+                _assertions_v1_projection(a, ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS)
+            )
             for a in ledger.apportionment_assertions
         ],
     }
@@ -1220,6 +1423,18 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
 
 __all__ = [
     "ASSERTIONS_CHANNEL_VERSION",
+    "ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS",
+    "ASSERTIONS_V1_CASELOAD_CASE_KEYS",
+    "ASSERTIONS_V1_CASELOAD_CHANNEL_KEYS",
+    "ASSERTIONS_V1_CASE_CHANNEL_KEYS",
+    "ASSERTIONS_V1_CONDITION_FIELDS",
+    "ASSERTIONS_V1_CONTENTION_FIELDS",
+    "ASSERTIONS_V1_MEDICAL_HISTORY_KEYS",
+    "ASSERTIONS_V1_MEDICAL_OPINION_FIELDS",
+    "ASSERTIONS_V1_OPTIONAL_VALIDATION_CONTEXT_KEYS",
+    "ASSERTIONS_V1_PRIOR_AWARD_FIELDS",
+    "ASSERTIONS_V1_PRIOR_CLAIM_FIELDS",
+    "ASSERTIONS_V1_VALIDATION_CONTEXT_KEYS",
     "CASELOAD_TRUTH_NAME",
     "CASELOAD_TRUTH_PROVENANCE_KEYS",
     "LEDGER_DIGEST_MISMATCH",
