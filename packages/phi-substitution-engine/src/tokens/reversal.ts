@@ -8,7 +8,7 @@ import type {
   TenantId,
   TokenizedText,
 } from "../core/brands";
-import type { ReversalHandle, ReversalStore } from "../core/contracts";
+import type { ReversalHandle, ReversalRecordInput, ReversalStore, ReversalWriteStore } from "../core/contracts";
 import type { EscapedTokenLiteral, TokenGrammar, TokenGrammarPolicy, TokenReverser } from "./ports";
 import { ReversalFailedError, ReversalHandleNotSerializableError } from "./errors";
 import { restoreSentinelLiterals, SENTINEL_CLOSE, SENTINEL_OPEN } from "./escaper";
@@ -97,30 +97,44 @@ export class InProcessReversalHandle implements ReversalHandle {
   }
 }
 
-interface ReversalRecordInput {
-  readonly tenantId: TenantId;
-  readonly matterId: MatterId;
-  readonly dictionaryVersion: DictionaryVersion;
-  readonly token: SubstitutionToken;
-  readonly canonical: string;
-}
+/**
+ * In-process dev store write input. The frozen `ReversalWriteStore` interface requires
+ * `attemptId` (its durable idempotency key); here it is OPTIONAL so existing in-process
+ * seeders and oracles that hold the CONCRETE store type may omit it. Method-parameter
+ * bivariance keeps the class assignable to the interface either way.
+ */
+type InMemoryReversalRecordInput = Omit<ReversalRecordInput, "attemptId"> & {
+  readonly attemptId?: OperationAttemptId;
+};
 
 /**
- * Tenant-scoped reversal store (CONTRACT-phase1 §7, L8, N2).
+ * Tenant-scoped reversal store (CONTRACT-phase1 §7, L8, N2) — the in-process dev
+ * implementation of the frozen `ReversalWriteStore` write seam (GLY-335 Wave 0).
  *
  * The ONLY read surface is the bounded `resolveEncounteredTokens`; there is no
  * list-all API. Every key includes the tenant id, so a cross-tenant lookup
- * misses even when matter, version, and token text collide.
+ * misses even when matter, version, and token text collide. `record` honors the
+ * `attemptId` idempotency key: a replay under the same (attemptId, token) is a
+ * no-op that keeps the FIRST canonical, so a retry — even one carrying a divergent
+ * payload — never overwrites the mapping a token was egressed under; a NEW attempt
+ * may update the current canonical. A write without an attemptId (concrete-only
+ * seeders) sets the key directly. The durable §6 store keys its upsert the same way.
  */
-export class InMemoryReversalStore implements ReversalStore {
+export class InMemoryReversalStore implements ReversalWriteStore {
   readonly maximumEncounteredTokenBatch: number;
-  private readonly canonicalByKey = new Map<string, string>();
+  // §7/N2 (GLY-336 gate): TRUE runtime-private (#), not TS `private`. Own named fields declared
+  // with TS `private` are still reflectively enumerable at runtime under ES2022
+  // (Object.keys / Object.getOwnPropertyNames / Reflect.ownKeys / JSON.stringify), so the raw
+  // token→canonical map MUST be a #field — otherwise a returned store instance leaks the mappings.
+  readonly #canonicalByKey = new Map<string, string>();
+  /** (tenant+matter+version+token)+attemptId pairs already written — for replay no-op (§3.1.3). */
+  readonly #recordedAttempts = new Set<string>();
 
   constructor(maximumEncounteredTokenBatch = 256) {
     this.maximumEncounteredTokenBatch = maximumEncounteredTokenBatch;
   }
 
-  private key(
+  #key(
     tenantId: TenantId,
     matterId: MatterId,
     dictionaryVersion: DictionaryVersion,
@@ -129,12 +143,25 @@ export class InMemoryReversalStore implements ReversalStore {
     return `${tenantId}${SEP}${matterId}${SEP}${dictionaryVersion.toString()}${SEP}${token}`;
   }
 
-  /** Write the current canonical value for a token (compiler-side truth write). */
-  record(input: ReversalRecordInput): void {
-    this.canonicalByKey.set(
-      this.key(input.tenantId, input.matterId, input.dictionaryVersion, input.token),
-      input.canonical,
-    );
+  /**
+   * Write the current canonical value for a token (compiler-side truth write). Idempotent
+   * per (attemptId, token): a replay under the same attempt is a no-op that keeps the first
+   * canonical (never a divergent overwrite); a new attempt may update it. The store never
+   * holds a duplicate mapping — one canonical per tenant+matter+version+token.
+   */
+  record(input: InMemoryReversalRecordInput): void {
+    const key = this.#key(input.tenantId, input.matterId, input.dictionaryVersion, input.token);
+    if (input.attemptId !== undefined) {
+      const attemptKey = `${key}${SEP}${input.attemptId}`;
+      if (this.#recordedAttempts.has(attemptKey)) {
+        // Idempotent replay: the same (attemptId, token) was already written — no-op that keeps
+        // the FIRST canonical, so a retry never overwrites the mapping a token egressed under
+        // (even if the replay carries a divergent payload).
+        return;
+      }
+      this.#recordedAttempts.add(attemptKey);
+    }
+    this.#canonicalByKey.set(key, input.canonical);
   }
 
   async resolveEncounteredTokens(input: {
@@ -153,8 +180,8 @@ export class InMemoryReversalStore implements ReversalStore {
         continue;
       }
       seen.add(token);
-      const canonical = this.canonicalByKey.get(
-        this.key(input.tenantId, input.matterId, input.dictionaryVersion, token),
+      const canonical = this.#canonicalByKey.get(
+        this.#key(input.tenantId, input.matterId, input.dictionaryVersion, token),
       );
       if (canonical !== undefined) {
         resolved.set(token, canonical);

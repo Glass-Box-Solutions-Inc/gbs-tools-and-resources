@@ -15,6 +15,58 @@ import type { ParsedToken, TokenGrammar, TokenGrammarPolicy } from "./ports";
 const OPEN = "[[";
 const CLOSE = "]]";
 
+/**
+ * A GENUINELY immutable, tamper-proof role allow-list (GLY-336 gate finding 2, capability-level).
+ *
+ * Two layers of hardening, both required:
+ *
+ * 1. WRITE-proof. `Object.freeze(new Set(...))` is NOT enough: `Set.prototype.add.call(frozenSet,
+ *    role)` still mutates the internal `[[SetData]]` slot (freezing only locks own properties). The
+ *    oracle returned here is a FROZEN plain object with NO `[[SetData]]` slot, so no `Set.prototype`
+ *    mutator can operate on it, and it exposes no `add`/`delete`/`clear`.
+ *
+ * 2. READ-proof (poison-resistant). The security-critical membership check (`has`) must NOT route
+ *    through `Set.prototype.has`, which a consumer can replace globally — even before this module is
+ *    imported — to make an arbitrary (PHI-bearing) role pass the allow-list and be emitted as a
+ *    token label. Membership is therefore backed by a FROZEN NULL-PROTOTYPE record read *directly*:
+ *    an `Object.create(null)` object has no prototype chain and no inherited/poisonable accessors,
+ *    so `record[value]` is a pure data read that cannot be diverted by `Set.prototype`,
+ *    `Object.prototype`, or import-order tampering. `__proto__`/`constructor` as role names resolve
+ *    to own data properties (or `undefined`), never to inherited members. No live `Set` is retained.
+ */
+export function frozenRoleSet(roles: Iterable<TokenRole>): ReadonlySet<TokenRole> {
+  const membership: Record<string, true> = Object.create(null) as Record<string, true>;
+  const list: TokenRole[] = [];
+  for (const role of roles) {
+    if (membership[role as unknown as string] !== true) {
+      membership[role as unknown as string] = true;
+      list.push(role);
+    }
+  }
+  Object.freeze(membership); // closure-private; never exposed; no [[SetData]], null prototype
+  const frozenList: readonly TokenRole[] = Object.freeze(list);
+  const iterate = (): IterableIterator<TokenRole> => frozenList[Symbol.iterator]();
+  const result: ReadonlySet<TokenRole> = Object.freeze({
+    has: (value: TokenRole): boolean => membership[value as unknown as string] === true,
+    get size(): number {
+      return frozenList.length;
+    },
+    keys: iterate,
+    values: iterate,
+    *entries(): IterableIterator<[TokenRole, TokenRole]> {
+      for (const role of frozenList) yield [role, role];
+    },
+    forEach(
+      callbackfn: (value: TokenRole, value2: TokenRole, set: ReadonlySet<TokenRole>) => void,
+      thisArg?: unknown,
+    ): void {
+      for (const role of frozenList) callbackfn.call(thisArg, role, role, result);
+    },
+    [Symbol.iterator]: iterate,
+  });
+  return result;
+}
+
 /** Spans returned by `scan` are always token-like: valid or malformed, never `not_token`. */
 export type TokenSpanParse = Exclude<ParsedToken, Readonly<{ kind: "not_token" }>>;
 
