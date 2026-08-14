@@ -41,6 +41,13 @@ from wc_caseload_engine.medical_assertions import (
     validate_medical_assertions,
 )
 from wc_caseload_engine.medical_history import PRESUMPTION_DEFAULT_BY_RESOLUTION
+from wc_caseload_engine.medical_story import (
+    ADVOCACY_LETTER_SURFACES,
+    INITIAL_MEDLEGAL_SURFACES,
+    PSYCH_MEDLEGAL_SURFACES,
+    PTP_CAUSATION_SURFACES,
+    SUPPLEMENTAL_MEDLEGAL_SURFACES,
+)
 from wc_caseload_engine.seeds import (
     ApportionmentAssertionEntry,
     ContentionEntry,
@@ -48,6 +55,7 @@ from wc_caseload_engine.seeds import (
     MedicalAssertionsScenario,
     MedicalOpinionEntry,
     parse_case_seed,
+    parse_caseload_spec,
 )
 
 DOI = dt.date(2022, 4, 11)
@@ -2449,79 +2457,78 @@ ASSERTION_LEAKAGE_EXEMPTIONS: dict[str, str] = {}
 
 _BARE_TOKEN = re.compile(r"(?<![a-z])unsupportable(?![a-z])")
 
-_LEAKAGE_SCENARIO: dict[str, Any] = {
-    "medical_history": {
-        "sample_conditions": False,
-        "conditions": [
-            {
-                "label": "nonindustrial lumbar degenerative disease",
-                "origin": "nonindustrial",
-                "body_part": "lumbar_spine",
-                "severity": "moderate",
-                "symptomatic_before_doi": True,
-            },
-            {
-                "label": "undocumented cervical strain history",
-                "origin": "nonindustrial",
-                "body_part": "shoulder",
-                "surfaces_in_file": False,
-            },
-        ],
-    },
-    "medical_assertions": {
-        "sample_assertions": False,
-        "contentions": [
-            # supported: visible nonindustrial overlap argued as apportionment.
-            {
-                "id": "ctn-01",
-                "claim_type": "apportionment_defense",
-                "party": "defense",
-                "position": "affirm",
-                "target_condition_id": "cond-00",
-                "rationale": "a nonindustrial factor contributes to present disability",
-            },
-            # thin: an invisible condition cannot support the aggravation read.
-            {
-                "id": "ctn-02",
-                "claim_type": "apportionment_defense",
-                "party": "defense",
-                "position": "affirm",
-                "target_condition_id": "cond-01",
-                "rationale": "a second contributing factor is asserted",
-            },
-        ],
-        "medical_opinions": [
-            {
-                "id": "opn-01",
-                "author_role": "qme",
-                "report_stage": "final",
-                "report_date": "2022-06-01",
-                "apportionment_state": "determined",
-                "determination_kind": "allocated",
-                "examination_performed": True,
-                "reviewed_condition_ids": ["cond-00"],
-                "rationale": "examined the applicant and reviewed the record",
-            }
-        ],
-        "apportionment_assertions": [
-            # unsupportable: vocational pass-through.
-            {
-                "id": "app-01",
-                "opinion_id": "opn-01",
-                "body_part": "lumbar_spine",
-                "industrial_percent": 60,
-                "nonindustrial_percent": 40,
-                "basis_kinds": ["vocational_apportionment"],
-                "condition_ids": ["cond-00"],
-                "description": "chronic lumbar disability",
-                "disability_causation_stated": True,
-                "reasonable_medical_probability": True,
-                "causal_rationale": "consistent with the vocational assessment",
-                "percentage_rationale": "the split follows the vocational report",
-            }
-        ],
-    },
-}
+PRIVATE_PSYCH_REGISTER_KEYS = (
+    "safety_officer_ptsd",
+    "harassment_gfpa",
+    "compensable_consequence",
+    "direct_physical_event",
+)
+
+R90_FORBIDDEN_VOCABULARY = (
+    "real",
+    "bogus",
+    "good",
+    "bad",
+    "adequate",
+    "inadequate",
+    "thin",
+    "underworked",
+    "quality",
+)
+
+_RESERVED_LABEL_POSITION = re.compile(
+    r"(?<![a-z0-9_])"
+    r"[\"']?(quality|rubric|assertionQuality|medicalAssertions)[\"']?"
+    r"\s*[:=]\s*[\"']?(supported|thin|unsupportable)(?![a-z])",
+    re.IGNORECASE,
+)
+
+MEDICAL_STORY_LEAKAGE_FAMILIES = (
+    ("initial_medlegal", INITIAL_MEDLEGAL_SURFACES, None),
+    ("psych_medlegal", PSYCH_MEDLEGAL_SURFACES, None),
+    ("supplemental_medlegal", SUPPLEMENTAL_MEDLEGAL_SURFACES, None),
+    ("ptp", PTP_CAUSATION_SURFACES, None),
+    ("advocacy", ADVOCACY_LETTER_SURFACES, "advocacy"),
+    (
+        "objection",
+        frozenset({"ADVOCACY_LETTERS_PTP_QME_AME"}),
+        "objection",
+    ),
+    (
+        "supplemental_request",
+        frozenset({"ADVOCACY_LETTERS_PTP_QME_AME"}),
+        "supplemental_request",
+    ),
+    (
+        "qme_deposition",
+        frozenset({"DEPOSITION_TRANSCRIPT"}),
+        "qme_deposition",
+    ),
+)
+
+
+def _private_psych_register_findings(payload: Any, path: str) -> list[str]:
+    """Find renderer-private selector keys without banning the public injury kind."""
+    findings: list[str] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            here = f"{path}.{key}"
+            if key in PRIVATE_PSYCH_REGISTER_KEYS:
+                findings.append(f"private psych register key {here}")
+            if (
+                isinstance(value, str)
+                and value in PRIVATE_PSYCH_REGISTER_KEYS
+                and not (
+                    key == "psych_injury_kind"
+                    and value == "compensable_consequence"
+                )
+            ):
+                findings.append(f"private psych register value {here}={value}")
+            findings.extend(_private_psych_register_findings(value, here))
+    elif isinstance(payload, list):
+        for index, item in enumerate(payload):
+            findings.extend(_private_psych_register_findings(item, f"{path}[{index}]"))
+    return findings
 
 
 def _leakage_reserved_key_findings(payload: Any, path: str) -> list[str]:
@@ -2538,14 +2545,124 @@ def _leakage_reserved_key_findings(payload: Any, path: str) -> list[str]:
     return findings
 
 
+def _without_legal_phrase_exemptions(text: str) -> str:
+    """Remove mandated legal phrases before applying R90's vocabulary."""
+    return (
+        text.lower()
+        .replace("good-faith", "")
+        .replace("good faith", "")
+        .replace("adequate examination", "")
+        .replace("adequate history", "")
+        .replace("adequate understanding", "")
+    )
+
+
+def _without_public_psych_kind(text: str) -> str:
+    """Keep the public injury kind while banning the private selector token."""
+    return re.sub(
+        r"[\"']?psych_injury_kind[\"']?\s*[:=]\s*"
+        r"[\"']?compensable_consequence[\"']?",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
+def _bare_and_private_text_findings(text: str, where: str) -> list[str]:
+    """Find the bare M2 label and renderer-private selector vocabulary."""
+    findings: list[str] = []
+    lowered = text.lower()
+    if _BARE_TOKEN.search(lowered) and where not in ASSERTION_LEAKAGE_EXEMPTIONS:
+        findings.append(f"bare token at {where}")
+    normalized = _without_public_psych_kind(lowered)
+    findings.extend(
+        f"private psych register token at {where}:{key}"
+        for key in PRIVATE_PSYCH_REGISTER_KEYS
+        if re.search(rf"\b{re.escape(key)}\b", normalized)
+    )
+    return findings
+
+
+def _r90_text_findings(text: str, where: str) -> list[str]:
+    """Find every R90 quality-commentary word, after legal exemptions."""
+    normalized = _without_legal_phrase_exemptions(text)
+    return [
+        f"forbidden production vocabulary at {where}:{word}"
+        for word in R90_FORBIDDEN_VOCABULARY
+        if re.search(rf"\b{re.escape(word)}\b", normalized)
+    ]
+
+
+def test_r90_allows_clinical_adequate_phrases_but_rejects_quality_commentary() -> None:
+    clinical = (
+        "The evaluator obtained an adequate history and demonstrated "
+        "adequate understanding."
+    )
+    assert _r90_text_findings(clinical, "probe") == []
+    assert _r90_text_findings("adequate report", "probe") == [
+        "forbidden production vocabulary at probe:adequate"
+    ]
+
+
+def _label_position_findings(text: str, where: str) -> list[str]:
+    """Find only reserved-key label syntax, not ordinary supported/thin prose."""
+    return [
+        f"reserved label position at {where}:{match.group(1)}={match.group(2)}"
+        for match in _RESERVED_LABEL_POSITION.finditer(text)
+    ]
+
+
+def _decoded_text_findings(text: str, where: str) -> list[str]:
+    """The shared scanner for analyzer-visible decoded semantic text."""
+    return [
+        *_bare_and_private_text_findings(text, where),
+        *_r90_text_findings(text, where),
+        *_label_position_findings(text, where),
+    ]
+
+
 def _ocr_png(png: bytes) -> str:
     """Tesseract over one rasterized page — the OCR-only text surface."""
+    import os
     import subprocess
 
+    environment = os.environ.copy()
+    environment["OMP_THREAD_LIMIT"] = "1"
     completed = subprocess.run(
-        ["tesseract", "stdin", "stdout"], input=png, capture_output=True, check=True
+        ["tesseract", "stdin", "stdout"],
+        input=png,
+        capture_output=True,
+        check=True,
+        env=environment,
     )
     return completed.stdout.decode("utf-8", errors="replace")
+
+
+def test_assertion_leakage_ocr_limits_tesseract_to_one_worker(monkeypatch) -> None:
+    """The OCR probe stays deterministic and bounded on shared CI runners."""
+    import os
+    import subprocess
+
+    sentinel = b"sentinel-png-bytes"
+    captured: dict[str, Any] = {}
+
+    class Completed:
+        stdout = b"decoded OCR text\n"
+
+    def fake_run(args: list[str], **kwargs: Any) -> Completed:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return Completed()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert _ocr_png(sentinel) == "decoded OCR text\n"
+    assert captured["args"] == ["tesseract", "stdin", "stdout"]
+    assert captured["kwargs"]["input"] == sentinel
+    assert captured["kwargs"]["capture_output"] is True
+    assert captured["kwargs"]["check"] is True
+    assert captured["kwargs"]["env"] is not os.environ
+    assert captured["kwargs"]["env"]["OMP_THREAD_LIMIT"] == "1"
 
 
 def _scan_assertion_leakage(
@@ -2584,30 +2701,43 @@ def _scan_assertion_leakage(
     tesseract_missing = shutil.which("tesseract") is None
 
     def note_token(text: str, where: str) -> None:
-        if _BARE_TOKEN.search(text.lower()) and where not in ASSERTION_LEAKAGE_EXEMPTIONS:
-            findings.append(f"bare token at {where}")
+        findings.extend(_decoded_text_findings(text, where))
+
+    def note_raw_token(text: str, where: str) -> None:
+        findings.extend(_bare_and_private_text_findings(text, where))
+        findings.extend(_label_position_findings(text, where))
 
     def note_reserved(payload: Any, where: str) -> None:
         findings.extend(_leakage_reserved_key_findings(payload, where))
+        findings.extend(_private_psych_register_findings(payload, where))
+
+    def note_r90_vocabulary(payload: Any, where: str) -> None:
+        findings.extend(_r90_text_findings(json.dumps(payload, default=str), where))
 
     for path in sorted(out.rglob("*")):
         rel = path.relative_to(out).as_posix()
         if rel == "truth" or rel.startswith("truth/"):
             continue
-        note_token(rel, f"path:{rel}")
+        note_raw_token(rel, f"path:{rel}")
         if path.is_dir():
             continue
         surfaces.append(rel)
         raw = path.read_bytes()
-        note_token(raw.decode("utf-8", errors="ignore"), f"bytes:{rel}")
+        note_raw_token(raw.decode("utf-8", errors="ignore"), f"bytes:{rel}")
         if path.name in ("seed.yaml", "case_facts.yaml"):
-            note_reserved(yaml_module.safe_load(raw.decode("utf-8")), rel)
+            payload = yaml_module.safe_load(raw.decode("utf-8"))
+            note_reserved(payload, rel)
+            if path.name == "seed.yaml":
+                note_r90_vocabulary(payload, rel)
         elif path.suffix == ".json":
-            note_reserved(json.loads(raw.decode("utf-8")), rel)
+            payload = json.loads(raw.decode("utf-8"))
+            note_reserved(payload, rel)
+            if path.name in ("manifest.json", "caseload_manifest.json"):
+                note_r90_vocabulary(payload, rel)
         elif path.suffix == ".docx":
             with zipfile.ZipFile(io.BytesIO(raw)) as archive:
                 for name in archive.namelist():
-                    if name.startswith("docProps/") or name.endswith(".xml"):
+                    if name.endswith(".xml"):
                         surfaces.append(f"{rel}!{name}")
                         note_token(
                             archive.read(name).decode("utf-8", errors="replace"),
@@ -2621,15 +2751,17 @@ def _scan_assertion_leakage(
                             properties: dict[str, str] = {}
                             try:
                                 root = ElementTree.fromstring(archive.read(name))
-                            except ElementTree.ParseError:
-                                root = None
-                            if root is not None:
-                                for element in root.iter():
-                                    local = element.tag.rsplit("}", 1)[-1]
-                                    properties[local] = element.text or ""
-                                    named = element.attrib.get("name")
-                                    if named is not None:
-                                        properties[named] = element.text or ""
+                            except ElementTree.ParseError as error:
+                                raise RuntimeError(
+                                    f"docx-properties:{rel}!{name} is malformed XML; "
+                                    "the reserved-key scan cannot certify property names"
+                                ) from error
+                            for element in root.iter():
+                                local = element.tag.rsplit("}", 1)[-1]
+                                properties[local] = element.text or ""
+                                named = element.attrib.get("name")
+                                if named is not None:
+                                    properties[named] = element.text or ""
                             note_reserved(
                                 properties, f"docx-properties:{rel}!{name}"
                             )
@@ -2716,14 +2848,18 @@ def _scan_assertion_leakage(
                                 "(apt-get install tesseract-ocr)"
                             )
                         surfaces.append(where)
-                        note_token(
-                            _ocr_png(page.get_pixmap(dpi=150).tobytes("png")),
-                            where,
+                        ocr_text = _ocr_png(
+                            page.get_pixmap(dpi=150).tobytes("png")
                         )
+                        note_token(ocr_text, where)
         elif path.suffix == ".eml":
             message = email.message_from_bytes(raw, policy=email.policy.default)
             note_reserved(
                 {name: str(value) for name, value in message.items()},
+                f"eml-headers:{rel}",
+            )
+            note_token(
+                json.dumps({name: str(value) for name, value in message.items()}),
                 f"eml-headers:{rel}",
             )
             for index, part in enumerate(message.walk()):
@@ -2750,13 +2886,10 @@ def _scan_assertion_leakage(
 
 @pytest.fixture(scope="module")
 def leakage_tree(tmp_path_factory: pytest.TempPathFactory):
-    """One assertion-bearing caseload, generated through the shipped CLI so the
-    scan can read stdout/stderr and structured logs as surfaces."""
+    """The committed R71 probe, generated through the shipped CLI."""
     import subprocess
     import sys
     from pathlib import Path
-
-    import yaml as yaml_module
 
     from wc_caseload_engine.substrate import find_substrate
 
@@ -2764,15 +2897,11 @@ def leakage_tree(tmp_path_factory: pytest.TempPathFactory):
         pytest.skip("merus-test-data-generator substrate not on disk")
 
     root = tmp_path_factory.mktemp("assertion-leakage")
-    body = _generate_body("leakage-probe-case", dict(_LEAKAGE_SCENARIO))
-    body["documents"] = {
-        "format_mix": {"pdf": 0.4, "docx": 0.25, "eml": 0.2, "scanned_pdf": 0.15},
-        "global_cap": 16,
-    }
-    body["output"] = {"formats": ["pdf", "docx", "eml", "scanned_pdf"]}
-    spec = {"caseload_id": "leakage-probe", "cases": [body]}
-    spec_path = root / "spec.yaml"
-    spec_path.write_text(yaml_module.safe_dump(spec), encoding="utf-8")
+    spec_path = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "medical_story_leakage_probe.yaml"
+    )
     out_dir = root / "out"
     package_root = Path(__file__).resolve().parents[1]
     proc = subprocess.run(
@@ -2795,11 +2924,22 @@ def leakage_tree(tmp_path_factory: pytest.TempPathFactory):
     return out_dir, (proc.stdout, proc.stderr)
 
 
+@pytest.fixture(scope="module")
+def pristine_leakage_scan(leakage_tree):
+    """Scan the pristine tree once: OCR is the expensive, deterministic step."""
+    out_dir, streams = leakage_tree
+    return _scan_assertion_leakage(out_dir, streams)
+
+
 @pytest.mark.slow
 def test_assertion_leakage_probe_seed_really_contains_truth_labels(leakage_tree) -> None:
     out_dir, _streams = leakage_tree
     truth = json.loads(
-        (out_dir / "truth" / "leakage-probe-case.truth.json").read_text(encoding="utf-8")
+        (
+            out_dir
+            / "truth"
+            / "medical-story-leakage-pristine.truth.json"
+        ).read_text(encoding="utf-8")
     )
     qualities = {
         item["quality"]
@@ -2811,19 +2951,41 @@ def test_assertion_leakage_probe_seed_really_contains_truth_labels(leakage_tree)
 
 @pytest.mark.slow
 def test_assertion_label_positions_are_absent_from_every_analyzer_visible_artifact(
-    leakage_tree,
+    pristine_leakage_scan,
 ) -> None:
-    out_dir, streams = leakage_tree
-    findings, surfaces = _scan_assertion_leakage(out_dir, streams)
-    assert not findings, findings
-    assert any(surface.endswith("seed.yaml") for surface in surfaces)
-    assert any(surface.endswith("manifest.json") for surface in surfaces)
+    findings, surfaces = pristine_leakage_scan
+    reserved = [finding for finding in findings if finding.startswith("reserved ")]
+    private = [
+        finding for finding in findings if finding.startswith("private psych register")
+    ]
+    r90 = [
+        finding
+        for finding in findings
+        if finding.startswith("forbidden production vocabulary")
+    ]
+    bare = [finding for finding in findings if finding.startswith("bare token")]
+    assert reserved == [], f"reserved label positions leaked: {reserved}"
+    assert private == [], f"private Part-5 selectors leaked: {private}"
+    assert r90 == [], f"R90 quality commentary leaked: {r90}"
+    assert bare == [], f"bare unsupportable leaked: {bare}"
+    assert "medical-story-leakage-pristine/seed.yaml" in surfaces
+    assert "medical-story-leakage-pristine/manifest.json" in surfaces
+    assert "caseload_manifest.json" in surfaces
+    assert any(surface.startswith("pdf-ocr:") for surface in surfaces)
+    assert set(PRIVATE_PSYCH_REGISTER_KEYS) == {
+        "safety_officer_ptsd",
+        "harassment_gfpa",
+        "compensable_consequence",
+        "direct_physical_event",
+    }
+    assert findings == [], f"aggregate analyzer-visible leakage: {findings}"
 
 
 @pytest.mark.slow
-def test_bare_unsupportable_is_absent_except_for_named_exemptions(leakage_tree) -> None:
-    out_dir, streams = leakage_tree
-    findings, _surfaces = _scan_assertion_leakage(out_dir, streams)
+def test_bare_unsupportable_is_absent_except_for_named_exemptions(
+    pristine_leakage_scan,
+) -> None:
+    findings, _surfaces = pristine_leakage_scan
     bare = [finding for finding in findings if finding.startswith("bare token")]
     assert not bare, bare
     assert ASSERTION_LEAKAGE_EXEMPTIONS == {}
@@ -2831,10 +2993,9 @@ def test_bare_unsupportable_is_absent_except_for_named_exemptions(leakage_tree) 
 
 @pytest.mark.slow
 def test_assertion_leakage_probe_covers_docx_properties_and_pdf_metadata(
-    leakage_tree,
+    pristine_leakage_scan,
 ) -> None:
-    out_dir, streams = leakage_tree
-    _findings, surfaces = _scan_assertion_leakage(out_dir, streams)
+    _findings, surfaces = pristine_leakage_scan
     assert any("docProps/core.xml" in surface for surface in surfaces), (
         "the probe never opened a DOCX docProps part"
     )
@@ -2852,6 +3013,200 @@ def test_assertion_leakage_probe_covers_docx_properties_and_pdf_metadata(
         "the probe never decoded an EML part"
     )
     assert "cli:stdout" in surfaces and "cli:stderr" in surfaces
+
+
+def _leakage_fixture_seed_and_plan() -> tuple[Any, Any]:
+    from pathlib import Path
+
+    import yaml
+
+    from wc_caseload_engine.planner import build_case_plan
+
+    fixture = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "medical_story_leakage_probe.yaml"
+    )
+    spec = parse_caseload_spec(yaml.safe_load(fixture.read_text(encoding="utf-8")))
+    assert spec.caseload_id == "medical-story-leakage-probe"
+    assert tuple(case.case_id for case in spec.cases) == (
+        "medical-story-leakage-pristine",
+    )
+    seed = spec.cases[0]
+    assert seed.rng_seed == 6100
+    assert seed.documents.global_cap == 15
+    assert seed.scenario.medical_assertions is not None
+    assert seed.scenario.medical_assertions.sample_contention_documents is False
+    return seed, build_case_plan(seed)
+
+
+def _leakage_family_representatives(plan: Any) -> dict[str, Any]:
+    assert plan.medical_story is not None
+    representatives: dict[str, Any] = {}
+    for document in plan.documents:
+        story = plan.medical_story.by_document_index.get(document.index)
+        if story is None:
+            continue
+        for family, subtypes, contention_surface in MEDICAL_STORY_LEAKAGE_FAMILIES:
+            if (
+                document.subtype in subtypes
+                and story.contention_surface == contention_surface
+            ):
+                representatives.setdefault(family, document)
+    return representatives
+
+
+@pytest.mark.slow
+def test_assertion_leakage_probe_covers_every_medical_story_surface_family(
+    leakage_tree,
+) -> None:
+    _out_dir, _streams = leakage_tree
+    _seed, plan = _leakage_fixture_seed_and_plan()
+    observed_families = set(_leakage_family_representatives(plan))
+    assert observed_families == {
+        "initial_medlegal",
+        "psych_medlegal",
+        "supplemental_medlegal",
+        "ptp",
+        "advocacy",
+        "objection",
+        "supplemental_request",
+        "qme_deposition",
+    }
+
+
+def test_medical_story_seed_binding_warning_and_trace_fields_have_no_quality_like_key() -> None:
+    """R71's internal names stay label-free before any artifact is rendered."""
+    from dataclasses import fields
+
+    from wc_caseload_engine.medical_assertions import (
+        AssertionTrace,
+        derive_medical_assertion_plan,
+    )
+    from wc_caseload_engine.medical_history import derive_medical_history
+
+    seed, case_plan = _leakage_fixture_seed_and_plan()
+    assert set(PRIVATE_PSYCH_REGISTER_KEYS) == {
+        "safety_officer_ptsd",
+        "harassment_gfpa",
+        "compensable_consequence",
+        "direct_physical_event",
+    }
+    trace = AssertionTrace()
+    assertion_plan = derive_medical_assertion_plan(
+        seed, derive_medical_history(seed), trace=trace
+    )
+
+    def keys(payload: Any, path: str) -> list[str]:
+        found: list[str] = []
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                here = f"{path}.{key}"
+                found.append(here)
+                found.extend(keys(value, here))
+        elif isinstance(payload, (list, tuple)):
+            for index, value in enumerate(payload):
+                found.extend(keys(value, f"{path}[{index}]"))
+        return found
+
+    key_paths = keys(seed.model_dump(mode="json"), "seed")
+    for index, binding in enumerate(assertion_plan.contention_documents):
+        key_paths.extend(
+            keys(binding.model_dump(mode="json"), f"binding[{index}]")
+        )
+    key_paths.extend(f"trace.{item.name}" for item in fields(trace))
+    forbidden_key_fragments = (
+        *RESERVED_LABEL_KEYS,
+        *PRIVATE_PSYCH_REGISTER_KEYS,
+        "supported",
+        "thin",
+        "unsupportable",
+    )
+    assert [
+        path
+        for path in key_paths
+        if any(
+            fragment.lower() in path.rsplit(".", 1)[-1].lower()
+            for fragment in forbidden_key_fragments
+        )
+    ] == []
+    warning_text = "\n".join(case_plan.warnings).lower()
+    assert not _BARE_TOKEN.search(warning_text)
+    assert not any(key in warning_text for key in PRIVATE_PSYCH_REGISTER_KEYS)
+
+
+@pytest.mark.slow
+def test_assertion_leakage_probe_has_positive_controls_for_every_medical_story_surface_family(
+    leakage_tree, tmp_path: Any
+) -> None:
+    """Each bound family gets its own format-valid planted copy and live scan."""
+    import shutil
+    import zipfile
+    from pathlib import Path
+
+    fitz = pytest.importorskip("fitz")
+
+    out_dir, _streams = leakage_tree
+    _seed, plan = _leakage_fixture_seed_and_plan()
+    representatives = _leakage_family_representatives(plan)
+    assert set(representatives) == {
+        "initial_medlegal",
+        "psych_medlegal",
+        "supplemental_medlegal",
+        "ptp",
+        "advocacy",
+        "objection",
+        "supplemental_request",
+        "qme_deposition",
+    }
+
+    source_case_dir = out_dir / "medical-story-leakage-pristine"
+    source_manifest = json.loads(
+        (source_case_dir / "manifest.json").read_text(encoding="utf-8")
+    )
+
+    def plant(path: Path) -> None:
+        if path.suffix == ".pdf":
+            with fitz.open(path) as document:
+                document[0].insert_text((72, 96), "unsupportable", fontsize=18)
+                planted = path.with_suffix(".planted.pdf")
+                document.save(planted)
+            path.unlink()
+            planted.rename(path)
+            return
+        if path.suffix == ".docx":
+            source = path.with_suffix(".docx.orig")
+            path.rename(source)
+            with zipfile.ZipFile(source) as inp, zipfile.ZipFile(path, "w") as outp:
+                for item in inp.infolist():
+                    data = inp.read(item.filename)
+                    if item.filename == "word/document.xml":
+                        data = data.replace(
+                            b"</w:body>",
+                            b"<w:p><w:r><w:t>unsupportable</w:t></w:r></w:p>"
+                            b"</w:body>",
+                        )
+                    outp.writestr(item, data)
+            source.unlink()
+            return
+        assert path.suffix == ".eml", path
+        path.write_bytes(path.read_bytes() + b"\nunsupportable\n")
+
+    for family, document in representatives.items():
+        copy_root = tmp_path / family
+        copy_root.mkdir()
+        manifest_entry = source_manifest["documents"][document.index]
+        source_path = source_case_dir / "documents" / manifest_entry["filename"]
+        planted_path = copy_root / manifest_entry["filename"]
+        assert manifest_entry["subtype"] == document.subtype
+        shutil.copy2(source_path, planted_path)
+        plant(planted_path)
+        findings, _surfaces = _scan_assertion_leakage(copy_root)
+        assert any(
+            finding.startswith("bare token at ")
+            and manifest_entry["filename"] in finding
+            for finding in findings
+        ), f"the {family} format-valid plant was not detected: {findings}"
 
 
 @pytest.mark.slow
@@ -2880,20 +3235,26 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
     manifest_path = case_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["assertionQuality"] = ["a", "b"]
+    manifest["reviewComment"] = "bogus"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     caseload_path = copy_root / "caseload_manifest.json"
     caseload = json.loads(caseload_path.read_text(encoding="utf-8"))
     caseload["medicalAssertions"] = {}
+    caseload["reviewComment"] = "underworked"
     caseload_path.write_text(json.dumps(caseload), encoding="utf-8")
 
     # 2. Reserved keys in the copied seed and case-facts YAML.
     seed_path = case_dir / "seed.yaml"
     seed_path.write_text(
-        seed_path.read_text(encoding="utf-8") + "\nquality: planted\n", encoding="utf-8"
+        seed_path.read_text(encoding="utf-8")
+        + "\nquality: supported\nreview_comment: bad\nharassment_gfpa: planted\n",
+        encoding="utf-8",
     )
     facts_path = case_dir / "case_facts.yaml"
     facts_path.write_text(
-        facts_path.read_text(encoding="utf-8") + "\nrubric: planted\n", encoding="utf-8"
+        facts_path.read_text(encoding="utf-8")
+        + "\nrubric: planted\nselector: safety_officer_ptsd\n",
+        encoding="utf-8",
     )
 
     # 3. The bare token in a rendered EML's raw bytes.
@@ -2934,7 +3295,8 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
             if item.filename == "word/document.xml":
                 data = data.replace(
                     b"</w:body>",
-                    b"<w:p><w:r><w:t>unsupportable</w:t></w:r></w:p></w:body>",
+                    b"<w:p><w:r><w:t>quality: supported</w:t></w:r></w:p>"
+                    b"</w:body>",
                 )
             outp.writestr(item, data)
     source.unlink()
@@ -2980,7 +3342,9 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
     assert scanned_pdf is not None, "the fixture rendered no image-only PDF"
     stamp = fitz.open()
     stamp_page = stamp.new_page(width=560, height=100)
-    stamp_page.insert_text((20, 60), "the finding is unsupportable here", fontsize=30)
+    stamp_page.insert_text(
+        (20, 60), "unsupportable and underworked", fontsize=30
+    )
     png = stamp_page.get_pixmap(dpi=150).tobytes("png")
     stamp.close()
     with fitz.open(scanned_pdf) as doc:
@@ -2996,15 +3360,41 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
     (documents / "unsupportable-note.txt").write_text("planted", encoding="utf-8")
     (documents / "unsupportable-exhibits").mkdir()
 
-    # 9. CLI streams: the bare token on stdout, a reserved key on stderr.
+    # 9. CLI streams: the bare token on stdout, unquoted label syntax on stderr.
     findings, _surfaces = _scan_assertion_leakage(
-        copy_root, ("note: this reads unsupportable", '{"quality": "planted"}')
+        copy_root, ("note: this reads unsupportable", "rubric: thin")
     )
     joined = "\n".join(findings)
     assert "manifest.json.assertionQuality" in joined
+    assert any(
+        finding.endswith("manifest.json:bogus")
+        and finding.startswith("forbidden production vocabulary at ")
+        for finding in findings
+    ), "the R90 forbidden-vocabulary plant in the ordinary manifest was not caught"
     assert "caseload_manifest.json.medicalAssertions" in joined
+    assert (
+        "forbidden production vocabulary at caseload_manifest.json:underworked"
+        in findings
+    ), "the distinct caseload-manifest R90 plant was not caught"
     assert "seed.yaml.quality" in joined
+    assert (
+        "reserved label position at bytes:medical-story-leakage-pristine/"
+        "seed.yaml:quality=supported"
+        in findings
+    )
+    assert (
+        "forbidden production vocabulary at medical-story-leakage-pristine/seed.yaml:bad"
+        in findings
+    ), "the copied-seed R90 plant was not caught"
+    assert any(
+        finding.startswith("private psych register key seed.yaml.harassment_gfpa")
+        for finding in findings
+    ), "the planted private register key in the copied seed was not caught"
     assert "case_facts.yaml.rubric" in joined
+    assert any(
+        finding.startswith("private psych register value case_facts.yaml.selector=")
+        for finding in findings
+    ), "the planted structured private register value was not caught"
     assert any(
         f.startswith("bare token at bytes:") and f.endswith(".eml") for f in findings
     )
@@ -3025,9 +3415,10 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
         for f in findings
     ), "the planted DOCX property NAME was not caught by the parsed-key read"
     assert any(
-        f.startswith("bare token at docx:") and "word/document.xml" in f
+        f.startswith("reserved label position at docx:")
+        and "word/document.xml" in f
         for f in findings
-    )
+    ), "the reserved DOCX-body label position was not caught"
     assert any(f.startswith("bare token at pdf-metadata:") for f in findings)
     assert any(f.startswith("bare token at pdf-info:") for f in findings)
     assert any(
@@ -3048,6 +3439,11 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
         "the rasterized token was not recovered from the image-only page"
     )
     assert any(
+        f.startswith("forbidden production vocabulary at pdf-ocr:")
+        and f.endswith(":underworked")
+        for f in findings
+    ), "the OCR surface was scanned only for the bare label, not full R90"
+    assert any(
         f.startswith("bare token at path:") and "unsupportable-note.txt" in f
         for f in findings
     )
@@ -3056,131 +3452,79 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
         for f in findings
     )
     assert "bare token at cli:stdout" in findings
-    assert "reserved key cli-stream:quality" in findings
+    assert "reserved label position at cli:stderr:rubric=thin" in findings
+
+
+@pytest.mark.slow
+def test_assertion_leakage_probe_fails_closed_on_malformed_docprops_xml(
+    leakage_tree, tmp_path: Any
+) -> None:
+    """A corrupt property part cannot silently bypass the structured key scan."""
+    import shutil
+    import zipfile
+
+    out_dir, _streams = leakage_tree
+    source = next(
+        iter(
+            sorted(
+                (
+                    out_dir
+                    / "medical-story-leakage-pristine"
+                    / "documents"
+                ).glob("*.docx")
+            )
+        ),
+        None,
+    )
+    assert source is not None, "the fixture rendered no DOCX to corrupt"
+    planted = tmp_path / source.name
+    original = tmp_path / f"{source.name}.orig"
+    shutil.copy2(source, original)
+    with zipfile.ZipFile(original) as inp, zipfile.ZipFile(planted, "w") as outp:
+        for item in inp.infolist():
+            data = inp.read(item.filename)
+            if item.filename == "docProps/core.xml":
+                data = b"<cp:coreProperties"
+            outp.writestr(item, data)
+
+    with pytest.raises(RuntimeError) as caught:
+        _scan_assertion_leakage(tmp_path)
+    assert str(caught.value) == (
+        f"docx-properties:{source.name}!docProps/core.xml is malformed XML; "
+        "the reserved-key scan cannot certify property names"
+    )
 
 
 def test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary():
-    """R90/R93 — production-visible Part 5 prose carries no hidden labels."""
-    from test_medical_story import _case, _part5_psych_report
+    """R90/R93 — only rendered Part-5 strings are analyzer-visible evidence."""
+    from test_medical_story import _part5_psych_report
     from test_medical_story_loop import _part5_imr_case
-    from wc_caseload_engine import fact_templates as templates
 
-    forbidden = (
-        "real",
-        "bogus",
-        "good",
-        "bad",
-        "adequate",
-        "inadequate",
-        "thin",
-        "underworked",
-        "quality",
-    )
-    private_register_keys = (
-        "harassment_gfpa",
-        "direct_physical_event",
-        "compensable_consequence",
-        "safety_officer_ptsd",
-    )
-
-    def leaked(label: str, value: Any) -> list[str]:
-        text = value if isinstance(value, str) else json.dumps(value, default=str)
-        # Statutory "good faith" and R88's examination-foundation phrase are
-        # mandated legal text, not an IMR-work-product classifier.
-        normalized = (
-            text.lower()
-            .replace("good-faith", "")
-            .replace("good faith", "")
-            .replace("adequate examination", "")
-        )
-        return [
-            f"{label}:{word}"
-            for word in forbidden
-            if re.search(rf"\b{re.escape(word)}\b", normalized)
-        ]
-
-    surfaces: list[tuple[str, Any]] = []
-    _seed, psych_plan = _case("surface-psych-medlegal")
-    assert psych_plan.medical_story is not None
-    surfaces.append(
-        (
-            "psych-plan",
-            psych_plan.medical_story.model_dump(mode="json"),
-        )
-    )
+    rendered_surfaces: list[tuple[str, str]] = []
     for opinion_id in ("opn-01", "opn-02", "opn-03", "opn-04"):
         _document, _story, rendered = _part5_psych_report(opinion_id)
-        surfaces.append((f"psych-report:{opinion_id}", rendered))
+        rendered_surfaces.append((f"psych-report:{opinion_id}", rendered))
 
     for case_id in (
         "imr-authored-true-upheld",
         "imr-sparse-explicit",
         "imr-sampled-upheld",
     ):
-        _seed, plan, _document, content, rendered = _part5_imr_case(case_id)
-        assert plan.medical_ur_plan is not None
-        surfaces.append(
-            (
-                f"imr-plan:{case_id}",
-                plan.medical_ur_plan.model_dump(mode="json"),
-            )
-        )
-        surfaces.append((f"imr-content:{case_id}", content.model_dump(mode="json")))
-        surfaces.append((f"imr-application:{case_id}", rendered))
-
-    # The private selector keys may name register rows in source, but may never
-    # cross into any plan, content model, rendered document, or other artifact.
-    def private_key_leaks(label: str, value: Any, path: str = "") -> list[str]:
-        findings: list[str] = []
-        if isinstance(value, dict):
-            for key, child in value.items():
-                child_path = f"{path}.{key}" if path else str(key)
-                if key in private_register_keys:
-                    findings.append(f"{label}:{child_path}")
-                if isinstance(child, str) and child in private_register_keys:
-                    if not (
-                        key == "psych_injury_kind"
-                        and child == "compensable_consequence"
-                    ):
-                        findings.append(f"{label}:{child_path}={child}")
-                    continue
-                findings.extend(private_key_leaks(label, child, child_path))
-        elif isinstance(value, (list, tuple)):
-            for index, child in enumerate(value):
-                findings.extend(private_key_leaks(label, child, f"{path}[{index}]"))
-        elif isinstance(value, str):
-            findings.extend(
-                f"{label}:{path}:{key}"
-                for key in private_register_keys
-                if re.search(rf"\b{re.escape(key)}\b", value)
-            )
-        return findings
-
-    private_key_findings = [
-        finding
-        for label, value in surfaces
-        for finding in private_key_leaks(label, value)
-    ]
-    assert private_key_findings == []
-
-    for constant_name in (
-        "PSYCH_HISTORY_REGISTER",
-        "PSYCH_QME_PROTOCOL_REGISTER",
-        "PSYCH_ROLDA_REGISTER",
-        "PSYCH_THRESHOLD_REGISTER",
-        "PSYCH_ACTUAL_EVENTS_REGISTER",
-        "PSYCH_SAFETY_OFFICER_REGISTER",
-        "PSYCH_GAF_PDRS_REGISTER",
-        "PSYCH_SECTION_4660_1C_REGISTER",
-        "PSYCH_DEFENSE_CONTEST_REGISTER",
-        "PSYCH_CONTENTION_SURFACE_REGISTER",
-        "IMR_APPLICATION_REGISTER",
-    ):
-        surfaces.append((constant_name, getattr(templates, constant_name)))
+        _seed, _plan, _document, _content, rendered = _part5_imr_case(case_id)
+        rendered_surfaces.append((f"imr-application:{case_id}", rendered))
 
     findings = [
         finding
-        for label, value in surfaces
-        for finding in leaked(label, value)
+        for label, rendered in rendered_surfaces
+        for finding in _decoded_text_findings(rendered, label)
+    ]
+    assert [label for label, _rendered in rendered_surfaces] == [
+        "psych-report:opn-01",
+        "psych-report:opn-02",
+        "psych-report:opn-03",
+        "psych-report:opn-04",
+        "imr-application:imr-authored-true-upheld",
+        "imr-application:imr-sparse-explicit",
+        "imr-application:imr-sampled-upheld",
     ]
     assert findings == []

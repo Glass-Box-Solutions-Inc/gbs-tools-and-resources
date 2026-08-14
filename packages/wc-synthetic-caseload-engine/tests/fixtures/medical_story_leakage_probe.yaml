@@ -1,0 +1,254 @@
+# AJC-62 (M3) — the frozen R71 pristine leakage probe (R77 step 11).
+#
+# The one explicit case binds every medical-story leakage family while keeping
+# all assertion samplers off.  The truth subtree deliberately contains all
+# three M2 grades; analyzer-visible output must contain none of their labels or
+# the Part 5 renderer-private register selectors.
+#
+# @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+
+caseload_id: medical-story-leakage-probe
+
+cases:
+  - case_id: medical-story-leakage-pristine
+    rng_seed: 6100
+    profile:
+      physicians:
+        qme_specialty: Psychiatry
+    injury:
+      type: specific
+      date_of_injury: 2022-04-11
+      body_parts:
+        - {part: lumbar_spine}
+        - {part: shoulder}
+        - {part: psyche}
+    lifecycle:
+      target_stage: medical_legal
+      claim_response: accepted
+      eval_type: qme
+    documents:
+      include_only:
+        - MEDICAL_LEGAL_QME_AME_IME
+        - PSYCH_EVAL_REPORT_QME_AME
+        - SUPPLEMENTAL_QME_AME_REPORT
+        - TREATING_PHYSICIAN_REPORT
+        - ADVOCACY_LETTERS_QME
+        - ADVOCACY_LETTERS_PTP_QME_AME
+        - DEPOSITION_TRANSCRIPT
+      format_mix:
+        pdf: 0.40
+        docx: 0.25
+        eml: 0.20
+        scanned_pdf: 0.15
+      global_cap: 15
+    output:
+      formats: [pdf, docx, eml, scanned_pdf]
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: nonindustrial lumbar degenerative disease
+            origin: nonindustrial
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: stable
+            symptomatic_before_doi: true
+          - label: undocumented cervical strain history
+            origin: nonindustrial
+            body_part: shoulder
+            surfaces_in_file: false
+          - label: adjustment disorder with mixed anxiety and depressed mood
+            body_system: psychiatric
+            origin: mixed
+            body_part: psyche
+            severity: moderate
+            trajectory: fluctuating
+            symptomatic_before_doi: false
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        contentions:
+          - id: ctn-01
+            claim_type: apportionment_defense
+            party: defense
+            position: affirm
+            target_condition_id: cond-00
+            rationale: a nonindustrial factor contributes to present disability
+          - id: ctn-02
+            claim_type: apportionment_defense
+            party: defense
+            position: affirm
+            target_condition_id: cond-01
+            rationale: a second contributing factor is asserted
+          - id: ctn-03
+            claim_type: psych_add_on
+            party: applicant
+            position: affirm
+            target_condition_id: cond-02
+            target_body_part: psyche
+            psych_injury_kind: direct
+            rationale: >-
+              Anxiety, depressed mood, sleep disturbance, concentration
+              difficulty, irritability, reduced energy, and social withdrawal
+              followed the reported employment event.
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2022-06-01
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00, cond-02]
+            endorses_contention_ids: [ctn-03]
+            psych_injury_kind: direct
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The psychiatric injury arose from the reported employment event,
+              and the actual events of employment were the predominant cause.
+            rationale: examined the applicant and reviewed the record
+          - id: opn-02
+            author_role: qme
+            report_stage: final
+            report_date: 2022-08-15
+            event_kind: supplemental_report
+            revision_kind: unchanged_additional_reasoning
+            responds_to_opinion_id: opn-01
+            apportionment_state: determined
+            determination_kind: allocated
+            reviewed_condition_ids: [cond-00, cond-02]
+            endorses_contention_ids: [ctn-03]
+            psych_injury_kind: direct
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The psychiatric injury arose from the reported employment event,
+              and the actual events of employment were the predominant cause.
+            revision_rationale: >-
+              The opinions are unchanged after review of the questions and
+              records identified in the request.
+          - id: opn-03
+            author_role: ptp
+            report_stage: interim
+            report_date: 2022-05-15
+            apportionment_state: deferred
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The mechanism, examination, and treatment course establish that
+              the condition arose out of and in the course of employment.
+            rationale: the conclusions rest on the examination and treatment course
+          - id: opn-04
+            author_role: qme
+            report_stage: final
+            report_date: 2022-10-20
+            event_kind: deposition
+            revision_kind: unchanged_additional_reasoning
+            responds_to_opinion_id: opn-01
+            apportionment_state: determined
+            determination_kind: allocated
+            reviewed_condition_ids: [cond-00, cond-02]
+            endorses_contention_ids: [ctn-03]
+            psych_injury_kind: direct
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The psychiatric injury arose from the reported employment event,
+              and the actual events of employment were the predominant cause.
+            rationale: the report opinions remain unchanged under examination
+          - id: opn-05
+            author_role: qme
+            report_stage: interim
+            report_date: 2022-06-10
+            apportionment_state: deferred
+            examination_performed: true
+            reviewed_condition_ids: [cond-02]
+            endorses_contention_ids: [ctn-03]
+            psych_injury_kind: direct
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The psychiatric injury arose from the reported employment event,
+              and the actual events of employment were the predominant cause.
+            rationale: examined the applicant and reviewed the psychiatric history
+        apportionment_assertions:
+          - id: app-01
+            opinion_id: opn-01
+            body_part: lumbar_spine
+            industrial_percent: 60
+            nonindustrial_percent: 40
+            basis_kinds: [vocational_apportionment]
+            condition_ids: [cond-00]
+            description: chronic lumbar disability
+            disability_causation_stated: true
+            reasonable_medical_probability: true
+            causal_rationale: consistent with the vocational assessment
+            percentage_rationale: the split follows the vocational report
+          - id: app-02
+            opinion_id: opn-02
+            body_part: lumbar_spine
+            industrial_percent: 60
+            nonindustrial_percent: 40
+            basis_kinds: [vocational_apportionment]
+            condition_ids: [cond-00]
+            description: chronic lumbar disability
+            disability_causation_stated: true
+            reasonable_medical_probability: true
+            causal_rationale: consistent with the vocational assessment
+            percentage_rationale: the split follows the vocational report
+          - id: app-03
+            opinion_id: opn-04
+            body_part: lumbar_spine
+            industrial_percent: 60
+            nonindustrial_percent: 40
+            basis_kinds: [vocational_apportionment]
+            condition_ids: [cond-00]
+            description: chronic lumbar disability
+            disability_causation_stated: true
+            reasonable_medical_probability: true
+            causal_rationale: consistent with the vocational assessment
+            percentage_rationale: the split follows the vocational report
+        contention_documents:
+          - id: cdoc-01
+            document_kind: opinion_report
+            medical_opinion_id: opn-01
+            subtype: MEDICAL_LEGAL_QME_AME_IME
+          - id: cdoc-02
+            document_kind: opinion_report
+            medical_opinion_id: opn-05
+            subtype: PSYCH_EVAL_REPORT_QME_AME
+          - id: cdoc-03
+            document_kind: supplemental_report
+            medical_opinion_id: opn-02
+            target_medical_opinion_id: opn-01
+            subtype: SUPPLEMENTAL_QME_AME_REPORT
+          - id: cdoc-04
+            document_kind: opinion_report
+            medical_opinion_id: opn-03
+            subtype: TREATING_PHYSICIAN_REPORT
+          - id: cdoc-05
+            document_kind: advocacy
+            actor_party: applicant
+            target_medical_opinion_id: opn-01
+            spoken_contention_ids: [ctn-03]
+            subtype: ADVOCACY_LETTERS_QME
+            doc_date: 2022-05-20
+          - id: cdoc-06
+            document_kind: objection
+            actor_party: defense
+            target_medical_opinion_id: opn-01
+            spoken_contention_ids: [ctn-01]
+            defense_contest_theories: [insufficient_investigation]
+            doc_date: 2022-06-20
+          - id: cdoc-07
+            document_kind: supplemental_request
+            actor_party: applicant
+            target_medical_opinion_id: opn-01
+            spoken_contention_ids: [ctn-03]
+            doc_date: 2022-07-01
+          - id: cdoc-08
+            document_kind: qme_deposition
+            medical_opinion_id: opn-04
+            target_medical_opinion_id: opn-01
+            actor_party: defense
+            spoken_contention_ids: [ctn-01]
+            defense_contest_theories: [lack_of_substantial_medical_evidence]
+            doc_date: 2022-10-20

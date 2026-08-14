@@ -2578,3 +2578,125 @@ find = '''    salt = _rng_candidate_key(draft)
 replace = '''    salt = _semantic_salt(draft.semantic_key)
     target_index = _weighted_index('''
 note = 'AJC-61, fix round 2 (sol F3). Part 3 B.2-B.3 keys every post-type candidate stream on family + rule-6 surface + normalized grounding IDs; re-salting onto the bare suppression tuple moves the recipe/defect draws and the pinned cohort counts and digests redden.'
+
+[[mutant]]
+id = 'm20-1'
+title = 'the leakage scan stops checking structured private selectors'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
+find = '''    def note_reserved(payload: Any, where: str) -> None:
+        findings.extend(_leakage_reserved_key_findings(payload, where))
+        findings.extend(_private_psych_register_findings(payload, where))'''
+replace = '''    def note_reserved(payload: Any, where: str) -> None:
+        findings.extend(_leakage_reserved_key_findings(payload, where))'''
+note = 'AJC-62 step 11. Raw token scans can still notice the selector spelling, so the control separately requires the structured key and structured value findings; disabling the recursive private-selector read therefore reddens the exact position guard.'
+
+[[mutant]]
+id = 'm20-2'
+title = 'the copied seed stops receiving the full R90 vocabulary scan'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
+find = '''            if path.name == "seed.yaml":
+                note_r90_vocabulary(payload, rel)'''
+replace = '''            if path.name == "seed.yaml":
+                _ = payload'''
+note = 'AJC-62 step 11. The copied seed carries a distinct bad plant in addition to its reserved quality: supported label position; removing the seed-only R90 call leaves the latter detectors alive but must lose the named bad finding.'
+
+[[mutant]]
+id = 'm20-3'
+title = 'case and caseload manifests stop receiving the full R90 scan'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
+find = '''            if path.name in ("manifest.json", "caseload_manifest.json"):
+                note_r90_vocabulary(payload, rel)'''
+replace = '''            if path.name in ("manifest.json", "caseload_manifest.json"):
+                _ = payload'''
+note = 'AJC-62 step 11. The position control plants bogus in the case manifest and underworked in the caseload manifest and requires both named findings, so one mutation proves the shared two-manifest branch rather than only one artifact.'
+
+[[mutant]]
+id = 'm20-4'
+title = 'OCR is downgraded from the full visible scanner to bare labels only'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
+find = '''                        ocr_text = _ocr_png(
+                            page.get_pixmap(dpi=150).tobytes("png")
+                        )
+                        note_token(ocr_text, where)'''
+replace = '''                        ocr_text = _ocr_png(
+                            page.get_pixmap(dpi=150).tobytes("png")
+                        )
+                        findings.extend(
+                            _bare_and_private_text_findings(ocr_text, where)
+                        )'''
+note = 'AJC-62 step 11. The raster plant contains both unsupportable and underworked; a bare-only OCR pass still catches the first, while the explicit OCR R90 assertion requires the second and goes red.'
+
+[[mutant]]
+id = 'm20-5'
+title = 'reserved label-position syntax is removed from decoded text'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
+find = '''    return [
+        *_bare_and_private_text_findings(text, where),
+        *_r90_text_findings(text, where),
+        *_label_position_findings(text, where),
+    ]'''
+replace = '''    return [
+        *_bare_and_private_text_findings(text, where),
+        *_r90_text_findings(text, where),
+    ]'''
+note = 'AJC-62 step 11. The DOCX body and unquoted CLI stderr each carry a reserved key tied to a supported/thin grade; their exact label-position assertions fail even though ordinary R90 and bare-label scans remain enabled.'
+
+[[mutant]]
+id = 'm20-6'
+title = 'malformed DOCX properties are skipped instead of failing closed'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_fails_closed_on_malformed_docprops_xml'
+find = '''                            except ElementTree.ParseError as error:
+                                raise RuntimeError(
+                                    f"docx-properties:{rel}!{name} is malformed XML; "
+                                    "the reserved-key scan cannot certify property names"
+                                ) from error'''
+replace = '''                            except ElementTree.ParseError:
+                                continue'''
+note = 'AJC-62 step 11. A malformed docProps/core.xml makes its property names unknowable; the dedicated guard requires the exact RuntimeError, so restoring the old silent skip cannot masquerade as a clean scan.'
+
+[[mutant]]
+id = 'm20-7'
+title = 'a private psych selector reaches a universally rendered protocol clause'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_medical_assertions.py::test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary'
+find = '''            "The undersigned personally conducted the clinical interview, "
+            "mental-status examination, and psychiatric record review.",'''
+replace = '''            "safety_officer_ptsd: The undersigned personally conducted the clinical interview, "
+            "mental-status examination, and psychiatric record review.",'''
+note = 'AJC-62 step 11. The evaluation-protocol clause is rendered by the psych report path for the opn-01 through opn-04 fixtures; planting the private selector in speaking-layer prose proves the L2 guard reads rendered reports, not register constants.'
+
+[[mutant]]
+id = 'm20-8'
+title = 'the sparse IMR generic rebuttal leaks underworked commentary'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_medical_assertions.py::test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary'
+find = '''            "The requested treatment is medically necessary for the industrial "
+            "condition. Reconsideration of the utilization-review determination is "'''
+replace = '''            "underworked: The requested treatment is medically necessary for the industrial "
+            "condition. Reconsideration of the utilization-review determination is "'''
+note = 'AJC-62 step 11. The explicit sparse IMR fixture takes generic_rebuttal, so the rendered-application-only L2 guard must find the R90 token without consulting the content model or IMR_APPLICATION_REGISTER directly.'
+
+[[mutant]]
+id = 'm20-9'
+title = 'the OCR leakage probe releases tesseract worker concurrency'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_ocr_limits_tesseract_to_one_worker'
+find = '''    environment["OMP_THREAD_LIMIT"] = "1"'''
+replace = '''    environment["OMP_THREAD_LIMIT"] = "2"'''
+note = 'AJC-62 step 11. OCR runs once per image-only page and must not multiply OpenMP workers across a full scan; the fast monkeypatch guard inspects the copied subprocess environment and requires the exact one-worker value.'
+
+[[mutant]]
+id = 'm20-10'
+title = 'clinical adequate phrases lose their R90 exemptions'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_r90_allows_clinical_adequate_phrases_but_rejects_quality_commentary'
+find = '''        .replace("adequate history", "")
+        .replace("adequate understanding", "")'''
+replace = '''        # clinical adequate phrases are no longer exempt'''
+note = 'AJC-62 step 11. OCR proved adequate history and adequate understanding are clinical foundation phrases rather than renderer-quality commentary; the fast polarity guard permits both while still rejecting adequate report.'
