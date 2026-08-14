@@ -2579,8 +2579,549 @@ replace = '''    salt = _semantic_salt(draft.semantic_key)
     target_index = _weighted_index('''
 note = 'AJC-61, fix round 2 (sol F3). Part 3 B.2-B.3 keys every post-type candidate stream on family + rule-6 surface + normalized grounding IDs; re-salting onto the bare suppression tuple moves the recipe/defect draws and the pinned cohort counts and digests redden.'
 
+# ---------------------------------------------------------------------------
+# AJC-62 Step 12 — frozen R74 m20 registry. Amendment A3 preserves the
+# Step-11 leakage series below as m21 and amends the complete registry to 281.
+# ---------------------------------------------------------------------------
+
 [[mutant]]
 id = 'm20-1'
+title = 'the absent medical-story gate constructs a story RNG'
+file = 'src/wc_caseload_engine/medical_story.py'
+test = 'tests/test_medical_story.py::test_absent_medical_story_gate_constructs_no_context_projection_or_story_rng'
+find = '''    if seed.scenario.medical_history is None:
+        return None
+    if history is None:  # pragma: no cover - the planner derives both together'''
+replace = '''    if seed.scenario.medical_history is None:
+        from wc_caseload_engine import medical_assertions as assertions_module
+
+        assertions_module._medical_story_rng(
+            seed,
+            "ptp-aoe-coe-finding",
+            ("case", seed.case_id, "gate-probe"),
+        )
+        return None
+    if history is None:  # pragma: no cover - the planner derives both together'''
+note = 'AJC-62 R74 m20-1. The history gate must return before constructing any projection or story RNG; the absent-gate probe turns the sanctioned module seam into a failing sentinel.'
+
+[[mutant]]
+id = 'm20-2'
+title = 'the objection template subtype becomes the canonical manifest carrier'
+file = 'src/wc_caseload_engine/medical_story.py'
+test = 'tests/test_medical_story.py::test_contention_template_subtypes_keep_canonical_manifest_carriers_and_provenance'
+find = '''    "objection": ("ADVOCACY_LETTERS_PTP_QME_AME", "OBJECTION_TO_QME_AME_REPORT"),'''
+replace = '''    "objection": ("OBJECTION_TO_QME_AME_REPORT", "ADVOCACY_LETTERS_PTP_QME_AME"),'''
+note = 'AJC-62 R74 m20-2. Swapping the pair leaks an internal substrate dispatch key into the canonical manifest vocabulary; the carrier/provenance gate catches the inversion.'
+
+[[mutant]]
+id = 'm20-3'
+title = 'the opinion projection serializes the unrestricted truth model'
+file = 'src/wc_caseload_engine/medical_story.py'
+test = 'tests/test_medical_story.py::test_medical_story_projection_uses_literal_allowlists_and_never_model_dump'
+find = '''    return StoryMedicalOpinion(
+        id=opinion.id,
+        author_role=opinion.author_role,
+        report_stage=opinion.report_stage,
+        report_date=opinion.report_date,
+        apportionment_state=opinion.apportionment_state,
+        determination_kind=opinion.determination_kind,
+        determination_rationale=opinion.determination_rationale,
+        examination_performed=opinion.examination_performed,
+        reviewed_condition_ids=opinion.reviewed_condition_ids,
+        reviewed_prior_claim_ids=opinion.reviewed_prior_claim_ids,
+        reviewed_prior_award_ids=opinion.reviewed_prior_award_ids,
+        endorses_contention_ids=opinion.endorses_contention_ids,
+        concurs_with_contention_ids=opinion.concurs_with_contention_ids,
+        rejects_contention_ids=opinion.rejects_contention_ids,
+        defers_contention_ids=opinion.defers_contention_ids,
+        responds_to_opinion_id=opinion.responds_to_opinion_id,
+        supersedes_opinion_id=opinion.supersedes_opinion_id,
+        rationale=opinion.rationale,
+        revision_rationale=opinion.revision_rationale,
+        event_kind=opinion.event_kind,
+        revision_kind=opinion.revision_kind,
+        psych_injury_kind=opinion.psych_injury_kind,
+        aoe_coe_finding=opinion.aoe_coe_finding,
+        aoe_coe_rationale=opinion.aoe_coe_rationale,
+    )'''
+replace = '''    return StoryMedicalOpinion(**opinion.model_dump())'''
+note = 'AJC-62 R74 m20-3. An unrestricted dump includes truth-only quality and makes future fields leak by default; the spy-backed guard converts the exception-capable failure into pytest.fail.'
+
+[[mutant]]
+id = 'm20-4'
+title = 'a dangling opinion binding guesses the nearest report date'
+file = 'src/wc_caseload_engine/medical_story.py'
+test = 'tests/test_medical_story.py::test_unbound_or_missing_opinion_id_fails_instead_of_guessing_by_date'
+find = '''            if opinion is None:
+                # R5 — an explicit binding is the only basis for content.
+                # This failure is the boundary: a dangling opinion ID must
+                # never be repaired by choosing the opinion with the nearest
+                # report date, a report ordinal, a subtype coincidence or
+                # collection order.
+                raise MedicalAssertionError(
+                    f"{_document_label(document)} binds medical opinion "
+                    f"'{document.medical_opinion_id}', which does not exist in "
+                    "the completed ledger; a missing or unbound opinion ID "
+                    "fails instead of guessing by date (R5)"
+                )'''
+replace = '''            if opinion is None:
+                opinion = min(
+                    opinions.values(),
+                    key=lambda candidate: abs(
+                        (candidate.report_date - document.doc_date).days
+                    ),
+                )'''
+note = 'AJC-62 R74 m20-4. A missing explicit binding must fail closed; selecting the nearest dated opinion recreates the forbidden date/subtype/ordinal inference.'
+
+[[mutant]]
+id = 'm20-5'
+title = 'the feature-absent doctrine pool admits Hikida'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_doctrine_content.py::TestContentTableIsComplete::test_legacy_and_medical_story_doctrine_pools_are_exact_and_ordered'
+find = '''LEGACY_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)[:14]'''
+replace = '''LEGACY_DOCTRINE_POOL: tuple[str, ...] = tuple(DOCTRINE_CONTENT)'''
+note = 'AJC-62 R74 m20-5. The absent-gate auto pool is the frozen first fourteen in declaration order; widening it to all doctrine content re-rolls legacy corpora.'
+
+[[mutant]]
+id = 'm20-6'
+title = 'the PTP industrial finding additionally requires advocacy'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_story_properties.py::test_adding_or_removing_ptp_advocacy_cannot_move_ptp_findings_dispositions_or_dates'
+find = '''        if opinion.author_role == "ptp":
+            opinions.append(
+                _remodel_sampled_ptp(
+                    seed, remodeled, history, opinion, opinion_key, contention_keys
+                )
+            )
+        else:'''
+replace = '''        if opinion.author_role == "ptp":
+            if any(
+                communications.get(ref)
+                for ref in opinion.endorses_contention_ids
+            ):
+                opinions.append(
+                    _remodel_sampled_ptp(
+                        seed, remodeled, history, opinion, opinion_key, contention_keys
+                    )
+                )
+            else:
+                opinions.append(opinion)
+        else:'''
+note = 'AJC-62 R74 m20-6. PTP findings are entity-private and independent of advocacy; requiring a qualifying communication leaves ordinary sampled PTP findings unremodeled and reddens the named independence gate.'
+
+[[mutant]]
+id = 'm20-7'
+title = 'a missed responsive-adoption draw still adopts'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_story_properties.py::test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication'
+find = '''    if _fraction_draw(rng, P_QME_AME_RESPONSIVE_ADOPTION.value):
+        return "adopted"
+    return "concurred"'''
+replace = '''    if _fraction_draw(rng, P_QME_AME_RESPONSIVE_ADOPTION.value):
+        return "adopted"
+    return "adopted"'''
+note = 'AJC-62 R74 m20-7. The complement of the 0.25 responsive-adoption channel is concurrence, not adoption; the forced miss in the adoption gate catches this collapse.'
+
+[[mutant]]
+id = 'm20-8'
+title = 'the combined revision kind needs only one changed-field family'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_story_loop.py::test_revision_kind_predicates_accept_and_reject_exact_field_changes'
+find = '''            if (
+                kind
+                in (
+                    "revised_apportionment",
+                    "revised_causation_and_apportionment",
+                )
+                and not apportionment_changed
+            ):
+                problems.append(
+                    f"medical opinion '{opinion.id}' has revision_kind "
+                    f"'{kind}' but changes no apportionment-family result "
+                    f"relative to predecessor '{predecessor.id}'"
+                )'''
+replace = '''            if (
+                kind == "revised_apportionment"
+                and not apportionment_changed
+            ) or (
+                kind == "revised_causation_and_apportionment"
+                and not causation_changed
+                and not apportionment_changed
+            ):
+                problems.append(
+                    f"medical opinion '{opinion.id}' has revision_kind "
+                    f"'{kind}' but changes no apportionment-family result "
+                    f"relative to predecessor '{predecessor.id}'"
+                )'''
+note = 'AJC-62 R74 m20-8. The combined revision kind promises both causation and apportionment changes; accepting either one alone weakens the complete R37 conjunction.'
+
+[[mutant]]
+id = 'm20-9'
+title = 'granular revision percentages snap to the nearest common member'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_story_properties.py::test_percentage_register_pool_continuous_remainder_and_predecessor_exclusion_are_exact'
+find = '''    if common_selected:
+        return pool[value_rng.randrange(len(pool))]
+    # Granular remainder: the continuous inverse-CDF construction. The
+    # interval index IS the selection — G[i] is returned directly after
+    # computing the same index the latent x would quantize back to.
+    z = value_rng.random() * len(pool)
+    interval = min(int(z), len(pool) - 1)
+    return pool[interval]'''
+replace = '''    if common_selected:
+        return pool[value_rng.randrange(len(pool))]
+    z = value_rng.random() * len(pool)
+    interval = min(int(z), len(pool) - 1)
+    granular_value = pool[interval]
+    return min(
+        COMMON_NONINDUSTRIAL_PERCENTAGES,
+        key=lambda common: abs(common - granular_value),
+    )'''
+note = 'AJC-62 R74 m20-9. The granular remainder returns its own interval member; snapping it to the nearest common register value collapses the two population components.'
+
+[[mutant]]
+id = 'm20-10'
+title = 'defense contest incidence reuses the M2 PTP-disposition stream'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_story_properties.py::test_m2_baseline_stream_calls_ids_counts_and_digests_are_byte_identical'
+find = '''            incidence = _medical_story_rng(seed, family, ("case", seed.case_id, x_key))'''
+replace = '''            incidence = (
+                _assertion_rng(seed, "ptp-disposition", canonical_story_key(x_key))
+                if family == "defense-contest-incidence"
+                else _medical_story_rng(seed, family, ("case", seed.case_id, x_key))
+            )'''
+note = 'AJC-62 R74 m20-10. M3 defense contest incidence owns a private medical-story family; constructing it under the existing M2 namespace violates the byte-identical base-stream trace.'
+
+[[mutant]]
+id = 'm20-11'
+title = 'semantic document rendering falls back to final index salt'
+file = 'src/wc_caseload_engine/renderer.py'
+test = 'tests/test_medical_story_properties.py::test_inserting_an_unrelated_document_cannot_move_semantic_render_outputs'
+find = '''    return assertion_module._medical_story_seed(
+        seed,
+        family,
+        _story_family_key(seed, medical_story_render_key),
+    )'''
+replace = '''    return derive_seed(seed.rng_seed, f"render:{index}")'''
+note = 'AJC-62 R74 m20-11. Feature-on render randomness is keyed by semantic document identity; using the final document index makes an unrelated insertion move surviving bytes.'
+
+[[mutant]]
+id = 'm20-12'
+title = 'the leakage-family oracle omits initial medical-legal reports'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_covers_every_medical_story_surface_family'
+find = '''    ("initial_medlegal", INITIAL_MEDLEGAL_SURFACES, None),'''
+replace = '''    # initial_medlegal omitted'''
+note = 'AJC-62 R74 m20-12. The family oracle is itself security-sensitive; removing the initial-medical-legal row must make its exact coverage guard red.'
+
+[[mutant]]
+id = 'm20-13'
+title = 'the leakage-family oracle omits psychiatric medical-legal reports'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_covers_every_medical_story_surface_family'
+find = '''    ("psych_medlegal", PSYCH_MEDLEGAL_SURFACES, None),'''
+replace = '''    # psych_medlegal omitted'''
+note = 'AJC-62 R74 m20-13. Removing only the psychiatric-medical-legal row proves the exact eight-family oracle cannot shrink silently.'
+
+[[mutant]]
+id = 'm20-14'
+title = 'the leakage-family oracle omits supplemental medical-legal reports'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_covers_every_medical_story_surface_family'
+find = '''    ("supplemental_medlegal", SUPPLEMENTAL_MEDLEGAL_SURFACES, None),'''
+replace = '''    # supplemental_medlegal omitted'''
+note = 'AJC-62 R74 m20-14. Removing only the supplemental-medical-legal row proves the exact eight-family oracle cannot shrink silently.'
+
+[[mutant]]
+id = 'm20-15'
+title = 'the leakage-family oracle omits PTP reports'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_covers_every_medical_story_surface_family'
+find = '''    ("ptp", PTP_CAUSATION_SURFACES, None),'''
+replace = '''    # ptp omitted'''
+note = 'AJC-62 R74 m20-15. Removing only the PTP row proves the exact eight-family oracle cannot shrink silently.'
+
+[[mutant]]
+id = 'm20-16'
+title = 'the leakage-family oracle omits advocacy letters'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_covers_every_medical_story_surface_family'
+find = '''    ("advocacy", ADVOCACY_LETTER_SURFACES, "advocacy"),'''
+replace = '''    # advocacy omitted'''
+note = 'AJC-62 R74 m20-16. Removing only the advocacy row proves the exact eight-family oracle cannot shrink silently.'
+
+[[mutant]]
+id = 'm20-17'
+title = 'the leakage-family oracle omits objection letters'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_covers_every_medical_story_surface_family'
+find = '''    (
+        "objection",
+        frozenset({"ADVOCACY_LETTERS_PTP_QME_AME"}),
+        "objection",
+    ),'''
+replace = '''    # objection omitted'''
+note = 'AJC-62 R74 m20-17. Removing the complete objection family row proves the leakage oracle covers that internal template surface.'
+
+[[mutant]]
+id = 'm20-18'
+title = 'the leakage-family oracle omits supplemental-request letters'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_covers_every_medical_story_surface_family'
+find = '''    (
+        "supplemental_request",
+        frozenset({"ADVOCACY_LETTERS_PTP_QME_AME"}),
+        "supplemental_request",
+    ),'''
+replace = '''    # supplemental_request omitted'''
+note = 'AJC-62 R74 m20-18. Removing the complete supplemental-request family row proves the leakage oracle covers that internal template surface.'
+
+[[mutant]]
+id = 'm20-19'
+title = 'the leakage-family oracle omits QME deposition transcripts'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_covers_every_medical_story_surface_family'
+find = '''    (
+        "qme_deposition",
+        frozenset({"DEPOSITION_TRANSCRIPT"}),
+        "qme_deposition",
+    ),'''
+replace = '''    # qme_deposition omitted'''
+note = 'AJC-62 R74 m20-19. Removing the complete QME-deposition family row proves the leakage oracle covers that governed deposition surface.'
+
+[[mutant]]
+id = 'm20-20'
+title = 'sampled IMR requests also follow overturned UR decisions'
+file = 'src/wc_caseload_engine/medical_story.py'
+test = 'tests/test_medical_story.py::test_imr_request_draw_uses_only_effective_upheld_denials_with_unauthored_imr'
+find = '''    elif effective_decision == "upheld" and target_denial_date is not None:
+        imr_requested = _fraction_hit(
+            assertions_module._medical_story_rng(
+                seed,
+                "imr-request",
+                _medical_ur_stream_key(seed, target_denial_date),
+            ),
+            assertions_module.P_IMR_REQUEST_GIVEN_UPHELD_DENIAL.value,
+        )'''
+replace = '''    elif (
+        effective_decision in {"upheld", "overturned"}
+        and target_denial_date is not None
+    ):
+        imr_requested = _fraction_hit(
+            assertions_module._medical_story_rng(
+                seed,
+                "imr-request",
+                _medical_ur_stream_key(seed, target_denial_date),
+            ),
+            assertions_module.P_IMR_REQUEST_GIVEN_UPHELD_DENIAL.value,
+        )'''
+note = 'AJC-62 R74 m20-20. The sampled request denominator is unauthored IMR after an effective upheld denial only; widening it constructs an ineligible stream for overturned decisions.'
+
+[[mutant]]
+id = 'm20-21'
+title = 'sampled IMR application content gains a hidden quality field'
+file = 'src/wc_caseload_engine/medical_story.py'
+test = 'tests/test_medical_story.py::test_sampled_imr_fields_are_sparse_without_quality_like_state'
+find = '''        mtus_citations=(),
+        target_denial_subtype="MEDICAL_TREATMENT_DENIAL_UR",
+        target_denial_date=target_denial_date,
+    )'''
+replace = '''        mtus_citations=(),
+        quality="thin",
+        target_denial_subtype="MEDICAL_TREATMENT_DENIAL_UR",
+        target_denial_date=target_denial_date,
+    )'''
+note = 'AJC-62 R74 m20-21. Structural IMR application content cannot carry quality-like state; the guard catches the extra-forbid exception as a call-phase pytest failure.'
+
+[[mutant]]
+id = 'm20-22'
+title = 'the bound contention-document cap is widened tenfold'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_story_loop.py::test_contention_loop_caps_are_exact_and_jointly_enforced'
+find = '''MAX_BOUND_CONTENTION_DOCUMENTS_PER_CASE: Final[int] = 15'''
+replace = '''MAX_BOUND_CONTENTION_DOCUMENTS_PER_CASE: Final[int] = 150'''
+note = 'AJC-62 R74 m20-22. The joint per-case cap is a literal 15; the exact cap gate rejects a tenfold widening before the limit can become decorative.'
+
+[[mutant]]
+id = 'm20-23'
+title = 'medical-story candidates enter before perspective resolution'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_medical_story_loop.py::test_contention_candidates_enter_after_perspective_before_controls_once'
+find = '''    story_planning = plan_medical_story_documents(
+        seed, timeline, assertion_plan, pov.candidates
+    )'''
+replace = '''    story_planning = plan_medical_story_documents(
+        seed, timeline, assertion_plan, machine_candidates
+    )'''
+note = 'AJC-62 R74 m20-23. The single insertion point consumes the exact perspective-resolved collection; handing it the machine candidates bypasses file-POV shaping.'
+
+[[mutant]]
+id = 'm20-24'
+title = 'post-control shaping reconstructs selected candidates without bindings'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_medical_story_loop.py::test_bound_candidate_metadata_survives_every_planner_transform'
+find = '''        available = pool.get(entry.subtype, [])
+        chosen = available[: entry.count]
+        dated.extend(chosen)
+        shortfall = entry.count - len(chosen)
+        if shortfall > 0:
+            role = chosen[-1].author_role if chosen else author_role_for(entry.subtype)
+            track = chosen[-1].track if chosen else TRACK_CORE
+            for extra in _synthesize_dates(seed, timeline, entry.subtype, available, shortfall):
+                dated.append(
+                    DatedCandidate(
+                        subtype=entry.subtype,
+                        doc_date=extra,
+                        track=track,
+                        author_role=role,
+                    )
+                )'''
+replace = '''        available = pool.get(entry.subtype, [])
+        chosen = available[: entry.count]
+        for candidate in chosen:
+            dated.append(
+                DatedCandidate(
+                    subtype=entry.subtype,
+                    doc_date=candidate.doc_date,
+                    track=candidate.track,
+                    author_role=candidate.author_role,
+                )
+            )
+        shortfall = entry.count - len(chosen)
+        if shortfall > 0:
+            role = chosen[-1].author_role if chosen else author_role_for(entry.subtype)
+            track = chosen[-1].track if chosen else TRACK_CORE
+            for extra in _synthesize_dates(seed, timeline, entry.subtype, available, shortfall):
+                dated.append(
+                    DatedCandidate(
+                        subtype=entry.subtype,
+                        doc_date=extra,
+                        track=track,
+                        author_role=role,
+                    )
+                )'''
+note = 'AJC-62 R74 m20-24. Reconstructing the selected legacy four-tuple erases opinion IDs, spoken contentions, surface, actor, theories and template subtype; selected bound candidates must survive whole.'
+
+[[mutant]]
+id = 'm20-25'
+title = 'reconciliation leaves dependents whose target report disappeared'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_medical_story_loop.py::test_document_controls_remove_dependencies_without_orphaning_chains'
+find = '''                if target is not None and target not in realized:
+                    reason = (
+                        f"its target report for opinion '{target}' is absent "
+                        "from the final plan"
+                    )'''
+replace = '''                if target is not None and target not in realized:
+                    reason = None'''
+note = 'AJC-62 R74 m20-25. Controls may remove a target report; reconciliation must cascade through every dependent instead of leaving an orphaned communication or response.'
+
+[[mutant]]
+id = 'm20-26'
+title = 'hard contention dates are individually clamped'
+file = 'src/wc_caseload_engine/medical_story.py'
+test = 'tests/test_medical_story_loop.py::test_hard_opinion_and_explicit_dates_are_fixed_and_edges_strict'
+find = '''    for binding in bindings:
+        if binding.medical_opinion_id is not None:
+            resolved[binding.id] = (
+                binding.doc_date
+                if binding.doc_date is not None
+                else opinions[binding.medical_opinion_id].report_date
+            )
+        elif binding.doc_date is not None:
+            resolved[binding.id] = binding.doc_date'''
+replace = '''    for binding in bindings:
+        if binding.medical_opinion_id is not None:
+            proposed = (
+                binding.doc_date
+                if binding.doc_date is not None
+                else opinions[binding.medical_opinion_id].report_date
+            )
+            resolved[binding.id] = timeline.clamp(proposed)
+        elif binding.doc_date is not None:
+            resolved[binding.id] = timeline.clamp(binding.doc_date)'''
+note = 'AJC-62 R74 m20-26. Opinion and explicit dates are hard anchors; per-document clamping silently moves authored facts and can stack a causal chain.'
+
+[[mutant]]
+id = 'm20-27'
+title = 'heterogeneous apportionment rows become an average scalar'
+file = 'src/wc_caseload_engine/renderer.py'
+test = 'tests/test_medical_story.py::test_ajc65_projection_is_coherent_for_every_apportionment_shape'
+find = '''    # R12 — heterogeneous plural rows are PROSE-ONLY. The rows carry different
+    # nonindustrial percentages, so no single scalar exists: an average, a
+    # maximum, a first row or a "primary" body part would each state a split
+    # the evaluator never made. AJC-65 suppresses its scalar impairment block
+    # on a prose-only opinion, and the wcce subclass renders the body-part
+    # table in its place.
+    return {
+        "opinion": " ".join(
+            [
+                "Apportionment of permanent disability is determined "
+                "separately for each body part, per Labor Code sections 4663 "
+                "and 4664.",
+                *_plural_row_sentences(rows),
+            ]
+        )
+    }'''
+replace = '''    average = round(
+        sum(row.nonindustrial_percent for row in rows) / len(rows)
+    )
+    return {
+        "register": "apportioned",
+        "nonindustrial_pct": average,
+        "opinion": " ".join(
+            [
+                "Apportionment of permanent disability is determined "
+                "separately for each body part, per Labor Code sections 4663 "
+                "and 4664.",
+                *_plural_row_sentences(rows),
+            ]
+        ),
+    }'''
+note = 'AJC-62 R74 m20-27. Heterogeneous rows have no truthful scalar; averaging their percentages fabricates an evaluator conclusion and reactivates the scalar rendering block.'
+
+[[mutant]]
+id = 'm20-28'
+title = 'variant content is activated globally instead of by family'
+file = 'src/wc_caseload_engine/renderer.py'
+test = 'tests/test_medical_story.py::test_ajc66_activates_only_the_bound_letter_or_deposition_family'
+find = '''        variant_switch = ajc66_variant_content(template_subtype)
+        if variant_switch is not None:
+            context["variant_content"] = variant_switch'''
+replace = '''        variant_switch = ajc66_variant_content(template_subtype)
+        if variant_switch is not None:
+            context["variant_content"] = True'''
+note = 'AJC-62 R74 m20-28. AJC-66 switches are namespaced to the bound letter or deposition family; global True enables unrelated substrate variants.'
+
+[[mutant]]
+id = 'm20-29'
+title = 'advocacy overlap is removed before provisional bundles are formed'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_story_loop.py::test_explicit_partial_overlap_suppresses_only_the_collision_without_redraw_or_repack'
+find = '''            remaining = list(winners)
+            bundles: list[list[Contention]] = []'''
+replace = '''            reserved_ids = reserved.get((actor, opinion.id), set())
+            remaining = [
+                contention
+                for contention in winners
+                if contention.id not in reserved_ids
+            ]
+            bundles: list[list[Contention]] = []'''
+note = 'AJC-62 R74 m20-29. Explicit reservation is applied after provisional membership and removes only collisions without redraw or repacking; filtering winners first changes bundle-size construction and membership.'
+
+[[mutant]]
+id = 'm20-30'
+title = 'sampled supplemental opinions may source another sampled chain'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_medical_story_loop.py::test_sampled_supplemental_never_recurses_beyond_one_deposition'
+find = '''        if opinion.event_kind == "supplemental_report" and not explicit:
+            continue'''
+replace = '''        if opinion.event_kind == "supplemental_report" and explicit:
+            continue'''
+note = 'AJC-62 R74 m20-30. Only base reports and explicitly authored supplemental reports are opportunity sources; admitting a sampled supplemental opens recursive sampled chains.'
+
+[[mutant]]
+id = 'm21-1'
 title = 'the leakage scan stops checking structured private selectors'
 file = 'tests/test_medical_assertions.py'
 test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
@@ -2592,7 +3133,7 @@ replace = '''    def note_reserved(payload: Any, where: str) -> None:
 note = 'AJC-62 step 11. Raw token scans can still notice the selector spelling, so the control separately requires the structured key and structured value findings; disabling the recursive private-selector read therefore reddens the exact position guard.'
 
 [[mutant]]
-id = 'm20-2'
+id = 'm21-2'
 title = 'the copied seed stops receiving the full R90 vocabulary scan'
 file = 'tests/test_medical_assertions.py'
 test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
@@ -2603,7 +3144,7 @@ replace = '''            if path.name == "seed.yaml":
 note = 'AJC-62 step 11. The copied seed carries a distinct bad plant in addition to its reserved quality: supported label position; removing the seed-only R90 call leaves the latter detectors alive but must lose the named bad finding.'
 
 [[mutant]]
-id = 'm20-3'
+id = 'm21-3'
 title = 'case and caseload manifests stop receiving the full R90 scan'
 file = 'tests/test_medical_assertions.py'
 test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
@@ -2614,7 +3155,7 @@ replace = '''            if path.name in ("manifest.json", "caseload_manifest.js
 note = 'AJC-62 step 11. The position control plants bogus in the case manifest and underworked in the caseload manifest and requires both named findings, so one mutation proves the shared two-manifest branch rather than only one artifact.'
 
 [[mutant]]
-id = 'm20-4'
+id = 'm21-4'
 title = 'OCR is downgraded from the full visible scanner to bare labels only'
 file = 'tests/test_medical_assertions.py'
 test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
@@ -2631,7 +3172,7 @@ replace = '''                        ocr_text = _ocr_png(
 note = 'AJC-62 step 11. The raster plant contains both unsupportable and underworked; a bare-only OCR pass still catches the first, while the explicit OCR R90 assertion requires the second and goes red.'
 
 [[mutant]]
-id = 'm20-5'
+id = 'm21-5'
 title = 'reserved label-position syntax is removed from decoded text'
 file = 'tests/test_medical_assertions.py'
 test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
@@ -2647,7 +3188,7 @@ replace = '''    return [
 note = 'AJC-62 step 11. The DOCX body and unquoted CLI stderr each carry a reserved key tied to a supported/thin grade; their exact label-position assertions fail even though ordinary R90 and bare-label scans remain enabled.'
 
 [[mutant]]
-id = 'm20-6'
+id = 'm21-6'
 title = 'malformed DOCX properties are skipped instead of failing closed'
 file = 'tests/test_medical_assertions.py'
 test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_fails_closed_on_malformed_docprops_xml'
@@ -2661,7 +3202,7 @@ replace = '''                            except ElementTree.ParseError:
 note = 'AJC-62 step 11. A malformed docProps/core.xml makes its property names unknowable; the dedicated guard requires the exact RuntimeError, so restoring the old silent skip cannot masquerade as a clean scan.'
 
 [[mutant]]
-id = 'm20-7'
+id = 'm21-7'
 title = 'a private psych selector reaches a universally rendered protocol clause'
 file = 'src/wc_caseload_engine/fact_templates.py'
 test = 'tests/test_medical_assertions.py::test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary'
@@ -2672,7 +3213,7 @@ replace = '''            "safety_officer_ptsd: The undersigned personally conduc
 note = 'AJC-62 step 11. The evaluation-protocol clause is rendered by the psych report path for the opn-01 through opn-04 fixtures; planting the private selector in speaking-layer prose proves the L2 guard reads rendered reports, not register constants.'
 
 [[mutant]]
-id = 'm20-8'
+id = 'm21-8'
 title = 'the sparse IMR generic rebuttal leaks underworked commentary'
 file = 'src/wc_caseload_engine/fact_templates.py'
 test = 'tests/test_medical_assertions.py::test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary'
@@ -2683,7 +3224,7 @@ replace = '''            "underworked: The requested treatment is medically nece
 note = 'AJC-62 step 11. The explicit sparse IMR fixture takes generic_rebuttal, so the rendered-application-only L2 guard must find the R90 token without consulting the content model or IMR_APPLICATION_REGISTER directly.'
 
 [[mutant]]
-id = 'm20-9'
+id = 'm21-9'
 title = 'the OCR leakage probe releases tesseract worker concurrency'
 file = 'tests/test_medical_assertions.py'
 test = 'tests/test_medical_assertions.py::test_assertion_leakage_ocr_limits_tesseract_to_one_worker'
@@ -2692,7 +3233,7 @@ replace = '''    environment["OMP_THREAD_LIMIT"] = "2"'''
 note = 'AJC-62 step 11. OCR runs once per image-only page and must not multiply OpenMP workers across a full scan; the fast monkeypatch guard inspects the copied subprocess environment and requires the exact one-worker value.'
 
 [[mutant]]
-id = 'm20-10'
+id = 'm21-10'
 title = 'clinical adequate phrases lose their R90 exemptions'
 file = 'tests/test_medical_assertions.py'
 test = 'tests/test_medical_assertions.py::test_r90_allows_clinical_adequate_phrases_but_rejects_quality_commentary'
@@ -2704,7 +3245,7 @@ replace = '''        # clinical adequate phrases are no longer exempt'''
 note = 'AJC-62 step 11. OCR proved adequate history, adequate effort, and adequate understanding are clinical foundation phrases rather than renderer-quality commentary; the fast polarity guard permits all three while still rejecting adequate report.'
 
 [[mutant]]
-id = 'm20-11'
+id = 'm21-11'
 title = 'copied-seed private key positions report only full paths'
 file = 'tests/test_medical_assertions.py'
 test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'

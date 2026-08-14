@@ -263,9 +263,7 @@ def test_revision_kind_predicates_accept_and_reject_exact_field_changes() -> Non
 
     # …and claiming supersession without a revision is rejected.
     superseding_unchanged = _response_opinion(supersedes_opinion_id="opn-01")
-    problems = _problems(
-        (base, superseding_unchanged), (base_row, _row("app-02", "opn-02", 20))
-    )
+    problems = _problems((base, superseding_unchanged), (base_row, _row("app-02", "opn-02", 20)))
     assert (
         "medical opinion 'opn-02' has revision_kind "
         "'unchanged_additional_reasoning' but sets supersedes_opinion_id; a "
@@ -292,9 +290,7 @@ def test_revision_kind_predicates_accept_and_reject_exact_field_changes() -> Non
         reviewed_condition_ids=("cond-01",),
         reviewed_prior_claim_ids=("prior-01",),
     )
-    accepted = _problems(
-        (base_narrow, grew), (base_row, _row("app-02", "opn-02", 20))
-    )
+    accepted = _problems((base_narrow, grew), (base_row, _row("app-02", "opn-02", 20)))
     assert accepted == ()
 
     # revised_causation: requires a causation change, supersession of the
@@ -308,18 +304,14 @@ def test_revision_kind_predicates_accept_and_reject_exact_field_changes() -> Non
         rejects_contention_ids=("ctn-01",),
         revision_rationale="the causation conclusion is revised",
     )
-    accepted = _problems(
-        (base, revised_causation), (base_row, _row("app-02", "opn-02", 20))
-    )
+    accepted = _problems((base, revised_causation), (base_row, _row("app-02", "opn-02", 20)))
     assert accepted == ()
     no_causation_change = _response_opinion(
         revision_kind="revised_causation",
         supersedes_opinion_id="opn-01",
         revision_rationale="claims revision while changing nothing",
     )
-    problems = _problems(
-        (base, no_causation_change), (base_row, _row("app-02", "opn-02", 20))
-    )
+    problems = _problems((base, no_causation_change), (base_row, _row("app-02", "opn-02", 20)))
     assert (
         "medical opinion 'opn-02' has revision_kind 'revised_causation' but "
         "changes no causation-family result relative to predecessor 'opn-01'"
@@ -353,9 +345,7 @@ def test_revision_kind_predicates_accept_and_reject_exact_field_changes() -> Non
         aoe_coe_finding="nonindustrial",
         revision_rationale="the causation conclusion is revised",
     )
-    problems = _problems(
-        (base, missing_supersession), (base_row, _row("app-02", "opn-02", 20))
-    )
+    problems = _problems((base, missing_supersession), (base_row, _row("app-02", "opn-02", 20)))
     assert (
         "medical opinion 'opn-02' has revision_kind 'revised_causation' but "
         "supersedes_opinion_id is not its immediate predecessor 'opn-01'; a "
@@ -388,9 +378,7 @@ def test_revision_kind_predicates_accept_and_reject_exact_field_changes() -> Non
         supersedes_opinion_id="opn-01",
         revision_rationale="claims a revision while changing nothing",
     )
-    problems = _problems(
-        (base, no_apportionment_change), (base_row, _row("app-02", "opn-02", 20))
-    )
+    problems = _problems((base, no_apportionment_change), (base_row, _row("app-02", "opn-02", 20)))
     assert (
         "medical opinion 'opn-02' has revision_kind 'revised_apportionment' "
         "but changes no apportionment-family result relative to predecessor "
@@ -813,16 +801,12 @@ def test_contention_loop_is_absent_without_history_or_assertions(
     # Assertions without a history are an error, never a partial loop — the
     # seed schema rejects the combination at parse, and the derivation guard
     # holds the same line for a caller that never derived the history.
-    with pytest.raises(
-        SeedValidationError, match=r"requires scenario\.medical_history"
-    ):
+    with pytest.raises(SeedValidationError, match=r"requires scenario\.medical_history"):
         _patched_seed(
             "loop-applicant-adopted",
             lambda case: case["scenario"].pop("medical_history"),
         )
-    with pytest.raises(
-        MedicalAssertionError, match=r"requires scenario\.medical_history"
-    ):
+    with pytest.raises(MedicalAssertionError, match=r"requires scenario\.medical_history"):
         derive_medical_assertion_plan(_matrix_seeds()["loop-applicant-adopted"], None)
     assert recorded == []
 
@@ -915,9 +899,7 @@ def test_r29_disposition_party_matrix_is_exact(monkeypatch: pytest.MonkeyPatch) 
         _history, _trace, plan = _derive(seed)
         monkeypatch.undo()
 
-        incidence = [
-            (family, key) for family, key in recorded if family in _INCIDENCE_FAMILIES
-        ]
+        incidence = [(family, key) for family, key in recorded if family in _INCIDENCE_FAMILIES]
         assert len(incidence) == 1, (case_id, incidence)
         family, key = incidence[0]
         assert family == family_by_cell[(actor, disposition_class)], case_id
@@ -941,9 +923,7 @@ def test_r29_disposition_party_matrix_is_exact(monkeypatch: pytest.MonkeyPatch) 
             assert contest[0].document_kind == "objection", case_id
         else:
             assert contest[0].document_kind == "supplemental_request", case_id
-            assert all(
-                binding.document_kind != "objection" for binding in contest
-            ), case_id
+            assert all(binding.document_kind != "objection" for binding in contest), case_id
 
     # Outside R30 the defense channel does not exist: an adopted applicant
     # contention concerning neither apportionment nor psych constructs no
@@ -964,9 +944,7 @@ def test_r29_disposition_party_matrix_is_exact(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.undo()
     assert [f for f, _k in recorded if f in _INCIDENCE_FAMILIES] == []
     assert _sampled_contest_documents(plan) == []
-    assert all(
-        binding.actor_party != "defense" for binding in plan.contention_documents
-    )
+    assert all(binding.actor_party != "defense" for binding in plan.contention_documents)
 
 
 # ---------------------------------------------------------------------------
@@ -1022,9 +1000,7 @@ def test_defense_contest_eligibility_actor_and_theory_propagation_are_exact(
 
     # An applicant chain constructs no theory stream and no theories.
     recorded = []
-    _route_story_streams(
-        monkeypatch, _contest_world("objection_supplemental"), recorded
-    )
+    _route_story_streams(monkeypatch, _contest_world("objection_supplemental"), recorded)
     _history, _trace, plan = _derive(_matrix_seeds()["loop-applicant-rejected"])
     monkeypatch.undo()
     assert all(
@@ -1088,10 +1064,11 @@ def test_every_contest_path_orders_and_tail_truncates_exactly(
         if report_date is None:
             seed = _matrix_seeds()[case_id]
         else:
+
             def move_report(case: dict[str, Any]) -> None:
-                case["scenario"]["medical_assertions"]["medical_opinions"][0][
-                    "report_date"
-                ] = dt.date.fromisoformat(report_date)
+                case["scenario"]["medical_assertions"]["medical_opinions"][0]["report_date"] = (
+                    dt.date.fromisoformat(report_date)
+                )
 
             seed = _patched_seed(case_id, move_report)
         _history, trace, plan = _derive(seed)
@@ -1252,9 +1229,7 @@ def test_contention_loop_caps_are_exact_and_jointly_enforced(
             target_medical_opinion_id=target,
             actor_party=actor,
             spoken_contention_ids=[spoken],
-            defense_contest_theories=(
-                ["post_termination"] if actor == "defense" else []
-            ),
+            defense_contest_theories=(["post_termination"] if actor == "defense" else []),
         )
 
     def request_entry(index: int, spoken: str) -> ContentionDocumentEntry:
@@ -1311,10 +1286,7 @@ def test_contention_loop_caps_are_exact_and_jointly_enforced(
     problems = assertion_module._explicit_contention_document_problems(
         scenario_of(
             [],
-            [
-                SimpleNamespace(id=f"opn-{90 + i}", event_kind="deposition")
-                for i in range(2)
-            ],
+            [SimpleNamespace(id=f"opn-{90 + i}", event_kind="deposition") for i in range(2)],
         )
     )
     assert (
@@ -1328,10 +1300,7 @@ def test_contention_loop_caps_are_exact_and_jointly_enforced(
             [advocacy_entry(i, f"ctn-{i:02d}") for i in range(1, 4)]
             + [objection_entry(4, "ctn-04"), objection_entry(5, "ctn-05")]
             + [request_entry(6, "ctn-06"), request_entry(7, "ctn-07")],
-            [
-                SimpleNamespace(id=f"opn-{80 + i}", event_kind="base_report")
-                for i in range(9)
-            ],
+            [SimpleNamespace(id=f"opn-{80 + i}", event_kind="base_report") for i in range(9)],
         )
     )
     assert (
@@ -1350,8 +1319,7 @@ def test_contention_loop_caps_are_exact_and_jointly_enforced(
         )
     )
     assert (
-        "explicit contention documents form 4 contest chains; the per-case "
-        "chain cap is 3 (R31)"
+        "explicit contention documents form 4 contest chains; the per-case chain cap is 3 (R31)"
     ) in problems
 
     # End to end: an explicit violation FAILS the derivation — two authored
@@ -1374,9 +1342,7 @@ def test_contention_loop_caps_are_exact_and_jointly_enforced(
                     "event_kind": "deposition",
                     "responds_to_opinion_id": "opn-01",
                     "revision_kind": "unchanged_additional_reasoning",
-                    "revision_rationale": (
-                        "the prior conclusions stand under examination"
-                    ),
+                    "revision_rationale": ("the prior conclusions stand under examination"),
                 }
             )
 
@@ -1482,9 +1448,7 @@ def test_contention_loop_caps_are_exact_and_jointly_enforced(
     _history, _trace, plan = _derive(four_way)
     monkeypatch.undo()
     objections = [
-        binding
-        for binding in plan.contention_documents
-        if binding.document_kind == "objection"
+        binding for binding in plan.contention_documents if binding.document_kind == "objection"
     ]
     assert [binding.spoken_contention_ids for binding in objections] == [
         ("ctn-01", "ctn-02", "ctn-03"),
@@ -1543,17 +1507,13 @@ def test_response_and_document_ids_are_assigned_in_one_final_subphased_pass(
                 "description": "chronic lumbar disability limiting weight-bearing",
                 "disability_causation_stated": True,
                 "reasonable_medical_probability": True,
-                "causal_rationale": (
-                    "degenerative pathology contributes to the disability"
-                ),
+                "causal_rationale": ("degenerative pathology contributes to the disability"),
                 "percentage_rationale": "the share reflects the imaging severity",
             }
         ]
 
     seed = _patched_seed("loop-applicant-concurred", rename_and_allocate)
-    _route_story_streams(
-        monkeypatch, _contest_world("objection_supplemental_deposition")
-    )
+    _route_story_streams(monkeypatch, _contest_world("objection_supplemental_deposition"))
     _history, _trace, plan = _derive(seed)
     monkeypatch.undo()
     ledger = plan.ledger
@@ -1617,9 +1577,7 @@ def test_response_and_document_ids_are_assigned_in_one_final_subphased_pass(
 
     # The same forced world over the unpatched row (base opn-01) allocates
     # opn-02/opn-03 — the suffix follows the used set, in one final pass.
-    _route_story_streams(
-        monkeypatch, _contest_world("objection_supplemental_deposition")
-    )
+    _route_story_streams(monkeypatch, _contest_world("objection_supplemental_deposition"))
     _history, _trace, unpatched = _derive(_matrix_seeds()["loop-applicant-concurred"])
     monkeypatch.undo()
     assert [o.id for o in unpatched.ledger.medical_opinions] == [
@@ -1797,9 +1755,7 @@ def test_explicit_partial_overlap_suppresses_only_the_collision_without_redraw_o
 
     recorded_a: list[tuple[str, Any]] = []
     _route_story_streams(monkeypatch, forced, recorded_a)
-    _history, _trace, baseline = _derive(
-        _patched_seed("loop-defense-adopted", widen)
-    )
+    _history, _trace, baseline = _derive(_patched_seed("loop-defense-adopted", widen))
     monkeypatch.undo()
 
     letters = [
@@ -1807,9 +1763,7 @@ def test_explicit_partial_overlap_suppresses_only_the_collision_without_redraw_o
         for b in baseline.contention_documents
         if b.document_kind == "advocacy" and b.source == "sampled"
     ]
-    assert [letter.spoken_contention_ids for letter in letters] == [
-        ("ctn-01", "ctn-02")
-    ]
+    assert [letter.spoken_contention_ids for letter in letters] == [("ctn-01", "ctn-02")]
     contest = _sampled_contest_documents(baseline)
     assert [b.document_kind for b in contest] == [
         "objection",
@@ -1821,9 +1775,7 @@ def test_explicit_partial_overlap_suppresses_only_the_collision_without_redraw_o
 
     recorded_b: list[tuple[str, Any]] = []
     _route_story_streams(monkeypatch, forced, recorded_b)
-    _history, _trace, overlapped = _derive(
-        _patched_seed("loop-defense-adopted", with_explicit)
-    )
+    _history, _trace, overlapped = _derive(_patched_seed("loop-defense-adopted", with_explicit))
     monkeypatch.undo()
 
     # The sampled letter keeps its provisional membership minus exactly the
@@ -1877,8 +1829,9 @@ def test_sampled_supplemental_never_recurses_beyond_one_deposition(
     chain's single deposition, and nothing ever targets the deposition."""
     forced = _contest_world(None, "supplemental_deposition")
     recorded: list[tuple[str, Any]] = []
+    seed = _matrix_seeds()["loop-applicant-deferred"]
     _route_story_streams(monkeypatch, forced, recorded)
-    _history, _trace, plan = _derive(_matrix_seeds()["loop-applicant-deferred"])
+    history, _trace, plan = _derive(seed)
     monkeypatch.undo()
 
     ledger = plan.ledger
@@ -1912,18 +1865,50 @@ def test_sampled_supplemental_never_recurses_beyond_one_deposition(
         "supplemental_report",
         "supplemental_request",
     ]
-    targets = {
-        b.document_kind: b.target_medical_opinion_id
-        for b in plan.contention_documents
-    }
+    targets = {b.document_kind: b.target_medical_opinion_id for b in plan.contention_documents}
     assert targets["supplemental_request"] == base.id
     assert targets["supplemental_report"] == base.id
     assert targets["qme_deposition"] == supplemental.id
     assert deposition.responds_to_opinion_id == supplemental.id
+    assert all(b.target_medical_opinion_id != deposition.id for b in plan.contention_documents), (
+        "a document targeted the terminal deposition"
+    )
+
+    # Exercise the opportunity enumerator against the COMPLETED ledger too.
+    # The ordinary derivation calls it before sampled responses are attached;
+    # this independent pass is the m20-30 oracle proving the eligibility
+    # predicate itself rejects a sampled supplemental as a new chain source.
+    scenario = seed.scenario.medical_assertions
+    assert scenario is not None
+    explicit_contention_ids = frozenset(entry.id for entry in scenario.contentions)
+    explicit_opinion_ids = frozenset(entry.id for entry in scenario.medical_opinions)
+    contention_keys = {
+        contention.id: assertion_module._story_contention_key(
+            seed, contention, explicit_contention_ids
+        )
+        for contention in ledger.contentions
+    }
+    direct_streams: list[tuple[str, Any]] = []
+    _route_story_streams(monkeypatch, forced, direct_streams)
+    direct_chunks = assertion_module._derive_contest_chunks(
+        seed,
+        scenario,
+        assertion_module.assertion_context(seed),
+        assertion_module.project_medical_history(
+            history, assertion_module.assertion_context(seed).current_body_parts
+        ),
+        ledger,
+        contention_keys,
+        explicit_opinion_ids,
+    )
+    monkeypatch.undo()
+    assert direct_chunks
     assert all(
-        b.target_medical_opinion_id != deposition.id
-        for b in plan.contention_documents
-    ), "a document targeted the terminal deposition"
+        chunk.target.event_kind == "base_report" or chunk.target.id in explicit_opinion_ids
+        for chunk in direct_chunks
+    ), "a sampled supplemental became a new contest-chain source"
+    direct_incidence = [key for family, key in direct_streams if family in _INCIDENCE_FAMILIES]
+    assert len(direct_incidence) == 1
 
     # Certain incidence again over the completed world reproduces the same
     # plan — the recursion door stays closed on rederivation too.
@@ -1949,9 +1934,7 @@ def test_supplemental_and_deposition_preceding_report_bindings_are_exact(
     predecessor report; a deposition examining the supplemental binds the
     deposition opinion against the supplemental, while a deposition on an
     objection-deposition chain examines the base report directly."""
-    _route_story_streams(
-        monkeypatch, _contest_world("objection_supplemental_deposition")
-    )
+    _route_story_streams(monkeypatch, _contest_world("objection_supplemental_deposition"))
     _history, _trace, plan = _derive(_matrix_seeds()["loop-applicant-rejected"])
     monkeypatch.undo()
     ledger = plan.ledger
@@ -1965,16 +1948,11 @@ def test_supplemental_and_deposition_preceding_report_bindings_are_exact(
     assert by_kind["supplemental_report"].medical_opinion_id == supplemental.id
     assert by_kind["supplemental_report"].target_medical_opinion_id == base.id
     assert by_kind["supplemental_report"].subtype == "SUPPLEMENTAL_QME_AME_REPORT"
-    assert (
-        by_kind["supplemental_report"].template_subtype
-        == "SUPPLEMENTAL_QME_AME_REPORT"
-    )
+    assert by_kind["supplemental_report"].template_subtype == "SUPPLEMENTAL_QME_AME_REPORT"
     assert by_kind["qme_deposition"].medical_opinion_id == deposition.id
     assert by_kind["qme_deposition"].target_medical_opinion_id == supplemental.id
     assert by_kind["qme_deposition"].subtype == "DEPOSITION_TRANSCRIPT"
-    assert (
-        by_kind["qme_deposition"].template_subtype == "DEPOSITION_TRANSCRIPT_QME_AME"
-    )
+    assert by_kind["qme_deposition"].template_subtype == "DEPOSITION_TRANSCRIPT_QME_AME"
     assert by_kind["qme_deposition"].proposed_date > supplemental.report_date
 
     # Without a supplemental in the chain the deposition examines the base.
@@ -2172,13 +2150,11 @@ def test_contention_candidates_enter_after_perspective_before_controls_once(
     }
     assert {"advocacy", "objection", "supplemental_request", "qme_deposition"} <= surfaces
     served = [
-        document
-        for document in case_plan.documents
-        if document.contention_surface == "advocacy"
+        document for document in case_plan.documents if document.contention_surface == "advocacy"
     ]
-    assert served and all(
-        document.contention_actor_party == "applicant" for document in served
-    ), "the bound applicant letter must survive the defense file's zero weight"
+    assert served and all(document.contention_actor_party == "applicant" for document in served), (
+        "the bound applicant letter must survive the defense file's zero weight"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2228,13 +2204,8 @@ def test_bound_candidate_metadata_survives_every_planner_transform(
     }
 
     # The transforms this gate claims survival through actually ran.
-    assert (
-        sum(1 for d in case_plan.documents if d.subtype == "SUBPOENAED_RECORDS_MEDICAL")
-        == 2
-    )
-    assert (
-        sum(1 for d in case_plan.documents if d.subtype == "CLIENT_STATUS_LETTERS") == 3
-    )
+    assert sum(1 for d in case_plan.documents if d.subtype == "SUBPOENAED_RECORDS_MEDICAL") == 2
+    assert sum(1 for d in case_plan.documents if d.subtype == "CLIENT_STATUS_LETTERS") == 3
 
     surface_of = {
         "advocacy": "advocacy",
@@ -2254,8 +2225,7 @@ def test_bound_candidate_metadata_survives_every_planner_transform(
                 document
                 for document in case_plan.documents
                 if document.contention_surface == surface_of[binding.document_kind]
-                and document.target_medical_opinion_id
-                == binding.target_medical_opinion_id
+                and document.target_medical_opinion_id == binding.target_medical_opinion_id
                 and document.contention_actor_party == binding.actor_party
             ]
         assert len(matches) == 1, (
@@ -2300,15 +2270,14 @@ def test_document_controls_remove_dependencies_without_orphaning_chains(
     orphan_plan = build_case_plan(_patched_seed("loop-applicant-rejected", exclude_base))
 
     assert not any(
-        document.subtype == "QME_COMPREHENSIVE_REPORT"
-        for document in orphan_plan.documents
+        document.subtype == "QME_COMPREHENSIVE_REPORT" for document in orphan_plan.documents
     ), "reconciliation must not resurrect a controlled-away subtype"
-    assert not any(
-        document.medical_opinion_id is not None for document in orphan_plan.documents
-    ), "with the base report excluded no bound realization may remain"
-    assert not any(
-        document.contention_surface is not None for document in orphan_plan.documents
-    ), "no dependent objection/request/deposition may be orphaned"
+    assert not any(document.medical_opinion_id is not None for document in orphan_plan.documents), (
+        "with the base report excluded no bound realization may remain"
+    )
+    assert not any(document.contention_surface is not None for document in orphan_plan.documents), (
+        "no dependent objection/request/deposition may be orphaned"
+    )
     prefixed = [
         warning
         for warning in orphan_plan.warnings
@@ -2320,15 +2289,11 @@ def test_document_controls_remove_dependencies_without_orphaning_chains(
     def exclude_letters(case: dict[str, Any]) -> None:
         case["documents"] = {"exclude": ["ADVOCACY_LETTERS_PTP_QME_AME"]}
 
-    cascade_plan = build_case_plan(
-        _patched_seed("loop-applicant-rejected", exclude_letters)
-    )
+    cascade_plan = build_case_plan(_patched_seed("loop-applicant-rejected", exclude_letters))
     monkeypatch.undo()
 
     base_docs = [
-        document
-        for document in cascade_plan.documents
-        if document.medical_opinion_id == "opn-01"
+        document for document in cascade_plan.documents if document.medical_opinion_id == "opn-01"
     ]
     assert len(base_docs) == 1, "the base report is not a dependent and survives"
     assert not any(
@@ -2336,12 +2301,10 @@ def test_document_controls_remove_dependencies_without_orphaning_chains(
         for document in cascade_plan.documents
     ), "the excluded letter carrier must remove the communications"
     assert not any(
-        document.medical_opinion_id not in (None, "opn-01")
-        for document in cascade_plan.documents
+        document.medical_opinion_id not in (None, "opn-01") for document in cascade_plan.documents
     ), "the sampled supplemental response must fall with its missing request"
     assert not any(
-        document.contention_surface == "qme_deposition"
-        for document in cascade_plan.documents
+        document.contention_surface == "qme_deposition" for document in cascade_plan.documents
     ), "the deposition examining the fallen supplemental must fall in cascade"
 
 
@@ -2374,14 +2337,10 @@ def test_control_synthesized_copies_never_clone_medical_story_bindings(
     monkeypatch.undo()
 
     letters = [
-        document
-        for document in case_plan.documents
-        if document.subtype == "ADVOCACY_LETTERS_QME"
+        document for document in case_plan.documents if document.subtype == "ADVOCACY_LETTERS_QME"
     ]
     assert len(letters) == 3
-    bound_letters = [
-        document for document in letters if document.contention_surface == "advocacy"
-    ]
+    bound_letters = [document for document in letters if document.contention_surface == "advocacy"]
     assert len(bound_letters) == 1, "one semantic letter, however many copies"
     for extra in (letter for letter in letters if letter not in bound_letters):
         assert extra.medical_opinion_id is None
@@ -2466,23 +2425,19 @@ def test_hard_opinion_and_explicit_dates_are_fixed_and_edges_strict(
     # strictly inside [injury + 1, report - 1] instead of clamping it onto
     # the injury date.
     def early_report(case: dict[str, Any]) -> None:
-        case["scenario"]["medical_assertions"]["medical_opinions"][0][
-            "report_date"
-        ] = dt.date(2024, 3, 11)
+        case["scenario"]["medical_assertions"]["medical_opinions"][0]["report_date"] = dt.date(
+            2024, 3, 11
+        )
 
     _route_story_streams(monkeypatch, _forced_full_chain())
     early_plan = build_case_plan(_patched_seed("loop-applicant-rejected", early_report))
     monkeypatch.undo()
     early_report_doc = next(
-        document
-        for document in early_plan.documents
-        if document.medical_opinion_id == "opn-01"
+        document for document in early_plan.documents if document.medical_opinion_id == "opn-01"
     )
     assert early_report_doc.doc_date == dt.date(2024, 3, 11)
     early_letter = next(
-        document
-        for document in early_plan.documents
-        if document.contention_surface == "advocacy"
+        document for document in early_plan.documents if document.contention_surface == "advocacy"
     )
     assert dt.date(2024, 3, 2) <= early_letter.doc_date < dt.date(2024, 3, 11)
 
@@ -2523,9 +2478,9 @@ def test_qme_panel_predecessors_refit_before_the_bound_base_report(
     the bound opinion event is left behind by the reuse."""
 
     def early_opinion(case: dict[str, Any]) -> None:
-        case["scenario"]["medical_assertions"]["medical_opinions"][0][
-            "report_date"
-        ] = dt.date(2024, 7, 1)
+        case["scenario"]["medical_assertions"]["medical_opinions"][0]["report_date"] = dt.date(
+            2024, 7, 1
+        )
 
     quiet = {
         "advocacy-incidence": _miss,
@@ -2539,9 +2494,7 @@ def test_qme_panel_predecessors_refit_before_the_bound_base_report(
     monkeypatch.undo()
 
     report = next(
-        document
-        for document in case_plan.documents
-        if document.medical_opinion_id == "opn-01"
+        document for document in case_plan.documents if document.medical_opinion_id == "opn-01"
     )
     assert report.subtype == "QME_COMPREHENSIVE_REPORT"
     assert report.doc_date == dt.date(2024, 7, 1), "the bound anchor is hard"
@@ -2576,9 +2529,7 @@ def _part5_imr_case(case_id: str) -> tuple[Any, Any, Any, Any, str]:
     spec = parse_caseload_spec(yaml.safe_load(path.read_text(encoding="utf-8")))
     seed = next(case for case in spec.cases if case.case_id == case_id)
     plan = build_case_plan(seed)
-    document = next(
-        item for item in plan.documents if item.subtype == "IMR_APPLICATION_FORM"
-    )
+    document = next(item for item in plan.documents if item.subtype == "IMR_APPLICATION_FORM")
     content = document.imr_application_content
     assert content is not None
     story = (
@@ -2586,9 +2537,7 @@ def _part5_imr_case(case_id: str) -> tuple[Any, Any, Any, Any, str]:
         if plan.medical_story is not None
         else None
     )
-    rendered = _flat(
-        _render(seed, plan, document, story, f"part5-{case_id}").text
-    )
+    rendered = _flat(_render(seed, plan, document, story, f"part5-{case_id}").text)
     return seed, plan, document, content, rendered
 
 
@@ -2605,9 +2554,7 @@ def test_part5_imr_authored_grounded_authored_conclusory_and_sampled_sparse_pros
     assert grounded.disputed_treatment == "lumbar epidural steroid injection"
     assert grounded.diagnosis_icd10 == "M51.26"
     assert grounded.ur_determination_attached is True
-    assert grounded.supporting_record_subtypes == (
-        "TREATING_PHYSICIAN_REPORT_PR2",
-    )
+    assert grounded.supporting_record_subtypes == ("TREATING_PHYSICIAN_REPORT_PR2",)
     assert grounded.mtus_citations == (
         "MTUS Low Back Disorders Guideline — epidural injection criterion",
     )
@@ -2627,15 +2574,12 @@ def test_part5_imr_authored_grounded_authored_conclusory_and_sampled_sparse_pros
     supporting_indices = [
         item.index
         for item in grounded_plan.documents
-        if item.subtype in grounded.supporting_record_subtypes
-        and item.index < grounded_doc.index
+        if item.subtype in grounded.supporting_record_subtypes and item.index < grounded_doc.index
     ]
     assert denial_index < grounded_doc.index
     assert supporting_indices
 
-    _seed, _plan, _doc, conclusory, conclusory_text = _part5_imr_case(
-        "imr-sparse-explicit"
-    )
+    _seed, _plan, _doc, conclusory, conclusory_text = _part5_imr_case("imr-sparse-explicit")
     assert conclusory.disputed_treatment == "lumbar epidural steroid injection"
     assert conclusory.clinical_rebuttal == (
         "The requested treatment is medically necessary for the industrial "
@@ -2654,9 +2598,7 @@ def test_part5_imr_authored_grounded_authored_conclusory_and_sampled_sparse_pros
     ):
         assert omitted_heading not in conclusory_text
 
-    _seed, _plan, _doc, sampled, sampled_text = _part5_imr_case(
-        "imr-sampled-upheld"
-    )
+    _seed, _plan, _doc, sampled, sampled_text = _part5_imr_case("imr-sampled-upheld")
     assert sampled.disputed_treatment == "requested treatment for the lumbar spine"
     assert sampled.disputed_treatment in sampled_text
     assert sampled.diagnosis_icd10 is None
@@ -2697,14 +2639,10 @@ def test_part5_imr_mtus_and_record_language_never_exceeds_bound_fields():
                 assert subtype.replace("_", " ") in text
         else:
             assert "SUPPORTING MEDICAL RECORDS" not in text
-        assert ("ATTACHMENT" in text) is (
-            content.ur_determination_attached is not None
-        )
+        assert ("ATTACHMENT" in text) is (content.ur_determination_attached is not None)
 
         decision = next(
-            item
-            for item in plan.documents
-            if item.subtype == "INDEPENDENT_MEDICAL_REVIEW_DECISION"
+            item for item in plan.documents if item.subtype == "INDEPENDENT_MEDICAL_REVIEW_DECISION"
         )
         assert decision.imr_application_content is None, case_id
         for editorial in ("application omission", "missing application field"):
