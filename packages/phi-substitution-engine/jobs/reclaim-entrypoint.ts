@@ -5,6 +5,7 @@ import {
   azureFilesBlobStoreFromEnvironment,
   postgresConfigFromEnvironment,
 } from "../src/tokens/durable/azure/runtime-config";
+import { integerEnvironment } from "./reclaim-environment";
 
 const DEFAULT_HORIZON_MS = 86_400_000;
 const DEFAULT_UPLOAD_HORIZON_MS = 172_800_000;
@@ -12,15 +13,6 @@ const DEFAULT_GRACE_MS = 86_400_000;
 const DEFAULT_LIMIT = 1_000;
 
 type ReclaimMode = "dry-run" | "quarantine" | "full";
-
-function integerEnvironment(name: string, fallback: number, allowZero: boolean): number {
-  const raw = process.env[name];
-  const value = raw === undefined ? fallback : Number(raw);
-  if (!Number.isSafeInteger(value) || value < (allowZero ? 0 : 1)) {
-    throw new Error(`invalid_${name}`);
-  }
-  return value;
-}
 
 function modeFromEnvironment(): ReclaimMode {
   const mode = process.env.RECLAIM_MODE ?? "dry-run";

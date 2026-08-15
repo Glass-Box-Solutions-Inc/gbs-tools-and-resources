@@ -30,7 +30,7 @@ export function postgresConfigFromEnvironment(
     password: required(environment, "PGPASSWORD"),
     database: required(environment, "PGDATABASE"),
     port: port(environment),
-    ...(environment.PGSSLMODE === "require" ? { ssl: { rejectUnauthorized: false } } : {}),
+    ...(environment.PGSSLMODE === "require" ? { ssl: true } : {}),
   };
 }
 
