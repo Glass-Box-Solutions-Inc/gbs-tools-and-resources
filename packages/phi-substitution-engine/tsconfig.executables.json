@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist-runtime",
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*.ts", "jobs/**/*.ts", "smoke/**/*.ts"],
+  "exclude": ["node_modules", "dist", "dist-runtime", "tests"]
+}
