@@ -1049,6 +1049,29 @@ def test_imr_request_draw_uses_only_effective_upheld_denials_with_unauthored_imr
     assert plans["imr-overturned"].medical_ur_plan is not None
     assert plans["imr-overturned"].medical_ur_plan.imr_requested is False
 
+    # The lifecycle intentionally emits no UR denial after an overturned
+    # decision, so its plan-only path cannot exercise the sampled-request
+    # branch.  Supply the otherwise valid denial date directly: an
+    # overturned, unauthored case must still construct neither the request
+    # stream nor an IMR request.  The mutant may instead reach the downstream
+    # effective-decision invariant; that is this guard's assertion failure,
+    # not a test error.
+    overturned_seed = _fresh_imr_case("imr-overturned")[0]
+    try:
+        overturned_probe = medical_story_module.derive_medical_ur_plan(
+            overturned_seed,
+            target_denial_date=overturned_seed.injury.onset_date + dt.timedelta(days=180),
+        )
+    except MedicalAssertionError as exc:
+        pytest.fail(
+            "an overturned, unauthored UR decision constructed an IMR request "
+            f"instead of returning false: {exc}"
+        )
+    assert overturned_probe is not None
+    assert overturned_probe.effective_decision == "overturned"
+    assert overturned_probe.imr_was_authored is False
+    assert overturned_probe.imr_requested is False
+
     assert "imr-request" not in calls.get("imr-authored-false-upheld", [])
     assert "imr-request" not in calls.get("imr-authored-true-upheld", [])
     assert calls["imr-sampled-upheld"].count("imr-request") == 1
@@ -1544,17 +1567,50 @@ def test_absent_medical_story_gate_constructs_no_context_projection_or_story_rng
             "output": {"formats": ["pdf"]},
         }
     )
-    plan = build_case_plan(seed)
     assert seed.scenario.medical_history is None
-    assert plan.medical_story is None
 
     def fail(*_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("the absent medical-story gate constructed M3 state")
 
+    story_rng_calls: list[tuple[Any, str, Any]] = []
+    original_story_rng = medical_assertions_module._medical_story_rng
+
+    def record_forbidden_story_rng(seed: Any, family: str, semantic_key: Any) -> Any:
+        story_rng_calls.append((seed, family, semantic_key))
+        try:
+            original_story_rng(seed, family, semantic_key)
+        except MedicalAssertionError as exc:
+            pytest.fail(
+                "the absent medical-story gate attempted story-RNG construction "
+                f"and raised {type(exc).__name__}: {exc}"
+            )
+        pytest.fail("the absent medical-story gate constructed a story RNG")
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(
+            medical_assertions_module,
+            "_medical_story_rng",
+            record_forbidden_story_rng,
+        )
+        try:
+            plan = build_case_plan(seed)
+            assert plan.medical_story is None
+        except MedicalAssertionError as exc:
+            pytest.fail(
+                "the absent medical-story gate raised "
+                f"{type(exc).__name__} instead of returning before RNG construction: {exc}"
+            )
+
     with pytest.MonkeyPatch.context() as patcher:
         patcher.setattr(medical_story_module, "_project_demographics", fail)
         patcher.setattr(random, "Random", fail)
+        patcher.setattr(
+            medical_assertions_module,
+            "_medical_story_rng",
+            record_forbidden_story_rng,
+        )
         assert derive_medical_story(seed, None, None, plan.documents) is None
+    assert story_rng_calls == []
 
     document = next(entry for entry in plan.documents if entry.subtype in INITIAL_MEDLEGAL_SURFACES)
     with pytest.MonkeyPatch.context() as patcher:

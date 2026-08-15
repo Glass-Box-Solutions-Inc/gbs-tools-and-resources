@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import random
 import typing
 from fractions import Fraction
 from pathlib import Path
@@ -761,7 +762,9 @@ def _record_m2_streams(index: int) -> tuple[Any, AssertionTrace, list[tuple[str,
 
 
 @pytest.mark.slow
-def test_m2_baseline_stream_calls_ids_counts_and_digests_are_byte_identical() -> None:
+def test_m2_baseline_stream_calls_ids_counts_and_digests_are_byte_identical(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """R70's M2-stream gate: family names, complete semantic salts,
     construction counts, within-stream draw counts, base ctn/opn/app IDs, the
     R62 field-projected payload and ``MEASURED_LEDGER_DIGESTS`` — all read
@@ -778,6 +781,54 @@ def test_m2_baseline_stream_calls_ids_counts_and_digests_are_byte_identical() ->
     failure shape).
     """
     result = build_cohort()
+
+    # A defense-contest decision gets its own M3 family and salt.  This is a
+    # direct construction oracle, independent of the aggregate M2 pins: the
+    # exact M2 PTP-disposition helper must never receive the M3 opportunity
+    # key, while the observed returned stream must be the medical-story one.
+    m2_calls: list[tuple[Any, str, str]] = []
+    story_calls: list[tuple[Any, str, Any, object]] = []
+    original_m2_rng = assertion_module._assertion_rng
+    original_story_rng = assertion_module._medical_story_rng
+
+    def recording_m2_rng(seed: Any, family: str, stable_key: str) -> Any:
+        m2_calls.append((seed, family, stable_key))
+        return original_m2_rng(seed, family, stable_key)
+
+    def recording_story_rng(seed: Any, family: str, semantic_key: Any) -> Any:
+        rng = original_story_rng(seed, family, semantic_key)
+        story_calls.append((seed, family, semantic_key, rng.getstate()))
+        return rng
+
+    # ``build_cohort`` is process-cached for the expensive aggregate pins, so
+    # an aggregate recorder can be empty when an earlier test warmed it.  Case
+    # 21 is a fixed, qualifying defense-contest witness and this direct plan
+    # derivation is deliberately outside that cache.
+    witness_seed = parse_case_seed(cohort_seed_body(21))
+    witness_history = derive_medical_history(witness_seed)
+    monkeypatch.setattr(assertion_module, "_assertion_rng", recording_m2_rng)
+    monkeypatch.setattr(assertion_module, "_medical_story_rng", recording_story_rng)
+    witness_plan = derive_medical_assertion_plan(witness_seed, witness_history)
+    assert witness_plan.ledger is not None
+
+    defense_story_calls = [
+        (seed, semantic_key, state)
+        for seed, family, semantic_key, state in story_calls
+        if family == "defense-contest-incidence"
+    ]
+    assert defense_story_calls, "the cohort stopped exercising defense contest incidence"
+    for seed, semantic_key, state in defense_story_calls:
+        expected_seed = derive_seed(
+            seed.rng_seed,
+            f"{MEDICAL_STORY_RNG_NAMESPACE}:defense-contest-incidence:"
+            f"{canonical_story_key(semantic_key)}",
+        )
+        assert state == random.Random(expected_seed).getstate()
+        assert (
+            seed,
+            "ptp-disposition",
+            canonical_story_key(semantic_key),
+        ) not in m2_calls
     # The R62 payload digests, computed from m2_baseline_ledger with the
     # literal M2 field allowlists, equal the frozen pre-M3 pins — no pin may
     # be re-recorded to accommodate M3; a mismatch is an implementation

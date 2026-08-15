@@ -3127,7 +3127,10 @@ file = 'tests/test_medical_assertions.py'
 test = 'tests/test_medical_assertions.py::test_assertion_leakage_probe_has_positive_controls_for_every_position'
 find = '''    def note_reserved(payload: Any, where: str) -> None:
         findings.extend(_leakage_reserved_key_findings(payload, where))
-        findings.extend(_private_psych_register_findings(payload, where))'''
+        findings.extend(_private_psych_register_findings(payload, where))
+        short = Path(where).name
+        if short in ("seed.yaml", "case_facts.yaml"):
+            findings.extend(_private_psych_register_findings(payload, short))'''
 replace = '''    def note_reserved(payload: Any, where: str) -> None:
         findings.extend(_leakage_reserved_key_findings(payload, where))'''
 note = 'AJC-62 step 11. Raw token scans can still notice the selector spelling, so the control separately requires the structured key and structured value findings; disabling the recursive private-selector read therefore reddens the exact position guard.'
