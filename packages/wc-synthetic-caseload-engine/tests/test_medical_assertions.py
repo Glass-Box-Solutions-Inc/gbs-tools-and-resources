@@ -3367,6 +3367,309 @@ def test_assertion_leakage_probe_fails_closed_on_malformed_docprops_xml(
     )
 
 
+@pytest.fixture(scope="module")
+def medical_story_showcase_leakage_tree(tmp_path_factory: pytest.TempPathFactory):
+    """Generate the committed five-case showcase through the shipped CLI."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from wc_caseload_engine.substrate import find_substrate
+
+    if find_substrate() is None:
+        pytest.skip("merus-test-data-generator substrate not on disk")
+    package = Path(__file__).resolve().parents[1]
+    out_dir = tmp_path_factory.mktemp("showcase-leakage") / "out"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "wc_caseload_engine",
+            "generate",
+            "--spec",
+            str(package / "examples" / "medical-story-showcase.yaml"),
+            "--out",
+            str(out_dir),
+        ],
+        cwd=package,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout[-3000:] + completed.stderr[-3000:]
+    return out_dir, (completed.stdout, completed.stderr)
+
+
+@pytest.mark.slow
+def test_medical_story_showcase_exposes_no_grade_labels_reserved_keys_or_private_registers(
+    medical_story_showcase_leakage_tree,
+) -> None:
+    """R71/R90: the feature-on golden candidate is pristine analyzer input."""
+    from pathlib import Path
+
+    import yaml as yaml_module
+
+    from wc_caseload_engine.planner import build_case_plan
+
+    out_dir, streams = medical_story_showcase_leakage_tree
+    expected_cases = {
+        "flagship-nonindustrial-cancer-noise-a",
+        "flagship-nonindustrial-cancer-noise-b",
+        "flagship-nonindustrial-cancer-noise-c",
+        "lc4664-prior-award-overlap",
+        "diabetic-neuropathy-cts-confound",
+    }
+    assert {path.parent.name for path in Path(out_dir).glob("*/manifest.json")} == expected_cases
+    assert frozenset(
+        {"quality", "rubric", "assertionQuality", "medicalAssertions"}
+    ) == RESERVED_LABEL_KEYS
+    assert PRIVATE_PSYCH_REGISTER_KEYS == (
+        "safety_officer_ptsd",
+        "harassment_gfpa",
+        "compensable_consequence",
+        "direct_physical_event",
+    )
+    assert R90_FORBIDDEN_VOCABULARY == (
+        "real",
+        "bogus",
+        "good",
+        "bad",
+        "adequate",
+        "inadequate",
+        "thin",
+        "underworked",
+        "quality",
+    )
+
+    truth_qualities = set()
+    for path in sorted((Path(out_dir) / "truth").glob("*.truth.json")):
+        if path.name == "caseload.truth.json":
+            continue
+        channel = json.loads(path.read_text(encoding="utf-8"))["channels"]["assertions"]
+        truth_qualities.update(
+            item["quality"]
+            for collection in ("contentions", "medicalOpinions", "apportionmentAssertions")
+            for item in channel[collection]
+        )
+    assert truth_qualities == {"supported", "thin", "unsupportable"}
+
+    report_categories = {
+        "initial_medlegal": frozenset(
+            {
+                "QME_REPORT_INITIAL",
+                "QME_COMPREHENSIVE_REPORT",
+                "AME_REPORT",
+                "AME_COMPREHENSIVE_REPORT",
+                "MEDICAL_LEGAL_QME_AME_IME",
+                "APPORTIONMENT_REPORT",
+            }
+        ),
+        "psych_medlegal": frozenset({"PSYCH_EVAL_REPORT_QME_AME"}),
+        "supplemental_medlegal": frozenset(
+            {"QME_REPORT_SUPPLEMENTAL", "SUPPLEMENTAL_QME_AME_REPORT"}
+        ),
+        "ptp": frozenset(
+            {
+                "TREATING_PHYSICIAN_REPORT",
+                "TREATING_PHYSICIAN_REPORT_PR2",
+                "TREATING_PHYSICIAN_REPORT_PR4",
+                "TREATING_PHYSICIAN_REPORT_FINAL",
+            }
+        ),
+    }
+    contention_categories = {
+        "advocacy": (
+            "advocacy",
+            frozenset(
+                {
+                    "ADVOCACY_LETTERS_PTP",
+                    "ADVOCACY_LETTERS_QME",
+                    "ADVOCACY_LETTERS_AME",
+                    "ADVOCACY_LETTERS_PTP_QME_AME",
+                }
+            ),
+        ),
+        "objection": (
+            "objection",
+            frozenset({"ADVOCACY_LETTERS_PTP_QME_AME"}),
+        ),
+        "supplemental_request": (
+            "supplemental_request",
+            frozenset({"ADVOCACY_LETTERS_PTP_QME_AME"}),
+        ),
+        "qme_deposition": (
+            "qme_deposition",
+            frozenset({"DEPOSITION_TRANSCRIPT"}),
+        ),
+    }
+    expected_governed_categories = {
+        "initial_medlegal",
+        "psych_medlegal",
+        "supplemental_medlegal",
+        "ptp",
+        "advocacy",
+        "objection",
+        "supplemental_request",
+        "qme_deposition",
+    }
+    assert set(report_categories) | set(contention_categories) == (
+        expected_governed_categories
+    )
+
+    package = Path(__file__).resolve().parents[1]
+    showcase_spec = parse_caseload_spec(
+        yaml_module.safe_load(
+            (package / "examples" / "medical-story-showcase.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+    )
+    governed_pdf_categories: dict[str, str] = {}
+    for seed in showcase_spec.cases:
+        plan = build_case_plan(seed)
+        assert plan.medical_story is not None
+        manifest = json.loads(
+            (Path(out_dir) / seed.case_id / "manifest.json").read_text(encoding="utf-8")
+        )
+        for document in plan.documents:
+            story = plan.medical_story.by_document_index.get(document.index)
+            if story is None:
+                continue
+            category = next(
+                (
+                    name
+                    for name, (surface, subtypes) in contention_categories.items()
+                    if document.contention_surface == surface and document.subtype in subtypes
+                ),
+                None,
+            )
+            if (
+                category is None
+                and document.contention_surface is None
+                and document.medical_story_render_key is not None
+                and story.medical_opinion is not None
+            ):
+                category = next(
+                    (
+                        name
+                        for name, subtypes in report_categories.items()
+                        if document.subtype in subtypes
+                    ),
+                    None,
+                )
+            if category is None:
+                continue
+            entry = manifest["documents"][document.index]
+            assert entry["subtype"] == document.subtype
+            assert entry["format"] == "pdf"
+            governed_pdf_categories[
+                f"{seed.case_id}/documents/{entry['filename']}"
+            ] = category
+    assert set(governed_pdf_categories.values()) == expected_governed_categories
+
+    findings, surfaces = _scan_assertion_leakage(out_dir, streams)
+    assert any(surface.endswith("/seed.yaml") for surface in surfaces)
+    assert any(surface.endswith("/manifest.json") for surface in surfaces)
+    assert any(surface.endswith(".pdf") for surface in surfaces)
+    reserved = [finding for finding in findings if finding.startswith("reserved ")]
+    private = [
+        finding for finding in findings if finding.startswith("private psych register")
+    ]
+    bare = [finding for finding in findings if finding.startswith("bare token")]
+
+    def r90_finding_is_in_scope(finding: str) -> bool:
+        location = finding.removeprefix("forbidden production vocabulary at ").rsplit(
+            ":", maxsplit=1
+        )[0]
+        if location.startswith("pdf-text:"):
+            return location.removeprefix("pdf-text:") in governed_pdf_categories
+        return (
+            location in {"caseload_manifest.json", "cli:stdout", "cli:stderr"}
+            or location.endswith("/seed.yaml")
+            or location.endswith("/manifest.json")
+        )
+
+    category_plants: dict[str, str] = {}
+    for relpath, category in sorted(governed_pdf_categories.items()):
+        category_plants.setdefault(category, relpath)
+    assert set(category_plants) == expected_governed_categories
+    for category, relpath in category_plants.items():
+        planted = _r90_text_findings(
+            "underworked good report bad rationale", f"pdf-text:{relpath}"
+        )
+        assert planted == [
+            f"forbidden production vocabulary at pdf-text:{relpath}:good",
+            f"forbidden production vocabulary at pdf-text:{relpath}:bad",
+            f"forbidden production vocabulary at pdf-text:{relpath}:underworked"
+        ], category
+        assert all(r90_finding_is_in_scope(finding) for finding in planted), category
+
+    structured_plants = {
+        "seed": _r90_text_findings(
+            "underworked", "flagship-nonindustrial-cancer-noise-a/seed.yaml"
+        )[0],
+        "manifest": _r90_text_findings(
+            "underworked", "flagship-nonindustrial-cancer-noise-a/manifest.json"
+        )[0],
+        "caseload": _r90_text_findings("underworked", "caseload_manifest.json")[0],
+        "cli": _r90_text_findings("underworked", "cli:stdout")[0],
+    }
+    assert all(r90_finding_is_in_scope(finding) for finding in structured_plants.values())
+
+    clinical_phrase = "variable with good and bad days but generally worsening"
+    clinical_phrase_paths = {
+        "diabetic-neuropathy-cts-confound/documents/058_2024-01-12.pdf",
+        "flagship-nonindustrial-cancer-noise-a/documents/056_2023-11-15.pdf",
+        "flagship-nonindustrial-cancer-noise-c/documents/048_2023-11-15.pdf",
+    }
+    fitz = pytest.importorskip("fitz")
+    governed_pdf_texts: dict[str, str] = {}
+    for relpath in governed_pdf_categories:
+        with fitz.open(Path(out_dir) / relpath) as document:
+            governed_pdf_texts[relpath] = re.sub(
+                r"\s+", " ", "\n".join(page.get_text() for page in document)
+            ).lower()
+    assert {
+        relpath
+        for relpath, text in governed_pdf_texts.items()
+        if clinical_phrase in text
+    } == clinical_phrase_paths
+
+    pre_exemption_r90 = [
+        finding
+        for finding in findings
+        if finding.startswith("forbidden production vocabulary")
+        and r90_finding_is_in_scope(finding)
+        and finding.startswith("forbidden production vocabulary at pdf-text:")
+    ]
+    expected_clinical_findings = {
+        f"forbidden production vocabulary at pdf-text:{relpath}:{word}"
+        for relpath in clinical_phrase_paths
+        for word in ("good", "bad")
+    }
+    assert len(pre_exemption_r90) == 6
+    assert set(pre_exemption_r90) == expected_clinical_findings
+
+    r90_findings = [
+        finding
+        for finding in findings
+        if finding.startswith("forbidden production vocabulary")
+        and r90_finding_is_in_scope(finding)
+        and not finding.startswith("forbidden production vocabulary at pdf-text:")
+    ]
+    r90_findings.extend(
+        finding
+        for relpath, text in governed_pdf_texts.items()
+        for finding in _r90_text_findings(
+            text.replace(clinical_phrase, ""), f"pdf-text:{relpath}"
+        )
+    )
+    assert reserved == [], f"reserved M2 label positions leaked: {reserved}"
+    assert private == [], f"private psych register selectors leaked: {private}"
+    assert bare == [], f"bare unsupportable grade leaked: {bare}"
+    assert r90_findings == [], f"R90 grade commentary leaked: {r90_findings}"
+
+
 def test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary():
     """R90/R93 — only rendered Part-5 strings are analyzer-visible evidence."""
     from test_medical_story import _part5_psych_report

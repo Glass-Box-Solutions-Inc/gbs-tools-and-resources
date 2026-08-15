@@ -1,0 +1,517 @@
+# AJC-62 medical-story showcase — five feature-on files with authored semantics.
+#
+# The first three cases hold the world fixed: an industrial lumbar injury and
+# an unrelated nonindustrial cancer.  Only the speaking layer changes.  The
+# last two cases make the §4664/§3208.3 and diabetic-neuropathy contention
+# fights visible, including one complete contention-response loop.
+#
+# @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+
+caseload_id: medical-story-showcase
+
+defaults:
+  documents:
+    format_mix: {pdf: 1.0}
+    global_cap: 72
+  output:
+    filename_style: neutral
+    formats: [pdf]
+
+cases:
+  # Silent control: the cancer is world truth, but no speaker puts it in issue.
+  - case_id: flagship-nonindustrial-cancer-noise-a
+    rng_seed: 622001
+    injury:
+      type: specific
+      date_of_injury: 2023-02-06
+      mechanism: acute lumbar strain while moving an inventory tote
+      body_parts: [{part: lumbar_spine, icd10: M54.5}]
+    lifecycle:
+      target_stage: medical_legal
+      claim_response: accepted
+      eval_type: qme
+    scenario:
+      medical_history: &flagship_history
+        sample_conditions: false
+        conditions:
+          - label: industrial lumbar strain
+            origin: industrial
+            body_part: lumbar_spine
+            icd10: S39.012A
+            severity: moderate
+            trajectory: stable
+            symptomatic_before_doi: false
+          - label: invasive ductal carcinoma of the breast
+            body_system: oncologic
+            origin: nonindustrial
+            body_part: breast
+            icd10: C50.919
+            onset: 2020-05-14
+            severity: moderate
+            trajectory: stable
+            symptomatic_before_doi: true
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2023-11-15
+            apportionment_state: determined
+            determination_kind: no_nonindustrial_share
+            determination_rationale: >-
+              The lumbar disability is caused in its entirety by the accepted
+              industrial strain.
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The lifting mechanism and immediate lumbar symptoms support
+              industrial causation.
+            rationale: the opinion rests on examination and the lumbar treatment record
+
+  # Same world, but applicant counsel expressly advances the oncology theory.
+  - case_id: flagship-nonindustrial-cancer-noise-b
+    rng_seed: 622002
+    injury:
+      type: specific
+      date_of_injury: 2023-02-06
+      mechanism: acute lumbar strain while moving an inventory tote
+      body_parts: [{part: lumbar_spine, icd10: M54.5}]
+    lifecycle:
+      target_stage: medical_legal
+      claim_response: accepted
+      eval_type: qme
+    scenario:
+      medical_history: *flagship_history
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        contentions:
+          - id: ctn-01
+            claim_type: industrial_causation
+            party: applicant
+            position: affirm
+            target_condition_id: cond-01
+            rationale: >-
+              Applicant contends that sustained work stress caused the invasive
+              ductal carcinoma and requests an industrial-causation finding.
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2023-11-15
+            apportionment_state: determined
+            determination_kind: no_nonindustrial_share
+            determination_rationale: >-
+              The lumbar disability is caused in its entirety by the accepted
+              industrial strain.
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            rejects_contention_ids: [ctn-01]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The lifting mechanism and immediate lumbar symptoms support
+              industrial causation of the lumbar condition only.
+            rationale: the opinion rests on examination and the lumbar treatment record
+        contention_documents:
+          - id: cdoc-01
+            document_kind: advocacy
+            actor_party: applicant
+            target_medical_opinion_id: opn-01
+            spoken_contention_ids: [ctn-01]
+            subtype: ADVOCACY_LETTERS_QME
+            doc_date: 2023-10-02
+
+  # Same world again.  The PTP notes the cancer without a complete foundation;
+  # the QME neither adopts nor concurs with that aside.
+  - case_id: flagship-nonindustrial-cancer-noise-c
+    rng_seed: 622003
+    injury:
+      type: specific
+      date_of_injury: 2023-02-06
+      mechanism: acute lumbar strain while moving an inventory tote
+      body_parts: [{part: lumbar_spine, icd10: M54.5}]
+    lifecycle:
+      target_stage: medical_legal
+      claim_response: accepted
+      eval_type: qme
+    scenario:
+      medical_history: *flagship_history
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        medical_opinions:
+          - id: opn-01
+            author_role: ptp
+            report_stage: interim
+            report_date: 2023-07-18
+            apportionment_state: deferred
+            examination_performed: false
+            reviewed_condition_ids: [cond-01]
+            aoe_coe_finding: deferred
+            aoe_coe_rationale: >-
+              The treating record notes invasive ductal carcinoma of the breast,
+              but no complete causation analysis is offered in this interim aside.
+          - id: opn-02
+            author_role: qme
+            report_stage: final
+            report_date: 2023-11-15
+            apportionment_state: determined
+            determination_kind: no_nonindustrial_share
+            determination_rationale: >-
+              The lumbar disability is caused in its entirety by the accepted
+              industrial strain.
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The lifting mechanism and immediate lumbar symptoms support
+              industrial causation of the lumbar condition.
+            rationale: the opinion rests on examination and the lumbar treatment record
+        contention_documents:
+          - id: cdoc-01
+            document_kind: opinion_report
+            medical_opinion_id: opn-01
+            subtype: TREATING_PHYSICIAN_REPORT_PR2
+
+  # A prior lumbar award overlaps the current disability while a separate
+  # direct psychiatric contention invokes the §3208.3 speaking register.
+  - case_id: lc4664-prior-award-overlap
+    rng_seed: 622004
+    injury:
+      type: specific
+      date_of_injury: 2023-03-13
+      mechanism: fall from a loading platform causing lumbar and psychiatric injury
+      body_parts:
+        - {part: lumbar_spine, icd10: M54.5}
+        - {part: psyche, icd10: F43.23}
+    lifecycle:
+      target_stage: medical_legal
+      claim_response: accepted
+      eval_type: qme
+      doctrine_hooks: [lc4664_prior_award, lc3208_3_psych]
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: pre-existing lumbar degenerative disc disease
+            origin: nonindustrial
+            body_part: lumbar_spine
+            icd10: M51.36
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+          - label: adjustment disorder with mixed anxiety and depressed mood
+            body_system: psychiatric
+            origin: industrial
+            body_part: psyche
+            icd10: F43.23
+            severity: moderate
+            trajectory: fluctuating
+            symptomatic_before_doi: false
+            psych_injury_kind: direct
+        prior_claims:
+          - body_parts: [lumbar_spine]
+            date_of_injury: 2017-05-08
+            resolution_type: stipulated_award
+            resolution_date: 2018-09-21
+            award:
+              body_parts: [lumbar_spine]
+              pd_percent: 14
+              award_date: 2018-09-21
+              resolution_type: stipulated_award
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        contentions:
+          - id: ctn-01
+            claim_type: psych_add_on
+            party: applicant
+            position: affirm
+            target_condition_id: cond-01
+            target_body_part: psyche
+            psych_injury_kind: direct
+            doctrine_hooks: [lc3208_3_psych]
+            rationale: >-
+              The actual fall and its immediate aftermath were the predominant
+              cause of the direct psychiatric injury under section 3208.3.
+          - id: ctn-02
+            claim_type: apportionment_defense
+            party: defense
+            position: affirm
+            target_prior_claim_id: prior-00
+            target_prior_award_id: prior-00-award
+            target_body_part: lumbar_spine
+            doctrine_hooks: [lc4664_prior_award]
+            rationale: >-
+              The prior stipulated lumbar award overlaps the current lumbar disability.
+            groundings:
+              - {hook: lc4664_prior_award, prior_award_id: prior-00-award}
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-01-22
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00, cond-01]
+            reviewed_prior_claim_ids: [prior-00]
+            reviewed_prior_award_ids: [prior-00-award]
+            endorses_contention_ids: [ctn-01, ctn-02]
+            psych_injury_kind: direct
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The fall itself and the contemporaneous psychiatric symptoms
+              support industrial causation within reasonable medical probability.
+            rationale: the conclusions rest on examination and complete record review
+        apportionment_assertions:
+          - id: app-01
+            opinion_id: opn-01
+            body_part: lumbar_spine
+            industrial_percent: 65
+            nonindustrial_percent: 35
+            basis_kinds: [lc4664_prior_award]
+            prior_claim_ids: [prior-00]
+            prior_award_ids: [prior-00-award]
+            description: current lumbar permanent disability overlapping the prior award
+            disability_causation_stated: true
+            reasonable_medical_probability: true
+            causal_rationale: >-
+              The previously awarded lumbar impairment remains an independent
+              cause of current lumbar permanent disability.
+            percentage_rationale: >-
+              The allocation reflects the prior 14 percent award and the current examination.
+            prior_award_analysis: >-
+              The section 4664(b) presumption is analyzed separately from
+              section 4663 causation and applies to the same lumbar region.
+            linked_contention_id: ctn-02
+            groundings:
+              - {hook: lc4664_prior_award, prior_award_id: prior-00-award}
+        contention_documents:
+          - id: cdoc-01
+            document_kind: advocacy
+            actor_party: applicant
+            target_medical_opinion_id: opn-01
+            spoken_contention_ids: [ctn-01]
+            subtype: ADVOCACY_LETTERS_QME
+            doc_date: 2023-11-17
+          - id: cdoc-02
+            document_kind: opinion_report
+            medical_opinion_id: opn-01
+            subtype: PSYCH_EVAL_REPORT_QME_AME
+
+  # Three apportionment rows deliberately span the exact truth-grade set, and
+  # the first QME opinion drives a full advocacy -> supplemental -> objection
+  # -> deposition exchange without sampled contention documents.
+  - case_id: diabetic-neuropathy-cts-confound
+    rng_seed: 622005
+    injury:
+      type: cumulative_trauma
+      ct_start: 2022-01-03
+      ct_end: 2023-06-30
+      mechanism: repetitive keyboarding and forceful gripping
+      body_parts: [{part: wrist, icd10: G56.01}]
+    lifecycle:
+      target_stage: medical_legal
+      claim_response: accepted
+      eval_type: qme
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: diabetes-associated sensorimotor polyneuropathy
+            body_system: neurologic
+            origin: nonindustrial
+            body_part: wrist
+            icd10: E11.42
+            severity: moderate
+            trajectory: progressive
+            symptomatic_before_doi: true
+          - label: industrial carpal tunnel syndrome
+            body_system: neurologic
+            origin: industrial
+            body_part: wrist
+            icd10: G56.01
+            severity: moderate
+            trajectory: stable
+            symptomatic_before_doi: false
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        contentions:
+          - id: ctn-01
+            claim_type: industrial_causation
+            party: applicant
+            position: affirm
+            target_condition_id: cond-01
+            target_body_part: wrist
+            rationale: >-
+              The repetitive work caused the focal median neuropathy at the wrist.
+          - id: ctn-02
+            claim_type: apportionment_defense
+            party: defense
+            position: affirm
+            target_condition_id: cond-00
+            target_body_part: wrist
+            rationale: >-
+              The diabetic polyneuropathy independently contributes to current disability.
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2024-01-12
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00, cond-01]
+            endorses_contention_ids: [ctn-01]
+            concurs_with_contention_ids: [ctn-02]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The repetitive exposure and focal electrodiagnostic findings support
+              industrial carpal tunnel syndrome.
+            rationale: the conclusions rest on examination and electrodiagnostic review
+          - id: opn-02
+            author_role: qme
+            report_stage: final
+            report_date: 2024-04-08
+            event_kind: supplemental_report
+            revision_kind: revised_apportionment
+            responds_to_opinion_id: opn-01
+            supersedes_opinion_id: opn-01
+            apportionment_state: determined
+            determination_kind: allocated
+            reviewed_condition_ids: [cond-00, cond-01]
+            endorses_contention_ids: [ctn-01]
+            concurs_with_contention_ids: [ctn-02]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The repetitive exposure and focal electrodiagnostic findings support
+              industrial carpal tunnel syndrome.
+            revision_rationale: >-
+              The supplemental diabetic treatment records document a larger
+              independent contribution than was available for the initial report.
+          - id: opn-03
+            author_role: qme
+            report_stage: final
+            report_date: 2024-07-19
+            event_kind: deposition
+            revision_kind: unchanged_additional_reasoning
+            responds_to_opinion_id: opn-02
+            apportionment_state: determined
+            determination_kind: allocated
+            reviewed_condition_ids: [cond-00, cond-01]
+            endorses_contention_ids: [ctn-01]
+            concurs_with_contention_ids: [ctn-02]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: >-
+              The repetitive exposure and focal electrodiagnostic findings support
+              industrial carpal tunnel syndrome.
+            rationale: the opinions remain unchanged after testimony and record review
+          - id: opn-04
+            author_role: ptp
+            report_stage: final
+            report_date: 2024-08-12
+            apportionment_state: determined
+            determination_kind: allocated
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            rationale: the opinion rests on examination alone
+        apportionment_assertions:
+          - id: app-01
+            opinion_id: opn-01
+            body_part: wrist
+            industrial_percent: 70
+            nonindustrial_percent: 30
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            description: current wrist permanent disability
+            disability_causation_stated: true
+            reasonable_medical_probability: true
+            causal_rationale: >-
+              The diabetes-associated polyneuropathy remains an independent
+              cause of current wrist disability.
+            percentage_rationale: >-
+              The split reflects the focal and length-dependent electrodiagnostic patterns.
+          - id: app-02
+            opinion_id: opn-02
+            body_part: wrist
+            industrial_percent: 60
+            nonindustrial_percent: 40
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            description: revised current wrist permanent disability
+            disability_causation_stated: true
+            reasonable_medical_probability: true
+            causal_rationale: >-
+              The diabetic polyneuropathy independently contributes to current disability.
+            revised_from_percent: 30
+            revision_rationale: >-
+              Newly reviewed diabetic treatment records show a greater contribution.
+          - id: app-03
+            opinion_id: opn-03
+            body_part: wrist
+            industrial_percent: 60
+            nonindustrial_percent: 40
+            basis_kinds: [preexisting_degenerative_pathology]
+            condition_ids: [cond-00]
+            description: unchanged wrist permanent disability allocation
+            disability_causation_stated: true
+            reasonable_medical_probability: true
+            causal_rationale: >-
+              The diabetic polyneuropathy independently contributes to current disability.
+            percentage_rationale: >-
+              The split remains 60/40 after the deposition testimony.
+          - id: app-04
+            opinion_id: opn-04
+            body_part: wrist
+            industrial_percent: 50
+            nonindustrial_percent: 50
+            basis_kinds: [vocational_apportionment]
+            condition_ids: [cond-00]
+            description: vocational allocation of wrist disability
+            disability_causation_stated: true
+            reasonable_medical_probability: true
+            causal_rationale: the allocation rests on vocational factors alone
+            percentage_rationale: the percentage is a vocational compromise
+        contention_documents:
+          - id: cdoc-01
+            document_kind: advocacy
+            actor_party: applicant
+            target_medical_opinion_id: opn-01
+            spoken_contention_ids: [ctn-01]
+            subtype: ADVOCACY_LETTERS_QME
+            doc_date: 2023-11-20
+          - id: cdoc-02
+            document_kind: supplemental_request
+            actor_party: applicant
+            target_medical_opinion_id: opn-01
+            spoken_contention_ids: [ctn-01]
+            doc_date: 2024-02-12
+          - id: cdoc-03
+            document_kind: supplemental_report
+            medical_opinion_id: opn-02
+            target_medical_opinion_id: opn-01
+            doc_date: 2024-04-08
+          - id: cdoc-04
+            document_kind: objection
+            actor_party: defense
+            target_medical_opinion_id: opn-02
+            spoken_contention_ids: [ctn-02]
+            defense_contest_theories: [lack_of_substantial_medical_evidence]
+            doc_date: 2024-05-14
+          - id: cdoc-05
+            document_kind: qme_deposition
+            medical_opinion_id: opn-03
+            target_medical_opinion_id: opn-02
+            actor_party: defense
+            spoken_contention_ids: [ctn-02]
+            defense_contest_theories: [lack_of_substantial_medical_evidence]
+            doc_date: 2024-07-19
+          - id: cdoc-06
+            document_kind: opinion_report
+            medical_opinion_id: opn-04
+            subtype: TREATING_PHYSICIAN_REPORT_FINAL

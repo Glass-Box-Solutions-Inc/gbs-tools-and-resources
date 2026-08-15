@@ -12,7 +12,7 @@ retuned template, a new field in a manifest, a dependency that changed a PDF
 byte. That drift is exactly what a corpus consumer feels, and nothing was
 watching for it.
 
-So the four shipped corpora in ``examples/`` are recorded here, and CI compares
+So the five shipped corpora in ``examples/`` are recorded here, and CI compares
 against the recording. The gate's whole purpose is asymmetry:
 
 * **Unintended drift is loud.** A regression that moves one document in one case
@@ -192,6 +192,11 @@ CORPORA: tuple[Corpus, ...] = (
         why="every doctrine hook seeded and landing; the doctrine content pins live here",
     ),
     Corpus(
+        name="medical-story-showcase",
+        tier=SUITE_TIER,
+        why="the five feature-on M3 medical stories and their truth-only grades",
+    ),
+    Corpus(
         name="money-showcase",
         tier=CI_TIER,
         why="the money spine the analyzer's figures are scored against; 539 files",
@@ -209,8 +214,7 @@ CORPORA: tuple[Corpus, ...] = (
 
 * ``suite`` corpora are checked by ``test_golden_corpus.py``, so they are
   covered by any ``pytest tests/`` — a developer's local run included. They are
-  the two a regression is most likely to reach first, and together they cost
-  about half a minute.
+  the three a regression is most likely to reach first.
 * ``ci`` corpora are checked by a dedicated step in the package's CI job. They
   are the two largest trees (539 and 410 files), and putting them in the suite
   would add that cost to every local run for drift that a PR check catches

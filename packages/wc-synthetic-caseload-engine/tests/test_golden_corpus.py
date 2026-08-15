@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from conftest import requires_substrate
 
@@ -158,6 +159,50 @@ def test_every_registered_corpus_is_in_exactly_one_tier() -> None:
         "both tiers must be populated — an empty tier means one of the two gates "
         f"runs nothing, and the tiers present are {sorted(tiers)}"
     )
+
+
+def test_medical_story_showcase_is_registered_as_suite_tier() -> None:
+    """AJC-62 R73: the new feature-on corpus has one exact registry row."""
+    rows = [corpus for corpus in CORPORA if corpus.name == "medical-story-showcase"]
+    assert len(rows) == 1
+    corpus = rows[0]
+    assert corpus.tier == SUITE_TIER
+    assert corpus.spec == EXAMPLES / "medical-story-showcase.yaml"
+    assert corpus.golden == PACKAGE / "tests" / "golden" / "medical-story-showcase.json"
+
+
+def test_medical_story_showcase_golden_has_exact_five_cases_and_seeds() -> None:
+    """AJC-62 R77 step 14: the recording and source name the same five seeds."""
+    expected_order = (
+        ("flagship-nonindustrial-cancer-noise-a", 622001),
+        ("flagship-nonindustrial-cancer-noise-b", 622002),
+        ("flagship-nonindustrial-cancer-noise-c", 622003),
+        ("lc4664-prior-award-overlap", 622004),
+        ("diabetic-neuropathy-cts-confound", 622005),
+    )
+    expected = {
+        "flagship-nonindustrial-cancer-noise-a": 622001,
+        "flagship-nonindustrial-cancer-noise-b": 622002,
+        "flagship-nonindustrial-cancer-noise-c": 622003,
+        "lc4664-prior-award-overlap": 622004,
+        "diabetic-neuropathy-cts-confound": 622005,
+    }
+    spec = yaml.safe_load((EXAMPLES / "medical-story-showcase.yaml").read_text())
+    assert tuple((case["case_id"], case["rng_seed"]) for case in spec["cases"]) == (
+        expected_order
+    )
+    assert {case["case_id"]: case["rng_seed"] for case in spec["cases"]} == expected
+
+    golden_path = PACKAGE / "tests" / "golden" / "medical-story-showcase.json"
+    assert golden_path.is_file(), (
+        "the Step-14 semantic artifacts are ready, but the orchestrator has not "
+        "recorded tests/golden/medical-story-showcase.json yet"
+    )
+    golden = json.loads(golden_path.read_text(encoding="utf-8"))
+    assert golden["corpus"] == "medical-story-showcase"
+    assert golden["tier"] == SUITE_TIER
+    assert set(golden["cases"]) == set(expected)
+    assert golden["caseCount"] == 5
 
 
 def test_every_registered_corpus_has_a_well_formed_golden() -> None:

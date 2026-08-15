@@ -18,8 +18,12 @@ mutated path assert through it rather than erroring.
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
+import json
 import random
 import re
+import subprocess
+import sys
 import tempfile
 from functools import cache
 from pathlib import Path
@@ -77,6 +81,15 @@ from wc_caseload_engine.taxonomy import effective_taxonomy
 _FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "medical_story_surface_matrix.yaml"
 _PSYCH_TRIAD_PATH = Path(__file__).resolve().parent / "fixtures" / "medical_story_psych_triad.yaml"
 _IMR_MATRIX_PATH = Path(__file__).resolve().parent / "fixtures" / "medical_story_imr_matrix.yaml"
+_SHOWCASE_PATH = Path(__file__).resolve().parents[1] / "examples" / "medical-story-showcase.yaml"
+
+_SHOWCASE_CASE_SEEDS = {
+    "flagship-nonindustrial-cancer-noise-a": 622001,
+    "flagship-nonindustrial-cancer-noise-b": 622002,
+    "flagship-nonindustrial-cancer-noise-c": 622003,
+    "lc4664-prior-award-overlap": 622004,
+    "diabetic-neuropathy-cts-confound": 622005,
+}
 
 _CASE_IDS = (
     "surface-initial-medlegal",
@@ -227,6 +240,48 @@ def _flat(text: str) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+@pytest.fixture(scope="module")
+def medical_story_showcase_tree(tmp_path_factory: pytest.TempPathFactory):
+    """Generate the committed R20 showcase through the shipped CLI once."""
+    from wc_caseload_engine.substrate import find_substrate
+
+    if find_substrate() is None:
+        pytest.skip("merus-test-data-generator substrate not on disk")
+    root = tmp_path_factory.mktemp("medical-story-showcase")
+    out_dir = root / "out"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "wc_caseload_engine",
+            "generate",
+            "--spec",
+            str(_SHOWCASE_PATH),
+            "--out",
+            str(out_dir),
+        ],
+        cwd=_SHOWCASE_PATH.parent.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout[-3000:] + completed.stderr[-3000:]
+    return out_dir, (completed.stdout, completed.stderr)
+
+
+def _showcase_truth(out_dir: Path, case_id: str) -> dict[str, Any]:
+    return json.loads((out_dir / "truth" / f"{case_id}.truth.json").read_text())
+
+
+def _showcase_pdf_text(out_dir: Path, case_id: str) -> str:
+    fitz = pytest.importorskip("fitz")
+    pages: list[str] = []
+    for path in sorted((out_dir / case_id / "documents").glob("*.pdf")):
+        with fitz.open(path) as document:
+            pages.extend(page.get_text() for page in document)
+    return _flat("\n".join(pages))
+
+
 def _assert_ordered(text: str, *markers: str) -> None:
     flattened = _flat(text)
     positions = []
@@ -252,6 +307,373 @@ def _without_page_furniture(text: str) -> str:
             continue
         kept.append(line)
     return "\n".join(kept)
+
+
+def test_medical_story_showcase_has_exactly_the_five_r20_cases_and_zero_fallback(
+    medical_story_showcase_tree,
+) -> None:
+    """R20/R67: exact identities, ordinary plans, and no generic dispatch."""
+    payload = yaml.safe_load(_SHOWCASE_PATH.read_text(encoding="utf-8"))
+    expected_order = (
+        ("flagship-nonindustrial-cancer-noise-a", 622001),
+        ("flagship-nonindustrial-cancer-noise-b", 622002),
+        ("flagship-nonindustrial-cancer-noise-c", 622003),
+        ("lc4664-prior-award-overlap", 622004),
+        ("diabetic-neuropathy-cts-confound", 622005),
+    )
+    assert tuple((entry["case_id"], entry["rng_seed"]) for entry in payload["cases"]) == (
+        expected_order
+    )
+    actual = {entry["case_id"]: entry["rng_seed"] for entry in payload["cases"]}
+    assert actual == _SHOWCASE_CASE_SEEDS
+
+    spec = parse_caseload_spec(payload)
+    assert tuple((case.case_id, case.rng_seed) for case in spec.cases) == expected_order
+    assert {case.case_id: case.rng_seed for case in spec.cases} == _SHOWCASE_CASE_SEEDS
+    for case in spec.cases:
+        plan = build_case_plan(case)
+        assert plan.warnings == (), f"{case.case_id}: {plan.warnings}"
+
+    out_dir, _streams = medical_story_showcase_tree
+    for case_id in _SHOWCASE_CASE_SEEDS:
+        manifest = json.loads((out_dir / case_id / "manifest.json").read_text())
+        assert manifest["caseId"] == case_id
+        assert manifest["documents"]
+        assert not any(document["fallback"] for document in manifest["documents"])
+
+
+def test_medical_story_showcase_authors_every_required_story_element_literally() -> None:
+    """The primary fixture oracle: deletion of any R20 story element is red."""
+    payload = yaml.safe_load(_SHOWCASE_PATH.read_text(encoding="utf-8"))
+    cases = {entry["case_id"]: entry for entry in payload["cases"]}
+
+    silent = cases["flagship-nonindustrial-cancer-noise-a"]["scenario"]
+    assert "contentions" not in silent["medical_assertions"]
+    assert silent["medical_history"]["conditions"][1] == {
+        "label": "invasive ductal carcinoma of the breast",
+        "body_system": "oncologic",
+        "origin": "nonindustrial",
+        "body_part": "breast",
+        "icd10": "C50.919",
+        "onset": dt.date(2020, 5, 14),
+        "severity": "moderate",
+        "trajectory": "stable",
+        "symptomatic_before_doi": True,
+    }
+
+    overreach = cases["flagship-nonindustrial-cancer-noise-b"]["scenario"][
+        "medical_assertions"
+    ]
+    assert overreach["contentions"] == [
+        {
+            "id": "ctn-01",
+            "claim_type": "industrial_causation",
+            "party": "applicant",
+            "position": "affirm",
+            "target_condition_id": "cond-01",
+            "rationale": (
+                "Applicant contends that sustained work stress caused the invasive "
+                "ductal carcinoma and requests an industrial-causation finding."
+            ),
+        }
+    ]
+
+    aside = cases["flagship-nonindustrial-cancer-noise-c"]["scenario"]["medical_assertions"]
+    assert aside["medical_opinions"][0] == {
+        "id": "opn-01",
+        "author_role": "ptp",
+        "report_stage": "interim",
+        "report_date": dt.date(2023, 7, 18),
+        "apportionment_state": "deferred",
+        "examination_performed": False,
+        "reviewed_condition_ids": ["cond-01"],
+        "aoe_coe_finding": "deferred",
+        "aoe_coe_rationale": (
+            "The treating record notes invasive ductal carcinoma of the breast, "
+            "but no complete causation analysis is offered in this interim aside."
+        ),
+    }
+    assert not {
+        "endorses_contention_ids",
+        "concurs_with_contention_ids",
+    }.intersection(aside["medical_opinions"][1])
+
+    overlap = cases["lc4664-prior-award-overlap"]["scenario"]["medical_assertions"]
+    psych = overlap["contentions"][0]
+    assert (
+        psych["id"],
+        psych["claim_type"],
+        psych["party"],
+        psych["psych_injury_kind"],
+        psych["doctrine_hooks"],
+    ) == ("ctn-01", "psych_add_on", "applicant", "direct", ["lc3208_3_psych"])
+
+    confound = cases["diabetic-neuropathy-cts-confound"]["scenario"]["medical_assertions"]
+    assert [item["id"] for item in confound["apportionment_assertions"]] == [
+        "app-01",
+        "app-02",
+        "app-03",
+        "app-04",
+    ]
+    assert "percentage_rationale" not in confound["apportionment_assertions"][1]
+    assert confound["apportionment_assertions"][3]["basis_kinds"] == [
+        "vocational_apportionment"
+    ]
+    assert [item["document_kind"] for item in confound["contention_documents"][:5]] == [
+        "advocacy",
+        "supplemental_request",
+        "supplemental_report",
+        "objection",
+        "qme_deposition",
+    ]
+    assert (
+        confound["medical_opinions"][1]["responds_to_opinion_id"],
+        confound["medical_opinions"][2]["responds_to_opinion_id"],
+    ) == ("opn-01", "opn-02")
+
+
+@pytest.mark.slow
+def test_medical_story_showcase_truth_and_documents_are_independent_primary_oracles(
+    medical_story_showcase_tree,
+) -> None:
+    """Truth grades and visible advocacy are asserted independently, never derived."""
+    out_dir, _streams = medical_story_showcase_tree
+    truth = {
+        case_id: _showcase_truth(out_dir, case_id) for case_id in _SHOWCASE_CASE_SEEDS
+    }
+    channels = {case_id: value["channels"]["assertions"] for case_id, value in truth.items()}
+
+    for suffix in ("a", "b", "c"):
+        case_id = f"flagship-nonindustrial-cancer-noise-{suffix}"
+        cancer = next(
+            condition
+            for condition in channels[case_id]["medicalHistory"]["conditions"]
+            if condition["id"] == "cond-01"
+        )
+        assert cancer["causalGroundTruth"] == "nonindustrial"
+        assert cancer["whollyUnrelated"] is True
+
+    assert channels["flagship-nonindustrial-cancer-noise-a"]["contentions"] == []
+    b_contention = channels["flagship-nonindustrial-cancer-noise-b"]["contentions"]
+    assert [(item["id"], item["party"], item["quality"]) for item in b_contention] == [
+        ("ctn-01", "applicant", "unsupportable")
+    ]
+    c_opinions = channels["flagship-nonindustrial-cancer-noise-c"]["medicalOpinions"]
+    assert [(item["id"], item["quality"]) for item in c_opinions] == [
+        ("opn-01", "thin"),
+        ("opn-02", "supported"),
+    ]
+    assert not {
+        "endorsesContentionIds",
+        "concursWithContentionIds",
+    }.intersection(next(item for item in c_opinions if item["id"] == "opn-02"))
+
+    showcase_spec = parse_caseload_spec(yaml.safe_load(_SHOWCASE_PATH.read_text(encoding="utf-8")))
+    c_seed = next(
+        case
+        for case in showcase_spec.cases
+        if case.case_id == "flagship-nonindustrial-cancer-noise-c"
+    )
+    c_plan = build_case_plan(c_seed)
+    assert c_plan.medical_story is not None
+    ptp_document = next(
+        document
+        for document in c_plan.documents
+        if (story := c_plan.medical_story.by_document_index.get(document.index)) is not None
+        and story.medical_opinion is not None
+        and story.medical_opinion.id == "opn-01"
+    )
+    qme_document = next(
+        document
+        for document in c_plan.documents
+        if (story := c_plan.medical_story.by_document_index.get(document.index)) is not None
+        and story.medical_opinion is not None
+        and story.medical_opinion.id == "opn-02"
+    )
+    c_manifest = json.loads(
+        (out_dir / c_seed.case_id / "manifest.json").read_text(encoding="utf-8")
+    )
+    ptp_entry = c_manifest["documents"][ptp_document.index]
+    qme_entry = c_manifest["documents"][qme_document.index]
+    assert (ptp_entry["subtype"], qme_entry["subtype"]) == (
+        "TREATING_PHYSICIAN_REPORT_PR2",
+        "QME_COMPREHENSIVE_REPORT",
+    )
+    fitz = pytest.importorskip("fitz")
+    with fitz.open(out_dir / c_seed.case_id / "documents" / ptp_entry["filename"]) as document:
+        ptp_text = _flat("\n".join(page.get_text() for page in document))
+    with fitz.open(out_dir / c_seed.case_id / "documents" / qme_entry["filename"]) as document:
+        qme_text = _flat("\n".join(page.get_text() for page in document))
+    assert "invasive ductal carcinoma of the breast" in ptp_text
+    assert "sustained work stress caused the invasive ductal carcinoma" not in qme_text
+    adoption_lead = (
+        "After review of the communication and the identified supporting evidence, I adopt"
+    )
+    assert adoption_lead not in qme_text
+
+    adoption_document, adoption_story = _bound("surface-psych-medlegal", "opn-02")
+    assert adoption_document.subtype == "PSYCH_EVAL_REPORT_QME_AME"
+    assert adoption_story.medical_opinion is not None
+    assert adoption_story.medical_opinion.endorses_contention_ids == ("ctn-02",)
+    assert tuple(contention.id for contention in adoption_story.contentions) == ("ctn-02",)
+    adoption_rendered = _rendered("surface-psych-medlegal", adoption_document.index)
+    assert adoption_lead in _flat(adoption_rendered.text)
+
+    overlap = channels["lc4664-prior-award-overlap"]
+    assert [(item["id"], item["quality"]) for item in overlap["contentions"]] == [
+        ("ctn-01", "thin"),
+        ("ctn-02", "supported"),
+    ]
+    assert [(item["id"], item["quality"]) for item in overlap["apportionmentAssertions"]] == [
+        ("app-01", "supported")
+    ]
+
+    confound = channels["diabetic-neuropathy-cts-confound"]
+    assert [(item["id"], item["quality"]) for item in confound["apportionmentAssertions"]] == [
+        ("app-01", "supported"),
+        ("app-02", "thin"),
+        ("app-03", "thin"),
+        ("app-04", "unsupportable"),
+    ]
+    assert {item["quality"] for item in confound["apportionmentAssertions"]} == {
+        "supported",
+        "thin",
+        "unsupportable",
+    }
+
+    pages = {case_id: _showcase_pdf_text(out_dir, case_id) for case_id in _SHOWCASE_CASE_SEEDS}
+    showcase_case_by_id = {case.case_id: case for case in showcase_spec.cases}
+
+    def _showcase_opinion_bound(case_id: str, opinion_id: str):
+        case = showcase_case_by_id[case_id]
+        plan = build_case_plan(case)
+        assert plan.medical_story is not None
+        for document in plan.documents:
+            story = plan.medical_story.by_document_index.get(document.index)
+            if (
+                story is not None
+                and story.contention_surface is None
+                and story.medical_opinion is not None
+                    and story.medical_opinion.id == opinion_id
+                ):
+                    return case, plan, document, story
+        raise AssertionError(f"{case_id} has no showcase bound report for {opinion_id}")
+
+    def _showcase_contention_bound(case_id: str, contention_surface: str):
+        case = showcase_case_by_id[case_id]
+        plan = build_case_plan(case)
+        assert plan.medical_story is not None
+        for document in plan.documents:
+            story = plan.medical_story.by_document_index.get(document.index)
+            if (
+                story is not None
+                and story.contention_surface == contention_surface
+                and story.medical_opinion is None
+            ):
+                return case, plan, document, story
+        raise AssertionError(
+            f"{case_id} has no showcase bound contention surface {contention_surface}"
+        )
+
+    overreach_sentence = (
+        "Applicant contends that sustained work stress caused the invasive ductal carcinoma"
+    )
+    silent_a_case, silent_a_plan, silent_a_document, silent_a_story = _showcase_opinion_bound(
+        "flagship-nonindustrial-cancer-noise-a", "opn-01"
+    )
+    assert silent_a_story.medical_opinion is not None
+    assert silent_a_story.medical_opinion.reviewed_condition_ids == ("cond-00",)
+    assert silent_a_story.medical_opinion.aoe_coe_rationale is not None
+    assert "lumbar" in silent_a_story.medical_opinion.aoe_coe_rationale
+    assert "cancer" not in silent_a_story.medical_opinion.aoe_coe_rationale.lower()
+    silent_a_text = _flat(
+        _render(
+            silent_a_case,
+            silent_a_plan,
+            silent_a_document,
+            silent_a_story,
+            "showcase-a-opn-01",
+        ).text
+    )
+    assert overreach_sentence not in silent_a_text
+
+    loud_b_case, loud_b_plan, loud_b_document, loud_b_story = _showcase_contention_bound(
+        "flagship-nonindustrial-cancer-noise-b", "advocacy"
+    )
+    loud_b_text = _flat(
+        _render(
+            loud_b_case,
+            loud_b_plan,
+            loud_b_document,
+            loud_b_story,
+            "showcase-b-opn-01",
+        ).text
+    )
+    assert overreach_sentence in loud_b_text
+
+    psych_case, psych_plan, psych_document, _ = _showcase_opinion_bound(
+        "lc4664-prior-award-overlap", "opn-01"
+    )
+    assert psych_document.subtype == "PSYCH_EVAL_REPORT_QME_AME"
+    psych_text = _flat(
+        _render(
+            psych_case,
+            psych_plan,
+            psych_document,
+            psych_plan.medical_story.by_document_index[psych_document.index],
+            "showcase-overlap-opn-01",
+        ).text
+    )
+    assert "Labor Code section 3208.3" in psych_text
+    assert "predominant cause" in psych_text
+    assert "The repetitive work caused the focal median neuropathy at the wrist" in pages[
+        "diabetic-neuropathy-cts-confound"
+    ]
+    assert "supplemental diabetic treatment records" in pages[
+        "diabetic-neuropathy-cts-confound"
+    ]
+    assert "do not constitute substantial medical evidence" in pages[
+        "diabetic-neuropathy-cts-confound"
+    ]
+    deposition_marker = (
+        "My opinions are unchanged; I have provided additional reasoning under oath today"
+    )
+    assert deposition_marker in pages["diabetic-neuropathy-cts-confound"]
+
+
+def test_medical_story_showcase_contention_loop_has_literal_causal_order() -> None:
+    """The authored chain lands advocacy -> request -> report -> objection -> deposition."""
+    spec = parse_caseload_spec(yaml.safe_load(_SHOWCASE_PATH.read_text(encoding="utf-8")))
+    seed = next(case for case in spec.cases if case.case_id == "diabetic-neuropathy-cts-confound")
+    plan = build_case_plan(seed)
+    assert plan.medical_story is not None
+    rows = []
+    for document in plan.documents:
+        story = plan.medical_story.by_document_index.get(document.index)
+        if story is None:
+            continue
+        if story.contention_surface in {
+            "advocacy",
+            "supplemental_request",
+            "objection",
+            "qme_deposition",
+        }:
+            rows.append(
+                (
+                    story.contention_surface,
+                    document.subtype,
+                    document.doc_date.isoformat(),
+                )
+            )
+        elif story.medical_opinion is not None and story.medical_opinion.id == "opn-02":
+            rows.append(("supplemental_report", document.subtype, document.doc_date.isoformat()))
+    assert rows == [
+        ("advocacy", "ADVOCACY_LETTERS_QME", "2023-11-20"),
+        ("supplemental_request", "ADVOCACY_LETTERS_PTP_QME_AME", "2024-02-12"),
+        ("supplemental_report", "SUPPLEMENTAL_QME_AME_REPORT", "2024-04-08"),
+        ("objection", "ADVOCACY_LETTERS_PTP_QME_AME", "2024-05-14"),
+        ("qme_deposition", "DEPOSITION_TRANSCRIPT", "2024-07-19"),
+    ]
 
 
 def test_surface_matrix_uses_the_frozen_r67_case_ids_and_seeds():
