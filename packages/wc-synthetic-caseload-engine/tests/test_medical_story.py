@@ -18,8 +18,12 @@ mutated path assert through it rather than erroring.
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
+import json
 import random
 import re
+import subprocess
+import sys
 import tempfile
 from functools import cache
 from pathlib import Path
@@ -74,15 +78,18 @@ from wc_caseload_engine.renderer import (
 from wc_caseload_engine.seeds import parse_case_seed, parse_caseload_spec
 from wc_caseload_engine.taxonomy import effective_taxonomy
 
-_FIXTURE_PATH = (
-    Path(__file__).resolve().parent / "fixtures" / "medical_story_surface_matrix.yaml"
-)
-_PSYCH_TRIAD_PATH = (
-    Path(__file__).resolve().parent / "fixtures" / "medical_story_psych_triad.yaml"
-)
-_IMR_MATRIX_PATH = (
-    Path(__file__).resolve().parent / "fixtures" / "medical_story_imr_matrix.yaml"
-)
+_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "medical_story_surface_matrix.yaml"
+_PSYCH_TRIAD_PATH = Path(__file__).resolve().parent / "fixtures" / "medical_story_psych_triad.yaml"
+_IMR_MATRIX_PATH = Path(__file__).resolve().parent / "fixtures" / "medical_story_imr_matrix.yaml"
+_SHOWCASE_PATH = Path(__file__).resolve().parents[1] / "examples" / "medical-story-showcase.yaml"
+
+_SHOWCASE_CASE_SEEDS = {
+    "flagship-nonindustrial-cancer-noise-a": 622001,
+    "flagship-nonindustrial-cancer-noise-b": 622002,
+    "flagship-nonindustrial-cancer-noise-c": 622003,
+    "lc4664-prior-award-overlap": 622004,
+    "diabetic-neuropathy-cts-confound": 622005,
+}
 
 _CASE_IDS = (
     "surface-initial-medlegal",
@@ -222,9 +229,7 @@ def _rendered(case_id: str, index: int, perspective: str = "applicant") -> _Rend
     seed, plan = _case(case_id, perspective)
     document = next(d for d in plan.documents if d.index == index)
     story = (
-        plan.medical_story.by_document_index.get(index)
-        if plan.medical_story is not None
-        else None
+        plan.medical_story.by_document_index.get(index) if plan.medical_story is not None else None
     )
     return _render(seed, plan, document, story, f"{perspective}-{case_id}-{index}")
 
@@ -233,6 +238,48 @@ def _flat(text: str) -> str:
     """Whitespace-normalized page text: PDF extraction wraps lines mid-phrase,
     so every multi-word phrase must be searched with wraps collapsed."""
     return re.sub(r"\s+", " ", text)
+
+
+@pytest.fixture(scope="module")
+def medical_story_showcase_tree(tmp_path_factory: pytest.TempPathFactory):
+    """Generate the committed R20 showcase through the shipped CLI once."""
+    from wc_caseload_engine.substrate import find_substrate
+
+    if find_substrate() is None:
+        pytest.skip("merus-test-data-generator substrate not on disk")
+    root = tmp_path_factory.mktemp("medical-story-showcase")
+    out_dir = root / "out"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "wc_caseload_engine",
+            "generate",
+            "--spec",
+            str(_SHOWCASE_PATH),
+            "--out",
+            str(out_dir),
+        ],
+        cwd=_SHOWCASE_PATH.parent.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout[-3000:] + completed.stderr[-3000:]
+    return out_dir, (completed.stdout, completed.stderr)
+
+
+def _showcase_truth(out_dir: Path, case_id: str) -> dict[str, Any]:
+    return json.loads((out_dir / "truth" / f"{case_id}.truth.json").read_text())
+
+
+def _showcase_pdf_text(out_dir: Path, case_id: str) -> str:
+    fitz = pytest.importorskip("fitz")
+    pages: list[str] = []
+    for path in sorted((out_dir / case_id / "documents").glob("*.pdf")):
+        with fitz.open(path) as document:
+            pages.extend(page.get_text() for page in document)
+    return _flat("\n".join(pages))
 
 
 def _assert_ordered(text: str, *markers: str) -> None:
@@ -262,11 +309,376 @@ def _without_page_furniture(text: str) -> str:
     return "\n".join(kept)
 
 
+def test_medical_story_showcase_has_exactly_the_five_r20_cases_and_zero_fallback(
+    medical_story_showcase_tree,
+) -> None:
+    """R20/R67: exact identities, ordinary plans, and no generic dispatch."""
+    payload = yaml.safe_load(_SHOWCASE_PATH.read_text(encoding="utf-8"))
+    expected_order = (
+        ("flagship-nonindustrial-cancer-noise-a", 622001),
+        ("flagship-nonindustrial-cancer-noise-b", 622002),
+        ("flagship-nonindustrial-cancer-noise-c", 622003),
+        ("lc4664-prior-award-overlap", 622004),
+        ("diabetic-neuropathy-cts-confound", 622005),
+    )
+    assert tuple((entry["case_id"], entry["rng_seed"]) for entry in payload["cases"]) == (
+        expected_order
+    )
+    actual = {entry["case_id"]: entry["rng_seed"] for entry in payload["cases"]}
+    assert actual == _SHOWCASE_CASE_SEEDS
+
+    spec = parse_caseload_spec(payload)
+    assert tuple((case.case_id, case.rng_seed) for case in spec.cases) == expected_order
+    assert {case.case_id: case.rng_seed for case in spec.cases} == _SHOWCASE_CASE_SEEDS
+    for case in spec.cases:
+        plan = build_case_plan(case)
+        assert plan.warnings == (), f"{case.case_id}: {plan.warnings}"
+
+    out_dir, _streams = medical_story_showcase_tree
+    for case_id in _SHOWCASE_CASE_SEEDS:
+        manifest = json.loads((out_dir / case_id / "manifest.json").read_text())
+        assert manifest["caseId"] == case_id
+        assert manifest["documents"]
+        assert not any(document["fallback"] for document in manifest["documents"])
+
+
+def test_medical_story_showcase_authors_every_required_story_element_literally() -> None:
+    """The primary fixture oracle: deletion of any R20 story element is red."""
+    payload = yaml.safe_load(_SHOWCASE_PATH.read_text(encoding="utf-8"))
+    cases = {entry["case_id"]: entry for entry in payload["cases"]}
+
+    silent = cases["flagship-nonindustrial-cancer-noise-a"]["scenario"]
+    assert "contentions" not in silent["medical_assertions"]
+    assert silent["medical_history"]["conditions"][1] == {
+        "label": "invasive ductal carcinoma of the breast",
+        "body_system": "oncologic",
+        "origin": "nonindustrial",
+        "body_part": "breast",
+        "icd10": "C50.919",
+        "onset": dt.date(2020, 5, 14),
+        "severity": "moderate",
+        "trajectory": "stable",
+        "symptomatic_before_doi": True,
+    }
+
+    overreach = cases["flagship-nonindustrial-cancer-noise-b"]["scenario"][
+        "medical_assertions"
+    ]
+    assert overreach["contentions"] == [
+        {
+            "id": "ctn-01",
+            "claim_type": "industrial_causation",
+            "party": "applicant",
+            "position": "affirm",
+            "target_condition_id": "cond-01",
+            "rationale": (
+                "Applicant contends that sustained work stress caused the invasive "
+                "ductal carcinoma and requests an industrial-causation finding."
+            ),
+        }
+    ]
+
+    aside = cases["flagship-nonindustrial-cancer-noise-c"]["scenario"]["medical_assertions"]
+    assert aside["medical_opinions"][0] == {
+        "id": "opn-01",
+        "author_role": "ptp",
+        "report_stage": "interim",
+        "report_date": dt.date(2023, 7, 18),
+        "apportionment_state": "deferred",
+        "examination_performed": False,
+        "reviewed_condition_ids": ["cond-01"],
+        "aoe_coe_finding": "deferred",
+        "aoe_coe_rationale": (
+            "The treating record notes invasive ductal carcinoma of the breast, "
+            "but no complete causation analysis is offered in this interim aside."
+        ),
+    }
+    assert not {
+        "endorses_contention_ids",
+        "concurs_with_contention_ids",
+    }.intersection(aside["medical_opinions"][1])
+
+    overlap = cases["lc4664-prior-award-overlap"]["scenario"]["medical_assertions"]
+    psych = overlap["contentions"][0]
+    assert (
+        psych["id"],
+        psych["claim_type"],
+        psych["party"],
+        psych["psych_injury_kind"],
+        psych["doctrine_hooks"],
+    ) == ("ctn-01", "psych_add_on", "applicant", "direct", ["lc3208_3_psych"])
+
+    confound = cases["diabetic-neuropathy-cts-confound"]["scenario"]["medical_assertions"]
+    assert [item["id"] for item in confound["apportionment_assertions"]] == [
+        "app-01",
+        "app-02",
+        "app-03",
+        "app-04",
+    ]
+    assert "percentage_rationale" not in confound["apportionment_assertions"][1]
+    assert confound["apportionment_assertions"][3]["basis_kinds"] == [
+        "vocational_apportionment"
+    ]
+    assert [item["document_kind"] for item in confound["contention_documents"][:5]] == [
+        "advocacy",
+        "supplemental_request",
+        "supplemental_report",
+        "objection",
+        "qme_deposition",
+    ]
+    assert (
+        confound["medical_opinions"][1]["responds_to_opinion_id"],
+        confound["medical_opinions"][2]["responds_to_opinion_id"],
+    ) == ("opn-01", "opn-02")
+
+
+@pytest.mark.slow
+def test_medical_story_showcase_truth_and_documents_are_independent_primary_oracles(
+    medical_story_showcase_tree,
+) -> None:
+    """Truth grades and visible advocacy are asserted independently, never derived."""
+    out_dir, _streams = medical_story_showcase_tree
+    truth = {
+        case_id: _showcase_truth(out_dir, case_id) for case_id in _SHOWCASE_CASE_SEEDS
+    }
+    channels = {case_id: value["channels"]["assertions"] for case_id, value in truth.items()}
+
+    for suffix in ("a", "b", "c"):
+        case_id = f"flagship-nonindustrial-cancer-noise-{suffix}"
+        cancer = next(
+            condition
+            for condition in channels[case_id]["medicalHistory"]["conditions"]
+            if condition["id"] == "cond-01"
+        )
+        assert cancer["causalGroundTruth"] == "nonindustrial"
+        assert cancer["whollyUnrelated"] is True
+
+    assert channels["flagship-nonindustrial-cancer-noise-a"]["contentions"] == []
+    b_contention = channels["flagship-nonindustrial-cancer-noise-b"]["contentions"]
+    assert [(item["id"], item["party"], item["quality"]) for item in b_contention] == [
+        ("ctn-01", "applicant", "unsupportable")
+    ]
+    c_opinions = channels["flagship-nonindustrial-cancer-noise-c"]["medicalOpinions"]
+    assert [(item["id"], item["quality"]) for item in c_opinions] == [
+        ("opn-01", "thin"),
+        ("opn-02", "supported"),
+    ]
+    assert not {
+        "endorsesContentionIds",
+        "concursWithContentionIds",
+    }.intersection(next(item for item in c_opinions if item["id"] == "opn-02"))
+
+    showcase_spec = parse_caseload_spec(yaml.safe_load(_SHOWCASE_PATH.read_text(encoding="utf-8")))
+    c_seed = next(
+        case
+        for case in showcase_spec.cases
+        if case.case_id == "flagship-nonindustrial-cancer-noise-c"
+    )
+    c_plan = build_case_plan(c_seed)
+    assert c_plan.medical_story is not None
+    ptp_document = next(
+        document
+        for document in c_plan.documents
+        if (story := c_plan.medical_story.by_document_index.get(document.index)) is not None
+        and story.medical_opinion is not None
+        and story.medical_opinion.id == "opn-01"
+    )
+    qme_document = next(
+        document
+        for document in c_plan.documents
+        if (story := c_plan.medical_story.by_document_index.get(document.index)) is not None
+        and story.medical_opinion is not None
+        and story.medical_opinion.id == "opn-02"
+    )
+    c_manifest = json.loads(
+        (out_dir / c_seed.case_id / "manifest.json").read_text(encoding="utf-8")
+    )
+    ptp_entry = c_manifest["documents"][ptp_document.index]
+    qme_entry = c_manifest["documents"][qme_document.index]
+    assert (ptp_entry["subtype"], qme_entry["subtype"]) == (
+        "TREATING_PHYSICIAN_REPORT_PR2",
+        "QME_COMPREHENSIVE_REPORT",
+    )
+    fitz = pytest.importorskip("fitz")
+    with fitz.open(out_dir / c_seed.case_id / "documents" / ptp_entry["filename"]) as document:
+        ptp_text = _flat("\n".join(page.get_text() for page in document))
+    with fitz.open(out_dir / c_seed.case_id / "documents" / qme_entry["filename"]) as document:
+        qme_text = _flat("\n".join(page.get_text() for page in document))
+    assert "invasive ductal carcinoma of the breast" in ptp_text
+    assert "sustained work stress caused the invasive ductal carcinoma" not in qme_text
+    adoption_lead = (
+        "After review of the communication and the identified supporting evidence, I adopt"
+    )
+    assert adoption_lead not in qme_text
+
+    adoption_document, adoption_story = _bound("surface-psych-medlegal", "opn-02")
+    assert adoption_document.subtype == "PSYCH_EVAL_REPORT_QME_AME"
+    assert adoption_story.medical_opinion is not None
+    assert adoption_story.medical_opinion.endorses_contention_ids == ("ctn-02",)
+    assert tuple(contention.id for contention in adoption_story.contentions) == ("ctn-02",)
+    adoption_rendered = _rendered("surface-psych-medlegal", adoption_document.index)
+    assert adoption_lead in _flat(adoption_rendered.text)
+
+    overlap = channels["lc4664-prior-award-overlap"]
+    assert [(item["id"], item["quality"]) for item in overlap["contentions"]] == [
+        ("ctn-01", "thin"),
+        ("ctn-02", "supported"),
+    ]
+    assert [(item["id"], item["quality"]) for item in overlap["apportionmentAssertions"]] == [
+        ("app-01", "supported")
+    ]
+
+    confound = channels["diabetic-neuropathy-cts-confound"]
+    assert [(item["id"], item["quality"]) for item in confound["apportionmentAssertions"]] == [
+        ("app-01", "supported"),
+        ("app-02", "thin"),
+        ("app-03", "thin"),
+        ("app-04", "unsupportable"),
+    ]
+    assert {item["quality"] for item in confound["apportionmentAssertions"]} == {
+        "supported",
+        "thin",
+        "unsupportable",
+    }
+
+    pages = {case_id: _showcase_pdf_text(out_dir, case_id) for case_id in _SHOWCASE_CASE_SEEDS}
+    showcase_case_by_id = {case.case_id: case for case in showcase_spec.cases}
+
+    def _showcase_opinion_bound(case_id: str, opinion_id: str):
+        case = showcase_case_by_id[case_id]
+        plan = build_case_plan(case)
+        assert plan.medical_story is not None
+        for document in plan.documents:
+            story = plan.medical_story.by_document_index.get(document.index)
+            if (
+                story is not None
+                and story.contention_surface is None
+                and story.medical_opinion is not None
+                    and story.medical_opinion.id == opinion_id
+                ):
+                    return case, plan, document, story
+        raise AssertionError(f"{case_id} has no showcase bound report for {opinion_id}")
+
+    def _showcase_contention_bound(case_id: str, contention_surface: str):
+        case = showcase_case_by_id[case_id]
+        plan = build_case_plan(case)
+        assert plan.medical_story is not None
+        for document in plan.documents:
+            story = plan.medical_story.by_document_index.get(document.index)
+            if (
+                story is not None
+                and story.contention_surface == contention_surface
+                and story.medical_opinion is None
+            ):
+                return case, plan, document, story
+        raise AssertionError(
+            f"{case_id} has no showcase bound contention surface {contention_surface}"
+        )
+
+    overreach_sentence = (
+        "Applicant contends that sustained work stress caused the invasive ductal carcinoma"
+    )
+    silent_a_case, silent_a_plan, silent_a_document, silent_a_story = _showcase_opinion_bound(
+        "flagship-nonindustrial-cancer-noise-a", "opn-01"
+    )
+    assert silent_a_story.medical_opinion is not None
+    assert silent_a_story.medical_opinion.reviewed_condition_ids == ("cond-00",)
+    assert silent_a_story.medical_opinion.aoe_coe_rationale is not None
+    assert "lumbar" in silent_a_story.medical_opinion.aoe_coe_rationale
+    assert "cancer" not in silent_a_story.medical_opinion.aoe_coe_rationale.lower()
+    silent_a_text = _flat(
+        _render(
+            silent_a_case,
+            silent_a_plan,
+            silent_a_document,
+            silent_a_story,
+            "showcase-a-opn-01",
+        ).text
+    )
+    assert overreach_sentence not in silent_a_text
+
+    loud_b_case, loud_b_plan, loud_b_document, loud_b_story = _showcase_contention_bound(
+        "flagship-nonindustrial-cancer-noise-b", "advocacy"
+    )
+    loud_b_text = _flat(
+        _render(
+            loud_b_case,
+            loud_b_plan,
+            loud_b_document,
+            loud_b_story,
+            "showcase-b-opn-01",
+        ).text
+    )
+    assert overreach_sentence in loud_b_text
+
+    psych_case, psych_plan, psych_document, _ = _showcase_opinion_bound(
+        "lc4664-prior-award-overlap", "opn-01"
+    )
+    assert psych_document.subtype == "PSYCH_EVAL_REPORT_QME_AME"
+    psych_text = _flat(
+        _render(
+            psych_case,
+            psych_plan,
+            psych_document,
+            psych_plan.medical_story.by_document_index[psych_document.index],
+            "showcase-overlap-opn-01",
+        ).text
+    )
+    assert "Labor Code section 3208.3" in psych_text
+    assert "predominant cause" in psych_text
+    assert "The repetitive work caused the focal median neuropathy at the wrist" in pages[
+        "diabetic-neuropathy-cts-confound"
+    ]
+    assert "supplemental diabetic treatment records" in pages[
+        "diabetic-neuropathy-cts-confound"
+    ]
+    assert "do not constitute substantial medical evidence" in pages[
+        "diabetic-neuropathy-cts-confound"
+    ]
+    deposition_marker = (
+        "My opinions are unchanged; I have provided additional reasoning under oath today"
+    )
+    assert deposition_marker in pages["diabetic-neuropathy-cts-confound"]
+
+
+def test_medical_story_showcase_contention_loop_has_literal_causal_order() -> None:
+    """The authored chain lands advocacy -> request -> report -> objection -> deposition."""
+    spec = parse_caseload_spec(yaml.safe_load(_SHOWCASE_PATH.read_text(encoding="utf-8")))
+    seed = next(case for case in spec.cases if case.case_id == "diabetic-neuropathy-cts-confound")
+    plan = build_case_plan(seed)
+    assert plan.medical_story is not None
+    rows = []
+    for document in plan.documents:
+        story = plan.medical_story.by_document_index.get(document.index)
+        if story is None:
+            continue
+        if story.contention_surface in {
+            "advocacy",
+            "supplemental_request",
+            "objection",
+            "qme_deposition",
+        }:
+            rows.append(
+                (
+                    story.contention_surface,
+                    document.subtype,
+                    document.doc_date.isoformat(),
+                )
+            )
+        elif story.medical_opinion is not None and story.medical_opinion.id == "opn-02":
+            rows.append(("supplemental_report", document.subtype, document.doc_date.isoformat()))
+    assert rows == [
+        ("advocacy", "ADVOCACY_LETTERS_QME", "2023-11-20"),
+        ("supplemental_request", "ADVOCACY_LETTERS_PTP_QME_AME", "2024-02-12"),
+        ("supplemental_report", "SUPPLEMENTAL_QME_AME_REPORT", "2024-04-08"),
+        ("objection", "ADVOCACY_LETTERS_PTP_QME_AME", "2024-05-14"),
+        ("qme_deposition", "DEPOSITION_TRANSCRIPT", "2024-07-19"),
+    ]
+
+
 def test_surface_matrix_uses_the_frozen_r67_case_ids_and_seeds():
     """R67 — the seven fixture identities are contract, not descriptive labels."""
-    actual = {
-        entry["case_id"]: entry["rng_seed"] for entry in _fixture_payload()["cases"]
-    }
+    actual = {entry["case_id"]: entry["rng_seed"] for entry in _fixture_payload()["cases"]}
     assert actual == _FROZEN_SURFACE_CASE_SEEDS
 
 
@@ -284,9 +696,7 @@ def test_r8_governed_surface_sets_equal_the_frozen_spec():
             }
         ),
         "psych": frozenset({"PSYCH_EVAL_REPORT_QME_AME"}),
-        "supplemental": frozenset(
-            {"QME_REPORT_SUPPLEMENTAL", "SUPPLEMENTAL_QME_AME_REPORT"}
-        ),
+        "supplemental": frozenset({"QME_REPORT_SUPPLEMENTAL", "SUPPLEMENTAL_QME_AME_REPORT"}),
         "ptp_causation": frozenset(
             {
                 "TREATING_PHYSICIAN_REPORT",
@@ -381,8 +791,7 @@ def test_every_governed_surface_resolves_to_its_exact_fact_aware_subclass_withou
                 continue
             rendered = _rendered(case_id, document.index)
             assert not rendered.fallback, (
-                f"{case_id}[{document.index}] {document.subtype} fell back: "
-                f"{rendered.fallback}"
+                f"{case_id}[{document.index}] {document.subtype} fell back: {rendered.fallback}"
             )
             rendered_count += 1
     assert rendered_count >= 24
@@ -457,9 +866,7 @@ def test_psych_triad_renders_world_framing_rederivation_and_section_4660_1_c():
     from the post-2012 added-impairment limitation. McCullough controls every
     report; no rendered quality value selects the law.
     """
-    seed, plan = _fixture_case(
-        str(_PSYCH_TRIAD_PATH), "psych-triad-consequence-as-direct"
-    )
+    seed, plan = _fixture_case(str(_PSYCH_TRIAD_PATH), "psych-triad-consequence-as-direct")
     assert plan.medical_history is not None
     psych = next(
         condition
@@ -505,13 +912,9 @@ def test_psych_triad_renders_world_framing_rederivation_and_section_4660_1_c():
             ).text
         )
 
-    assert "direct injury caused by the events of employment themselves" in rendered[
-        "advocacy"
-    ]
+    assert "direct injury caused by the events of employment themselves" in rendered["advocacy"]
     assert "PSYCHIATRIC CAUSATION" in rendered["opn-01"]
-    assert "direct injury arising from the events of employment themselves" in rendered[
-        "opn-01"
-    ]
+    assert "direct injury arising from the events of employment themselves" in rendered["opn-01"]
     qme_text = rendered["opn-02"]
     _assert_ordered(
         qme_text,
@@ -538,9 +941,7 @@ def test_hikida_justice_variants_render_the_frozen_four_cell_semantics():
     document = next(
         item
         for item in plan.documents
-        if (
-            story := plan.medical_story.by_document_index.get(item.index)
-        ) is not None
+        if (story := plan.medical_story.by_document_index.get(item.index)) is not None
         and story.contention_surface == "advocacy"
     )
     base_story = plan.medical_story.by_document_index[document.index]
@@ -575,8 +976,7 @@ def test_hikida_justice_variants_render_the_frozen_four_cell_semantics():
     for marker in (
         "other pathology also contributes; under Justice's narrowing of Hikida, "
         "statutory apportionment applies",
-        "requested refusal of apportionment invokes Hikida even though Justice "
-        "limits the carveout",
+        "requested refusal of apportionment invokes Hikida even though Justice limits the carveout",
         "requested result still applies apportionment contrary to the Hikida carveout",
         "Hikida, as narrowed by Justice, therefore requires compensation without apportionment",
     ):
@@ -649,6 +1049,29 @@ def test_imr_request_draw_uses_only_effective_upheld_denials_with_unauthored_imr
     assert plans["imr-overturned"].medical_ur_plan is not None
     assert plans["imr-overturned"].medical_ur_plan.imr_requested is False
 
+    # The lifecycle intentionally emits no UR denial after an overturned
+    # decision, so its plan-only path cannot exercise the sampled-request
+    # branch.  Supply the otherwise valid denial date directly: an
+    # overturned, unauthored case must still construct neither the request
+    # stream nor an IMR request.  The mutant may instead reach the downstream
+    # effective-decision invariant; that is this guard's assertion failure,
+    # not a test error.
+    overturned_seed = _fresh_imr_case("imr-overturned")[0]
+    try:
+        overturned_probe = medical_story_module.derive_medical_ur_plan(
+            overturned_seed,
+            target_denial_date=overturned_seed.injury.onset_date + dt.timedelta(days=180),
+        )
+    except MedicalAssertionError as exc:
+        pytest.fail(
+            "an overturned, unauthored UR decision constructed an IMR request "
+            f"instead of returning false: {exc}"
+        )
+    assert overturned_probe is not None
+    assert overturned_probe.effective_decision == "overturned"
+    assert overturned_probe.imr_was_authored is False
+    assert overturned_probe.imr_requested is False
+
     assert "imr-request" not in calls.get("imr-authored-false-upheld", [])
     assert "imr-request" not in calls.get("imr-authored-true-upheld", [])
     assert calls["imr-sampled-upheld"].count("imr-request") == 1
@@ -660,9 +1083,7 @@ def test_imr_request_draw_uses_only_effective_upheld_denials_with_unauthored_imr
             if document.subtype == "MEDICAL_TREATMENT_DENIAL_UR"
         ]
         applications = [
-            document
-            for document in plan.documents
-            if document.subtype == "IMR_APPLICATION_FORM"
+            document for document in plan.documents if document.subtype == "IMR_APPLICATION_FORM"
         ]
         if applications:
             assert len(denials) == 1
@@ -684,9 +1105,7 @@ def test_medical_story_imr_uses_canonical_carrier_and_legacy_path_stays_unchange
         if document.subtype == "INDEPENDENT_MEDICAL_REVIEW_DECISION"
     )
     application = next(
-        document
-        for document in gated.documents
-        if document.subtype == "IMR_APPLICATION_FORM"
+        document for document in gated.documents if document.subtype == "IMR_APPLICATION_FORM"
     )
     denial = next(
         document
@@ -698,9 +1117,7 @@ def test_medical_story_imr_uses_canonical_carrier_and_legacy_path_stays_unchange
     assert decision.imr_application_content is None
 
     storyless_seed = seed.model_copy(
-        update={
-            "scenario": seed.scenario.model_copy(update={"medical_history": None})
-        }
+        update={"scenario": seed.scenario.model_copy(update={"medical_history": None})}
     )
     legacy = build_case_plan(storyless_seed)
     legacy_subtypes = tuple(document.subtype for document in legacy.documents)
@@ -710,11 +1127,12 @@ def test_medical_story_imr_uses_canonical_carrier_and_legacy_path_stays_unchange
 
 def test_sampled_imr_fields_are_sparse_without_quality_like_state():
     """R58 — omissions are visible fields, never hidden adequacy state."""
-    _sampled_seed, sampled = _fresh_imr_case("imr-sampled-upheld")
+    try:
+        _sampled_seed, sampled = _fresh_imr_case("imr-sampled-upheld")
+    except Exception as error:
+        pytest.fail(f"sampled sparse IMR construction raised: {error!r}")
     sampled_application = next(
-        document
-        for document in sampled.documents
-        if document.subtype == "IMR_APPLICATION_FORM"
+        document for document in sampled.documents if document.subtype == "IMR_APPLICATION_FORM"
     )
     content = sampled_application.imr_application_content
     assert content is not None
@@ -746,9 +1164,7 @@ def test_sampled_imr_fields_are_sparse_without_quality_like_state():
 
     _explicit_seed, explicit = _fresh_imr_case("imr-sparse-explicit")
     explicit_application = next(
-        document
-        for document in explicit.documents
-        if document.subtype == "IMR_APPLICATION_FORM"
+        document for document in explicit.documents if document.subtype == "IMR_APPLICATION_FORM"
     ).imr_application_content
     assert explicit_application is not None
     assert explicit_application.disputed_treatment == "lumbar epidural steroid injection"
@@ -769,9 +1185,7 @@ def test_ptp_sections_follow_the_frozen_order():
     only on the P&S surfaces, immediately after the impairment rating."""
     _seed, apportionment_plan = _case("surface-ptp-apportionment")
     assert apportionment_plan.medical_story is not None
-    documents_by_index = {
-        document.index: document for document in apportionment_plan.documents
-    }
+    documents_by_index = {document.index: document for document in apportionment_plan.documents}
     assert documents_by_index[54].subtype == "TREATING_PHYSICIAN_REPORT_PR4"
     assert documents_by_index[54].medical_opinion_id == "opn-01"
     assert 54 in apportionment_plan.medical_story.by_document_index
@@ -864,9 +1278,7 @@ def test_every_story_record_reference_names_an_earlier_planned_document():
                 assert planned.doc_date == reference.doc_date
                 assert reference.document_index != document.index
                 assert reference.doc_date < document.doc_date
-                assert taxonomy.parent_of(reference.subtype) in (
-                    RECORD_REFERENCE_PARENT_TYPES
-                )
+                assert taxonomy.parent_of(reference.subtype) in (RECORD_REFERENCE_PARENT_TYPES)
             if (
                 document.subtype in SUPPLEMENTAL_MEDLEGAL_SURFACES
                 and story.medical_opinion is not None
@@ -928,9 +1340,7 @@ def test_every_surface_uses_bound_author_role_not_file_perspective():
                     continue
                 actor = document.contention_actor_party
                 expected_role = (
-                    "court_reporter"
-                    if surface == "qme_deposition"
-                    else f"{actor}_attorney"
+                    "court_reporter" if surface == "qme_deposition" else f"{actor}_attorney"
                 )
                 assert document.author_role == expected_role, (
                     f"{case_id}/{perspective}[{document.index}] author_role "
@@ -1042,24 +1452,17 @@ def test_ajc65_governance_consumes_and_discards_legacy_draws():
     shift every later section."""
     seed, plan = _case("surface-initial-medlegal")
     document, story = _bound("surface-initial-medlegal", "opn-02")
-    stripped = story.model_copy(
-        update={"medical_opinion": None, "apportionments": ()}
-    )
+    stripped = story.model_copy(update={"medical_opinion": None, "apportionments": ()})
     governed = _flat(
         _without_page_furniture(_render(seed, plan, document, story, "draws-governed").text)
     )
     history_only = _flat(
-        _without_page_furniture(
-            _render(seed, plan, document, stripped, "draws-history-only").text
-        )
+        _without_page_furniture(_render(seed, plan, document, stripped, "draws-history-only").text)
     )
 
     # Non-vacuity: the two renders really did diverge where governance lives.
     assert "The multilevel degenerative disc disease predated the injury" in governed
-    assert (
-        "The multilevel degenerative disc disease predated the injury"
-        not in history_only
-    )
+    assert "The multilevel degenerative disc disease predated the injury" not in history_only
 
     def _after_apportionment(text: str) -> str:
         start = text.index("FUTURE MEDICAL TREATMENT RECOMMENDATIONS")
@@ -1097,6 +1500,55 @@ def test_ajc66_activates_only_the_bound_letter_or_deposition_family():
     for key in sorted(expected_depositions):
         switch = ajc66_variant_content(key)
         assert switch == {"deposition_transcript": True}, f"{key} -> {switch!r}"
+
+    # Capture the context that render_document actually hands to each bound
+    # template.  A global True looks identical to the correct namespaced
+    # block from inside the intended family; the opposite family is the
+    # observable counterfactual that distinguishes them (m20-28).
+    seed, plan = _case("surface-contention-loop")
+    templates = fact_aware_templates()
+    cross_family_cases = (
+        (
+            "objection",
+            {"letter": True},
+            templates["DEPOSITION_TRANSCRIPT"],
+        ),
+        (
+            "qme_deposition",
+            {"deposition_transcript": True},
+            templates["ADVOCACY_LETTERS_PTP"],
+        ),
+    )
+    for surface, expected_switch, opposite_class in cross_family_cases:
+        document, story = next(
+            (document, story)
+            for document, story in _governed("surface-contention-loop")
+            if story.contention_surface == surface
+        )
+        captured_specs: list[Any] = []
+        original_spec = renderer_module._DocumentSpec
+
+        def capture_spec(
+            *args: Any,
+            _original_spec: Any = original_spec,
+            _captured_specs: list[Any] = captured_specs,
+            **kwargs: Any,
+        ) -> Any:
+            spec = _original_spec(*args, **kwargs)
+            _captured_specs.append(spec)
+            return spec
+
+        with pytest.MonkeyPatch.context() as patcher:
+            patcher.setattr(renderer_module, "_DocumentSpec", capture_spec)
+            _render(seed, plan, document, story, f"ajc66-cross-family-{surface}")
+        assert len(captured_specs) == 1
+        spec = captured_specs[0]
+        assert spec.context["variant_content"] == expected_switch
+        opposite = opposite_class(plan.cast.case)
+        assert opposite.variant_content_enabled(spec) is False, (
+            f"{surface} activated unrelated family "
+            f"{opposite.VARIANT_CONTENT_FAMILY!r}"
+        )
 
     # The objection letter renders its registered service paragraph (register
     # prose, absent from the engine's own applicant paragraphs) and the
@@ -1140,9 +1592,7 @@ def test_ajc66_absent_false_and_empty_contexts_are_inert():
     # with neither the engine's story sections nor any register prose.
     seed, plan = _case("surface-advocacy-registers")
     document = next(
-        d
-        for d, s in _governed("surface-advocacy-registers")
-        if s.contention_surface == "advocacy"
+        d for d, s in _governed("surface-advocacy-registers") if s.contention_surface == "advocacy"
     )
     absent = _flat(_render(seed, plan, document, None, "ajc66-story-absent").text)
     assert "RECORDS AND FACTS FOR REVIEW" not in absent
@@ -1166,21 +1616,52 @@ def test_absent_medical_story_gate_constructs_no_context_projection_or_story_rng
             "output": {"formats": ["pdf"]},
         }
     )
-    plan = build_case_plan(seed)
     assert seed.scenario.medical_history is None
-    assert plan.medical_story is None
 
     def fail(*_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("the absent medical-story gate constructed M3 state")
 
+    story_rng_calls: list[tuple[Any, str, Any]] = []
+    original_story_rng = medical_assertions_module._medical_story_rng
+
+    def record_forbidden_story_rng(seed: Any, family: str, semantic_key: Any) -> Any:
+        story_rng_calls.append((seed, family, semantic_key))
+        try:
+            original_story_rng(seed, family, semantic_key)
+        except MedicalAssertionError as exc:
+            pytest.fail(
+                "the absent medical-story gate attempted story-RNG construction "
+                f"and raised {type(exc).__name__}: {exc}"
+            )
+        pytest.fail("the absent medical-story gate constructed a story RNG")
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(
+            medical_assertions_module,
+            "_medical_story_rng",
+            record_forbidden_story_rng,
+        )
+        try:
+            plan = build_case_plan(seed)
+            assert plan.medical_story is None
+        except MedicalAssertionError as exc:
+            pytest.fail(
+                "the absent medical-story gate raised "
+                f"{type(exc).__name__} instead of returning before RNG construction: {exc}"
+            )
+
     with pytest.MonkeyPatch.context() as patcher:
         patcher.setattr(medical_story_module, "_project_demographics", fail)
         patcher.setattr(random, "Random", fail)
+        patcher.setattr(
+            medical_assertions_module,
+            "_medical_story_rng",
+            record_forbidden_story_rng,
+        )
         assert derive_medical_story(seed, None, None, plan.documents) is None
+    assert story_rng_calls == []
 
-    document = next(
-        entry for entry in plan.documents if entry.subtype in INITIAL_MEDLEGAL_SURFACES
-    )
+    document = next(entry for entry in plan.documents if entry.subtype in INITIAL_MEDLEGAL_SURFACES)
     with pytest.MonkeyPatch.context() as patcher:
         patcher.setattr(renderer_module, "ajc65_story_governance", fail)
         patcher.setattr(renderer_module, "ajc66_variant_content", fail)
@@ -1197,9 +1678,7 @@ def test_governed_medical_facts_are_identical_across_every_bound_surface():
     for opinion_id in ("opn-01", "opn-02", "opn-03", "opn-04"):
         document, _story = _bound("surface-initial-medlegal", opinion_id)
         text = _flat(
-            _without_page_furniture(
-                _rendered("surface-initial-medlegal", document.index).text
-            )
+            _without_page_furniture(_rendered("surface-initial-medlegal", document.index).text)
         )
         start = text.index("PAST MEDICAL HISTORY")
         end = text.index("REVIEW OF MEDICAL RECORDS")
@@ -1228,36 +1707,39 @@ def test_medical_story_projection_uses_literal_allowlists_and_never_model_dump()
     ledger models really do carry the truth-only ``quality`` field, and the
     projection executed with ``model_dump`` spies planted never touches one —
     so no future field (grade, note, digest) can leak by default."""
-    seed, plan = _case("surface-contention-loop")
-    assert plan.medical_assertions is not None
-    # The planted truth-only field exists on every upstream ledger model.
-    assert all(hasattr(o, "quality") for o in plan.medical_assertions.medical_opinions)
-    assert all(hasattr(c, "quality") for c in plan.medical_assertions.contentions)
+    try:
+        seed, plan = _case("surface-contention-loop")
+        assert plan.medical_assertions is not None
+        # The planted truth-only field exists on every upstream ledger model.
+        assert all(hasattr(o, "quality") for o in plan.medical_assertions.medical_opinions)
+        assert all(hasattr(c, "quality") for c in plan.medical_assertions.contentions)
 
-    def _spy(name: str):
-        def fail(self: Any, *args: Any, **kwargs: Any) -> Any:
-            raise AssertionError(
-                f"{name} was serialized wholesale during the story projection; "
-                "R4 requires a literal field allowlist, never model_dump"
+        def _spy(name: str):
+            def fail(self: Any, *args: Any, **kwargs: Any) -> Any:
+                raise AssertionError(
+                    f"{name} was serialized wholesale during the story projection; "
+                    "R4 requires a literal field allowlist, never model_dump"
+                )
+
+            return fail
+
+        with pytest.MonkeyPatch.context() as patcher:
+            for model in (
+                ApplicantDemographics,
+                MedicalCondition,
+                PriorClaim,
+                PriorAward,
+                MedicalOpinion,
+                Contention,
+                ApportionmentAssertion,
+            ):
+                patcher.setattr(model, "model_dump", _spy(model.__name__))
+                patcher.setattr(model, "model_dump_json", _spy(model.__name__))
+            story_plan = derive_medical_story(
+                seed, plan.medical_history, plan.medical_assertions, plan.documents
             )
-
-        return fail
-
-    with pytest.MonkeyPatch.context() as patcher:
-        for model in (
-            ApplicantDemographics,
-            MedicalCondition,
-            PriorClaim,
-            PriorAward,
-            MedicalOpinion,
-            Contention,
-            ApportionmentAssertion,
-        ):
-            patcher.setattr(model, "model_dump", _spy(model.__name__))
-            patcher.setattr(model, "model_dump_json", _spy(model.__name__))
-        story_plan = derive_medical_story(
-            seed, plan.medical_history, plan.medical_assertions, plan.documents
-        )
+    except Exception as error:
+        pytest.fail(f"literal medical-story projection raised: {error!r}")
     assert story_plan is not None and story_plan.by_document_index
 
     for story in story_plan.by_document_index.values():
@@ -1275,20 +1757,14 @@ def test_unbound_or_missing_opinion_id_fails_instead_of_guessing_by_date():
     order."""
     seed, plan = _case("surface-contention-loop")
     documents = list(plan.documents)
-    position = next(
-        i for i, d in enumerate(documents) if d.medical_opinion_id is not None
-    )
-    documents[position] = dataclasses.replace(
-        documents[position], medical_opinion_id="opn-99"
-    )
+    position = next(i for i, d in enumerate(documents) if d.medical_opinion_id is not None)
+    documents[position] = dataclasses.replace(documents[position], medical_opinion_id="opn-99")
     message = None
     try:
         derive_medical_story(seed, plan.medical_history, plan.medical_assertions, documents)
     except MedicalAssertionError as exc:
         message = str(exc)
-    assert message is not None, (
-        "a dangling opinion binding derived a story instead of failing (R5)"
-    )
+    assert message is not None, "a dangling opinion binding derived a story instead of failing (R5)"
     assert "'opn-99'" in message
     assert "does not exist in the completed ledger" in message
     assert "fails instead of guessing by date (R5)" in message
@@ -1296,18 +1772,14 @@ def test_unbound_or_missing_opinion_id_fails_instead_of_guessing_by_date():
 
 def _part5_psych_report(opinion_id: str) -> tuple[Any, Any, str]:
     document, story = _bound("surface-psych-medlegal", opinion_id)
-    return document, story, _flat(
-        _rendered("surface-psych-medlegal", document.index).text
-    )
+    return document, story, _flat(_rendered("surface-psych-medlegal", document.index).text)
 
 
 def test_part5_psych_complaint_registers_are_exact_and_fact_grounded():
     """R82 — all four speaking-layer registers render exact grounded slots."""
     _direct_doc, _direct_story, direct = _part5_psych_report("opn-01")
     _gfpa_doc, _gfpa_story, gfpa = _part5_psych_report("opn-02")
-    _consequence_doc, _consequence_story, consequence = _part5_psych_report(
-        "opn-03"
-    )
+    _consequence_doc, _consequence_story, consequence = _part5_psych_report("opn-03")
     _safety_doc, _safety_story, safety = _part5_psych_report("opn-04")
 
     assert (
@@ -1343,9 +1815,7 @@ def test_part5_psych_complaint_registers_are_exact_and_fact_grounded():
 def test_part5_rolda_threshold_six_month_post_termination_and_gfpa_walk_is_exact():
     """R79/R83 — corrected McCullough, Rolda, dates, GFPA, and reservation."""
     _gfpa_doc, _gfpa_story, gfpa = _part5_psych_report("opn-02")
-    _consequence_doc, _consequence_story, consequence = _part5_psych_report(
-        "opn-03"
-    )
+    _consequence_doc, _consequence_story, consequence = _part5_psych_report("opn-03")
     _safety_doc, _safety_story, safety = _part5_psych_report("opn-04")
     rolda = (
         "After consideration of the medical, documentary, and testimonial "
@@ -1394,9 +1864,7 @@ def test_part5_rolda_threshold_six_month_post_termination_and_gfpa_walk_is_exact
         for document, story in _governed("surface-psych-medlegal")
         if document.defense_contest_theories == ("post_termination",)
     )
-    post = _flat(
-        _render(seed, plan, post_document, post_story, "part5-post-termination").text
-    )
+    post = _flat(_render(seed, plan, post_document, post_story, "part5-post-termination").text)
     for clause in dict(PSYCH_DEFENSE_CONTEST_REGISTER)["post_termination"]:
         assert clause in post
     assert "sudden-and-extraordinary exception is not inferred from a violent-act" in gfpa
@@ -1539,8 +2007,7 @@ def test_part5_rolda_threshold_six_month_post_termination_and_gfpa_walk_is_exact
                 "3208.3(d)" in lowered
                 and "predominant" in lowered
                 and any(
-                    token in lowered
-                    for token in ("permits", "without", "does not apply", "bypass")
+                    token in lowered for token in ("permits", "without", "does not apply", "bypass")
                 )
             ):
                 bypass_findings.append(sentence)
@@ -1568,9 +2035,9 @@ def test_part5_actual_events_percentages_never_become_disability_apportionment()
     )[0]
     assert "70 percent" in pd_section and "30 percent" in pd_section
     assert "45%" not in pd_section
-    causation_section = rendered.split(
-        "PSYCHIATRIC INJURY CAUSATION", maxsplit=1
-    )[1].split("LABOR CODE §3208.3 ANALYSIS", maxsplit=1)[0]
+    causation_section = rendered.split("PSYCHIATRIC INJURY CAUSATION", maxsplit=1)[1].split(
+        "LABOR CODE §3208.3 ANALYSIS", maxsplit=1
+    )[0]
     for percentage in (
         story.apportionments[0].industrial_percent,
         story.apportionments[0].nonindustrial_percent,
@@ -1591,19 +2058,17 @@ def test_part5_actual_events_percentages_never_become_disability_apportionment()
         update={"industrial_percent": 60, "nonindustrial_percent": 40}
     )
     changed_story = story.model_copy(update={"apportionments": (changed_row,)})
-    changed = _flat(
-        _render(seed, plan, document, changed_story, "part5-pd-row-changed").text
-    )
+    changed = _flat(_render(seed, plan, document, changed_story, "part5-pd-row-changed").text)
     assert allocation in changed
     assert "60 percent" in changed and "40 percent" in changed
-    changed_causation_section = changed.split(
-        "PSYCHIATRIC INJURY CAUSATION", maxsplit=1
-    )[1].split("LABOR CODE §3208.3 ANALYSIS", maxsplit=1)[0]
+    changed_causation_section = changed.split("PSYCHIATRIC INJURY CAUSATION", maxsplit=1)[1].split(
+        "LABOR CODE §3208.3 ANALYSIS", maxsplit=1
+    )[0]
     assert "60 percent" not in changed_causation_section
     assert "40 percent" not in changed_causation_section
-    changed_pd_section = changed.split(
-        "PSYCHIATRIC APPORTIONMENT", maxsplit=1
-    )[1].split("FUTURE MEDICAL TREATMENT RECOMMENDATIONS", maxsplit=1)[0]
+    changed_pd_section = changed.split("PSYCHIATRIC APPORTIONMENT", maxsplit=1)[1].split(
+        "FUTURE MEDICAL TREATMENT RECOMMENDATIONS", maxsplit=1
+    )[0]
     assert "60 percent" in changed_pd_section and "40 percent" in changed_pd_section
     assert "45%" not in changed_pd_section
 
@@ -1616,9 +2081,7 @@ def test_part5_actual_events_percentages_never_become_disability_apportionment()
     changed_opinion = story.medical_opinion.model_copy(
         update={"aoe_coe_rationale": changed_rationale}
     )
-    changed_causation_story = story.model_copy(
-        update={"medical_opinion": changed_opinion}
-    )
+    changed_causation_story = story.model_copy(update={"medical_opinion": changed_opinion})
     changed_causation = _flat(
         _render(
             seed,
@@ -1630,9 +2093,9 @@ def test_part5_actual_events_percentages_never_become_disability_apportionment()
     )
     assert changed_allocation in changed_causation
     assert "70 percent" in changed_causation and "30 percent" in changed_causation
-    changed_causation_pd = changed_causation.split(
-        "PSYCHIATRIC APPORTIONMENT", maxsplit=1
-    )[1].split("FUTURE MEDICAL TREATMENT RECOMMENDATIONS", maxsplit=1)[0]
+    changed_causation_pd = changed_causation.split("PSYCHIATRIC APPORTIONMENT", maxsplit=1)[
+        1
+    ].split("FUTURE MEDICAL TREATMENT RECOMMENDATIONS", maxsplit=1)[0]
     assert "70 percent" in changed_causation_pd
     assert "55%" not in changed_causation_pd
 
@@ -1666,9 +2129,7 @@ def test_part5_safety_officer_ptsd_presumption_and_wilson_register_is_exact():
         update={"psych_exception_analysis": "violent_act"}
     )
     violent_story = story.model_copy(update={"apportionments": (violent_row,)})
-    violent = _flat(
-        _render(seed, plan, document, violent_story, "part5-violent-act").text
-    )
+    violent = _flat(_render(seed, plan, document, violent_story, "part5-violent-act").text)
     assert (
         "The violent-act inquiry concerns the mechanism: strong physical force, "
         "extreme or intense force, or an act that was vehemently or passionately "
@@ -1702,9 +2163,7 @@ def test_part5_gaf_to_wpi_is_report_prose_not_rating_state():
 
 def test_part5_direct_consequence_honest_and_mischaracterizing_registers_are_exact():
     """R87 — advocacy may diverge; PTP/QME remain independent speaking layers."""
-    seed, plan = _fixture_case(
-        str(_PSYCH_TRIAD_PATH), "psych-triad-consequence-as-direct"
-    )
+    seed, plan = _fixture_case(str(_PSYCH_TRIAD_PATH), "psych-triad-consequence-as-direct")
     rendered: dict[str, str] = {}
     for document in plan.documents:
         story = plan.medical_story.by_document_index.get(document.index)
@@ -1733,10 +2192,13 @@ def test_part5_direct_consequence_honest_and_mischaracterizing_registers_are_exa
         "even though Labor Code section 4660.1(c)(1) limits an additional psychiatric "
         "impairment rating."
     )
-    assert consequence.replace(
-        "[grounded physical-injury effects]",
-        "pain, treatment, disability",
-    ) in rendered["opn-02"]
+    assert (
+        consequence.replace(
+            "[grounded physical-injury effects]",
+            "pain, treatment, disability",
+        )
+        in rendered["opn-02"]
+    )
     assert "section 3208.3(b)(1)'s predominant-cause threshold applies" in rendered["opn-02"]
     assert "section 3208.3(d) does not apply" not in rendered["opn-02"]
     assert (
@@ -1766,8 +2228,7 @@ def test_part5_psych_defense_and_contention_surface_phrase_pools_are_exact():
             "4663.",
         ),
         "supplemental_request": (
-            "1. Identify the actual events of employment assumed in forming your "
-            "opinion.",
+            "1. Identify the actual events of employment assumed in forming your opinion.",
             "2. State the percentage of total causation resulting from those events.",
             "3. Distinguish event-focused symptoms from symptoms arising from pain, "
             "disability, treatment, or other physical-injury effects.",
@@ -1835,9 +2296,7 @@ def test_part5_psych_defense_and_contention_surface_phrase_pools_are_exact():
     governed = list(_governed("surface-contention-loop"))
     for surface in ("advocacy", "objection", "supplemental_request", "qme_deposition"):
         document, story = next(
-            (document, story)
-            for document, story in governed
-            if story.contention_surface == surface
+            (document, story) for document, story in governed if story.contention_surface == surface
         )
         psych_contention = story.contentions[0].model_copy(
             update={
@@ -1901,9 +2360,7 @@ def test_part5_register_gaps_render_only_generic_grounded_prose():
             "apportionments": (),
         }
     )
-    text = _flat(
-        _render(seed, plan, document, generic_story, "part5-register-gaps").text
-    )
+    text = _flat(_render(seed, plan, document, generic_story, "part5-register-gaps").text)
     assert (
         "The available history identifies no more specific psychiatric mechanism "
         "than the facts stated in the records reviewed."

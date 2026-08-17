@@ -4,12 +4,12 @@ project: wc-synthetic-caseload-engine
 slug: 20260727-143600_wc-synthetic-caseload-engine
 effort: E4
 effort_source: classifier
-phase: verify
-progress: 238/241
-iteration: 16
+phase: execute
+progress: 247/254
+iteration: 17
 mode: interactive
 started: 2026-07-27T14:36:00-07:00
-updated: 2026-07-31T23:55:00-07:00
+updated: 2026-08-14T21:37:32-07:00
 ticket: AJC-34
 ---
 
@@ -366,6 +366,22 @@ Round 10 audited round 9. Three findings, plus a fourth found while reproducing 
 - [x] ISC-239: **The document/money matrix is derived from the registry, not from the overrides** — a matrix built from the fact-aware list can only confirm what is already governed, which is how a twenty-seven-subtype template family making nine money draws went eleven rounds without anyone looking at it. Every money-drawing substrate module is now either governed for every subtype routed to it or listed with a reason, and the ledger fails in both directions (probe: `TestEveryMoneyDrawingTemplateIsAccountedFor`, plus a staleness check that fails when an entry stops being true)
 - [x] ISC-240: **A governed money fact is the same figure on every surface that prints it** — the sweep renders one settled case and walks every document in it rather than a named few. It found five defects on its first run: the settlement memo family's parallel money ontology (a temporary-disability rate of $1,141.07 against a published $767.59, a recommended target of $387,466 against an executed $32,668, a hardcoded PD rate of 290), a range-table row whose columns summed to $432,073 beside its own printed total of $427,428, the wage family governed on eight emittable subtypes of ten, with `PRIOR_CLAIMS_EDD_SDI_INFO` printing a temporary-disability rate of $848.53 against a published $767.59, a free `random.uniform(18, 55)` behind `employer.hourly_rate` feeding three document families, and a personnel-file promotion row raising pay above the rate the file says the applicant earns (probe: `TestAGovernedFigureIsTheSameOnEverySurface`, which also fails when a rule matches nothing). The registry binding is over the *canonical* subtypes: the first run mapped five registry-only keys the engine can never emit, and `test_scenario_p2` refused them — a hand-written list would have been wrong in the other direction too
 
+### AJC-62 final mutation-gate remediation (added 2026-08-14)
+
+- [x] ISC-241: Mutant `m20-3` fails its named guard on an assertion (probe: isolated mutation gate).
+- [x] ISC-242: Mutant `m20-25` fails its named guard on an assertion (probe: isolated mutation gate).
+- [x] ISC-243: Mutant `m20-26` exposes individual clamping through its named assertion (probe: isolated mutation gate).
+- [x] ISC-244: Mutant `m20-28` exposes cross-family variant activation through its named assertion (probe: isolated mutation gate).
+- [x] ISC-245: Mutant `m21-8` exposes sparse IMR commentary through its named assertion (probe: isolated mutation gate).
+- [x] ISC-246: Mutation shard 3 reports every registered mutant killed by assertion (probe: shard gate).
+- [x] ISC-247: Mutation shard 5 reports every registered mutant killed by assertion (probe: shard gate).
+- [x] ISC-248: Mutation shard 6 reports every registered mutant killed by assertion (probe: shard gate).
+- [x] ISC-249: Mutation shard 8 reports every registered mutant killed by assertion (probe: shard gate).
+- [ ] ISC-250: Full pytest suite exits zero (probe: requested pytest command).
+- [ ] ISC-251: All five golden corpora report OK (probe: requested golden command).
+- [ ] ISC-252: Ruff reports `All checks passed!` (probe: requested Ruff command).
+- [ ] ISC-253: Anti: No mutant is weakened to make its guard easier to kill (probe: registry read-back).
+
 - [x] ISC-181: **Anti**: the whole-corpus byte accounting survives the remediation unchanged — **353 files, 345 identical, 8 changed, 0 unexplained**, all 331 rendered documents byte-identical, no `money` key anywhere in the demo output, substrate tracked diff 0 (probe: `git archive origin/main` baseline regenerated and diffed against HEAD after every fix above; determinism ×3 including `TZ=Australia/Sydney`)
 
 ### Phase 3a confirmation residuals + prose-truth guard (added 2026-07-29, from the PR #25 confirmation review)
@@ -645,3 +661,12 @@ Evidence is grouped; every probe was run in the main checkout on the fast-forwar
   - **Mutation testing, 17 mutants.** 15 RED on first pass (method-selection order, rate ceiling, rate floor, DOI keying, in-kind, gap knob, diligence→lateness, approval/funding collapse, the money gate itself, wage-table rewrite, settlement pin, floor de-duplication, validator wage-statement rule, `money()` pin, derivation-body pin). **One STILL-GREEN and it was a real finding**: unpinning `money()`'s own decimal context left the whole-derivation probe green because the outer wrap covered it — the guard was widened to probe the public entry points directly and the mutant now goes red. Two further pins (`money_manifest_block`, `_dollars`) survive individually because they are mutually redundant; removing both together goes RED, recorded rather than hidden.
   - **Meta-guards fired on their own, as designed.** The ISC-129 message registry went red on 13 unregistered actionable messages the moment the money validators landed; each is now registered with a trigger seed and its own prescribed edit followed verbatim. Two messages were invisible to the detector (displaced verbs, the ISC-150 hole) and were reworded to registered imperatives rather than widening the vocabulary. ISC-137's `SCENARIO_CLASSES` extended by the six money scenario classes at the moment they existed.
   - **Not claimed:** the money layer is not exercised by the demo caseload (by design — see Decisions), so the demo proves inertness and the showcase proves function; and `earning_capacity` is reachable only by authoring, which the showcase's seventh case and the method-reachability test both witness.
+- ISC-241: isolated mutation gate — `1/1 mutants ran their named guard and failed it on an assertion`
+- ISC-242: isolated mutation gate — `1/1 mutants ran their named guard and failed it on an assertion`
+- ISC-243: isolated mutation gate — `1/1 mutants ran their named guard and failed it on an assertion`
+- ISC-244: isolated mutation gate — `1/1 mutants ran their named guard and failed it on an assertion`
+- ISC-245: isolated mutation gate — `1/1 mutants ran their named guard and failed it on an assertion`
+- ISC-246: mutation shard 3/10 — `28/28 mutants ran their named guard and failed it on an assertion`
+- ISC-247: mutation shard 5/10 — `28/28 mutants ran their named guard and failed it on an assertion` (writable temporary mirror used for the registered cross-package substrate mutant; production checkout remained untouched)
+- ISC-248: mutation shard 6/10 — `28/28 mutants ran their named guard and failed it on an assertion`
+- ISC-249: mutation shard 8/10 — `28/28 mutants ran their named guard and failed it on an assertion`

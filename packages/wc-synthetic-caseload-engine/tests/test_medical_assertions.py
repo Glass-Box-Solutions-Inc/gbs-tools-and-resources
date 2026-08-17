@@ -41,6 +41,13 @@ from wc_caseload_engine.medical_assertions import (
     validate_medical_assertions,
 )
 from wc_caseload_engine.medical_history import PRESUMPTION_DEFAULT_BY_RESOLUTION
+from wc_caseload_engine.medical_story import (
+    ADVOCACY_LETTER_SURFACES,
+    INITIAL_MEDLEGAL_SURFACES,
+    PSYCH_MEDLEGAL_SURFACES,
+    PTP_CAUSATION_SURFACES,
+    SUPPLEMENTAL_MEDLEGAL_SURFACES,
+)
 from wc_caseload_engine.seeds import (
     ApportionmentAssertionEntry,
     ContentionEntry,
@@ -48,6 +55,7 @@ from wc_caseload_engine.seeds import (
     MedicalAssertionsScenario,
     MedicalOpinionEntry,
     parse_case_seed,
+    parse_caseload_spec,
 )
 
 DOI = dt.date(2022, 4, 11)
@@ -234,9 +242,7 @@ def _problems(
     world: AssertionWorldProjection | None = None,
     context: AssertionValidationContext | None = None,
 ) -> tuple[str, ...]:
-    return validate_medical_assertions(
-        context or _context(), world or _world(), ledger
-    )
+    return validate_medical_assertions(context or _context(), world or _world(), ledger)
 
 
 def _seed_body(scenario: dict[str, Any]) -> dict[str, Any]:
@@ -393,9 +399,7 @@ def test_typed_doctrine_grounding_union_round_trips_all_four_variants() -> None:
     )
     restored = Contention.model_validate(contention.model_dump())
     assert restored.groundings == groundings
-    assert tuple(type(g) for g in restored.groundings) == tuple(
-        type(g) for g in groundings
-    )
+    assert tuple(type(g) for g in restored.groundings) == tuple(type(g) for g in groundings)
 
 
 def test_reviewed_prior_reference_caps_are_exact_and_combined_overflow_rejects() -> None:
@@ -519,18 +523,14 @@ def test_gate_and_identity_error_templates_are_exact() -> None:
                 }
             )
         )
-    assert "scenario.medical_assertions.contentions: duplicate id 'ctn-01'" in str(
-        duplicate.value
-    )
+    assert "scenario.medical_assertions.contentions: duplicate id 'ctn-01'" in str(duplicate.value)
 
     with pytest.raises(Exception) as reserved:
         parse_case_seed(
             _seed_body(
                 {
                     "medical_history": {},
-                    "medical_assertions": {
-                        "contentions": [{**contention, "quality": "supported"}]
-                    },
+                    "medical_assertions": {"contentions": [{**contention, "quality": "supported"}]},
                 }
             )
         )
@@ -622,8 +622,7 @@ def test_referential_error_templates_are_exact() -> None:
         ),
         (
             _ledger(assertions=(_assertion(opinion_id="opn-77"),)),
-            "apportionment assertion 'app-01' references unknown medical opinion "
-            "'opn-77'",
+            "apportionment assertion 'app-01' references unknown medical opinion 'opn-77'",
         ),
         (
             _ledger(
@@ -644,16 +643,14 @@ def test_referential_error_templates_are_exact() -> None:
                 opinions=(_opinion(),),
                 assertions=(_assertion(prior_claim_ids=("prior-88",)),),
             ),
-            "apportionment assertion 'app-01' references unknown prior claim "
-            "'prior-88'",
+            "apportionment assertion 'app-01' references unknown prior claim 'prior-88'",
         ),
         (
             _ledger(
                 opinions=(_opinion(),),
                 assertions=(_assertion(prior_award_ids=("prior-88-award",)),),
             ),
-            "apportionment assertion 'app-01' references unknown prior award "
-            "'prior-88-award'",
+            "apportionment assertion 'app-01' references unknown prior award 'prior-88-award'",
         ),
         (
             _ledger(
@@ -757,11 +754,7 @@ def test_opinion_chain_error_templates_are_exact() -> None:
 def test_lifecycle_error_templates_are_exact() -> None:
     cases: list[tuple[MedicalAssertionLedger, str]] = [
         (
-            _ledger(
-                opinions=(
-                    _opinion(apportionment_state="deferred", determination_kind=None),
-                )
-            ),
+            _ledger(opinions=(_opinion(apportionment_state="deferred", determination_kind=None),)),
             "medical opinion 'opn-01' is final but apportionment_state is 'deferred'",
         ),
         (
@@ -774,8 +767,7 @@ def test_lifecycle_error_templates_are_exact() -> None:
                     ),
                 )
             ),
-            "medical opinion 'opn-01' is interim but apportionment_state is "
-            "'omitted'",
+            "medical opinion 'opn-01' is interim but apportionment_state is 'omitted'",
         ),
         (
             _ledger(
@@ -788,14 +780,11 @@ def test_lifecycle_error_templates_are_exact() -> None:
                 ),
                 assertions=(_assertion(),),
             ),
-            "medical opinion 'opn-01' is deferred but owns an apportionment "
-            "assertion",
+            "medical opinion 'opn-01' is deferred but owns an apportionment assertion",
         ),
         (
             _ledger(
-                opinions=(
-                    _opinion(apportionment_state="omitted", determination_kind=None),
-                ),
+                opinions=(_opinion(apportionment_state="omitted", determination_kind=None),),
                 assertions=(_assertion(),),
             ),
             "medical opinion 'opn-01' is omitted but owns an apportionment assertion",
@@ -870,8 +859,7 @@ def test_doctrine_grounding_and_treatment_typing_messages_are_exact() -> None:
                     ),
                 )
             ),
-            "contention 'ctn-01' has more than one grounding for doctrine hook "
-            "'benson'",
+            "contention 'ctn-01' has more than one grounding for doctrine hook 'benson'",
         ),
         (
             _ledger(contentions=(_contention(groundings=(benson,)),)),
@@ -915,8 +903,7 @@ def test_doctrine_grounding_and_treatment_typing_messages_are_exact() -> None:
                     ),
                 )
             ),
-            "contention 'ctn-01' sets treatment_causation but has no "
-            "target_condition_id",
+            "contention 'ctn-01' sets treatment_causation but has no target_condition_id",
         ),
         (
             _ledger(
@@ -927,8 +914,7 @@ def test_doctrine_grounding_and_treatment_typing_messages_are_exact() -> None:
                     ),
                 )
             ),
-            "contention 'ctn-01' sets treatment_causation but has no "
-            "requested_apportionment",
+            "contention 'ctn-01' sets treatment_causation but has no requested_apportionment",
         ),
         (
             _ledger(contentions=(_contention(requested_apportionment="apply"),)),
@@ -944,8 +930,7 @@ def test_doctrine_grounding_and_treatment_typing_messages_are_exact() -> None:
                     ),
                 )
             ),
-            "contention 'ctn-01' sets requested_apportionment but has no "
-            "treatment_causation",
+            "contention 'ctn-01' sets requested_apportionment but has no treatment_causation",
         ),
         (
             _ledger(
@@ -1043,12 +1028,9 @@ def test_apportionment_shape_error_templates_are_exact() -> None:
         (
             _ledger(
                 opinions=(_opinion(),),
-                assertions=(
-                    _assertion(prior_award_ids=("prior-01-award", "prior-01-award")),
-                ),
+                assertions=(_assertion(prior_award_ids=("prior-01-award", "prior-01-award")),),
             ),
-            "apportionment assertion 'app-01' repeats prior award id "
-            "'prior-01-award'",
+            "apportionment assertion 'app-01' repeats prior award id 'prior-01-award'",
         ),
         (
             _ledger(
@@ -1125,26 +1107,25 @@ def _graded_assertion(**overrides: Any) -> str:
 
 def test_closed_invalid_basis_decision_table_is_exact() -> None:
     """All fourteen bases, each mapped: the closed list is closed."""
-    assert frozenset(
-        {
-            "vocational_apportionment",
-            "lc3208_3_threshold_misuse",
-            "bare_age",
-            "bare_gender",
-            "risk_factor_only",
-        }
-    ) == UNCONDITIONAL_HARD_INVALID_BASES
-    for basis in sorted(UNCONDITIONAL_HARD_INVALID_BASES):
-        grade = _graded_assertion(
-            basis_kinds=("preexisting_degenerative_pathology", basis)
+    assert (
+        frozenset(
+            {
+                "vocational_apportionment",
+                "lc3208_3_threshold_misuse",
+                "bare_age",
+                "bare_gender",
+                "risk_factor_only",
+            }
         )
+        == UNCONDITIONAL_HARD_INVALID_BASES
+    )
+    for basis in sorted(UNCONDITIONAL_HARD_INVALID_BASES):
+        grade = _graded_assertion(basis_kinds=("preexisting_degenerative_pathology", basis))
         assert grade == "unsupportable", basis
 
     # The one conditional member: its predicate is exactly the four
     # psych_exception_analysis rows.
-    assert (
-        _graded_assertion(basis_kinds=("psych_impairment_add_on",)) == "unsupportable"
-    )
+    assert _graded_assertion(basis_kinds=("psych_impairment_add_on",)) == "unsupportable"
     assert (
         _graded_assertion(
             basis_kinds=("psych_impairment_add_on",),
@@ -1188,15 +1169,11 @@ def test_every_escobedo_checklist_item_can_independently_move_supported_to_the_e
 
     # 5a — the owning opinion never examined.
     assertion = _assertion()
-    ledger = _ledger(
-        opinions=(_opinion(examination_performed=False),), assertions=(assertion,)
-    )
+    ledger = _ledger(opinions=(_opinion(examination_performed=False),), assertions=(assertion,))
     assert apportionment_quality(_world(), _context(), ledger, assertion) == "thin"
 
     # 5b — a relied-on factor outside the reviewed record.
-    ledger = _ledger(
-        opinions=(_opinion(reviewed_condition_ids=()),), assertions=(assertion,)
-    )
+    ledger = _ledger(opinions=(_opinion(reviewed_condition_ids=()),), assertions=(assertion,))
     assert apportionment_quality(_world(), _context(), ledger, assertion) == "thin"
     assert "5b" in escobedo_misses(_world(), ledger, assertion)
 
@@ -1209,9 +1186,7 @@ def test_every_escobedo_checklist_item_can_independently_move_supported_to_the_e
         basis_kinds=("preexisting_degenerative_pathology", "industrial_treatment"),
         linked_contention_id="ctn-01",
     )
-    ledger8 = _ledger(
-        contentions=(treatment,), opinions=(_opinion(),), assertions=(assertion8,)
-    )
+    ledger8 = _ledger(contentions=(treatment,), opinions=(_opinion(),), assertions=(assertion8,))
     assert apportionment_quality(_world(), _context(), ledger8, assertion8) == "thin"
     assert "8" in escobedo_misses(_world(), ledger8, assertion8)
 
@@ -1230,9 +1205,7 @@ def test_every_escobedo_checklist_item_can_independently_move_supported_to_the_e
 
     # 10 — an unexplained material revision is the expected lower grade
     # UNSUPPORTABLE (Part 3 B.8); a reasoned one is not a defect at all.
-    assert (
-        _graded_assertion(revised_from_percent=10) == "unsupportable"
-    )
+    assert _graded_assertion(revised_from_percent=10) == "unsupportable"
     assert (
         _graded_assertion(
             revised_from_percent=10,
@@ -1248,18 +1221,14 @@ def test_every_escobedo_checklist_item_can_independently_move_supported_to_the_e
         groundings=(BensonGrounding(prior_claim_ids=("prior-01",)),),
     )
     ledger11 = _ledger(
-        opinions=(
-            _opinion(reviewed_prior_claim_ids=("prior-01", "prior-02")),
-        ),
+        opinions=(_opinion(reviewed_prior_claim_ids=("prior-01", "prior-02")),),
         assertions=(assertion11,),
     )
     assert apportionment_quality(_world(), _context(), ledger11, assertion11) == "thin"
     assert "11" in escobedo_misses(_world(), ledger11, assertion11)
 
     # 12 — genetics with no diagnosed pathology referenced.
-    assertion12 = _assertion(
-        basis_kinds=("genetics_heredity_pathology",), condition_ids=()
-    )
+    assertion12 = _assertion(basis_kinds=("genetics_heredity_pathology",), condition_ids=())
     ledger12 = _ledger(opinions=(_opinion(),), assertions=(assertion12,))
     assert apportionment_quality(_world(), _context(), ledger12, assertion12) == "thin"
     assert "12" in escobedo_misses(_world(), ledger12, assertion12)
@@ -1297,22 +1266,22 @@ def test_explicit_hikida_forward_and_inverse_fixture_decision_table_is_exact() -
         return contention_quality(world, _context(), contention)
 
     # Forward: treatment stated as SOLE cause, apportionment requested anyway.
-    assert grade(
-        treatment_causation="sole_cause", requested_apportionment="apply"
-    ) == "unsupportable"
+    assert (
+        grade(treatment_causation="sole_cause", requested_apportionment="apply") == "unsupportable"
+    )
     # Inverse: contributing cause, refusal to apportion despite a substantial
     # nonindustrial contributor on the record — over-applying Hikida.
-    assert grade(
-        treatment_causation="contributing_cause", requested_apportionment="refuse"
-    ) == "unsupportable"
+    assert (
+        grade(treatment_causation="contributing_cause", requested_apportionment="refuse")
+        == "unsupportable"
+    )
     # Contributing cause with application and reasoning may be supported.
-    assert grade(
-        treatment_causation="contributing_cause", requested_apportionment="apply"
-    ) == "supported"
+    assert (
+        grade(treatment_causation="contributing_cause", requested_apportionment="apply")
+        == "supported"
+    )
     # Sole cause with refusal is the correct Hikida paradigm.
-    assert grade(
-        treatment_causation="sole_cause", requested_apportionment="refuse"
-    ) == "supported"
+    assert grade(treatment_causation="sole_cause", requested_apportionment="refuse") == "supported"
 
     # The assertion-side hard direction: a nonzero nonindustrial share where the
     # linked treatment story says sole cause.
@@ -1470,9 +1439,7 @@ def test_hikida_legal_error_is_graded_not_rejected() -> None:
 
 
 def test_vocational_apportionment_is_graded_not_rejected() -> None:
-    assert _graded_assertion(
-        basis_kinds=("vocational_apportionment",)
-    ) == "unsupportable"
+    assert _graded_assertion(basis_kinds=("vocational_apportionment",)) == "unsupportable"
     ledger = _ledger(
         opinions=(_opinion(),),
         assertions=(_assertion(basis_kinds=("vocational_apportionment",)),),
@@ -1491,25 +1458,27 @@ def test_psych_add_on_error_is_graded_not_rejected() -> None:
         ),
     )
     assert not _problems(ledger)
-    assert _graded_assertion(
-        basis_kinds=("psych_impairment_add_on",),
-        psych_exception_analysis="none_applies",
-    ) == "unsupportable"
+    assert (
+        _graded_assertion(
+            basis_kinds=("psych_impairment_add_on",),
+            psych_exception_analysis="none_applies",
+        )
+        == "unsupportable"
+    )
 
 
 def test_bare_demographic_basis_is_graded_not_rejected() -> None:
     for basis in ("bare_age", "bare_gender"):
-        ledger = _ledger(
-            opinions=(_opinion(),), assertions=(_assertion(basis_kinds=(basis,)),)
-        )
+        ledger = _ledger(opinions=(_opinion(),), assertions=(_assertion(basis_kinds=(basis,)),))
         assert not _problems(ledger)
         assert _graded_assertion(basis_kinds=(basis,)) == "unsupportable"
 
 
 def test_rice_genetics_basis_is_weighed_not_barred() -> None:
-    assert _graded_assertion(
-        basis_kinds=("genetics_heredity_pathology",), condition_ids=("cond-01",)
-    ) == "supported"
+    assert (
+        _graded_assertion(basis_kinds=("genetics_heredity_pathology",), condition_ids=("cond-01",))
+        == "supported"
+    )
 
 
 def test_interim_deferral_is_valid() -> None:
@@ -1652,13 +1621,11 @@ def test_reasoned_supplemental_revision_chain_is_valid() -> None:
     )
     ledger = _ledger(opinions=(first, revised), assertions=(assertion,))
     assert not _problems(ledger)
-    # The frozen M2 rubric predates response events: item 5a fires on ANY
-    # no-examination owner, and R37 forbids a fresh examination on a
-    # supplemental response, so this chain's single miss is exactly 5a and it
-    # grades thin under the shipped checklist. The reasoned revision (item 10)
-    # is NOT among the misses — that is the *Lindh* half the old test proved.
-    # Step 4's response-semantics remodel owns any response-aware 5a change;
-    # step 2 changes no grading.
+    # Amendment A2 freezes the channel-1.0.0 owner-local item 5a rule through
+    # AJC-62: R37 forbids a fresh examination on this supplemental response,
+    # so its single miss remains exactly 5a and it grades thin. The reasoned
+    # revision (item 10) is NOT among the misses — that is the *Lindh* half the
+    # old test proved. AJC-63 owns the versioned response-aware re-scope.
     assert escobedo_misses(_world(), ledger, assertion) == ("5a",)
     assert apportionment_quality(_world(), _context(), ledger, assertion) == "thin"
 
@@ -1713,21 +1680,14 @@ def test_m3_literals_are_exactly_the_frozen_vocabularies_in_order() -> None:
     from wc_caseload_engine.medical_history import PsychInjuryKind
     from wc_caseload_engine.medical_story import ContentionSurface
 
-    assert (
-        typing.get_args(module.OpinionEventKind.__value__)
-        == EXPECTED_OPINION_EVENT_KINDS
-    )
-    assert (
-        typing.get_args(module.OpinionRevisionKind.__value__)
-        == EXPECTED_OPINION_REVISION_KINDS
-    )
+    assert typing.get_args(module.OpinionEventKind.__value__) == EXPECTED_OPINION_EVENT_KINDS
+    assert typing.get_args(module.OpinionRevisionKind.__value__) == EXPECTED_OPINION_REVISION_KINDS
     assert (
         typing.get_args(module.OpinionContentionDisposition.__value__)
         == EXPECTED_OPINION_CONTENTION_DISPOSITIONS
     )
     assert (
-        typing.get_args(module.DefenseContestTheory.__value__)
-        == EXPECTED_DEFENSE_CONTEST_THEORIES
+        typing.get_args(module.DefenseContestTheory.__value__) == EXPECTED_DEFENSE_CONTEST_THEORIES
     )
     assert typing.get_args(module.ContestPath.__value__) == EXPECTED_CONTEST_PATHS
     assert (
@@ -1829,12 +1789,8 @@ def test_contention_and_opinion_psych_kind_require_a_psychiatric_anchor() -> Non
         reviewed_condition_ids=(),
         rejects_contention_ids=("ctn-01",),
     )
-    assert not _problems(
-        _ledger(contentions=(anchored,), opinions=(via_contention,)), psych_world
-    )
-    stray = _opinion(
-        psych_injury_kind="direct", determination_kind="no_nonindustrial_share"
-    )
+    assert not _problems(_ledger(contentions=(anchored,), opinions=(via_contention,)), psych_world)
+    stray = _opinion(psych_injury_kind="direct", determination_kind="no_nonindustrial_share")
     assert (
         "medical opinion 'opn-01' sets psych_injury_kind 'direct' without a "
         "psychiatric reviewed condition, a psyche claim body part, or a "
@@ -1872,9 +1828,7 @@ def test_psych_kind_divergence_across_layers_is_legal_case_content() -> None:
         aoe_coe_finding="industrial",
         reviewed_condition_ids=("cond-02",),
     )
-    ledger = _ledger(
-        contentions=(applicant_direct,), opinions=(ptp_direct, qme_consequence)
-    )
+    ledger = _ledger(contentions=(applicant_direct,), opinions=(ptp_direct, qme_consequence))
     assert not _problems(ledger, psych_world)
 
 
@@ -1897,16 +1851,12 @@ def test_four_disposition_collections_are_pairwise_disjoint_and_resolve() -> Non
         ("defers_contention_ids", "defers"),
     ):
         dangling = _opinion(**{collection: ("ctn-77",)})
-        assert (
-            f"medical opinion 'opn-01' {verb} unknown contention 'ctn-77'"
-            in _problems(_ledger(opinions=(dangling,)))
+        assert f"medical opinion 'opn-01' {verb} unknown contention 'ctn-77'" in _problems(
+            _ledger(opinions=(dangling,))
         )
-    both = _opinion(
-        endorses_contention_ids=("ctn-01",), rejects_contention_ids=("ctn-01",)
-    )
-    assert (
-        "medical opinion 'opn-01' both endorses and rejects contention 'ctn-01'"
-        in _problems(_ledger(contentions=(base,), opinions=(both,)))
+    both = _opinion(endorses_contention_ids=("ctn-01",), rejects_contention_ids=("ctn-01",))
+    assert "medical opinion 'opn-01' both endorses and rejects contention 'ctn-01'" in _problems(
+        _ledger(contentions=(base,), opinions=(both,))
     )
 
 
@@ -1981,9 +1931,7 @@ def test_response_opinion_structure_is_strict_and_base_reports_stay_free() -> No
         report_date=dt.date(2023, 6, 1),
         determination_kind="no_nonindustrial_share",
     )
-    problems = _problems(
-        _ledger(opinions=(first, mismatched)), context=_context(eval_type="none")
-    )
+    problems = _problems(_ledger(opinions=(first, mismatched)), context=_context(eval_type="none"))
     assert (
         "medical opinion 'opn-02' has author_role 'qme' but its predecessor "
         "'opn-01' has author_role 'ame'; a supplemental or deposition opinion "
@@ -2151,9 +2099,7 @@ def test_contention_documents_collection_caps_ids_and_references() -> None:
         parse_case_seed(duplicate)
 
     labelled = json.loads(json.dumps(body))
-    labelled["scenario"]["medical_assertions"]["contention_documents"][0][
-        "quality"
-    ] = "thin"
+    labelled["scenario"]["medical_assertions"]["contention_documents"][0]["quality"] = "thin"
     with pytest.raises(Exception, match="reserved truth-label field"):
         parse_case_seed(labelled)
 
@@ -2288,9 +2234,7 @@ _DIVERGENT_SCENARIO: dict[str, Any] = {
                 "target_prior_award_id": "prior-00-award",
                 "doctrine_hooks": ["lc4664_prior_award"],
                 "rationale": "the prior compromise and release conclusively presumes",
-                "groundings": [
-                    {"hook": "lc4664_prior_award", "prior_award_id": "prior-00-award"}
-                ],
+                "groundings": [{"hook": "lc4664_prior_award", "prior_award_id": "prior-00-award"}],
             },
         ],
         "medical_opinions": [
@@ -2376,9 +2320,12 @@ def test_validate_spec_rejects_each_planted_internal_incoherence_with_exact_temp
         ],
     }
     incoherent["cases"][0]["scenario"] = {
-        "medical_history": {"sample_conditions": False, "conditions": [
-            {"label": "hypertension", "key": "hypertension"},
-        ]},
+        "medical_history": {
+            "sample_conditions": False,
+            "conditions": [
+                {"label": "hypertension", "key": "hypertension"},
+            ],
+        },
         "medical_assertions": {
             "sample_assertions": False,
             "contentions": [
@@ -2449,79 +2396,75 @@ ASSERTION_LEAKAGE_EXEMPTIONS: dict[str, str] = {}
 
 _BARE_TOKEN = re.compile(r"(?<![a-z])unsupportable(?![a-z])")
 
-_LEAKAGE_SCENARIO: dict[str, Any] = {
-    "medical_history": {
-        "sample_conditions": False,
-        "conditions": [
-            {
-                "label": "nonindustrial lumbar degenerative disease",
-                "origin": "nonindustrial",
-                "body_part": "lumbar_spine",
-                "severity": "moderate",
-                "symptomatic_before_doi": True,
-            },
-            {
-                "label": "undocumented cervical strain history",
-                "origin": "nonindustrial",
-                "body_part": "shoulder",
-                "surfaces_in_file": False,
-            },
-        ],
-    },
-    "medical_assertions": {
-        "sample_assertions": False,
-        "contentions": [
-            # supported: visible nonindustrial overlap argued as apportionment.
-            {
-                "id": "ctn-01",
-                "claim_type": "apportionment_defense",
-                "party": "defense",
-                "position": "affirm",
-                "target_condition_id": "cond-00",
-                "rationale": "a nonindustrial factor contributes to present disability",
-            },
-            # thin: an invisible condition cannot support the aggravation read.
-            {
-                "id": "ctn-02",
-                "claim_type": "apportionment_defense",
-                "party": "defense",
-                "position": "affirm",
-                "target_condition_id": "cond-01",
-                "rationale": "a second contributing factor is asserted",
-            },
-        ],
-        "medical_opinions": [
-            {
-                "id": "opn-01",
-                "author_role": "qme",
-                "report_stage": "final",
-                "report_date": "2022-06-01",
-                "apportionment_state": "determined",
-                "determination_kind": "allocated",
-                "examination_performed": True,
-                "reviewed_condition_ids": ["cond-00"],
-                "rationale": "examined the applicant and reviewed the record",
-            }
-        ],
-        "apportionment_assertions": [
-            # unsupportable: vocational pass-through.
-            {
-                "id": "app-01",
-                "opinion_id": "opn-01",
-                "body_part": "lumbar_spine",
-                "industrial_percent": 60,
-                "nonindustrial_percent": 40,
-                "basis_kinds": ["vocational_apportionment"],
-                "condition_ids": ["cond-00"],
-                "description": "chronic lumbar disability",
-                "disability_causation_stated": True,
-                "reasonable_medical_probability": True,
-                "causal_rationale": "consistent with the vocational assessment",
-                "percentage_rationale": "the split follows the vocational report",
-            }
-        ],
-    },
-}
+PRIVATE_PSYCH_REGISTER_KEYS = (
+    "safety_officer_ptsd",
+    "harassment_gfpa",
+    "compensable_consequence",
+    "direct_physical_event",
+)
+
+R90_FORBIDDEN_VOCABULARY = (
+    "real",
+    "bogus",
+    "good",
+    "bad",
+    "adequate",
+    "inadequate",
+    "thin",
+    "underworked",
+    "quality",
+)
+
+_RESERVED_LABEL_POSITION = re.compile(
+    r"(?<![a-z0-9_])"
+    r"[\"']?(quality|rubric|assertionQuality|medicalAssertions)[\"']?"
+    r"\s*[:=]\s*[\"']?(supported|thin|unsupportable)(?![a-z])",
+    re.IGNORECASE,
+)
+
+MEDICAL_STORY_LEAKAGE_FAMILIES = (
+    ("initial_medlegal", INITIAL_MEDLEGAL_SURFACES, None),
+    ("psych_medlegal", PSYCH_MEDLEGAL_SURFACES, None),
+    ("supplemental_medlegal", SUPPLEMENTAL_MEDLEGAL_SURFACES, None),
+    ("ptp", PTP_CAUSATION_SURFACES, None),
+    ("advocacy", ADVOCACY_LETTER_SURFACES, "advocacy"),
+    (
+        "objection",
+        frozenset({"ADVOCACY_LETTERS_PTP_QME_AME"}),
+        "objection",
+    ),
+    (
+        "supplemental_request",
+        frozenset({"ADVOCACY_LETTERS_PTP_QME_AME"}),
+        "supplemental_request",
+    ),
+    (
+        "qme_deposition",
+        frozenset({"DEPOSITION_TRANSCRIPT"}),
+        "qme_deposition",
+    ),
+)
+
+
+def _private_psych_register_findings(payload: Any, path: str) -> list[str]:
+    """Find renderer-private selector keys without banning the public injury kind."""
+    findings: list[str] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            here = f"{path}.{key}"
+            if key in PRIVATE_PSYCH_REGISTER_KEYS:
+                findings.append(f"private psych register key {here}")
+            if (
+                isinstance(value, str)
+                and value in PRIVATE_PSYCH_REGISTER_KEYS
+                and not (key == "psych_injury_kind" and value == "compensable_consequence")
+            ):
+                findings.append(f"private psych register value {here}={value}")
+            findings.extend(_private_psych_register_findings(value, here))
+    elif isinstance(payload, list):
+        for index, item in enumerate(payload):
+            findings.extend(_private_psych_register_findings(item, f"{path}[{index}]"))
+    return findings
 
 
 def _leakage_reserved_key_findings(payload: Any, path: str) -> list[str]:
@@ -2538,14 +2481,123 @@ def _leakage_reserved_key_findings(payload: Any, path: str) -> list[str]:
     return findings
 
 
+def _without_legal_phrase_exemptions(text: str) -> str:
+    """Remove mandated legal phrases before applying R90's vocabulary."""
+    return (
+        text.lower()
+        .replace("good-faith", "")
+        .replace("good faith", "")
+        .replace("adequate examination", "")
+        .replace("adequate history", "")
+        .replace("adequate effort", "")
+        .replace("adequate understanding", "")
+    )
+
+
+def _without_public_psych_kind(text: str) -> str:
+    """Keep the public injury kind while banning the private selector token."""
+    return re.sub(
+        r"[\"']?psych_injury_kind[\"']?\s*[:=]\s*"
+        r"[\"']?compensable_consequence[\"']?",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
+def _bare_and_private_text_findings(text: str, where: str) -> list[str]:
+    """Find the bare M2 label and renderer-private selector vocabulary."""
+    findings: list[str] = []
+    lowered = text.lower()
+    if _BARE_TOKEN.search(lowered) and where not in ASSERTION_LEAKAGE_EXEMPTIONS:
+        findings.append(f"bare token at {where}")
+    normalized = _without_public_psych_kind(lowered)
+    findings.extend(
+        f"private psych register token at {where}:{key}"
+        for key in PRIVATE_PSYCH_REGISTER_KEYS
+        if re.search(rf"\b{re.escape(key)}\b", normalized)
+    )
+    return findings
+
+
+def _r90_text_findings(text: str, where: str) -> list[str]:
+    """Find every R90 quality-commentary word, after legal exemptions."""
+    normalized = _without_legal_phrase_exemptions(text)
+    return [
+        f"forbidden production vocabulary at {where}:{word}"
+        for word in R90_FORBIDDEN_VOCABULARY
+        if re.search(rf"\b{re.escape(word)}\b", normalized)
+    ]
+
+
+def test_r90_allows_clinical_adequate_phrases_but_rejects_quality_commentary() -> None:
+    clinical = "The evaluator obtained an adequate history and demonstrated adequate understanding."
+    assert _r90_text_findings(clinical, "probe") == []
+    assert _r90_text_findings("The testing also showed adequate effort.", "probe") == []
+    assert _r90_text_findings("adequate report", "probe") == [
+        "forbidden production vocabulary at probe:adequate"
+    ]
+
+
+def _label_position_findings(text: str, where: str) -> list[str]:
+    """Find only reserved-key label syntax, not ordinary supported/thin prose."""
+    return [
+        f"reserved label position at {where}:{match.group(1)}={match.group(2)}"
+        for match in _RESERVED_LABEL_POSITION.finditer(text)
+    ]
+
+
+def _decoded_text_findings(text: str, where: str) -> list[str]:
+    """The shared scanner for analyzer-visible decoded semantic text."""
+    return [
+        *_bare_and_private_text_findings(text, where),
+        *_r90_text_findings(text, where),
+        *_label_position_findings(text, where),
+    ]
+
+
 def _ocr_png(png: bytes) -> str:
     """Tesseract over one rasterized page — the OCR-only text surface."""
+    import os
     import subprocess
 
+    environment = os.environ.copy()
+    environment["OMP_THREAD_LIMIT"] = "1"
     completed = subprocess.run(
-        ["tesseract", "stdin", "stdout"], input=png, capture_output=True, check=True
+        ["tesseract", "stdin", "stdout"],
+        input=png,
+        capture_output=True,
+        check=True,
+        env=environment,
     )
     return completed.stdout.decode("utf-8", errors="replace")
+
+
+def test_assertion_leakage_ocr_limits_tesseract_to_one_worker(monkeypatch) -> None:
+    """The OCR probe stays deterministic and bounded on shared CI runners."""
+    import os
+    import subprocess
+
+    sentinel = b"sentinel-png-bytes"
+    captured: dict[str, Any] = {}
+
+    class Completed:
+        stdout = b"decoded OCR text\n"
+
+    def fake_run(args: list[str], **kwargs: Any) -> Completed:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return Completed()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert _ocr_png(sentinel) == "decoded OCR text\n"
+    assert captured["args"] == ["tesseract", "stdin", "stdout"]
+    assert captured["kwargs"]["input"] == sentinel
+    assert captured["kwargs"]["capture_output"] is True
+    assert captured["kwargs"]["check"] is True
+    assert captured["kwargs"]["env"] is not os.environ
+    assert captured["kwargs"]["env"]["OMP_THREAD_LIMIT"] == "1"
 
 
 def _scan_assertion_leakage(
@@ -2584,30 +2636,46 @@ def _scan_assertion_leakage(
     tesseract_missing = shutil.which("tesseract") is None
 
     def note_token(text: str, where: str) -> None:
-        if _BARE_TOKEN.search(text.lower()) and where not in ASSERTION_LEAKAGE_EXEMPTIONS:
-            findings.append(f"bare token at {where}")
+        findings.extend(_decoded_text_findings(text, where))
+
+    def note_raw_token(text: str, where: str) -> None:
+        findings.extend(_bare_and_private_text_findings(text, where))
+        findings.extend(_label_position_findings(text, where))
 
     def note_reserved(payload: Any, where: str) -> None:
         findings.extend(_leakage_reserved_key_findings(payload, where))
+        findings.extend(_private_psych_register_findings(payload, where))
+        short = Path(where).name
+        if short in ("seed.yaml", "case_facts.yaml"):
+            findings.extend(_private_psych_register_findings(payload, short))
+
+    def note_r90_vocabulary(payload: Any, where: str) -> None:
+        findings.extend(_r90_text_findings(json.dumps(payload, default=str), where))
 
     for path in sorted(out.rglob("*")):
         rel = path.relative_to(out).as_posix()
         if rel == "truth" or rel.startswith("truth/"):
             continue
-        note_token(rel, f"path:{rel}")
+        note_raw_token(rel, f"path:{rel}")
         if path.is_dir():
             continue
         surfaces.append(rel)
         raw = path.read_bytes()
-        note_token(raw.decode("utf-8", errors="ignore"), f"bytes:{rel}")
+        note_raw_token(raw.decode("utf-8", errors="ignore"), f"bytes:{rel}")
         if path.name in ("seed.yaml", "case_facts.yaml"):
-            note_reserved(yaml_module.safe_load(raw.decode("utf-8")), rel)
+            payload = yaml_module.safe_load(raw.decode("utf-8"))
+            note_reserved(payload, rel)
+            if path.name == "seed.yaml":
+                note_r90_vocabulary(payload, rel)
         elif path.suffix == ".json":
-            note_reserved(json.loads(raw.decode("utf-8")), rel)
+            payload = json.loads(raw.decode("utf-8"))
+            note_reserved(payload, rel)
+            if path.name in ("manifest.json", "caseload_manifest.json"):
+                note_r90_vocabulary(payload, rel)
         elif path.suffix == ".docx":
             with zipfile.ZipFile(io.BytesIO(raw)) as archive:
                 for name in archive.namelist():
-                    if name.startswith("docProps/") or name.endswith(".xml"):
+                    if name.endswith(".xml"):
                         surfaces.append(f"{rel}!{name}")
                         note_token(
                             archive.read(name).decode("utf-8", errors="replace"),
@@ -2621,15 +2689,17 @@ def _scan_assertion_leakage(
                             properties: dict[str, str] = {}
                             try:
                                 root = ElementTree.fromstring(archive.read(name))
-                            except ElementTree.ParseError:
-                                root = None
-                            if root is not None:
-                                for element in root.iter():
-                                    local = element.tag.rsplit("}", 1)[-1]
-                                    properties[local] = element.text or ""
-                                    named = element.attrib.get("name")
-                                    if named is not None:
-                                        properties[named] = element.text or ""
+                            except ElementTree.ParseError as error:
+                                raise RuntimeError(
+                                    f"docx-properties:{rel}!{name} is malformed XML; "
+                                    "the reserved-key scan cannot certify property names"
+                                ) from error
+                            for element in root.iter():
+                                local = element.tag.rsplit("}", 1)[-1]
+                                properties[local] = element.text or ""
+                                named = element.attrib.get("name")
+                                if named is not None:
+                                    properties[named] = element.text or ""
                             note_reserved(
                                 properties, f"docx-properties:{rel}!{name}"
                             )
@@ -2637,9 +2707,7 @@ def _scan_assertion_leakage(
             fitz = pytest.importorskip("fitz")
             with fitz.open(path) as document:
                 surfaces.append(f"{rel}!metadata")
-                note_token(
-                    json.dumps(document.metadata or {}), f"pdf-metadata:{rel}"
-                )
+                note_token(json.dumps(document.metadata or {}), f"pdf-metadata:{rel}")
                 info_type, info_value = document.xref_get_key(-1, "Info")
                 if info_type == "xref":
                     info_xref = int(info_value.split()[0])
@@ -2652,9 +2720,7 @@ def _scan_assertion_leakage(
                     note_token(json.dumps(info), f"pdf-info:{rel}")
                 xmp_xref = document.xref_xml_metadata()
                 if xmp_xref:
-                    xmp_text = document.xref_stream(xmp_xref).decode(
-                        "utf-8", errors="replace"
-                    )
+                    xmp_text = document.xref_stream(xmp_xref).decode("utf-8", errors="replace")
                     note_token(xmp_text, f"pdf-xmp:{rel}")
                     # Structured read: XMP element and attribute NAMES are
                     # keys — a property named assertionQuality is exactly as
@@ -2679,12 +2745,8 @@ def _scan_assertion_leakage(
                     note_reserved(xmp_keys, f"pdf-xmp:{rel}")
                 for page in document:
                     for annotation in page.annots() or ():
-                        note_reserved(
-                            dict(annotation.info), f"pdf-annotation:{rel}"
-                        )
-                        note_token(
-                            json.dumps(annotation.info), f"pdf-annotation:{rel}"
-                        )
+                        note_reserved(dict(annotation.info), f"pdf-annotation:{rel}")
+                        note_token(json.dumps(annotation.info), f"pdf-annotation:{rel}")
                         # The RAW annotation dictionary. ``annotation.info``
                         # surfaces only the standard fields — a custom
                         # /assertionQuality key on the annot object is
@@ -2716,14 +2778,18 @@ def _scan_assertion_leakage(
                                 "(apt-get install tesseract-ocr)"
                             )
                         surfaces.append(where)
-                        note_token(
-                            _ocr_png(page.get_pixmap(dpi=150).tobytes("png")),
-                            where,
+                        ocr_text = _ocr_png(
+                            page.get_pixmap(dpi=150).tobytes("png")
                         )
+                        note_token(ocr_text, where)
         elif path.suffix == ".eml":
             message = email.message_from_bytes(raw, policy=email.policy.default)
             note_reserved(
                 {name: str(value) for name, value in message.items()},
+                f"eml-headers:{rel}",
+            )
+            note_token(
+                json.dumps({name: str(value) for name, value in message.items()}),
                 f"eml-headers:{rel}",
             )
             for index, part in enumerate(message.walk()):
@@ -2750,13 +2816,10 @@ def _scan_assertion_leakage(
 
 @pytest.fixture(scope="module")
 def leakage_tree(tmp_path_factory: pytest.TempPathFactory):
-    """One assertion-bearing caseload, generated through the shipped CLI so the
-    scan can read stdout/stderr and structured logs as surfaces."""
+    """The committed R71 probe, generated through the shipped CLI."""
     import subprocess
     import sys
     from pathlib import Path
-
-    import yaml as yaml_module
 
     from wc_caseload_engine.substrate import find_substrate
 
@@ -2764,15 +2827,7 @@ def leakage_tree(tmp_path_factory: pytest.TempPathFactory):
         pytest.skip("merus-test-data-generator substrate not on disk")
 
     root = tmp_path_factory.mktemp("assertion-leakage")
-    body = _generate_body("leakage-probe-case", dict(_LEAKAGE_SCENARIO))
-    body["documents"] = {
-        "format_mix": {"pdf": 0.4, "docx": 0.25, "eml": 0.2, "scanned_pdf": 0.15},
-        "global_cap": 16,
-    }
-    body["output"] = {"formats": ["pdf", "docx", "eml", "scanned_pdf"]}
-    spec = {"caseload_id": "leakage-probe", "cases": [body]}
-    spec_path = root / "spec.yaml"
-    spec_path.write_text(yaml_module.safe_dump(spec), encoding="utf-8")
+    spec_path = Path(__file__).resolve().parent / "fixtures" / "medical_story_leakage_probe.yaml"
     out_dir = root / "out"
     package_root = Path(__file__).resolve().parents[1]
     proc = subprocess.run(
@@ -2795,11 +2850,20 @@ def leakage_tree(tmp_path_factory: pytest.TempPathFactory):
     return out_dir, (proc.stdout, proc.stderr)
 
 
+@pytest.fixture(scope="module")
+def pristine_leakage_scan(leakage_tree):
+    """Scan the pristine tree once: OCR is the expensive, deterministic step."""
+    out_dir, streams = leakage_tree
+    return _scan_assertion_leakage(out_dir, streams)
+
+
 @pytest.mark.slow
 def test_assertion_leakage_probe_seed_really_contains_truth_labels(leakage_tree) -> None:
     out_dir, _streams = leakage_tree
     truth = json.loads(
-        (out_dir / "truth" / "leakage-probe-case.truth.json").read_text(encoding="utf-8")
+        (out_dir / "truth" / "medical-story-leakage-pristine.truth.json").read_text(
+            encoding="utf-8"
+        )
     )
     qualities = {
         item["quality"]
@@ -2811,19 +2875,35 @@ def test_assertion_leakage_probe_seed_really_contains_truth_labels(leakage_tree)
 
 @pytest.mark.slow
 def test_assertion_label_positions_are_absent_from_every_analyzer_visible_artifact(
-    leakage_tree,
+    pristine_leakage_scan,
 ) -> None:
-    out_dir, streams = leakage_tree
-    findings, surfaces = _scan_assertion_leakage(out_dir, streams)
-    assert not findings, findings
-    assert any(surface.endswith("seed.yaml") for surface in surfaces)
-    assert any(surface.endswith("manifest.json") for surface in surfaces)
+    findings, surfaces = pristine_leakage_scan
+    reserved = [finding for finding in findings if finding.startswith("reserved ")]
+    private = [finding for finding in findings if finding.startswith("private psych register")]
+    r90 = [finding for finding in findings if finding.startswith("forbidden production vocabulary")]
+    bare = [finding for finding in findings if finding.startswith("bare token")]
+    assert reserved == [], f"reserved label positions leaked: {reserved}"
+    assert private == [], f"private Part-5 selectors leaked: {private}"
+    assert r90 == [], f"R90 quality commentary leaked: {r90}"
+    assert bare == [], f"bare unsupportable leaked: {bare}"
+    assert "medical-story-leakage-pristine/seed.yaml" in surfaces
+    assert "medical-story-leakage-pristine/manifest.json" in surfaces
+    assert "caseload_manifest.json" in surfaces
+    assert any(surface.startswith("pdf-ocr:") for surface in surfaces)
+    assert set(PRIVATE_PSYCH_REGISTER_KEYS) == {
+        "safety_officer_ptsd",
+        "harassment_gfpa",
+        "compensable_consequence",
+        "direct_physical_event",
+    }
+    assert findings == [], f"aggregate analyzer-visible leakage: {findings}"
 
 
 @pytest.mark.slow
-def test_bare_unsupportable_is_absent_except_for_named_exemptions(leakage_tree) -> None:
-    out_dir, streams = leakage_tree
-    findings, _surfaces = _scan_assertion_leakage(out_dir, streams)
+def test_bare_unsupportable_is_absent_except_for_named_exemptions(
+    pristine_leakage_scan,
+) -> None:
+    findings, _surfaces = pristine_leakage_scan
     bare = [finding for finding in findings if finding.startswith("bare token")]
     assert not bare, bare
     assert ASSERTION_LEAKAGE_EXEMPTIONS == {}
@@ -2831,10 +2911,9 @@ def test_bare_unsupportable_is_absent_except_for_named_exemptions(leakage_tree) 
 
 @pytest.mark.slow
 def test_assertion_leakage_probe_covers_docx_properties_and_pdf_metadata(
-    leakage_tree,
+    pristine_leakage_scan,
 ) -> None:
-    out_dir, streams = leakage_tree
-    _findings, surfaces = _scan_assertion_leakage(out_dir, streams)
+    _findings, surfaces = pristine_leakage_scan
     assert any("docProps/core.xml" in surface for surface in surfaces), (
         "the probe never opened a DOCX docProps part"
     )
@@ -2852,6 +2931,183 @@ def test_assertion_leakage_probe_covers_docx_properties_and_pdf_metadata(
         "the probe never decoded an EML part"
     )
     assert "cli:stdout" in surfaces and "cli:stderr" in surfaces
+
+
+def _leakage_fixture_seed_and_plan() -> tuple[Any, Any]:
+    from pathlib import Path
+
+    import yaml
+
+    from wc_caseload_engine.planner import build_case_plan
+
+    fixture = Path(__file__).resolve().parent / "fixtures" / "medical_story_leakage_probe.yaml"
+    spec = parse_caseload_spec(yaml.safe_load(fixture.read_text(encoding="utf-8")))
+    assert spec.caseload_id == "medical-story-leakage-probe"
+    assert tuple(case.case_id for case in spec.cases) == ("medical-story-leakage-pristine",)
+    seed = spec.cases[0]
+    assert seed.rng_seed == 6100
+    assert seed.documents.global_cap == 15
+    assert seed.scenario.medical_assertions is not None
+    assert seed.scenario.medical_assertions.sample_contention_documents is False
+    return seed, build_case_plan(seed)
+
+
+def _leakage_family_representatives(plan: Any) -> dict[str, Any]:
+    assert plan.medical_story is not None
+    representatives: dict[str, Any] = {}
+    for document in plan.documents:
+        story = plan.medical_story.by_document_index.get(document.index)
+        if story is None:
+            continue
+        for family, subtypes, contention_surface in MEDICAL_STORY_LEAKAGE_FAMILIES:
+            if document.subtype in subtypes and story.contention_surface == contention_surface:
+                representatives.setdefault(family, document)
+    return representatives
+
+
+@pytest.mark.slow
+def test_assertion_leakage_probe_covers_every_medical_story_surface_family(
+    leakage_tree,
+) -> None:
+    _out_dir, _streams = leakage_tree
+    _seed, plan = _leakage_fixture_seed_and_plan()
+    observed_families = set(_leakage_family_representatives(plan))
+    assert observed_families == {
+        "initial_medlegal",
+        "psych_medlegal",
+        "supplemental_medlegal",
+        "ptp",
+        "advocacy",
+        "objection",
+        "supplemental_request",
+        "qme_deposition",
+    }
+
+
+def test_medical_story_seed_binding_warning_and_trace_fields_have_no_quality_like_key() -> None:
+    """R71's internal names stay label-free before any artifact is rendered."""
+    from dataclasses import fields
+
+    from wc_caseload_engine.medical_assertions import (
+        AssertionTrace,
+        derive_medical_assertion_plan,
+    )
+    from wc_caseload_engine.medical_history import derive_medical_history
+
+    seed, case_plan = _leakage_fixture_seed_and_plan()
+    assert set(PRIVATE_PSYCH_REGISTER_KEYS) == {
+        "safety_officer_ptsd",
+        "harassment_gfpa",
+        "compensable_consequence",
+        "direct_physical_event",
+    }
+    trace = AssertionTrace()
+    assertion_plan = derive_medical_assertion_plan(seed, derive_medical_history(seed), trace=trace)
+
+    def keys(payload: Any, path: str) -> list[str]:
+        found: list[str] = []
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                here = f"{path}.{key}"
+                found.append(here)
+                found.extend(keys(value, here))
+        elif isinstance(payload, (list, tuple)):
+            for index, value in enumerate(payload):
+                found.extend(keys(value, f"{path}[{index}]"))
+        return found
+
+    key_paths = keys(seed.model_dump(mode="json"), "seed")
+    for index, binding in enumerate(assertion_plan.contention_documents):
+        key_paths.extend(keys(binding.model_dump(mode="json"), f"binding[{index}]"))
+    key_paths.extend(f"trace.{item.name}" for item in fields(trace))
+    forbidden_key_fragments = (
+        *RESERVED_LABEL_KEYS,
+        *PRIVATE_PSYCH_REGISTER_KEYS,
+        "supported",
+        "thin",
+        "unsupportable",
+    )
+    assert [
+        path
+        for path in key_paths
+        if any(
+            fragment.lower() in path.rsplit(".", 1)[-1].lower()
+            for fragment in forbidden_key_fragments
+        )
+    ] == []
+    warning_text = "\n".join(case_plan.warnings).lower()
+    assert not _BARE_TOKEN.search(warning_text)
+    assert not any(key in warning_text for key in PRIVATE_PSYCH_REGISTER_KEYS)
+
+
+@pytest.mark.slow
+def test_assertion_leakage_probe_has_positive_controls_for_every_medical_story_surface_family(
+    leakage_tree, tmp_path: Any
+) -> None:
+    """Each bound family gets its own format-valid planted copy and live scan."""
+    import shutil
+    import zipfile
+    from pathlib import Path
+
+    fitz = pytest.importorskip("fitz")
+
+    out_dir, _streams = leakage_tree
+    _seed, plan = _leakage_fixture_seed_and_plan()
+    representatives = _leakage_family_representatives(plan)
+    assert set(representatives) == {
+        "initial_medlegal",
+        "psych_medlegal",
+        "supplemental_medlegal",
+        "ptp",
+        "advocacy",
+        "objection",
+        "supplemental_request",
+        "qme_deposition",
+    }
+
+    source_case_dir = out_dir / "medical-story-leakage-pristine"
+    source_manifest = json.loads((source_case_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    def plant(path: Path) -> None:
+        if path.suffix == ".pdf":
+            with fitz.open(path) as document:
+                document[0].insert_text((72, 96), "unsupportable", fontsize=18)
+                planted = path.with_suffix(".planted.pdf")
+                document.save(planted)
+            path.unlink()
+            planted.rename(path)
+            return
+        if path.suffix == ".docx":
+            source = path.with_suffix(".docx.orig")
+            path.rename(source)
+            with zipfile.ZipFile(source) as inp, zipfile.ZipFile(path, "w") as outp:
+                for item in inp.infolist():
+                    data = inp.read(item.filename)
+                    if item.filename == "word/document.xml":
+                        data = data.replace(
+                            b"</w:body>",
+                            b"<w:p><w:r><w:t>unsupportable</w:t></w:r></w:p></w:body>",
+                        )
+                    outp.writestr(item, data)
+            source.unlink()
+            return
+        assert path.suffix == ".eml", path
+        path.write_bytes(path.read_bytes() + b"\nunsupportable\n")
+
+    for family, document in representatives.items():
+        copy_root = tmp_path / family
+        copy_root.mkdir()
+        manifest_entry = source_manifest["documents"][document.index]
+        source_path = source_case_dir / "documents" / manifest_entry["filename"]
+        planted_path = copy_root / manifest_entry["filename"]
+        assert manifest_entry["subtype"] == document.subtype
+        shutil.copy2(source_path, planted_path)
+        plant(planted_path)
+        findings, _surfaces = _scan_assertion_leakage(copy_root)
+        assert any(
+            finding.startswith("bare token at ") and manifest_entry["filename"] in finding
+            for finding in findings
+        ), f"the {family} format-valid plant was not detected: {findings}"
 
 
 @pytest.mark.slow
@@ -2880,20 +3136,26 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
     manifest_path = case_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["assertionQuality"] = ["a", "b"]
+    manifest["reviewComment"] = "bogus"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     caseload_path = copy_root / "caseload_manifest.json"
     caseload = json.loads(caseload_path.read_text(encoding="utf-8"))
     caseload["medicalAssertions"] = {}
+    caseload["reviewComment"] = "underworked"
     caseload_path.write_text(json.dumps(caseload), encoding="utf-8")
 
     # 2. Reserved keys in the copied seed and case-facts YAML.
     seed_path = case_dir / "seed.yaml"
     seed_path.write_text(
-        seed_path.read_text(encoding="utf-8") + "\nquality: planted\n", encoding="utf-8"
+        seed_path.read_text(encoding="utf-8")
+        + "\nquality: supported\nreview_comment: bad\nharassment_gfpa: planted\n",
+        encoding="utf-8",
     )
     facts_path = case_dir / "case_facts.yaml"
     facts_path.write_text(
-        facts_path.read_text(encoding="utf-8") + "\nrubric: planted\n", encoding="utf-8"
+        facts_path.read_text(encoding="utf-8")
+        + "\nrubric: planted\nselector: safety_officer_ptsd\n",
+        encoding="utf-8",
     )
 
     # 3. The bare token in a rendered EML's raw bytes.
@@ -2934,7 +3196,7 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
             if item.filename == "word/document.xml":
                 data = data.replace(
                     b"</w:body>",
-                    b"<w:p><w:r><w:t>unsupportable</w:t></w:r></w:p></w:body>",
+                    b"<w:p><w:r><w:t>quality: supported</w:t></w:r></w:p></w:body>",
                 )
             outp.writestr(item, data)
     source.unlink()
@@ -2974,13 +3236,11 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
 
     # 7. The OCR-only position: rasterize the token and stamp it into an
     #    image-only page as PIXELS — no text layer anywhere on the page.
-    scanned_pdf = next(
-        (p for p in sorted(documents.glob("*.pdf")) if not _page_zero_text(p)), None
-    )
+    scanned_pdf = next((p for p in sorted(documents.glob("*.pdf")) if not _page_zero_text(p)), None)
     assert scanned_pdf is not None, "the fixture rendered no image-only PDF"
     stamp = fitz.open()
     stamp_page = stamp.new_page(width=560, height=100)
-    stamp_page.insert_text((20, 60), "the finding is unsupportable here", fontsize=30)
+    stamp_page.insert_text((20, 60), "unsupportable and underworked", fontsize=30)
     png = stamp_page.get_pixmap(dpi=150).tobytes("png")
     stamp.close()
     with fitz.open(scanned_pdf) as doc:
@@ -2996,43 +3256,58 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
     (documents / "unsupportable-note.txt").write_text("planted", encoding="utf-8")
     (documents / "unsupportable-exhibits").mkdir()
 
-    # 9. CLI streams: the bare token on stdout, a reserved key on stderr.
+    # 9. CLI streams: the bare token on stdout, unquoted label syntax on stderr.
     findings, _surfaces = _scan_assertion_leakage(
-        copy_root, ("note: this reads unsupportable", '{"quality": "planted"}')
+        copy_root, ("note: this reads unsupportable", "rubric: thin")
     )
     joined = "\n".join(findings)
     assert "manifest.json.assertionQuality" in joined
+    assert any(
+        finding.endswith("manifest.json:bogus")
+        and finding.startswith("forbidden production vocabulary at ")
+        for finding in findings
+    ), "the R90 forbidden-vocabulary plant in the ordinary manifest was not caught"
     assert "caseload_manifest.json.medicalAssertions" in joined
+    assert "forbidden production vocabulary at caseload_manifest.json:underworked" in findings, (
+        "the distinct caseload-manifest R90 plant was not caught"
+    )
     assert "seed.yaml.quality" in joined
+    assert (
+        "reserved label position at bytes:medical-story-leakage-pristine/"
+        "seed.yaml:quality=supported" in findings
+    )
+    assert (
+        "forbidden production vocabulary at medical-story-leakage-pristine/seed.yaml:bad"
+        in findings
+    ), "the copied-seed R90 plant was not caught"
+    assert any(
+        finding.startswith("private psych register key seed.yaml.harassment_gfpa")
+        for finding in findings
+    ), "the planted private register key in the copied seed was not caught"
     assert "case_facts.yaml.rubric" in joined
     assert any(
-        f.startswith("bare token at bytes:") and f.endswith(".eml") for f in findings
-    )
+        finding.startswith("private psych register value case_facts.yaml.selector=")
+        for finding in findings
+    ), "the planted structured private register value was not caught"
+    assert any(f.startswith("bare token at bytes:") and f.endswith(".eml") for f in findings)
     assert any(
-        f.startswith("bare token at eml-part:") and "planted-note.eml" in f
-        for f in findings
+        f.startswith("bare token at eml-part:") and "planted-note.eml" in f for f in findings
     ), "the base64-encoded EML part was not decoded and scanned"
     assert any(
-        f.startswith("reserved key eml-headers:") and ".assertionQuality" in f
-        for f in findings
+        f.startswith("reserved key eml-headers:") and ".assertionQuality" in f for f in findings
     )
+    assert any(f.startswith("bare token at docx:") and "docProps/core.xml" in f for f in findings)
     assert any(
-        f.startswith("bare token at docx:") and "docProps/core.xml" in f
-        for f in findings
-    )
-    assert any(
-        f.startswith("reserved key docx-properties:") and ".quality" in f
-        for f in findings
+        f.startswith("reserved key docx-properties:") and ".quality" in f for f in findings
     ), "the planted DOCX property NAME was not caught by the parsed-key read"
     assert any(
-        f.startswith("bare token at docx:") and "word/document.xml" in f
+        f.startswith("reserved label position at docx:") and "word/document.xml" in f
         for f in findings
-    )
+    ), "the reserved DOCX-body label position was not caught"
     assert any(f.startswith("bare token at pdf-metadata:") for f in findings)
     assert any(f.startswith("bare token at pdf-info:") for f in findings)
     assert any(
-        f.startswith("reserved key pdf-info:") and ".assertionQuality" in f
-        for f in findings
+        f.startswith("reserved key pdf-info:") and ".assertionQuality" in f for f in findings
     ), "the planted custom Info key was not caught by the raw-dictionary read"
     assert any(f.startswith("bare token at pdf-annotation:") for f in findings)
     assert any(
@@ -3040,32 +3315,121 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
         for f in findings
     ), "the planted raw annotation key was not caught by the xref enumeration"
     assert any(
-        f.startswith("reserved key pdf-xmp:") and ".assertionQuality" in f
-        for f in findings
+        f.startswith("reserved key pdf-xmp:") and ".assertionQuality" in f for f in findings
     ), "the planted XMP attribute NAME was not caught by the parsed packet read"
     assert any(f.startswith("bare token at pdf-text:") for f in findings)
     assert any(f.startswith("bare token at pdf-ocr:") for f in findings), (
         "the rasterized token was not recovered from the image-only page"
     )
     assert any(
-        f.startswith("bare token at path:") and "unsupportable-note.txt" in f
+        f.startswith("forbidden production vocabulary at pdf-ocr:") and f.endswith(":underworked")
         for f in findings
+    ), "the OCR surface was scanned only for the bare label, not full R90"
+    assert any(
+        f.startswith("bare token at path:") and "unsupportable-note.txt" in f for f in findings
     )
     assert any(
-        f.startswith("bare token at path:") and "unsupportable-exhibits" in f
-        for f in findings
+        f.startswith("bare token at path:") and "unsupportable-exhibits" in f for f in findings
     )
     assert "bare token at cli:stdout" in findings
-    assert "reserved key cli-stream:quality" in findings
+    assert "reserved label position at cli:stderr:rubric=thin" in findings
 
 
-def test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary():
-    """R90/R93 — production-visible Part 5 prose carries no hidden labels."""
-    from test_medical_story import _case, _part5_psych_report
-    from test_medical_story_loop import _part5_imr_case
-    from wc_caseload_engine import fact_templates as templates
+@pytest.mark.slow
+def test_assertion_leakage_probe_fails_closed_on_malformed_docprops_xml(
+    leakage_tree, tmp_path: Any
+) -> None:
+    """A corrupt property part cannot silently bypass the structured key scan."""
+    import shutil
+    import zipfile
 
-    forbidden = (
+    out_dir, _streams = leakage_tree
+    source = next(
+        iter(sorted((out_dir / "medical-story-leakage-pristine" / "documents").glob("*.docx"))),
+        None,
+    )
+    assert source is not None, "the fixture rendered no DOCX to corrupt"
+    planted = tmp_path / source.name
+    original = tmp_path / f"{source.name}.orig"
+    shutil.copy2(source, original)
+    with zipfile.ZipFile(original) as inp, zipfile.ZipFile(planted, "w") as outp:
+        for item in inp.infolist():
+            data = inp.read(item.filename)
+            if item.filename == "docProps/core.xml":
+                data = b"<cp:coreProperties"
+            outp.writestr(item, data)
+
+    with pytest.raises(RuntimeError) as caught:
+        _scan_assertion_leakage(tmp_path)
+    assert str(caught.value) == (
+        f"docx-properties:{source.name}!docProps/core.xml is malformed XML; "
+        "the reserved-key scan cannot certify property names"
+    )
+
+
+@pytest.fixture(scope="module")
+def medical_story_showcase_leakage_tree(tmp_path_factory: pytest.TempPathFactory):
+    """Generate the committed five-case showcase through the shipped CLI."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from wc_caseload_engine.substrate import find_substrate
+
+    if find_substrate() is None:
+        pytest.skip("merus-test-data-generator substrate not on disk")
+    package = Path(__file__).resolve().parents[1]
+    out_dir = tmp_path_factory.mktemp("showcase-leakage") / "out"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "wc_caseload_engine",
+            "generate",
+            "--spec",
+            str(package / "examples" / "medical-story-showcase.yaml"),
+            "--out",
+            str(out_dir),
+        ],
+        cwd=package,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout[-3000:] + completed.stderr[-3000:]
+    return out_dir, (completed.stdout, completed.stderr)
+
+
+@pytest.mark.slow
+def test_medical_story_showcase_exposes_no_grade_labels_reserved_keys_or_private_registers(
+    medical_story_showcase_leakage_tree,
+) -> None:
+    """R71/R90: the feature-on golden candidate is pristine analyzer input."""
+    from pathlib import Path
+
+    import yaml as yaml_module
+
+    from wc_caseload_engine.planner import build_case_plan
+
+    out_dir, streams = medical_story_showcase_leakage_tree
+    expected_cases = {
+        "flagship-nonindustrial-cancer-noise-a",
+        "flagship-nonindustrial-cancer-noise-b",
+        "flagship-nonindustrial-cancer-noise-c",
+        "lc4664-prior-award-overlap",
+        "diabetic-neuropathy-cts-confound",
+    }
+    assert {path.parent.name for path in Path(out_dir).glob("*/manifest.json")} == expected_cases
+    assert frozenset(
+        {"quality", "rubric", "assertionQuality", "medicalAssertions"}
+    ) == RESERVED_LABEL_KEYS
+    assert PRIVATE_PSYCH_REGISTER_KEYS == (
+        "safety_officer_ptsd",
+        "harassment_gfpa",
+        "compensable_consequence",
+        "direct_physical_event",
+    )
+    assert R90_FORBIDDEN_VOCABULARY == (
         "real",
         "bogus",
         "good",
@@ -3076,111 +3440,266 @@ def test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary(
         "underworked",
         "quality",
     )
-    private_register_keys = (
-        "harassment_gfpa",
-        "direct_physical_event",
-        "compensable_consequence",
-        "safety_officer_ptsd",
+
+    truth_qualities = set()
+    for path in sorted((Path(out_dir) / "truth").glob("*.truth.json")):
+        if path.name == "caseload.truth.json":
+            continue
+        channel = json.loads(path.read_text(encoding="utf-8"))["channels"]["assertions"]
+        truth_qualities.update(
+            item["quality"]
+            for collection in ("contentions", "medicalOpinions", "apportionmentAssertions")
+            for item in channel[collection]
+        )
+    assert truth_qualities == {"supported", "thin", "unsupportable"}
+
+    report_categories = {
+        "initial_medlegal": frozenset(
+            {
+                "QME_REPORT_INITIAL",
+                "QME_COMPREHENSIVE_REPORT",
+                "AME_REPORT",
+                "AME_COMPREHENSIVE_REPORT",
+                "MEDICAL_LEGAL_QME_AME_IME",
+                "APPORTIONMENT_REPORT",
+            }
+        ),
+        "psych_medlegal": frozenset({"PSYCH_EVAL_REPORT_QME_AME"}),
+        "supplemental_medlegal": frozenset(
+            {"QME_REPORT_SUPPLEMENTAL", "SUPPLEMENTAL_QME_AME_REPORT"}
+        ),
+        "ptp": frozenset(
+            {
+                "TREATING_PHYSICIAN_REPORT",
+                "TREATING_PHYSICIAN_REPORT_PR2",
+                "TREATING_PHYSICIAN_REPORT_PR4",
+                "TREATING_PHYSICIAN_REPORT_FINAL",
+            }
+        ),
+    }
+    contention_categories = {
+        "advocacy": (
+            "advocacy",
+            frozenset(
+                {
+                    "ADVOCACY_LETTERS_PTP",
+                    "ADVOCACY_LETTERS_QME",
+                    "ADVOCACY_LETTERS_AME",
+                    "ADVOCACY_LETTERS_PTP_QME_AME",
+                }
+            ),
+        ),
+        "objection": (
+            "objection",
+            frozenset({"ADVOCACY_LETTERS_PTP_QME_AME"}),
+        ),
+        "supplemental_request": (
+            "supplemental_request",
+            frozenset({"ADVOCACY_LETTERS_PTP_QME_AME"}),
+        ),
+        "qme_deposition": (
+            "qme_deposition",
+            frozenset({"DEPOSITION_TRANSCRIPT"}),
+        ),
+    }
+    expected_governed_categories = {
+        "initial_medlegal",
+        "psych_medlegal",
+        "supplemental_medlegal",
+        "ptp",
+        "advocacy",
+        "objection",
+        "supplemental_request",
+        "qme_deposition",
+    }
+    assert set(report_categories) | set(contention_categories) == (
+        expected_governed_categories
     )
 
-    def leaked(label: str, value: Any) -> list[str]:
-        text = value if isinstance(value, str) else json.dumps(value, default=str)
-        # Statutory "good faith" and R88's examination-foundation phrase are
-        # mandated legal text, not an IMR-work-product classifier.
-        normalized = (
-            text.lower()
-            .replace("good-faith", "")
-            .replace("good faith", "")
-            .replace("adequate examination", "")
-        )
-        return [
-            f"{label}:{word}"
-            for word in forbidden
-            if re.search(rf"\b{re.escape(word)}\b", normalized)
-        ]
-
-    surfaces: list[tuple[str, Any]] = []
-    _seed, psych_plan = _case("surface-psych-medlegal")
-    assert psych_plan.medical_story is not None
-    surfaces.append(
-        (
-            "psych-plan",
-            psych_plan.medical_story.model_dump(mode="json"),
+    package = Path(__file__).resolve().parents[1]
+    showcase_spec = parse_caseload_spec(
+        yaml_module.safe_load(
+            (package / "examples" / "medical-story-showcase.yaml").read_text(
+                encoding="utf-8"
+            )
         )
     )
+    governed_pdf_categories: dict[str, str] = {}
+    for seed in showcase_spec.cases:
+        plan = build_case_plan(seed)
+        assert plan.medical_story is not None
+        manifest = json.loads(
+            (Path(out_dir) / seed.case_id / "manifest.json").read_text(encoding="utf-8")
+        )
+        for document in plan.documents:
+            story = plan.medical_story.by_document_index.get(document.index)
+            if story is None:
+                continue
+            category = next(
+                (
+                    name
+                    for name, (surface, subtypes) in contention_categories.items()
+                    if document.contention_surface == surface and document.subtype in subtypes
+                ),
+                None,
+            )
+            if (
+                category is None
+                and document.contention_surface is None
+                and document.medical_story_render_key is not None
+                and story.medical_opinion is not None
+            ):
+                category = next(
+                    (
+                        name
+                        for name, subtypes in report_categories.items()
+                        if document.subtype in subtypes
+                    ),
+                    None,
+                )
+            if category is None:
+                continue
+            entry = manifest["documents"][document.index]
+            assert entry["subtype"] == document.subtype
+            assert entry["format"] == "pdf"
+            governed_pdf_categories[
+                f"{seed.case_id}/documents/{entry['filename']}"
+            ] = category
+    assert set(governed_pdf_categories.values()) == expected_governed_categories
+
+    findings, surfaces = _scan_assertion_leakage(out_dir, streams)
+    assert any(surface.endswith("/seed.yaml") for surface in surfaces)
+    assert any(surface.endswith("/manifest.json") for surface in surfaces)
+    assert any(surface.endswith(".pdf") for surface in surfaces)
+    reserved = [finding for finding in findings if finding.startswith("reserved ")]
+    private = [
+        finding for finding in findings if finding.startswith("private psych register")
+    ]
+    bare = [finding for finding in findings if finding.startswith("bare token")]
+
+    def r90_finding_is_in_scope(finding: str) -> bool:
+        location = finding.removeprefix("forbidden production vocabulary at ").rsplit(
+            ":", maxsplit=1
+        )[0]
+        if location.startswith("pdf-text:"):
+            return location.removeprefix("pdf-text:") in governed_pdf_categories
+        return (
+            location in {"caseload_manifest.json", "cli:stdout", "cli:stderr"}
+            or location.endswith("/seed.yaml")
+            or location.endswith("/manifest.json")
+        )
+
+    category_plants: dict[str, str] = {}
+    for relpath, category in sorted(governed_pdf_categories.items()):
+        category_plants.setdefault(category, relpath)
+    assert set(category_plants) == expected_governed_categories
+    for category, relpath in category_plants.items():
+        planted = _r90_text_findings(
+            "underworked good report bad rationale", f"pdf-text:{relpath}"
+        )
+        assert planted == [
+            f"forbidden production vocabulary at pdf-text:{relpath}:good",
+            f"forbidden production vocabulary at pdf-text:{relpath}:bad",
+            f"forbidden production vocabulary at pdf-text:{relpath}:underworked"
+        ], category
+        assert all(r90_finding_is_in_scope(finding) for finding in planted), category
+
+    structured_plants = {
+        "seed": _r90_text_findings(
+            "underworked", "flagship-nonindustrial-cancer-noise-a/seed.yaml"
+        )[0],
+        "manifest": _r90_text_findings(
+            "underworked", "flagship-nonindustrial-cancer-noise-a/manifest.json"
+        )[0],
+        "caseload": _r90_text_findings("underworked", "caseload_manifest.json")[0],
+        "cli": _r90_text_findings("underworked", "cli:stdout")[0],
+    }
+    assert all(r90_finding_is_in_scope(finding) for finding in structured_plants.values())
+
+    clinical_phrase = "variable with good and bad days but generally worsening"
+    clinical_phrase_paths = {
+        "diabetic-neuropathy-cts-confound/documents/058_2024-01-12.pdf",
+        "flagship-nonindustrial-cancer-noise-a/documents/056_2023-11-15.pdf",
+        "flagship-nonindustrial-cancer-noise-c/documents/048_2023-11-15.pdf",
+    }
+    fitz = pytest.importorskip("fitz")
+    governed_pdf_texts: dict[str, str] = {}
+    for relpath in governed_pdf_categories:
+        with fitz.open(Path(out_dir) / relpath) as document:
+            governed_pdf_texts[relpath] = re.sub(
+                r"\s+", " ", "\n".join(page.get_text() for page in document)
+            ).lower()
+    assert {
+        relpath
+        for relpath, text in governed_pdf_texts.items()
+        if clinical_phrase in text
+    } == clinical_phrase_paths
+
+    pre_exemption_r90 = [
+        finding
+        for finding in findings
+        if finding.startswith("forbidden production vocabulary")
+        and r90_finding_is_in_scope(finding)
+        and finding.startswith("forbidden production vocabulary at pdf-text:")
+    ]
+    expected_clinical_findings = {
+        f"forbidden production vocabulary at pdf-text:{relpath}:{word}"
+        for relpath in clinical_phrase_paths
+        for word in ("good", "bad")
+    }
+    assert len(pre_exemption_r90) == 6
+    assert set(pre_exemption_r90) == expected_clinical_findings
+
+    r90_findings = [
+        finding
+        for finding in findings
+        if finding.startswith("forbidden production vocabulary")
+        and r90_finding_is_in_scope(finding)
+        and not finding.startswith("forbidden production vocabulary at pdf-text:")
+    ]
+    r90_findings.extend(
+        finding
+        for relpath, text in governed_pdf_texts.items()
+        for finding in _r90_text_findings(
+            text.replace(clinical_phrase, ""), f"pdf-text:{relpath}"
+        )
+    )
+    assert reserved == [], f"reserved M2 label positions leaked: {reserved}"
+    assert private == [], f"private psych register selectors leaked: {private}"
+    assert bare == [], f"bare unsupportable grade leaked: {bare}"
+    assert r90_findings == [], f"R90 grade commentary leaked: {r90_findings}"
+
+
+def test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary():
+    """R90/R93 — only rendered Part-5 strings are analyzer-visible evidence."""
+    from test_medical_story import _part5_psych_report
+    from test_medical_story_loop import _part5_imr_case
+
+    rendered_surfaces: list[tuple[str, str]] = []
     for opinion_id in ("opn-01", "opn-02", "opn-03", "opn-04"):
         _document, _story, rendered = _part5_psych_report(opinion_id)
-        surfaces.append((f"psych-report:{opinion_id}", rendered))
+        rendered_surfaces.append((f"psych-report:{opinion_id}", rendered))
 
     for case_id in (
         "imr-authored-true-upheld",
         "imr-sparse-explicit",
         "imr-sampled-upheld",
     ):
-        _seed, plan, _document, content, rendered = _part5_imr_case(case_id)
-        assert plan.medical_ur_plan is not None
-        surfaces.append(
-            (
-                f"imr-plan:{case_id}",
-                plan.medical_ur_plan.model_dump(mode="json"),
-            )
-        )
-        surfaces.append((f"imr-content:{case_id}", content.model_dump(mode="json")))
-        surfaces.append((f"imr-application:{case_id}", rendered))
-
-    # The private selector keys may name register rows in source, but may never
-    # cross into any plan, content model, rendered document, or other artifact.
-    def private_key_leaks(label: str, value: Any, path: str = "") -> list[str]:
-        findings: list[str] = []
-        if isinstance(value, dict):
-            for key, child in value.items():
-                child_path = f"{path}.{key}" if path else str(key)
-                if key in private_register_keys:
-                    findings.append(f"{label}:{child_path}")
-                if isinstance(child, str) and child in private_register_keys:
-                    if not (
-                        key == "psych_injury_kind"
-                        and child == "compensable_consequence"
-                    ):
-                        findings.append(f"{label}:{child_path}={child}")
-                    continue
-                findings.extend(private_key_leaks(label, child, child_path))
-        elif isinstance(value, (list, tuple)):
-            for index, child in enumerate(value):
-                findings.extend(private_key_leaks(label, child, f"{path}[{index}]"))
-        elif isinstance(value, str):
-            findings.extend(
-                f"{label}:{path}:{key}"
-                for key in private_register_keys
-                if re.search(rf"\b{re.escape(key)}\b", value)
-            )
-        return findings
-
-    private_key_findings = [
-        finding
-        for label, value in surfaces
-        for finding in private_key_leaks(label, value)
-    ]
-    assert private_key_findings == []
-
-    for constant_name in (
-        "PSYCH_HISTORY_REGISTER",
-        "PSYCH_QME_PROTOCOL_REGISTER",
-        "PSYCH_ROLDA_REGISTER",
-        "PSYCH_THRESHOLD_REGISTER",
-        "PSYCH_ACTUAL_EVENTS_REGISTER",
-        "PSYCH_SAFETY_OFFICER_REGISTER",
-        "PSYCH_GAF_PDRS_REGISTER",
-        "PSYCH_SECTION_4660_1C_REGISTER",
-        "PSYCH_DEFENSE_CONTEST_REGISTER",
-        "PSYCH_CONTENTION_SURFACE_REGISTER",
-        "IMR_APPLICATION_REGISTER",
-    ):
-        surfaces.append((constant_name, getattr(templates, constant_name)))
+        _seed, _plan, _document, _content, rendered = _part5_imr_case(case_id)
+        rendered_surfaces.append((f"imr-application:{case_id}", rendered))
 
     findings = [
         finding
-        for label, value in surfaces
-        for finding in leaked(label, value)
+        for label, rendered in rendered_surfaces
+        for finding in _decoded_text_findings(rendered, label)
+    ]
+    assert [label for label, _rendered in rendered_surfaces] == [
+        "psych-report:opn-01",
+        "psych-report:opn-02",
+        "psych-report:opn-03",
+        "psych-report:opn-04",
+        "imr-application:imr-authored-true-upheld",
+        "imr-application:imr-sparse-explicit",
+        "imr-application:imr-sampled-upheld",
     ]
     assert findings == []

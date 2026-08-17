@@ -21,21 +21,22 @@
       "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf": "39c29931201f08dd"
     }
   },
-  "caseCount": 6,
-  "documentCount": 210,
-  "fileCount": 236,
+  "caseCount": 7,
+  "documentCount": 241,
+  "fileCount": 271,
   "rootFiles": [
     "caseload_manifest.json",
     "truth/caseload.truth.json",
     "truth/showcase-death-dependency.truth.json",
     "truth/showcase-firefighter-presumption.truth.json",
+    "truth/showcase-hikida-justice.truth.json",
     "truth/showcase-imr-challenge.truth.json",
     "truth/showcase-psychiatric.truth.json",
     "truth/showcase-rating-doctrines.truth.json",
     "truth/showcase-threshold-defences.truth.json"
   ],
-  "corpusTree": "fd1d13fe0dacfc9d11f749be05da78e694e65e8f29eb4c19d6850260c2ea180c",
-  "caseload": "ce973ccd45fe576276fb9b2eb587656cfc34cfc69124a711c37b85a8cdc3e758",
+  "corpusTree": "96f27f5e8250629ac06b5f9a4ed5bfec0d0e05a78b912991fec707a45d693947",
+  "caseload": "be12d94c3a302d7054314f52d1422db2f225909a5afd9791acc2ec0b1b7a78c2",
   "cases": {
     "showcase-death-dependency": {
       "documentCount": 30,
@@ -56,6 +57,16 @@
       "manifest": "7395650d5ab1061413d657099c2c5354e1440d3a14e6dee5b9310149f8eee78c",
       "seed": "881e3c7a31892415b7f38e5dc9dfdafbae078c8af21dbd51bff0b6bea6297edd",
       "facts": "adc73094e74f6759d519f8d8a6be2ebb7f4a8fb7f443009aeec27c386449db98"
+    },
+    "showcase-hikida-justice": {
+      "documentCount": 31,
+      "distinctSubtypes": 18,
+      "fileCount": 34,
+      "tree": "7ed3c4f3de2b674c8a3c78cba64c66aaa6d283f3aad50021baee0204c626ecb3",
+      "documents": "2ca20aaf1ee88685ec55348e2ea1b448d3588705fb1410997bc7fe99b8a2b4af",
+      "manifest": "34de9bc3420930d721199f7739b2512c9142a96d97e9678e644cee86298cf529",
+      "seed": "393b8158ef9bbf8abb608b370881f0fc10de1279f46e4f6a0e26bf0668d42f37",
+      "facts": "1990d112c996274e644e2f784abb08f0263e231a9b23731e3c9e72f322c09916"
     },
     "showcase-imr-challenge": {
       "documentCount": 30,

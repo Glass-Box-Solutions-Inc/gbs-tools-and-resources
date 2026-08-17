@@ -462,9 +462,7 @@ class MedicalAssertionLedger(BaseModel):
         return next((o for o in self.medical_opinions if o.id == opinion_id), None)
 
     def assertions_of(self, opinion_id: str) -> tuple[ApportionmentAssertion, ...]:
-        return tuple(
-            a for a in self.apportionment_assertions if a.opinion_id == opinion_id
-        )
+        return tuple(a for a in self.apportionment_assertions if a.opinion_id == opinion_id)
 
     def quality_counts(self) -> dict[str, int]:
         counts = {"supported": 0, "thin": 0, "unsupportable": 0}
@@ -476,6 +474,79 @@ class MedicalAssertionLedger(BaseModel):
             for item in collection:
                 counts[item.quality] += 1
         return counts
+
+
+# AJC-62 Amendment A2-R4: the production-side assertion projection used by
+# the M3 plan-digest contract.  These are deliberately literal allowlists,
+# not a full model dump with ``quality`` removed.  The cohort oracle declares
+# an independent value-identical copy so a coordinated edit cannot silently
+# move the change detector.
+M3_PLAN_DIGEST_CONTENTION_FIELDS: Final[tuple[str, ...]] = (
+    "id",
+    "claim_type",
+    "party",
+    "position",
+    "psych_injury_kind",
+    "target_condition_id",
+    "target_prior_claim_id",
+    "target_prior_award_id",
+    "target_body_part",
+    "doctrine_hooks",
+    "rationale",
+    "treatment_causation",
+    "requested_apportionment",
+    "groundings",
+)
+
+M3_PLAN_DIGEST_MEDICAL_OPINION_FIELDS: Final[tuple[str, ...]] = (
+    "id",
+    "author_role",
+    "report_stage",
+    "report_date",
+    "event_kind",
+    "revision_kind",
+    "apportionment_state",
+    "determination_kind",
+    "determination_rationale",
+    "examination_performed",
+    "psych_injury_kind",
+    "aoe_coe_finding",
+    "aoe_coe_rationale",
+    "reviewed_condition_ids",
+    "reviewed_prior_claim_ids",
+    "reviewed_prior_award_ids",
+    "endorses_contention_ids",
+    "concurs_with_contention_ids",
+    "rejects_contention_ids",
+    "defers_contention_ids",
+    "responds_to_opinion_id",
+    "supersedes_opinion_id",
+    "rationale",
+    "revision_rationale",
+)
+
+M3_PLAN_DIGEST_APPORTIONMENT_ASSERTION_FIELDS: Final[tuple[str, ...]] = (
+    "id",
+    "opinion_id",
+    "body_part",
+    "industrial_percent",
+    "nonindustrial_percent",
+    "basis_kinds",
+    "condition_ids",
+    "prior_claim_ids",
+    "prior_award_ids",
+    "description",
+    "disability_causation_stated",
+    "reasonable_medical_probability",
+    "causal_rationale",
+    "percentage_rationale",
+    "prior_award_analysis",
+    "revised_from_percent",
+    "revision_rationale",
+    "psych_exception_analysis",
+    "linked_contention_id",
+    "groundings",
+)
 
 
 class ContentionDocumentBinding(BaseModel):
@@ -721,7 +792,9 @@ def sibtf_grounding_clauses(history: AssertionWorldProjection) -> tuple[str, ...
     plan path and the truth path cannot drift apart.
     """
     return tuple(
-        clause.name for clause in SIBTF_QUALIFYING if clause.holds(history)  # type: ignore[arg-type]
+        clause.name
+        for clause in SIBTF_QUALIFYING
+        if clause.holds(history)  # type: ignore[arg-type]
     )
 
 
@@ -766,9 +839,7 @@ def _award_pairing_problem(
     return problems
 
 
-def _contention_referential(
-    contention: Contention, history: AssertionWorldProjection
-) -> list[str]:
+def _contention_referential(contention: Contention, history: AssertionWorldProjection) -> list[str]:
     problems: list[str] = []
     condition_ids = history.condition_ids()
     if (
@@ -819,19 +890,13 @@ def _opinion_referential(
     problems: list[str] = []
     for ref in opinion.reviewed_condition_ids:
         if ref not in history.condition_ids():
-            problems.append(
-                f"medical opinion '{opinion.id}' reviews unknown condition '{ref}'"
-            )
+            problems.append(f"medical opinion '{opinion.id}' reviews unknown condition '{ref}'")
     for ref in opinion.reviewed_prior_claim_ids:
         if ref not in history.prior_claim_ids():
-            problems.append(
-                f"medical opinion '{opinion.id}' reviews unknown prior claim '{ref}'"
-            )
+            problems.append(f"medical opinion '{opinion.id}' reviews unknown prior claim '{ref}'")
     for ref in opinion.reviewed_prior_award_ids:
         if ref not in history.prior_award_ids():
-            problems.append(
-                f"medical opinion '{opinion.id}' reviews unknown prior award '{ref}'"
-            )
+            problems.append(f"medical opinion '{opinion.id}' reviews unknown prior award '{ref}'")
     disposition_collections: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("endorses", opinion.endorses_contention_ids),
         ("concurs with", opinion.concurs_with_contention_ids),
@@ -841,17 +906,14 @@ def _opinion_referential(
     for verb, refs in disposition_collections:
         for ref in refs:
             if ref not in contention_ids:
-                problems.append(
-                    f"medical opinion '{opinion.id}' {verb} unknown contention '{ref}'"
-                )
+                problems.append(f"medical opinion '{opinion.id}' {verb} unknown contention '{ref}'")
     # R26: the four disposition collections are pairwise disjoint. The
     # endorses/rejects pair keeps its exact M2 template.
     for index, (verb_a, refs_a) in enumerate(disposition_collections):
         for verb_b, refs_b in disposition_collections[index + 1 :]:
             for ref in sorted(set(refs_a) & set(refs_b)):
                 problems.append(
-                    f"medical opinion '{opinion.id}' both {verb_a} and {verb_b} "
-                    f"contention '{ref}'"
+                    f"medical opinion '{opinion.id}' both {verb_a} and {verb_b} contention '{ref}'"
                 )
     return problems
 
@@ -878,20 +940,17 @@ def _assertion_referential(
     for ref in assertion.condition_ids:
         if ref not in history.condition_ids():
             problems.append(
-                f"apportionment assertion '{assertion.id}' references unknown "
-                f"condition '{ref}'"
+                f"apportionment assertion '{assertion.id}' references unknown condition '{ref}'"
             )
     for ref in assertion.prior_claim_ids:
         if ref not in history.prior_claim_ids():
             problems.append(
-                f"apportionment assertion '{assertion.id}' references unknown prior "
-                f"claim '{ref}'"
+                f"apportionment assertion '{assertion.id}' references unknown prior claim '{ref}'"
             )
     for ref in assertion.prior_award_ids:
         if ref not in history.prior_award_ids():
             problems.append(
-                f"apportionment assertion '{assertion.id}' references unknown prior "
-                f"award '{ref}'"
+                f"apportionment assertion '{assertion.id}' references unknown prior award '{ref}'"
             )
     problems.extend(
         _award_pairing_problem(
@@ -994,9 +1053,7 @@ def _opinion_chain(
                 chain = " -> ".join(cycle)
                 if frozenset(cycle) not in {frozenset(c.split(" -> ")) for c in reported}:
                     reported.add(chain)
-                    problems.append(
-                        f"medical opinion chain contains a cycle: {chain}"
-                    )
+                    problems.append(f"medical opinion chain contains a cycle: {chain}")
     return problems
 
 
@@ -1052,9 +1109,7 @@ def _psych_kind_anchoring(
     for opinion in ledger.medical_opinions:
         if opinion.psych_injury_kind is None:
             continue
-        if psyche_claimed or any(
-            psychiatric_target(ref) for ref in opinion.reviewed_condition_ids
-        ):
+        if psyche_claimed or any(psychiatric_target(ref) for ref in opinion.reviewed_condition_ids):
             continue
         referenced = (
             *opinion.endorses_contention_ids,
@@ -1063,8 +1118,7 @@ def _psych_kind_anchoring(
             *opinion.defers_contention_ids,
         )
         if any(
-            (found := ledger.contention(ref)) is not None
-            and psychiatric_contention(found)
+            (found := ledger.contention(ref)) is not None and psychiatric_contention(found)
             for ref in referenced
         ):
             continue
@@ -1104,9 +1158,7 @@ def _response_opinion_structure(ledger: MedicalAssertionLedger) -> list[str]:
     return problems
 
 
-def _causation_family_changed(
-    response: MedicalOpinion, predecessor: MedicalOpinion
-) -> bool:
+def _causation_family_changed(response: MedicalOpinion, predecessor: MedicalOpinion) -> bool:
     """R37's causation changed-field family: AOE/COE, psych classification,
     any endorsement/concurrence/rejection/deferral result, or the causation
     rationale differs from the immediate predecessor."""
@@ -1117,8 +1169,7 @@ def _causation_family_changed(
     if response.aoe_coe_rationale != predecessor.aoe_coe_rationale:
         return True
     return any(
-        frozenset(getattr(response, collection))
-        != frozenset(getattr(predecessor, collection))
+        frozenset(getattr(response, collection)) != frozenset(getattr(predecessor, collection))
         for collection in (
             "endorses_contention_ids",
             "concurs_with_contention_ids",
@@ -1142,15 +1193,12 @@ def _apportionment_family_changed(
     if response.determination_kind != predecessor.determination_kind:
         return True
     response_rows = {a.body_part: a for a in ledger.assertions_of(response.id)}
-    predecessor_rows = {
-        a.body_part: a for a in ledger.assertions_of(predecessor.id)
-    }
+    predecessor_rows = {a.body_part: a for a in ledger.assertions_of(predecessor.id)}
     if set(response_rows) != set(predecessor_rows):
         return True
     return any(
         row.nonindustrial_percent != predecessor_rows[part].nonindustrial_percent
-        or frozenset(row.basis_kinds)
-        != frozenset(predecessor_rows[part].basis_kinds)
+        or frozenset(row.basis_kinds) != frozenset(predecessor_rows[part].basis_kinds)
         for part, row in response_rows.items()
     )
 
@@ -1187,9 +1235,7 @@ def _revision_kind_predicates(ledger: MedicalAssertionLedger) -> list[str]:
             continue
         kind = opinion.revision_kind
         causation_changed = _causation_family_changed(opinion, predecessor)
-        apportionment_changed = _apportionment_family_changed(
-            opinion, predecessor, ledger
-        )
+        apportionment_changed = _apportionment_family_changed(opinion, predecessor, ledger)
         if kind in ("unchanged_additional_reasoning", "new_records_no_change"):
             if opinion.supersedes_opinion_id is not None:
                 problems.append(
@@ -1214,8 +1260,7 @@ def _revision_kind_predicates(ledger: MedicalAssertionLedger) -> list[str]:
                     "the same under this kind"
                 )
             if kind == "new_records_no_change" and not (
-                _reviewed_record_union(opinion)
-                > _reviewed_record_union(predecessor)
+                _reviewed_record_union(opinion) > _reviewed_record_union(predecessor)
             ):
                 problems.append(
                     f"medical opinion '{opinion.id}' has revision_kind "
@@ -1235,19 +1280,27 @@ def _revision_kind_predicates(ledger: MedicalAssertionLedger) -> list[str]:
             # The complete R37 conjunction: each revising kind requires its
             # own changed-field family and forbids the family it does not
             # state; the combined kind requires BOTH.
-            if kind in (
-                "revised_causation",
-                "revised_causation_and_apportionment",
-            ) and not causation_changed:
+            if (
+                kind
+                in (
+                    "revised_causation",
+                    "revised_causation_and_apportionment",
+                )
+                and not causation_changed
+            ):
                 problems.append(
                     f"medical opinion '{opinion.id}' has revision_kind "
                     f"'{kind}' but changes no causation-family result "
                     f"relative to predecessor '{predecessor.id}'"
                 )
-            if kind in (
-                "revised_apportionment",
-                "revised_causation_and_apportionment",
-            ) and not apportionment_changed:
+            if (
+                kind
+                in (
+                    "revised_apportionment",
+                    "revised_causation_and_apportionment",
+                )
+                and not apportionment_changed
+            ):
                 problems.append(
                     f"medical opinion '{opinion.id}' has revision_kind "
                     f"'{kind}' but changes no apportionment-family result "
@@ -1290,9 +1343,7 @@ def _percentage_revision_rows(
     if predecessor.determination_kind != "allocated":
         return []
     problems: list[str] = []
-    predecessor_rows = {
-        a.body_part: a for a in ledger.assertions_of(predecessor.id)
-    }
+    predecessor_rows = {a.body_part: a for a in ledger.assertions_of(predecessor.id)}
     for row in ledger.assertions_of(opinion.id):
         prior = predecessor_rows.get(row.body_part)
         if prior is None:
@@ -1337,33 +1388,25 @@ def _lifecycle(ledger: MedicalAssertionLedger) -> list[str]:
         owned_assertions = ledger.assertions_of(opinion.id)
         if opinion.report_stage == "final" and opinion.apportionment_state == "deferred":
             problems.append(
-                f"medical opinion '{opinion.id}' is final but apportionment_state "
-                "is 'deferred'"
+                f"medical opinion '{opinion.id}' is final but apportionment_state is 'deferred'"
             )
         if opinion.report_stage == "interim" and opinion.apportionment_state == "omitted":
             problems.append(
-                f"medical opinion '{opinion.id}' is interim but apportionment_state "
-                "is 'omitted'"
+                f"medical opinion '{opinion.id}' is interim but apportionment_state is 'omitted'"
             )
         if opinion.apportionment_state == "deferred" and owned_assertions:
             problems.append(
-                f"medical opinion '{opinion.id}' is deferred but owns an "
-                "apportionment assertion"
+                f"medical opinion '{opinion.id}' is deferred but owns an apportionment assertion"
             )
         if opinion.apportionment_state == "omitted" and owned_assertions:
             problems.append(
-                f"medical opinion '{opinion.id}' is omitted but owns an "
-                "apportionment assertion"
+                f"medical opinion '{opinion.id}' is omitted but owns an apportionment assertion"
             )
         if opinion.apportionment_state == "determined" and opinion.determination_kind is None:
             problems.append(
-                f"medical opinion '{opinion.id}' is determined but has no "
-                "determination_kind"
+                f"medical opinion '{opinion.id}' is determined but has no determination_kind"
             )
-        if (
-            opinion.determination_kind is not None
-            and opinion.apportionment_state != "determined"
-        ):
+        if opinion.determination_kind is not None and opinion.apportionment_state != "determined":
             problems.append(
                 f"medical opinion '{opinion.id}' has determination_kind "
                 f"'{opinion.determination_kind}' but apportionment_state is not "
@@ -1415,10 +1458,7 @@ def _grounding_typing(ledger: MedicalAssertionLedger) -> list[str]:
                 f"contention '{contention.id}' sets treatment_causation but "
                 "claim_type is not 'compensable_consequence'"
             )
-        if (
-            contention.treatment_causation is not None
-            and contention.target_condition_id is None
-        ):
+        if contention.treatment_causation is not None and contention.target_condition_id is None:
             problems.append(
                 f"contention '{contention.id}' sets treatment_causation but has no "
                 "target_condition_id"
@@ -1817,8 +1857,27 @@ EVIDENCE_BUDGET_MIX = AssertionKnob[tuple[Fraction, Fraction, Fraction]](
 """Weights for evidence budgets ``(1, 2, 3)`` reviewed records."""
 
 COMMON_NONINDUSTRIAL_PERCENTAGES: Final[tuple[int, ...]] = (
-    5, 10, 15, 20, 25, 30, 33, 35, 40, 45, 50,
-    55, 60, 65, 67, 70, 75, 80, 85, 90, 95,
+    5,
+    10,
+    15,
+    20,
+    25,
+    30,
+    33,
+    35,
+    40,
+    45,
+    50,
+    55,
+    60,
+    65,
+    67,
+    70,
+    75,
+    80,
+    85,
+    90,
+    95,
 )
 """The register real percentages cluster on — fives, thirds, quarters. Drawn at
 :data:`P_COMMON_PERCENTAGE_REGISTER`; the remaining mass draws from 1..99
@@ -2003,9 +2062,7 @@ P_APPLICANT_COMPLETION_REQUEST = AssertionKnob[Fraction](
     source="AJC-62 Part 3 calibration (R50).",
 )
 
-ADVERSE_CONTEST_PATH_WEIGHTS = AssertionKnob[
-    dict[str, tuple[tuple[str, Fraction], ...]]
-](
+ADVERSE_CONTEST_PATH_WEIGHTS = AssertionKnob[dict[str, tuple[tuple[str, Fraction], ...]]](
     value={
         "applicant": (
             ("objection_only", Fraction(1, 2)),
@@ -2029,9 +2086,7 @@ ADVERSE_CONTEST_PATH_WEIGHTS = AssertionKnob[
     source="AJC-62 Part 3 calibration (R50).",
 )
 
-COMPLETION_PATH_WEIGHTS = AssertionKnob[
-    dict[str, tuple[tuple[str, Fraction], ...]]
-](
+COMPLETION_PATH_WEIGHTS = AssertionKnob[dict[str, tuple[tuple[str, Fraction], ...]]](
     value={
         "applicant": (
             ("supplemental_only", Fraction(17, 20)),
@@ -2081,8 +2136,7 @@ DEFENSE_THEORY_WEIGHTS = AssertionKnob[tuple[tuple[str, Fraction], ...]](
         "in the chain."
     ),
     source=(
-        "Categories: sme-answers.md, Ruling Set Three. Weights: AJC-62 Part 3 "
-        "calibration (R51)."
+        "Categories: sme-answers.md, Ruling Set Three. Weights: AJC-62 Part 3 calibration (R51)."
     ),
 )
 
@@ -2163,9 +2217,7 @@ REVISION_KIND_WEIGHTS = AssertionKnob[dict[str, tuple[Fraction, ...]]](
 )
 
 GRANULAR_NONINDUSTRIAL_PERCENTAGES: Final[tuple[int, ...]] = tuple(
-    value
-    for value in range(1, 100)
-    if value not in COMMON_NONINDUSTRIAL_PERCENTAGES
+    value for value in range(1, 100) if value not in COMMON_NONINDUSTRIAL_PERCENTAGES
 )
 """The exactly-78-integer continuous remainder of 1..99 (R55). The granular
 selector implements the continuous latent law (uniform by Lebesgue measure over
@@ -2253,9 +2305,7 @@ IMR_DECISION_LAG_DAYS = AssertionKnob[tuple[int, int]](
     ),
 )
 
-UR_DECISION_WEIGHTS_WHEN_UNSTATED = AssertionKnob[
-    tuple[tuple[str, Fraction], ...]
-](
+UR_DECISION_WEIGHTS_WHEN_UNSTATED = AssertionKnob[tuple[tuple[str, Fraction], ...]](
     value=(
         ("upheld", Fraction(1, 2)),
         ("overturned", Fraction(1, 2)),
@@ -2269,9 +2319,7 @@ UR_DECISION_WEIGHTS_WHEN_UNSTATED = AssertionKnob[
     source="Existing lifecycle/substrate behavior (AJC-62 Part 3 R57).",
 )
 
-IMR_OUTCOME_WEIGHTS_WHEN_UNSTATED = AssertionKnob[
-    tuple[tuple[str, Fraction], ...]
-](
+IMR_OUTCOME_WEIGHTS_WHEN_UNSTATED = AssertionKnob[tuple[tuple[str, Fraction], ...]](
     value=(
         ("upheld", Fraction(1, 2)),
         ("overturned", Fraction(1, 2)),
@@ -2307,9 +2355,7 @@ IMR_APPLICATION_FIELD_OCCUPANCY = AssertionKnob[dict[str, Fraction]](
     source="AJC-62 Part 3 calibration (R58); direction counsel-confirmed.",
 )
 
-SUPPORTING_RECORD_COUNT_WEIGHTS = AssertionKnob[
-    tuple[tuple[int, Fraction], ...]
-](
+SUPPORTING_RECORD_COUNT_WEIGHTS = AssertionKnob[tuple[tuple[int, Fraction], ...]](
     value=(
         (1, Fraction(3, 5)),
         (2, Fraction(3, 10)),
@@ -2391,10 +2437,7 @@ MEDICAL_STORY_KNOBS: Final[dict[str, AssertionKnob]] = {
             "outside the common pool, selected through the R55 continuous "
             "latent law so no granular value is a nearest-common clamp."
         ),
-        source=(
-            "Anti-clamp consequence of the M2 pool and integer schema "
-            "(AJC-62 Part 3 R55)."
-        ),
+        source=("Anti-clamp consequence of the M2 pool and integer schema (AJC-62 Part 3 R55)."),
     ),
     "ADVOCACY_LEAD_DAYS": ADVOCACY_LEAD_DAYS,
     "OBJECTION_LAG_DAYS": OBJECTION_LAG_DAYS,
@@ -2593,9 +2636,7 @@ def _normalized_story_atom(value: object) -> object:
         normalized = [_normalized_story_atom(item) for item in value]
         return sorted(
             normalized,
-            key=lambda item: json.dumps(
-                item, ensure_ascii=True, separators=(",", ":")
-            ),
+            key=lambda item: json.dumps(item, ensure_ascii=True, separators=(",", ":")),
         )
     if isinstance(value, Mapping):
         pairs = [
@@ -2604,9 +2645,7 @@ def _normalized_story_atom(value: object) -> object:
         ]
         return sorted(
             pairs,
-            key=lambda pair: json.dumps(
-                pair[0], ensure_ascii=True, separators=(",", ":")
-            ),
+            key=lambda pair: json.dumps(pair[0], ensure_ascii=True, separators=(",", ":")),
         )
     raise MedicalAssertionError(
         f"medical-story semantic keys forbid {type(value).__name__} atoms; "
@@ -2662,21 +2701,14 @@ def _medical_story_seed(
             "scenario.medical_history is None, and the absent path must "
             "return before any stream exists (R44/R1)"
         )
-    if (
-        family in MEDICAL_STORY_ASSERTION_LOOP_FAMILIES
-        and seed.scenario.medical_assertions is None
-    ):
+    if family in MEDICAL_STORY_ASSERTION_LOOP_FAMILIES and seed.scenario.medical_assertions is None:
         raise MedicalAssertionError(
             f"assertion-loop family {family!r} constructed while "
             "scenario.medical_assertions is None; only UR/IMR and "
             "document-render families may run history-present/"
             "assertions-absent (R44)"
         )
-    if (
-        len(semantic_key) < 2
-        or semantic_key[0] != "case"
-        or semantic_key[1] != seed.case_id
-    ):
+    if len(semantic_key) < 2 or semantic_key[0] != "case" or semantic_key[1] != seed.case_id:
         raise MedicalAssertionError(
             f"medical-story semantic key {semantic_key!r} does not begin "
             f'("case", {seed.case_id!r}, ...); R45 requires the case prefix '
@@ -2731,9 +2763,7 @@ def _story_contention_key(
     )
 
 
-def _story_sampled_base_opinion_key(
-    seed: CaseSeed, opinion: MedicalOpinion
-) -> StorySemanticKey:
+def _story_sampled_base_opinion_key(seed: CaseSeed, opinion: MedicalOpinion) -> StorySemanticKey:
     """The R45 ``O`` identity for the sampled stage base opinion.
 
     ``("case", id, "opinion", "sampled_base", author_role, report_stage,
@@ -2770,9 +2800,7 @@ def _ptp_aoe_coe_finding(seed: CaseSeed, opinion_key: StorySemanticKey) -> str:
     letter author/content/date/subtype, no file perspective, no contention
     quality, no QME/AME result (R49/R16).
     """
-    rng = _medical_story_rng(
-        seed, "ptp-aoe-coe-finding", ("case", seed.case_id, opinion_key)
-    )
+    rng = _medical_story_rng(seed, "ptp-aoe-coe-finding", ("case", seed.case_id, opinion_key))
     if _fraction_draw(rng, P_PTP_INDUSTRIAL_AOE_COE.value):
         return "industrial"
     complement = PTP_AOE_COE_COMPLEMENT_WEIGHTS.value
@@ -2781,9 +2809,7 @@ def _ptp_aoe_coe_finding(seed: CaseSeed, opinion_key: StorySemanticKey) -> str:
     return members[index]
 
 
-def _applicant_psych_framing(
-    seed: CaseSeed, contention_key: StorySemanticKey
-) -> str:
+def _applicant_psych_framing(seed: CaseSeed, contention_key: StorySemanticKey) -> str:
     """R49 applicant framing of a consequence-psych contention —
     ``applicant-psych-framing``, keyed ``(C,)``: 3/4 mischaracterized
     ``direct``, complement ``compensable_consequence``."""
@@ -2938,10 +2964,7 @@ def _draw_revision_kind(
             and not can_change_causation
         ):
             continue
-        if (
-            adoption_changed_disposition
-            and kind not in _CAUSATION_CAPABLE_REVISION_KINDS
-        ):
+        if adoption_changed_disposition and kind not in _CAUSATION_CAPABLE_REVISION_KINDS:
             continue
         eligible.append((kind, weight))
     total = sum(weight for _kind, weight in eligible)
@@ -2962,9 +2985,7 @@ def _draw_revision_kind(
             trigger_class,
         ),
     )
-    index = _weighted_index(
-        rng, tuple(weight / total for _kind, weight in eligible)
-    )
+    index = _weighted_index(rng, tuple(weight / total for _kind, weight in eligible))
     return eligible[index][0]
 
 
@@ -3007,14 +3028,10 @@ def _draw_revision_percentage(
     register = _medical_story_rng(seed, "revision-percentage-register", key)
     common_selected = _fraction_draw(register, P_COMMON_PERCENTAGE_REGISTER.value)
     pool = (
-        COMMON_NONINDUSTRIAL_PERCENTAGES
-        if common_selected
-        else GRANULAR_NONINDUSTRIAL_PERCENTAGES
+        COMMON_NONINDUSTRIAL_PERCENTAGES if common_selected else GRANULAR_NONINDUSTRIAL_PERCENTAGES
     )
     if require_change and predecessor_nonindustrial in pool:
-        pool = tuple(
-            value for value in pool if value != predecessor_nonindustrial
-        )
+        pool = tuple(value for value in pool if value != predecessor_nonindustrial)
     value_rng = _medical_story_rng(seed, "revision-percentage-value", key)
     if common_selected:
         return pool[value_rng.randrange(len(pool))]
@@ -3226,9 +3243,7 @@ def _affirmative_evidence(
         return "indeterminate"
 
     if claim_type == "psych_add_on":
-        psych = next(
-            (c for c in history.conditions if c.key == "depression_anxiety"), None
-        )
+        psych = next((c for c in history.conditions if c.key == "depression_anxiety"), None)
         if target is not None:
             psych = target
         if psych is None:
@@ -3304,9 +3319,7 @@ def contention_quality(
     return "thin"
 
 
-def _hard_invalid_basis(
-    assertion: ApportionmentAssertion, linked: Contention | None
-) -> bool:
+def _hard_invalid_basis(assertion: ApportionmentAssertion, linked: Contention | None) -> bool:
     """Precedence rule 1 — the closed invalid-basis decision."""
     if any(basis in UNCONDITIONAL_HARD_INVALID_BASES for basis in assertion.basis_kinds):
         return True
@@ -3367,9 +3380,7 @@ def escobedo_misses(
     if "lc4664_prior_award" in assertion.basis_kinds and not assertion.prior_award_analysis:
         misses.append("9")
     if "benson_successive_injury" in assertion.basis_kinds:
-        benson = next(
-            (g for g in assertion.groundings if isinstance(g, BensonGrounding)), None
-        )
+        benson = next((g for g in assertion.groundings if isinstance(g, BensonGrounding)), None)
         separated = benson is not None and set(assertion.prior_claim_ids) <= set(
             benson.prior_claim_ids
         )
@@ -3394,9 +3405,7 @@ def _relied_on_record_gap(
             return True
     if any(ref not in owner.reviewed_prior_claim_ids for ref in assertion.prior_claim_ids):
         return True
-    return any(
-        ref not in owner.reviewed_prior_award_ids for ref in assertion.prior_award_ids
-    )
+    return any(ref not in owner.reviewed_prior_award_ids for ref in assertion.prior_award_ids)
 
 
 def apportionment_quality(
@@ -3428,9 +3437,11 @@ def apportionment_quality(
 
     cited = [history.condition(ref) for ref in assertion.condition_ids]
     cited_claims = [history.prior_claim(ref) for ref in assertion.prior_claim_ids]
-    if (cited or cited_claims) and all(
-        c is None or c.wholly_unrelated for c in cited
-    ) and all(c is None or not c.overlaps_current for c in cited_claims):
+    if (
+        (cited or cited_claims)
+        and all(c is None or c.wholly_unrelated for c in cited)
+        and all(c is None or not c.overlaps_current for c in cited_claims)
+    ):
         contradicted = any(c is not None and c.wholly_unrelated for c in cited) or any(
             c is not None and not c.overlaps_current for c in cited_claims
         )
@@ -3483,9 +3494,7 @@ def opinion_quality(
     for ref in opinion.rejects_contention_ids:
         contention = ledger.contention(ref)
         if contention is not None:
-            flipped: ContentionPosition = (
-                "deny" if contention.position == "affirm" else "affirm"
-            )
+            flipped: ContentionPosition = "deny" if contention.position == "affirm" else "affirm"
             opposite = contention.model_copy(update={"position": flipped})
             sink(contention_quality(history, context, opposite))
 
@@ -3496,8 +3505,7 @@ def opinion_quality(
         [
             ref
             for ref in opinion.reviewed_condition_ids
-            if (condition := history.condition(ref)) is not None
-            and condition.surfaces_in_file
+            if (condition := history.condition(ref)) is not None and condition.surfaces_in_file
         ]
         or opinion.reviewed_prior_claim_ids
         or opinion.reviewed_prior_award_ids
@@ -3547,9 +3555,7 @@ def grade_ledger(
         apportionment_assertions=ledger.apportionment_assertions,
     )
     assertions = tuple(
-        a.model_copy(
-            update={"quality": apportionment_quality(history, context, regraded, a)}
-        )
+        a.model_copy(update={"quality": apportionment_quality(history, context, regraded, a)})
         for a in ledger.apportionment_assertions
     )
     regraded = MedicalAssertionLedger(
@@ -3599,18 +3605,14 @@ def assertion_warnings(
             for grounding in item.groundings:
                 refs: list[tuple[str, str, set[str]]] = []
                 if isinstance(grounding, BensonGrounding):
-                    refs = [
-                        ("prior claim", ref, claim_ids)
-                        for ref in grounding.prior_claim_ids
-                    ]
+                    refs = [("prior claim", ref, claim_ids) for ref in grounding.prior_claim_ids]
                 elif isinstance(grounding, SibtfGrounding):
                     refs = [
                         ("condition", ref, condition_ids)
                         for ref in grounding.preexisting_condition_ids
                     ]
                     refs.extend(
-                        ("prior award", ref, award_ids)
-                        for ref in grounding.prior_award_ids
+                        ("prior award", ref, award_ids) for ref in grounding.prior_award_ids
                     )
                 elif isinstance(grounding, Lc4664PriorAwardGrounding):
                     refs = [("prior award", grounding.prior_award_id, award_ids)]
@@ -3676,9 +3678,7 @@ class AssertionTrace:
     def __post_init__(self) -> None:
         self.recipes = [] if self.recipes is None else self.recipes
         self.evidence_budgets = [] if self.evidence_budgets is None else self.evidence_budgets
-        self.candidate_families = (
-            {} if self.candidate_families is None else self.candidate_families
-        )
+        self.candidate_families = {} if self.candidate_families is None else self.candidate_families
         self.eligible_candidates = (
             {} if self.eligible_candidates is None else self.eligible_candidates
         )
@@ -3721,17 +3721,14 @@ def _explicit_reference_problems(scenario: object) -> list[str]:
             for ref in refs:
                 if ref not in contention_ids:
                     problems.append(
-                        f"medical opinion '{opinion.id}' {verb} unknown "
-                        f"contention '{ref}'"
+                        f"medical opinion '{opinion.id}' {verb} unknown contention '{ref}'"
                     )
         for verb, ref in (
             ("responds to", opinion.responds_to_opinion_id),
             ("supersedes", opinion.supersedes_opinion_id),
         ):
             if ref is not None and ref != opinion.id and ref not in opinion_ids:
-                problems.append(
-                    f"medical opinion '{opinion.id}' {verb} unknown opinion '{ref}'"
-                )
+                problems.append(f"medical opinion '{opinion.id}' {verb} unknown opinion '{ref}'")
     for document in scenario.contention_documents:  # type: ignore[attr-defined]
         for label, ref in (
             ("medical_opinion_id", document.medical_opinion_id),
@@ -3745,8 +3742,7 @@ def _explicit_reference_problems(scenario: object) -> list[str]:
         for ref in document.spoken_contention_ids:
             if ref not in contention_ids:
                 problems.append(
-                    f"contention document '{document.id}' speaks unknown "
-                    f"contention '{ref}'"
+                    f"contention document '{document.id}' speaks unknown contention '{ref}'"
                 )
     for assertion in scenario.apportionment_assertions:  # type: ignore[attr-defined]
         if assertion.opinion_id not in opinion_ids:
@@ -4046,14 +4042,10 @@ def _contention_candidates(
         claim_types = _condition_claim_types(condition, context)
         if claim_types:
             note_eligible("condition")
-            incidence = _assertion_rng(
-                seed, "contention-incidence", f"condition:{condition.id}"
-            )
+            incidence = _assertion_rng(seed, "contention-incidence", f"condition:{condition.id}")
             if _fraction_draw(incidence, P_CONTENTION_GIVEN_CONDITION.value):
                 note_drawn("condition")
-                chooser = _assertion_rng(
-                    seed, "contention-type", f"condition:{condition.id}"
-                )
+                chooser = _assertion_rng(seed, "contention-type", f"condition:{condition.id}")
                 claim_type = claim_types[chooser.randrange(len(claim_types))]
                 party, position = _CANONICAL_STANCE[claim_type]
                 target_part = _condition_target_part(condition, context)
@@ -4081,9 +4073,7 @@ def _contention_candidates(
                 )
         if firefighter_hook and condition.body_system == "oncologic":
             note_eligible("firefighter")
-            incidence = _assertion_rng(
-                seed, "contention-incidence", f"firefighter:{condition.id}"
-            )
+            incidence = _assertion_rng(seed, "contention-incidence", f"firefighter:{condition.id}")
             if _fraction_draw(incidence, P_FIREFIGHTER_CONTENTION.value):
                 note_drawn("firefighter")
                 key = (
@@ -4110,9 +4100,7 @@ def _contention_candidates(
                             "the presumption attaches to this diagnosis under the "
                             "safety-member statutes"
                         ),
-                        groundings=(
-                            FirefighterPresumptionGrounding(condition_id=condition.id),
-                        ),
+                        groundings=(FirefighterPresumptionGrounding(condition_id=condition.id),),
                     )
                 )
 
@@ -4199,9 +4187,7 @@ def _contention_candidates(
             # any record, and the SIBTF argument is about *that* disability.
             target_award = award_ids[0] if award_ids else None
             target_condition = (
-                qualifying_conditions[0]
-                if target_award is None and qualifying_conditions
-                else None
+                qualifying_conditions[0] if target_award is None and qualifying_conditions else None
             )
             target_claim = (
                 history.prior_award(target_award).prior_claim_id
@@ -4343,9 +4329,7 @@ def _apply_contention_recipe(
                         "of the psychiatric injury"
                     ),
                 )
-            elif roll < float(
-                P_PSYCH_PREDOMINANT_CAUSE_DENIAL.value + P_GFPA_DEFENSE.value
-            ):
+            elif roll < float(P_PSYCH_PREDOMINANT_CAUSE_DENIAL.value + P_GFPA_DEFENSE.value):
                 shaped = _replace_draft(
                     draft,
                     claim_type="denial_of_injury",
@@ -4512,8 +4496,7 @@ def _append_sampled(
     # let a candidate become semantically identical to an explicit contention
     # AFTER the only suppression pass (sol review, PR #44 M1).
     normalized = [
-        _replace_draft(draft, semantic_key=_contention_semantic_key(draft))
-        for draft in shaped
+        _replace_draft(draft, semantic_key=_contention_semantic_key(draft)) for draft in shaped
     ]
     candidates = tuple(
         AssertionCandidate(
@@ -4586,9 +4569,7 @@ def _append_sampled(
                 _assertion_rng(seed, "medical-legal-deferral", opinion_salt),
                 P_MEDLEGAL_DEFERRAL.value,
             )
-            report_stage, state = (
-                ("interim", "deferred") if deferred else ("final", "determined")
-            )
+            report_stage, state = ("interim", "deferred") if deferred else ("final", "determined")
         else:  # pre_trial | resolved | post_recon
             author_role = context.eval_type if context.eval_type in ("qme", "ame") else "ptp"
             report_stage, state = "final", "determined"
@@ -4666,8 +4647,7 @@ def _append_sampled(
                         branch = "B"
                         determination_kind = "no_nonindustrial_share"
                         determination_rationale = (
-                            "the record affirmatively shows the disability is "
-                            "entirely industrial"
+                            "the record affirmatively shows the disability is entirely industrial"
                         )
 
         # The review budget, drawn before the rows so a coherent build can
@@ -4866,9 +4846,7 @@ def _append_sampled(
                 groundings: list[DoctrineGrounding] = []
                 if part_awards:
                     basis.append("lc4664_prior_award")
-                    groundings.append(
-                        Lc4664PriorAwardGrounding(prior_award_id=part_awards[0])
-                    )
+                    groundings.append(Lc4664PriorAwardGrounding(prior_award_id=part_awards[0]))
                 assertion_key: SemanticKey = ("apportionment", author_role, part)
                 target_index = _weighted_index(
                     _assertion_rng(seed, "quality-target", _semantic_salt(assertion_key)),
@@ -4876,9 +4854,7 @@ def _append_sampled(
                 )
                 recipe = ("supported", "thin", "unsupportable")[target_index]
                 fields: dict[str, object] = {
-                    "description": (
-                        f"chronic {part} disability limiting sustained activity"
-                    ),
+                    "description": (f"chronic {part} disability limiting sustained activity"),
                     "disability_causation_stated": True,
                     "reasonable_medical_probability": True,
                     "causal_rationale": (
@@ -4890,8 +4866,7 @@ def _append_sampled(
                         "the industrial mechanism"
                     ),
                     "prior_award_analysis": (
-                        "the prior award is treated separately under the "
-                        "conclusive presumption"
+                        "the prior award is treated separately under the conclusive presumption"
                         if part_awards
                         else None
                     ),
@@ -4900,8 +4875,7 @@ def _append_sampled(
                     (
                         c.id
                         for c in contributors
-                        if part in c.apportionment_targets
-                        and c.id not in part_conditions
+                        if part in c.apportionment_targets and c.id not in part_conditions
                     ),
                     None,
                 )
@@ -4925,14 +4899,17 @@ def _append_sampled(
                         # Item 5b, planted: rely on a record the review never
                         # reached.
                         part_conditions = (*part_conditions, uncited_contributor)
-                    elif lever in ("disability_causation_stated",
-                                   "reasonable_medical_probability"):
+                    elif lever in ("disability_causation_stated", "reasonable_medical_probability"):
                         fields[lever] = False
                     else:
                         fields[lever] = None
                 elif recipe == "unsupportable":
-                    variants = ["vocational_apportionment", "bare_age", "bare_gender",
-                                "risk_factor_only"]
+                    variants = [
+                        "vocational_apportionment",
+                        "bare_age",
+                        "bare_gender",
+                        "risk_factor_only",
+                    ]
                     variant = variants[
                         _assertion_rng(
                             seed, "unsupportable-defect", _semantic_salt(assertion_key)
@@ -5038,9 +5015,7 @@ def _append_sampled(
     used_contention_ids = {c.id for c in contentions}
     key_to_contention_id: dict[SemanticKey, str] = {}
     sampled_contentions: list[Contention] = []
-    for draft, (_ref, probe, _stream_key) in zip(
-        ordered, pending[len(contentions) :], strict=True
-    ):
+    for draft, (_ref, probe, _stream_key) in zip(ordered, pending[len(contentions) :], strict=True):
         assigned = _first_unused("ctn", used_contention_ids)
         used_contention_ids.add(assigned)
         key_to_contention_id.setdefault(draft.semantic_key, assigned)
@@ -5065,12 +5040,8 @@ def _append_sampled(
             opinion.model_copy(
                 update={
                     "id": assigned,
-                    "endorses_contention_ids": tuple(
-                        _resolve_ref(ref) for ref in endorse_refs
-                    ),
-                    "rejects_contention_ids": tuple(
-                        _resolve_ref(ref) for ref in reject_refs
-                    ),
+                    "endorses_contention_ids": tuple(_resolve_ref(ref) for ref in endorse_refs),
+                    "rejects_contention_ids": tuple(_resolve_ref(ref) for ref in reject_refs),
                 }
             )
         )
@@ -5093,9 +5064,7 @@ def _append_sampled(
             assertion.model_copy(
                 update={
                     "id": assigned,
-                    "opinion_id": opinion_id_map.get(
-                        assertion.opinion_id, assertion.opinion_id
-                    ),
+                    "opinion_id": opinion_id_map.get(assertion.opinion_id, assertion.opinion_id),
                 }
             )
         )
@@ -5112,24 +5081,17 @@ def _first_unused(prefix: str, used: set[str]) -> str:
         candidate = f"{prefix}-{suffix:02d}"
         if candidate not in used:
             return candidate
-    raise MedicalAssertionError(
-        f"no unused {prefix}- id remains below the two-digit ceiling"
-    )
+    raise MedicalAssertionError(f"no unused {prefix}- id remains below the two-digit ceiling")
 
 
-def _world_consequence_psych(
-    history: AssertionWorldProjection, condition_id: str | None
-) -> bool:
+def _world_consequence_psych(history: AssertionWorldProjection, condition_id: str | None) -> bool:
     """Whether *condition_id* names a world condition classified
     ``compensable_consequence`` — the R49 eligibility anchor for both psych
     mischaracterization draws."""
     if condition_id is None:
         return False
     condition = history.condition(condition_id)
-    return (
-        condition is not None
-        and condition.psych_injury_kind == "compensable_consequence"
-    )
+    return condition is not None and condition.psych_injury_kind == "compensable_consequence"
 
 
 def _remodel_sampled_ptp(
@@ -5175,9 +5137,7 @@ def _remodel_sampled_ptp(
         if contention is not None and _world_consequence_psych(
             history, contention.target_condition_id
         ):
-            psych_kind = _ptp_psych_classification(
-                seed, opinion_key, contention_keys[ref]
-            )
+            psych_kind = _ptp_psych_classification(seed, opinion_key, contention_keys[ref])
     return opinion.model_copy(
         update={
             "aoe_coe_finding": finding,
@@ -5265,8 +5225,7 @@ def _apply_story_semantics(
     history: AssertionWorldProjection,
     graded: MedicalAssertionLedger,
     *,
-    qualifying_communications: dict[str, tuple[StorySemanticKey, ...]]
-    | None = None,
+    qualifying_communications: dict[str, tuple[StorySemanticKey, ...]] | None = None,
 ) -> MedicalAssertionLedger:
     """R77 step 4 — the M3 base-disposition remodel over the graded M2 ledger.
 
@@ -5287,16 +5246,16 @@ def _apply_story_semantics(
     if not getattr(scenario, "sample_assertions", True):
         return graded
     explicit_contention_ids = frozenset(
-        entry.id for entry in scenario.contentions  # type: ignore[attr-defined]
+        entry.id
+        for entry in scenario.contentions  # type: ignore[attr-defined]
     )
     explicit_opinion_ids = frozenset(
-        entry.id for entry in scenario.medical_opinions  # type: ignore[attr-defined]
+        entry.id
+        for entry in scenario.medical_opinions  # type: ignore[attr-defined]
     )
     communications = dict(qualifying_communications or {})
     contention_keys = {
-        contention.id: _story_contention_key(
-            seed, contention, explicit_contention_ids
-        )
+        contention.id: _story_contention_key(seed, contention, explicit_contention_ids)
         for contention in graded.contentions
     }
 
@@ -5316,12 +5275,8 @@ def _apply_story_semantics(
         ):
             identity = canonical_story_key(contention_keys[contention.id])
             if identity not in framed:
-                framed[identity] = _applicant_psych_framing(
-                    seed, contention_keys[contention.id]
-                )
-            contention = contention.model_copy(
-                update={"psych_injury_kind": framed[identity]}
-            )
+                framed[identity] = _applicant_psych_framing(seed, contention_keys[contention.id])
+            contention = contention.model_copy(update={"psych_injury_kind": framed[identity]})
         contentions.append(contention)
 
     remodeled = MedicalAssertionLedger(
@@ -5332,10 +5287,7 @@ def _apply_story_semantics(
 
     opinions: list[MedicalOpinion] = []
     for opinion in remodeled.medical_opinions:
-        if (
-            opinion.id in explicit_opinion_ids
-            or opinion.event_kind != "base_report"
-        ):
+        if opinion.id in explicit_opinion_ids or opinion.event_kind != "base_report":
             # Authored explicit disposition collections remain authoritative
             # (R49); sampled response events own their step-5 semantics.
             opinions.append(opinion)
@@ -5507,9 +5459,7 @@ def _compatible_realization_carriers(opinion: MedicalOpinion) -> frozenset[str]:
         return frozenset(surfaces.SUPPLEMENTAL_MEDLEGAL_SURFACES)
     if opinion.author_role == "ptp":
         return frozenset(surfaces.PTP_CAUSATION_SURFACES)
-    return frozenset(
-        surfaces.INITIAL_MEDLEGAL_SURFACES | surfaces.PSYCH_MEDLEGAL_SURFACES
-    )
+    return frozenset(surfaces.INITIAL_MEDLEGAL_SURFACES | surfaces.PSYCH_MEDLEGAL_SURFACES)
 
 
 def _default_realization_carrier(opinion: MedicalOpinion) -> str:
@@ -5740,9 +5690,7 @@ class _AdvocacyLetter:
 @dataclass(slots=True)
 class _AdvocacyPlan:
     letters: list[_AdvocacyLetter] = field(default_factory=list)
-    qualifying_communications: dict[str, tuple[StorySemanticKey, ...]] = field(
-        default_factory=dict
-    )
+    qualifying_communications: dict[str, tuple[StorySemanticKey, ...]] = field(default_factory=dict)
 
 
 def _advocacy_d_key(
@@ -5814,9 +5762,9 @@ def _derive_advocacy(
     for entry in getattr(scenario, "contention_documents", []):
         if entry.document_kind != "advocacy":
             continue
-        reserved.setdefault(
-            (entry.actor_party, entry.target_medical_opinion_id), set()
-        ).update(entry.spoken_contention_ids)
+        reserved.setdefault((entry.actor_party, entry.target_medical_opinion_id), set()).update(
+            entry.spoken_contention_ids
+        )
 
     minimum_window_start = context.date_of_injury + dt.timedelta(days=1)
     for opinion in ledger.medical_opinions:
@@ -5850,9 +5798,7 @@ def _derive_advocacy(
                 )
                 if _fraction_draw(incidence, rate):
                     winners.append(contention)
-            winners.sort(
-                key=lambda c: canonical_story_key(contention_keys[c.id])
-            )
+            winners.sort(key=lambda c: canonical_story_key(contention_keys[c.id]))
             remaining = list(winners)
             bundles: list[list[Contention]] = []
             while remaining:
@@ -5874,14 +5820,10 @@ def _derive_advocacy(
                         target_key,
                         actor,
                         contention_keys[remaining[0].id],
-                        tuple(
-                            contention_keys[c.id] for c in remaining
-                        ),
+                        tuple(contention_keys[c.id] for c in remaining),
                     ),
                 )
-                index = _weighted_index(
-                    chooser, tuple(weight / total for _size, weight in sizes)
-                )
+                index = _weighted_index(chooser, tuple(weight / total for _size, weight in sizes))
                 size = sizes[index][0]
                 bundles.append(remaining[:size])
                 remaining = remaining[size:]
@@ -5904,9 +5846,7 @@ def _derive_advocacy(
                 plan.letters.append(letter)
                 if role in ("qme", "ame") and opinion.id not in explicit_opinion_ids:
                     for contention in kept:
-                        existing = plan.qualifying_communications.get(
-                            contention.id, ()
-                        )
+                        existing = plan.qualifying_communications.get(contention.id, ())
                         plan.qualifying_communications[contention.id] = tuple(
                             sorted(
                                 (*existing, letter.d_key),
@@ -5966,18 +5906,12 @@ def _derive_contest_chunks(
         if opinion.event_kind == "supplemental_report" and not explicit:
             continue
         opinion_key = _story_opinion_key(seed, opinion, explicit_opinion_ids)
-        view = _view_of_ledger_opinion(
-            opinion, ledger, opinion_key, explicit=explicit
-        )
+        view = _view_of_ledger_opinion(opinion, ledger, opinion_key, explicit=explicit)
         for contention in ledger.contentions:
             disposition = _classification_of(view, contention.id)
-            actor, disposition_class = _R29_DECISION_TABLE[
-                (contention.party, disposition)
-            ]
+            actor, disposition_class = _R29_DECISION_TABLE[(contention.party, disposition)]
             if actor == "defense":
-                if not _concerns_apportionment_or_psych(
-                    contention, ledger, history
-                ):
+                if not _concerns_apportionment_or_psych(contention, ledger, history):
                     continue  # outside R30: zero probability, no stream
                 family = "defense-contest-incidence"
                 rate = P_DEFENSE_CONTEST.value
@@ -5996,9 +5930,7 @@ def _derive_contest_chunks(
                 opinion_key,
                 contention_keys[contention.id],
             )
-            incidence = _medical_story_rng(
-                seed, family, ("case", seed.case_id, x_key)
-            )
+            incidence = _medical_story_rng(seed, family, ("case", seed.case_id, x_key))
             if not _fraction_draw(incidence, rate):
                 continue
             weights_table = (
@@ -6006,12 +5938,8 @@ def _derive_contest_chunks(
                 if disposition_class == "determined_adverse"
                 else COMPLETION_PATH_WEIGHTS.value[actor]
             )
-            chooser = _medical_story_rng(
-                seed, "contest-path", ("case", seed.case_id, x_key)
-            )
-            index = _weighted_index(
-                chooser, tuple(weight for _path, weight in weights_table)
-            )
+            chooser = _medical_story_rng(seed, "contest-path", ("case", seed.case_id, x_key))
+            index = _weighted_index(chooser, tuple(weight for _path, weight in weights_table))
             path = weights_table[index][0]
             fired.setdefault((actor, opinion.id, path), []).append(contention)
             targets[opinion.id] = (opinion, opinion_key, explicit)
@@ -6028,9 +5956,7 @@ def _derive_contest_chunks(
             key=lambda c: canonical_story_key(contention_keys[c.id]),
         )
         for start in range(0, len(members), MAX_CONTENTIONS_PER_LOOP_DOCUMENT):
-            chunk_members = tuple(
-                members[start : start + MAX_CONTENTIONS_PER_LOOP_DOCUMENT]
-            )
+            chunk_members = tuple(members[start : start + MAX_CONTENTIONS_PER_LOOP_DOCUMENT])
             chunk = _ChainChunk(
                 actor=actor,
                 target=opinion,
@@ -6038,9 +5964,7 @@ def _derive_contest_chunks(
                 target_explicit=explicit,
                 path=path,
                 disposition_class=(
-                    "determined_adverse"
-                    if path in _ADVERSE_CONTEST_PATHS
-                    else "completion"
+                    "determined_adverse" if path in _ADVERSE_CONTEST_PATHS else "completion"
                 ),
                 contentions=chunk_members,
             )
@@ -6050,23 +5974,17 @@ def _derive_contest_chunks(
                     if chunk.disposition_class == "determined_adverse"
                     else "supplemental_request"
                 )
-                spoken_keys = tuple(
-                    contention_keys[c.id] for c in chunk.contentions
-                )
-                chain_d_key = _contest_d_key(
-                    seed, first_kind, actor, None, target_key, spoken_keys
-                )
+                spoken_keys = tuple(contention_keys[c.id] for c in chunk.contentions)
+                chain_d_key = _contest_d_key(seed, first_kind, actor, None, target_key, spoken_keys)
                 counts = DEFENSE_THEORY_COUNT_WEIGHTS.value
                 count_rng = _medical_story_rng(
                     seed,
                     "defense-theory-count",
                     ("case", seed.case_id, chain_d_key),
                 )
-                count = counts[
-                    _weighted_index(
-                        count_rng, tuple(weight for _n, weight in counts)
-                    )
-                ][0]
+                count = counts[_weighted_index(count_rng, tuple(weight for _n, weight in counts))][
+                    0
+                ]
                 selection_rng = _medical_story_rng(
                     seed,
                     "defense-theory-selection",
@@ -6087,9 +6005,7 @@ def _derive_contest_chunks(
     return chunks
 
 
-def _predecessor_row_key(
-    view: _OpinionView, row: ApportionmentAssertion
-) -> StorySemanticKey:
+def _predecessor_row_key(view: _OpinionView, row: ApportionmentAssertion) -> StorySemanticKey:
     """The R55 predecessor-assertion identity for one changed row."""
     if view.explicit:
         return ("apportionment", "explicit", row.id)
@@ -6107,11 +6023,11 @@ def _new_record_candidate(
     visible world entities the predecessor never reviewed, respecting R37's
     reviewed-ID caps (8/5/5, combined 12). No stream is consumed.
     """
-    reviewed = {
-        ("condition", ref) for ref in view.reviewed_condition_ids
-    } | {("prior_claim", ref) for ref in view.reviewed_prior_claim_ids} | {
-        ("prior_award", ref) for ref in view.reviewed_prior_award_ids
-    }
+    reviewed = (
+        {("condition", ref) for ref in view.reviewed_condition_ids}
+        | {("prior_claim", ref) for ref in view.reviewed_prior_claim_ids}
+        | {("prior_award", ref) for ref in view.reviewed_prior_award_ids}
+    )
     combined = len(reviewed)
     if combined >= REVIEWED_IDS_COMBINED_CAP:
         return None
@@ -6122,14 +6038,10 @@ def _new_record_candidate(
             candidates.append(("condition", onset, condition.id))
     for claim in history.prior_claims:
         if len(view.reviewed_prior_claim_ids) < 5:
-            candidates.append(
-                ("prior_claim", claim.date_of_injury.isoformat(), claim.id)
-            )
+            candidates.append(("prior_claim", claim.date_of_injury.isoformat(), claim.id))
     for award in history.awards:
         if len(view.reviewed_prior_award_ids) < 5:
-            candidates.append(
-                ("prior_award", award.award_date.isoformat(), award.id)
-            )
+            candidates.append(("prior_award", award.award_date.isoformat(), award.id))
     for family, _date, ref in sorted(candidates):
         if (family, ref) not in reviewed:
             return (family, ref)
@@ -6138,42 +6050,30 @@ def _new_record_candidate(
 
 _RESPONSE_RATIONALES: Final[dict[str, str]] = {
     "unchanged_additional_reasoning": (
-        "the prior conclusions stand; additional reasoning addresses the "
-        "questions presented"
+        "the prior conclusions stand; additional reasoning addresses the questions presented"
     ),
     "new_records_no_change": (
-        "the newly received records were reviewed and do not change the "
-        "stated conclusions"
+        "the newly received records were reviewed and do not change the stated conclusions"
     ),
-    "revised_causation": (
-        "the revised conclusions rest on further review of the record"
-    ),
+    "revised_causation": ("the revised conclusions rest on further review of the record"),
     "revised_apportionment": (
-        "the revised percentages rest on further review of the documented "
-        "pathology"
+        "the revised percentages rest on further review of the documented pathology"
     ),
     "revised_causation_and_apportionment": (
-        "the revised conclusions and percentages rest on further review of "
-        "the record"
+        "the revised conclusions and percentages rest on further review of the record"
     ),
 }
 
 _RESPONSE_REVISION_RATIONALES: Final[dict[str, str]] = {
-    "revised_causation": (
-        "the causation analysis is revised on further review of the record"
-    ),
-    "revised_apportionment": (
-        "the apportionment percentages are revised on further review"
-    ),
+    "revised_causation": ("the causation analysis is revised on further review of the record"),
+    "revised_apportionment": ("the apportionment percentages are revised on further review"),
     "revised_causation_and_apportionment": (
-        "the causation and apportionment conclusions are revised on further "
-        "review"
+        "the causation and apportionment conclusions are revised on further review"
     ),
 }
 
 _REVISED_AOE_RATIONALE: Final[str] = (
-    "on further consideration the causal analysis is restated with revised "
-    "reasoning"
+    "on further consideration the causal analysis is restated with revised reasoning"
 )
 
 
@@ -6243,13 +6143,12 @@ def _draft_response_opinion(
             prospective[contention.id] = None  # indeterminate: kind-gated draw
 
     prospective_changed = any(
-        result is not None
-        and result != _classification_of(predecessor, contention_id)
+        result is not None and result != _classification_of(predecessor, contention_id)
         for contention_id, result in prospective.items()
     )
     record_candidate = _new_record_candidate(history, predecessor)
-    can_change_apportionment = (
-        predecessor.determination_kind == "allocated" and bool(predecessor.rows)
+    can_change_apportionment = predecessor.determination_kind == "allocated" and bool(
+        predecessor.rows
     )
     kind = _draw_revision_kind(
         seed,
@@ -6334,8 +6233,7 @@ def _draft_response_opinion(
                             "nonindustrial_percent": new_percent,
                             "revised_from_percent": row.nonindustrial_percent,
                             "revision_rationale": (
-                                "the revised share follows the supplemental "
-                                "analysis of the record"
+                                "the revised share follows the supplemental analysis of the record"
                             ),
                         }
                     )
@@ -6370,18 +6268,12 @@ def _draft_response_opinion(
         reviewed_condition_ids=tuple(reviewed_conditions),
         reviewed_prior_claim_ids=tuple(reviewed_claims),
         reviewed_prior_award_ids=tuple(reviewed_awards),
-        endorses_contention_ids=tuple(
-            ref for ref in _ordered_refs(endorses, predecessor, chunk)
-        ),
+        endorses_contention_ids=tuple(ref for ref in _ordered_refs(endorses, predecessor, chunk)),
         concurs_with_contention_ids=tuple(
             ref for ref in _ordered_refs(concurs, predecessor, chunk)
         ),
-        rejects_contention_ids=tuple(
-            ref for ref in _ordered_refs(rejects, predecessor, chunk)
-        ),
-        defers_contention_ids=tuple(
-            ref for ref in _ordered_refs(defers, predecessor, chunk)
-        ),
+        rejects_contention_ids=tuple(ref for ref in _ordered_refs(rejects, predecessor, chunk)),
+        defers_contention_ids=tuple(ref for ref in _ordered_refs(defers, predecessor, chunk)),
         responds_to_opinion_id="opn-98",  # placeholder; resolved at labeling
         supersedes_opinion_id="opn-98" if supersedes_ref is not None else None,
         rationale=_RESPONSE_RATIONALES[kind],
@@ -6403,9 +6295,7 @@ def _draft_response_opinion(
     )
 
 
-def _ordered_refs(
-    selected: set[str], predecessor: _OpinionView, chunk: _ChainChunk
-) -> list[str]:
+def _ordered_refs(selected: set[str], predecessor: _OpinionView, chunk: _ChainChunk) -> list[str]:
     """Deterministic collection order for a response's disposition tuples.
 
     Predecessor-classified IDs first (sorted — a frozenset carries no order),
@@ -6414,10 +6304,7 @@ def _ordered_refs(
     ordered: list[str] = []
     seen: set[str] = set()
     predecessor_ids = (
-        predecessor.endorses
-        | predecessor.concurs
-        | predecessor.rejects
-        | predecessor.defers
+        predecessor.endorses | predecessor.concurs | predecessor.rejects | predecessor.defers
     )
     for ref in (*sorted(predecessor_ids), *(c.id for c in chunk.contentions)):
         if ref in selected and ref not in seen:
@@ -6474,13 +6361,8 @@ def _explicit_contention_document_problems(scenario: object) -> list[str]:
     explicit per-kind, chain, and opinion caps.
     """
     entries = list(getattr(scenario, "contention_documents", []))
-    opinions = {
-        entry.id: entry
-        for entry in getattr(scenario, "medical_opinions", [])
-    }
-    contentions = {
-        entry.id: entry for entry in getattr(scenario, "contentions", [])
-    }
+    opinions = {entry.id: entry for entry in getattr(scenario, "medical_opinions", [])}
+    contentions = {entry.id: entry for entry in getattr(scenario, "contentions", [])}
     problems: list[str] = []
     seen_collisions: dict[tuple[object, ...], str] = {}
     surfaces = _loop_surfaces() if entries else None
@@ -6488,9 +6370,7 @@ def _explicit_contention_document_problems(scenario: object) -> list[str]:
     for entry in entries:
         prefix = f"contention document '{entry.id}' ({entry.document_kind})"
         current = (
-            opinions.get(entry.medical_opinion_id)
-            if entry.medical_opinion_id is not None
-            else None
+            opinions.get(entry.medical_opinion_id) if entry.medical_opinion_id is not None else None
         )
         target = (
             opinions.get(entry.target_medical_opinion_id)
@@ -6531,8 +6411,7 @@ def _explicit_contention_document_problems(scenario: object) -> list[str]:
                     frozenset(surfaces.PTP_CAUSATION_SURFACES)
                     if current.author_role == "ptp"
                     else frozenset(
-                        surfaces.INITIAL_MEDLEGAL_SURFACES
-                        | surfaces.PSYCH_MEDLEGAL_SURFACES
+                        surfaces.INITIAL_MEDLEGAL_SURFACES | surfaces.PSYCH_MEDLEGAL_SURFACES
                     )
                 )
                 if entry.subtype not in compatible:
@@ -6577,8 +6456,7 @@ def _explicit_contention_document_problems(scenario: object) -> list[str]:
                 elif (
                     target is not None
                     and entry.subtype != _LOOP_LETTER_CARRIER
-                    and entry.subtype
-                    != _ADVOCACY_SAMPLED_CARRIERS[target.author_role]
+                    and entry.subtype != _ADVOCACY_SAMPLED_CARRIERS[target.author_role]
                 ):
                     problems.append(
                         f"{prefix} selects role carrier '{entry.subtype}' for "
@@ -6680,9 +6558,7 @@ def _explicit_contention_document_problems(scenario: object) -> list[str]:
     supplemental_opinions = sum(
         1 for o in opinions.values() if o.event_kind == "supplemental_report"
     )
-    deposition_opinions = sum(
-        1 for o in opinions.values() if o.event_kind == "deposition"
-    )
+    deposition_opinions = sum(1 for o in opinions.values() if o.event_kind == "deposition")
     explicit_kind_totals = {
         "advocacy": kind_counts["advocacy"],
         "objection": kind_counts["objection"],
@@ -6780,9 +6656,7 @@ def _derive_contention_loop(
     """
     entries = list(getattr(scenario, "contention_documents", []))
     entry_by_opinion = {
-        entry.medical_opinion_id: entry
-        for entry in entries
-        if entry.medical_opinion_id is not None
+        entry.medical_opinion_id: entry for entry in entries if entry.medical_opinion_id is not None
     }
     counters: Counter[str] = Counter()
     caps = {
@@ -6824,9 +6698,7 @@ def _derive_contention_loop(
         subtype = entry.subtype  # type: ignore[attr-defined]
         template: str | None = None
         current_ref = entry.medical_opinion_id  # type: ignore[attr-defined]
-        current = (
-            ledger.opinion(current_ref) if current_ref is not None else None
-        )
+        current = ledger.opinion(current_ref) if current_ref is not None else None
         if kind == "opinion_report" and current is not None:
             subtype = subtype or _default_realization_carrier(current)
         elif kind == "advocacy":
@@ -6856,14 +6728,10 @@ def _derive_contention_loop(
         target_ref = entry.target_medical_opinion_id  # type: ignore[attr-defined]
         target = ledger.opinion(target_ref) if target_ref is not None else None
         current_key = (
-            _story_opinion_key(seed, current, explicit_opinion_ids)
-            if current is not None
-            else None
+            _story_opinion_key(seed, current, explicit_opinion_ids) if current is not None else None
         )
         target_key = (
-            _story_opinion_key(seed, target, explicit_opinion_ids)
-            if target is not None
-            else None
+            _story_opinion_key(seed, target, explicit_opinion_ids) if target is not None else None
         )
         spoken = tuple(entry.spoken_contention_ids)  # type: ignore[attr-defined]
         return _BindingDraft(
@@ -6905,9 +6773,7 @@ def _derive_contention_loop(
             else None
         )
         target_key = (
-            _story_opinion_key(seed, target, explicit_opinion_ids)
-            if target is not None
-            else None
+            _story_opinion_key(seed, target, explicit_opinion_ids) if target is not None else None
         )
         return _BindingDraft(
             document_kind=kind,
@@ -6916,9 +6782,7 @@ def _derive_contention_loop(
             proposed_date=opinion.report_date,
             doc_date=None,
             medical_opinion_ref=opinion.id,
-            target_ref=opinion.responds_to_opinion_id
-            if kind != "opinion_report"
-            else None,
+            target_ref=opinion.responds_to_opinion_id if kind != "opinion_report" else None,
             spoken=spoken,
             actor_party=None,
             theories=(),
@@ -6990,8 +6854,7 @@ def _derive_contention_loop(
                     document_kind="advocacy",
                     subtype=letter.subtype,
                     template_subtype=letter.subtype,
-                    proposed_date=letter.target_report_date
-                    - dt.timedelta(days=lead),
+                    proposed_date=letter.target_report_date - dt.timedelta(days=lead),
                     doc_date=None,
                     medical_opinion_ref=None,
                     target_ref=letter.target_ref,
@@ -7020,8 +6883,11 @@ def _derive_contention_loop(
                     set(),
                 ).update(entry.spoken_contention_ids)
         explicit_request_dates = {
-            (entry.actor_party, entry.target_medical_opinion_id, entry.document_kind):
-            entry.doc_date
+            (
+                entry.actor_party,
+                entry.target_medical_opinion_id,
+                entry.document_kind,
+            ): entry.doc_date
             for entry in entries
             if entry.document_kind in ("objection", "supplemental_request")
         }
@@ -7096,9 +6962,7 @@ def _derive_contention_loop(
         for row in draft.rows:
             row_id = _first_unused("app", used_row_ids)
             used_row_ids.add(row_id)
-            labelled_rows.append(
-                row.model_copy(update={"id": row_id, "opinion_id": assigned})
-            )
+            labelled_rows.append(row.model_copy(update={"id": row_id, "opinion_id": assigned}))
     final_ledger = (
         ledger
         if not labelled_opinions
@@ -7111,9 +6975,7 @@ def _derive_contention_loop(
             ),
         )
     )
-    used_cdoc_ids = {
-        draft.explicit_id for draft in drafts if draft.explicit_id is not None
-    }
+    used_cdoc_ids = {draft.explicit_id for draft in drafts if draft.explicit_id is not None}
     bindings: list[ContentionDocumentBinding] = []
     for draft in drafts:
         if draft.explicit_id is not None:
@@ -7123,8 +6985,7 @@ def _derive_contention_loop(
             used_cdoc_ids.add(binding_id)
         if draft.d_key is None:  # pragma: no cover - every constructor owns D
             raise MedicalAssertionError(
-                "contention-document binding reached final labeling without "
-                "its R45 semantic D key"
+                "contention-document binding reached final labeling without its R45 semantic D key"
             )
         bindings.append(
             ContentionDocumentBinding(
@@ -7133,9 +6994,7 @@ def _derive_contention_loop(
                 subtype=draft.subtype,
                 doc_date=draft.doc_date,
                 medical_opinion_id=(
-                    reference_map.get(
-                        draft.medical_opinion_ref, draft.medical_opinion_ref
-                    )
+                    reference_map.get(draft.medical_opinion_ref, draft.medical_opinion_ref)
                     if draft.medical_opinion_ref is not None
                     else None
                 ),
@@ -7209,19 +7068,14 @@ def _build_chain_stages(
     )
 
     def stage_fits(kind: str) -> bool:
-        if (
-            counters["total"] + tentative["total"]
-            >= MAX_BOUND_CONTENTION_DOCUMENTS_PER_CASE
-        ):
+        if counters["total"] + tentative["total"] >= MAX_BOUND_CONTENTION_DOCUMENTS_PER_CASE:
             return False
         cap = caps.get(kind)
         return cap is None or counters[kind] + tentative[kind] < cap
 
     def stage_spoken(kind: str) -> tuple[str, ...]:
         reserved_ids = reserved.get((kind, chunk.actor, chunk.target.id), set())
-        return tuple(
-            c.id for c in chunk.contentions if c.id not in reserved_ids
-        )
+        return tuple(c.id for c in chunk.contentions if c.id not in reserved_ids)
 
     objection_binding: _BindingDraft | None = None
     request_binding: _BindingDraft | None = None
@@ -7257,8 +7111,7 @@ def _build_chain_stages(
                 document_kind="objection",
                 subtype=_LOOP_LETTER_CARRIER,
                 template_subtype=_OBJECTION_TEMPLATE_SUBTYPE,
-                proposed_date=chunk.target.report_date
-                + dt.timedelta(days=offset),
+                proposed_date=chunk.target.report_date + dt.timedelta(days=offset),
                 doc_date=None,
                 medical_opinion_ref=None,
                 target_ref=chunk.target.id,
@@ -7282,9 +7135,7 @@ def _build_chain_stages(
                 # duplicate: the request follows the authored objection.
                 request_base_key = chunk.target_key
                 request_base_date = (
-                    explicit_request_dates.get(
-                        (chunk.actor, chunk.target.id, "objection")
-                    )
+                    explicit_request_dates.get((chunk.actor, chunk.target.id, "objection"))
                     or chunk.target.report_date
                 )
             else:
@@ -7336,9 +7187,7 @@ def _build_chain_stages(
             request_d_key = d_key
             tentative["supplemental_request"] += 1
             tentative["total"] += 1
-            records.append(
-                _StageRecord("supplemental_request", request_binding, None)
-            )
+            records.append(_StageRecord("supplemental_request", request_binding, None))
         elif stage == "supplemental_report":
             if not stage_fits("supplemental_report") or opinion_total >= 8:
                 failed_stage = "supplemental_report"
@@ -7352,9 +7201,7 @@ def _build_chain_stages(
                     )
                     or chunk.target.report_date
                 )
-            revisited = tuple(
-                sorted(spoken_keys, key=canonical_story_key)
-            )
+            revisited = tuple(sorted(spoken_keys, key=canonical_story_key))
             response_key: StorySemanticKey = (
                 "case",
                 seed.case_id,
@@ -7421,19 +7268,13 @@ def _build_chain_stages(
             opinion_total += 1
             drafted += 1
             records.append(
-                _StageRecord(
-                    "supplemental_report", supplemental_binding, supplemental_draft
-                )
+                _StageRecord("supplemental_report", supplemental_binding, supplemental_draft)
             )
         elif stage == "qme_deposition":
             if not stage_fits("qme_deposition") or opinion_total >= 8:
                 failed_stage = "qme_deposition"
                 break
-            examined = (
-                supplemental_draft.view()
-                if supplemental_draft is not None
-                else target_view
-            )
+            examined = supplemental_draft.view() if supplemental_draft is not None else target_view
             spoken = (
                 stage_spoken("qme_deposition")
                 if examined is target_view
@@ -7507,9 +7348,7 @@ def _build_chain_stages(
             tentative["total"] += 1
             opinion_total += 1
             drafted += 1
-            records.append(
-                _StageRecord("qme_deposition", deposition_binding, deposition_draft)
-            )
+            records.append(_StageRecord("qme_deposition", deposition_binding, deposition_draft))
 
     if failed_stage is not None:
         # R31's exact tail collapse. A failing deposition already left the
@@ -7610,8 +7449,7 @@ def derive_medical_assertion_plan(
             for item in collection:
                 realized[item.id] = item.quality
         trace.recipes = [
-            (key, recipe, realized.get(key, ""))
-            for key, recipe, _placeholder in trace.recipes
+            (key, recipe, realized.get(key, "")) for key, recipe, _placeholder in trace.recipes
         ]
         # The exact M2 post-grade/pre-M3 ledger (R61). Recorded BEFORE any
         # M3 transformation so the R62 digest oracle and the R70 stream gate
@@ -7657,14 +7495,8 @@ def derive_medical_assertion_plan(
         explicit_opinion_ids,
         trace,
     )
-    completed = (
-        graded
-        if loop_ledger is graded
-        else grade_ledger(context, projection, loop_ledger)
-    )
-    return MedicalAssertionPlan(
-        ledger=completed, contention_documents=contention_documents
-    )
+    completed = graded if loop_ledger is graded else grade_ledger(context, projection, loop_ledger)
+    return MedicalAssertionPlan(ledger=completed, contention_documents=contention_documents)
 
 
 def derive_medical_assertions(
@@ -7681,9 +7513,7 @@ def derive_medical_assertions(
     remodel, and (from steps 5-6) the loop subphases. The preserved pre-M3
     surface lives on ``AssertionTrace.m2_baseline_ledger``.
     """
-    return derive_medical_assertion_plan(
-        seed, history, timeline=timeline, trace=trace
-    ).ledger
+    return derive_medical_assertion_plan(seed, history, timeline=timeline, trace=trace).ledger
 
 
 __all__ = [
@@ -7699,6 +7529,9 @@ __all__ = [
     "GRANULAR_NONINDUSTRIAL_PERCENTAGES",
     "GROUNDABLE_HOOKS",
     "HOOK_TO_BASIS",
+    "M3_PLAN_DIGEST_APPORTIONMENT_ASSERTION_FIELDS",
+    "M3_PLAN_DIGEST_CONTENTION_FIELDS",
+    "M3_PLAN_DIGEST_MEDICAL_OPINION_FIELDS",
     "MAX_ADVOCACY_LETTERS_PER_CASE",
     "MAX_BOUND_CONTENTION_DOCUMENTS_PER_CASE",
     "MAX_CONTENTIONS_PER_LOOP_DOCUMENT",

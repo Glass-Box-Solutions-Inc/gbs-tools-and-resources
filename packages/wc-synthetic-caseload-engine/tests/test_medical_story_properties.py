@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import random
 import typing
 from fractions import Fraction
 from pathlib import Path
@@ -27,15 +28,36 @@ from assertion_cohort import (
     M2_APPORTIONMENT_ORACLE_FIELDS,
     M2_CONTENTION_ORACLE_FIELDS,
     M2_OPINION_ORACLE_FIELDS,
+    M3_PLAN_DIGEST_APPORTIONMENT_ASSERTION_FIELDS,
+    M3_PLAN_DIGEST_CONTENTION_FIELDS,
+    M3_PLAN_DIGEST_MEDICAL_OPINION_FIELDS,
+    MEASURED_ADVOCACY_COUNTS,
     MEASURED_ASSERTION_QUALITY_COUNTS,
+    MEASURED_CHAIN_LENGTH_COUNTS,
     MEASURED_CONTENTION_FAMILY_COUNTS,
+    MEASURED_CONTEST_PATH_COUNTS,
+    MEASURED_DATE_OFFSET_COUNTS,
+    MEASURED_DISPOSITION_COUNTS,
     MEASURED_ELIGIBLE_COUNTS,
+    MEASURED_IMR_FIELD_COUNTS,
     MEASURED_LEDGER_DIGESTS,
     MEASURED_M2_STREAM_TRACE_DIGESTS,
+    MEASURED_M3_BASE_OPINION_QUALITY_COUNTS,
+    MEASURED_M3_BASE_OWNER_APPORTIONMENT_QUALITY_COUNTS,
+    MEASURED_MEDICAL_STORY_PLAN_DIGESTS,
+    MEASURED_PERCENTAGE_REGISTER_COUNTS,
+    MEASURED_REVISION_KIND_COUNTS,
+    MEASURED_STORY_DRAW_COUNTS,
+    MEASURED_STORY_ELIGIBLE_COUNTS,
+    QUALITY_KEYS,
+    RESPONSE_EVENT_KINDS,
     _CountingRandom,
     _digest,
+    _m3_plan_digest,
     build_cohort,
+    build_medical_story_cohort,
     cohort_seed_body,
+    measure_m3_quality_strata,
 )
 from wc_caseload_engine import fact_templates as fact_templates_module
 from wc_caseload_engine import medical_assertions as assertion_module
@@ -76,13 +98,9 @@ from wc_caseload_engine.seeds import (
 )
 
 _RENDER_KEY_FIXTURE = (
-    Path(__file__).resolve().parent
-    / "fixtures"
-    / "medical_story_render_key_pair.yaml"
+    Path(__file__).resolve().parent / "fixtures" / "medical_story_render_key_pair.yaml"
 )
-_IMR_FIXTURE = (
-    Path(__file__).resolve().parent / "fixtures" / "medical_story_imr_matrix.yaml"
-)
+_IMR_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "medical_story_imr_matrix.yaml"
 
 #: An INDEPENDENT literal copy of the R46 registry — never imported from
 #: production, so a production edit and this oracle must both move for the
@@ -253,9 +271,7 @@ def test_medical_story_stream_registry_is_exact_complete_and_namespaced(
     # The loop/optional split is structural (R44): the 21 assertion-loop
     # families are exactly the registry minus the eight UR/IMR and five
     # document-render families.
-    assert frozenset(
-        EXPECTED_MEDICAL_STORY_FAMILIES[:21]
-    ) == MEDICAL_STORY_ASSERTION_LOOP_FAMILIES
+    assert frozenset(EXPECTED_MEDICAL_STORY_FAMILIES[:21]) == MEDICAL_STORY_ASSERTION_LOOP_FAMILIES
     assert frozenset(EXPECTED_MEDICAL_STORY_FAMILIES[21:]) == {
         "ur-decision",
         "imr-request",
@@ -279,9 +295,7 @@ def test_medical_story_stream_registry_is_exact_complete_and_namespaced(
     # warning: the helper refuses it before any stream exists.
     seed = parse_case_seed(cohort_seed_body(3))
     with pytest.raises(MedicalAssertionError, match="unknown medical-story rng family"):
-        assertion_module._medical_story_rng(
-            seed, "not-a-registered-family", ("case", seed.case_id)
-        )
+        assertion_module._medical_story_rng(seed, "not-a-registered-family", ("case", seed.case_id))
 
     observed: set[str] = set()
     original_story_seed = assertion_module._medical_story_seed
@@ -290,9 +304,7 @@ def test_medical_story_stream_registry_is_exact_complete_and_namespaced(
         observed.add(family)
         return original_story_seed(seed_obj, family, semantic_key)
 
-    monkeypatch.setattr(
-        assertion_module, "_medical_story_seed", recording_story_seed
-    )
+    monkeypatch.setattr(assertion_module, "_medical_story_seed", recording_story_seed)
 
     # The fixed 6,000-case cohort remains an independently pinned nineteen
     # families; the focused witnesses below close only the fifteen known gaps.
@@ -334,19 +346,13 @@ def test_medical_story_stream_registry_is_exact_complete_and_namespaced(
     for seed_obj in imr_spec.cases:
         build_case_plan(seed_obj)
     sampled_imr = next(
-        seed_obj
-        for seed_obj in imr_spec.cases
-        if seed_obj.case_id == "imr-sampled-upheld"
+        seed_obj for seed_obj in imr_spec.cases if seed_obj.case_id == "imr-sampled-upheld"
     )
-    unstated_ur = sampled_imr.lifecycle.ur_dispute.model_copy(
-        update={"decision": None}
-    )
+    unstated_ur = sampled_imr.lifecycle.ur_dispute.model_copy(update={"decision": None})
     unstated = sampled_imr.model_copy(
         update={
             "case_id": "imr-unstated-decision-family-focus",
-            "lifecycle": sampled_imr.lifecycle.model_copy(
-                update={"ur_dispute": unstated_ur}
-            ),
+            "lifecycle": sampled_imr.lifecycle.model_copy(update={"ur_dispute": unstated_ur}),
         }
     )
     assert unstated.lifecycle.ur_dispute.decision is None
@@ -414,9 +420,7 @@ def test_inserting_an_unrelated_document_cannot_move_semantic_render_outputs(
 
     def by_render_key(result: Any) -> dict[str, tuple[Any, Any, bytes]]:
         observed: dict[str, tuple[Any, Any, bytes]] = {}
-        for document, render in zip(
-            result.plan.documents, result.renders, strict=True
-        ):
+        for document, render in zip(result.plan.documents, result.renders, strict=True):
             key = document.medical_story_render_key
             assert key is not None, (
                 f"history-present document {document.index} has no R45 render key"
@@ -466,9 +470,7 @@ def test_inserting_an_unrelated_document_cannot_move_semantic_render_outputs(
             ),
         ),
     )
-    assert canonical_story_key(
-        added_advocacy_key
-    ) not in base
+    assert canonical_story_key(added_advocacy_key) not in base
 
     qme_key_prefix = (
         "case",
@@ -490,9 +492,7 @@ def test_inserting_an_unrelated_document_cannot_move_semantic_render_outputs(
     assert base_qme.medical_story_render_key[:3] == qme_key_prefix
     assert inserted_qme.medical_story_render_key[:3] == qme_key_prefix
 
-    moved = [
-        key for key in common if base[key][0].index != inserted[key][0].index
-    ]
+    moved = [key for key in common if base[key][0].index != inserted[key][0].index]
     assert moved, "the control insertion moved no common final index"
     for key in sorted(common):
         base_document, base_render, base_bytes = base[key]
@@ -541,9 +541,12 @@ def test_semantic_format_replaces_but_does_not_skip_the_legacy_format_draw(
     )
 
     assert constructed == [legacy_seed, semantic_seed]
-    assert renderer_module._format_from_roll(
-        seed.effective_format_mix(), original_random(legacy_seed).random()
-    ) == "pdf"
+    assert (
+        renderer_module._format_from_roll(
+            seed.effective_format_mix(), original_random(legacy_seed).random()
+        )
+        == "pdf"
+    )
     assert selected == "eml"
 
 
@@ -640,24 +643,17 @@ def test_medical_story_keys_use_pre_id_semantics_and_never_positions_or_indices(
         ("lumbar_spine", "shoulder"),
     )
     assert canonical_story_key(u_key) == (
-        f'["case","{case_id}","ur","2024-03-01",true,'
-        '["lumbar_spine","shoulder"]]'
+        f'["case","{case_id}","ur","2024-03-01",true,["lumbar_spine","shoulder"]]'
     )
 
     # Tuples and lists are NEVER reordered; sets and frozensets ALWAYS are.
     ordered = ("case", case_id, "probe", ("b", "a"))
-    assert canonical_story_key(ordered) == (
-        f'["case","{case_id}","probe",["b","a"]]'
-    )
+    assert canonical_story_key(ordered) == (f'["case","{case_id}","probe",["b","a"]]')
     unordered = ("case", case_id, "probe", frozenset({"b", "a"}))
-    assert canonical_story_key(unordered) == (
-        f'["case","{case_id}","probe",["a","b"]]'
-    )
+    assert canonical_story_key(unordered) == (f'["case","{case_id}","probe",["a","b"]]')
     # A mapping appears only after sorting its items by normalized key.
     mapped = ("case", case_id, "probe", {"z": 1, "a": 2})
-    assert canonical_story_key(mapped) == (
-        f'["case","{case_id}","probe",[["a",2],["z",1]]]'
-    )
+    assert canonical_story_key(mapped) == (f'["case","{case_id}","probe",[["a",2],["z",1]]]')
 
     # Floats, datetimes, and arbitrary objects are forbidden atoms — a repr
     # carries a memory address, a float carries platform formatting, a
@@ -674,9 +670,7 @@ def test_medical_story_keys_use_pre_id_semantics_and_never_positions_or_indices(
     # Canonicalization is ASCII-stable: non-ASCII content is escaped, never
     # re-encoded differently per locale.
     accented = ("case", case_id, "probe", "café")
-    assert canonical_story_key(accented) == (
-        f'["case","{case_id}","probe","caf\\u00e9"]'
-    )
+    assert canonical_story_key(accented) == (f'["case","{case_id}","probe","caf\\u00e9"]')
 
 
 def test_medical_story_rng_streams_are_fresh_independent_and_gated() -> None:
@@ -708,9 +702,7 @@ def test_medical_story_rng_streams_are_fresh_independent_and_gated() -> None:
 
     canonical = canonical_story_key(key)
     story_seed = assertion_module._medical_story_seed(seed, "ur-decision", key)
-    assert story_seed == derive_seed(
-        seed.rng_seed, f"medical-story:ur-decision:{canonical}"
-    )
+    assert story_seed == derive_seed(seed.rng_seed, f"medical-story:ur-decision:{canonical}")
     for foreign_namespace in ("medical-assertions", "medical"):
         assert story_seed != derive_seed(
             seed.rng_seed, f"{foreign_namespace}:ur-decision:{canonical}"
@@ -735,9 +727,7 @@ def test_medical_story_rng_streams_are_fresh_independent_and_gated() -> None:
     bare["scenario"] = {}
     bare_seed = parse_case_seed(bare)
     with pytest.raises(MedicalAssertionError, match="medical-story gate"):
-        assertion_module._medical_story_rng(
-            bare_seed, "ur-decision", ("case", bare_seed.case_id)
-        )
+        assertion_module._medical_story_rng(bare_seed, "ur-decision", ("case", bare_seed.case_id))
 
 
 # ---------------------------------------------------------------------------
@@ -759,9 +749,7 @@ def _record_m2_streams(index: int) -> tuple[Any, AssertionTrace, list[tuple[str,
         constructed = original(seed_obj, family, stable_key)
         counting = _CountingRandom()
         counting.setstate(constructed.getstate())
-        live.append(
-            (family, f"{ASSERTION_RNG_NAMESPACE}:{family}:{stable_key}", counting)
-        )
+        live.append((family, f"{ASSERTION_RNG_NAMESPACE}:{family}:{stable_key}", counting))
         return counting
 
     assertion_module._assertion_rng = recording
@@ -774,7 +762,9 @@ def _record_m2_streams(index: int) -> tuple[Any, AssertionTrace, list[tuple[str,
 
 
 @pytest.mark.slow
-def test_m2_baseline_stream_calls_ids_counts_and_digests_are_byte_identical() -> None:
+def test_m2_baseline_stream_calls_ids_counts_and_digests_are_byte_identical(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """R70's M2-stream gate: family names, complete semantic salts,
     construction counts, within-stream draw counts, base ctn/opn/app IDs, the
     R62 field-projected payload and ``MEASURED_LEDGER_DIGESTS`` — all read
@@ -791,6 +781,54 @@ def test_m2_baseline_stream_calls_ids_counts_and_digests_are_byte_identical() ->
     failure shape).
     """
     result = build_cohort()
+
+    # A defense-contest decision gets its own M3 family and salt.  This is a
+    # direct construction oracle, independent of the aggregate M2 pins: the
+    # exact M2 PTP-disposition helper must never receive the M3 opportunity
+    # key, while the observed returned stream must be the medical-story one.
+    m2_calls: list[tuple[Any, str, str]] = []
+    story_calls: list[tuple[Any, str, Any, object]] = []
+    original_m2_rng = assertion_module._assertion_rng
+    original_story_rng = assertion_module._medical_story_rng
+
+    def recording_m2_rng(seed: Any, family: str, stable_key: str) -> Any:
+        m2_calls.append((seed, family, stable_key))
+        return original_m2_rng(seed, family, stable_key)
+
+    def recording_story_rng(seed: Any, family: str, semantic_key: Any) -> Any:
+        rng = original_story_rng(seed, family, semantic_key)
+        story_calls.append((seed, family, semantic_key, rng.getstate()))
+        return rng
+
+    # ``build_cohort`` is process-cached for the expensive aggregate pins, so
+    # an aggregate recorder can be empty when an earlier test warmed it.  Case
+    # 21 is a fixed, qualifying defense-contest witness and this direct plan
+    # derivation is deliberately outside that cache.
+    witness_seed = parse_case_seed(cohort_seed_body(21))
+    witness_history = derive_medical_history(witness_seed)
+    monkeypatch.setattr(assertion_module, "_assertion_rng", recording_m2_rng)
+    monkeypatch.setattr(assertion_module, "_medical_story_rng", recording_story_rng)
+    witness_plan = derive_medical_assertion_plan(witness_seed, witness_history)
+    assert witness_plan.ledger is not None
+
+    defense_story_calls = [
+        (seed, semantic_key, state)
+        for seed, family, semantic_key, state in story_calls
+        if family == "defense-contest-incidence"
+    ]
+    assert defense_story_calls, "the cohort stopped exercising defense contest incidence"
+    for seed, semantic_key, state in defense_story_calls:
+        expected_seed = derive_seed(
+            seed.rng_seed,
+            f"{MEDICAL_STORY_RNG_NAMESPACE}:defense-contest-incidence:"
+            f"{canonical_story_key(semantic_key)}",
+        )
+        assert state == random.Random(expected_seed).getstate()
+        assert (
+            seed,
+            "ptp-disposition",
+            canonical_story_key(semantic_key),
+        ) not in m2_calls
     # The R62 payload digests, computed from m2_baseline_ledger with the
     # literal M2 field allowlists, equal the frozen pre-M3 pins — no pin may
     # be re-recorded to accommodate M3; a mismatch is an implementation
@@ -846,8 +884,7 @@ def test_m2_baseline_stream_calls_ids_counts_and_digests_are_byte_identical() ->
             (baseline.apportionment_assertions, "app"),
         ):
             assert [item.id for item in collection] == [
-                f"{prefix}-{position:02d}"
-                for position in range(1, len(collection) + 1)
+                f"{prefix}-{position:02d}" for position in range(1, len(collection) + 1)
             ]
 
         # The R62 field projection of the baseline reproduces the frozen pin.
@@ -876,17 +913,11 @@ def test_m2_oracle_allowlists_are_independent_literals_equal_to_production_v1_tu
 
     assert M2_CONTENTION_ORACLE_FIELDS == tm.ASSERTIONS_V1_CONTENTION_FIELDS
     assert M2_OPINION_ORACLE_FIELDS == tm.ASSERTIONS_V1_MEDICAL_OPINION_FIELDS
-    assert (
-        M2_APPORTIONMENT_ORACLE_FIELDS
-        == tm.ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS
-    )
+    assert M2_APPORTIONMENT_ORACLE_FIELDS == tm.ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS
     # Independence is identity-level: equal values, distinct declarations.
     assert M2_CONTENTION_ORACLE_FIELDS is not tm.ASSERTIONS_V1_CONTENTION_FIELDS
     assert M2_OPINION_ORACLE_FIELDS is not tm.ASSERTIONS_V1_MEDICAL_OPINION_FIELDS
-    assert (
-        M2_APPORTIONMENT_ORACLE_FIELDS
-        is not tm.ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS
-    )
+    assert M2_APPORTIONMENT_ORACLE_FIELDS is not tm.ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS
     # The R62 vocabulary ends at quality on every collection.
     for fields in (
         M2_CONTENTION_ORACLE_FIELDS,
@@ -894,6 +925,163 @@ def test_m2_oracle_allowlists_are_independent_literals_equal_to_production_v1_tu
         M2_APPORTIONMENT_ORACLE_FIELDS,
     ):
         assert fields[-1] == "quality"
+
+
+@pytest.mark.slow
+def test_medical_story_cohort_matches_pinned_counts_bands_and_floors() -> None:
+    """R61-R64/A2: exact M3 change detectors plus primary base bands.
+
+    The literal 0.75-0.85 assertions deliberately precede the first-run exact
+    pins: the spec band is the primary oracle; the pins only detect later
+    deterministic drift. Response strata are complete diagnostics, never a
+    blended all-opinion gate.
+    """
+
+    import assertion_cohort as cohort_module
+
+    result = build_medical_story_cohort()
+    opinion_total = sum(result.base_opinion_quality_counts.values())
+    assertion_total = sum(result.base_owner_apportionment_quality_counts.values())
+    opinion_supported_share = result.base_opinion_quality_counts["supported"] / opinion_total
+    assertion_supported_share = (
+        result.base_owner_apportionment_quality_counts["supported"] / assertion_total
+    )
+    assert 0.75 <= opinion_supported_share <= 0.85
+    assert 0.75 <= assertion_supported_share <= 0.85
+
+    assert dict(result.base_opinion_quality_counts) == (MEASURED_M3_BASE_OPINION_QUALITY_COUNTS)
+    assert dict(result.base_owner_apportionment_quality_counts) == (
+        MEASURED_M3_BASE_OWNER_APPORTIONMENT_QUALITY_COUNTS
+    )
+    assert dict(result.story_eligible_counts) == MEASURED_STORY_ELIGIBLE_COUNTS
+    assert dict(result.story_draw_counts) == MEASURED_STORY_DRAW_COUNTS
+    assert dict(result.advocacy_counts) == MEASURED_ADVOCACY_COUNTS
+    assert dict(result.contest_path_counts) == MEASURED_CONTEST_PATH_COUNTS
+    assert dict(result.chain_length_counts) == MEASURED_CHAIN_LENGTH_COUNTS
+    assert dict(result.disposition_counts) == MEASURED_DISPOSITION_COUNTS
+    assert dict(result.revision_kind_counts) == MEASURED_REVISION_KIND_COUNTS
+    assert dict(result.percentage_register_counts) == (MEASURED_PERCENTAGE_REGISTER_COUNTS)
+    assert {
+        kind: dict(counts) for kind, counts in result.date_offset_counts.items()
+    } == MEASURED_DATE_OFFSET_COUNTS
+    assert dict(result.imr_field_counts) == MEASURED_IMR_FIELD_COUNTS
+    assert result.medical_story_plan_digests == MEASURED_MEDICAL_STORY_PLAN_DIGESTS
+    assert result.invalid_ledgers == 0
+    assert result.imr_field_counts["request:eligible"] == 1500
+
+    assert tuple(result.response_quality_counts_by_event_kind) == (
+        "supplemental_report",
+        "deposition",
+    )
+    assert RESPONSE_EVENT_KINDS == ("supplemental_report", "deposition")
+    for event_kind in RESPONSE_EVENT_KINDS:
+        assert tuple(result.response_quality_counts_by_event_kind[event_kind]) == (
+            "supported",
+            "thin",
+            "unsupportable",
+        )
+    for aggregate in (
+        result.response_opinion_quality_counts,
+        result.response_apportionment_quality_counts,
+    ):
+        assert tuple(aggregate) == ("supported", "thin", "unsupportable")
+        assert sum(aggregate.values()) > 0
+    assert {
+        quality: sum(
+            result.response_quality_counts_by_event_kind[event_kind][quality]
+            for event_kind in RESPONSE_EVENT_KINDS
+        )
+        for quality in QUALITY_KEYS
+    } == {
+        quality: (
+            result.response_opinion_quality_counts[quality]
+            + result.response_apportionment_quality_counts[quality]
+        )
+        for quality in QUALITY_KEYS
+    }
+
+    assert not hasattr(result, "quality_counts")
+    assert not hasattr(cohort_module, "MEASURED_FULL_ASSERTION_QUALITY_COUNTS")
+
+
+def test_ajc62_quality_bands_exclude_response_strata_without_dropping_response_counts() -> None:
+    """A2-R5: adding a reasoned response changes diagnostics only."""
+
+    seed = parse_case_seed(cohort_seed_body(3))
+    history = derive_medical_history(seed)
+    plan = derive_medical_assertion_plan(seed, history)
+    ledger = plan.ledger
+    assert ledger is not None
+    base = next(
+        opinion
+        for opinion in ledger.medical_opinions
+        if opinion.event_kind == "base_report" and opinion.author_role in ("qme", "ame")
+    )
+    response = base.model_copy(
+        update={
+            "id": "opn-99",
+            "report_date": base.report_date + dt.timedelta(days=30),
+            "event_kind": "supplemental_report",
+            "revision_kind": "unchanged_additional_reasoning",
+            "responds_to_opinion_id": base.id,
+            "supersedes_opinion_id": None,
+            "examination_performed": False,
+            "rationale": (
+                "The complete reviewed record and prior examination support the "
+                "unchanged conclusion."
+            ),
+            "revision_rationale": (
+                "The supplemental review supplies additional reasoning without changing the result."
+            ),
+            "quality": "supported",
+        }
+    )
+    with_response = ledger.model_copy(
+        update={"medical_opinions": (*ledger.medical_opinions, response)}
+    )
+
+    before = measure_m3_quality_strata(ledger)
+    after = measure_m3_quality_strata(with_response)
+    assert after[0] == before[0]
+    assert after[1] == before[1]
+    assert sum(after[2].values()) == sum(before[2].values()) + 1
+    assert after[2]["supported"] == before[2]["supported"] + 1
+    assert after[4]["supplemental_report"]["supported"] == (
+        before[4]["supplemental_report"]["supported"] + 1
+    )
+    assert after[4]["deposition"] == before[4]["deposition"]
+
+
+def test_m3_plan_digest_uses_independent_quality_free_literal_allowlists() -> None:
+    """A2-R4: full M3 semantics are pinned without truth-only quality."""
+
+    assert M3_PLAN_DIGEST_CONTENTION_FIELDS == (assertion_module.M3_PLAN_DIGEST_CONTENTION_FIELDS)
+    assert M3_PLAN_DIGEST_MEDICAL_OPINION_FIELDS == (
+        assertion_module.M3_PLAN_DIGEST_MEDICAL_OPINION_FIELDS
+    )
+    assert M3_PLAN_DIGEST_APPORTIONMENT_ASSERTION_FIELDS == (
+        assertion_module.M3_PLAN_DIGEST_APPORTIONMENT_ASSERTION_FIELDS
+    )
+    assert "quality" not in M3_PLAN_DIGEST_CONTENTION_FIELDS
+    assert "quality" not in M3_PLAN_DIGEST_MEDICAL_OPINION_FIELDS
+    assert "quality" not in M3_PLAN_DIGEST_APPORTIONMENT_ASSERTION_FIELDS
+
+    seed = parse_case_seed(cohort_seed_body(3))
+    history = derive_medical_history(seed)
+    plan = derive_medical_assertion_plan(seed, history)
+    ledger = plan.ledger
+    assert ledger is not None
+    assert ledger.medical_opinions
+    changed_opinions = tuple(
+        opinion.model_copy(
+            update={"quality": ("thin" if opinion.quality == "supported" else "supported")}
+        )
+        for opinion in ledger.medical_opinions
+    )
+    quality_changed = ledger.model_copy(update={"medical_opinions": changed_opinions})
+    changed_plan = plan.model_copy(update={"ledger": quality_changed})
+    assert quality_changed != ledger
+    assert _m3_plan_digest(changed_plan, None) == _m3_plan_digest(plan, None)
 
 
 # ---------------------------------------------------------------------------
@@ -1165,21 +1353,37 @@ def test_every_counsel_ruled_medical_story_knob_and_denominator_is_exact() -> No
     # R55 — the percentage pools: the M2 pool untouched, the granular
     # remainder exactly the 78-integer complement of 1..99.
     assert COMMON_NONINDUSTRIAL_PERCENTAGES == (
-        5, 10, 15, 20, 25, 30, 33, 35, 40, 45, 50,
-        55, 60, 65, 67, 70, 75, 80, 85, 90, 95,
+        5,
+        10,
+        15,
+        20,
+        25,
+        30,
+        33,
+        35,
+        40,
+        45,
+        50,
+        55,
+        60,
+        65,
+        67,
+        70,
+        75,
+        80,
+        85,
+        90,
+        95,
     )
-    assert tuple(
-        value
-        for value in range(1, 100)
-        if value not in COMMON_NONINDUSTRIAL_PERCENTAGES
-    ) == GRANULAR_NONINDUSTRIAL_PERCENTAGES
+    assert (
+        tuple(value for value in range(1, 100) if value not in COMMON_NONINDUSTRIAL_PERCENTAGES)
+        == GRANULAR_NONINDUSTRIAL_PERCENTAGES
+    )
     assert len(GRANULAR_NONINDUSTRIAL_PERCENTAGES) == 78
-    assert set(COMMON_NONINDUSTRIAL_PERCENTAGES).isdisjoint(
-        GRANULAR_NONINDUSTRIAL_PERCENTAGES
+    assert set(COMMON_NONINDUSTRIAL_PERCENTAGES).isdisjoint(GRANULAR_NONINDUSTRIAL_PERCENTAGES)
+    assert set(COMMON_NONINDUSTRIAL_PERCENTAGES) | set(GRANULAR_NONINDUSTRIAL_PERCENTAGES) == set(
+        range(1, 100)
     )
-    assert set(COMMON_NONINDUSTRIAL_PERCENTAGES) | set(
-        GRANULAR_NONINDUSTRIAL_PERCENTAGES
-    ) == set(range(1, 100))
 
     # R56 — inclusive integer date bands, strictly positive and ordered.
     bands = {
@@ -1278,7 +1482,7 @@ def _sampled_opinion_ids(trace: AssertionTrace, patch_explicit: set[str]) -> set
     return {o.id for o in baseline.medical_opinions if o.id not in patch_explicit}
 
 
-def test_ptp_remodel_has_exact_findings_complement_and_no_sampled_endorsement(
+def test_adding_or_removing_ptp_advocacy_cannot_move_ptp_findings_dispositions_or_dates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """R70's PTP-remodel gate (R49/R16/R47).
@@ -1318,8 +1522,7 @@ def test_ptp_remodel_has_exact_findings_complement_and_no_sampled_endorsement(
         oracle = random_module.Random(
             derive_seed(
                 seed3.rng_seed,
-                "medical-story:ptp-aoe-coe-finding:"
-                + canonical_story_key(full_key),
+                "medical-story:ptp-aoe-coe-finding:" + canonical_story_key(full_key),
             )
         )
         if oracle.random() < float(Fraction(19, 20)):
@@ -1391,12 +1594,8 @@ def test_ptp_remodel_has_exact_findings_complement_and_no_sampled_endorsement(
     monkeypatch.setattr(assertion_module, "_medical_story_rng", original)
     baseline = trace.m2_baseline_ledger
     assert baseline is not None and plan.ledger is not None
-    forced = next(
-        o for o in plan.ledger.medical_opinions if o.author_role == "ptp"
-    )
-    base = next(
-        o for o in baseline.medical_opinions if o.author_role == "ptp"
-    )
+    forced = next(o for o in plan.ledger.medical_opinions if o.author_role == "ptp")
+    base = next(o for o in baseline.medical_opinions if o.author_role == "ptp")
     assert forced.aoe_coe_finding == "deferred"
     assert base.endorses_contention_ids, "cohort-0002 stopped endorsing"
     endorsed = base.endorses_contention_ids[0]
@@ -1432,9 +1631,7 @@ def test_ptp_remodel_has_exact_findings_complement_and_no_sampled_endorsement(
     assert explicit_opinion is not None
     assert explicit_opinion.aoe_coe_finding is None
     sampled = [
-        o
-        for o in plan.ledger.medical_opinions
-        if o.id != "opn-01" and o.author_role == "ptp"
+        o for o in plan.ledger.medical_opinions if o.id != "opn-01" and o.author_role == "ptp"
     ]
     for opinion in sampled:
         assert opinion.aoe_coe_finding is not None
@@ -1484,9 +1681,7 @@ def test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication(
         # The qualifying communications, re-derived at the production seam:
         # sampled advocacy letters targeting the sampled evaluator (R38).
         contention_keys = {
-            contention.id: assertion_module._story_contention_key(
-                seed, contention, frozenset()
-            )
+            contention.id: assertion_module._story_contention_key(seed, contention, frozenset())
             for contention in baseline.contentions
         }
         communications = assertion_module._derive_advocacy(
@@ -1512,9 +1707,7 @@ def test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication(
             if base_opinion.author_role not in ("qme", "ame"):
                 continue
             checked_opinions += 1
-            assert plan_opinion.rejects_contention_ids == (
-                base_opinion.rejects_contention_ids
-            )
+            assert plan_opinion.rejects_contention_ids == (base_opinion.rejects_contention_ids)
             endorsed = set(plan_opinion.endorses_contention_ids)
             concurred = set(plan_opinion.concurs_with_contention_ids)
             deferred = set(plan_opinion.defers_contention_ids)
@@ -1532,9 +1725,7 @@ def test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication(
                     continue
                 if evidence == "supports":
                     if communications.get(contention.id):
-                        assert (contention.id in endorsed) != (
-                            contention.id in concurred
-                        )
+                        assert (contention.id in endorsed) != (contention.id in concurred)
                         if contention.id in endorsed:
                             adoption_witnessed = True
                     else:
@@ -1611,9 +1802,7 @@ def test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication(
 
     monkeypatch.setattr(assertion_module, "_medical_story_rng", fail_if_constructed)
     assert (
-        assertion_module._qme_ame_supported_disposition(
-            seed3, opinion_key, contention_key, ()
-        )
+        assertion_module._qme_ame_supported_disposition(seed3, opinion_key, contention_key, ())
         == "concurred"
     )
     monkeypatch.undo()
@@ -1654,9 +1843,7 @@ def test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication(
             dt.date(2023, 1, 1) + dt.timedelta(days=day),
             (),
         )
-        sorted_d = tuple(
-            sorted((d_key_b, d_key_a), key=canonical_story_key)
-        )
+        sorted_d = tuple(sorted((d_key_b, d_key_a), key=canonical_story_key))
         full_key = (
             "case",
             seed3.case_id,
@@ -1667,13 +1854,10 @@ def test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication(
         oracle = random_module.Random(
             derive_seed(
                 seed3.rng_seed,
-                "medical-story:qme-ame-responsive-adoption:"
-                + canonical_story_key(full_key),
+                "medical-story:qme-ame-responsive-adoption:" + canonical_story_key(full_key),
             )
         )
-        expected = (
-            "adopted" if oracle.random() < float(Fraction(1, 4)) else "concurred"
-        )
+        expected = "adopted" if oracle.random() < float(Fraction(1, 4)) else "concurred"
         forward = assertion_module._qme_ame_supported_disposition(
             seed3, shifted_opinion_key, contention_key, (d_key_a, d_key_b)
         )
@@ -1692,9 +1876,7 @@ def test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication(
     assert baseline is not None
     context = assertion_context(seed)
     projection = project_medical_history(history, context.current_body_parts)
-    base_evaluator = next(
-        o for o in baseline.medical_opinions if o.author_role in ("qme", "ame")
-    )
+    base_evaluator = next(o for o in baseline.medical_opinions if o.author_role in ("qme", "ame"))
     assert base_evaluator.rejects_contention_ids, "cohort-5763 stopped rejecting"
     rejected_id = base_evaluator.rejects_contention_ids[0]
     scenario = seed.scenario.medical_assertions
@@ -1706,9 +1888,7 @@ def test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication(
         baseline,
         qualifying_communications={rejected_id: (d_key_a,)},
     )
-    evaluator = next(
-        o for o in remodeled.medical_opinions if o.author_role in ("qme", "ame")
-    )
+    evaluator = next(o for o in remodeled.medical_opinions if o.author_role in ("qme", "ame"))
     assert rejected_id in evaluator.rejects_contention_ids
     assert rejected_id not in evaluator.endorses_contention_ids
     assert rejected_id not in evaluator.concurs_with_contention_ids
@@ -1724,13 +1904,8 @@ def test_qme_ame_responsive_adoption_requires_evidence_and_prior_communication(
         baseline,
         qualifying_communications={supported_id: (d_key_a,)},
     )
-    evaluator = next(
-        o for o in remodeled.medical_opinions if o.author_role in ("qme", "ame")
-    )
-    assert (
-        supported_id
-        in evaluator.endorses_contention_ids + evaluator.concurs_with_contention_ids
-    )
+    evaluator = next(o for o in remodeled.medical_opinions if o.author_role in ("qme", "ame"))
+    assert supported_id in evaluator.endorses_contention_ids + evaluator.concurs_with_contention_ids
 
 
 def test_revision_kind_draws_follow_trigger_conditioned_compatible_weights(
@@ -1748,20 +1923,32 @@ def test_revision_kind_draws_follow_trigger_conditioned_compatible_weights(
     revision_kinds = typing.get_args(OpinionRevisionKind.__value__)
     weights = {
         "supplemental_after_objection": (
-            Fraction(7, 20), Fraction(3, 20), Fraction(3, 20),
-            Fraction(1, 4), Fraction(1, 10),
+            Fraction(7, 20),
+            Fraction(3, 20),
+            Fraction(3, 20),
+            Fraction(1, 4),
+            Fraction(1, 10),
         ),
         "supplemental_after_completion": (
-            Fraction(3, 20), Fraction(1, 5), Fraction(1, 5),
-            Fraction(3, 10), Fraction(3, 20),
+            Fraction(3, 20),
+            Fraction(1, 5),
+            Fraction(1, 5),
+            Fraction(3, 10),
+            Fraction(3, 20),
         ),
         "deposition_examining_base": (
-            Fraction(13, 20), Fraction(0, 1), Fraction(1, 10),
-            Fraction(1, 5), Fraction(1, 20),
+            Fraction(13, 20),
+            Fraction(0, 1),
+            Fraction(1, 10),
+            Fraction(1, 5),
+            Fraction(1, 20),
         ),
         "deposition_examining_supplemental": (
-            Fraction(7, 10), Fraction(0, 1), Fraction(1, 10),
-            Fraction(3, 20), Fraction(1, 20),
+            Fraction(7, 10),
+            Fraction(0, 1),
+            Fraction(1, 10),
+            Fraction(3, 20),
+            Fraction(1, 20),
         ),
     }
 
@@ -1988,8 +2175,7 @@ def test_percentage_register_pool_continuous_remainder_and_predecessor_exclusion
         register = random_module.Random(
             derive_seed(
                 seed3.rng_seed,
-                "medical-story:revision-percentage-register:"
-                + canonical_story_key(full_key),
+                "medical-story:revision-percentage-register:" + canonical_story_key(full_key),
             )
         )
         common_selected = register.random() < float(Fraction(17, 20))
@@ -1999,8 +2185,7 @@ def test_percentage_register_pool_continuous_remainder_and_predecessor_exclusion
         value = random_module.Random(
             derive_seed(
                 seed3.rng_seed,
-                "medical-story:revision-percentage-value:"
-                + canonical_story_key(full_key),
+                "medical-story:revision-percentage-value:" + canonical_story_key(full_key),
             )
         )
         if common_selected:
@@ -2100,12 +2285,8 @@ def test_raw_date_band_draws_are_inclusive_causal_and_never_redrawn(
     bands = {
         "advocacy-lead": assertion_module.ADVOCACY_LEAD_DAYS.value,
         "objection-lag": assertion_module.OBJECTION_LAG_DAYS.value,
-        "supplemental-request-lag": (
-            assertion_module.SUPPLEMENTAL_REQUEST_LAG_DAYS.value
-        ),
-        "supplemental-report-lag": (
-            assertion_module.SUPPLEMENTAL_REPORT_LAG_DAYS.value
-        ),
+        "supplemental-request-lag": (assertion_module.SUPPLEMENTAL_REQUEST_LAG_DAYS.value),
+        "supplemental-report-lag": (assertion_module.SUPPLEMENTAL_REPORT_LAG_DAYS.value),
         "deposition-lag": assertion_module.DEPOSITION_LAG_DAYS.value,
     }
     assert bands == {
@@ -2212,9 +2393,7 @@ def test_raw_date_band_draws_are_inclusive_causal_and_never_redrawn(
         "supplemental_request"
     ].proposed_date + dt.timedelta(days=offsets["supplemental-report-lag"])
     assert by_kind["supplemental_report"].proposed_date == supplemental.report_date
-    assert by_kind[
-        "qme_deposition"
-    ].proposed_date == supplemental.report_date + dt.timedelta(
+    assert by_kind["qme_deposition"].proposed_date == supplemental.report_date + dt.timedelta(
         days=offsets["deposition-lag"]
     )
     assert by_kind["qme_deposition"].proposed_date == deposition.report_date
@@ -2222,9 +2401,7 @@ def test_raw_date_band_draws_are_inclusive_causal_and_never_redrawn(
     # Never redrawn: no (family, key) pair is constructed twice within the
     # derivation, and a second derivation replays byte-identical raw draws.
     band_streams = [
-        (family, canonical_story_key(key))
-        for family, key in recorded
-        if family in bands
+        (family, canonical_story_key(key)) for family, key in recorded if family in bands
     ]
     assert len(band_streams) == 5
     assert len(band_streams) == len(set(band_streams))

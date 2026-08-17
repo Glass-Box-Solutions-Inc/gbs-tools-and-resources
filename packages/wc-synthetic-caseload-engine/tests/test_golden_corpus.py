@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from conftest import requires_substrate
 
@@ -158,6 +159,50 @@ def test_every_registered_corpus_is_in_exactly_one_tier() -> None:
         "both tiers must be populated — an empty tier means one of the two gates "
         f"runs nothing, and the tiers present are {sorted(tiers)}"
     )
+
+
+def test_medical_story_showcase_is_registered_as_suite_tier() -> None:
+    """AJC-62 R73: the new feature-on corpus has one exact registry row."""
+    rows = [corpus for corpus in CORPORA if corpus.name == "medical-story-showcase"]
+    assert len(rows) == 1
+    corpus = rows[0]
+    assert corpus.tier == SUITE_TIER
+    assert corpus.spec == EXAMPLES / "medical-story-showcase.yaml"
+    assert corpus.golden == PACKAGE / "tests" / "golden" / "medical-story-showcase.json"
+
+
+def test_medical_story_showcase_golden_has_exact_five_cases_and_seeds() -> None:
+    """AJC-62 R77 step 14: the recording and source name the same five seeds."""
+    expected_order = (
+        ("flagship-nonindustrial-cancer-noise-a", 622001),
+        ("flagship-nonindustrial-cancer-noise-b", 622002),
+        ("flagship-nonindustrial-cancer-noise-c", 622003),
+        ("lc4664-prior-award-overlap", 622004),
+        ("diabetic-neuropathy-cts-confound", 622005),
+    )
+    expected = {
+        "flagship-nonindustrial-cancer-noise-a": 622001,
+        "flagship-nonindustrial-cancer-noise-b": 622002,
+        "flagship-nonindustrial-cancer-noise-c": 622003,
+        "lc4664-prior-award-overlap": 622004,
+        "diabetic-neuropathy-cts-confound": 622005,
+    }
+    spec = yaml.safe_load((EXAMPLES / "medical-story-showcase.yaml").read_text())
+    assert tuple((case["case_id"], case["rng_seed"]) for case in spec["cases"]) == (
+        expected_order
+    )
+    assert {case["case_id"]: case["rng_seed"] for case in spec["cases"]} == expected
+
+    golden_path = PACKAGE / "tests" / "golden" / "medical-story-showcase.json"
+    assert golden_path.is_file(), (
+        "the Step-14 semantic artifacts are ready, but the orchestrator has not "
+        "recorded tests/golden/medical-story-showcase.json yet"
+    )
+    golden = json.loads(golden_path.read_text(encoding="utf-8"))
+    assert golden["corpus"] == "medical-story-showcase"
+    assert golden["tier"] == SUITE_TIER
+    assert set(golden["cases"]) == set(expected)
+    assert golden["caseCount"] == 5
 
 
 def test_every_registered_corpus_has_a_well_formed_golden() -> None:
@@ -282,6 +327,89 @@ def test_pre_m3_unchanged_corpus_golden_files_match_the_frozen_ajc62_baseline() 
     doctrine = contract["doctrine_showcase_pre_m3"]
     assert doctrine["corpus"] == "doctrine-showcase"
     assert doctrine["cases"], "the embedded pre-M3 doctrine payload lost its cases"
+
+
+def test_doctrine_showcase_rerecord_is_addition_only_for_preexisting_cases() -> None:
+    """AJC-62 R73: the one doctrine re-record adds one case and changes no old case.
+
+    The expected side is the complete pre-M3 payload captured before M3. It is
+    deliberately not derived from the current golden: comparing the re-record
+    with itself would be the oracle-integrity doctrine's forbidden Form A.
+    """
+    contract = json.loads(AJC62_GOLDEN_CONTRACT.read_text(encoding="utf-8"))
+    before = contract["doctrine_showcase_pre_m3"]
+    golden = Path(__file__).resolve().parent / "golden" / "doctrine-showcase.json"
+    after = json.loads(golden.read_text(encoding="utf-8"))
+
+    preexisting_cases = {
+        "showcase-death-dependency",
+        "showcase-firefighter-presumption",
+        "showcase-imr-challenge",
+        "showcase-psychiatric",
+        "showcase-rating-doctrines",
+        "showcase-threshold-defences",
+    }
+    added_cases = {"showcase-hikida-justice"}
+    assert set(before["cases"]) == preexisting_cases
+    assert set(after["cases"]) == preexisting_cases | added_cases
+    assert set(after["cases"]) - set(before["cases"]) == added_cases
+
+    case_keys = {
+        "documentCount",
+        "distinctSubtypes",
+        "fileCount",
+        "tree",
+        "documents",
+        "manifest",
+        "seed",
+        "facts",
+    }
+
+    def canonical_json(value: Any) -> bytes:
+        return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    changed_preexisting: list[str] = []
+    for case_id in sorted(preexisting_cases):
+        assert set(before["cases"][case_id]) == case_keys
+        assert set(after["cases"][case_id]) == case_keys
+        if canonical_json(after["cases"][case_id]) != canonical_json(
+            before["cases"][case_id]
+        ):
+            changed_preexisting.append(case_id)
+    assert not changed_preexisting, (
+        "the doctrine re-record changed pre-existing case dictionaries: "
+        f"{changed_preexisting}"
+    )
+
+    allowed_top_level_changes = {
+        "cases",
+        "caseCount",
+        "documentCount",
+        "fileCount",
+        "rootFiles",
+        "caseload",
+        "corpusTree",
+    }
+    assert set(after) == set(before)
+    assert allowed_top_level_changes < set(before)
+    stable_top_level = set(before) - allowed_top_level_changes
+    assert canonical_json({key: after[key] for key in stable_top_level}) == canonical_json(
+        {key: before[key] for key in stable_top_level}
+    )
+
+    new_truth_file = "truth/showcase-hikida-justice.truth.json"
+    assert set(after["rootFiles"]) - set(before["rootFiles"]) == {new_truth_file}
+    assert set(before["rootFiles"]) - set(after["rootFiles"]) == set()
+    assert after["rootFiles"] == sorted(after["rootFiles"])
+
+    final_cases = after["cases"]
+    assert after["caseCount"] == len(final_cases)
+    assert after["documentCount"] == sum(
+        case["documentCount"] for case in final_cases.values()
+    )
+    assert after["fileCount"] == len(after["rootFiles"]) + sum(
+        case["fileCount"] for case in final_cases.values()
+    )
 
 
 # ---------------------------------------------------------------------------
