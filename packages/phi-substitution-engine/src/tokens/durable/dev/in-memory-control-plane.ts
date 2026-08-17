@@ -711,48 +711,63 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     return false;
   }
 
+  #orderedPathOneCandidates(olderThanEpochMs: number): PreparedRow[] {
+    return [...this.#prepared.values()]
+      .filter((row) =>
+        row.state === "reclaim_marked" ||
+        ((row.state === "finalized" || row.state === "orphaned") && row.createdAtMs < olderThanEpochMs)
+      )
+      .sort((left, right) => {
+        const stateOrder = Number(left.state !== "reclaim_marked") - Number(right.state !== "reclaim_marked");
+        if (stateOrder !== 0) return stateOrder;
+        if (left.createdAtMs !== right.createdAtMs) return left.createdAtMs - right.createdAtMs;
+        const leftId = asString(left.preparedBlobId);
+        const rightId = asString(right.preparedBlobId);
+        return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+      });
+  }
+
+  #selectPathOneCandidates(
+    olderThanEpochMs: number,
+    limit: number,
+  ): { readonly rows: readonly PreparedRow[]; readonly skippedReferenced: number } {
+    const candidates = this.#orderedPathOneCandidates(olderThanEpochMs);
+
+    // Match Postgres's separate COUNT over a LIMITed referenced-candidate subquery.
+    // The metric is bounded independently; references never occupy reclaimable selection slots.
+    let skippedReferenced = 0;
+    for (const row of candidates) {
+      if (skippedReferenced === limit) break;
+      if (this.#isReferenced(row.preparedBlobId)) {
+        skippedReferenced += 1;
+      }
+    }
+
+    const rows: PreparedRow[] = [];
+    for (const row of candidates) {
+      if (rows.length === limit) break;
+      if (!this.#isReferenced(row.preparedBlobId)) {
+        rows.push(row);
+      }
+    }
+    return { rows, skippedReferenced };
+  }
+
   public async selectFinalizedOrphansForReclaim(
     input: ReclaimQueryInput,
   ): Promise<ReclaimFinalizedOrphansSelection> {
     checkedDuration(input.olderThanEpochMs, "older_than_ms");
     const limit = checkedLimit(input.limit);
     const rows: ReclaimBlobRow[] = [];
-    let skippedReferenced = 0;
-    let inspected = 0;
-    const candidates = [
-      ...[...this.#prepared.values()].filter((row) => row.state === "reclaim_marked"),
-      ...[...this.#prepared.values()].filter((row) =>
-        (row.state === "finalized" || row.state === "orphaned") &&
-        row.createdAtMs < input.olderThanEpochMs
-      ),
-    ].sort((left, right) => {
-      const stateOrder = Number(left.state !== "reclaim_marked") - Number(right.state !== "reclaim_marked");
-      if (stateOrder !== 0) {
-        return stateOrder;
-      }
-      if (left.createdAtMs !== right.createdAtMs) {
-        return left.createdAtMs - right.createdAtMs;
-      }
-      const leftId = asString(left.preparedBlobId);
-      const rightId = asString(right.preparedBlobId);
-      return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
-    });
-    for (const row of candidates) {
-      if (inspected === limit) {
-        break;
-      }
-      inspected += 1;
-      if (this.#isReferenced(row.preparedBlobId)) {
-        skippedReferenced += 1;
-        continue;
-      }
+    const selected = this.#selectPathOneCandidates(input.olderThanEpochMs, limit);
+    for (const row of selected.rows) {
       if (row.state !== "reclaim_marked") {
         row.state = "reclaim_marked";
         this.#fault("reclaimAfterPathOneMark");
       }
       rows.push({ preparedBlobId: row.preparedBlobId, blobPath: row.blobPath });
     }
-    return { rows, skippedReferenced };
+    return { rows, skippedReferenced: selected.skippedReferenced };
   }
 
   public async reclaimFinalizedOrphans(input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]> {
@@ -863,30 +878,11 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     let remaining = checkedLimit(input.limit);
     let scanned = 0;
     let reclaimed = 0;
-    let skippedReferenced = 0;
-    const pathOne = [...this.#prepared.values()]
-      .filter((row) =>
-        row.state === "reclaim_marked" ||
-        ((row.state === "finalized" || row.state === "orphaned") && row.createdAtMs < input.olderThanEpochMs)
-      )
-      .sort((left, right) => {
-        const stateOrder = Number(left.state !== "reclaim_marked") - Number(right.state !== "reclaim_marked");
-        if (stateOrder !== 0) return stateOrder;
-        if (left.createdAtMs !== right.createdAtMs) return left.createdAtMs - right.createdAtMs;
-        const leftId = asString(left.preparedBlobId);
-        const rightId = asString(right.preparedBlobId);
-        return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
-      })
-      .slice(0, remaining);
-    scanned += pathOne.length;
-    for (const row of pathOne) {
-      if (this.#isReferenced(row.preparedBlobId)) {
-        skippedReferenced += 1;
-      } else {
-        reclaimed += 1;
-        remaining -= 1;
-      }
-    }
+    const pathOne = this.#selectPathOneCandidates(input.olderThanEpochMs, remaining);
+    const skippedReferenced = pathOne.skippedReferenced;
+    scanned += pathOne.rows.length + skippedReferenced;
+    reclaimed += pathOne.rows.length;
+    remaining -= pathOne.rows.length;
 
     const count = (predicate: (row: PreparedRow) => boolean): void => {
       if (remaining === 0) return;
@@ -941,7 +937,6 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
     let scanned = 0;
     let reclaimed = 0;
     let skippedReferenced = 0;
-    let pathOneInspected = 0;
     const visit = (): boolean => {
       if (remaining === 0) {
         return false;
@@ -950,46 +945,17 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       scanned += 1;
       return true;
     };
-    const inspectPathOne = (): boolean => {
-      if (pathOneInspected === scrubbed.limit) {
-        return false;
-      }
-      pathOneInspected += 1;
-      scanned += 1;
-      return true;
-    };
-
-    // Recovery selector: reclaim_marked is age-independent after a worker has exclusively claimed it.
-    for (const row of [...this.#prepared.values()]) {
+    // Path 1: recover marked rows first, then fresh finalized/orphaned rows, while references
+    // contribute only to the independently capped metric and never consume the global budget.
+    const pathOne = this.#selectPathOneCandidates(scrubbed.olderThanEpochMs, scrubbed.limit);
+    skippedReferenced = pathOne.skippedReferenced;
+    scanned += skippedReferenced;
+    for (const row of pathOne.rows) {
+      if (!visit()) break;
       if (row.state !== "reclaim_marked") {
-        continue;
+        row.state = "reclaim_marked";
+        this.#fault("reclaimAfterPathOneMark");
       }
-      if (!inspectPathOne()) break;
-      if (this.#isReferenced(row.preparedBlobId)) {
-        skippedReferenced += 1;
-        continue;
-      }
-      remaining -= 1;
-      this.#finishPathOne(row, now);
-      reclaimed += 1;
-    }
-
-    // Path 1: only finalized/orphaned rows past the caller's strict horizon may be marked.
-    for (const row of [...this.#prepared.values()]) {
-      if (remaining === 0 || pathOneInspected === scrubbed.limit) {
-        break;
-      }
-      if ((row.state !== "finalized" && row.state !== "orphaned") || row.createdAtMs >= scrubbed.olderThanEpochMs) {
-        continue;
-      }
-      inspectPathOne();
-      if (this.#isReferenced(row.preparedBlobId)) {
-        skippedReferenced += 1;
-        continue;
-      }
-      remaining -= 1;
-      row.state = "reclaim_marked";
-      this.#fault("reclaimAfterPathOneMark");
       this.#finishPathOne(row, now);
       reclaimed += 1;
     }
