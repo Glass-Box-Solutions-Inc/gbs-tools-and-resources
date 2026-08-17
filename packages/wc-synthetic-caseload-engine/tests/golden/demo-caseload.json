@@ -5,8 +5,8 @@
   "tier": "suite",
   "recordedWith": {
     "engine": "0.9.0",
-    "substratePin": "2168d066120c57f7585a2f674629979432ef674a",
-    "substrateSha": "2168d066120c57f7585a2f674629979432ef674a",
+    "substratePin": "cb485354f16164ca2d422804fe9d40f9a2250920",
+    "substrateSha": "70c8f3bed4c8df9b352e557e4128460798c62bfb",
     "python": "3.12.13",
     "dependencies": {
       "reportlab": "4.5.1",
