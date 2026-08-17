@@ -4,12 +4,12 @@ project: wc-synthetic-caseload-engine
 slug: 20260727-143600_wc-synthetic-caseload-engine
 effort: E4
 effort_source: classifier
-phase: execute
-progress: 247/254
-iteration: 17
+phase: verify
+progress: 255/267
+iteration: 19
 mode: interactive
 started: 2026-07-27T14:36:00-07:00
-updated: 2026-08-14T21:37:32-07:00
+updated: 2026-08-17T00:31:10-07:00
 ticket: AJC-34
 ---
 
@@ -382,6 +382,23 @@ Round 10 audited round 9. Three findings, plus a fourth found while reproducing 
 - [ ] ISC-252: Ruff reports `All checks passed!` (probe: requested Ruff command).
 - [ ] ISC-253: Anti: No mutant is weakened to make its guard easier to kill (probe: registry read-back).
 
+### AJC-63 / M4 assertions-channel v2 (added 2026-08-16)
+
+- [x] ISC-254: Assertions channel v2 is an exact additive schema over byte-exact v1, including literal v1/v2 allowlists, conditional `revisionKind`, required `eventKind`, and only `contentionDocuments` / `spokenContentionIds` surviving empty serialization (probe: frozen exact-schema oracle).
+- [x] ISC-255: The five grading functions require and forward a keyword-only normalized major `quality_contract`, while Escobedo item 5b remains owner-local (probe: direct signature and witness oracle).
+- [x] ISC-256: V2 response opinions inherit item 5a only through a nonempty, same-author, strictly date-backward, acyclic chain terminating at an examined base; the frozen v1-thin/v2-supported response-owned apportionment witness passes (probe: direct grading oracle plus malformed-chain controls).
+- [x] ISC-257: Same-major assertion-channel minors auto-dispatch through the normalized major contract, with the frozen witness-2 response chain regrading identically under `2.0.0` and `2.1.0` (probe: minor-version dispatch oracle).
+- [x] ISC-258: `contentionDocuments` exports the final planned-document bindings losslessly at manifest positions, validates only dangling projection IDs and impossible literal carrier links, and binds every semantic v2 field into `ledgerDigest` (probe: literal binding-table and standalone position oracles).
+- [x] ISC-259: `validate --out` auto-dispatches readable v1/v2 same-major minors, accepts legal world-truth divergence, and rejects structural incoherence or recomputed-digest quality tampering with the exact wrapper and rule messages (probe: output-tree polarity oracles).
+- [x] ISC-260: V2 parsing preserves ordered, duplicate-exact assertion-validation parity with the in-memory ledger across the frozen clean corpus and its planted dangling-reference copy (probe: clean-corpus round-trip oracle).
+- [x] ISC-261: Quality permutations move only scorer truth and its digest; every analyzer-visible structured position and byte surface remains label-free with positive controls (probe: leakage scanner and differential oracles).
+- [x] ISC-262: Anti: Default/v1 output and all five committed goldens remain byte-exact; feature-absent v2 emits no assertions channel; package/provenance version remains exactly `0.9.0` (probe: frozen SHA/version/backward-compatibility oracle).
+- [x] ISC-263: `ContentionDocumentBinding` documents the restricted truth-only projection while explicitly retaining no-quality, no-ordinary-manifest, and no-seed boundaries (probe: docstring oracle/read-back).
+- [x] ISC-264: Every frozen AJC-63 named mutation is registered after the 281-mutant baseline and each isolated gate reports `1/1 killed by assertion` (probe: per-mutant mutation-gate commands).
+- [ ] ISC-265: Every new AJC-63 oracle passes and the full pytest suite exits zero with zero failed tokens (probe: requested pytest commands).
+- [ ] ISC-266: All five golden corpora report byte-identical OK under `golden_gate.py --check --all` (probe: requested golden command).
+- [ ] ISC-267: Ruff reports `All checks passed!` on the completed slice (probe: requested Ruff command).
+
 - [x] ISC-181: **Anti**: the whole-corpus byte accounting survives the remediation unchanged — **353 files, 345 identical, 8 changed, 0 unexplained**, all 331 rendered documents byte-identical, no `money` key anywhere in the demo output, substrate tracked diff 0 (probe: `git archive origin/main` baseline regenerated and diffed against HEAD after every fix above; determinism ×3 including `TZ=Australia/Sydney`)
 
 ### Phase 3a confirmation residuals + prose-truth guard (added 2026-07-29, from the PR #25 confirmation review)
@@ -411,6 +428,9 @@ Round 10 audited round 9. Three findings, plus a fourth found while reproducing 
 | 65–69 | integration | manifest schema validation | schema-valid | pytest |
 | 70–71 | gate | pytest, ruff | pass | Bash |
 | 72–74 | anti | denylist sweep over output; sentinel-tree diff | zero hits; zero files outside `--out` | pytest |
+| 254–263 | compatibility + integration | frozen AJC-63 exact-schema, grading, binding, validation, and leakage oracles | exact | pytest |
+| 264 | mutation | every registered AJC-63 mutant isolated | 1/1 killed by assertion | mutation_gate.py |
+| 265–267 | gates | full pytest, five goldens, ruff | exit 0 / 5 OK / clean | Bash |
 
 ## Features
 
@@ -427,8 +447,16 @@ Round 10 audited round 9. Three findings, plus a fourth found while reproducing 
 | manifests | per-case + caseload manifests, provenance | 65–69 | renderer-bridge | no |
 | quality | tests, ruff, example caseload | 70–74 | all | no |
 | perspective | applicant vs defense file POV: cast owner, work-product swap, emission profiles | 75–84 | lifecycle-bridge, renderer-bridge | no |
+| assertions-v2-schema | opt-in exact additive truth-channel v2 serialization and parsing | 254, 257, 262 | assertions-v1 | no |
+| assertions-v2-grading | normalized version contract and incorporated-examination item 5a | 255–257 | assertions-v2-schema | no |
+| assertions-v2-bindings | lossless final-plan contention-document export and structural validator | 258–260, 263 | assertions-v2-schema | no |
+| assertions-v2-leakage | scorer-only quality differential and analyzer anti-probes | 261–262 | assertions-v2-schema | no |
+| ajc63-verification | frozen oracles, isolated mutants, suite, goldens, ruff | 264–267 | all AJC-63 features | no |
 
 ## Decisions
+
+- 2026-08-17 00:02: AJC-63 fixes version semantics at truth-channel selection and requires the shared grader selector throughout; final `PlannedDocument` positions are the sole binding-export source, so no seed/pre-control inference is introduced.
+- 2026-08-16 23:43: AJC-63/M4 is implemented against the frozen spec at documentation commit `fa0f898`; every binding decision, oracle, named mutation, and the §2 witness-2 `2.1.0` fixture condition is mandatory. No silent adaptation is permitted.
 
 - 2026-07-27 15:05 — New package (`wc-synthetic-caseload-engine`) rather than updating merus-test-data-generator in place, per Alex's mid-session direction "This becomes a new tool in that same repo."
 - 2026-07-27 15:05 — Python 3.12 despite the TypeScript-first PAI rule: the reusable substrate (25 ReportLab template classes, content pools, lifecycle DAG, scan simulator) is Python; a TS rebuild would forfeit ~90% reuse. Surfaced to Alex as an explicit stack decision needing his ack.

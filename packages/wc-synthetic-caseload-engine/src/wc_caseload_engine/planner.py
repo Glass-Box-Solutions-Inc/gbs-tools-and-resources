@@ -78,8 +78,10 @@ from wc_caseload_engine.medical_assertions import (
     assertion_context,
     assertion_warnings,
     canonical_story_key,
+    contention_document_projections,
     derive_medical_assertion_plan,
     project_medical_history,
+    validate_contention_document_bindings,
     validate_medical_assertions,
 )
 from wc_caseload_engine.medical_history import (
@@ -2572,6 +2574,24 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
                 medical_story_render_key=render_key,
             )
         )
+
+    # AJC-63/M4: validate only the final indexed binding projection. This is the
+    # shared predicate the v2 truth reader uses; seed entries and pre-control
+    # candidates are deliberately unavailable at this boundary.
+    if medical_assertions is not None and medical_history is not None:
+        binding_context = assertion_context(seed, timeline)
+        binding_projection = project_medical_history(
+            medical_history,
+            binding_context.current_body_parts,
+        )
+        binding_problems = validate_contention_document_bindings(
+            binding_projection,
+            medical_assertions,
+            contention_document_projections(documents),
+            documents,
+        )
+        if binding_problems:
+            raise MedicalAssertionError("\n".join(binding_problems))
 
     # R3/R4: the story projection runs LAST, over the final dated, controlled,
     # perspective-resolved, sorted and indexed document tuple. Pure — on the

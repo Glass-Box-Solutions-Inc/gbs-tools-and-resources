@@ -2521,7 +2521,12 @@ title = 'endorsement grades collapse onto the shared suppression tuple'
 file = 'src/wc_caseload_engine/medical_assertions.py'
 test = 'tests/test_medical_assertion_properties.py::test_two_explicit_contentions_sharing_a_suppression_key_keep_their_own_grades_and_concurrence'
 find = '''            would_be = {
-                ref: contention_quality(history, context, c)
+                ref: contention_quality(
+                    history,
+                    context,
+                    c,
+                    quality_contract="2.0.0",
+                )
                 for ref, c, _key in supportable
             }
             pick = next(
@@ -2529,7 +2534,12 @@ find = '''            would_be = {
                 supportable[0] if author_role == "ptp" else None,
             )'''
 replace = '''            would_be = {
-                _contention_semantic_key(c): contention_quality(history, context, c)
+                _contention_semantic_key(c): contention_quality(
+                    history,
+                    context,
+                    c,
+                    quality_contract="2.0.0",
+                )
                 for _ref, c, _key in supportable
             }
             pick = next(
@@ -2540,7 +2550,7 @@ replace = '''            would_be = {
                 ),
                 supportable[0] if author_role == "ptp" else None,
             )'''
-note = 'AJC-61, fix round 2 (sol F2, proved on cohort-4803). Two distinct explicit contentions may legally share the B.2 tuple; keying grades on it keeps only the last twin and the evaluator endorses nothing. The guard reproduces exactly that scenario. Re-pointed at the F3 3-tuple shape in the same round — the guard moves when the code moves.'
+note = 'AJC-61, fix round 2 (sol F2, proved on cohort-4803). Two distinct explicit contentions may legally share the B.2 tuple; keying grades on it keeps only the last twin and the evaluator endorses nothing. The guard reproduces exactly that scenario. Re-pointed at the F3 3-tuple shape in the same round, and again in AJC-63/M4 when the internal call gained quality_contract="2.0.0" — the guard moves when the code moves.'
 
 [[mutant]]
 id = 'm19-23'
@@ -3272,3 +3282,666 @@ replace = '''    def note_reserved(payload: Any, where: str) -> None:
         findings.extend(_leakage_reserved_key_findings(payload, where))
         findings.extend(_private_psych_register_findings(payload, where))'''
 note = 'AJC-62 step 11. If basename-only private-register reporting is removed, copied-seed and copied-case_facts plants still emit reserved-key tokens in raw bytes but lose the structured-key/value position assertions in the copied-tree positive-control test.'
+
+[[mutant]]
+id = 'm22-1'
+title = 'V2-DROP-EVENT-KIND'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_schema_is_exact_additive_delta_over_v1'
+find = '''    "event_kind",
+    "revision_kind",'''
+replace = '''    "revision_kind",'''
+note = 'AJC-63 M4. Every v2 opinion exports required eventKind.'
+
+[[mutant]]
+id = 'm22-2'
+title = 'V2-EMIT-NULLS'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_schema_is_exact_additive_delta_over_v1'
+find = '''                or (item is not None and item != [] and item != ())'''
+replace = '''                or (item != [] and item != ())'''
+note = 'AJC-63 M4. Optional null values remain absent.'
+
+[[mutant]]
+id = 'm22-3'
+title = 'V2-DROP-EMPTY-CONTENTION-DOCUMENTS'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_schema_is_exact_additive_delta_over_v1'
+find = '''ALWAYS_PRESENT_V2_KEYS: Final = frozenset(
+    {"contentionDocuments", "spokenContentionIds"}
+)'''
+replace = '''ALWAYS_PRESENT_V2_KEYS: Final = frozenset(
+    {"spokenContentionIds"}
+)'''
+note = 'AJC-63 M4. Empty contentionDocuments is required.'
+
+[[mutant]]
+id = 'm22-4'
+title = 'V2-DROP-EMPTY-SPOKEN-CONTENTIONS'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_schema_is_exact_additive_delta_over_v1'
+find = '''ALWAYS_PRESENT_V2_KEYS: Final = frozenset(
+    {"contentionDocuments", "spokenContentionIds"}
+)'''
+replace = '''ALWAYS_PRESENT_V2_KEYS: Final = frozenset(
+    {"contentionDocuments"}
+)'''
+note = 'AJC-63 M4. Every binding keeps spokenContentionIds even empty.'
+
+[[mutant]]
+id = 'm22-5'
+title = 'V2-EMIT-BASE-REVISION-KIND'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_schema_is_exact_additive_delta_over_v1'
+find = '''def _assertions_v2_projection(
+    model: BaseModel,
+    fields: tuple[str, ...],
+) -> dict[str, object]:
+    """V2's independent literal projection; never serialize unrestricted models."""
+    serialized = model.model_dump(
+        mode="json",
+        include=frozenset(fields),
+        exclude_none=True,
+    )
+    return {
+        field: serialized[field]
+        for field in fields
+        if field in serialized
+    }'''
+replace = '''def _assertions_v2_projection(
+    model: BaseModel,
+    fields: tuple[str, ...],
+) -> dict[str, object]:
+    """V2's independent literal projection; never serialize unrestricted models."""
+    serialized = model.model_dump(
+        mode="json",
+        include=frozenset(fields),
+        exclude_none=True,
+    )
+    projected = {
+        field: serialized[field]
+        for field in fields
+        if field in serialized
+    }
+    if getattr(model, "event_kind", None) == "base_report":
+        projected["revision_kind"] = "unchanged_additional_reasoning"
+    return projected'''
+note = 'AJC-63 M4. Base reports must omit revisionKind.'
+
+[[mutant]]
+id = 'm22-6'
+title = 'V2-DROP-RESPONSE-REVISION-KIND'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_schema_is_exact_additive_delta_over_v1'
+find = '''    "event_kind",
+    "revision_kind",
+    "concurs_with_contention_ids",'''
+replace = '''    "event_kind",
+    "concurs_with_contention_ids",'''
+note = 'AJC-63 M4. Response opinions require revisionKind.'
+
+[[mutant]]
+id = 'm22-7'
+title = 'V2-UNRESTRICTED-MODEL-DUMP'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_schema_is_exact_additive_delta_over_v1'
+find = '''    serialized = model.model_dump(
+        mode="json",
+        include=frozenset(fields),
+        exclude_none=True,
+    )
+    return {
+        field: serialized[field]
+        for field in fields
+        if field in serialized
+    }
+
+
+def _assertions_v2_record'''
+replace = '''    return model.model_dump(mode="json", exclude_none=True)
+
+
+def _assertions_v2_record'''
+note = 'AJC-63 M4. V2 uses literal allowlists rather than model expansion.'
+
+[[mutant]]
+id = 'm22-8'
+title = 'V2-BUMP-ENVELOPE'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_schema_is_exact_additive_delta_over_v1'
+find = '''SCHEMA_VERSION = "1.0.0"'''
+replace = '''SCHEMA_VERSION = "2.0.0"'''
+note = 'AJC-63 M4. Only the assertions channel advances.'
+
+[[mutant]]
+id = 'm22-9'
+title = 'V1-WRITER-EXPANDS'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection'
+find = '''    serialized = model.model_dump(
+        mode="json",
+        include=frozenset(fields),
+        exclude_none=True,
+    )
+    return {
+        field: serialized[field]
+        for field in fields
+        if field in serialized
+    }
+
+
+def _assertions_v1_record'''
+replace = '''    return model.model_dump(mode="json", exclude_none=True)
+
+
+def _assertions_v1_record'''
+note = 'AJC-63 M4. The v1 writer remains frozen.'
+
+[[mutant]]
+id = 'm22-10'
+title = 'V2-UNKNOWN-MAJOR-ACCEPTED'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_assertions_channel_rejects_an_unknown_major'
+find = '''    raise TruthManifestError(
+        f"unsupported assertions channel version {version!r}; reader supports "
+        f"{ASSERTIONS_CHANNEL_VERSION!r} and {ASSERTIONS_V2_CHANNEL_VERSION!r}"
+    )'''
+replace = '''    return "2.0.0"'''
+note = 'AJC-63 M4. Unknown assertion-channel majors fail closed.'
+
+[[mutant]]
+id = 'm22-11'
+title = 'V2-MINOR-VERSION-BREAKS-DISPATCH'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_v1_and_v2_rederive_response_quality_under_their_exact_version_contracts'
+find = '''    if parts[0] == "2":
+        return "2.0.0"'''
+replace = '''    if parts[0] == "2":
+        return version  # type: ignore[return-value]'''
+note = 'AJC-63 M4. Compatible minors normalize to their major contract.'
+
+[[mutant]]
+id = 'm22-12'
+title = 'V2-IGNORE-QUALITY-CONTRACT'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_v2_response_chain_incorporates_examined_base_without_changing_v1'
+find = '''        and quality_contract == "2.0.0"
+        and owner.event_kind != "base_report"'''
+replace = '''        and owner.event_kind != "base_report"'''
+note = 'AJC-63 M4. V1 keeps owner-local 5a while v2 incorporates the chain.'
+
+[[mutant]]
+id = 'm22-13'
+title = 'V2-CONTRACT-NOT-FORWARDED'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_v2_response_chain_incorporates_examined_base_without_changing_v1'
+find = '''    if escobedo_misses(
+        history,
+        ledger,
+        assertion,
+        quality_contract=quality_contract,
+    ):'''
+replace = '''    if escobedo_misses(
+        history,
+        ledger,
+        assertion,
+        quality_contract="1.0.0",
+    ):'''
+note = 'AJC-63 M4. Nested graders forward the selected contract.'
+
+[[mutant]]
+id = 'm22-14'
+title = 'V2-EMPTY-CHAIN-INCORPORATES'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_item_5a_inherits_only_a_same_author_examined_predecessor_chain'
+find = '''    if predecessor_id is None:
+        return False
+    seen = {response.id}'''
+replace = '''    if predecessor_id is None:
+        return True
+    seen = {response.id}'''
+note = 'AJC-63 M4. A v2 response needs a nonempty predecessor chain.'
+
+[[mutant]]
+id = 'm22-15'
+title = 'V2-CHAIN-SKIPS-AUTHOR'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_item_5a_inherits_only_a_same_author_examined_predecessor_chain'
+find = '''        if predecessor.author_role != current.author_role:
+            return False'''
+replace = '''        if False and predecessor.author_role != current.author_role:
+            return False'''
+note = 'AJC-63 M4. Every response edge preserves author.'
+
+[[mutant]]
+id = 'm22-16'
+title = 'V2-CHAIN-SKIPS-DATE'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_item_5a_inherits_only_a_same_author_examined_predecessor_chain'
+find = '''        if predecessor.report_date >= current.report_date:
+            return False'''
+replace = '''        if False and predecessor.report_date >= current.report_date:
+            return False'''
+note = 'AJC-63 M4. Every response edge moves strictly backward in date.'
+
+[[mutant]]
+id = 'm22-17'
+title = 'V2-CHAIN-SKIPS-CYCLE'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_item_5a_inherits_only_a_same_author_examined_predecessor_chain'
+find = '''        if predecessor_id in seen:
+            return False'''
+replace = '''        if predecessor_id in seen:
+            return True'''
+note = 'AJC-63 M4. Cyclic response chains never incorporate examination.'
+
+[[mutant]]
+id = 'm22-18'
+title = 'V2-DROP-DOCUMENT-BINDING'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_v2_contention_document_export_is_lossless_manifest_linked_and_digest_bound'
+find = '''            for binding in bindings
+        ],'''
+replace = '''            for binding in bindings[:-1]
+        ],'''
+note = 'AJC-63 M4. Every realized assertion binding exports.'
+
+[[mutant]]
+id = 'm22-19'
+title = 'V2-OFF-BY-ONE-DOCUMENT-INDEX'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_manifest_document_positions_equal_planned_document_indexes_by_construction'
+find = '''    assert document.subtype == row["subtype"]
+    return row'''
+replace = '''    assert document.subtype == row["subtype"]
+    row["documentIndex"] += 1
+    return row'''
+note = 'AJC-63 M4. documentIndex is the exact zero-based manifest position.'
+
+[[mutant]]
+id = 'm22-20'
+title = 'V2-SWAP-CANONICAL-SUBTYPE'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_v2_contention_document_export_is_lossless_manifest_linked_and_digest_bound'
+find = '''    assert document.subtype == row["subtype"]
+    return row'''
+replace = '''    assert document.subtype == row["subtype"]
+    row["subtype"] = "APPLICATION_FOR_ADJUDICATION"
+    return row'''
+note = 'AJC-63 M4. The exported subtype remains canonical.'
+
+[[mutant]]
+id = 'm22-21'
+title = 'V2-EXPORT-TEMPLATE-SUBTYPE'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_v2_contention_document_export_is_lossless_manifest_linked_and_digest_bound'
+find = '''    assert document.subtype == row["subtype"]
+    return row'''
+replace = '''    assert document.subtype == row["subtype"]
+    row["subtype"] = getattr(document, "template_subtype", None)
+    return row'''
+note = 'AJC-63 M4. Internal template dispatch never replaces canonical subtype.'
+
+[[mutant]]
+id = 'm22-22'
+title = 'V2-ALLOW-DANGLING-BINDING'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_v2_contention_document_export_is_lossless_manifest_linked_and_digest_bound'
+find = '''            if contention_id not in contention_ids:
+                problems.append('''
+replace = '''            if False and contention_id not in contention_ids:
+                problems.append('''
+note = 'AJC-63 M4. Exported binding references must resolve.'
+
+[[mutant]]
+id = 'm22-23'
+title = 'V2-DIGEST-EXCLUDES-BINDINGS'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_v2_contention_document_export_is_lossless_manifest_linked_and_digest_bound'
+find = '''        if key not in ("channelVersion", "ledgerDigest")'''
+replace = '''        if key not in ("channelVersion", "ledgerDigest", "contentionDocuments")'''
+note = 'AJC-63 M4. The ledger digest covers every binding row.'
+
+[[mutant]]
+id = 'm22-24'
+title = 'V2-REJECT-DIVERGENCE'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_validate_out_v2_accepts_planted_world_truth_divergence'
+find = '''    problems = validate_medical_assertions(context, projection, ledger)
+    if quality_contract == "2.0.0":'''
+replace = '''    problems = validate_medical_assertions(context, projection, ledger)
+    if any(item.quality != "supported" for item in ledger.contentions):
+        problems += ("non-supported contention is invalid",)
+    if quality_contract == "2.0.0":'''
+note = 'AJC-63 M4. Legal divergence is gradeable, not incoherent.'
+
+[[mutant]]
+id = 'm22-25'
+title = 'V2-ACCEPT-DANGLING-REFERENCE'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_validate_out_v2_rejects_planted_internal_incoherence'
+find = '''    problems = validate_medical_assertions(context, projection, ledger)
+    if quality_contract == "2.0.0":'''
+replace = '''    problems = tuple(
+        problem for problem in validate_medical_assertions(context, projection, ledger)
+        if "references unknown condition" not in problem
+    )
+    if quality_contract == "2.0.0":'''
+note = 'AJC-63 M4. Dangling assertion references remain structural failures.'
+
+[[mutant]]
+id = 'm22-26'
+title = 'V2-SKIP-REGRADE'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_validate_out_v2_rejects_tampered_quality_after_digest_recomputed'
+find = '''    rederived = grade_ledger(
+        context,
+        projection,
+        ledger,
+        quality_contract=quality_contract,
+    )'''
+replace = '''    return context, projection, ledger'''
+note = 'AJC-63 M4. A recomputed digest never legitimizes a false quality label.'
+
+[[mutant]]
+id = 'm22-27'
+title = 'V2-VALIDATOR-USES-V1-CONTRACT'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_validate_out_v2_has_zero_false_positives_on_clean_medical_story_corpus'
+find = '''        quality_contract=quality_contract,
+    )
+    for stated_collection, derived_collection in ('''
+replace = '''        quality_contract="1.0.0",
+    )
+    for stated_collection, derived_collection in ('''
+note = 'AJC-63 M4. V2 validation regrades under v2 semantics.'
+
+[[mutant]]
+id = 'm22-28'
+title = 'V2-VALIDATOR-REACHES-SUBSTRATE'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_validate_out_v2_does_not_reach_the_substrate'
+find = '''    parsed = parse_medical_assertions_from_truth(document)
+    if parsed is None:'''
+replace = '''    from wc_caseload_engine.substrate import import_substrate
+    import_substrate("data.models")
+    parsed = parse_medical_assertions_from_truth(document)
+    if parsed is None:'''
+note = 'AJC-63 M4. Recorded truth validates without the substrate checkout.'
+
+[[mutant]]
+id = 'm22-29'
+title = 'V2-NONSUPPORTED-IS-A-PROBLEM'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_validate_out_v2_has_zero_false_positives_on_clean_medical_story_corpus'
+find = '''    problems = validate_medical_assertions(context, projection, ledger)
+    if quality_contract == "2.0.0":'''
+replace = '''    problems = validate_medical_assertions(context, projection, ledger)
+    if any(
+        item.quality != "supported"
+        for collection in (
+            ledger.contentions,
+            ledger.medical_opinions,
+            ledger.apportionment_assertions,
+        )
+        for item in collection
+    ):
+        problems += ("non-supported quality is invalid",)
+    if quality_contract == "2.0.0":'''
+note = 'AJC-63 M4. Thin and unsupportable are labels, never validation problems.'
+
+[[mutant]]
+id = 'm22-30'
+title = 'V2-DIVERGENCE-IS-A-PROBLEM'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_validate_out_v2_accepts_planted_world_truth_divergence'
+find = '''    problems = validate_medical_assertions(context, projection, ledger)
+    if quality_contract == "2.0.0":'''
+replace = '''    problems = validate_medical_assertions(context, projection, ledger)
+    if any(item.quality == "unsupportable" for item in ledger.contentions):
+        problems += ("world-truth divergence is invalid",)
+    if quality_contract == "2.0.0":'''
+note = 'AJC-63 M4. World-truth divergence does not enter the problem tuple.'
+
+[[mutant]]
+id = 'm22-31'
+title = 'V2-SKIP-ASSERTIONS-CHANNEL'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_ajc63_validator.py::test_validate_out_v2_has_zero_false_positives_on_clean_medical_story_corpus'
+find = '''            medical_assertions_from_truth(
+                truth,
+                manifest_documents=manifest_documents,
+            )'''
+replace = '''            if False:
+                medical_assertions_from_truth(
+                    truth,
+                    manifest_documents=manifest_documents,
+                )'''
+note = 'AJC-63 M4. Output validation always consumes an assertions channel.'
+
+[[mutant]]
+id = 'm22-32'
+title = 'V2-POSITIVE-CONTROL-NOT-DETECTED'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_validate_out_v2_has_zero_false_positives_on_clean_medical_story_corpus'
+find = '''    if (
+        contention.target_condition_id is not None
+        and contention.target_condition_id not in condition_ids
+    ):
+        problems.append('''
+replace = '''    if (
+        contention.target_condition_id is not None
+        and False
+        and contention.target_condition_id not in condition_ids
+    ):
+        problems.append('''
+note = 'AJC-63 M4. The same-corpus dangling plant is a live positive control.'
+
+[[mutant]]
+id = 'm22-33'
+title = 'V2-LEAK-QUALITY-KEY'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_medical_assertions.py::test_v2_label_positions_are_absent_from_every_analyzer_visible_artifact'
+find = '''        "caseId": seed.case_id,
+        "perspective": seed.perspective,'''
+replace = '''        "caseId": seed.case_id,
+        "quality": "supported",
+        "perspective": seed.perspective,'''
+note = 'AJC-63 M4. Ordinary manifests carry no scorer label position.'
+
+[[mutant]]
+id = 'm22-34'
+title = 'V2-LEAK-GRADE-INTO-MANIFEST'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_medical_assertions.py::test_v2_label_positions_are_absent_from_every_analyzer_visible_artifact'
+find = '''        "caseId": seed.case_id,
+        "perspective": seed.perspective,'''
+replace = '''        "caseId": seed.case_id,
+        "assertionQuality": "unsupportable",
+        "perspective": seed.perspective,'''
+note = 'AJC-63 M4. Grades never enter analyzer manifests.'
+
+[[mutant]]
+id = 'm22-35'
+title = 'V2-LEAK-GRADE-INTO-RENDERER'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_medical_assertions.py::test_v2_label_positions_are_absent_from_every_analyzer_visible_artifact'
+find = '''            title=document.title,
+            author_role=document.author_role,'''
+replace = '''            title=f"{document.title} unsupportable",
+            author_role=document.author_role,'''
+note = 'AJC-63 M4. Renderer-visible prose never receives scorer grades.'
+
+[[mutant]]
+id = 'm22-36'
+title = 'V2-SCAN-TRUTH-AS-ANALYZER'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_v2_label_positions_are_absent_from_every_analyzer_visible_artifact'
+find = '''        if rel == "truth" or rel.startswith("truth/"):
+            continue'''
+replace = '''        if False and (rel == "truth" or rel.startswith("truth/")):
+            continue'''
+note = 'AJC-63 M4. The scanner excludes only scorer truth.'
+
+[[mutant]]
+id = 'm22-37'
+title = 'V2-SKIP-OCR-SURFACE'
+file = 'tests/test_medical_assertions.py'
+test = 'tests/test_medical_assertions.py::test_v2_leakage_probe_has_positive_controls_for_every_position'
+find = '''                        note_token(ocr_text, where)'''
+replace = '''                        _ = ocr_text'''
+note = 'AJC-63 M4. Image-only PDF pages remain OCR-scanned.'
+
+[[mutant]]
+id = 'm22-38'
+title = 'V2-TRUTH-IGNORES-QUALITY-PERMUTATION'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_medical_assertions.py::test_v2_quality_permutation_moves_only_scorer_truth'
+find = '''    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )'''
+replace = '''    payload = json.loads(json.dumps(payload))
+    for collection in ("contentions", "medicalOpinions", "apportionmentAssertions"):
+        for row in payload.get(collection, []):
+            row.pop("quality", None)
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )'''
+note = 'AJC-63 M4. Truth digest movement proves quality is scorer-visible.'
+
+[[mutant]]
+id = 'm22-39'
+title = 'V2-BECOMES-DEFAULT'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_ajc63_validator.py::test_ajc63_default_and_feature_absent_outputs_are_byte_identical_to_post_ajc62'
+find = '''def generate_caseload(
+    caseload_id: str,
+    seeds: Iterable[CaseSeed],
+    out_dir: Path,
+    truth: bool = True,
+    truth_manifest_version: int = 1,'''
+replace = '''def generate_caseload(
+    caseload_id: str,
+    seeds: Iterable[CaseSeed],
+    out_dir: Path,
+    truth: bool = True,
+    truth_manifest_version: int = 2,'''
+note = 'AJC-63 M4. Existing invocations remain assertions v1.'
+
+[[mutant]]
+id = 'm22-40'
+title = 'V2-BUMP-PACKAGE-VERSION'
+file = 'src/wc_caseload_engine/__init__.py'
+test = 'tests/test_ajc63_validator.py::test_ajc63_keeps_package_version_at_0_9_0'
+find = '''__version__ = "0.9.0"'''
+replace = '''__version__ = "0.9.1"'''
+note = 'AJC-63 M4. The package version remains 0.9.0.'
+
+[[mutant]]
+id = 'm22-41'
+title = 'V2-EMITS-EMPTY-ASSERTIONS'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc63_validator.py::test_ajc63_default_and_feature_absent_outputs_are_byte_identical_to_post_ajc62'
+find = '''    if plan.medical_assertions is not None:
+        channels["assertions"] = (
+            _assertions_v1_channel(plan)
+            if version == 1
+            else _assertions_v2_channel(plan)
+        )'''
+replace = '''    if plan.medical_assertions is not None:
+        channels["assertions"] = (
+            _assertions_v1_channel(plan)
+            if version == 1
+            else _assertions_v2_channel(plan)
+        )
+    elif version == 2:
+        channels["assertions"] = {}'''
+note = 'AJC-63 M4. Feature-absent v2 emits no assertions channel.'
+
+[[mutant]]
+id = 'm22-42'
+title = 'V2-MOVES-ANALYZER-BYTES'
+file = 'src/wc_caseload_engine/manifests.py'
+test = 'tests/test_ajc63_validator.py::test_ajc63_default_and_feature_absent_outputs_are_byte_identical_to_post_ajc62'
+find = '''    manifest = build_manifest(plan, renders)
+    _write_json(case_dir / MANIFEST_NAME, manifest)'''
+replace = '''    manifest = build_manifest(plan, renders)
+    manifest["truthManifestVersion"] = truth_manifest_version
+    _write_json(case_dir / MANIFEST_NAME, manifest)'''
+note = 'AJC-63 M4. Opting into v2 changes scorer truth only.'
+
+[[mutant]]
+id = 'm22-43'
+title = 'V2-REWRITES-EXISTING-GOLDEN'
+file = 'tests/golden/demo-caseload.json'
+test = 'tests/test_ajc63_validator.py::test_ajc63_default_and_feature_absent_outputs_are_byte_identical_to_post_ajc62'
+find = '''    "engine": "0.9.0",'''
+replace = '''    "engine": "0.9.1",'''
+note = 'AJC-63 M4. Existing golden files remain byte-exact.'
+
+[[mutant]]
+id = 'm22-44'
+title = 'V2-ALLOW-DANGLING-MEDICAL-OPINION-ID'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_v2_contention_document_export_is_lossless_manifest_linked_and_digest_bound'
+find = '''        for field_name, opinion_id in (
+            ("medicalOpinionId", binding.medical_opinion_id),
+            ("targetMedicalOpinionId", binding.target_medical_opinion_id),
+        ):
+            if opinion_id is not None and opinion_id not in opinion_ids:
+                problems.append(
+                    f"contentionDocuments documentIndex {index} {field_name} references "
+                    f"unknown medical opinion {opinion_id!r}"
+                )'''
+replace = '''        for field_name, opinion_id in (
+            ("medicalOpinionId", binding.medical_opinion_id),
+            ("targetMedicalOpinionId", binding.target_medical_opinion_id),
+        ):
+            if (
+                field_name == "targetMedicalOpinionId"
+                and opinion_id is not None
+                and opinion_id not in opinion_ids
+            ):
+                problems.append(
+                    f"contentionDocuments documentIndex {index} {field_name} references "
+                    f"unknown medical opinion {opinion_id!r}"
+                )'''
+note = 'AJC-63 M4. Every medicalOpinionId binding must resolve to a known opinion.'
+
+[[mutant]]
+id = 'm22-45'
+title = 'V2-ALLOW-DANGLING-TARGET-MEDICAL-OPINION-ID'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_v2_contention_document_export_is_lossless_manifest_linked_and_digest_bound'
+find = '''        for field_name, opinion_id in (
+            ("medicalOpinionId", binding.medical_opinion_id),
+            ("targetMedicalOpinionId", binding.target_medical_opinion_id),
+        ):
+            if opinion_id is not None and opinion_id not in opinion_ids:
+                problems.append(
+                    f"contentionDocuments documentIndex {index} {field_name} references "
+                    f"unknown medical opinion {opinion_id!r}"
+                )'''
+replace = '''        for field_name, opinion_id in (
+            ("medicalOpinionId", binding.medical_opinion_id),
+            ("targetMedicalOpinionId", binding.target_medical_opinion_id),
+        ):
+            if (
+                field_name == "medicalOpinionId"
+                and opinion_id is not None
+                and opinion_id not in opinion_ids
+            ):
+                problems.append(
+                    f"contentionDocuments documentIndex {index} {field_name} references "
+                    f"unknown medical opinion {opinion_id!r}"
+                )'''
+note = 'AJC-63 M4. Every targetMedicalOpinionId binding must resolve to a known opinion.'
+
+[[mutant]]
+id = 'm22-46'
+title = 'V2-RELAXES-SAME-DATE-BACKWARD'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_item_5a_inherits_only_a_same_author_examined_predecessor_chain'
+find = '''            if target is not None and target.report_date >= opinion.report_date:'''
+replace = '''            if target is not None and target.report_date > opinion.report_date:'''
+note = 'AJC-63 M4. Response and supersession targets must move strictly backward.'

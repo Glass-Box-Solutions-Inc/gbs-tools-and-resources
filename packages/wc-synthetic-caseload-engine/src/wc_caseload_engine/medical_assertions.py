@@ -71,6 +71,9 @@ from wc_caseload_engine.seeds import (
 type AssertionQuality = Literal["supported", "thin", "unsupportable"]
 """The truth-only grade. Never analyzer-visible; the leakage probe enforces it."""
 
+type AssertionQualityContract = Literal["1.0.0", "2.0.0"]
+"""The normalized assertions-channel major selecting grading semantics."""
+
 type ContentionClaimType = Literal[
     "industrial_causation",
     "aggravation",
@@ -556,8 +559,10 @@ class ContentionDocumentBinding(BaseModel):
     ContentionDocumentEntry`: every entry field normalized, plus the internal
     ``template_subtype`` carrier split (R2/R35), the proposed date, and whether
     the binding came from an explicit entry, a required opinion realization, or
-    sampling. Never exported — no manifest, no seed YAML, no truth channel, no
-    ``quality``-like field.
+    sampling. A restricted projection of final realized bindings may enter only
+    assertions truth channel ``2.x``. The binding itself never carries
+    ``quality`` or a quality-like field, never enters the ordinary manifest,
+    and never enters seed YAML.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -587,6 +592,189 @@ class ContentionDocumentBinding(BaseModel):
     This is excluded from serialization so manifests, copied seeds, truth
     channels, and existing binding digests do not acquire a publication field.
     """
+
+
+class ContentionDocumentProjection(BaseModel):
+    """One final indexed document's restricted assertions-v2 binding projection.
+
+    This scorer-only record deliberately excludes template dispatch, proposed
+    dates, sampler provenance, semantic/render keys, prose projections, record
+    references, preceding reports, and UR/IMR lifecycle payloads. It carries no
+    quality field and is never written to the ordinary manifest or seed YAML.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    document_index: int = Field(ge=0)
+    subtype: str
+    document_date: dt.date
+    spoken_contention_ids: tuple[str, ...] = ()
+    medical_opinion_id: str | None = None
+    target_medical_opinion_id: str | None = None
+    contention_surface: Literal[
+        "advocacy", "objection", "supplemental_request", "qme_deposition"
+    ] | None = None
+    contention_actor_party: ContentionParty | None = None
+    defense_contest_theories: tuple[DefenseContestTheory, ...] = ()
+
+
+REPORT_CONTENTION_CARRIERS: Final = frozenset(
+    {
+        "QME_REPORT_INITIAL",
+        "QME_COMPREHENSIVE_REPORT",
+        "AME_REPORT",
+        "AME_COMPREHENSIVE_REPORT",
+        "MEDICAL_LEGAL_QME_AME_IME",
+        "APPORTIONMENT_REPORT",
+        "PSYCH_EVAL_REPORT_QME_AME",
+        "QME_REPORT_SUPPLEMENTAL",
+        "SUPPLEMENTAL_QME_AME_REPORT",
+        "TREATING_PHYSICIAN_REPORT",
+        "TREATING_PHYSICIAN_REPORT_PR2",
+        "TREATING_PHYSICIAN_REPORT_PR4",
+        "TREATING_PHYSICIAN_REPORT_FINAL",
+    }
+)
+"""Literal report carriers. Reports may carry a binding regardless of surface."""
+
+CONTENTION_SURFACE_CARRIERS: Final = {
+    "advocacy": frozenset(
+        {
+            "ADVOCACY_LETTERS_PTP",
+            "ADVOCACY_LETTERS_QME",
+            "ADVOCACY_LETTERS_AME",
+            "ADVOCACY_LETTERS_PTP_QME_AME",
+        }
+    ),
+    "objection": frozenset({"ADVOCACY_LETTERS_PTP_QME_AME"}),
+    "supplemental_request": frozenset({"ADVOCACY_LETTERS_PTP_QME_AME"}),
+    "qme_deposition": frozenset({"DEPOSITION_TRANSCRIPT"}),
+}
+"""Literal non-report carrier map used by both plan and truth validation."""
+
+
+def contention_document_projections(
+    documents: Sequence[object],
+) -> tuple[ContentionDocumentProjection, ...]:
+    """Project only final planned documents carrying an assertion binding."""
+    projections: list[ContentionDocumentProjection] = []
+    for document in documents:
+        spoken = tuple(getattr(document, "spoken_contention_ids", ()))
+        medical_opinion_id = getattr(document, "medical_opinion_id", None)
+        target_medical_opinion_id = getattr(
+            document, "target_medical_opinion_id", None
+        )
+        surface = getattr(document, "contention_surface", None)
+        actor = getattr(document, "contention_actor_party", None)
+        theories = tuple(getattr(document, "defense_contest_theories", ()))
+        if not any(
+            (
+                spoken,
+                medical_opinion_id,
+                target_medical_opinion_id,
+                surface,
+                actor,
+                theories,
+            )
+        ):
+            continue
+        projections.append(
+            ContentionDocumentProjection(
+                document_index=document.index,
+                subtype=document.subtype,
+                document_date=document.doc_date,
+                spoken_contention_ids=spoken,
+                medical_opinion_id=medical_opinion_id,
+                target_medical_opinion_id=target_medical_opinion_id,
+                contention_surface=surface,
+                contention_actor_party=actor,
+                defense_contest_theories=theories,
+            )
+        )
+    return tuple(projections)
+
+
+def _artifact_value(document: object, mapping_key: str, attribute: str) -> object:
+    if isinstance(document, Mapping):
+        return document.get(mapping_key)
+    return getattr(document, attribute, None)
+
+
+def validate_contention_document_bindings(
+    projection: AssertionWorldProjection,
+    ledger: MedicalAssertionLedger,
+    bindings: Sequence[ContentionDocumentProjection],
+    documents: Sequence[object] | None = None,
+) -> tuple[str, ...]:
+    """Validate v2 bindings without turning legal divergence into incoherence.
+
+    Binding incoherence is intentionally limited to dangling projection IDs and
+    a canonical subtype that cannot carry its stated contention surface.
+    Artifact-link integrity additionally pins each row to the manifest position,
+    subtype and date it names. ``surfaces_in_file`` is never consulted here.
+    """
+    del projection  # World divergence is gradeable and not a binding predicate.
+    problems: list[str] = []
+    contention_ids = frozenset(item.id for item in ledger.contentions)
+    opinion_ids = frozenset(item.id for item in ledger.medical_opinions)
+    seen_indexes: set[int] = set()
+    for binding in bindings:
+        index = binding.document_index
+        if index in seen_indexes:
+            problems.append(
+                f"contentionDocuments contains more than one row for documentIndex {index}"
+            )
+        seen_indexes.add(index)
+        if documents is None:
+            pass
+        elif index >= len(documents):
+            problems.append(
+                f"contentionDocuments documentIndex {index} does not select a manifest document"
+            )
+        else:
+            artifact = documents[index]
+            subtype = _artifact_value(artifact, "subtype", "subtype")
+            raw_date = _artifact_value(artifact, "documentDate", "doc_date")
+            artifact_date = (
+                raw_date.isoformat() if isinstance(raw_date, dt.date) else raw_date
+            )
+            if subtype != binding.subtype:
+                problems.append(
+                    f"contentionDocuments documentIndex {index} subtype "
+                    f"{binding.subtype!r} does not match manifest subtype {subtype!r}"
+                )
+            if artifact_date != binding.document_date.isoformat():
+                problems.append(
+                    f"contentionDocuments documentIndex {index} documentDate "
+                    f"{binding.document_date.isoformat()!r} does not match manifest "
+                    f"documentDate {artifact_date!r}"
+                )
+        for contention_id in binding.spoken_contention_ids:
+            if contention_id not in contention_ids:
+                problems.append(
+                    f"contentionDocuments documentIndex {index} references unknown "
+                    f"contention {contention_id!r}"
+                )
+        for field_name, opinion_id in (
+            ("medicalOpinionId", binding.medical_opinion_id),
+            ("targetMedicalOpinionId", binding.target_medical_opinion_id),
+        ):
+            if opinion_id is not None and opinion_id not in opinion_ids:
+                problems.append(
+                    f"contentionDocuments documentIndex {index} {field_name} references "
+                    f"unknown medical opinion {opinion_id!r}"
+                )
+        surface = binding.contention_surface
+        if (
+            surface is not None
+            and binding.subtype not in REPORT_CONTENTION_CARRIERS
+            and binding.subtype not in CONTENTION_SURFACE_CARRIERS[surface]
+        ):
+            problems.append(
+                f"contentionDocuments documentIndex {index} subtype "
+                f"{binding.subtype!r} cannot carry contentionSurface {surface!r}"
+            )
+    return tuple(problems)
 
 
 class MedicalAssertionPlan(BaseModel):
@@ -3292,6 +3480,8 @@ def contention_quality(
     history: AssertionWorldProjection,
     context: AssertionValidationContext,
     contention: Contention,
+    *,
+    quality_contract: AssertionQualityContract,
 ) -> AssertionQuality:
     """Grade one contention against the world ledger.
 
@@ -3300,6 +3490,7 @@ def contention_quality(
     evidence tri-state: contradicted is unsupportable, supported-with-reasoning
     is supported, and the indeterminate or unreasoned middle is thin.
     """
+    _require_quality_contract(quality_contract)
     if (
         contention.treatment_causation == "sole_cause"
         and contention.requested_apportionment == "apply"
@@ -3341,12 +3532,15 @@ def escobedo_misses(
     history: AssertionWorldProjection,
     ledger: MedicalAssertionLedger,
     assertion: ApportionmentAssertion,
+    *,
+    quality_contract: AssertionQualityContract,
 ) -> tuple[str, ...]:
     """Which applicable checklist items this assertion misses, in item order.
 
     Each item reads an independently controllable input, so the frozen oracle
     can move a supported build to its expected lower grade one item at a time.
     """
+    _require_quality_contract(quality_contract)
     owner = ledger.opinion(assertion.opinion_id)
     linked = (
         ledger.contention(assertion.linked_contention_id)
@@ -3365,7 +3559,14 @@ def escobedo_misses(
         misses.append("3a")
     if not assertion.reasonable_medical_probability:
         misses.append("4")
-    if owner is not None and not owner.examination_performed:
+    examined = owner is not None and owner.examination_performed
+    if (
+        owner is not None
+        and quality_contract == "2.0.0"
+        and owner.event_kind != "base_report"
+    ):
+        examined = _response_incorporates_examination(ledger, owner)
+    if owner is not None and not examined:
         misses.append("5a")
     if owner is not None and _relied_on_record_gap(history, owner, assertion):
         misses.append("5b")
@@ -3408,11 +3609,50 @@ def _relied_on_record_gap(
     return any(ref not in owner.reviewed_prior_award_ids for ref in assertion.prior_award_ids)
 
 
+def _require_quality_contract(
+    quality_contract: AssertionQualityContract,
+) -> AssertionQualityContract:
+    """Fail closed when a caller bypasses channel-major normalization."""
+    if quality_contract not in ("1.0.0", "2.0.0"):
+        raise ValueError(f"unsupported assertion quality contract {quality_contract!r}")
+    return quality_contract
+
+
+def _response_incorporates_examination(
+    ledger: MedicalAssertionLedger,
+    response: MedicalOpinion,
+) -> bool:
+    """Whether a v2 response has an exact examined-base predecessor chain."""
+    predecessor_id = response.responds_to_opinion_id
+    if predecessor_id is None:
+        return False
+    seen = {response.id}
+    current = response
+    while predecessor_id is not None:
+        if predecessor_id in seen:
+            return False
+        predecessor = ledger.opinion(predecessor_id)
+        if predecessor is None:
+            return False
+        if predecessor.author_role != current.author_role:
+            return False
+        if predecessor.report_date >= current.report_date:
+            return False
+        seen.add(predecessor_id)
+        if predecessor.event_kind == "base_report":
+            return predecessor.examination_performed
+        current = predecessor
+        predecessor_id = predecessor.responds_to_opinion_id
+    return False
+
+
 def apportionment_quality(
     history: AssertionWorldProjection,
     context: AssertionValidationContext,
     ledger: MedicalAssertionLedger,
     assertion: ApportionmentAssertion,
+    *,
+    quality_contract: AssertionQualityContract,
 ) -> AssertionQuality:
     """Grade one apportionment assertion under the frozen precedence.
 
@@ -3421,6 +3661,7 @@ def apportionment_quality(
     3. any applicable checklist miss -> thin;
     4. all pass -> supported.
     """
+    _require_quality_contract(quality_contract)
     linked = (
         ledger.contention(assertion.linked_contention_id)
         if assertion.linked_contention_id is not None
@@ -3457,7 +3698,12 @@ def apportionment_quality(
         # to hard by Part 3); an explained one is not a defect at all.
         return "unsupportable"
 
-    if escobedo_misses(history, ledger, assertion):
+    if escobedo_misses(
+        history,
+        ledger,
+        assertion,
+        quality_contract=quality_contract,
+    ):
         return "thin"
     return "supported"
 
@@ -3467,6 +3713,8 @@ def opinion_quality(
     context: AssertionValidationContext,
     ledger: MedicalAssertionLedger,
     opinion: MedicalOpinion,
+    *,
+    quality_contract: AssertionQualityContract,
 ) -> AssertionQuality:
     """Grade one opinion: the worst of everything it stands behind.
 
@@ -3476,6 +3724,7 @@ def opinion_quality(
     their own grades; the opinion's own foundation and its final determination
     close the set. Interim deferral itself carries no penalty.
     """
+    _require_quality_contract(quality_contract)
     order = {"supported": 0, "thin": 1, "unsupportable": 2}
     worst = "supported"
 
@@ -3490,16 +3739,38 @@ def opinion_quality(
     for ref in opinion.endorses_contention_ids:
         contention = ledger.contention(ref)
         if contention is not None:
-            sink(contention_quality(history, context, contention))
+            sink(
+                contention_quality(
+                    history,
+                    context,
+                    contention,
+                    quality_contract=quality_contract,
+                )
+            )
     for ref in opinion.rejects_contention_ids:
         contention = ledger.contention(ref)
         if contention is not None:
             flipped: ContentionPosition = "deny" if contention.position == "affirm" else "affirm"
             opposite = contention.model_copy(update={"position": flipped})
-            sink(contention_quality(history, context, opposite))
+            sink(
+                contention_quality(
+                    history,
+                    context,
+                    opposite,
+                    quality_contract=quality_contract,
+                )
+            )
 
     for assertion in ledger.assertions_of(opinion.id):
-        sink(apportionment_quality(history, context, ledger, assertion))
+        sink(
+            apportionment_quality(
+                history,
+                context,
+                ledger,
+                assertion,
+                quality_contract=quality_contract,
+            )
+        )
 
     relevant_review = bool(
         [
@@ -3537,6 +3808,8 @@ def grade_ledger(
     context: AssertionValidationContext,
     history: AssertionWorldProjection,
     ledger: MedicalAssertionLedger,
+    *,
+    quality_contract: AssertionQualityContract,
 ) -> MedicalAssertionLedger:
     """Re-derive every quality in *ledger* from the frozen rubric.
 
@@ -3545,8 +3818,18 @@ def grade_ledger(
     never copied — the truth-side validator re-runs this exact function to
     prove a stated label is the derived one.
     """
+    _require_quality_contract(quality_contract)
     contentions = tuple(
-        c.model_copy(update={"quality": contention_quality(history, context, c)})
+        c.model_copy(
+            update={
+                "quality": contention_quality(
+                    history,
+                    context,
+                    c,
+                    quality_contract=quality_contract,
+                )
+            }
+        )
         for c in ledger.contentions
     )
     regraded = MedicalAssertionLedger(
@@ -3555,7 +3838,17 @@ def grade_ledger(
         apportionment_assertions=ledger.apportionment_assertions,
     )
     assertions = tuple(
-        a.model_copy(update={"quality": apportionment_quality(history, context, regraded, a)})
+        a.model_copy(
+            update={
+                "quality": apportionment_quality(
+                    history,
+                    context,
+                    regraded,
+                    a,
+                    quality_contract=quality_contract,
+                )
+            }
+        )
         for a in ledger.apportionment_assertions
     )
     regraded = MedicalAssertionLedger(
@@ -3564,7 +3857,17 @@ def grade_ledger(
         apportionment_assertions=assertions,
     )
     opinions = tuple(
-        o.model_copy(update={"quality": opinion_quality(history, context, regraded, o)})
+        o.model_copy(
+            update={
+                "quality": opinion_quality(
+                    history,
+                    context,
+                    regraded,
+                    o,
+                    quality_contract=quality_contract,
+                )
+            }
+        )
         for o in ledger.medical_opinions
     )
     return MedicalAssertionLedger(
@@ -4684,7 +4987,12 @@ def _append_sampled(
             # last twin's grade — a thin ctn-02 erased a supported ctn-01's
             # endorsement (sol fix round 2, F2, proved on cohort-4803).
             would_be = {
-                ref: contention_quality(history, context, c)
+                ref: contention_quality(
+                    history,
+                    context,
+                    c,
+                    quality_contract="2.0.0",
+                )
                 for ref, c, _key in supportable
             }
             pick = next(
@@ -7438,7 +7746,12 @@ def derive_medical_assertion_plan(
         medical_opinions=tuple(opinions),
         apportionment_assertions=tuple(assertions),
     )
-    graded = grade_ledger(context, projection, ledger)
+    graded = grade_ledger(
+        context,
+        projection,
+        ledger,
+        quality_contract="2.0.0",
+    )
     if trace is not None:
         realized: dict[str, str] = {}
         for collection in (
@@ -7495,7 +7808,16 @@ def derive_medical_assertion_plan(
         explicit_opinion_ids,
         trace,
     )
-    completed = graded if loop_ledger is graded else grade_ledger(context, projection, loop_ledger)
+    completed = (
+        graded
+        if loop_ledger is graded
+        else grade_ledger(
+            context,
+            projection,
+            loop_ledger,
+            quality_contract="2.0.0",
+        )
+    )
     return MedicalAssertionPlan(ledger=completed, contention_documents=contention_documents)
 
 
@@ -7559,6 +7881,7 @@ __all__ = [
     "AssertionKnob",
     "AssertionProvenance",
     "AssertionQuality",
+    "AssertionQualityContract",
     "AssertionTrace",
     "AssertionValidationContext",
     "AssertionWorldProjection",
@@ -7567,6 +7890,7 @@ __all__ = [
     "ContentionClaimType",
     "ContentionDocumentBinding",
     "ContentionDocumentKind",
+    "ContentionDocumentProjection",
     "ContentionParty",
     "ContentionPosition",
     "ContestPath",
@@ -7598,6 +7922,7 @@ __all__ = [
     "assertion_context",
     "assertion_warnings",
     "canonical_story_key",
+    "contention_document_projections",
     "contention_evidence",
     "contention_quality",
     "derive_medical_assertion_plan",
@@ -7609,5 +7934,6 @@ __all__ = [
     "project_medical_history",
     "qme_disposition",
     "sibtf_grounding_clauses",
+    "validate_contention_document_bindings",
     "validate_medical_assertions",
 ]

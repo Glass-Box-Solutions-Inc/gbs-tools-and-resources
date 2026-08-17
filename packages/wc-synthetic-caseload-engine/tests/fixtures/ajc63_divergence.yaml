@@ -1,0 +1,57 @@
+# AJC-63/M4 — visible, resolved legal-divergence control.
+
+caseload_id: ajc63-divergence
+
+defaults:
+  documents:
+    format_mix: {pdf: 1.0}
+    global_cap: 8
+  output:
+    formats: [pdf]
+
+cases:
+  - case_id: ajc63-divergence-visible
+    rng_seed: 630063
+    injury:
+      type: specific
+      date_of_injury: 2022-04-11
+      body_parts: [{part: lumbar_spine}]
+    lifecycle:
+      target_stage: medical_legal
+      claim_response: accepted
+      eval_type: qme
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: visible nonindustrial lumbar degeneration
+            origin: nonindustrial
+            body_part: lumbar_spine
+            severity: moderate
+            trajectory: stable
+            symptomatic_before_doi: true
+            surfaces_in_file: true
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        contentions:
+          - id: ctn-01
+            claim_type: industrial_causation
+            party: applicant
+            position: affirm
+            target_condition_id: cond-00
+            rationale: applicant attributes the lumbar condition to the work event
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2023-01-20
+            apportionment_state: determined
+            determination_kind: no_nonindustrial_share
+            determination_rationale: the asserted industrial theory is not supported
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            rejects_contention_ids: [ctn-01]
+            aoe_coe_finding: nonindustrial
+            aoe_coe_rationale: the degeneration predates the reported injury
+            rationale: the opinion rests on examination and the complete record
