@@ -212,6 +212,37 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
     expect(outcome.scanned).toBeLessThanOrEqual(limit * 2);
   });
 
+  it("caps Path-1 selection when unreferenced candidates exceed the limit", async () => {
+    const limit = 2;
+    const selectionPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 + 100 });
+    for (let index = 0; index < 5; index += 1) {
+      await prepare(selectionPlane, {
+        attempt: `selection-cap-${index}`,
+        createdAtMs: T0 - 10 + index,
+      });
+    }
+    const selection = await selectionPlane.selectFinalizedOrphansForReclaim({
+      olderThanEpochMs: T0 + 1,
+      limit,
+    });
+    expect(selection.rows).toHaveLength(limit);
+    expect(selection.skippedReferenced).toBe(0);
+
+    const workerPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 + 100 });
+    for (let index = 0; index < 5; index += 1) {
+      await prepare(workerPlane, {
+        attempt: `selection-cap-worker-${index}`,
+        createdAtMs: T0 - 10 + index,
+      });
+    }
+    const outcome = await workerPlane.reclaimOrphanedPrepared({
+      olderThanEpochMs: T0 + 1,
+      limit,
+    });
+    expect(outcome.reclaimed).toBeLessThanOrEqual(limit);
+    expect(outcome.scanned).toBeLessThanOrEqual(limit * 2);
+  });
+
   it("MUT-RECLAIM-COMMITTED: a committed/current-referenced blob is never reclaimed", async () => {
     const c = clock(T0 + 100);
     const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });
