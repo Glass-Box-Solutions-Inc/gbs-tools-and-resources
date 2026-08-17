@@ -81,6 +81,8 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
     });
     this.#assertWithinBudget(pathOne.rows.length, remaining, "path_one");
     remaining -= pathOne.rows.length;
+    // skippedReferenced is a separately limit-capped metric: scanned may reach 2×limit,
+    // but budget (and thus all mutation work) is consumed only by selected rows.
     scanned += pathOne.rows.length + pathOne.skippedReferenced;
     skippedReferenced += pathOne.skippedReferenced;
     for (const row of pathOne.rows) {

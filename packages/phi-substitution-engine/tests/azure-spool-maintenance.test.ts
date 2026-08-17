@@ -266,6 +266,44 @@ describe("AzureSpoolMaintenance unit", () => {
     expect(blobs.renameCalls).toEqual([]);
   });
 
+  it("selects an unreferenced Path-1 row behind limit referenced rows on the first sweep", async () => {
+    const controlPlane = new InMemoryControlPlane();
+    const blobs = new FakeBlobStore();
+
+    for (let index = 0; index < 2; index += 1) {
+      const referenced = await seedFinalized(controlPlane, blobs, T0 - 2 + index);
+      const published = await controlPlane.publish({
+        prepared: { handle: referenced.handle },
+        expiresAtEpochMs: BigInt(T0 + 10_000),
+        nowEpochMilliseconds: T0,
+      });
+      if (published.kind !== "published") throw new Error("expected published");
+      await controlPlane.flushClaim({
+        commit: published.commit,
+        nowEpochMilliseconds: T0,
+        blobEtag: referenced.etag,
+        blobLength: referenced.length,
+      });
+      controlPlane.debugSetPreparedState(referenced.handle, "finalized");
+    }
+    const reclaimable = await seedFinalized(controlPlane, blobs, T0);
+
+    await expect(controlPlane.previewReclamation({
+      olderThanEpochMs: T0 + 1,
+      uploadHorizonEpochMs: 0,
+      quarantinedBeforeEpochMs: 0,
+      limit: 2,
+      includeHardDelete: false,
+    })).resolves.toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
+
+    const outcome = await maintenance(controlPlane, blobs, T0 + 100, 10_000, 10_000)
+      .reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
+
+    expect(outcome).toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
+    expect(controlPlane.debugPrepared(reclaimable.handle)?.state).toBe("quarantined");
+    expect(blobs.has(`reclaim-quarantine/${reclaimable.handle as unknown as string}`)).toBe(true);
+  });
+
   it("does not let referenced Path 1 rows starve Path 3 across sweeps", async () => {
     const controlPlane = new InMemoryControlPlane();
     const blobs = new FakeBlobStore();
@@ -488,5 +526,44 @@ describe.skipIf(!LIVE)("AzureSpoolMaintenance live Postgres", () => {
     )).rowCount).toBe(0);
     expect(blobs.has(uploading.stagingPath)).toBe(false);
     expect(blobs.has(uploading.blobPath)).toBe(false);
+  });
+
+  it("does not let referenced Path-1 rows fill LIMIT slots ahead of a reclaimable row", async () => {
+    const blobs = new FakeBlobStore();
+
+    for (let index = 0; index < 2; index += 1) {
+      const referenced = await seedFinalized(controlPlane, blobs, T0 - 2 + index);
+      const published = await controlPlane.publish({
+        prepared: { handle: referenced.handle },
+        expiresAtEpochMs: BigInt(T0 + 10_000),
+        nowEpochMilliseconds: T0,
+      });
+      if (published.kind !== "published") throw new Error("expected published");
+      await controlPlane.flushClaim({
+        commit: published.commit,
+        nowEpochMilliseconds: T0,
+        blobEtag: referenced.etag,
+        blobLength: referenced.length,
+      });
+      await pool.query(
+        `UPDATE reversal_prepared SET state = 'finalized' WHERE prepared_blob_id = $1`,
+        [referenced.handle],
+      );
+    }
+    const reclaimable = await seedFinalized(controlPlane, blobs, T0);
+
+    await expect(controlPlane.previewReclamation({
+      olderThanEpochMs: T0 + 1,
+      uploadHorizonEpochMs: 0,
+      quarantinedBeforeEpochMs: 0,
+      limit: 2,
+      includeHardDelete: false,
+    })).resolves.toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
+
+    const outcome = await maintenance(controlPlane, blobs, T0 + 100, 10_000, 10_000)
+      .reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
+
+    expect(outcome).toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
+    expect(blobs.has(`reclaim-quarantine/${reclaimable.handle as unknown as string}`)).toBe(true);
   });
 });

@@ -118,7 +118,10 @@ interface ReclaimUploadSqlRow extends ReclaimBlobSqlRow {
 
 interface ReclaimCandidateSqlRow extends ReclaimBlobSqlRow {
   readonly state: "finalized" | "orphaned" | "reclaim_marked";
-  readonly is_referenced: boolean;
+}
+
+interface ReclaimCountSqlRow extends QueryResultRow {
+  readonly count: number;
 }
 
 interface ReclaimIdSqlRow extends QueryResultRow {
@@ -634,22 +637,27 @@ export class PostgresControlPlane implements ControlPlane {
     safeEpochMs(input.olderThanEpochMs, "older_than_ms");
     const limit = safeLimit(input.limit);
     return transaction(this.#pool, async (client) => {
+      const skippedReferenced = await this.#countReferencedPathOneCandidates(
+        client,
+        input.olderThanEpochMs,
+        limit,
+      );
       const candidates = await client.query<ReclaimCandidateSqlRow>(
-        `SELECT p.prepared_blob_id, p.blob_path, p.state,
-                (
-                  EXISTS (
-                    SELECT 1 FROM reversal_claim c WHERE c.prepared_blob_id = p.prepared_blob_id
-                  )
-                  OR EXISTS (
-                    SELECT 1 FROM reversal_current c WHERE c.prepared_blob_id = p.prepared_blob_id
-                  )
-                ) AS is_referenced
+        `SELECT p.prepared_blob_id, p.blob_path, p.state
          FROM reversal_prepared p
-         WHERE p.state = 'reclaim_marked'
-            OR (
-              p.state IN ('finalized', 'orphaned')
-              AND p.created_at_ms < $1
+         WHERE (
+              p.state = 'reclaim_marked'
+              OR (
+                p.state IN ('finalized', 'orphaned')
+                AND p.created_at_ms < $1
+              )
             )
+           AND NOT EXISTS (
+             SELECT 1 FROM reversal_claim c WHERE c.prepared_blob_id = p.prepared_blob_id
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM reversal_current c WHERE c.prepared_blob_id = p.prepared_blob_id
+           )
          ORDER BY CASE WHEN p.state = 'reclaim_marked' THEN 0 ELSE 1 END,
                   p.created_at_ms,
                   p.prepared_blob_id
@@ -659,12 +667,7 @@ export class PostgresControlPlane implements ControlPlane {
       );
 
       const rows: ReclaimBlobRow[] = [];
-      let skippedReferenced = 0;
       for (const candidate of candidates.rows) {
-        if (candidate.is_referenced) {
-          skippedReferenced += 1;
-          continue;
-        }
         if (candidate.state !== "reclaim_marked") {
           const marked = await client.query(
             `UPDATE reversal_prepared p
@@ -818,36 +821,34 @@ export class PostgresControlPlane implements ControlPlane {
       let remaining = limit;
       let scanned = 0;
       let reclaimed = 0;
-      let skippedReferenced = 0;
+      const skippedReferenced = await this.#countReferencedPathOneCandidates(
+        client,
+        input.olderThanEpochMs,
+        remaining,
+      );
 
       const pathOne = await client.query<ReclaimCandidateSqlRow>(
-        `SELECT p.prepared_blob_id, p.blob_path, p.state,
-                (
-                  EXISTS (
-                    SELECT 1 FROM reversal_claim c WHERE c.prepared_blob_id = p.prepared_blob_id
-                  )
-                  OR EXISTS (
-                    SELECT 1 FROM reversal_current c WHERE c.prepared_blob_id = p.prepared_blob_id
-                  )
-                ) AS is_referenced
+        `SELECT p.prepared_blob_id, p.blob_path, p.state
          FROM reversal_prepared p
-         WHERE p.state = 'reclaim_marked'
-            OR (p.state IN ('finalized', 'orphaned') AND p.created_at_ms < $1)
+         WHERE (
+              p.state = 'reclaim_marked'
+              OR (p.state IN ('finalized', 'orphaned') AND p.created_at_ms < $1)
+            )
+           AND NOT EXISTS (
+             SELECT 1 FROM reversal_claim c WHERE c.prepared_blob_id = p.prepared_blob_id
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM reversal_current c WHERE c.prepared_blob_id = p.prepared_blob_id
+           )
          ORDER BY CASE WHEN p.state = 'reclaim_marked' THEN 0 ELSE 1 END,
                   p.created_at_ms,
                   p.prepared_blob_id
          LIMIT $2`,
         [input.olderThanEpochMs, remaining],
       );
-      scanned += pathOne.rows.length;
-      for (const row of pathOne.rows) {
-        if (row.is_referenced) {
-          skippedReferenced += 1;
-        } else {
-          reclaimed += 1;
-          remaining -= 1;
-        }
-      }
+      scanned += pathOne.rows.length + skippedReferenced;
+      reclaimed += pathOne.rows.length;
+      remaining -= pathOne.rows.length;
 
       if (remaining > 0) {
         const uploadRecovery = await client.query<ReclaimIdSqlRow>(
@@ -892,6 +893,44 @@ export class PostgresControlPlane implements ControlPlane {
 
       return { scanned, reclaimed, skippedReferenced };
     });
+  }
+
+  async #countReferencedPathOneCandidates(
+    client: PoolClient,
+    olderThanEpochMs: number,
+    limit: number,
+  ): Promise<number> {
+    // Count a LIMITed, identically ordered subquery rather than LEAST(COUNT(*), limit):
+    // this bounds candidate inspection as well as the observable skippedReferenced metric.
+    const result = await client.query<ReclaimCountSqlRow>(
+      `SELECT COUNT(*)::int AS count
+       FROM (
+         SELECT p.prepared_blob_id
+         FROM reversal_prepared p
+         WHERE (
+              p.state = 'reclaim_marked'
+              OR (p.state IN ('finalized', 'orphaned') AND p.created_at_ms < $1)
+            )
+           AND (
+             EXISTS (
+               SELECT 1 FROM reversal_claim c WHERE c.prepared_blob_id = p.prepared_blob_id
+             )
+             OR EXISTS (
+               SELECT 1 FROM reversal_current c WHERE c.prepared_blob_id = p.prepared_blob_id
+             )
+           )
+         ORDER BY CASE WHEN p.state = 'reclaim_marked' THEN 0 ELSE 1 END,
+                  p.created_at_ms,
+                  p.prepared_blob_id
+         LIMIT $2
+       ) referenced_candidates`,
+      [olderThanEpochMs, limit],
+    );
+    const count = result.rows[0]?.count;
+    if (!Number.isSafeInteger(count) || count === undefined || count < 0 || count > limit) {
+      throw new Error("reclaim_referenced_candidate_count_invalid");
+    }
+    return count;
   }
 
   async #computeExpiredAndDetach(client: PoolClient, claim: ClaimRow): Promise<boolean> {

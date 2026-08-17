@@ -79,6 +79,15 @@ function scriptedControlPlane(results: readonly ScriptedQueryResult[]): {
   return { controlPlane: new PostgresControlPlane(pool), statements };
 }
 
+function expectReferenceFiltersBeforeLimit(statement: string): void {
+  const claimFilter = statement.indexOf("AND NOT EXISTS (\n             SELECT 1 FROM reversal_claim");
+  const currentFilter = statement.indexOf("AND NOT EXISTS (\n             SELECT 1 FROM reversal_current");
+  const limit = statement.lastIndexOf("LIMIT $2");
+  expect(claimFilter).toBeGreaterThan(-1);
+  expect(currentFilter).toBeGreaterThan(claimFilter);
+  expect(limit).toBeGreaterThan(currentFilter);
+}
+
 describe("PostgresControlPlane maintenance completion idempotency", () => {
   const handle = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000001");
 
@@ -166,6 +175,54 @@ describe("PostgresControlPlane maintenance completion idempotency", () => {
 
     await expect(complete(fixture.controlPlane)).rejects.toThrow(expectedError);
     expect(fixture.statements.at(-1)).toBe("ROLLBACK");
+  });
+
+  it("filters Path-1 references before LIMIT in both live selection and preview SQL", async () => {
+    const first = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000011");
+    const second = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000012");
+    const selected = scriptedControlPlane([
+      { rowCount: 1, rows: [{ count: 2 }] },
+      {
+        rowCount: 1,
+        rows: [{ prepared_blob_id: first, blob_path: `blobs/${first}`, state: "reclaim_marked" }],
+      },
+    ]);
+
+    await expect(selected.controlPlane.selectFinalizedOrphansForReclaim({
+      olderThanEpochMs: T0 + 1,
+      limit: 2,
+    })).resolves.toEqual({
+      rows: [{ preparedBlobId: first, blobPath: `blobs/${first}` }],
+      skippedReferenced: 2,
+    });
+    const liveSelectorSql = selected.statements.find((statement) => statement.includes("FOR UPDATE OF p SKIP LOCKED"));
+    expect(liveSelectorSql).toBeDefined();
+    expectReferenceFiltersBeforeLimit(liveSelectorSql ?? "");
+
+    const previewed = scriptedControlPlane([
+      { rowCount: 0, rows: [] },
+      { rowCount: 1, rows: [{ count: 2 }] },
+      {
+        rowCount: 2,
+        rows: [
+          { prepared_blob_id: first, blob_path: `blobs/${first}`, state: "reclaim_marked" },
+          { prepared_blob_id: second, blob_path: `blobs/${second}`, state: "finalized" },
+        ],
+      },
+    ]);
+    await expect(previewed.controlPlane.previewReclamation({
+      olderThanEpochMs: T0 + 1,
+      uploadHorizonEpochMs: 0,
+      quarantinedBeforeEpochMs: 0,
+      limit: 2,
+      includeHardDelete: false,
+    })).resolves.toEqual({ scanned: 4, reclaimed: 2, skippedReferenced: 2 });
+    const previewSql = previewed.statements.find((statement) =>
+      statement.includes("SELECT p.prepared_blob_id, p.blob_path, p.state") &&
+      !statement.includes("FOR UPDATE")
+    );
+    expect(previewSql).toBeDefined();
+    expectReferenceFiltersBeforeLimit(previewSql ?? "");
   });
 });
 

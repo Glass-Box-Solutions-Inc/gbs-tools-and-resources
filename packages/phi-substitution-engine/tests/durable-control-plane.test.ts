@@ -158,6 +158,91 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
     expect(controlPlane.debugPrepared(quarantined.handle)).toBeUndefined();
   });
 
+  it("does not let referenced Path-1 rows fill selection slots ahead of a reclaimable row", async () => {
+    const c = clock(T0 + 100);
+    const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });
+
+    for (let index = 0; index < 2; index += 1) {
+      const { prepared: referenced } = await prepare(controlPlane, {
+        attempt: `selection-slot-reference-${index}`,
+        createdAtMs: T0 - 2 + index,
+      });
+      const published = await controlPlane.publish(referenced);
+      if (published.kind !== "published") throw new Error("expected published");
+      await controlPlane.flush(published.commit);
+      controlPlane.debugSetPreparedState(referenced.handle, "finalized");
+    }
+    const { prepared: reclaimable } = await prepare(controlPlane, {
+      attempt: "selection-slot-reclaimable",
+      createdAtMs: T0,
+    });
+
+    const outcome = await controlPlane.reclaimOrphanedPrepared({
+      olderThanEpochMs: T0 + 1,
+      limit: 2,
+    });
+
+    expect(outcome).toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
+    expect(controlPlane.debugPrepared(reclaimable.handle)?.state).toBe("quarantined");
+  });
+
+  it("caps Path-1 reference metrics when candidates exceed the selection limit", async () => {
+    const limit = 2;
+    const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 + 100 });
+
+    for (let index = 0; index < 5; index += 1) {
+      const { prepared: referenced } = await prepare(controlPlane, {
+        attempt: `reference-metric-cap-${index}`,
+        createdAtMs: T0 - 10 + index,
+      });
+      const published = await controlPlane.publish(referenced);
+      if (published.kind !== "published") throw new Error("expected published");
+      await controlPlane.flush(published.commit);
+      controlPlane.debugSetPreparedState(referenced.handle, "finalized");
+    }
+
+    const outcome = await controlPlane.reclaimOrphanedPrepared({
+      olderThanEpochMs: T0 + 1,
+      limit,
+    });
+
+    expect(outcome.reclaimed).toBe(0);
+    expect(outcome.skippedReferenced).toBeLessThanOrEqual(limit);
+    expect(outcome.skippedReferenced).toBeLessThanOrEqual(outcome.scanned);
+    expect(outcome.scanned).toBeLessThanOrEqual(limit * 2);
+  });
+
+  it("caps Path-1 selection when unreferenced candidates exceed the limit", async () => {
+    const limit = 2;
+    const selectionPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 + 100 });
+    for (let index = 0; index < 5; index += 1) {
+      await prepare(selectionPlane, {
+        attempt: `selection-cap-${index}`,
+        createdAtMs: T0 - 10 + index,
+      });
+    }
+    const selection = await selectionPlane.selectFinalizedOrphansForReclaim({
+      olderThanEpochMs: T0 + 1,
+      limit,
+    });
+    expect(selection.rows).toHaveLength(limit);
+    expect(selection.skippedReferenced).toBe(0);
+
+    const workerPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 + 100 });
+    for (let index = 0; index < 5; index += 1) {
+      await prepare(workerPlane, {
+        attempt: `selection-cap-worker-${index}`,
+        createdAtMs: T0 - 10 + index,
+      });
+    }
+    const outcome = await workerPlane.reclaimOrphanedPrepared({
+      olderThanEpochMs: T0 + 1,
+      limit,
+    });
+    expect(outcome.reclaimed).toBeLessThanOrEqual(limit);
+    expect(outcome.scanned).toBeLessThanOrEqual(limit * 2);
+  });
+
   it("MUT-RECLAIM-COMMITTED: a committed/current-referenced blob is never reclaimed", async () => {
     const c = clock(T0 + 100);
     const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });

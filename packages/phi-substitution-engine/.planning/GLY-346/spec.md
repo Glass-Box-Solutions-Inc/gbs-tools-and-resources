@@ -49,7 +49,7 @@ export interface ReclaimOrphanedPreparedInput {
   readonly limit?: number;
 }
 export interface ReclaimOutcome {
-  readonly scanned: number;    // prepared artifacts examined
+  readonly scanned: number;    // prepared artifacts examined. Rev 2026-08-17 (GLY-350): `limit` bounds reclaimable SELECTION per path; Path-1 additionally reports up to `limit` referenced candidates in the metric, so scanned may reach 2×limit while mutation work stays bounded by `limit`.
   readonly reclaimed: number;  // orphaned artifacts deleted
   readonly skippedReferenced: number; // examined but retained because still referenced (observability)
 }
