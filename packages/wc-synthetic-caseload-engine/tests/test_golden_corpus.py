@@ -39,6 +39,7 @@ import copy
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -1125,21 +1126,39 @@ def test_a_format_two_golden_is_refused_rather_than_assuming_one_root_file(
     assert "--record --only legacy" in str(raised.value)
 
 
-def test_a_bare_record_is_a_usage_error() -> None:
+def test_a_bare_record_is_a_usage_error(tmp_path: Path) -> None:
     """Re-recording accepts new output as correct, so the scope is stated.
 
     It is also the fastest way to turn a red gate green, which is exactly why it
     may not be the default: a reviewer seeing four rewritten goldens should be
     seeing a decision, not a reflex.
+
+    The subprocess runs against the real golden directory, so this test must
+    contain its own blast radius: if the usage-error guard is ever absent (the
+    exact defect mutant m14-7 plants), the CLI proceeds to a REAL bare
+    re-record. The snapshot/restore below confines that failure to a red
+    assertion instead of silently restamping every golden in the working tree —
+    which is precisely what happened on two mutation sweeps before this guard
+    existed.
     """
-    completed = subprocess.run(
-        [sys.executable, str(TOOL), "--record"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert completed.returncode == 2, completed.stdout + completed.stderr
-    assert "explicit scope" in completed.stderr
+    golden_dir = Path(__file__).parent / "golden"
+    snapshot = tmp_path / "golden-snapshot"
+    shutil.copytree(golden_dir, snapshot)
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(TOOL), "--record"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 2, completed.stdout + completed.stderr
+        assert "explicit scope" in completed.stderr
+    finally:
+        for path in snapshot.iterdir():
+            shutil.copy2(path, golden_dir / path.name)
+        for path in golden_dir.iterdir():
+            if not (snapshot / path.name).exists():
+                path.unlink()
 
 
 def test_an_unknown_corpus_name_is_a_usage_error_not_an_empty_pass() -> None:
