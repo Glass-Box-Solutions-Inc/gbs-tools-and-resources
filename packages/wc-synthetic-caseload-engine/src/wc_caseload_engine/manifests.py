@@ -257,6 +257,7 @@ def generate_case(
     out_dir: Path,
     case_number: int = 1,
     truth_dir: Path | None = None,
+    truth_manifest_version: int = 1,
 ) -> CaseResult:
     """Generate one complete case: seed, documents and manifest.
 
@@ -266,6 +267,7 @@ def generate_case(
         case_number: 1-based position, used for corpus filenames.
         truth_dir: scorer-only output directory, or ``None`` to preserve the
             historical case tree exactly.
+        truth_manifest_version: assertions-channel major to write (1 or 2).
 
     Returns:
         A :class:`CaseResult`.
@@ -356,7 +358,15 @@ def generate_case(
 
     manifest = build_manifest(plan, renders)
     _write_json(case_dir / MANIFEST_NAME, manifest)
-    truth_path = write_case_truth_manifest(plan, truth_dir) if truth_dir is not None else None
+    truth_path = (
+        write_case_truth_manifest(
+            plan,
+            truth_dir,
+            truth_manifest_version=truth_manifest_version,
+        )
+        if truth_dir is not None
+        else None
+    )
 
     log.info(
         "case.generated",
@@ -458,6 +468,7 @@ def generate_caseload(
     seeds: Iterable[CaseSeed],
     out_dir: Path,
     truth: bool = True,
+    truth_manifest_version: int = 1,
 ) -> list[CaseResult]:
     """Generate every case in a caseload and write the aggregate manifest."""
     seeds = tuple(seeds)
@@ -480,11 +491,17 @@ def generate_caseload(
                 out_dir,
                 case_number=case_number,
                 truth_dir=truth_dir,
+                truth_manifest_version=truth_manifest_version,
             )
         )
     _write_json(out_dir / CASELOAD_MANIFEST_NAME, build_caseload_manifest(caseload_id, results))
     if truth_dir is not None:
-        write_caseload_truth_manifest(caseload_id, results, truth_dir)
+        write_caseload_truth_manifest(
+            caseload_id,
+            results,
+            truth_dir,
+            truth_manifest_version=truth_manifest_version,
+        )
     return results
 
 
@@ -1556,6 +1573,13 @@ def _validate_truth_tree(
 
     for case_id, truth_path in sorted(truth_by_case.items()):
         report.truth_manifests += 1
+        manifest = case_manifests.get(case_id)
+        manifest_documents = (
+            manifest.get("documents")
+            if isinstance(manifest, Mapping)
+            and isinstance(manifest.get("documents"), list)
+            else None
+        )
         try:
             truth = read_truth_manifest(truth_path)
             money_facts_from_truth(truth)
@@ -1563,7 +1587,10 @@ def _validate_truth_tree(
             # quality rederivation — all from the recorded payload, no sampler
             # re-run and no substrate checkout. Divergence from world truth
             # passes; a tampered label or reference fails here.
-            medical_assertions_from_truth(truth)
+            medical_assertions_from_truth(
+                truth,
+                manifest_documents=manifest_documents,
+            )
         except TruthManifestError as exc:
             report.problems.append(
                 f"{case_id}: truth manifest {truth_path} cannot be validated ({exc}) — "
@@ -1571,7 +1598,6 @@ def _validate_truth_tree(
             )
             continue
 
-        manifest = case_manifests.get(case_id)
         if manifest is None:
             continue
         truth_case_id = truth.get("caseId")

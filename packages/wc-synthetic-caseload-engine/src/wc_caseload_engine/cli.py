@@ -122,12 +122,20 @@ def cli() -> None:
     show_default=True,
     help="Write scorer-only ground truth beneath the output truth directory.",
 )
+@click.option(
+    "--truth-manifest-version",
+    type=click.Choice([1, 2]),
+    default=1,
+    show_default=True,
+    help="Assertions truth-channel major; version 2 is explicit opt-in.",
+)
 def generate(
     spec_path: Path,
     out_dir: Path,
     seed_override: int | None,
     dry_run: bool,
     truth_manifest: bool,
+    truth_manifest_version: int,
 ) -> None:
     """Generate synthetic case files from a caseload spec."""
     spec = _load_spec(spec_path)
@@ -157,6 +165,7 @@ def generate(
             seeds,
             out_dir,
             truth=truth_manifest,
+            truth_manifest_version=truth_manifest_version,
         )
     except SubstrateUnavailableError as exc:
         raise click.ClickException(str(exc)) from exc

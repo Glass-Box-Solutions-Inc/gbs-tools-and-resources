@@ -1102,7 +1102,9 @@ def _graded_assertion(**overrides: Any) -> str:
     """Grade one assertion inside a coherent single-opinion ledger."""
     assertion = _assertion(**overrides)
     ledger = _ledger(opinions=(_opinion(),), assertions=(assertion,))
-    return apportionment_quality(_world(), _context(), ledger, assertion)
+    return apportionment_quality(
+        _world(), _context(), ledger, assertion, quality_contract="1.0.0"
+    )
 
 
 def test_closed_invalid_basis_decision_table_is_exact() -> None:
@@ -1170,12 +1172,24 @@ def test_every_escobedo_checklist_item_can_independently_move_supported_to_the_e
     # 5a — the owning opinion never examined.
     assertion = _assertion()
     ledger = _ledger(opinions=(_opinion(examination_performed=False),), assertions=(assertion,))
-    assert apportionment_quality(_world(), _context(), ledger, assertion) == "thin"
+    assert (
+        apportionment_quality(
+            _world(), _context(), ledger, assertion, quality_contract="1.0.0"
+        )
+        == "thin"
+    )
 
     # 5b — a relied-on factor outside the reviewed record.
     ledger = _ledger(opinions=(_opinion(reviewed_condition_ids=()),), assertions=(assertion,))
-    assert apportionment_quality(_world(), _context(), ledger, assertion) == "thin"
-    assert "5b" in escobedo_misses(_world(), ledger, assertion)
+    assert (
+        apportionment_quality(
+            _world(), _context(), ledger, assertion, quality_contract="1.0.0"
+        )
+        == "thin"
+    )
+    assert "5b" in escobedo_misses(
+        _world(), ledger, assertion, quality_contract="1.0.0"
+    )
 
     # 8 — industrial_treatment without the explicit sole/contributing statement.
     treatment = _contention(
@@ -1187,8 +1201,15 @@ def test_every_escobedo_checklist_item_can_independently_move_supported_to_the_e
         linked_contention_id="ctn-01",
     )
     ledger8 = _ledger(contentions=(treatment,), opinions=(_opinion(),), assertions=(assertion8,))
-    assert apportionment_quality(_world(), _context(), ledger8, assertion8) == "thin"
-    assert "8" in escobedo_misses(_world(), ledger8, assertion8)
+    assert (
+        apportionment_quality(
+            _world(), _context(), ledger8, assertion8, quality_contract="1.0.0"
+        )
+        == "thin"
+    )
+    assert "8" in escobedo_misses(
+        _world(), ledger8, assertion8, quality_contract="1.0.0"
+    )
 
     # 9 — §4664 basis with no separate presumption analysis.
     assertion9 = _assertion(
@@ -1200,8 +1221,15 @@ def test_every_escobedo_checklist_item_can_independently_move_supported_to_the_e
         opinions=(_opinion(reviewed_prior_award_ids=("prior-01-award",)),),
         assertions=(assertion9,),
     )
-    assert apportionment_quality(_world(), _context(), ledger9, assertion9) == "thin"
-    assert "9" in escobedo_misses(_world(), ledger9, assertion9)
+    assert (
+        apportionment_quality(
+            _world(), _context(), ledger9, assertion9, quality_contract="1.0.0"
+        )
+        == "thin"
+    )
+    assert "9" in escobedo_misses(
+        _world(), ledger9, assertion9, quality_contract="1.0.0"
+    )
 
     # 10 — an unexplained material revision is the expected lower grade
     # UNSUPPORTABLE (Part 3 B.8); a reasoned one is not a defect at all.
@@ -1224,14 +1252,28 @@ def test_every_escobedo_checklist_item_can_independently_move_supported_to_the_e
         opinions=(_opinion(reviewed_prior_claim_ids=("prior-01", "prior-02")),),
         assertions=(assertion11,),
     )
-    assert apportionment_quality(_world(), _context(), ledger11, assertion11) == "thin"
-    assert "11" in escobedo_misses(_world(), ledger11, assertion11)
+    assert (
+        apportionment_quality(
+            _world(), _context(), ledger11, assertion11, quality_contract="1.0.0"
+        )
+        == "thin"
+    )
+    assert "11" in escobedo_misses(
+        _world(), ledger11, assertion11, quality_contract="1.0.0"
+    )
 
     # 12 — genetics with no diagnosed pathology referenced.
     assertion12 = _assertion(basis_kinds=("genetics_heredity_pathology",), condition_ids=())
     ledger12 = _ledger(opinions=(_opinion(),), assertions=(assertion12,))
-    assert apportionment_quality(_world(), _context(), ledger12, assertion12) == "thin"
-    assert "12" in escobedo_misses(_world(), ledger12, assertion12)
+    assert (
+        apportionment_quality(
+            _world(), _context(), ledger12, assertion12, quality_contract="1.0.0"
+        )
+        == "thin"
+    )
+    assert "12" in escobedo_misses(
+        _world(), ledger12, assertion12, quality_contract="1.0.0"
+    )
 
 
 def _hikida_world() -> AssertionWorldProjection:
@@ -1263,7 +1305,9 @@ def test_explicit_hikida_forward_and_inverse_fixture_decision_table_is_exact() -
             target_condition_id="cond-03",
             **overrides,
         )
-        return contention_quality(world, _context(), contention)
+        return contention_quality(
+            world, _context(), contention, quality_contract="1.0.0"
+        )
 
     # Forward: treatment stated as SOLE cause, apportionment requested anyway.
     assert (
@@ -1293,7 +1337,12 @@ def test_explicit_hikida_forward_and_inverse_fixture_decision_table_is_exact() -
     )
     assertion = _assertion(linked_contention_id="ctn-01")
     ledger = _ledger(contentions=(sole,), opinions=(_opinion(),), assertions=(assertion,))
-    assert apportionment_quality(world, _context(), ledger, assertion) == "unsupportable"
+    assert (
+        apportionment_quality(
+            world, _context(), ledger, assertion, quality_contract="1.0.0"
+        )
+        == "unsupportable"
+    )
 
 
 def _agreeing_world() -> AssertionWorldProjection:
@@ -1327,8 +1376,16 @@ def test_reasoned_zero_share_and_unable_to_approximate_can_grade_supported_when_
     )
     ledger = _ledger(opinions=(zero_share, unable))
     assert not _problems(ledger, world)
-    assert opinion_quality(world, _context(), ledger, zero_share) == "supported"
-    assert opinion_quality(world, _context(), ledger, unable) == "supported"
+    assert (
+        opinion_quality(
+            world, _context(), ledger, zero_share, quality_contract="1.0.0"
+        )
+        == "supported"
+    )
+    assert (
+        opinion_quality(world, _context(), ledger, unable, quality_contract="1.0.0")
+        == "supported"
+    )
 
 
 def test_zero_share_contradicted_by_substantial_nonindustrial_evidence_is_unsupportable() -> None:
@@ -1340,7 +1397,12 @@ def test_zero_share_contradicted_by_substantial_nonindustrial_evidence_is_unsupp
     )
     ledger = _ledger(opinions=(zero_share,))
     assert not _problems(ledger)
-    assert opinion_quality(_world(), _context(), ledger, zero_share) == "unsupportable"
+    assert (
+        opinion_quality(
+            _world(), _context(), ledger, zero_share, quality_contract="1.0.0"
+        )
+        == "unsupportable"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1352,7 +1414,12 @@ def test_nonindustrial_world_condition_may_be_asserted_industrial() -> None:
     contention = _contention()  # cond-01 is nonindustrial world truth
     ledger = _ledger(contentions=(contention,))
     assert not _problems(ledger)
-    assert contention_quality(_world(), _context(), contention) == "unsupportable"
+    assert (
+        contention_quality(
+            _world(), _context(), contention, quality_contract="1.0.0"
+        )
+        == "unsupportable"
+    )
 
 
 def test_wholly_unrelated_condition_may_be_apportioned() -> None:
@@ -1362,7 +1429,12 @@ def test_wholly_unrelated_condition_may_be_apportioned() -> None:
         assertions=(assertion,),
     )
     assert not _problems(ledger)
-    assert apportionment_quality(_world(), _context(), ledger, assertion) == "unsupportable"
+    assert (
+        apportionment_quality(
+            _world(), _context(), ledger, assertion, quality_contract="1.0.0"
+        )
+        == "unsupportable"
+    )
 
 
 def test_false_prior_award_overlap_is_graded_not_rejected() -> None:
@@ -1375,7 +1447,9 @@ def test_false_prior_award_overlap_is_graded_not_rejected() -> None:
     )
     ledger = _ledger(contentions=(contention,))
     assert not _problems(ledger)
-    assert contention_quality(_world(), _context(), contention) in ("thin", "unsupportable")
+    assert contention_quality(
+        _world(), _context(), contention, quality_contract="1.0.0"
+    ) in ("thin", "unsupportable")
 
 
 def test_false_c_and_r_legal_assertion_is_graded_not_rejected() -> None:
@@ -1389,7 +1463,9 @@ def test_false_c_and_r_legal_assertion_is_graded_not_rejected() -> None:
     )
     ledger = _ledger(contentions=(contention,))
     assert not _problems(ledger)
-    assert contention_quality(_world(), _context(), contention) in ("thin", "unsupportable")
+    assert contention_quality(
+        _world(), _context(), contention, quality_contract="1.0.0"
+    ) in ("thin", "unsupportable")
 
 
 def test_competing_medical_opinions_may_disagree() -> None:
@@ -1423,7 +1499,12 @@ def test_explicit_qme_may_dissent_from_ledger_evidence() -> None:
     )
     ledger = _ledger(contentions=(contention,), opinions=(dissenting,))
     assert not _problems(ledger)
-    assert opinion_quality(_world(), _context(), ledger, dissenting) == "unsupportable"
+    assert (
+        opinion_quality(
+            _world(), _context(), ledger, dissenting, quality_contract="1.0.0"
+        )
+        == "unsupportable"
+    )
 
 
 def test_hikida_legal_error_is_graded_not_rejected() -> None:
@@ -1435,7 +1516,12 @@ def test_hikida_legal_error_is_graded_not_rejected() -> None:
     )
     ledger = _ledger(contentions=(contention,))
     assert not _problems(ledger, _hikida_world())
-    assert contention_quality(_hikida_world(), _context(), contention) == "unsupportable"
+    assert (
+        contention_quality(
+            _hikida_world(), _context(), contention, quality_contract="1.0.0"
+        )
+        == "unsupportable"
+    )
 
 
 def test_vocational_apportionment_is_graded_not_rejected() -> None:
@@ -1492,14 +1578,24 @@ def test_interim_deferral_is_valid() -> None:
     assert not _problems(ledger)
     # Deferral itself carries no penalty: with a real foundation the opinion
     # stays supported.
-    assert opinion_quality(_world(), _context(), ledger, deferring) == "supported"
+    assert (
+        opinion_quality(
+            _world(), _context(), ledger, deferring, quality_contract="1.0.0"
+        )
+        == "supported"
+    )
 
 
 def test_final_report_omission_is_valid_but_unsupportable() -> None:
     omitting = _opinion(apportionment_state="omitted", determination_kind=None)
     ledger = _ledger(opinions=(omitting,))
     assert not _problems(ledger)
-    assert opinion_quality(_world(), _context(), ledger, omitting) == "unsupportable"
+    assert (
+        opinion_quality(
+            _world(), _context(), ledger, omitting, quality_contract="1.0.0"
+        )
+        == "unsupportable"
+    )
 
 
 def test_ungrounded_entity_hook_warns_and_survives() -> None:
@@ -1626,8 +1722,48 @@ def test_reasoned_supplemental_revision_chain_is_valid() -> None:
     # so its single miss remains exactly 5a and it grades thin. The reasoned
     # revision (item 10) is NOT among the misses — that is the *Lindh* half the
     # old test proved. AJC-63 owns the versioned response-aware re-scope.
-    assert escobedo_misses(_world(), ledger, assertion) == ("5a",)
-    assert apportionment_quality(_world(), _context(), ledger, assertion) == "thin"
+    assert (
+        escobedo_misses(
+            _world(), ledger, assertion, quality_contract="1.0.0"
+        )
+        == ("5a",)
+    )
+    assert (
+        apportionment_quality(
+            _world(), _context(), ledger, assertion, quality_contract="1.0.0"
+        )
+        == "thin"
+    )
+
+
+def test_assertions_v1_item_5a_remains_owner_local_for_response_rows() -> None:
+    """A2-R7: channel 1 keeps the response owner's no-exam miss."""
+    base = _opinion(report_date=dt.date(2023, 2, 1))
+    response = _opinion(
+        "opn-02",
+        report_date=dt.date(2023, 9, 1),
+        event_kind="supplemental_report",
+        revision_kind="revised_apportionment",
+        responds_to_opinion_id="opn-01",
+        supersedes_opinion_id="opn-01",
+        examination_performed=False,
+        revision_rationale="new records support the revised allocation",
+    )
+    assertion = _assertion(opinion_id="opn-02")
+    ledger = _ledger(opinions=(base, response), assertions=(assertion,))
+
+    assert (
+        escobedo_misses(
+            _world(), ledger, assertion, quality_contract="1.0.0"
+        )
+        == ("5a",)
+    )
+    assert (
+        apportionment_quality(
+            _world(), _context(), ledger, assertion, quality_contract="1.0.0"
+        )
+        == "thin"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2840,6 +2976,8 @@ def leakage_tree(tmp_path_factory: pytest.TempPathFactory):
             str(spec_path),
             "--out",
             str(out_dir),
+            "--truth-manifest-version",
+            "2",
         ],
         cwd=package_root,
         capture_output=True,
@@ -2874,6 +3012,98 @@ def test_assertion_leakage_probe_seed_really_contains_truth_labels(leakage_tree)
 
 
 @pytest.mark.slow
+def test_v2_quality_permutation_moves_only_scorer_truth(
+    leakage_tree, tmp_path: Any
+) -> None:
+    """Quality-only change is truth-visible and analyzer-byte-inert; semantics are live."""
+    import hashlib
+    import shutil
+    from pathlib import Path
+
+    import yaml
+
+    from wc_caseload_engine.manifests import generate_caseload
+    from wc_caseload_engine.truth_manifest import assertion_ledger_digest
+
+    out_dir, _streams = leakage_tree
+
+    def analyzer_bytes(root: Path) -> dict[str, str]:
+        return {
+            path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(root.rglob("*"))
+            if path.is_file()
+            and path.relative_to(root).parts[0] != "truth"
+        }
+
+    copied = tmp_path / "quality-permuted"
+    shutil.copytree(out_dir, copied)
+    truth_path = copied / "truth" / "medical-story-leakage-pristine.truth.json"
+    before_truth = truth_path.read_bytes()
+    payload = json.loads(before_truth)
+    channel = payload["channels"]["assertions"]
+    before_digest = channel["ledgerDigest"]
+    permutation = {
+        "supported": "thin",
+        "thin": "unsupportable",
+        "unsupportable": "supported",
+    }
+    for collection in ("contentions", "medicalOpinions", "apportionmentAssertions"):
+        for row in channel[collection]:
+            row["quality"] = permutation[row["quality"]]
+    channel["ledgerDigest"] = assertion_ledger_digest(channel)
+    truth_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    assert channel["ledgerDigest"] != before_digest
+    assert truth_path.read_bytes() != before_truth
+    assert analyzer_bytes(copied) == analyzer_bytes(out_dir)
+
+    fixture = Path(__file__).resolve().parent / "fixtures" / "medical_story_leakage_probe.yaml"
+    semantic_payload = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    semantic_payload["cases"][0]["scenario"]["medical_assertions"]["contentions"][2][
+        "rationale"
+    ] = (
+        "Applicant instead attributes the psychiatric condition to a sustained "
+        "course of workplace events and requests an industrial finding."
+    )
+    semantic_spec = parse_caseload_spec(semantic_payload)
+    semantic_out = tmp_path / "semantic-change"
+    generate_caseload(
+        semantic_spec.caseload_id,
+        semantic_spec.cases,
+        semantic_out,
+        truth=True,
+        truth_manifest_version=2,
+    )
+    original_case = out_dir / "medical-story-leakage-pristine"
+    semantic_case = semantic_out / "medical-story-leakage-pristine"
+    original_manifest = json.loads(
+        (original_case / "manifest.json").read_text(encoding="utf-8")
+    )
+    semantic_manifest = json.loads(
+        (semantic_case / "manifest.json").read_text(encoding="utf-8")
+    )
+    governed = {
+        "MEDICAL_LEGAL_QME_AME_IME",
+        "PSYCH_EVAL_REPORT_QME_AME",
+        "SUPPLEMENTAL_QME_AME_REPORT",
+        "TREATING_PHYSICIAN_REPORT",
+        "ADVOCACY_LETTERS_QME",
+        "ADVOCACY_LETTERS_PTP_QME_AME",
+        "DEPOSITION_TRANSCRIPT",
+    }
+    changed_governed_documents = []
+    for original, semantic in zip(
+        original_manifest["documents"], semantic_manifest["documents"], strict=True
+    ):
+        if original["subtype"] not in governed:
+            continue
+        original_file = original_case / "documents" / original["filename"]
+        semantic_file = semantic_case / "documents" / semantic["filename"]
+        if original_file.read_bytes() != semantic_file.read_bytes():
+            changed_governed_documents.append(original["subtype"])
+    assert changed_governed_documents
+
+
+@pytest.mark.slow
 def test_assertion_label_positions_are_absent_from_every_analyzer_visible_artifact(
     pristine_leakage_scan,
 ) -> None:
@@ -2897,6 +3127,23 @@ def test_assertion_label_positions_are_absent_from_every_analyzer_visible_artifa
         "direct_physical_event",
     }
     assert findings == [], f"aggregate analyzer-visible leakage: {findings}"
+
+
+@pytest.mark.slow
+def test_v2_label_positions_are_absent_from_every_analyzer_visible_artifact(
+    pristine_leakage_scan,
+) -> None:
+    """AJC-63 exact-name oracle over the extended v2 step-11 scanner."""
+    findings, surfaces = pristine_leakage_scan
+    assert findings == []
+    assert "medical-story-leakage-pristine/seed.yaml" in surfaces
+    assert "medical-story-leakage-pristine/manifest.json" in surfaces
+    assert "caseload_manifest.json" in surfaces
+    assert any("docProps/" in surface for surface in surfaces)
+    assert any(surface.endswith("!info") for surface in surfaces)
+    assert any(surface.startswith("pdf-ocr:") for surface in surfaces)
+    assert any("!part" in surface for surface in surfaces)
+    assert "cli:stdout" in surfaces and "cli:stderr" in surfaces
 
 
 @pytest.mark.slow
@@ -3333,6 +3580,16 @@ def test_assertion_leakage_probe_has_positive_controls_for_every_position(
     )
     assert "bare token at cli:stdout" in findings
     assert "reserved label position at cli:stderr:rubric=thin" in findings
+
+
+@pytest.mark.slow
+def test_v2_leakage_probe_has_positive_controls_for_every_position(
+    leakage_tree, tmp_path: Any
+) -> None:
+    """AJC-63 exact-name oracle reuses, rather than forks, the step-11 plants."""
+    test_assertion_leakage_probe_has_positive_controls_for_every_position(
+        leakage_tree, tmp_path
+    )
 
 
 @pytest.mark.slow

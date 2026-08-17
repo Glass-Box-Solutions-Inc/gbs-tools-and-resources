@@ -11,6 +11,7 @@ boundary test crosses the renderer.
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import decimal
 import json
 import shutil
@@ -24,6 +25,11 @@ import pytest
 
 from conftest import requires_substrate
 from wc_caseload_engine.manifests import generate_case, generate_caseload, validate_output_tree
+from wc_caseload_engine.medical_assertions import (
+    assertion_context,
+    grade_ledger,
+    project_medical_history,
+)
 from wc_caseload_engine.money import money_manifest_block
 from wc_caseload_engine.planner import build_case_plan
 from wc_caseload_engine.seeds import parse_case_seed
@@ -1212,6 +1218,50 @@ def _assert_channel_collections_match_ajc61_projection(
     ]
 
 
+def _v1_graded_ledger(plan: Any) -> Any:
+    ledger = plan.medical_assertions
+    assert ledger is not None
+    context = assertion_context(plan.seed, plan.timeline)
+    projection = project_medical_history(
+        plan.medical_history, context.current_body_parts
+    )
+    return grade_ledger(context, projection, ledger, quality_contract="1.0.0")
+
+
+def _m4_response_plan(case_id: str = "assertions-m4-response") -> Any:
+    """The frozen §2 witness-2 chain reused by the 2.1 dispatch oracle."""
+    from test_medical_assertions import _assertion, _ledger, _opinion
+
+    plan = _m3_plan(case_id)
+    base = _opinion(
+        "opn-01",
+        report_date=dt.date(2023, 2, 1),
+        reviewed_condition_ids=("cond-00",),
+    )
+    response = _opinion(
+        "opn-02",
+        report_date=dt.date(2023, 9, 1),
+        reviewed_condition_ids=("cond-00",),
+        event_kind="supplemental_report",
+        revision_kind="unchanged_additional_reasoning",
+        responds_to_opinion_id="opn-01",
+        examination_performed=False,
+        revision_rationale="the additional records confirm the same allocation",
+    )
+    base_row = _assertion(
+        "app-01", opinion_id="opn-01", condition_ids=("cond-00",)
+    )
+    response_row = _assertion(
+        "app-02", opinion_id="opn-02", condition_ids=("cond-00",)
+    )
+    return replace(
+        plan,
+        medical_assertions=_ledger(
+            opinions=(base, response), assertions=(base_row, response_row)
+        ),
+    )
+
+
 def _m3_complete_scenario() -> dict[str, Any]:
     """The A1-R6 fixture: every optional AJC-61 field, plus the M3 vocabulary.
 
@@ -1730,22 +1780,23 @@ def test_assertions_channel_1_round_trips_the_complete_ajc61_projection() -> Non
     _exercise_m3_internal_state(plan)
     truth = json.loads(json.dumps(build_case_truth_manifest(plan)))
     channel = truth["channels"]["assertions"]
+    v1_ledger = _v1_graded_ledger(plan)
 
-    _assert_channel_collections_match_ajc61_projection(channel, ledger)
+    _assert_channel_collections_match_ajc61_projection(channel, v1_ledger)
     assert channel["ledgerDigest"] == assertion_ledger_digest(channel)
 
     parsed = medical_assertions_from_truth(truth)
     assert parsed is not None
     _context, _projection, parsed_ledger = parsed
     for source_items, parsed_items, fields in (
-        (ledger.contentions, parsed_ledger.contentions, AJC61_CONTENTION_FIELDS),
+        (v1_ledger.contentions, parsed_ledger.contentions, AJC61_CONTENTION_FIELDS),
         (
-            ledger.medical_opinions,
+            v1_ledger.medical_opinions,
             parsed_ledger.medical_opinions,
             AJC61_MEDICAL_OPINION_FIELDS,
         ),
         (
-            ledger.apportionment_assertions,
+            v1_ledger.apportionment_assertions,
             parsed_ledger.apportionment_assertions,
             AJC61_APPORTIONMENT_ASSERTION_FIELDS,
         ),
@@ -1753,6 +1804,63 @@ def test_assertions_channel_1_round_trips_the_complete_ajc61_projection() -> Non
         assert [_ajc61_projection(item, fields) for item in parsed_items] == [
             _ajc61_projection(item, fields) for item in source_items
         ]
+
+
+def test_v1_and_v2_rederive_response_quality_under_their_exact_version_contracts() -> None:
+    """A2-R7: one semantic response chain is thin in v1, supported in v2."""
+    plan = _m4_response_plan()
+    document_snapshot = tuple(
+        (item.index, item.subtype, item.doc_date) for item in plan.documents
+    )
+    default_payload = build_case_truth_manifest(plan)
+    v1_payload = build_case_truth_manifest(plan, truth_manifest_version=1)
+    v2_payload = build_case_truth_manifest(plan, truth_manifest_version=2)
+
+    assert json.dumps(default_payload, separators=(",", ":")) == json.dumps(
+        v1_payload, separators=(",", ":")
+    )
+    v1_channel = v1_payload["channels"]["assertions"]
+    v2_channel = v2_payload["channels"]["assertions"]
+    assert [row["quality"] for row in v1_channel["apportionmentAssertions"]] == [
+        "supported",
+        "thin",
+    ]
+    assert [row["quality"] for row in v2_channel["apportionmentAssertions"]] == [
+        "supported",
+        "supported",
+    ]
+    assert [row["quality"] for row in v1_channel["medicalOpinions"]] == [
+        "supported",
+        "thin",
+    ]
+    assert [row["quality"] for row in v2_channel["medicalOpinions"]] == [
+        "supported",
+        "supported",
+    ]
+
+    parsed_v1 = medical_assertions_from_truth(v1_payload)
+    parsed_v2 = medical_assertions_from_truth(v2_payload)
+    assert parsed_v1 is not None and parsed_v2 is not None
+    assert parsed_v1[2].apportionment_assertions[1].quality == "thin"
+    assert parsed_v2[2].apportionment_assertions[1].quality == "supported"
+    assert tuple(
+        (item.index, item.subtype, item.doc_date) for item in plan.documents
+    ) == document_snapshot
+    assert v2_channel["contentionDocuments"] == []
+
+    compatible_minor = copy.deepcopy(v2_payload)
+    compatible_minor["channels"]["assertions"]["channelVersion"] = "2.1.0"
+    compatible_minor["channels"]["assertions"]["ledgerDigest"] = (
+        assertion_ledger_digest(compatible_minor["channels"]["assertions"])
+    )
+    try:
+        parsed_minor = medical_assertions_from_truth(compatible_minor)
+    except ValueError as error:
+        raise AssertionError(
+            f"compatible assertions minor did not normalize: {error}"
+        ) from error
+    assert parsed_minor is not None
+    assert parsed_minor[2] == parsed_v2[2]
 
 
 def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> None:
@@ -1787,6 +1895,7 @@ def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> N
     plan = _m3_plan()
     ledger = plan.medical_assertions
     assert ledger is not None
+    v1_ledger = _v1_graded_ledger(plan)
     truth = json.loads(json.dumps(build_case_truth_manifest(plan)))
     channel = truth["channels"]["assertions"]
 
@@ -1807,15 +1916,15 @@ def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> N
             }
 
     for emitted_items, source_items, fields in (
-        (channel["contentions"], ledger.contentions, AJC61_CONTENTION_FIELDS),
+        (channel["contentions"], v1_ledger.contentions, AJC61_CONTENTION_FIELDS),
         (
             channel["medicalOpinions"],
-            ledger.medical_opinions,
+            v1_ledger.medical_opinions,
             AJC61_MEDICAL_OPINION_FIELDS,
         ),
         (
             channel["apportionmentAssertions"],
-            ledger.apportionment_assertions,
+            v1_ledger.apportionment_assertions,
             AJC61_APPORTIONMENT_ASSERTION_FIELDS,
         ),
     ):
@@ -1916,7 +2025,7 @@ def test_legacy_v1_without_assertions_remains_valid() -> None:
 
 def test_assertions_channel_rejects_an_unknown_major(tmp_path: Path) -> None:
     payload = _assertion_truth()
-    payload["channels"]["assertions"]["channelVersion"] = "2.0.0"
+    payload["channels"]["assertions"]["channelVersion"] = "3.0.0"
     with pytest.raises(TruthManifestError, match="unsupported assertions channel"):
         medical_assertions_from_truth(payload)
     path = tmp_path / "major.truth.json"
@@ -1961,12 +2070,13 @@ def test_assertion_rollup_counts_match_case_channels(tmp_path: Path) -> None:
     rollup = build_caseload_truth_manifest("counted", [bearing])
     channel = rollup["channels"]["assertions"]
     ledger = bearing.plan.medical_assertions
+    v1_ledger = _v1_graded_ledger(bearing.plan)
     assert channel["counts"] == {
         "contentions": len(ledger.contentions),
         "medicalOpinions": len(ledger.medical_opinions),
         "apportionmentAssertions": len(ledger.apportionment_assertions),
     }
-    assert channel["qualityCounts"] == ledger.quality_counts()
+    assert channel["qualityCounts"] == v1_ledger.quality_counts()
     assert (
         sum(channel["apportionmentStateCounts"].values())
         == len(ledger.medical_opinions)
