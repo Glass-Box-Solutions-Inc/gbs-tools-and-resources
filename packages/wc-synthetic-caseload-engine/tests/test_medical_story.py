@@ -1501,6 +1501,55 @@ def test_ajc66_activates_only_the_bound_letter_or_deposition_family():
         switch = ajc66_variant_content(key)
         assert switch == {"deposition_transcript": True}, f"{key} -> {switch!r}"
 
+    # Capture the context that render_document actually hands to each bound
+    # template.  A global True looks identical to the correct namespaced
+    # block from inside the intended family; the opposite family is the
+    # observable counterfactual that distinguishes them (m20-28).
+    seed, plan = _case("surface-contention-loop")
+    templates = fact_aware_templates()
+    cross_family_cases = (
+        (
+            "objection",
+            {"letter": True},
+            templates["DEPOSITION_TRANSCRIPT"],
+        ),
+        (
+            "qme_deposition",
+            {"deposition_transcript": True},
+            templates["ADVOCACY_LETTERS_PTP"],
+        ),
+    )
+    for surface, expected_switch, opposite_class in cross_family_cases:
+        document, story = next(
+            (document, story)
+            for document, story in _governed("surface-contention-loop")
+            if story.contention_surface == surface
+        )
+        captured_specs: list[Any] = []
+        original_spec = renderer_module._DocumentSpec
+
+        def capture_spec(
+            *args: Any,
+            _original_spec: Any = original_spec,
+            _captured_specs: list[Any] = captured_specs,
+            **kwargs: Any,
+        ) -> Any:
+            spec = _original_spec(*args, **kwargs)
+            _captured_specs.append(spec)
+            return spec
+
+        with pytest.MonkeyPatch.context() as patcher:
+            patcher.setattr(renderer_module, "_DocumentSpec", capture_spec)
+            _render(seed, plan, document, story, f"ajc66-cross-family-{surface}")
+        assert len(captured_specs) == 1
+        spec = captured_specs[0]
+        assert spec.context["variant_content"] == expected_switch
+        opposite = opposite_class(plan.cast.case)
+        assert opposite.variant_content_enabled(spec) is False, (
+            f"{surface} activated unrelated family "
+            f"{opposite.VARIANT_CONTENT_FAMILY!r}"
+        )
+
     # The objection letter renders its registered service paragraph (register
     # prose, absent from the engine's own applicant paragraphs) and the
     # deposition opens with the register's qualification examination.
@@ -1658,22 +1707,22 @@ def test_medical_story_projection_uses_literal_allowlists_and_never_model_dump()
     ledger models really do carry the truth-only ``quality`` field, and the
     projection executed with ``model_dump`` spies planted never touches one —
     so no future field (grade, note, digest) can leak by default."""
-    seed, plan = _case("surface-contention-loop")
-    assert plan.medical_assertions is not None
-    # The planted truth-only field exists on every upstream ledger model.
-    assert all(hasattr(o, "quality") for o in plan.medical_assertions.medical_opinions)
-    assert all(hasattr(c, "quality") for c in plan.medical_assertions.contentions)
-
-    def _spy(name: str):
-        def fail(self: Any, *args: Any, **kwargs: Any) -> Any:
-            raise AssertionError(
-                f"{name} was serialized wholesale during the story projection; "
-                "R4 requires a literal field allowlist, never model_dump"
-            )
-
-        return fail
-
     try:
+        seed, plan = _case("surface-contention-loop")
+        assert plan.medical_assertions is not None
+        # The planted truth-only field exists on every upstream ledger model.
+        assert all(hasattr(o, "quality") for o in plan.medical_assertions.medical_opinions)
+        assert all(hasattr(c, "quality") for c in plan.medical_assertions.contentions)
+
+        def _spy(name: str):
+            def fail(self: Any, *args: Any, **kwargs: Any) -> Any:
+                raise AssertionError(
+                    f"{name} was serialized wholesale during the story projection; "
+                    "R4 requires a literal field allowlist, never model_dump"
+                )
+
+            return fail
+
         with pytest.MonkeyPatch.context() as patcher:
             for model in (
                 ApplicantDemographics,

@@ -29,6 +29,7 @@ import pytest
 import yaml
 
 from wc_caseload_engine import medical_assertions as assertion_module
+from wc_caseload_engine import medical_story as medical_story_module
 from wc_caseload_engine import planner as planner_module
 from wc_caseload_engine.fact_templates import IMR_APPLICATION_REGISTER
 from wc_caseload_engine.medical_assertions import (
@@ -2267,7 +2268,13 @@ def test_document_controls_remove_dependencies_without_orphaning_chains(
     def exclude_base(case: dict[str, Any]) -> None:
         case["documents"] = {"exclude": ["QME_COMPREHENSIVE_REPORT"]}
 
-    orphan_plan = build_case_plan(_patched_seed("loop-applicant-rejected", exclude_base))
+    try:
+        orphan_plan = build_case_plan(_patched_seed("loop-applicant-rejected", exclude_base))
+    except MedicalAssertionError as error:
+        pytest.fail(
+            "controlled-away report dependencies reached story validation instead "
+            f"of being reconciled out: {error}"
+        )
 
     assert not any(
         document.subtype == "QME_COMPREHENSIVE_REPORT" for document in orphan_plan.documents
@@ -2289,7 +2296,15 @@ def test_document_controls_remove_dependencies_without_orphaning_chains(
     def exclude_letters(case: dict[str, Any]) -> None:
         case["documents"] = {"exclude": ["ADVOCACY_LETTERS_PTP_QME_AME"]}
 
-    cascade_plan = build_case_plan(_patched_seed("loop-applicant-rejected", exclude_letters))
+    try:
+        cascade_plan = build_case_plan(
+            _patched_seed("loop-applicant-rejected", exclude_letters)
+        )
+    except MedicalAssertionError as error:
+        pytest.fail(
+            "controlled-away communication dependencies reached story validation "
+            f"instead of falling in cascade: {error}"
+        )
     monkeypatch.undo()
 
     base_docs = [
@@ -2400,6 +2415,38 @@ def test_hard_opinion_and_explicit_dates_are_fixed_and_edges_strict(
     assert by_opinion[base.id].doc_date == base.report_date
     assert by_opinion[supplemental.id].doc_date == supplemental.report_date
     assert by_opinion[deposition.id].doc_date == deposition.report_date
+
+    # The private resolver must preserve each hard anchor before the separate
+    # chronology verifier rejects an impossible window.  In-range integration
+    # fixtures cannot distinguish preservation from timeline.clamp(); these
+    # two out-of-window counterfactuals make m20-26 observable directly.
+    base_binding = next(
+        binding
+        for binding in derive_plan.contention_documents
+        if binding.medical_opinion_id == base.id
+    )
+    after_horizon = case_plan.timeline.horizon + dt.timedelta(days=2)
+    opinion_binding = base_binding.model_copy(update={"doc_date": None})
+    moved_opinion = base.model_copy(update={"report_date": after_horizon})
+    opinion_dates, _dropped, _warnings = medical_story_module._resolve_contention_dates(
+        case_plan.timeline,
+        (opinion_binding,),
+        {base.id: moved_opinion},
+    )
+    assert opinion_dates[opinion_binding.id] == after_horizon, (
+        "an opinion report date is a hard anchor, not an individually clamped proposal"
+    )
+
+    explicit_date = after_horizon + dt.timedelta(days=1)
+    explicit_binding = base_binding.model_copy(update={"doc_date": explicit_date})
+    explicit_dates, _dropped, _warnings = medical_story_module._resolve_contention_dates(
+        case_plan.timeline,
+        (explicit_binding,),
+        {base.id: base},
+    )
+    assert explicit_dates[explicit_binding.id] == explicit_date, (
+        "an explicit contention date is a hard anchor, not an individually clamped proposal"
+    )
 
     by_surface = {
         document.contention_surface: document

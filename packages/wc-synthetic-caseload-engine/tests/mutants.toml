@@ -3220,11 +3220,21 @@ id = 'm21-8'
 title = 'the sparse IMR generic rebuttal leaks underworked commentary'
 file = 'src/wc_caseload_engine/fact_templates.py'
 test = 'tests/test_medical_assertions.py::test_part5_psych_and_imr_registers_do_not_leak_labels_or_quality_commentary'
-find = '''            "The requested treatment is medically necessary for the industrial "
-            "condition. Reconsideration of the utilization-review determination is "'''
-replace = '''            "underworked: The requested treatment is medically necessary for the industrial "
-            "condition. Reconsideration of the utilization-review determination is "'''
-note = 'AJC-62 step 11. The explicit sparse IMR fixture takes generic_rebuttal, so the rendered-application-only L2 guard must find the R90 token without consulting the content model or IMR_APPLICATION_REGISTER directly.'
+find = '''                    self.make_section(
+                        "CLINICAL REBUTTAL", content.clinical_rebuttal
+                    )'''
+replace = '''                    self.make_section(
+                        "CLINICAL REBUTTAL",
+                        (
+                            f"underworked: {content.clinical_rebuttal}"
+                            if content.clinical_rebuttal
+                            == _register_clauses(
+                                IMR_APPLICATION_REGISTER, "generic_rebuttal"
+                            )[0]
+                            else content.clinical_rebuttal
+                        ),
+                    )'''
+note = 'AJC-62 step 11. The generic register is no longer read on the explicit-content path, so this find-block follows the same sparse-only defect to the live CLINICAL REBUTTAL render branch. The explicit sparse fixture equals generic_rebuttal; the rendered-application-only L2 guard must find the R90 token without consulting the content model or register directly.'
 
 [[mutant]]
 id = 'm21-9'
