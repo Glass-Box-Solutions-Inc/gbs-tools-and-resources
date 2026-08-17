@@ -3587,6 +3587,13 @@ def test_v2_leakage_probe_has_positive_controls_for_every_position(
     leakage_tree, tmp_path: Any
 ) -> None:
     """AJC-63 exact-name oracle reuses, rather than forks, the step-11 plants."""
+    out_dir, _streams = leakage_tree
+    truth = json.loads(
+        (out_dir / "truth" / "medical-story-leakage-pristine.truth.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert truth["channels"]["assertions"]["channelVersion"] == "2.0.0"
     test_assertion_leakage_probe_has_positive_controls_for_every_position(
         leakage_tree, tmp_path
     )

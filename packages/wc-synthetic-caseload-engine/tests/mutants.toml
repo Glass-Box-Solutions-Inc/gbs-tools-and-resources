@@ -3878,3 +3878,70 @@ test = 'tests/test_ajc63_validator.py::test_ajc63_default_and_feature_absent_out
 find = '''    "engine": "0.9.0",'''
 replace = '''    "engine": "0.9.1",'''
 note = 'AJC-63 M4. Existing golden files remain byte-exact.'
+
+[[mutant]]
+id = 'm22-44'
+title = 'V2-ALLOW-DANGLING-MEDICAL-OPINION-ID'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_v2_contention_document_export_is_lossless_manifest_linked_and_digest_bound'
+find = '''        for field_name, opinion_id in (
+            ("medicalOpinionId", binding.medical_opinion_id),
+            ("targetMedicalOpinionId", binding.target_medical_opinion_id),
+        ):
+            if opinion_id is not None and opinion_id not in opinion_ids:
+                problems.append(
+                    f"contentionDocuments documentIndex {index} {field_name} references "
+                    f"unknown medical opinion {opinion_id!r}"
+                )'''
+replace = '''        for field_name, opinion_id in (
+            ("medicalOpinionId", binding.medical_opinion_id),
+            ("targetMedicalOpinionId", binding.target_medical_opinion_id),
+        ):
+            if (
+                field_name == "targetMedicalOpinionId"
+                and opinion_id is not None
+                and opinion_id not in opinion_ids
+            ):
+                problems.append(
+                    f"contentionDocuments documentIndex {index} {field_name} references "
+                    f"unknown medical opinion {opinion_id!r}"
+                )'''
+note = 'AJC-63 M4. Every medicalOpinionId binding must resolve to a known opinion.'
+
+[[mutant]]
+id = 'm22-45'
+title = 'V2-ALLOW-DANGLING-TARGET-MEDICAL-OPINION-ID'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_v2_contention_document_export_is_lossless_manifest_linked_and_digest_bound'
+find = '''        for field_name, opinion_id in (
+            ("medicalOpinionId", binding.medical_opinion_id),
+            ("targetMedicalOpinionId", binding.target_medical_opinion_id),
+        ):
+            if opinion_id is not None and opinion_id not in opinion_ids:
+                problems.append(
+                    f"contentionDocuments documentIndex {index} {field_name} references "
+                    f"unknown medical opinion {opinion_id!r}"
+                )'''
+replace = '''        for field_name, opinion_id in (
+            ("medicalOpinionId", binding.medical_opinion_id),
+            ("targetMedicalOpinionId", binding.target_medical_opinion_id),
+        ):
+            if (
+                field_name == "medicalOpinionId"
+                and opinion_id is not None
+                and opinion_id not in opinion_ids
+            ):
+                problems.append(
+                    f"contentionDocuments documentIndex {index} {field_name} references "
+                    f"unknown medical opinion {opinion_id!r}"
+                )'''
+note = 'AJC-63 M4. Every targetMedicalOpinionId binding must resolve to a known opinion.'
+
+[[mutant]]
+id = 'm22-46'
+title = 'V2-RELAXES-SAME-DATE-BACKWARD'
+file = 'src/wc_caseload_engine/medical_assertions.py'
+test = 'tests/test_ajc63_validator.py::test_assertions_v2_item_5a_inherits_only_a_same_author_examined_predecessor_chain'
+find = '''            if target is not None and target.report_date >= opinion.report_date:'''
+replace = '''            if target is not None and target.report_date > opinion.report_date:'''
+note = 'AJC-63 M4. Response and supersession targets must move strictly backward.'

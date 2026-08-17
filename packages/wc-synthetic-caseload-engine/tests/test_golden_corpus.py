@@ -1140,6 +1140,10 @@ def test_a_bare_record_is_a_usage_error(tmp_path: Path) -> None:
     assertion instead of silently restamping every golden in the working tree —
     which is precisely what happened on two mutation sweeps before this guard
     existed.
+
+    The ``finally`` rollback is best-effort only: a SIGKILL or outer-timeout
+    kill skips it entirely. The one-level copy is deliberate because the command
+    contract is a flat golden directory, not a recursive subtree restore.
     """
     golden_dir = Path(__file__).parent / "golden"
     snapshot = tmp_path / "golden-snapshot"

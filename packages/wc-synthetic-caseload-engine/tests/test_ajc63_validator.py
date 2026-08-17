@@ -330,6 +330,13 @@ def test_assertions_v2_item_5a_inherits_only_a_same_author_examined_predecessor_
             _response(report_date=dt.date(2023, 1, 1)),
         )
     )
+    same_date_base = _base().model_copy(update={"report_date": dt.date(2023, 1, 1)})
+    same_date, same_date_row = _response_ledger(
+        (
+            same_date_base,
+            _response(report_date=dt.date(2023, 1, 1)),
+        )
+    )
     first = _response(
         "opn-01",
         predecessor="opn-02",
@@ -348,6 +355,7 @@ def test_assertions_v2_item_5a_inherits_only_a_same_author_examined_predecessor_
         (missing, missing_row),
         (wrong_author, wrong_author_row),
         (nonbackward, nonbackward_row),
+        (same_date, same_date_row),
         (cycle, cycle_row),
     ):
         misses, assertion_grade, _opinion_grade = _direct_grades(
@@ -367,6 +375,10 @@ def test_assertions_v2_item_5a_inherits_only_a_same_author_examined_predecessor_
     assert any(
         "response and supersession targets must be strictly earlier" in problem
         for problem in validate_medical_assertions(_context(), _world(), nonbackward)
+    )
+    assert any(
+        "response and supersession targets must be strictly earlier" in problem
+        for problem in validate_medical_assertions(_context(), _world(), same_date)
     )
     assert any(
         "medical opinion chain contains a cycle" in problem
@@ -577,6 +589,34 @@ def test_v2_contention_document_export_is_lossless_manifest_linked_and_digest_bo
     dangling_channel["ledgerDigest"] = assertion_ledger_digest(dangling_channel)
     with pytest.raises(TruthManifestError, match="unknown contention 'ctn-77'"):
         medical_assertions_from_truth(dangling)
+
+    dangling_medical = copy.deepcopy(payload)
+    dangling_medical_channel = dangling_medical["channels"]["assertions"]
+    dangling_medical_channel["contentionDocuments"][2]["medicalOpinionId"] = "opn-77"
+    dangling_medical_channel["ledgerDigest"] = assertion_ledger_digest(
+        dangling_medical_channel
+    )
+    with pytest.raises(
+        TruthManifestError,
+        match=(
+            "contentionDocuments documentIndex 5 medicalOpinionId references "
+            "unknown medical opinion 'opn-77'"
+        ),
+    ):
+        medical_assertions_from_truth(dangling_medical)
+
+    dangling_target = copy.deepcopy(payload)
+    dangling_target_channel = dangling_target["channels"]["assertions"]
+    dangling_target_channel["contentionDocuments"][0]["targetMedicalOpinionId"] = "opn-77"
+    dangling_target_channel["ledgerDigest"] = assertion_ledger_digest(dangling_target_channel)
+    with pytest.raises(
+        TruthManifestError,
+        match=(
+            "contentionDocuments documentIndex 0 targetMedicalOpinionId "
+            "references unknown medical opinion 'opn-77'"
+        ),
+    ):
+        medical_assertions_from_truth(dangling_target)
 
     impossible = copy.deepcopy(payload)
     impossible_channel = impossible["channels"]["assertions"]
