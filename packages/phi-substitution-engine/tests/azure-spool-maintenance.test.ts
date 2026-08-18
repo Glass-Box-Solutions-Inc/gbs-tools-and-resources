@@ -129,6 +129,7 @@ async function seedUploading(
   blobs: FakeBlobStore,
   createdAtEpochMs: number,
   withStaging = true,
+  backdatePool?: Pool,
 ): Promise<SeededPrepared> {
   fixtureSequence += 1;
   const handle = brand<PreparedWriteHandle>(randomUUID());
@@ -144,6 +145,14 @@ async function seedUploading(
     blobPath,
     createdAtEpochMs: createdAtEpochMs,
   });
+  if (controlPlane instanceof InMemoryControlPlane) {
+    controlPlane.debugSetPreparedCreatedAtMs(handle, createdAtEpochMs);
+  } else if (backdatePool !== undefined) {
+    await backdatePool.query(
+      `UPDATE reversal_prepared SET created_at_ms = $2 WHERE prepared_blob_id = $1`,
+      [handle, createdAtEpochMs],
+    );
+  }
   if (withStaging) {
     await blobs.putStaging(stagingPath, Uint8Array.of(fixtureSequence & 0xff, 2, 3));
   }
@@ -161,8 +170,9 @@ async function seedFinalized(
   controlPlane: ControlPlane,
   blobs: FakeBlobStore,
   createdAtEpochMs = T0,
+  backdatePool?: Pool,
 ): Promise<SeededPrepared> {
-  const seeded = await seedUploading(controlPlane, blobs, createdAtEpochMs);
+  const seeded = await seedUploading(controlPlane, blobs, createdAtEpochMs, true, backdatePool);
   const finalized = await blobs.finalize(seeded.stagingPath, seeded.blobPath);
   await controlPlane.markFinalized({
     preparedBlobId: seeded.handle,
@@ -503,8 +513,8 @@ describe.skipIf(!LIVE)("AzureSpoolMaintenance live Postgres", () => {
 
   it("runs Path 1 quarantine and Path 2 stale-upload deletion against real metadata", async () => {
     const blobs = new FakeBlobStore();
-    const finalized = await seedFinalized(controlPlane, blobs, T0);
-    const uploading = await seedUploading(controlPlane, blobs, T0);
+    const finalized = await seedFinalized(controlPlane, blobs, T0, pool);
+    const uploading = await seedUploading(controlPlane, blobs, T0, true, pool);
 
     const outcome = await maintenance(controlPlane, blobs, T0 + 1_000, 100, 10_000)
       .reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 10 });
@@ -532,7 +542,7 @@ describe.skipIf(!LIVE)("AzureSpoolMaintenance live Postgres", () => {
     const blobs = new FakeBlobStore();
 
     for (let index = 0; index < 2; index += 1) {
-      const referenced = await seedFinalized(controlPlane, blobs, T0 - 2 + index);
+      const referenced = await seedFinalized(controlPlane, blobs, T0 - 2 + index, pool);
       const published = await controlPlane.publish({
         prepared: { handle: referenced.handle },
         expiresAtEpochMs: BigInt(T0 + 10_000),
@@ -550,7 +560,7 @@ describe.skipIf(!LIVE)("AzureSpoolMaintenance live Postgres", () => {
         [referenced.handle],
       );
     }
-    const reclaimable = await seedFinalized(controlPlane, blobs, T0);
+    const reclaimable = await seedFinalized(controlPlane, blobs, T0, pool);
 
     await expect(controlPlane.previewReclamation({
       olderThanEpochMs: T0 + 1,

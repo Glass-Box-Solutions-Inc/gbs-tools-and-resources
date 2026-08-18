@@ -110,7 +110,7 @@ function nonceValue(nonce: GcmNonce96): bigint {
 
 describe("GLY-346 Lane A — reclamation oracles", () => {
   it("previews reclamation with the global budget without mutating candidates", async () => {
-    const controlPlane = new InMemoryControlPlane();
+    const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 });
     const { prepared } = await prepare(controlPlane, { createdAtMs: T0 });
 
     const outcome = await controlPlane.previewReclamation({
@@ -127,7 +127,7 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
   });
 
   it("keeps referenced rows outside the in-memory maintenance budget", async () => {
-    const c = clock(T0 + 100);
+    const c = clock(T0);
     const controlPlane = new InMemoryControlPlane({
       nowEpochMilliseconds: c.now,
       quarantineGraceMilliseconds: 100,
@@ -136,8 +136,6 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
       attempt: "quarantine-candidate",
       createdAtMs: T0,
     });
-    await controlPlane.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 1 });
-
     for (let index = 0; index < 2; index += 1) {
       const { prepared: referenced } = await prepare(controlPlane, {
         attempt: `referenced-${index}`,
@@ -148,6 +146,8 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
       await controlPlane.flush(published.commit);
       controlPlane.debugSetPreparedState(referenced.handle, "finalized");
     }
+    c.set(T0 + 100);
+    await controlPlane.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 1 });
     c.advance(101);
 
     const first = await controlPlane.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
@@ -159,7 +159,7 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
   });
 
   it("does not let referenced Path-1 rows fill selection slots ahead of a reclaimable row", async () => {
-    const c = clock(T0 + 100);
+    const c = clock(T0);
     const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });
 
     for (let index = 0; index < 2; index += 1) {
@@ -176,6 +176,7 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
       attempt: "selection-slot-reclaimable",
       createdAtMs: T0,
     });
+    c.set(T0 + 100);
 
     const outcome = await controlPlane.reclaimOrphanedPrepared({
       olderThanEpochMs: T0 + 1,
@@ -188,7 +189,8 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
 
   it("caps Path-1 reference metrics when candidates exceed the selection limit", async () => {
     const limit = 2;
-    const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 + 100 });
+    const c = clock(T0);
+    const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });
 
     for (let index = 0; index < 5; index += 1) {
       const { prepared: referenced } = await prepare(controlPlane, {
@@ -200,6 +202,7 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
       await controlPlane.flush(published.commit);
       controlPlane.debugSetPreparedState(referenced.handle, "finalized");
     }
+    c.set(T0 + 100);
 
     const outcome = await controlPlane.reclaimOrphanedPrepared({
       olderThanEpochMs: T0 + 1,
@@ -214,7 +217,7 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
 
   it("caps Path-1 selection when unreferenced candidates exceed the limit", async () => {
     const limit = 2;
-    const selectionPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 + 100 });
+    const selectionPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 });
     for (let index = 0; index < 5; index += 1) {
       await prepare(selectionPlane, {
         attempt: `selection-cap-${index}`,
@@ -228,7 +231,7 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
     expect(selection.rows).toHaveLength(limit);
     expect(selection.skippedReferenced).toBe(0);
 
-    const workerPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 + 100 });
+    const workerPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 });
     for (let index = 0; index < 5; index += 1) {
       await prepare(workerPlane, {
         attempt: `selection-cap-worker-${index}`,
@@ -244,13 +247,14 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
   });
 
   it("MUT-RECLAIM-COMMITTED: a committed/current-referenced blob is never reclaimed", async () => {
-    const c = clock(T0 + 100);
+    const c = clock(T0);
     const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });
     const { prepared, input } = await prepare(controlPlane, { createdAtMs: T0 });
     const published = await controlPlane.publish(prepared);
     expect(published.kind).toBe("published");
     if (published.kind !== "published") throw new Error("expected published");
     await controlPlane.flush(published.commit);
+    c.set(T0 + 100);
 
     await controlPlane.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1 });
 
@@ -261,11 +265,12 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
   });
 
   it("MUT-RECLAIM-PENDING-CLAIM: a blob backing a pending claim is not reclaimed", async () => {
-    const c = clock(T0 + 100);
+    const c = clock(T0);
     const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });
     const { prepared, input } = await prepare(controlPlane, { createdAtMs: T0 });
     const published = await controlPlane.publish(prepared);
     expect(published.kind).toBe("published");
+    c.set(T0 + 100);
 
     await controlPlane.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1 });
 
@@ -275,7 +280,7 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
   });
 
   it("MUT-RECLAIM-HORIZON: a blob newer than olderThan is not reclaimed", async () => {
-    const c = clock(T0 + 100);
+    const c = clock(T0 + 50);
     const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });
     const { prepared } = await prepare(controlPlane, { createdAtMs: T0 + 50 });
 
@@ -286,9 +291,10 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
   });
 
   it("MUT-RECLAIM-NOOP: a genuine orphan past horizon is quarantined", async () => {
-    const c = clock(T0 + 100);
+    const c = clock(T0);
     const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });
     const { prepared } = await prepare(controlPlane, { createdAtMs: T0 });
+    c.set(T0 + 100);
 
     const outcome = await controlPlane.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1 });
 
@@ -302,7 +308,7 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
   });
 
   it("MUT-RECLAIM-ARG-GETTER: a changing getter cannot widen the sweep", async () => {
-    const c = clock(T0 + 100);
+    const c = clock(T0 + 50);
     const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });
     const { prepared } = await prepare(controlPlane, { createdAtMs: T0 + 50 });
     let reads = 0;
@@ -321,12 +327,13 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
   });
 
   it("MUT-QUARANTINE-NOT-HARDDELETE: quarantine is recoverable within grace and deleted only past grace", async () => {
-    const c = clock(T0 + 100);
+    const c = clock(T0);
     const controlPlane = new InMemoryControlPlane({
       nowEpochMilliseconds: c.now,
       quarantineGraceMilliseconds: 100,
     });
     const { prepared } = await prepare(controlPlane, { createdAtMs: T0 });
+    c.set(T0 + 100);
     await controlPlane.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1 });
     expect(controlPlane.debugPrepared(prepared.handle)?.quarantineBlobPresent).toBe(true);
 
@@ -353,8 +360,71 @@ describe("GLY-346 Lane A — reclamation oracles", () => {
 });
 
 describe("GLY-346 Lane A — control-plane state-machine conformance", () => {
+  it("uses the plane clock so stale producer metadata cannot age fresh Path-2a or Path-1 rows", async () => {
+    const oneHundredHours = 100 * 60 * 60 * 1_000;
+    const uploadHorizon = 48 * 60 * 60 * 1_000;
+    const c = clock(T0);
+    const faults: InMemoryControlPlaneFaults = { failAt: "prepareAfterUploadingInsert" };
+    const controlPlane = new InMemoryControlPlane({
+      nowEpochMilliseconds: c.now,
+      uploadHorizonMilliseconds: uploadHorizon,
+      faults,
+    });
+    const skewedMeta = { createdAtMs: T0 - oneHundredHours };
+
+    await expect(controlPlane.prepare(writeInput(skewedMeta))).rejects.toThrow("prepareAfterUploadingInsert");
+    const uploadingHandle = controlPlane.debugPreparedHandles()[0];
+    expect(uploadingHandle).toBeDefined();
+    if (uploadingHandle === undefined) throw new Error("expected uploading row");
+
+    delete faults.failAt;
+    const { prepared: finalized } = await prepare(controlPlane, {
+      ...skewedMeta,
+      attempt: "skewed-finalized",
+    });
+    const outcome = await controlPlane.reclaimOrphanedPrepared({
+      olderThanEpochMs: T0 - uploadHorizon,
+    });
+
+    expect(outcome.reclaimed).toBe(0);
+    expect(controlPlane.debugPrepared(uploadingHandle)?.state).toBe("uploading");
+    expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe("finalized");
+  });
+
+  it("uses an old plane clock so Path-2a and Path-1 become eligible despite fresh producer metadata", async () => {
+    const oneHundredHours = 100 * 60 * 60 * 1_000;
+    const uploadHorizon = 48 * 60 * 60 * 1_000;
+    const c = clock(T0 - oneHundredHours);
+    const faults: InMemoryControlPlaneFaults = { failAt: "prepareAfterUploadingInsert" };
+    const controlPlane = new InMemoryControlPlane({
+      nowEpochMilliseconds: c.now,
+      uploadHorizonMilliseconds: uploadHorizon,
+      faults,
+    });
+    const freshMeta = { createdAtMs: T0 };
+
+    await expect(controlPlane.prepare(writeInput(freshMeta))).rejects.toThrow("prepareAfterUploadingInsert");
+    const uploadingHandle = controlPlane.debugPreparedHandles()[0];
+    expect(uploadingHandle).toBeDefined();
+    if (uploadingHandle === undefined) throw new Error("expected uploading row");
+
+    delete faults.failAt;
+    const { prepared: finalized } = await prepare(controlPlane, {
+      ...freshMeta,
+      attempt: "old-plane-finalized",
+    });
+    c.set(T0);
+    const outcome = await controlPlane.reclaimOrphanedPrepared({
+      olderThanEpochMs: T0 - uploadHorizon,
+    });
+
+    expect(outcome.reclaimed).toBe(2);
+    expect(controlPlane.debugPrepared(uploadingHandle)).toBeUndefined();
+    expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe("quarantined");
+  });
+
   it("orders Path-1 recovery and fresh candidates like Postgres, not insertion order", async () => {
-    const controlPlane = new InMemoryControlPlane();
+    const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 });
     const freshLaterId = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000002");
     const freshEarlierId = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000001");
     const recoveryId = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000003");
@@ -413,9 +483,9 @@ describe("GLY-346 Lane A — control-plane state-machine conformance", () => {
     const first = await controlPlane.publish(winner.prepared);
     expect(first.kind).toBe("published");
     const before = controlPlane.debugClaim(winner.input.idempotencyKey);
+    const loser = await prepare(controlPlane, { expiresAtMs: BigInt(T0 + 10), createdAtMs: T0 });
     c.set(T0 + 10);
 
-    const loser = await prepare(controlPlane, { expiresAtMs: BigInt(T0 + 10), createdAtMs: T0 });
     const conflict = await controlPlane.publish(loser.prepared);
     expect(conflict).toMatchObject({ kind: "existing", expired: true });
     const expired = controlPlane.debugClaim(winner.input.idempotencyKey);
@@ -432,9 +502,10 @@ describe("GLY-346 Lane A — control-plane state-machine conformance", () => {
   });
 
   it("concurrent mark-vs-publish: publish wins committed transition and maintenance cannot quarantine it", async () => {
-    const c = clock(T0 + 100);
+    const c = clock(T0);
     const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: c.now });
     const { prepared, input } = await prepare(controlPlane, { createdAtMs: T0 });
+    c.set(T0 + 100);
 
     const [published] = await Promise.all([
       controlPlane.publish(prepared),

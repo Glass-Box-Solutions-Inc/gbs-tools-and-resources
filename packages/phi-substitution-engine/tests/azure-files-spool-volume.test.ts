@@ -33,6 +33,7 @@ import type {
 } from "../src/tokens/durable/azure/control-plane";
 import { PostgresControlPlane, runMigrations } from "../src/tokens/durable/azure/postgres-control-plane";
 import { decodeReversalBlob, encodeReversalBlob } from "../src/tokens/durable/azure/reversal-blob-codec";
+import { InMemoryControlPlane } from "../src/tokens/durable/dev/in-memory-control-plane";
 import { InMemoryKeyProvider } from "../src/tokens/durable/dev/in-memory-key-provider";
 import { ReversalFailedError } from "../src/tokens/index";
 import { DurableReversalStore } from "../src/tokens/durable/durable-reversal-store";
@@ -131,6 +132,12 @@ class MemoryBlobStore implements BlobStore {
     this.#objects.delete(path);
     this.#etags.delete(path);
     return Promise.resolve();
+  }
+}
+
+class FailingPutBlobStore extends MemoryBlobStore {
+  public override putStaging(): Promise<void> {
+    return Promise.reject(new Error("simulated_staging_write_failure"));
   }
 }
 
@@ -279,6 +286,51 @@ describe("reversal blob codec", () => {
 });
 
 describe("AzureFilesSpoolVolume unit", () => {
+  it("uses plane time for adapter-prepared Path-1 and crash-left Path-2a rows", async () => {
+    const oneHundredHours = 100 * 60 * 60 * 1_000;
+    const uploadHorizon = 48 * 60 * 60 * 1_000;
+    const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 });
+    const input = (suffix: string): PrepareReversalWriteInput => {
+      const encryptedRecord = blobFixture();
+      return {
+        idempotencyKey: brand<ReversalIdempotencyKey>(`idempotency-${suffix}`),
+        mappingKey: brand<ReversalMappingKey>(`mapping-${suffix}`),
+        immutableScopeDigest: brand<ReversalScopeDigest>(`scope-${suffix}`),
+        encryptedRecord: {
+          ...encryptedRecord,
+          meta: { ...encryptedRecord.meta, createdAtEpochMs: T0 - oneHundredHours },
+        },
+      };
+    };
+
+    const interrupted = new AzureFilesSpoolVolume(controlPlane, new FailingPutBlobStore(), () => T0);
+    await expect(interrupted.prepare(input("uploading"))).rejects.toThrow("simulated_staging_write_failure");
+    const uploadingHandle = controlPlane.debugPreparedHandles()[0];
+    expect(uploadingHandle).toBeDefined();
+    if (uploadingHandle === undefined) throw new Error("expected uploading row");
+
+    const completed = new AzureFilesSpoolVolume(controlPlane, new MemoryBlobStore(), () => T0);
+    const finalized = await completed.prepare(input("finalized"));
+    const threshold = T0 - uploadHorizon;
+
+    await expect(controlPlane.markStaleUploads({
+      uploadHorizonEpochMs: threshold,
+      limit: 10,
+    })).resolves.toEqual([]);
+    await expect(controlPlane.selectFinalizedOrphansForReclaim({
+      olderThanEpochMs: threshold,
+      limit: 10,
+    })).resolves.toEqual({ rows: [], skippedReferenced: 0 });
+    expect(controlPlane.debugPrepared(uploadingHandle)).toMatchObject({
+      state: "uploading",
+      createdAtMs: T0,
+    });
+    expect(controlPlane.debugPrepared(finalized.handle)).toMatchObject({
+      state: "finalized",
+      createdAtMs: T0,
+    });
+  });
+
   it("prepares, publishes, flushes, and reads the exact encrypted record", async () => {
     const controlPlane = new MemoryControlPlane();
     const blobs = new MemoryBlobStore();
