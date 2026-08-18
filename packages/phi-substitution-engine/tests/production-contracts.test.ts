@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import type { PhiAuditEvent } from "../src/audit/ports";
 import { ExactAllowListAuditSerializer } from "../src/audit/serializer";
 import { isPhiEngineFailureCode } from "../src/core/errors";
@@ -57,5 +58,12 @@ describe("GLY-353 production contracts", () => {
       ...interruptedEvent(),
       failureCode: "CALL_INTERRUPTED",
     } as PhiAuditEvent)).toThrow();
+  });
+
+  it("ORACLE-PROD-ABORT-ONCE-LATCH-SHAPE: terminal transitions cannot overwrite an earlier winner", () => {
+    const source = readFileSync(new URL("../src/core/wrapper.ts", import.meta.url), "utf8");
+    expect(source).toContain('if (this.#terminal === null) this.#terminal = "failure";');
+    expect(source).toContain('if (this.#terminal !== null) return;\n    this.#terminal = "interrupted";');
+    expect(source).toContain('if (this.#terminal !== null) return false;\n    this.#terminal = "completed";');
   });
 });

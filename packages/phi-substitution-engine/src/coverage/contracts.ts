@@ -122,9 +122,9 @@ export interface EgressEvidenceSignature {
  * and M4 EMITS. Populating and SIGNING it is the M4 attestor lane; this seam-freeze authors the
  * TYPE + doc only. Per §9 no field here is ever assumed from application tests.
  *
- * 2026-08-18 — GLY-353 additive amendment: `egressPolicyVersion` and
- * `enginePolicyVersion` are required signed claims; RFC 8785/SHA-256 canonicalization is
- * normative. The original GLY-335 seam freeze remains in force.
+ * 2026-08-18 — GLY-353 additive amendment: egressPolicyVersion and enginePolicyVersion are
+ * required signed claims; RFC 8785/SHA-256 canonicalization is normative. The original GLY-335
+ * seam freeze remains in force.
  */
 export interface AzureEgressPolicyEvidence {
   readonly environment: "cae-gbs-wp";

@@ -36,6 +36,7 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
     for (const name of [
       "createSubstitutionEngine",
       "createProtectedAiProvider",
+      "createProductionProtectedAiProvider",
       "PhiEngineError",
       "isPhiEngineError",
       "isPhiEngineFailureCode",
