@@ -130,7 +130,14 @@ DEFENSE_WIRE_FACT_KEYS = (
     "initialFileReview",
     "scorerLabels",
 )
-DEFENSE_WIRE_PUBLIC_KEYS = DEFENSE_WIRE_FACT_KEYS[:-1]
+# A literal allowlist, not a slice of DEFENSE_WIRE_FACT_KEYS: a key appended
+# after "scorerLabels" must never join the public projection by position.
+DEFENSE_WIRE_PUBLIC_KEYS = (
+    "exposureEvents",
+    "paidCosts",
+    "reserveEvents",
+    "initialFileReview",
+)
 DEFENSE_WIRE_BUCKET_KEYS = ("indemnity", "medical", "expenseAlae", "total")
 DEFENSE_WIRE_PAID_COST_KEYS = (
     "id",

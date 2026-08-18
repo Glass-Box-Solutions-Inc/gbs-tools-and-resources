@@ -322,10 +322,14 @@ def test_every_official_artifact_digest_failure_uses_the_registered_code(
 
 
 def test_production_contains_no_test_mirror_loader_or_binding_field() -> None:
-    source = (
-        PACKAGE_ROOT / "src" / "wc_caseload_engine" / "rating_sources.py"
-    ).read_text(encoding="utf-8")
-    assert "dfec_1_4_table.pd_calculator.json" not in source
-    assert DFEC_PROJECTION_SHA256 not in source
-    assert DFEC_BACKEND_FILE_SHA256 not in source
+    # R27's prohibition covers production generally, so the sweep walks every
+    # shipped module, not just rating_sources.py. The vendored meta.json is
+    # data, not code, and is digest-pinned separately.
+    for module in sorted(
+        (PACKAGE_ROOT / "src" / "wc_caseload_engine").rglob("*.py")
+    ):
+        source = module.read_text(encoding="utf-8")
+        assert "dfec_1_4_table.pd_calculator.json" not in source, module.name
+        assert DFEC_PROJECTION_SHA256 not in source, module.name
+        assert DFEC_BACKEND_FILE_SHA256 not in source, module.name
     assert DFEC_DECLARATION_SHA256 not in source
