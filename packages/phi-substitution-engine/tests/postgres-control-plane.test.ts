@@ -58,25 +58,29 @@ interface ScriptedQueryResult {
 function scriptedControlPlane(results: readonly ScriptedQueryResult[]): {
   readonly controlPlane: PostgresControlPlane;
   readonly statements: string[];
+  readonly boundParameters: Array<readonly unknown[] | undefined>;
 } {
   const pending = [...results];
   const statements: string[] = [];
+  const boundParameters: Array<readonly unknown[] | undefined> = [];
+  const query = (sql: string, parameters?: readonly unknown[]): Promise<ScriptedQueryResult> => {
+    statements.push(sql.trim());
+    boundParameters.push(parameters);
+    if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+      return Promise.resolve({ rowCount: 0, rows: [] });
+    }
+    const result = pending.shift();
+    if (result === undefined) {
+      return Promise.reject(new Error("unexpected_scripted_query"));
+    }
+    return Promise.resolve(result);
+  };
   const client = {
-    query: (sql: string): Promise<ScriptedQueryResult> => {
-      statements.push(sql.trim());
-      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
-        return Promise.resolve({ rowCount: 0, rows: [] });
-      }
-      const result = pending.shift();
-      if (result === undefined) {
-        return Promise.reject(new Error("unexpected_scripted_query"));
-      }
-      return Promise.resolve(result);
-    },
+    query,
     release: (): void => undefined,
   };
-  const pool = { connect: () => Promise.resolve(client) } as unknown as Pool;
-  return { controlPlane: new PostgresControlPlane(pool), statements };
+  const pool = { connect: () => Promise.resolve(client), query } as unknown as Pool;
+  return { controlPlane: new PostgresControlPlane(pool), statements, boundParameters };
 }
 
 function expectReferenceFiltersBeforeLimit(statement: string): void {
@@ -90,6 +94,56 @@ function expectReferenceFiltersBeforeLimit(statement: string): void {
 
 describe("PostgresControlPlane maintenance completion idempotency", () => {
   const handle = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000001");
+
+  it("uses the database clock for DEK-generation lifecycle metadata", async () => {
+    const generationId = "generation-a";
+    const fixture = scriptedControlPlane([
+      { rowCount: 0, rows: [] },
+      { rowCount: 1, rows: [] },
+      {
+        rowCount: 1,
+        rows: [{
+          dek_generation_id: `b64url-v1:${Buffer.from(generationId).toString("base64url")}`,
+          wrapped_dek: Buffer.from([1, 2, 3]),
+        }],
+      },
+    ]);
+
+    await fixture.controlPlane.ensureDekGeneration({
+      scope: {
+        tenantId: TENANT,
+        matterId: brand<MatterId>("matter-a"),
+        purpose: "reversal-v1",
+      },
+      mint: async () => ({
+        dekGenerationId: brand<DekGenerationId>(generationId),
+        wrappedDek: brand<WrappedDekMaterial>(Uint8Array.of(1, 2, 3)),
+      }),
+    });
+
+    expect(fixture.statements[1]).toContain("EXTRACT(EPOCH FROM clock_timestamp()) * 1000");
+    expect(fixture.boundParameters[1]).toHaveLength(6);
+  });
+
+  it("uses the database clock instead of binding producer time into prepared lifecycle age", async () => {
+    const fixture = scriptedControlPlane([{ rowCount: 1, rows: [] }]);
+
+    await fixture.controlPlane.insertPreparedUploading({
+      preparedBlobId: handle,
+      tenantId: TENANT,
+      mappingKey: brand<ReversalMappingKey>("mapping-a"),
+      idempotencyKey: brand<ReversalIdempotencyKey>("idempotency-a"),
+      immutableScopeDigest: brand<ReversalScopeDigest>("scope-a"),
+      stagingPath: `staging/${handle as unknown as string}`,
+      blobPath: `blobs/${handle as unknown as string}`,
+      createdAtEpochMs: T0 - 100 * 60 * 60 * 1_000,
+    });
+
+    expect(fixture.statements).toHaveLength(1);
+    expect(fixture.statements[0]).toContain("EXTRACT(EPOCH FROM clock_timestamp()) * 1000");
+    expect(fixture.statements[0]).not.toContain("$8");
+    expect(fixture.boundParameters[0]).toHaveLength(7);
+  });
 
   it("accepts markQuarantined after another worker already reached quarantined", async () => {
     const fixture = scriptedControlPlane([
@@ -287,6 +341,12 @@ describe.skipIf(!LIVE)("PostgresControlPlane live conformance", () => {
       blobPath: `blobs/${handle as unknown as string}`,
       createdAtEpochMs: options.createdAtMs ?? T0,
     });
+    if (options.createdAtMs !== undefined) {
+      await pool.query(
+        `UPDATE reversal_prepared SET created_at_ms = $2 WHERE prepared_blob_id = $1`,
+        [handle, options.createdAtMs],
+      );
+    }
     await controlPlane.markFinalized({ preparedBlobId: handle, blobEtag, blobLength });
     return { prepared: { handle }, mappingKey, idempotencyKey, blobEtag, blobLength };
   }
@@ -514,6 +574,10 @@ describe.skipIf(!LIVE)("PostgresControlPlane live conformance", () => {
       blobPath: `blobs/${handle as unknown as string}`,
       createdAtEpochMs: T0,
     });
+    await pool.query(
+      `UPDATE reversal_prepared SET created_at_ms = $2 WHERE prepared_blob_id = $1`,
+      [handle, T0],
+    );
     const marked = await controlPlane.reclaimStaleUploads({ uploadHorizonEpochMs: T0 + 1, limit: 10 });
     expect(marked.map((row) => row.preparedBlobId)).toEqual([handle]);
 
@@ -524,6 +588,46 @@ describe.skipIf(!LIVE)("PostgresControlPlane live conformance", () => {
     expect(recovered.map((row) => row.preparedBlobId)).toEqual([handle]);
     await controlPlane.completeStaleUploadReclaim(handle);
     expect((await pool.query(`SELECT 1 FROM reversal_prepared WHERE prepared_blob_id = $1`, [handle])).rowCount).toBe(0);
+  });
+
+  it("keeps a new uploading row fresh despite a client timestamp skewed 100 hours behind", async () => {
+    const handle = brand<PreparedWriteHandle>(randomUUID());
+    const oneHundredHours = 100 * 60 * 60 * 1_000;
+    const uploadHorizon = 48 * 60 * 60 * 1_000;
+    const before = await pool.query<{ readonly db_now_ms: string }>(
+      `SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint::text AS db_now_ms`,
+    );
+    const dbBeforeMs = Number(before.rows[0]?.db_now_ms);
+
+    await controlPlane.insertPreparedUploading({
+      preparedBlobId: handle,
+      tenantId: TENANT,
+      mappingKey: brand<ReversalMappingKey>(`tenant-a${SEP}matter-a${SEP}1${SEP}[[Skewed]]`),
+      idempotencyKey: brand<ReversalIdempotencyKey>("tenant-a\0skewed-attempt\0[[Skewed]]"),
+      immutableScopeDigest: brand<ReversalScopeDigest>("skewed-scope"),
+      stagingPath: `staging/${handle as unknown as string}`,
+      blobPath: `blobs/${handle as unknown as string}`,
+      createdAtEpochMs: dbBeforeMs - oneHundredHours,
+    });
+
+    const marked = await controlPlane.markStaleUploads({
+      uploadHorizonEpochMs: dbBeforeMs - uploadHorizon,
+      limit: 10,
+    });
+    const stored = await pool.query<{ readonly created_at_ms: string; readonly db_now_ms: string }>(
+      `SELECT created_at_ms::text AS created_at_ms,
+              (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint::text AS db_now_ms
+       FROM reversal_prepared
+       WHERE prepared_blob_id = $1`,
+      [handle],
+    );
+    const createdAtMs = Number(stored.rows[0]?.created_at_ms);
+    const dbAfterMs = Number(stored.rows[0]?.db_now_ms);
+
+    expect(marked).toEqual([]);
+    expect(createdAtMs).toBeGreaterThanOrEqual(dbBeforeMs);
+    expect(createdAtMs).toBeLessThanOrEqual(dbAfterMs);
+    expect(dbAfterMs - createdAtMs).toBeLessThan(10_000);
   });
 
   it("stores NUMERIC(20,0) matter expiry exactly and compares without BIGINT overflow", async () => {
