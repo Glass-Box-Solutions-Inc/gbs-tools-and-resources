@@ -14,12 +14,16 @@ from __future__ import annotations
 import email
 import json
 import zipfile
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from wc_caseload_engine.manifests import MANIFEST_NAME, generate_caseload
+from wc_caseload_engine.rating import RatingFacts, RatingImpairment
+from wc_caseload_engine.rating_sources import RatingScheduleBinding
 from wc_caseload_engine.seeds import load_caseload_spec, resolve_caseload
 from wc_caseload_engine.substrate import find_substrate
 from wc_caseload_engine.taxonomy import find_classifier
@@ -64,6 +68,41 @@ def minimal_case() -> dict[str, Any]:
 def minimal_caseload(minimal_case: dict[str, Any]) -> dict[str, Any]:
     """Smallest valid CaseloadSpec mapping."""
     return {"caseload_id": "probe-load", "cases": [minimal_case]}
+
+
+@pytest.fixture
+def literal_rating_facts() -> RatingFacts:
+    """One literal R44 result for pre-derivation CaseFacts neighbor probes."""
+    impairment = RatingImpairment(
+        id="cervical",
+        body_part="cervical_spine",
+        impairment_number="15.01.02.02",
+        wpi=10,
+        description="Cervical soft tissue lesion",
+        adjustment_method="dfec_1_4",
+        fec_rank=None,
+        adjustment_factor=Decimal("1.4"),
+        schedule_adjusted=14,
+        variant="H",
+        occupation_adjusted=17,
+        age_band="37-41",
+        age_adjusted=19,
+        rating_string="15.01.02.02 - 10 - 1.4 - 14H - 17 - 19%",
+    )
+    return RatingFacts(
+        schedule=RatingScheduleBinding(),
+        date_of_injury=date(2013, 1, 1),
+        applicant_age=40,
+        occupation_group="470",
+        occupation_title="Warehouse worker",
+        impairments=(impairment,),
+        combination_method="single",
+        kite_impairment_ids=None,
+        scheduled_combined_rating=19,
+        combined_rating=19,
+        final_pd_percent=19,
+        rating_string="15.01.02.02 - 10 - 1.4 - 14H - 17 - 19%",
+    )
 
 
 @pytest.fixture(scope="session")

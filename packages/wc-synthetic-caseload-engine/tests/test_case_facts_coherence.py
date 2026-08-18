@@ -38,6 +38,7 @@ from wc_caseload_engine.manifests import (
     validate_output_tree,
 )
 from wc_caseload_engine.planner import build_case_plan
+from wc_caseload_engine.rating import RatingFacts
 from wc_caseload_engine.seeds import MODALITIES as SEED_MODALITIES
 from wc_caseload_engine.seeds import parse_case_seed
 
@@ -699,17 +700,24 @@ class TestOnlyGovernedFactsArePublished:
         for provider in block["providers"]:
             assert set(provider) == set(GOVERNED_LEDGER_FIELDS["providers"])
 
-    def test_ungoverned_facts_survive_on_the_model(self) -> None:
+    def test_ungoverned_facts_survive_on_the_model(
+        self, literal_rating_facts: RatingFacts
+    ) -> None:
         """Unpublished is not underived — Phase 2 needs these."""
         seed = _seed("internal", {"surgery": "performed"})
         facts = build_case_plan(seed).case_facts
         assert facts is not None
         assert facts.mmi_date is not None
         assert facts.visits, "visit series was dropped rather than unpublished"
-        rating = getattr(seed.scenario, "rating", None)
-        assert (rating is None) == (facts.wpi is None) == (facts.pd is None)
-        # TODO(AJC-44 R111): add one rating-present neighboring row when
-        # scenario.rating exists; the current schema has no such input.
+        assert seed.scenario.rating is None
+        assert facts.rating is None
+        assert facts.wpi is None
+        assert facts.pd is None
+
+        rated = CaseFacts(rating=literal_rating_facts)
+        assert rated.rating is literal_rating_facts
+        assert rated.wpi == literal_rating_facts.impairments[0].wpi == 10
+        assert rated.pd == literal_rating_facts.final_pd_percent == 19
 
     #: Ledger fields that must never be published. Every one is a *field name*,
     #: which is why the check below walks keys.

@@ -44,6 +44,7 @@ from wc_caseload_engine.case_facts import (
     CaseFacts,
     facts_manifest_block,
 )
+from wc_caseload_engine.defense_lens import reserve_event_for_document
 from wc_caseload_engine.money import (
     GOVERNED_MONEY_FIELDS,
     MoneyFacts,
@@ -317,6 +318,19 @@ def generate_case(
             if story_plan is not None
             else None
         )
+        reserve_event = None
+        defense = (
+            None if plan.money_facts is None else plan.money_facts.defense
+        )
+        if defense is not None and document.subtype in {
+            "RESERVE_WORKSHEET",
+            "RESERVE_CHANGE_NOTICE",
+        }:
+            reserve_event = reserve_event_for_document(
+                defense,
+                document_index=document.index,
+                subtype=document.subtype,
+            )
         result = render_document(
             seed=seed,
             cast=plan.cast,
@@ -331,6 +345,7 @@ def generate_case(
             content_flags=document.content_flags,
             case_facts=plan.case_facts,
             money_facts=plan.money_facts,
+            reserve_event=reserve_event,
             packet_index=packet_counter,
             report_ordinal=report_counter,
             letter_ordinal=letter_counter,

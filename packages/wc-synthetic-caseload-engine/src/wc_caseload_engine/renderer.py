@@ -86,6 +86,7 @@ from wc_caseload_engine.doctrine import (
     register_for_subtype,
 )
 from wc_caseload_engine.perspective import file_owner_firm
+from wc_caseload_engine.rating import RATING_GROUNDED_DOCTRINE_HOOKS
 from wc_caseload_engine.seeds import CaseSeed, derive_seed
 from wc_caseload_engine.substrate import import_substrate
 
@@ -632,6 +633,24 @@ def doctrine_flowables(
             )
         body.append(Paragraph(rng.choice(pool), styles["BodyText14"]))
         body.append(Paragraph(content.citation, styles["SmallItalic"]))
+        facts = getattr(template, "_wc_case_facts", None)
+        rating = getattr(facts, "rating", None)
+        if hook in RATING_GROUNDED_DOCTRINE_HOOKS and rating is not None:
+            body.append(
+                Paragraph(
+                    "Selected unapportioned permanent disability rating: "
+                    f"{rating.final_pd_percent}%.",
+                    styles["BodyText14"],
+                )
+            )
+            if hook == "kite" and rating.combination_method == "kite_addition":
+                body.append(
+                    Paragraph(
+                        "Explicit Kite addition selected; scheduled CVC comparator: "
+                        f"{rating.scheduled_combined_rating}%.",
+                        styles["BodyText14"],
+                    )
+                )
         body.append(Spacer(1, 8))
 
     if not body:
@@ -690,6 +709,7 @@ def render_document(
     content_flags: Sequence[str] = (),
     case_facts: Any = None,
     money_facts: Any = None,
+    reserve_event: Any = None,
     packet_index: int | None = None,
     report_ordinal: int | None = None,
     letter_ordinal: int | None = None,
@@ -725,6 +745,8 @@ def render_document(
             templates all delegate straight to the substrate on ``None``, so a
             case with no money layer renders through the unmodified path even
             for the subtypes the money registry claims.
+        reserve_event: the exact bound InitialFileReview or ReserveEvent for a
+            reserve artifact. It is never selected or reconstructed here.
         template_subtype: AJC-62's internal substrate dispatch key (R2), or
             ``None`` for every pre-M3 document. Resolves the substrate class
             and registry variant while ``subtype`` stays the canonical
@@ -751,7 +773,7 @@ def render_document(
 
     template_class, variant, class_name = _load_template(
         subtype,
-        fact_aware=case_facts is not None,
+        fact_aware=case_facts is not None or reserve_event is not None,
         template_subtype=template_subtype,
     )
     output_format = models.OutputFormat(doc_format if doc_format != "scanned_pdf" else "pdf")
@@ -821,6 +843,8 @@ def render_document(
         # doc_date and picks the most recent anchor preceding it, so the
         # reference cannot name a document dated after the letter citing it.
         context["cadence_anchors"] = cadence_anchors
+    if reserve_event is not None:
+        context["reserve_event"] = reserve_event
     context["perspective"] = seed.perspective
     # Whether this file carries a Medicare set-aside. ``lifecycle.resolution.msa``
     # already governs it, and the release needs it to decide whether to print an
@@ -905,6 +929,8 @@ def render_document(
         template._wc_case_facts = case_facts
     if money_facts is not None:
         template._wc_money_facts = money_facts
+    if reserve_event is not None:
+        template._wc_reserve_event = reserve_event
     try:
         template.generate(out_path, spec)
     except Exception as exc:
@@ -936,6 +962,8 @@ def render_document(
             retry._wc_case_facts = case_facts
         if money_facts is not None:
             retry._wc_money_facts = money_facts
+        if reserve_event is not None:
+            retry._wc_reserve_event = reserve_event
         retry.generate(out_path, spec)
 
     payload = out_path.read_bytes()

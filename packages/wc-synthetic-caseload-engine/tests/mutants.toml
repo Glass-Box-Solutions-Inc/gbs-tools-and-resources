@@ -3961,21 +3961,11 @@ title = 'ABSENT-RATING-PLACEHOLDER-STREAM'
 file = 'src/wc_caseload_engine/case_facts.py'
 test = 'tests/test_money_w2_baseline.py::test_rating_absence_registry_retirement_and_unrelated_stream_bytes'
 find = '''    mmi = getattr(timeline, "resolution_date", None)
-    onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
-    if mmi is None:
-        mmi = onset + timedelta(days=300)
-    # TODO(AJC-44 R111): populate these only from the future scenario.rating
-    # input.  A QME/AME evaluation is not itself an impairment rating.
-    wpi = None
-    pd = None'''
-replace = '''    rng = _rng(seed, "rating")
+    onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date'''
+replace = '''    _rng(seed, "rating")
     mmi = getattr(timeline, "resolution_date", None)
-    onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
-    if mmi is None:
-        mmi = onset + timedelta(days=300)
-    wpi = rng.randint(3, 24) if seed.lifecycle.eval_type != "none" else None
-    pd = min(100, int(wpi * 1.4)) if wpi is not None else None'''
-note = 'AJC-44/AJC-45 W2 work item 1. Restoring the placeholder and retired facts:rating salt violates both independent halves of the guard.'
+    onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date'''
+note = 'AJC-44/AJC-45 W2 work item 1, repointed after R45 removed the scalar fields. Restoring the retired facts:rating salt violates the literal stream registry while the rating-null projections remain independently asserted.'
 
 [[mutant]]
 id = 'm23-25'
@@ -4005,3 +3995,684 @@ replace = '''def build_case_truth_manifest(
     truth_manifest_version: int = 2,
 ) -> dict[str, Any]:'''
 note = 'AJC-44/AJC-45 W2 work item 1. The assertion-bearing response-chain witness pins the default writer to assertions 1.0.0.'
+
+[[mutant]]
+id = 'm23-16'
+title = 'W1-FRACTION-0_6667'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_w2_item13.py::test_r109_fraction_literal_and_independent_2428_72_oracle'
+find = '    return value * Decimal(fraction.numerator) / Decimal(fraction.denominator)'
+replace = '    return value * Decimal("0.6667")'
+note = 'R109. Restoring the inherited decimal approximation must fail the unbounded 2428.72 exact-fraction oracle.'
+
+[[mutant]]
+id = 'm23-29'
+title = 'W1-RATE-FOUR-ERA'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_money_spine.py::TestNoStatutoryNumberIsPresentedAsVerified::test_r109_artifact_has_all_17_eras_and_literal_td_anchors'
+find = 'UNCONFIRMED_RATE_TABLE: tuple[RateBasis, ...] = tuple(era.basis for era in RATE_TABLE_ERAS)'
+replace = '''UNCONFIRMED_RATE_TABLE: tuple[RateBasis, ...] = (
+    RateBasis(label="doi-pre-2014", effective_from=dt.date.min, effective_to=dt.date(2013, 12, 31), td_fraction=WEEKLY_BENEFIT_FRACTION, td_max_weekly=money(1066.72), td_min_weekly=money(160.00), pd_fraction=WEEKLY_BENEFIT_FRACTION, pd_max_weekly=money(270.00), pd_min_weekly=money(160.00), authority="Temporary and permanent disability indemnity rates for dates of injury before 2014. COUNSEL-UNCONFIRMED placeholder — the figures, the fraction and the bracket boundaries are all unverified."),
+    RateBasis(label="doi-2014-2018", effective_from=dt.date(2014, 1, 1), effective_to=dt.date(2018, 12, 31), td_fraction=WEEKLY_BENEFIT_FRACTION, td_max_weekly=money(1215.27), td_min_weekly=money(182.29), pd_fraction=WEEKLY_BENEFIT_FRACTION, pd_max_weekly=money(290.00), pd_min_weekly=money(160.00), authority="Temporary and permanent disability indemnity rates for dates of injury 2014-2018. COUNSEL-UNCONFIRMED placeholder."),
+    RateBasis(label="doi-2019-2022", effective_from=dt.date(2019, 1, 1), effective_to=dt.date(2022, 12, 31), td_fraction=WEEKLY_BENEFIT_FRACTION, td_max_weekly=money(1539.71), td_min_weekly=money(230.95), pd_fraction=WEEKLY_BENEFIT_FRACTION, pd_max_weekly=money(290.00), pd_min_weekly=money(160.00), authority="Temporary and permanent disability indemnity rates for dates of injury 2019-2022. COUNSEL-UNCONFIRMED placeholder."),
+    RateBasis(label="doi-2023-onward", effective_from=dt.date(2023, 1, 1), effective_to=None, td_fraction=WEEKLY_BENEFIT_FRACTION, td_max_weekly=money(1619.15), td_min_weekly=money(242.86), pd_fraction=WEEKLY_BENEFIT_FRACTION, pd_max_weekly=money(290.00), pd_min_weekly=money(160.00), authority="Temporary and permanent disability indemnity rates for dates of injury 2023 onward. COUNSEL-UNCONFIRMED placeholder."),
+)'''
+note = 'R109. Restoring the literal inherited four-era placeholder table must fail the 17-era artifact/count/anchor oracle.'
+
+[[mutant]]
+id = 'm23-1'
+title = 'PDRS-PDF-SHA-BYPASS'
+file = 'src/wc_caseload_engine/rating_sources.py'
+test = 'tests/test_rating_sources.py::test_production_loader_rejects_pdf_provenance_sha_mismatch'
+find = '''    if meta.get("sha256") != PDRS_2005_PDF_SHA256:
+        _mismatch()'''
+replace = '''    if False:
+        _mismatch()'''
+note = 'R27/R44. The official PDF provenance digest inside the metadata is part of the fail-closed source boundary.'
+
+[[mutant]]
+id = 'm23-2'
+title = 'PDRS-TABLE-DIGEST-BYPASS'
+file = 'src/wc_caseload_engine/rating_sources.py'
+test = 'tests/test_rating_sources.py::test_production_loader_rejects_tables_digest_mismatch'
+find = '''    if _sha256(tables_bytes) != PDRS_2005_TABLES_SHA256:
+        _mismatch()'''
+replace = '''    if False:
+        _mismatch()'''
+note = 'R27. Parsed-looking table bytes are not accepted unless their digest is the pinned official artifact digest.'
+
+[[mutant]]
+id = 'm23-3'
+title = 'SECTION4-DROP-ROW'
+file = 'src/wc_caseload_engine/data/pdrs_2005_section4_matrix.json'
+test = 'tests/test_rating_sources.py::test_r83_section4_rows_cells_values_and_dual_parse_literal_oracle'
+find = ''',
+ "17.09.07.00": {
+  "110": "D",
+  "111": "D",
+  "112": "C",
+  "120": "C",
+  "210": "E",
+  "211": "E",
+  "212": "E",
+  "213": "F",
+  "214": "F",
+  "220": "E",
+  "221": "E",
+  "230": "E",
+  "240": "E",
+  "250": "F",
+  "251": "E",
+  "290": "E",
+  "310": "F",
+  "311": "F",
+  "320": "F",
+  "321": "F",
+  "322": "F",
+  "330": "F",
+  "331": "F",
+  "332": "F",
+  "340": "G",
+  "341": "G",
+  "350": "G",
+  "351": "G",
+  "360": "G",
+  "370": "G",
+  "380": "I",
+  "390": "H",
+  "420": "G",
+  "430": "H",
+  "460": "H",
+  "470": "H",
+  "480": "H",
+  "481": "I",
+  "482": "J",
+  "490": "I",
+  "491": "H",
+  "492": "I",
+  "493": "H",
+  "560": "I",
+  "590": "J"
+ }'''
+replace = ''
+note = 'R28/R83. The direct artifact oracle fixes 113 rows and 5,085 cells before production loader iteration.'
+
+[[mutant]]
+id = 'm23-4'
+title = 'SECTION4-DROP-GROUP'
+file = 'src/wc_caseload_engine/data/pdrs_2005_tables.json'
+test = 'tests/test_rating_sources.py::test_r83_exact_45_group_tuple_and_every_row_keyset'
+find = '''"493", "560", "590"]}'''
+replace = '''"493", "560"]}'''
+note = 'R28/R83. The test-side literal tuple fixes all 45 occupational group codes before iterating matrix rows.'
+
+[[mutant]]
+id = 'm23-5'
+title = 'SECTION4-CROSSREF-FALLBACK'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating.py::test_section4_cross_reference_never_falls_back'
+find = '''    if impairment_number == _SECTION4_CROSS_REFERENCE:
+        _fail(
+            RATING_VARIANT_CROSS_REFERENCE_REQUIRED,
+            "scenario.rating.impairments[].impairment_number",
+            impairment_number,
+            "the official Section 4 row cross-references 11.03.04.00, "
+            "15.01.XX.XX, or 16.02.01.00; an authored choice is required and "
+            "no fallback is permitted",
+        )'''
+replace = '''    if impairment_number == _SECTION4_CROSS_REFERENCE:
+        return "13.07.07.00"'''
+note = 'R35/R85. The cross-reference-only impairment must fail instead of borrowing the first nearby Section 4 row.'
+
+[[mutant]]
+id = 'm23-51'
+title = 'CVC-EXTREMITY-AMBIGUITY-ACCEPT'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating.py::test_cvc_requires_distinguishable_extremity_identity'
+find = '''            if len(same_class) > 1:'''
+replace = '''            if False:'''
+note = 'R9/R85. Two rows from one extremity class cannot pass without identity, while the literal 16.*/17.* neighbor remains accepted.'
+
+[[mutant]]
+id = 'm23-6'
+title = 'RATING-RANDOM-FINAL'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating.py::test_r38_final_pd_is_literal_not_derived_noise'
+find = '''        final_pd_percent=combined,'''
+replace = '''        final_pd_percent=combined + len(derived),'''
+note = 'R37/R38/R43. Replacing the table-derived final PD with deterministic derived noise must fail the literal eleven-percent oracle.'
+
+[[mutant]]
+id = 'm23-7'
+title = 'POST2013-USES-FEC-RANK'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating.py::test_post2013_derivation_never_reads_fec_rank_or_table'
+find = '''        else:
+            fec_rank = None
+            adjustment_factor = Decimal("1.4")'''
+replace = '''        else:
+            _ = registered[0]
+            fec_rank = None
+            adjustment_factor = Decimal("1.4")'''
+note = 'R33. The 2013+ branch must remain blind to parsed.imp rank and parsed.fec; the register spy raises an AssertionError on the forbidden read.'
+
+[[mutant]]
+id = 'm23-8'
+title = 'RATING-OCC-SKIP'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating.py::test_r38_occupation_adjustment_is_not_skipped'
+find = '''        occupation_adjusted = occupation_adjusted_rating(
+            schedule_adjusted, variant, source
+        )'''
+replace = '''        occupation_adjusted = schedule_adjusted'''
+note = 'R36-R38. Passing schedule-adjusted ten through instead of the exact H occupation cell must fail the literal thirteen oracle. Repointed when Part B extracted the coordinate lookup for R86.'
+
+[[mutant]]
+id = 'm23-9'
+title = 'RATING-AGE-SKIP'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating.py::test_r38_age_adjustment_is_not_skipped'
+find = '''        age_adjusted = age_adjusted_rating(
+            occupation_adjusted, age_band, source
+        )'''
+replace = '''        age_adjusted = occupation_adjusted'''
+note = 'R36-R38. Passing occupation-adjusted thirteen through instead of the exact 27-31 age cell must fail the literal eleven oracle. Repointed when Part B extracted the coordinate lookup for R86.'
+
+[[mutant]]
+id = 'm23-10'
+title = 'RATING-STRING-TOKEN-SWAP'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating.py::test_r39_rating_string_token_order_is_exact_ascii'
+find = '''            f"{rating.occupation_group}{variant} - {occupation_adjusted} - "
+            f"{age_adjusted}%"'''
+replace = '''            f"{rating.occupation_group}{variant} - {age_adjusted} - "
+            f"{occupation_adjusted}%"'''
+note = 'R39. Swapping the occupational and age-adjusted tokens must fail the exact canonical ASCII string oracle.'
+
+[[mutant]]
+id = 'm23-11'
+title = 'KITE-AUTO-SELECT'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating.py::test_r42_kite_hook_and_existing_corpora_never_auto_select_addition'
+find = '''        if explicit_kite:'''
+replace = '''        if len(derived) == 2:'''
+note = 'R42/R105. Two rows, including a real planner seed carrying the kite doctrine hook, must remain scheduled CVC unless raw scenario.rating explicitly contains a non-null kite_addition.'
+
+[[mutant]]
+id = 'm23-30'
+title = 'KITE-NO-100-CAP'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating.py::test_r42_kite_addition_is_capped_at_100_after_retaining_scheduled_cvc'
+find = '''            combined = min(100, sum(row.age_adjusted for row in derived))'''
+replace = '''            combined = sum(row.age_adjusted for row in derived)'''
+note = 'R42/R105. The explicit 60 plus 55 pair must cap at 100 while preserving its scheduled CVC baseline of 82.'
+
+[[mutant]]
+id = 'm23-38'
+title = 'KITE-WRONG-PAIR-ACCEPT'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating.py::test_kite_pair_is_exactly_the_complete_authored_two_row_set'
+find = '''            if len(self.impairments) != 2 or set(selected) != set(ids):'''
+replace = '''            if len(self.impairments) != 2:'''
+note = 'R26/R42/R105. An explicit pair must name exactly the complete two-member authored impairment-ID set; an unknown or unselected ID fails RATING_KITE_PAIR_INVALID.'
+
+[[mutant]]
+id = 'm23-31'
+title = 'POST2013-SKIPS-DFEC-1_4'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating_coherence.py::test_r86_dfec_mirror_then_policy_then_production_then_mirror'
+find = '''    rounded = int(
+        (Decimal(wpi) * Decimal("1.4")).to_integral_value(rounding=ROUND_HALF_UP)
+    )
+    return min(100, rounded)'''
+replace = '''    return wpi'''
+note = 'R33/R86. Passing authored WPI through must fail the independently fixed 100-value post-2013 policy sweep before mirror comparison.'
+
+[[mutant]]
+id = 'm23-33'
+title = 'PDCALC-OCC-FIRST-DIGIT'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating_coherence.py::test_r86_full_group_section4_lookup_never_uses_first_digit'
+find = '''    variant = None if row is None else row.get(occupation_group)'''
+replace = '''    variant = (
+        None
+        if row is None
+        else next(
+            (
+                value
+                for group, value in row.items()
+                if group.startswith(occupation_group[0])
+            ),
+            None,
+        )
+    )'''
+note = 'R34/R86. A first-digit 4xx lookup collapses group 470 H and neighboring 480 I onto one reconstructed value, reddening the literal full-group oracle.'
+
+[[mutant]]
+id = 'm23-34'
+title = 'CVC-AUTHORED-ORDER'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating_coherence.py::test_r86_cvc_sorts_descending_instead_of_authored_order'
+find = '''    ordered = tuple(
+        value
+        for _index, value in sorted(
+            enumerate(values), key=lambda item: (-item[1], item[0])
+        )
+    )'''
+replace = '''    ordered = tuple(values)'''
+note = 'R40/R41/R86. Combining the authored 13,50,32 order yields 71; stable descending 50,32,13 yields the literal chart-backed 70.'
+
+[[mutant]]
+id = 'm23-35'
+title = 'CVC-ROUND-END-ONLY'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating_coherence.py::test_r86_cvc_chart_and_section7_chain_round_each_step'
+find = '''    result = ordered[0]
+    for next_rating in ordered[1:]:
+        combined = Decimal(result) + Decimal(next_rating) * (
+            Decimal(1) - Decimal(result) / Decimal(100)
+        )
+        result = int(combined.to_integral_value(rounding=ROUND_HALF_UP))
+    return result'''
+replace = '''    result = Decimal(ordered[0])
+    for next_rating in ordered[1:]:
+        result = result + Decimal(next_rating) * (
+            Decimal(1) - result / Decimal(100)
+        )
+    return int(result.to_integral_value(rounding=ROUND_HALF_UP))'''
+note = 'R41/R86. Deferring rounding preserves pair cells but moves the official 50,32,13,4 chain from 71 to 72; the guard establishes all 3,697 chart cells first.'
+
+[[mutant]]
+id = 'm23-44'
+title = 'CVC-HALF-UP-DOWN'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating_coherence.py::test_r86_cvc_chart_half_ties_round_up'
+find = '''        result = int(combined.to_integral_value(rounding=ROUND_HALF_UP))'''
+replace = '''        result = int(combined.to_integral_value(rounding="ROUND_HALF_DOWN"))'''
+note = 'R41/R86. Half-down turns the extracted-chart tie 50 C 1 from literal 51 into 50 after the independent 3,697-cell chart oracle is established.'
+
+[[mutant]]
+id = 'm23-52'
+title = 'POST2013-DFEC-ROUND-DOWN'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating_coherence.py::test_r86_dfec_round_half_up_sweeps_all_100_values'
+find = '''        (Decimal(wpi) * Decimal("1.4")).to_integral_value(rounding=ROUND_HALF_UP)'''
+replace = '''        (Decimal(wpi) * Decimal("1.4")).to_integral_value(rounding="ROUND_DOWN")'''
+note = 'R33/R86. ROUND_DOWN diverges throughout the independently evaluated 100-value policy, including the literal 8 to 11 anchor.'
+
+[[mutant]]
+id = 'm23-53'
+title = 'POST2013-DFEC-NO-100-CAP'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_rating_coherence.py::test_r86_dfec_cap_sweeps_all_100_values'
+find = '''    return min(100, rounded)'''
+replace = '''    return rounded'''
+note = 'R33/R86. Removing the cap diverges from the fixed policy at every authored WPI from the first saturation key 72 onward.'
+
+[[mutant]]
+id = 'm23-12'
+title = 'RATING-CARRIER-RANDOM'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_rating.py::test_r48_rating_carrier_matrix_is_literal_and_deterministic'
+find = '''    return [*base, *required]'''
+replace = '''    return list(candidates)'''
+note = 'R47/R48. Restoring the lifecycle/substrate draw makes the rating carrier set seed-random instead of the literal deterministic matrix.'
+
+[[mutant]]
+id = 'm23-28'
+title = 'W2-PD-DOLLAR-JOIN'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_rating_coherence.py::test_r89_rating_path_never_joins_pd_percent_to_dollars_or_offsets'
+find = '''                        "Selected unapportioned permanent disability: "
+                        f"{rating.final_pd_percent}%",'''
+replace = '''                        "Selected unapportioned permanent disability: "
+                        f"{rating.final_pd_percent}%; Apportioned PD dollars: "
+                        f"${rating.final_pd_percent * 1000}",'''
+note = 'R49/R52/R89. Joining the selected PD percent to an invented apportioned-dollar value reddens the rating-path M5 exclusion scanner.'
+
+[[mutant]]
+id = 'm23-14'
+title = 'MONEY-1_9-ACCEPT'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_money_reader_rejects_invented_1_9_0'
+find = '''    if version not in SUPPORTED_MONEY_CHANNEL_VERSIONS:
+        raise TruthManifestError('''
+replace = '''    if version == "1.9.0":
+        return MONEY_CHANNEL_V1_1_VERSION
+    if version not in SUPPORTED_MONEY_CHANNEL_VERSIONS:
+        raise TruthManifestError('''
+note = 'R17/R19/R97. Restoring same-major acceptance maps invented 1.9.0 onto the 1.1 parser and reddens the exact-version rejection oracle.'
+
+[[mutant]]
+id = 'm23-15'
+title = 'MONEY-RATING-UNDER-V1_1'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_money_reader_rejects_rating_under_v1_1'
+find = '''MONEY_V1_1_CASE_CHANNEL_KEYS: Final = (
+    "channelVersion",
+    "wage",
+    "benefits",
+    "published",
+    "settlement",
+    "penalties",
+)'''
+replace = '''MONEY_V1_1_CASE_CHANNEL_KEYS: Final = (
+    "channelVersion",
+    "wage",
+    "benefits",
+    "published",
+    "rating",
+    "settlement",
+    "penalties",
+)'''
+note = 'R18/R19/R97. Allowing a v1.2 rating group under v1.1 makes the historical reader silently discard it.'
+
+[[mutant]]
+id = 'm23-27'
+title = 'DUPLICATE-RATING-PROJECTION'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_r46_writer_passes_the_single_rating_reference_to_money_channel'
+find = '''        channels["money"] = _money_channel(plan.money_facts, rating=rating)'''
+replace = '''        channels["money"] = _money_channel(
+            plan.money_facts,
+            rating=rating.model_copy(deep=True) if rating is not None else None,
+        )'''
+note = 'R46/R87. Reconstructing a second RatingFacts object breaks the identity-pinned writer seam even when its values happen to compare equal.'
+
+[[mutant]]
+id = 'm23-45'
+title = 'MONEY-MIXED-CASELOAD-STAYS-1_1'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_mixed_money_caseload_selects_1_2_but_keeps_narrow_member_rows'
+find = '''            "channelVersion": (
+                MONEY_CHANNEL_V1_2_VERSION
+                if any(
+                    (
+                        result.plan.case_facts is not None
+                        and result.plan.case_facts.rating is not None
+                    )
+                    or getattr(result.plan.money_facts, "defense", None) is not None
+                    for result in results
+                )
+                else MONEY_CHANNEL_VERSION
+            ),'''
+replace = '''            "channelVersion": MONEY_CHANNEL_VERSION,'''
+note = 'R17/R18/R97. Holding the aggregate at 1.1 hides that one member requires the 1.2 rating schema while leaving per-case dispatch unchanged.'
+
+[[mutant]]
+id = 'm23-17'
+title = 'RESERVE-BUCKET-COLLAPSE'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_bucket_arithmetic_preserves_literal_components'
+find = '''        return BucketAmounts(
+            indemnity=_money_sum(self.indemnity, other.indemnity),
+            medical=_money_sum(self.medical, other.medical),
+            expense_alae=_money_sum(self.expense_alae, other.expense_alae),
+        )'''
+replace = '''        return BucketAmounts(
+            indemnity=_money_sum(self.total, other.total),
+            medical=_ZERO,
+            expense_alae=_ZERO,
+        )'''
+note = 'R57/R90. Collapsing both operands into indemnity preserves the grand total but destroys the three literal per-bucket sums.'
+
+[[mutant]]
+id = 'm23-18'
+title = 'INCURRED-OMIT-PAID'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_recommended_snapshot_incurred_includes_paid'
+find = '''        incurred=paid + outstanding,'''
+replace = '''        incurred=outstanding,'''
+note = 'R64/R65/R90. Treating outstanding as incurred omits the manually pinned paid amounts in every bucket and total.'
+
+[[mutant]]
+id = 'm23-32'
+title = 'EXPOSURE-BELOW-PAID-CLAMP'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_exposure_one_cent_below_paid_fails_before_flooring'
+find = '''        if ultimate_amount < paid_amount:'''
+replace = '''        if False:'''
+note = 'R59/R90. Removing the fail-closed comparison lets subtract_floored launder a one-cent-below ultimate into a plausible zero reserve.'
+
+[[mutant]]
+id = 'm23-48'
+title = 'DEFENSE-RANDOM-EXPOSURE'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_projection_retains_authored_exposure_without_rng'
+find = '''        expected=authored.expected,'''
+replace = '''        expected=BucketAmounts(
+            indemnity=(
+                authored.expected.indemnity
+                + Decimal(__import__("random").Random(0).randint(1, 9))
+            ),
+            medical=authored.expected.medical,
+            expense_alae=authored.expected.expense_alae,
+        ),'''
+note = 'R59/R71/R105. A seeded RNG still changes an authored exposure literal; the projection oracle pins every input amount exactly.'
+
+[[mutant]]
+id = 'm23-50'
+title = 'DEFENSE-DECIMAL-FLOAT'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_defense_amounts_use_decimal_str_and_half_up'
+find = '''            amount = Decimal(str(value))'''
+replace = '''            amount = Decimal(float(value))'''
+note = 'R59/R105. Binary float conversion changes the literal 2.675 HALF_UP result from 2.68 to 2.67.'
+
+[[mutant]]
+id = 'm23-19'
+title = 'DILIGENCE-CHANGES-EXPOSURE'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_booking_policy_is_pure_over_fixed_exposure_and_paid_inputs'
+find = '''                exposure=exposure,
+                prior_snapshot=prior_snapshot,'''
+replace = '''                exposure=(
+                    exposure.model_copy(
+                        update={"expected": BucketAmounts(
+                            indemnity=exposure.expected.indemnity + Decimal("1.00"),
+                            medical=exposure.expected.medical,
+                            expense_alae=exposure.expected.expense_alae,
+                        )}
+                    )
+                    if diligence == "negligent"
+                    else exposure
+                ),
+                prior_snapshot=prior_snapshot,'''
+note = 'R66/R105. Diligence is a booking policy only; changing a precomputed authored exposure breaks the direct three-policy isolation oracle.'
+
+[[mutant]]
+id = 'm23-20'
+title = 'NEGLIGENT-FULL-ADOPT'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_negligent_policy_under_reserves_and_detects_stair_stepping'
+find = '''            booked = _bucket_map(negligent_component, recommended, carried)'''
+replace = '''            booked = recommended'''
+note = 'R69/R70. Full adoption erases the literal 40/25 policy, under-reserved final state, and stair-step positive control.'
+
+[[mutant]]
+id = 'm23-36'
+title = 'DEFENSE-TRIGGER-DATE-FALLBACK'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_all_nine_triggers_resolve_from_literal_semantic_date_map'
+find = '''    if not matches:
+        _fail(
+            DEFENSE_INELIGIBLE_RESERVE_TRIGGER,
+            f"scenario.defense_lens.exposure_events[{trigger}]",
+            semantic_event_id,
+            "the trigger has no eligible semantic planned-document source",
+        )'''
+replace = '''    if not matches:
+        return TriggerOccurrence(
+            trigger=trigger,
+            semantic_event_id=semantic_event_id,
+            effective_date=(candidates[0].doc_date if candidates else date.min),
+            source_kind="planned_document",
+            source_record_id=source_record_id,
+            requires_planned_document=True,
+        )'''
+note = 'R62/R90. A missing semantic carrier must reject; borrowing any surviving carrier date is a prohibited fallback.'
+
+[[mutant]]
+id = 'm23-37'
+title = 'AOE-CLAIM-RESPONSE-CONFLATION'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_aoe_coe_requires_a_final_opinion_not_claim_response'
+find = '''            if not eligible:
+                _fail(
+                    DEFENSE_INELIGIBLE_RESERVE_TRIGGER,
+                    f"scenario.defense_lens.exposure_events[{trigger}]",
+                    trigger,
+                    "the trigger has no eligible final medical-opinion carrier",
+                )'''
+replace = '''            if not eligible:
+                claim_carrier = next(
+                    item for item in candidates
+                    if item.subtype in {
+                        "CLAIM_ACCEPTANCE_LETTER",
+                        "CLAIM_DENIAL_LETTER",
+                        "CLAIM_DELAY_NOTICE",
+                    }
+                )
+                occurrences.append(TriggerOccurrence(
+                    trigger=trigger,
+                    semantic_event_id=f"claim-response:{lifecycle.claim_response}",
+                    effective_date=claim_carrier.doc_date,
+                    source_kind="planned_document",
+                    source_record_id=lifecycle.claim_response,
+                    requires_planned_document=True,
+                ))
+                continue'''
+note = 'R62/R90. A claim-response disposition is not a physician AOE/COE finding; the paired fixture changes only the final opinion carrier.'
+
+[[mutant]]
+id = 'm23-39'
+title = 'ADOPTION-LAG-ALWAYS-ZERO'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_adoption_lag_tracks_bucket_first_uninterrupted_shortfall'
+find = '''                adoption_lag_days=lag,'''
+replace = '''                adoption_lag_days=0,'''
+note = 'R73/R90. The dated shortfall fixture pins 10- and 31-day uninterrupted bucket-first lags, so a literal zero cannot survive.'
+
+[[mutant]]
+id = 'm23-40'
+title = 'DEFENSE-DERIVE-BEFORE-M4'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_defense_lens.py::test_planner_runs_literal_ten_stage_defense_pipeline'
+find = '''    record_phase("lifecycle_m4_rating_recon_candidates")
+
+    defense_state: _UnboundDefenseState | None = None'''
+replace = '''    record_phase("unbound_defense")
+
+    defense_state: _UnboundDefenseState | None = None'''
+note = 'R55/R105. Recording unbound defense before the M4/rating/recon candidate phase violates the literal ten-stage pipeline and duplicates the phase when derivation actually occurs.'
+
+[[mutant]]
+id = 'm23-49'
+title = 'DEFENSE-TRIGGER-CARRIER-FIT-MOVE'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_opinion_bound_carrier_date_cannot_be_fit_moved'
+find = '''            if carrier.doc_date != opinion.report_date:'''
+replace = '''            if False:'''
+note = 'R62/R90. Moving an opinion-bound carrier off its exact report date must fail rather than silently changing the reserve trigger date.'
+
+[[mutant]]
+id = 'm23-22'
+title = 'RESERVE-RENDERER-DRAWS-FIGURE'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_defense_lens.py::test_reserve_renderers_follow_bound_literal_figures'
+find = '''                    reserve_money(getattr(snapshot.paid, field)),'''
+replace = '''                    reserve_money(
+                        getattr(snapshot.paid, field) + Decimal("0.01")
+                    ),'''
+note = 'R76/R112. Recomputing even the paid column by one cent breaks the literal paper-to-bound-event matrix and its live one-cent control.'
+
+[[mutant]]
+id = 'm23-23'
+title = 'RESERVE-NOTICE-DETACH'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_reserve_event_artifact_bijection_is_literal'
+find = '''        if len(matches) == 1:
+            return matches[0]'''
+replace = '''        if len(matches) == 1:
+            return facts.reserve_events[0]'''
+note = 'R74/R95. Selecting the first event instead of the event at the bound final document index detaches the second notice from its facts.'
+
+[[mutant]]
+id = 'm23-41'
+title = 'DUPLICATE-IFR-EVENT'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_defense_lens.py::test_duplicate_initial_review_cannot_enter_reserve_events'
+find = '''            if event.trigger == "initial_file_review":'''
+replace = '''            if False:'''
+note = 'R77/R96. Removing the explicit duplicate-IFR rejection allows the sole initial review to be injected into the post-IFR event tuple.'
+
+[[mutant]]
+id = 'm23-42'
+title = 'TRIGGER-SOURCE-REMOVAL-IGNORED'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_defense_lens.py::test_planner_preserves_semantic_identity_and_rejects_last_source_removal'
+find = '''        validate_required_trigger_sources(
+            defense_state.trigger_occurrences,
+            dated,
+            source_subtypes=dict(defense_state.source_subtypes),
+        )'''
+replace = '''        pass'''
+note = 'R75/R95. Skipping the stage-7 consumed-source check lets controls erase the last claim-response carrier used by a reserve trigger.'
+
+[[mutant]]
+id = 'm23-43'
+title = 'TRIGGER-COPY-NEW-IDENTITY'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_defense_lens.py::test_planner_preserves_semantic_identity_and_rejects_last_source_removal'
+find = '''                semantic_event_id=candidate.semantic_event_id,'''
+replace = '''                semantic_event_id=(
+                    f"{candidate.semantic_event_id}:copy"
+                    if candidate.semantic_event_id == "claim-response:accepted"
+                    else candidate.semantic_event_id
+                ),'''
+note = 'R62/R95. Regenerating an inherited source ID during final PlannedDocument conversion breaks byte-for-byte semantic identity preservation.'
+
+[[mutant]]
+id = 'm23-46'
+title = 'RESERVE-EXTRA-NOTICE'
+file = 'src/wc_caseload_engine/planner.py'
+test = 'tests/test_defense_lens.py::test_planner_reserve_carriers_have_exact_titles_and_bijection'
+find = '''    candidates.extend(
+        DatedCandidate(
+            subtype="RESERVE_CHANGE_NOTICE",
+            doc_date=decision.exposure.effective_date,
+            track=TRACK_CORE,
+            priority=4,
+            author_role="carrier",
+            stage=decision.exposure.trigger,
+            semantic_event_id=f"reserve:{decision.exposure.trigger}",
+        )
+        for decision in state.decisions[1:]
+        if decision.requires_notice
+    )
+    return candidates'''
+replace = '''    candidates.extend(
+        DatedCandidate(
+            subtype="RESERVE_CHANGE_NOTICE",
+            doc_date=decision.exposure.effective_date,
+            track=TRACK_CORE,
+            priority=4,
+            author_role="carrier",
+            stage=decision.exposure.trigger,
+            semantic_event_id=f"reserve:{decision.exposure.trigger}",
+        )
+        for decision in state.decisions[1:]
+        if decision.requires_notice
+    )
+    candidates.append(
+        DatedCandidate(
+            subtype="RESERVE_CHANGE_NOTICE",
+            doc_date=state.decisions[0].exposure.effective_date,
+            track=TRACK_CORE,
+            priority=4,
+            author_role="carrier",
+            stage="fabricated",
+        )
+    )
+    return candidates'''
+note = 'R75/R95. An extra forced reserve-change notice has no changed post-IFR event and must fail the carrier/event bijection.'

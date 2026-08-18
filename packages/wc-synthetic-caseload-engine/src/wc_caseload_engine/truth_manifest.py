@@ -26,12 +26,14 @@ import hashlib
 import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
+from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
 from pydantic import BaseModel, ValidationError
 
 from wc_caseload_engine import __version__
+from wc_caseload_engine.case_facts import rating_manifest_block
 from wc_caseload_engine.medical_assertions import (
     AssertionQualityContract,
     AssertionValidationContext,
@@ -70,6 +72,8 @@ from wc_caseload_engine.money import (
     money_manifest_block,
 )
 from wc_caseload_engine.planner import CasePlan
+from wc_caseload_engine.rating import RatingFacts, RatingImpairment
+from wc_caseload_engine.rating_sources import RatingScheduleBinding
 
 if TYPE_CHECKING:
     from wc_caseload_engine.manifests import CaseResult
@@ -77,7 +81,15 @@ if TYPE_CHECKING:
 TRUTH_DIR = "truth"
 CASELOAD_TRUTH_NAME = "caseload.truth.json"
 SCHEMA_VERSION = "1.0.0"
+MONEY_CHANNEL_V1_0_VERSION = "1.0.0"
+MONEY_CHANNEL_V1_1_VERSION = "1.1.0"
+MONEY_CHANNEL_V1_2_VERSION = "1.2.0"
 MONEY_CHANNEL_VERSION = "1.1.0"
+SUPPORTED_MONEY_CHANNEL_VERSIONS = (
+    "1.0.0",
+    "1.1.0",
+    "1.2.0",
+)
 ASSERTIONS_CHANNEL_VERSION = "1.0.0"
 """The assertions channel (AJC-61, M2). The ENVELOPE stays at 1.0.0 — the
 module contract above exists precisely so a new channel can arrive without
@@ -97,6 +109,107 @@ ALWAYS_PRESENT_V2_KEYS: Final = frozenset(
     {"contentionDocuments", "spokenContentionIds"}
 )
 """The only v2 collection keys whose empty value remains serialized."""
+
+MONEY_V1_0_CASE_CHANNEL_KEYS: Final = (
+    "channelVersion",
+    "wage",
+    "benefits",
+    "published",
+    "settlement",
+)
+MONEY_V1_0_OPTIONAL_CASE_CHANNEL_KEYS: Final = ("settlement",)
+MONEY_V1_1_CASE_CHANNEL_KEYS: Final = (
+    "channelVersion",
+    "wage",
+    "benefits",
+    "published",
+    "settlement",
+    "penalties",
+)
+MONEY_V1_1_OPTIONAL_CASE_CHANNEL_KEYS: Final = ("settlement", "penalties")
+MONEY_V1_2_CASE_CHANNEL_KEYS: Final = (
+    "channelVersion",
+    "wage",
+    "benefits",
+    "published",
+    "rating",
+    "defense",
+    "settlement",
+    "penalties",
+)
+MONEY_V1_2_OPTIONAL_CASE_CHANNEL_KEYS: Final = (
+    "rating",
+    "defense",
+    "settlement",
+    "penalties",
+)
+MONEY_V1_2_PUBLISHED_GROUP_KEYS: Final = (
+    "wage",
+    "rate",
+    "benefits",
+    "rating",
+    "defense",
+    "settlement",
+    "penalties",
+)
+MONEY_V1_2_CASELOAD_CHANNEL_KEYS: Final = (
+    "channelVersion",
+    "caseCount",
+    "moneyCaseCount",
+    "cases",
+)
+MONEY_V1_2_CASELOAD_CASE_KEYS: Final = (
+    "caseId",
+    "truthFile",
+    "seedHash",
+    "averageWeeklyWage",
+    "tdWeeklyRate",
+    "tdBound",
+    "method",
+    "settlementGrossAmount",
+)
+MONEY_V1_2_RATING_KEYS: Final = (
+    "schedule",
+    "dateOfInjury",
+    "applicantAge",
+    "occupationGroup",
+    "occupationTitle",
+    "impairments",
+    "combinationMethod",
+    "kiteImpairmentIds",
+    "scheduledCombinedRating",
+    "combinedRating",
+    "finalPdPercent",
+    "ratingString",
+)
+MONEY_V1_2_RATING_IMPAIRMENT_KEYS: Final = (
+    "id",
+    "bodyPart",
+    "impairmentNumber",
+    "description",
+    "wpi",
+    "adjustmentMethod",
+    "fecRank",
+    "adjustmentFactor",
+    "scheduleAdjusted",
+    "variant",
+    "occupationAdjusted",
+    "ageBand",
+    "ageAdjusted",
+    "ratingString",
+)
+MONEY_V1_2_RATING_SCHEDULE_KEYS: Final = (
+    "edition",
+    "sourceUrl",
+    "pdfSha256",
+    "extractedTextSha256",
+    "tablesSha256",
+    "section4Sha256",
+    "section4MetaSha256",
+    "counselStatus",
+)
+
+MONEY_DEFENSE_SCOPE_UNSUPPORTED = "MONEY_DEFENSE_SCOPE_UNSUPPORTED"
 
 # ---------------------------------------------------------------------------
 # Amendment A1 — the frozen assertions-channel 1.0.0 projection (AJC-62)
@@ -488,6 +601,8 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 def _channel_decimal(value: Any) -> str:
     """Serialize a model Decimal exactly, without exponent notation or quantizing."""
+    if isinstance(value, Fraction):
+        return f"{value.numerator}/{value.denominator}"
     return f"{value:f}"
 
 
@@ -496,14 +611,103 @@ def _date(value: Any) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
+def _rating_channel_projection(rating: RatingFacts) -> dict[str, Any]:
+    """Serialize one canonical rating through v1.2's literal scorer allowlists."""
+    schedule_values = {
+        "edition": rating.schedule.edition,
+        "sourceUrl": rating.schedule.source_url,
+        "pdfSha256": rating.schedule.pdf_sha256,
+        "extractedTextSha256": rating.schedule.extracted_text_sha256,
+        "tablesSha256": rating.schedule.tables_sha256,
+        "section4Sha256": rating.schedule.section4_sha256,
+        "section4MetaSha256": rating.schedule.section4_meta_sha256,
+        "counselStatus": rating.schedule.counsel_status,
+    }
+    impairments = []
+    for impairment in rating.impairments:
+        row_values = {
+            "id": impairment.id,
+            "bodyPart": impairment.body_part,
+            "impairmentNumber": impairment.impairment_number,
+            "description": impairment.description,
+            "wpi": impairment.wpi,
+            "adjustmentMethod": impairment.adjustment_method,
+            "fecRank": impairment.fec_rank,
+            "adjustmentFactor": (
+                _channel_decimal(impairment.adjustment_factor)
+                if impairment.adjustment_factor is not None
+                else None
+            ),
+            "scheduleAdjusted": impairment.schedule_adjusted,
+            "variant": impairment.variant,
+            "occupationAdjusted": impairment.occupation_adjusted,
+            "ageBand": impairment.age_band,
+            "ageAdjusted": impairment.age_adjusted,
+            "ratingString": impairment.rating_string,
+        }
+        impairments.append(
+            {
+                key: row_values[key]
+                for key in MONEY_V1_2_RATING_IMPAIRMENT_KEYS
+            }
+        )
+    values = {
+        "schedule": {
+            key: schedule_values[key]
+            for key in MONEY_V1_2_RATING_SCHEDULE_KEYS
+        },
+        "dateOfInjury": rating.date_of_injury.isoformat(),
+        "applicantAge": rating.applicant_age,
+        "occupationGroup": rating.occupation_group,
+        "occupationTitle": rating.occupation_title,
+        "impairments": impairments,
+        "combinationMethod": rating.combination_method,
+        "kiteImpairmentIds": (
+            list(rating.kite_impairment_ids)
+            if rating.kite_impairment_ids is not None
+            else None
+        ),
+        "scheduledCombinedRating": rating.scheduled_combined_rating,
+        "combinedRating": rating.combined_rating,
+        "finalPdPercent": rating.final_pd_percent,
+        "ratingString": rating.rating_string,
+    }
+    return {key: values[key] for key in MONEY_V1_2_RATING_KEYS}
+
+
+def _money_channel(
+    facts: MoneyFacts,
+    *,
+    rating: RatingFacts | None,
+) -> dict[str, Any]:
     """Build the complete, lossless money channel from decided facts."""
+    defense = getattr(facts, "defense", None)
+    if defense is not None:
+        raise TruthManifestError(
+            f"{MONEY_DEFENSE_SCOPE_UNSUPPORTED}: non-null defense serialization "
+            "belongs to Money W2 Item 10"
+        )
+    channel_version = (
+        MONEY_CHANNEL_V1_2_VERSION
+        if rating is not None or defense is not None
+        else MONEY_CHANNEL_VERSION
+    )
     wage = facts.wages
     rate = wage.rate
     basis = rate.basis
     computation = wage.computation
+    published = money_manifest_block(facts)
+    if channel_version == MONEY_CHANNEL_V1_2_VERSION:
+        published_values = dict(published)
+        if rating is not None:
+            published_values["rating"] = rating_manifest_block(rating)
+        published = {
+            key: published_values[key]
+            for key in MONEY_V1_2_PUBLISHED_GROUP_KEYS
+            if key in published_values
+        }
     channel: dict[str, Any] = {
-        "channelVersion": MONEY_CHANNEL_VERSION,
+        "channelVersion": channel_version,
         "wage": {
             "periods": [
                 {
@@ -588,7 +792,7 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
         },
         # The public projection deliberately remains cents-formatted; its bytes
         # are the existing ``money_manifest_block`` contract, unlike this lossless channel.
-        "published": money_manifest_block(facts),
+        "published": published,
     }
     if facts.settlement is not None:
         settlement = facts.settlement
@@ -658,6 +862,14 @@ def _money_channel(facts: MoneyFacts) -> dict[str, Any]:
         channel["penalties"]["firstPaymentRule"] = _first_payment_rule_block(
             penalties.first_payment_rule
         )
+    if rating is not None:
+        channel["rating"] = _rating_channel_projection(rating)
+    if channel_version == MONEY_CHANNEL_V1_2_VERSION:
+        return {
+            key: channel[key]
+            for key in MONEY_V1_2_CASE_CHANNEL_KEYS
+            if key in channel
+        }
     return channel
 
 
@@ -1337,7 +1549,8 @@ def build_case_truth_manifest(
     version = _truth_manifest_version(truth_manifest_version)
     channels: dict[str, Any] = {}
     if plan.money_facts is not None:
-        channels["money"] = _money_channel(plan.money_facts)
+        rating = plan.case_facts.rating if plan.case_facts is not None else None
+        channels["money"] = _money_channel(plan.money_facts, rating=rating)
     if plan.medical_assertions is not None:
         channels["assertions"] = (
             _assertions_v1_channel(plan)
@@ -1405,7 +1618,18 @@ def build_caseload_truth_manifest(
         # never share structure, or a later mutation of one channel moves
         # another channel's bytes (sol review, PR #44 M2 / Part 4:141).
         channels["money"] = {
-            "channelVersion": MONEY_CHANNEL_VERSION,
+            "channelVersion": (
+                MONEY_CHANNEL_V1_2_VERSION
+                if any(
+                    (
+                        result.plan.case_facts is not None
+                        and result.plan.case_facts.rating is not None
+                    )
+                    or getattr(result.plan.money_facts, "defense", None) is not None
+                    for result in results
+                )
+                else MONEY_CHANNEL_VERSION
+            ),
             "caseCount": len(results),
             "moneyCaseCount": money_case_count,
             "cases": [dict(entry) for entry in cases],
@@ -1537,12 +1761,9 @@ def read_truth_manifest(path: Path) -> dict[str, Any]:
         raise TruthManifestError(f"truth manifest {path} must contain an object at 'channels'")
     if "money" in channels:
         money_channel = _mapping(channels["money"], "channels.money")
-        _require_compatible_version(
+        _money_channel_contract(
             money_channel,
-            key="channelVersion",
-            path="channels.money",
-            supported=MONEY_CHANNEL_VERSION,
-            label="money channel",
+            kind=payload.get("kind"),
         )
     if "assertions" in channels:
         assertions_channel = _mapping(channels["assertions"], "channels.assertions")
@@ -1598,6 +1819,157 @@ def _require_compatible_version(
     return version
 
 
+def _require_exact_money_version(document: Mapping[str, Any]) -> str:
+    """Require one of the three literal money contracts, never same-major."""
+    location = "channels.money.channelVersion"
+    if "channelVersion" not in document:
+        raise TruthManifestError(
+            f"malformed money channel: missing {location}"
+        )
+    version = document["channelVersion"]
+    if not isinstance(version, str):
+        raise TruthManifestError(
+            f"malformed money channel: {location} {version!r} must be major.minor.patch"
+        )
+    parts = version.split(".")
+    if len(parts) != 3 or any(not part.isdigit() for part in parts):
+        raise TruthManifestError(
+            f"malformed money channel: {location} {version!r} must be major.minor.patch"
+        )
+    if version not in SUPPORTED_MONEY_CHANNEL_VERSIONS:
+        raise TruthManifestError(
+            f"unsupported money channel version {version!r}; reader supports "
+            f"{SUPPORTED_MONEY_CHANNEL_VERSIONS!r}"
+        )
+    return version
+
+
+def _require_exact_keys(
+    document: Mapping[str, Any],
+    *,
+    allowed: tuple[str, ...],
+    optional: tuple[str, ...],
+    path: str,
+) -> None:
+    allowed_set = frozenset(allowed)
+    optional_set = frozenset(optional)
+    unknown = tuple(key for key in document if key not in allowed_set)
+    missing = tuple(
+        key for key in allowed if key not in optional_set and key not in document
+    )
+    if unknown:
+        raise TruthManifestError(
+            f"malformed money channel: unknown {path} keys {unknown!r}"
+        )
+    if missing:
+        raise TruthManifestError(
+            f"malformed money channel: missing {path} keys {missing!r}"
+        )
+
+
+def _money_channel_contract(
+    channel: Mapping[str, Any],
+    *,
+    kind: Any,
+) -> str:
+    """Validate one exact case or caseload money-channel projection."""
+    version = _require_exact_money_version(channel)
+    if kind == "caseload":
+        _require_exact_keys(
+            channel,
+            allowed=MONEY_V1_2_CASELOAD_CHANNEL_KEYS,
+            optional=(),
+            path="channels.money",
+        )
+        cases = _sequence(
+            _required(channel, "cases", "channels.money"),
+            "channels.money.cases",
+        )
+        optional_case_keys = (
+            "averageWeeklyWage",
+            "tdWeeklyRate",
+            "tdBound",
+            "method",
+            "settlementGrossAmount",
+        )
+        for index, value in enumerate(cases):
+            _require_exact_keys(
+                _mapping(value, f"channels.money.cases[{index}]"),
+                allowed=MONEY_V1_2_CASELOAD_CASE_KEYS,
+                optional=optional_case_keys,
+                path=f"channels.money.cases[{index}]",
+            )
+        return version
+
+    contracts = {
+        MONEY_CHANNEL_V1_0_VERSION: (
+            MONEY_V1_0_CASE_CHANNEL_KEYS,
+            MONEY_V1_0_OPTIONAL_CASE_CHANNEL_KEYS,
+        ),
+        MONEY_CHANNEL_V1_1_VERSION: (
+            MONEY_V1_1_CASE_CHANNEL_KEYS,
+            MONEY_V1_1_OPTIONAL_CASE_CHANNEL_KEYS,
+        ),
+        MONEY_CHANNEL_V1_2_VERSION: (
+            MONEY_V1_2_CASE_CHANNEL_KEYS,
+            MONEY_V1_2_OPTIONAL_CASE_CHANNEL_KEYS,
+        ),
+    }
+    allowed, optional = contracts[version]
+    _require_exact_keys(
+        channel,
+        allowed=allowed,
+        optional=optional,
+        path="channels.money",
+    )
+    published = _mapping(
+        _required(channel, "published", "channels.money"),
+        "channels.money.published",
+    )
+    published_contracts = {
+        MONEY_CHANNEL_V1_0_VERSION: ("wage", "rate", "benefits", "settlement"),
+        MONEY_CHANNEL_V1_1_VERSION: (
+            "wage",
+            "rate",
+            "benefits",
+            "settlement",
+            "penalties",
+        ),
+        MONEY_CHANNEL_V1_2_VERSION: MONEY_V1_2_PUBLISHED_GROUP_KEYS,
+    }
+    _require_exact_keys(
+        published,
+        allowed=published_contracts[version],
+        optional=tuple(
+            key
+            for key in published_contracts[version]
+            if key not in {"wage", "rate", "benefits"}
+        ),
+        path="channels.money.published",
+    )
+    if version == MONEY_CHANNEL_V1_2_VERSION:
+        if "defense" in channel and channel["defense"] is not None:
+            raise TruthManifestError(
+                f"{MONEY_DEFENSE_SCOPE_UNSUPPORTED}: non-null channels.money.defense "
+                "belongs to Money W2 Item 10"
+            )
+        if "defense" in published and published["defense"] is not None:
+            raise TruthManifestError(
+                f"{MONEY_DEFENSE_SCOPE_UNSUPPORTED}: non-null "
+                "channels.money.published.defense belongs to Money W2 Item 10"
+            )
+        if ("rating" in channel) != ("rating" in published):
+            raise TruthManifestError(
+                "malformed money channel: v1.2 rating must appear in both "
+                "channels.money.rating and channels.money.published.rating"
+            )
+        if channel.get("rating") != published.get("rating"):
+            raise TruthManifestError(
+                "malformed money channel: v1.2 rating projections disagree"
+            )
+    return version
+
+
 def _assertions_quality_contract(
     channel: Mapping[str, Any],
 ) -> AssertionQualityContract:
@@ -1644,13 +2016,7 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
     if "money" not in channels:
         return None
     channel = _mapping(channels["money"], "channels.money")
-    _require_compatible_version(
-        channel,
-        key="channelVersion",
-        path="channels.money",
-        supported=MONEY_CHANNEL_VERSION,
-        label="money channel",
-    )
+    _money_channel_contract(channel, kind=document.get("kind"))
 
     try:
         wage_doc = _mapping(_required(channel, "wage", "channels.money"), "channels.money.wage")
@@ -1989,6 +2355,121 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
         raise TruthManifestError(f"malformed money channel: {exc}") from exc
 
 
+def rating_facts_from_truth(document: Mapping[str, Any]) -> RatingFacts | None:
+    """Reconstruct the optional exact-v1.2 rating without touching MoneyFacts."""
+    _require_compatible_version(
+        document,
+        key="schemaVersion",
+        path="$",
+        supported=SCHEMA_VERSION,
+        label="truth manifest envelope",
+    )
+    channels = _mapping(_required(document, "channels", "$"), "channels")
+    if "money" not in channels:
+        return None
+    channel = _mapping(channels["money"], "channels.money")
+    version = _money_channel_contract(channel, kind=document.get("kind"))
+    if version != MONEY_CHANNEL_V1_2_VERSION or "rating" not in channel:
+        return None
+    rating_doc = _mapping(channel["rating"], "channels.money.rating")
+    _require_exact_keys(
+        rating_doc,
+        allowed=MONEY_V1_2_RATING_KEYS,
+        optional=(),
+        path="channels.money.rating",
+    )
+    schedule_doc = _mapping(
+        _required(rating_doc, "schedule", "channels.money.rating"),
+        "channels.money.rating.schedule",
+    )
+    _require_exact_keys(
+        schedule_doc,
+        allowed=MONEY_V1_2_RATING_SCHEDULE_KEYS,
+        optional=(),
+        path="channels.money.rating.schedule",
+    )
+    try:
+        schedule = RatingScheduleBinding(
+            **_model_data(
+                schedule_doc,
+                {
+                    "edition": "edition",
+                    "sourceUrl": "source_url",
+                    "pdfSha256": "pdf_sha256",
+                    "extractedTextSha256": "extracted_text_sha256",
+                    "tablesSha256": "tables_sha256",
+                    "section4Sha256": "section4_sha256",
+                    "section4MetaSha256": "section4_meta_sha256",
+                    "counselStatus": "counsel_status",
+                },
+                "channels.money.rating.schedule",
+            )
+        )
+        impairments = []
+        for index, value in enumerate(
+            _sequence(
+                _required(rating_doc, "impairments", "channels.money.rating"),
+                "channels.money.rating.impairments",
+            )
+        ):
+            path = f"channels.money.rating.impairments[{index}]"
+            impairment_doc = _mapping(value, path)
+            _require_exact_keys(
+                impairment_doc,
+                allowed=MONEY_V1_2_RATING_IMPAIRMENT_KEYS,
+                optional=(),
+                path=path,
+            )
+            impairments.append(
+                RatingImpairment(
+                    **_model_data(
+                        impairment_doc,
+                        {
+                            "id": "id",
+                            "bodyPart": "body_part",
+                            "impairmentNumber": "impairment_number",
+                            "description": "description",
+                            "wpi": "wpi",
+                            "adjustmentMethod": "adjustment_method",
+                            "fecRank": "fec_rank",
+                            "adjustmentFactor": "adjustment_factor",
+                            "scheduleAdjusted": "schedule_adjusted",
+                            "variant": "variant",
+                            "occupationAdjusted": "occupation_adjusted",
+                            "ageBand": "age_band",
+                            "ageAdjusted": "age_adjusted",
+                            "ratingString": "rating_string",
+                        },
+                        path,
+                    )
+                )
+            )
+        return RatingFacts(
+            schedule=schedule,
+            impairments=tuple(impairments),
+            **_model_data(
+                rating_doc,
+                {
+                    "dateOfInjury": "date_of_injury",
+                    "applicantAge": "applicant_age",
+                    "occupationGroup": "occupation_group",
+                    "occupationTitle": "occupation_title",
+                    "combinationMethod": "combination_method",
+                    "kiteImpairmentIds": "kite_impairment_ids",
+                    "scheduledCombinedRating": "scheduled_combined_rating",
+                    "combinedRating": "combined_rating",
+                    "finalPdPercent": "final_pd_percent",
+                    "ratingString": "rating_string",
+                },
+                "channels.money.rating",
+            ),
+        )
+    except TruthManifestError:
+        raise
+    except (TypeError, ValueError, ValidationError) as exc:
+        raise TruthManifestError(f"malformed money channel rating: {exc}") from exc
+
+
 __all__ = [
     "ALWAYS_PRESENT_V2_KEYS",
     "ASSERTIONS_CHANNEL_VERSION",
@@ -2021,8 +2502,26 @@ __all__ = [
     "CASELOAD_TRUTH_NAME",
     "CASELOAD_TRUTH_PROVENANCE_KEYS",
     "LEDGER_DIGEST_MISMATCH",
+    "MONEY_CHANNEL_V1_0_VERSION",
+    "MONEY_CHANNEL_V1_1_VERSION",
+    "MONEY_CHANNEL_V1_2_VERSION",
+    "MONEY_CHANNEL_VERSION",
+    "MONEY_DEFENSE_SCOPE_UNSUPPORTED",
+    "MONEY_V1_0_CASE_CHANNEL_KEYS",
+    "MONEY_V1_0_OPTIONAL_CASE_CHANNEL_KEYS",
+    "MONEY_V1_1_CASE_CHANNEL_KEYS",
+    "MONEY_V1_1_OPTIONAL_CASE_CHANNEL_KEYS",
+    "MONEY_V1_2_CASELOAD_CASE_KEYS",
+    "MONEY_V1_2_CASELOAD_CHANNEL_KEYS",
+    "MONEY_V1_2_CASE_CHANNEL_KEYS",
+    "MONEY_V1_2_OPTIONAL_CASE_CHANNEL_KEYS",
+    "MONEY_V1_2_PUBLISHED_GROUP_KEYS",
+    "MONEY_V1_2_RATING_IMPAIRMENT_KEYS",
+    "MONEY_V1_2_RATING_KEYS",
+    "MONEY_V1_2_RATING_SCHEDULE_KEYS",
     "PENALTY_ASSESSMENT_KEY_NAMES",
     "SCORER_ONLY_ENVELOPE_KEY_NAMES",
+    "SUPPORTED_MONEY_CHANNEL_VERSIONS",
     "TRUTH_DIR",
     "TRUTH_PROVENANCE_KEYS",
     "TruthManifestError",
@@ -2034,6 +2533,7 @@ __all__ = [
     "medical_assertions_from_truth",
     "money_facts_from_truth",
     "parse_medical_assertions_from_truth",
+    "rating_facts_from_truth",
     "read_truth_manifest",
     "write_case_truth_manifest",
     "write_caseload_truth_manifest",

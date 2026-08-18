@@ -36,7 +36,7 @@ import pytest
 
 from conftest import extract_text, requires_substrate
 from wc_caseload_engine import money as money_module
-from wc_caseload_engine.case_facts import derive_case_facts
+from wc_caseload_engine.case_facts import CaseFacts, derive_case_facts
 from wc_caseload_engine.fact_templates import (
     BENEFIT_RECORD_SUBTYPES,
     METHOD_LABEL,
@@ -52,9 +52,12 @@ from wc_caseload_engine.manifests import (
 )
 from wc_caseload_engine.money import (
     IRREGULARITY_THRESHOLD,
+    MONEY_RATE_UNSUPPORTED_DOI,
+    RATE_TABLE_ERAS,
     SHORT_HISTORY_WEEKS,
     TD_PAYMENT_DUE_DAYS,
     UNCONFIRMED_RATE_TABLE,
+    MoneyRateError,
     analyzer_money_manifest_block,
     compute_aww,
     compute_comp_rate,
@@ -75,6 +78,7 @@ from wc_caseload_engine.planner import (
     MONEY_WAGE_SUBTYPE,
     build_case_plan,
 )
+from wc_caseload_engine.rating import RatingFacts
 from wc_caseload_engine.renderer import _load_template
 from wc_caseload_engine.seeds import (
     AWW_METHODS,
@@ -706,6 +710,25 @@ class TestNoStatutoryNumberIsPresentedAsVerified:
             assert basis.counsel_confirmed is False, basis.label
             assert basis.source == "engine_default_table"
 
+    def test_r109_artifact_has_all_17_eras_and_literal_td_anchors(self) -> None:
+        anchors = {
+            2010: ("148.00", "986.69"),
+            2012: ("151.57", "1010.50"),
+            2013: ("160.00", "1066.72"),
+            2018: ("182.29", "1215.27"),
+            2022: ("230.95", "1539.71"),
+            2023: ("242.86", "1619.15"),
+            2025: ("252.03", "1680.29"),
+            2026: ("264.61", "1764.11"),
+        }
+        assert len(RATE_TABLE_ERAS) == 17
+        assert len(UNCONFIRMED_RATE_TABLE) == 17
+        assert RATE_TABLE_ERAS[0].effective_from.isoformat() == "2010-01-01"
+        assert RATE_TABLE_ERAS[-1].effective_to.isoformat() == "2027-01-01"
+        for year, expected in anchors.items():
+            era = next(row for row in RATE_TABLE_ERAS if row.effective_from.year == year)
+            assert (str(era.td_min_weekly_rate), str(era.td_max_weekly_rate)) == expected
+
     def test_every_shipped_authority_says_so_in_its_own_text(self) -> None:
         """The caveat travels with the citation, not only with the flag.
 
@@ -716,14 +739,17 @@ class TestNoStatutoryNumberIsPresentedAsVerified:
             assert "COUNSEL-UNCONFIRMED" in basis.authority, basis.label
 
     def test_the_table_is_the_only_source_of_a_binding(self) -> None:
-        """``rate_basis_for`` is the seam, and it answers for any date."""
-        for doi in ("1971-01-01", "2013-12-31", "2014-01-01", "2099-06-06"):
+        """``rate_basis_for`` is the seam, and it fails outside coverage."""
+        for doi in ("2010-01-01", "2013-12-31", "2014-01-01", "2026-12-31"):
             basis = rate_basis_for(parse_case_seed(_seed_body(None)).injury.onset_date)
             assert basis in UNCONFIRMED_RATE_TABLE
             from datetime import date as _date
 
             year, month, day = (int(part) for part in doi.split("-"))
             assert rate_basis_for(_date(year, month, day)) in UNCONFIRMED_RATE_TABLE
+        for doi in ("2009-12-31", "2027-01-01"):
+            with pytest.raises(MoneyRateError, match=MONEY_RATE_UNSUPPORTED_DOI):
+                rate_basis_for(_date(*(int(part) for part in doi.split("-"))))
 
     def test_a_seed_may_supply_a_confirmed_binding_and_it_is_recorded_as_authored(
         self,
@@ -4532,7 +4558,9 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         assert any("before the Board approves" in problem for problem in problems), problems
 
 
-def test_the_rate_derivation_takes_no_dependency_on_the_fabricated_rating() -> None:
+def test_the_rate_derivation_takes_no_dependency_on_the_fabricated_rating(
+    literal_rating_facts: RatingFacts,
+) -> None:
     """ISC-169 — AJC-44 inherits a clean surface.
 
     A med-legal evaluation without ``scenario.rating`` is not a rating.  Its
@@ -4562,9 +4590,8 @@ def test_the_rate_derivation_takes_no_dependency_on_the_fabricated_rating() -> N
         if isinstance(node, ast.Attribute):
             assert node.attr not in {"wpi", "pd"}, node.attr
 
-    # Behavioural: qme/ame/none are all rating-absent today, and money must not
-    # move with eval_type.  TODO(AJC-44 R111): add exactly one rating-present
-    # row when scenario.rating enters the schema.
+    # Behavioural: qme/ame/none are all rating-absent without an authored
+    # rating, and money must not move with eval_type.
     rates = set()
     for eval_type in ("qme", "ame", "none"):
         seed = parse_case_seed(
@@ -4577,9 +4604,18 @@ def test_the_rate_derivation_takes_no_dependency_on_the_fabricated_rating() -> N
         clinical = derive_case_facts(seed, timeline)
         facts = derive_money_facts(seed, timeline)
         rates.add((facts.aww, facts.wages.rate.td_weekly_rate))
-        rating = getattr(seed.scenario, "rating", None)
-        assert (rating is None) == (clinical.wpi is None) == (clinical.pd is None)
+        assert seed.scenario.rating is None
+        assert clinical.rating is None
+        assert clinical.wpi is None
+        assert clinical.pd is None
     assert len(rates) == 1, rates
+
+    # R111 positive neighbor is a literal canonical result until Item 4 owns
+    # derivation. Compatibility values can arise only through this object.
+    rated = CaseFacts(rating=literal_rating_facts)
+    assert rated.rating is literal_rating_facts
+    assert rated.wpi == literal_rating_facts.impairments[0].wpi == 10
+    assert rated.pd == literal_rating_facts.final_pd_percent == 19
 
 
 def test_select_method_is_a_pure_function_of_the_wage_facts() -> None:

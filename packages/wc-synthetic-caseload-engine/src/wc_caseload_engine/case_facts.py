@@ -33,11 +33,12 @@ from __future__ import annotations
 import datetime as dt
 import random
 from datetime import timedelta
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from wc_caseload_engine.rating import RatingFacts, derive_rating_facts
 from wc_caseload_engine.seeds import CaseSeed, derive_seed
 from wc_caseload_engine.substrate import import_substrate
 
@@ -63,6 +64,61 @@ MODALITY_DISPLAY: dict[str, str] = {
     "emg": "EMG",
     "labs": "Laboratory Studies",
 }
+
+CASE_FACTS_RATING_KEYS: Final = (
+    "schedule",
+    "dateOfInjury",
+    "applicantAge",
+    "occupationGroup",
+    "occupationTitle",
+    "impairments",
+    "combinationMethod",
+    "kiteImpairmentIds",
+    "scheduledCombinedRating",
+    "combinedRating",
+    "finalPdPercent",
+    "ratingString",
+)
+CASE_FACTS_MONEY_RATING_KEYS: Final = (
+    "schedule",
+    "dateOfInjury",
+    "applicantAge",
+    "occupationGroup",
+    "occupationTitle",
+    "impairments",
+    "combinationMethod",
+    "kiteImpairmentIds",
+    "scheduledCombinedRating",
+    "combinedRating",
+    "finalPdPercent",
+    "ratingString",
+)
+CASE_FACTS_RATING_SCHEDULE_KEYS: Final = (
+    "edition",
+    "sourceUrl",
+    "pdfSha256",
+    "extractedTextSha256",
+    "tablesSha256",
+    "section4Sha256",
+    "section4MetaSha256",
+    "counselStatus",
+)
+CASE_FACTS_RATING_IMPAIRMENT_KEYS: Final = (
+    "id",
+    "bodyPart",
+    "impairmentNumber",
+    "description",
+    "wpi",
+    "adjustmentMethod",
+    "fecRank",
+    "adjustmentFactor",
+    "scheduleAdjusted",
+    "variant",
+    "occupationAdjusted",
+    "ageBand",
+    "ageAdjusted",
+    "ratingString",
+)
 """How each modality is written in a rendered document.
 
 One spelling per modality, in one place, because the coherence harness greps
@@ -249,8 +305,17 @@ class CaseFacts(BaseModel):
     """
     """Letter contents this case's lifecycle can support — see ``ADJUSTER_LETTER_TYPES``."""
     mmi_date: dt.date | None = None
-    wpi: int | None = None
-    pd: int | None = None
+    rating: RatingFacts | None = None
+
+    @property
+    def wpi(self) -> int | None:
+        """Deprecated first-row compatibility projection, never combined WPI."""
+        return None if self.rating is None else self.rating.impairments[0].wpi
+
+    @property
+    def pd(self) -> int | None:
+        """Deprecated compatibility projection of the canonical final PD."""
+        return None if self.rating is None else self.rating.final_pd_percent
 
     @property
     def discharge_date(self) -> dt.date | None:
@@ -932,15 +997,22 @@ def derive_case_facts(seed: CaseSeed, timeline: Any, cast: Any = None) -> CaseFa
     visits = _derive_visits(seed, timeline, surgery, status)
     trajectory = _derive_trajectory(seed, status)
 
+    rating = None
+    if seed.scenario.rating is not None:
+        case = getattr(cast, "case", None)
+        applicant = getattr(case, "applicant", None)
+        employer = getattr(case, "employer", None)
+        rating = derive_rating_facts(
+            seed.scenario.rating,
+            date_of_injury=getattr(timeline, "injury_date", seed.injury.onset_date),
+            birth_date=getattr(applicant, "date_of_birth", None),
+            occupation_title=str(getattr(employer, "position", "") or ""),
+        )
+
     mmi = getattr(timeline, "resolution_date", None)
     onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
     if mmi is None:
         mmi = onset + timedelta(days=300)
-    # TODO(AJC-44 R111): populate these only from the future scenario.rating
-    # input.  A QME/AME evaluation is not itself an impairment rating.
-    wpi = None
-    pd = None
-
     facts = CaseFacts(
         diagnostics=diagnostics,
         surgery=surgery,
@@ -953,8 +1025,9 @@ def derive_case_facts(seed: CaseSeed, timeline: Any, cast: Any = None) -> CaseFa
         late_benefit_events=late_events,
         adjuster_letter_types_allowed=_derive_allowed_letter_types(seed),
         mmi_date=mmi,
-        wpi=wpi,
-        pd=pd,
+        # A QME/AME evaluation alone is never a rating. Only the authored
+        # scenario gate constructs the canonical derivation above.
+        rating=rating,
     )
     log.debug(
         "case_facts.derived",
@@ -965,6 +1038,75 @@ def derive_case_facts(seed: CaseSeed, timeline: Any, cast: Any = None) -> CaseFa
         providers=len(facts.providers),
     )
     return facts
+
+
+def _rating_projection(
+    rating: RatingFacts,
+    keys: tuple[str, ...],
+) -> dict[str, Any]:
+    """Project one rating reference through a literal public allowlist."""
+    schedule_values = {
+        "edition": rating.schedule.edition,
+        "sourceUrl": rating.schedule.source_url,
+        "pdfSha256": rating.schedule.pdf_sha256,
+        "extractedTextSha256": rating.schedule.extracted_text_sha256,
+        "tablesSha256": rating.schedule.tables_sha256,
+        "section4Sha256": rating.schedule.section4_sha256,
+        "section4MetaSha256": rating.schedule.section4_meta_sha256,
+        "counselStatus": rating.schedule.counsel_status,
+    }
+    schedule = {
+        key: schedule_values[key] for key in CASE_FACTS_RATING_SCHEDULE_KEYS
+    }
+    impairments = []
+    for impairment in rating.impairments:
+        values = {
+            "id": impairment.id,
+            "bodyPart": impairment.body_part,
+            "impairmentNumber": impairment.impairment_number,
+            "description": impairment.description,
+            "wpi": impairment.wpi,
+            "adjustmentMethod": impairment.adjustment_method,
+            "fecRank": impairment.fec_rank,
+            "adjustmentFactor": (
+                str(impairment.adjustment_factor)
+                if impairment.adjustment_factor is not None
+                else None
+            ),
+            "scheduleAdjusted": impairment.schedule_adjusted,
+            "variant": impairment.variant,
+            "occupationAdjusted": impairment.occupation_adjusted,
+            "ageBand": impairment.age_band,
+            "ageAdjusted": impairment.age_adjusted,
+            "ratingString": impairment.rating_string,
+        }
+        impairments.append(
+            {key: values[key] for key in CASE_FACTS_RATING_IMPAIRMENT_KEYS}
+        )
+    values: dict[str, Any] = {
+        "schedule": schedule,
+        "dateOfInjury": rating.date_of_injury.isoformat(),
+        "applicantAge": rating.applicant_age,
+        "occupationGroup": rating.occupation_group,
+        "occupationTitle": rating.occupation_title,
+        "impairments": impairments,
+        "combinationMethod": rating.combination_method,
+        "kiteImpairmentIds": (
+            list(rating.kite_impairment_ids)
+            if rating.kite_impairment_ids is not None
+            else None
+        ),
+        "scheduledCombinedRating": rating.scheduled_combined_rating,
+        "combinedRating": rating.combined_rating,
+        "finalPdPercent": rating.final_pd_percent,
+        "ratingString": rating.rating_string,
+    }
+    return {key: values[key] for key in keys}
+
+
+def rating_manifest_block(rating: RatingFacts) -> dict[str, Any]:
+    """The exact analyzer-visible ``caseFacts.rating`` projection."""
+    return _rating_projection(rating, CASE_FACTS_RATING_KEYS)
 
 
 def facts_manifest_block(facts: CaseFacts, money: Any = None) -> dict[str, Any]:
@@ -1058,10 +1200,17 @@ def facts_manifest_block(facts: CaseFacts, money: Any = None) -> dict[str, Any]:
             for p in facts.providers
         ],
     }
+    if facts.rating is not None:
+        block["rating"] = rating_manifest_block(facts.rating)
     if money is not None:
         from wc_caseload_engine.money import analyzer_money_manifest_block
 
         block["money"] = analyzer_money_manifest_block(money)
+        if facts.rating is not None:
+            block["money"]["rating"] = _rating_projection(
+                facts.rating,
+                CASE_FACTS_MONEY_RATING_KEYS,
+            )
     return block
 
 
@@ -1089,6 +1238,10 @@ __all__ = [
     "BENEFIT_NOTICE_WINDOWS",
     "CADENCES",
     "CADENCE_WEIGHTS",
+    "CASE_FACTS_MONEY_RATING_KEYS",
+    "CASE_FACTS_RATING_IMPAIRMENT_KEYS",
+    "CASE_FACTS_RATING_KEYS",
+    "CASE_FACTS_RATING_SCHEDULE_KEYS",
     "DILIGENCES",
     "DILIGENCE_WEIGHTS",
     "DILIGENCE_WINDOW_FRACTIONS",
@@ -1110,6 +1263,7 @@ __all__ = [
     "VisitFact",
     "derive_case_facts",
     "facts_manifest_block",
+    "rating_manifest_block",
     "resolve_adjuster_diligence",
     "resolve_attorney_cadence",
     "resolve_surgery_status",

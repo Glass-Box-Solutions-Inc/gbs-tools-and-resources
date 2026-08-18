@@ -48,6 +48,16 @@ from wc_caseload_engine.case_facts import (
     resolve_surgery_status,
     resolve_treatment_status,
 )
+from wc_caseload_engine.defense_lens import (
+    PaidCost,
+    _UnboundDefenseState,
+    bind_defense_artifacts,
+    bind_defense_facts,
+    build_unbound_defense,
+    paid_cost_ledger,
+    validate_required_trigger_sources,
+    validate_reserve_artifact_candidates,
+)
 from wc_caseload_engine.doc_controls import (
     TRACK_CORE,
     ControlResolution,
@@ -103,12 +113,34 @@ from wc_caseload_engine.medical_story import (
 )
 from wc_caseload_engine.money import MoneyFacts, derive_money_facts
 from wc_caseload_engine.perspective import apply_perspective, document_roles
+from wc_caseload_engine.rating import (
+    RATING_CARRIER_SUBTYPES,
+    RATING_REQUIRED_CARRIER_REMOVED,
+    RatingValidationError,
+)
 from wc_caseload_engine.recon_machine import ReconTrack, build_recon_track
 from wc_caseload_engine.renderer import choose_format
 from wc_caseload_engine.seeds import CaseSeed, DocumentControls, ImrOutcome
 from wc_caseload_engine.taxonomy import Taxonomy, effective_taxonomy, parent_type_of
 
 log = structlog.get_logger(__name__)
+
+DEFENSE_PLANNER_STAGES: tuple[str, ...] = (
+    "cast",
+    "case_facts_rating",
+    "early_w1",
+    "lifecycle_m4_rating_recon_candidates",
+    "unbound_defense",
+    "reserve_candidates",
+    "controls",
+    "bindings",
+    "final_money_facts",
+    "render",
+)
+
+_IMPAIRMENT_WORKSHEET_HOOKS: frozenset[str] = frozenset(
+    {"almaraz_guzman", "kite", "sibtf"}
+)
 
 
 class ControlKeyError(ValueError):
@@ -149,6 +181,9 @@ class PlannedDocument:
     this subtype. Empty for every document of a hook-free case, which is what
     keeps the no-doctrine render path byte-identical to what it was.
     """
+
+    semantic_event_id: str | None = None
+    """W2 internal trigger identity preserved through final index assignment."""
 
     medical_opinion_id: str | None = None
     """AJC-62 (M3) explicit document-to-assertion binding (R5/R35), with the
@@ -535,6 +570,191 @@ def _synthesize_dates(
     for _ in range(needed):
         out.append(timeline.clamp(timeline.injury_date + timedelta(days=rng.randint(1, span_days))))
     return sorted(out)
+
+
+def _required_rating_carrier_subtypes(
+    seed: CaseSeed, facts: CaseFacts
+) -> tuple[str, ...]:
+    """Return R48's deterministic carrier matrix in canonical order."""
+    rating = facts.rating
+    if rating is None:
+        return ()
+    hooks = frozenset(seed.lifecycle.doctrine_hooks)
+    required = ["PD_RATING_CALCULATION_WORKSHEET"]
+    if len(rating.impairments) > 1 or hooks & _IMPAIRMENT_WORKSHEET_HOOKS:
+        required.append("IMPAIRMENT_RATING_WORKSHEET")
+    if len(rating.impairments) > 1 or "kite" in hooks:
+        required.append("PD_RATING_CONVERSION")
+    return tuple(required)
+
+
+def _bind_required_rating_carriers(
+    seed: CaseSeed,
+    facts: CaseFacts,
+    timeline: CaseTimeline,
+    candidates: Sequence[DatedCandidate],
+) -> list[DatedCandidate]:
+    """Replace substrate rating draws with R48's fact-driven carrier set."""
+    if facts.rating is None:
+        return list(candidates)
+    base = [
+        candidate
+        for candidate in candidates
+        if candidate.subtype not in RATING_CARRIER_SUBTYPES
+    ]
+    rating_date = timeline.clamp(
+        timeline.application_filed_date + timedelta(days=30)
+    )
+    required = [
+        DatedCandidate(
+            subtype=subtype,
+            doc_date=rating_date,
+            track=TRACK_CORE,
+            priority=20,
+            author_role=author_role_for(subtype),
+            stage="medical_legal",
+        )
+        for subtype in _required_rating_carrier_subtypes(seed, facts)
+    ]
+    return [*base, *required]
+
+
+def _defense_semantic_candidates(
+    seed: CaseSeed,
+    facts: CaseFacts,
+    candidates: Sequence[DatedCandidate],
+) -> list[DatedCandidate]:
+    """Assign R62 IDs once at semantic construction, before controls."""
+    if seed.scenario.defense_lens is None:
+        return list(candidates)
+    response_subtype = {
+        "accepted": "CLAIM_ACCEPTANCE_LETTER",
+        "denied": "CLAIM_DENIAL_LETTER",
+        "delayed": "CLAIM_DELAY_NOTICE",
+    }[seed.lifecycle.claim_response]
+    surgery = facts.surgery
+    procedure_key = surgery.cpt_code or (
+        f"{surgery.body_part}:uncoded" if surgery.body_part else None
+    )
+    annotated: list[DatedCandidate] = []
+    for candidate in candidates:
+        if candidate.subtype in {"RESERVE_WORKSHEET", "RESERVE_CHANGE_NOTICE"}:
+            continue
+        semantic_id = candidate.semantic_event_id
+        if semantic_id is None and candidate.medical_opinion_id is not None:
+            semantic_id = f"medical-opinion:{candidate.medical_opinion_id}"
+        elif semantic_id is None and candidate.subtype == response_subtype:
+            semantic_id = f"claim-response:{seed.lifecycle.claim_response}"
+        elif (
+            semantic_id is None
+            and candidate.subtype == "MEDICAL_TREATMENT_AUTHORIZATION"
+            and procedure_key is not None
+        ):
+            semantic_id = f"surgery-authorization:{procedure_key}"
+        elif semantic_id is None and candidate.subtype == "PD_RATING_CALCULATION_WORKSHEET":
+            semantic_id = "rating:formal"
+        elif semantic_id is None and candidate.subtype == "NOTICE_OF_TRIAL":
+            semantic_id = f"trial-setting:{candidate.doc_date.isoformat()}"
+        elif semantic_id is None and candidate.subtype == "PETITION_RECONSIDERATION_FILED":
+            semantic_id = "recon:petition"
+        annotated.append(replace(candidate, semantic_event_id=semantic_id))
+    return annotated
+
+
+def _defense_paid_ledger(
+    money_facts: MoneyFacts,
+    authored: Sequence[object],
+) -> tuple[PaidCost, ...]:
+    """Merge exact W1 payments with authored non-W1 costs once."""
+    costs: list[PaidCost] = []
+    for ordinal, period in enumerate(money_facts.benefits.td_periods, 1):
+        if period.date_paid is None:
+            continue
+        costs.append(
+            PaidCost(
+                id=f"w1:td:{ordinal}",
+                date=period.date_paid,
+                bucket="indemnity",
+                category="td",
+                amount=period.amount,
+                source_document_subtype="BENEFIT_PAYMENT_LEDGER",
+            )
+        )
+    for ordinal, advance in enumerate(money_facts.benefits.pd_advances, 1):
+        costs.append(
+            PaidCost(
+                id=f"w1:pd:{ordinal}",
+                date=advance.date_paid,
+                bucket="indemnity",
+                category="pd",
+                amount=advance.amount,
+                source_document_subtype="BENEFIT_PAYMENT_LEDGER",
+            )
+        )
+    for item in authored:
+        costs.append(
+            PaidCost(
+                id=item.id,
+                date=item.date,
+                bucket=item.bucket,
+                category=item.category,
+                amount=item.amount,
+                source_document_subtype=item.source_document_subtype,
+            )
+        )
+    identifiers = tuple(item.id for item in costs)
+    if len(set(identifiers)) != len(identifiers):
+        paid_cost_ledger(costs)
+    return tuple(sorted(costs, key=lambda item: (item.date, item.id)))
+
+
+def _reserve_candidates(state: _UnboundDefenseState) -> list[DatedCandidate]:
+    candidates = [
+        DatedCandidate(
+            subtype="RESERVE_WORKSHEET",
+            doc_date=state.decisions[0].exposure.effective_date,
+            track=TRACK_CORE,
+            priority=4,
+            author_role="carrier",
+            stage="initial_file_review",
+            semantic_event_id="reserve:initial_file_review",
+        )
+    ]
+    candidates.extend(
+        DatedCandidate(
+            subtype="RESERVE_CHANGE_NOTICE",
+            doc_date=decision.exposure.effective_date,
+            track=TRACK_CORE,
+            priority=4,
+            author_role="carrier",
+            stage=decision.exposure.trigger,
+            semantic_event_id=f"reserve:{decision.exposure.trigger}",
+        )
+        for decision in state.decisions[1:]
+        if decision.requires_notice
+    )
+    return candidates
+
+
+def _verify_required_rating_carriers(
+    seed: CaseSeed,
+    facts: CaseFacts,
+    candidates: Sequence[DatedCandidate],
+) -> None:
+    """Fail when an explicit control removed any required rating carrier."""
+    required = _required_rating_carrier_subtypes(seed, facts)
+    if not required:
+        return
+    held = Counter(candidate.subtype for candidate in candidates)
+    missing = tuple(subtype for subtype in required if held[subtype] < 1)
+    if missing:
+        raise RatingValidationError(
+            RATING_REQUIRED_CARRIER_REMOVED,
+            "documents",
+            missing,
+            "scenario.rating requires every R48 carrier; remove or relax the "
+            "document control that suppressed the named subtype",
+        )
 
 
 #: What survives ``treatment: never_treated``.
@@ -2324,7 +2544,12 @@ def reconcile_medical_ur_documents(
     return live, tuple(warnings)
 
 
-def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
+def build_case_plan(
+    seed: CaseSeed,
+    case_number: int = 1,
+    *,
+    _phase_trace: list[str] | None = None,
+) -> CasePlan:
     """Turn one seed into a fully decided case plan.
 
     Args:
@@ -2342,18 +2567,25 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     controls = normalize_control_keys(seed.documents, case_id=seed.case_id)
     timeline = build_timeline(seed)
 
+    def record_phase(name: str) -> None:
+        if _phase_trace is not None:
+            _phase_trace.append(name)
+
     # The cast is built here rather than after the document loop so the ledger
     # can be derived *once*, with the cast, and used everywhere. Deriving a
     # cast-free copy for planning and a cast-bearing copy for publication meant
     # two derivations per case that disagreed with each other — the planner saw
     # one provider, the manifest published five.
     cast = build_case_cast(seed, timeline, case_number=case_number)
+    record_phase("cast")
     case_facts = derive_case_facts(seed, timeline, cast)
+    record_phase("case_facts_rating")
     # The resolved diligence is passed in rather than re-resolved, so the money
     # and the clinical ledger cannot disagree about who handled this file. Two
     # independent resolutions of the same persona is the defect that let
     # ``scenario.surgery`` and ``has_surgery`` contradict each other in Phase 1.
     money_facts = derive_money_facts(seed, timeline, case_facts.adjuster_diligence)
+    record_phase("early_w1")
     # The cast's date of birth rather than a second derivation of it — the ledger and
     # the documents must not reach two different ages for one applicant.
     medical_history = derive_medical_history(
@@ -2417,10 +2649,46 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     # owns), binds or adds the required opinion-report candidates, and
     # materializes every contention-document binding. Loop candidates never
     # pass through apply_perspective() a second time.
-    story_planning = plan_medical_story_documents(
-        seed, timeline, assertion_plan, pov.candidates
+    rating_bound_candidates = _bind_required_rating_carriers(
+        seed, case_facts, timeline, pov.candidates
     )
-    candidates = list(story_planning.candidates)
+    story_planning = plan_medical_story_documents(
+        seed, timeline, assertion_plan, rating_bound_candidates
+    )
+    candidates = _defense_semantic_candidates(
+        seed,
+        case_facts,
+        story_planning.candidates,
+    )
+    record_phase("lifecycle_m4_rating_recon_candidates")
+
+    defense_state: _UnboundDefenseState | None = None
+    defense_scenario = seed.scenario.defense_lens
+    if defense_scenario is not None:
+        assert money_facts is not None
+        paid_ledger = _defense_paid_ledger(
+            money_facts,
+            defense_scenario.paid_costs,
+        )
+        defense_state = build_unbound_defense(
+            defense_scenario,
+            timeline=timeline,
+            lifecycle=seed.lifecycle,
+            case_facts=case_facts,
+            candidates=candidates,
+            paid_costs=paid_ledger,
+            diligence=case_facts.adjuster_diligence,
+            opinions=(
+                ()
+                if medical_assertions is None
+                else medical_assertions.medical_opinions
+            ),
+            recon=recon,
+        )
+    record_phase("unbound_defense")
+    if defense_state is not None:
+        candidates.extend(_reserve_candidates(defense_state))
+    record_phase("reserve_candidates")
 
     control = resolve_document_controls(
         to_document_candidates(candidates),
@@ -2502,6 +2770,15 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
         dated, assertion_plan.contention_documents
     )
     dated, imr_reconcile_warnings = reconcile_medical_ur_documents(dated)
+    _verify_required_rating_carriers(seed, case_facts, dated)
+    if defense_state is not None:
+        validate_required_trigger_sources(
+            defense_state.trigger_occurrences,
+            dated,
+            source_subtypes=dict(defense_state.source_subtypes),
+        )
+        validate_reserve_artifact_candidates(defense_state, dated)
+    record_phase("controls")
     penalty_warnings = _penalty_control_warnings(case_facts, dated, controls)
     dated.sort(key=lambda item: (item.doc_date, item.subtype, item.track))
 
@@ -2556,9 +2833,14 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
                 ),
                 track=candidate.track,
                 author_role=roles.author_role,
-                title=taxonomy.label(subtype) or subtype.replace("_", " ").title(),
+                title=(
+                    "Initial File Review"
+                    if subtype == "RESERVE_WORKSHEET"
+                    else taxonomy.label(subtype) or subtype.replace("_", " ").title()
+                ),
                 recipient_role=roles.recipient_role,
                 content_flags=content_flags_for(seed.lifecycle.doctrine_hooks, subtype),
+                semantic_event_id=candidate.semantic_event_id,
                 # The R5/R35 bindings survive to the final indexed document —
                 # this is the seam derive_medical_story() resolves from.
                 medical_opinion_id=candidate.medical_opinion_id,
@@ -2574,6 +2856,24 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
                 medical_story_render_key=render_key,
             )
         )
+
+    bound_defense_artifacts = None
+    if defense_state is not None:
+        bound_defense_artifacts = bind_defense_artifacts(
+            defense_state,
+            documents=documents,
+        )
+    record_phase("bindings")
+    defense_facts = None
+    if defense_state is not None and bound_defense_artifacts is not None:
+        defense_facts = bind_defense_facts(
+            defense_state,
+            bound_defense_artifacts,
+            claim_response=seed.lifecycle.claim_response,
+        )
+    if money_facts is not None and defense_facts is not None:
+        money_facts = money_facts.model_copy(update={"defense": defense_facts})
+    record_phase("final_money_facts")
 
     # AJC-63/M4: validate only the final indexed binding projection. This is the
     # shared predicate the v2 truth reader uses; seed entries and pre-control
@@ -2599,6 +2899,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
     medical_story = derive_medical_story(
         seed, medical_history, medical_assertions, documents
     )
+    record_phase("render")
 
     emitted = _emitted_per_track(
         documents, [track.documents for track in lien_tracks] + [recon.documents]
@@ -2715,6 +3016,7 @@ def build_case_plan(seed: CaseSeed, case_number: int = 1) -> CasePlan:
 
 
 __all__ = [
+    "DEFENSE_PLANNER_STAGES",
     "MONEY_FLOOR_SUBTYPES",
     "MONEY_PD_SUBTYPE",
     "MONEY_TD_SUBTYPE",

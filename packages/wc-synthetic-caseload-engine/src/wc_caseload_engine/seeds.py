@@ -54,12 +54,25 @@ from wc_caseload_engine.clinical_grounding import (
     Sex,
     SmokingStatus,
 )
+from wc_caseload_engine.defense_lens import (
+    DEFENSE_REQUIRES_DEFENSE_PERSPECTIVE,
+    DEFENSE_REQUIRES_WAGES,
+    DefenseLensScenario,
+)
 from wc_caseload_engine.doctrine import (
     DOCTRINE_CONTENT,
     DoctrineFacts,
     distinct_body_part_count,
     hook_is_supported,
     supported_hooks,
+)
+from wc_caseload_engine.rating import (
+    RATING_INVALID_AGE_INPUT,
+    RATING_REQUIRES_WAGES,
+    KiteAdditionInput,
+    RatingImpairmentInput,
+    RatingScenario,
+    validate_rating_inputs,
 )
 
 log = structlog.get_logger(__name__)
@@ -2472,6 +2485,22 @@ class ScenarioSpec(_Model):
     wage facts" from "the author said nothing".
     """
 
+    defense_lens: DefenseLensScenario | None = None
+    """Authored defense evaluation and ultimate-cost operands.
+
+    ``None`` is the byte-inert default.  Item 7 validates the authored model
+    only; planner events, documents, and projections land in later work items.
+    """
+
+    rating: RatingScenario | None = None
+    """Authored PDRS operands. ``None`` constructs no rating state or RNG.
+
+    A present block is validated fail-closed here and at :class:`CaseSeed`'s
+    cross-object boundary, but is not computed until the rating deriver owns
+    the arithmetic.  It shares the existing wage gate rather than opening a
+    second versioned money channel.
+    """
+
     benefits: BenefitsScenario | None = None
     """What was paid. Requires ``wages`` — see :meth:`_money_needs_a_wage_block`."""
 
@@ -2523,8 +2552,9 @@ class ScenarioSpec(_Model):
     def _money_needs_a_wage_block(self) -> ScenarioSpec:
         """One gate for the whole money layer, and it is the wage block.
 
-        ``benefits``, ``settlement`` and ``penalties`` describe money moving. A benefit
-        payment has a rate, and a rate is derived from an average weekly wage —
+        ``defense_lens``, ``rating``, ``benefits``, ``settlement`` and ``penalties``
+        describe money. A benefit payment has a rate, and a rate is derived from an
+        average weekly wage —
         so a benefits block with no wage facts behind it is exactly the asserted
         number this layer exists to replace with a derived one. The settlement
         is held to the same gate rather than a looser one of its own, because
@@ -2535,12 +2565,24 @@ class ScenarioSpec(_Model):
             return self
         stated = [
             name
-            for name in ("benefits", "settlement", "penalties")
+            for name in (
+                "defense_lens",
+                "rating",
+                "benefits",
+                "settlement",
+                "penalties",
+            )
             if getattr(self, name) is not None
         ]
         if stated:
+            codes = []
+            if "defense_lens" in stated:
+                codes.append(DEFENSE_REQUIRES_WAGES)
+            if "rating" in stated:
+                codes.append(RATING_REQUIRES_WAGES)
+            code = f"{'/'.join(codes)}: " if codes else ""
             raise ValueError(
-                f"scenario.{' and scenario.'.join(stated)} needs scenario.wages — a "
+                f"{code}scenario.{' and scenario.'.join(stated)} needs scenario.wages — a "
                 "benefit rate and a settlement both rest on an average weekly wage, and "
                 "without an earnings history this engine would have to assert one. Add a "
                 f"scenario.wages block, or remove scenario.{stated[0]}."
@@ -2618,6 +2660,31 @@ class CaseSeed(_Model):
     documents: DocumentControls = Field(default_factory=DocumentControls)
     output: OutputSpec = Field(default_factory=OutputSpec)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _rating_age_fails_with_the_rating_code(cls, value: Any) -> Any:
+        """Give rating-bound age failures their stable R50 identity.
+
+        The nested applicant model validates before any outer ``after``
+        validator can see it. This raw boundary is therefore the only place a
+        rating seed with an invalid authored age can fail with its rating code
+        instead of Pydantic's generic integer-range message.
+        """
+        if not isinstance(value, Mapping):
+            return value
+        scenario = value.get("scenario")
+        if not isinstance(scenario, Mapping) or scenario.get("rating") is None:
+            return value
+        profile = value.get("profile")
+        applicant = profile.get("applicant") if isinstance(profile, Mapping) else None
+        age = applicant.get("age") if isinstance(applicant, Mapping) else None
+        if age is not None and (type(age) is not int or not 16 <= age <= 99):
+            raise ValueError(
+                f"{RATING_INVALID_AGE_INPUT}: profile.applicant.age={age!r} — "
+                "a rating supports an authored applicant age from 16 through 99"
+            )
+        return value
+
     @field_validator("injury", mode="before")
     @classmethod
     def _reject_repeated_body_parts(cls, value: Any, info: ValidationInfo) -> Any:
@@ -2649,6 +2716,36 @@ class CaseSeed(_Model):
                     _repeated_part_message(*repeated, case_id=info.data.get("case_id"))
                 )
         return value
+
+    @model_validator(mode="after")
+    def _rating_is_valid_before_derivation(self) -> CaseSeed:
+        """Reject every invalid rating state before Item 4 may compute it."""
+        rating = self.scenario.rating
+        if rating is None:
+            return self
+        validate_rating_inputs(
+            rating,
+            date_of_injury=self.injury.onset_date,
+            evaluator=self.lifecycle.eval_type,
+            injury_body_parts=tuple(part.part for part in self.injury.body_parts),
+            date_path=(
+                "injury.ct_end"
+                if self.injury.type == "cumulative_trauma"
+                else "injury.date_of_injury"
+            ),
+        )
+        return self
+
+    @model_validator(mode="after")
+    def _defense_lens_requires_defense_perspective(self) -> CaseSeed:
+        """A defense file lens cannot be authored into an applicant file."""
+        if self.scenario.defense_lens is None or self.perspective == "defense":
+            return self
+        raise ValueError(
+            f"{DEFENSE_REQUIRES_DEFENSE_PERSPECTIVE}: scenario.defense_lens "
+            "requires perspective: defense; change the top-level perspective or "
+            "remove scenario.defense_lens."
+        )
 
     @model_validator(mode="after")
     def _a_fatal_injury_has_no_disability_benefits_to_pay(self) -> CaseSeed:
@@ -3770,6 +3867,7 @@ __all__ = [
     "CaseProfile",
     "CaseSeed",
     "CaseloadSpec",
+    "DefenseLensScenario",
     "DiagnosticEntry",
     "DiagnosticsScenario",
     "DiscoveryScenario",
@@ -3780,12 +3878,15 @@ __all__ = [
     "EmployerProfile",
     "InKindEntry",
     "InjurySpec",
+    "KiteAdditionInput",
     "LienSpec",
     "LifecycleSpec",
     "OutputSpec",
     "PageRange",
     "PhysicianProfile",
     "RateBasisOverride",
+    "RatingImpairmentInput",
+    "RatingScenario",
     "ReconsiderationSpec",
     "ResolutionSpec",
     "ScenarioSpec",
