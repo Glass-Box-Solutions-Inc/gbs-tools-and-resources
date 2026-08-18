@@ -17,10 +17,17 @@ export interface AzureSpoolMaintenanceOptions {
   readonly blobStore: BlobStore;
   readonly uploadHorizonMs: number;
   readonly graceMs: number;
+  /** Defaults to 30 days; controls when a superseded record becomes a Path-1 candidate. */
+  readonly supersedeRetentionMs?: number;
+  /** Rename-delay heuristic only. Defaults to 60 seconds. */
+  readonly readDrainMs?: number;
   readonly now?: () => number;
   /** Defaults true. Quarantine-mode jobs disable only Path 3 hard deletion. */
   readonly includeHardDelete?: boolean;
 }
+
+export const DEFAULT_SUPERSEDE_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+export const DEFAULT_READ_DRAIN_MS = 60_000;
 
 function checkedDuration(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < 0) {
@@ -53,6 +60,8 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
   readonly #blobStore: BlobStore;
   readonly #uploadHorizonMs: number;
   readonly #graceMs: number;
+  readonly #supersedeRetentionMs: number;
+  readonly #readDrainMs: number;
   readonly #now: () => number;
   readonly #includeHardDelete: boolean;
 
@@ -61,6 +70,14 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
     this.#blobStore = options.blobStore;
     this.#uploadHorizonMs = checkedDuration(options.uploadHorizonMs, "upload_horizon");
     this.#graceMs = checkedDuration(options.graceMs, "grace");
+    this.#supersedeRetentionMs = checkedDuration(
+      options.supersedeRetentionMs ?? DEFAULT_SUPERSEDE_RETENTION_MS,
+      "supersede_retention",
+    );
+    this.#readDrainMs = checkedDuration(options.readDrainMs ?? DEFAULT_READ_DRAIN_MS, "read_drain");
+    if (this.#supersedeRetentionMs < this.#graceMs || this.#graceMs < this.#readDrainMs) {
+      throw new Error("azure_spool_maintenance_invalid_retention_window_order");
+    }
     this.#now = options.now ?? Date.now;
     this.#includeHardDelete = options.includeHardDelete ?? true;
   }
@@ -78,6 +95,8 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
     const pathOne = await this.#controlPlane.selectFinalizedOrphansForReclaim({
       olderThanEpochMs: scrubbed.olderThanEpochMs,
       limit: remaining,
+      supersedeRetentionMs: this.#supersedeRetentionMs,
+      readDrainMs: this.#readDrainMs,
     });
     this.#assertWithinBudget(pathOne.rows.length, remaining, "path_one");
     remaining -= pathOne.rows.length;
@@ -121,6 +140,8 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
       const hardDelete = await this.#controlPlane.hardDeleteQuarantined({
         olderThanEpochMs: Math.max(0, nowEpochMs - this.#graceMs),
         limit: remaining,
+        supersedeRetentionMs: this.#supersedeRetentionMs,
+        readDrainMs: this.#readDrainMs,
       });
       this.#assertWithinBudget(hardDelete.length, remaining, "path_three");
       remaining -= hardDelete.length;
@@ -138,27 +159,46 @@ export class AzureSpoolMaintenance implements SpoolMaintenance {
 
   async #quarantine(row: ReclaimBlobRow): Promise<void> {
     const destination = quarantinePath(row.preparedBlobId);
-    if (await this.#blobStore.head(destination) !== undefined) {
+    const destinationHead = await this.#blobStore.head(destination);
+    if (destinationHead !== undefined) {
+      if (BigInt(destinationHead.len) !== row.blobLength) {
+        throw new Error("azure_spool_maintenance_quarantine_length_mismatch");
+      }
       // A prior worker completed the rename. Remove a divergent leftover original defensively.
       await this.#removeIdempotently(row.blobPath);
+      if (await this.#blobStore.head(row.blobPath) !== undefined) {
+        throw new Error("azure_spool_maintenance_quarantine_original_still_present");
+      }
       return;
     }
-    if (await this.#blobStore.head(row.blobPath) === undefined) {
-      // Recovery deliberately tolerates a missing source, including a crash after an external move.
-      return;
+    const sourceHead = await this.#blobStore.head(row.blobPath);
+    if (sourceHead === undefined) {
+      throw new Error("azure_spool_maintenance_quarantine_both_paths_absent");
+    }
+    if (BigInt(sourceHead.len) !== row.blobLength) {
+      throw new Error("azure_spool_maintenance_quarantine_length_mismatch");
     }
     try {
       await this.#blobStore.rename(row.blobPath, destination);
     } catch (error: unknown) {
       if (statusCodeOf(error) === 404) {
-        return;
-      }
-      // Concurrent recovery may win the same rename after our HEAD. Its destination is success.
-      if (await this.#blobStore.head(destination) !== undefined) {
+        // The source may have disappeared because a peer won the same move. Verification below
+        // decides whether that is success; source+destination absence is never success.
+      } else if (await this.#blobStore.head(destination) !== undefined) {
         await this.#removeIdempotently(row.blobPath);
-        return;
+      } else {
+        throw error;
       }
-      throw error;
+    }
+    const verifiedDestination = await this.#blobStore.head(destination);
+    if (verifiedDestination === undefined) {
+      throw new Error("azure_spool_maintenance_quarantine_both_paths_absent");
+    }
+    if (BigInt(verifiedDestination.len) !== row.blobLength) {
+      throw new Error("azure_spool_maintenance_quarantine_length_mismatch");
+    }
+    if (await this.#blobStore.head(row.blobPath) !== undefined) {
+      throw new Error("azure_spool_maintenance_quarantine_original_still_present");
     }
   }
 
