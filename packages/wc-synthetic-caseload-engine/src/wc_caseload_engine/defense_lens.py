@@ -743,7 +743,7 @@ class DefenseLensFacts(BaseModel):
                 "resolved exposure triggers cannot repeat",
             )
         for event in self.reserve_events:
-            if False:
+            if event.trigger == "initial_file_review":
                 _fail(
                     DEFENSE_DUPLICATE_INITIAL_REVIEW_EVENT,
                     "defense.reserve_events",

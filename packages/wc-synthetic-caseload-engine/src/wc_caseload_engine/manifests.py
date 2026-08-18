@@ -361,6 +361,7 @@ def generate_case(
                 if medical_story is not None
                 else None
             ),
+            semantic_event_id=document.semantic_event_id,
         )
         if document.subtype in SUBPOENAED_RECORDS_SUBTYPES:
             packet_counter += 1

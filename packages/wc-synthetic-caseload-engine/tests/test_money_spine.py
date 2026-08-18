@@ -3350,6 +3350,9 @@ class TestTheGovernanceTableBindsBothWays:
         # ISC-177 lesson, applied to the check that names the table.
         checked = 0
         for group, fields in GOVERNED_MONEY_FIELDS.items():
+            if group == "defense":
+                assert group not in self._block()["money"]
+                continue
             for field in fields:
                 block = self._block()
                 assert field in block["money"][group], (
@@ -3362,7 +3365,11 @@ class TestTheGovernanceTableBindsBothWays:
                     "missing governed field" in problem and field in problem for problem in problems
                 ), f"deleting {group}.{field} was accepted: {problems}"
                 checked += 1
-        assert checked == sum(len(f) for f in GOVERNED_MONEY_FIELDS.values())
+        assert checked == sum(
+            len(fields)
+            for group, fields in GOVERNED_MONEY_FIELDS.items()
+            if group != "defense"
+        )
 
     def test_every_published_label_is_checked_against_its_own_vocabulary(self) -> None:
         """`basisSource` was the one extraction label nothing validated.

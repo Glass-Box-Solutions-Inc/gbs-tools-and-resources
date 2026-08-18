@@ -593,10 +593,10 @@ def _bind_required_rating_carriers(
     facts: CaseFacts,
     timeline: CaseTimeline,
     candidates: Sequence[DatedCandidate],
-) -> list[DatedCandidate]:
+) -> Sequence[DatedCandidate]:
     """Replace substrate rating draws with R48's fact-driven carrier set."""
     if facts.rating is None:
-        return list(candidates)
+        return candidates
     base = [
         candidate
         for candidate in candidates
@@ -613,6 +613,11 @@ def _bind_required_rating_carriers(
             priority=20,
             author_role=author_role_for(subtype),
             stage="medical_legal",
+            semantic_event_id=(
+                "rating:formal"
+                if subtype == "PD_RATING_CALCULATION_WORKSHEET"
+                else f"rating:carrier:{subtype}"
+            ),
         )
         for subtype in _required_rating_carrier_subtypes(seed, facts)
     ]
@@ -623,10 +628,10 @@ def _defense_semantic_candidates(
     seed: CaseSeed,
     facts: CaseFacts,
     candidates: Sequence[DatedCandidate],
-) -> list[DatedCandidate]:
+) -> Sequence[DatedCandidate]:
     """Assign R62 IDs once at semantic construction, before controls."""
     if seed.scenario.defense_lens is None:
-        return list(candidates)
+        return candidates
     response_subtype = {
         "accepted": "CLAIM_ACCEPTANCE_LETTER",
         "denied": "CLAIM_DENIAL_LETTER",
@@ -2835,7 +2840,7 @@ def build_case_plan(
                 author_role=roles.author_role,
                 title=(
                     "Initial File Review"
-                    if subtype == "RESERVE_WORKSHEET"
+                    if defense_state is not None and subtype == "RESERVE_WORKSHEET"
                     else taxonomy.label(subtype) or subtype.replace("_", " ").title()
                 ),
                 recipient_role=roles.recipient_role,

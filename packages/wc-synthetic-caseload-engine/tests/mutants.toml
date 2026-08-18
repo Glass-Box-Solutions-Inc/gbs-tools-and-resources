@@ -450,7 +450,7 @@ id = 'm4-2'
 title = 'the settlement group is skipped by the governance loop again'
 file = 'src/wc_caseload_engine/manifests.py'
 test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_a_settlement_is_shape_checked_and_governed_like_everything_else'
-find = '''        if key in ("settlement", "penalties") and money.get(key) is None:'''
+find = '''        if key in ("settlement", "penalties", "defense") and money.get(key) is None:'''
 replace = '''        if key in ("settlement", "penalties"):'''
 
 [[mutant]]
@@ -985,12 +985,12 @@ id = 'g-4'
 title = 'a mutation that does not compile is run anyway'
 file = 'tools/mutation_gate.py'
 test = 'tests/test_mutation_gate.py::TestOnlyANamedCallPhaseAssertionIsRed::test_a_mutation_that_does_not_compile_is_not_red'
-find = '''    except SyntaxError as exc:
+find = '''    if syntax_error is not None:
         return Verdict(
             "INVALID-MUTATION",'''
-replace = '''    except SyntaxError as exc:
+replace = '''    if syntax_error is not None:
         return Verdict(
-            "RED" if exc else "INVALID-MUTATION",'''
+            "RED" if syntax_error else "INVALID-MUTATION",'''
 
 [[mutant]]
 id = 'g-5'
@@ -1397,8 +1397,8 @@ note = "AJC-55. The substrate's alias table is the single seam through which eve
 id = 'm16-1'
 title = 'an incompatible money-channel major version is silently accepted'
 file = 'src/wc_caseload_engine/truth_manifest.py'
-test = 'tests/test_truth_manifest.py::test_unknown_channel_is_ignored_and_money_major_is_guarded'
-find = '''    if parts[0] != supported.partition(".")[0]:'''
+test = 'tests/test_truth_manifest.py::test_unknown_channel_is_ignored_and_money_exact_version_is_guarded'
+find = '''    if version not in SUPPORTED_MONEY_CHANNEL_VERSIONS:'''
 replace = '''    if False:'''
 note = 'AJC-48 Round B, re-pointed in the review round. Additive channels and compatible minor versions are open, but a new money major may change the meaning or shape of scorer labels. The reader must refuse it rather than reconstructing an apparently valid but semantically unknown MoneyFacts. The major check moved into the shared _require_compatible_version helper when review finding 4 made one parser serve both the envelope and every channel, so this mutation now disables both — the guard still names the money-channel claim, which is the narrower of the two and therefore the honest one to assert.'
 
@@ -1409,10 +1409,12 @@ file = 'src/wc_caseload_engine/truth_manifest.py'
 test = 'tests/test_truth_manifest.py::test_money_gate_omits_channel_and_reimports_as_none'
 find = '''    channels: dict[str, Any] = {}
     if plan.money_facts is not None:
-        channels["money"] = _money_channel(plan.money_facts)'''
+        rating = plan.case_facts.rating if plan.case_facts is not None else None
+        channels["money"] = _money_channel(plan.money_facts, rating=rating)'''
 replace = '''    channels: dict[str, Any] = {}
     if plan.money_facts is not None:
-        channels["money"] = _money_channel(plan.money_facts)
+        rating = plan.case_facts.rating if plan.case_facts is not None else None
+        channels["money"] = _money_channel(plan.money_facts, rating=rating)
     else:
         channels["money"] = {}'''
 note = 'AJC-48 Round B. Channel presence means a label family exists for the case. An empty or null money channel invents a third state between absent and populated and makes scorer routing ambiguous.'
@@ -1422,7 +1424,7 @@ id = 'm16-3'
 title = 'the scorer-facing published block drifts away from the public money ledger'
 file = 'src/wc_caseload_engine/truth_manifest.py'
 test = 'tests/test_truth_manifest.py::test_published_block_is_the_existing_public_contract'
-find = '''        "published": money_manifest_block(facts),'''
+find = '''        "published": published,'''
 replace = '''        "published": {},'''
 note = 'AJC-48 Round B. The scorer label and case manifest must be the same established public contract, not independently serialized approximations that can drift while each remains internally valid.'
 
@@ -1519,8 +1521,8 @@ id = 'm15-6'
 title = 'the penalties group is skipped by the governance loop again'
 file = 'src/wc_caseload_engine/manifests.py'
 test = 'tests/test_money_spine.py::TestTheValidatorRefusesAnUncheckableClaim::test_penalties_are_shape_checked_and_governed_like_everything_else'
-find = '''        if key in ("settlement", "penalties") and money.get(key) is None:'''
-replace = '''        if key in ("settlement", "penalties") and (money.get(key) is None or key == "penalties"):'''
+find = '''        if key in ("settlement", "penalties", "defense") and money.get(key) is None:'''
+replace = '''        if key in ("settlement", "penalties", "defense") and (money.get(key) is None or key == "penalties"):'''
 note = 'AJC-48 Round D. Optional means an absent penalties group may be skipped; a present one must still be shape-checked and refused if it publishes an ungoverned extraction label.'
 
 [[mutant]]
@@ -2957,8 +2959,11 @@ id = 'm20-23'
 title = 'medical-story candidates enter before perspective resolution'
 file = 'src/wc_caseload_engine/planner.py'
 test = 'tests/test_medical_story_loop.py::test_contention_candidates_enter_after_perspective_before_controls_once'
-find = '''    story_planning = plan_medical_story_documents(
-        seed, timeline, assertion_plan, pov.candidates
+find = '''    rating_bound_candidates = _bind_required_rating_carriers(
+        seed, case_facts, timeline, pov.candidates
+    )
+    story_planning = plan_medical_story_documents(
+        seed, timeline, assertion_plan, rating_bound_candidates
     )'''
 replace = '''    story_planning = plan_medical_story_documents(
         seed, timeline, assertion_plan, machine_candidates
@@ -3973,10 +3978,10 @@ title = 'ABSENT-DEFENSE-CONSTRUCTION'
 file = 'src/wc_caseload_engine/truth_manifest.py'
 test = 'tests/test_money_w2_baseline.py::test_defense_absent_baseline_has_a_live_one_input_positive_neighbor'
 find = '''    channel: dict[str, Any] = {
-        "channelVersion": MONEY_CHANNEL_VERSION,
+        "channelVersion": channel_version,
         "wage": {'''
 replace = '''    channel: dict[str, Any] = {
-        "channelVersion": MONEY_CHANNEL_VERSION,
+        "channelVersion": channel_version,
         "defenseConstruction": {"method": "fabricated"},
         "wage": {'''
 note = 'AJC-44/AJC-45 W2 work item 1. A defense-absent baseline must not acquire a fabricated defense construction.'
@@ -4694,3 +4699,35 @@ replace = '''    block = money_manifest_block(facts)
         )["scorerLabels"]
     return block'''
 note = 'R78/R96/R102. Publishing scorerLabels hands the analyzer the stair-stepping and reserve-adequacy answers instead of preserving the scorer-only boundary.'
+
+[[mutant]]
+id = 'm23-47'
+title = 'DILIGENCE-IN-GOLDEN-SEED'
+file = 'examples/money-w2-showcase.yaml'
+test = 'tests/test_money_w2_corpus.py::test_w2_raw_yaml_omits_adjuster_diligence_and_uses_neutral_names'
+find = '''  - case_id: w2-rating-anchor
+    rng_seed: 62001
+    profile:
+      applicant: {age: 44, occupation: Warehouse worker}
+    injury:
+      type: specific
+      date_of_injury: 2012-06-15
+      body_parts: [{part: cervical_spine, icd10: M54.2}]
+    lifecycle: {target_stage: medical_legal, eval_type: qme}
+    scenario:
+      wages: {}
+      rating:'''
+replace = '''  - case_id: w2-rating-anchor
+    rng_seed: 62001
+    profile:
+      applicant: {age: 44, occupation: Warehouse worker}
+    injury:
+      type: specific
+      date_of_injury: 2012-06-15
+      body_parts: [{part: cervical_spine, icd10: M54.2}]
+    lifecycle: {target_stage: medical_legal, eval_type: qme}
+    scenario:
+      adjuster: {diligence: negligent}
+      wages: {}
+      rating:'''
+note = 'R100/R102/R105. A W2 golden case must prove booking policy from derived behavior; authoring diligence in the raw showcase bypasses that oracle.'

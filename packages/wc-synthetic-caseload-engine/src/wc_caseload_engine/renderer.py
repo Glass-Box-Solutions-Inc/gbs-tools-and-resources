@@ -582,6 +582,12 @@ Named rather than inlined so a test can tell a wrapped dispatch from a plain
 one without matching on a string literal it also has to keep in sync.
 """
 
+RATING_RNG_STREAMS: tuple[str, ...] = ("rating:doctrine",)
+"""Every rating-owned RNG family; all suffixes are semantic identities."""
+
+DEFENSE_LENS_RNG_STREAMS: tuple[str, ...] = ()
+"""Defense arithmetic and reserve paper consume authored/frozen facts, never RNG."""
+
 
 def doctrine_flowables(
     template: Any,
@@ -592,6 +598,7 @@ def doctrine_flowables(
     content_flags: Sequence[str],
     medical_story_enabled: bool = False,
     medical_story_render_key: tuple[object, ...] | None = None,
+    semantic_event_id: str | None = None,
 ) -> list[Any]:
     """The authorities section appended to a flagged document's story.
 
@@ -621,7 +628,16 @@ def doctrine_flowables(
         )
         if not pool:
             continue
-        if medical_story_render_key is None:
+        facts = getattr(template, "_wc_case_facts", None)
+        rating = getattr(facts, "rating", None)
+        if rating is not None and semantic_event_id is not None:
+            rng = random.Random(
+                derive_seed(
+                    seed.rng_seed,
+                    f"rating:doctrine:{semantic_event_id}:{hook}",
+                )
+            )
+        elif medical_story_render_key is None:
             rng = random.Random(
                 derive_seed(seed.rng_seed, f"doctrine:{index}:{hook}")
             )
@@ -633,8 +649,6 @@ def doctrine_flowables(
             )
         body.append(Paragraph(rng.choice(pool), styles["BodyText14"]))
         body.append(Paragraph(content.citation, styles["SmallItalic"]))
-        facts = getattr(template, "_wc_case_facts", None)
-        rating = getattr(facts, "rating", None)
         if hook in RATING_GROUNDED_DOCTRINE_HOOKS and rating is not None:
             body.append(
                 Paragraph(
@@ -721,6 +735,7 @@ def render_document(
     imr_application_content: Any = None,
     imr_outcome: str | None = None,
     medical_story_render_key: tuple[object, ...] | None = None,
+    semantic_event_id: str | None = None,
 ) -> RenderResult:
     """Render one planned document to *out_path*, reproducibly.
 
@@ -800,6 +815,7 @@ def render_document(
                 content_flags=flags,
                 medical_story_enabled=medical_story is not None,
                 medical_story_render_key=medical_story_render_key,
+                semantic_event_id=semantic_event_id,
             ),
         )
 
