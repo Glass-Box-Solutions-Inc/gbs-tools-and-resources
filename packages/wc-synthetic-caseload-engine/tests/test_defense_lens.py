@@ -13,14 +13,19 @@ from pydantic import ValidationError
 
 from conftest import extract_text, requires_substrate
 from wc_caseload_engine.defense_lens import (
+    DEFENSE_ACCOUNTING_EQUATION_BROKEN,
+    DEFENSE_ARTIFACT_BINDING_MISMATCH,
+    DEFENSE_ARTIFACT_BINDING_MISSING,
     DEFENSE_BUCKET_CATEGORIES,
     DEFENSE_DUPLICATE_INITIAL_REVIEW_EVENT,
     DEFENSE_DUPLICATE_PAID_COST_ID,
     DEFENSE_DUPLICATE_RESERVE_TRIGGER,
     DEFENSE_DUPLICATE_W1_PAID_COST,
+    DEFENSE_ERROR_CODES,
     DEFENSE_EXPOSURE_BELOW_PAID,
     DEFENSE_INELIGIBLE_RESERVE_TRIGGER,
     DEFENSE_INITIAL_FILE_REVIEW_REQUIRED,
+    DEFENSE_INITIAL_REVIEW_REQUIRED,
     DEFENSE_INVALID_BUCKET_CATEGORY,
     DEFENSE_INVALID_EXPOSURE_RANGE,
     DEFENSE_NEGATIVE_AMOUNT,
@@ -29,6 +34,7 @@ from wc_caseload_engine.defense_lens import (
     DEFENSE_REQUIRES_WAGES,
     DEFENSE_RESERVE_TRIGGERS,
     DEFENSE_TRIGGER_OCCURRENCE_ID_MISSING,
+    DEFENSE_TRIGGER_ORDER_INVALID,
     DEFENSE_TRIGGER_SOURCE_DATE_MISMATCH,
     DEFENSE_TRIGGER_SOURCE_REMOVED,
     DEFENSE_UNBOUND_RESERVE_NOTICE,
@@ -180,6 +186,27 @@ EXPECTED_BUCKET_CATEGORIES = {
         "copy_service",
     ),
 }
+EXPECTED_DEFENSE_ERROR_CODES = {
+    "DEFENSE_REQUIRES_WAGES",
+    "DEFENSE_REQUIRES_DEFENSE_PERSPECTIVE",
+    "DEFENSE_INVALID_BUCKET_CATEGORY",
+    "DEFENSE_INVALID_EXPOSURE_RANGE",
+    "DEFENSE_EXPOSURE_BELOW_PAID",
+    "DEFENSE_DUPLICATE_W1_PAID_COST",
+    "DEFENSE_UNKNOWN_RESERVE_TRIGGER",
+    "DEFENSE_INELIGIBLE_RESERVE_TRIGGER",
+    "DEFENSE_INITIAL_REVIEW_REQUIRED",
+    "DEFENSE_DUPLICATE_INITIAL_REVIEW_EVENT",
+    "DEFENSE_TRIGGER_ORDER_INVALID",
+    "DEFENSE_TRIGGER_OCCURRENCE_ID_MISSING",
+    "DEFENSE_TRIGGER_SOURCE_REMOVED",
+    "DEFENSE_TRIGGER_SOURCE_DATE_MISMATCH",
+    "DEFENSE_REQUIRED_CARRIER_REMOVED",
+    "DEFENSE_ARTIFACT_BINDING_MISSING",
+    "DEFENSE_ARTIFACT_BINDING_MISMATCH",
+    "DEFENSE_UNBOUND_RESERVE_NOTICE",
+    "DEFENSE_ACCOUNTING_EQUATION_BROKEN",
+}
 
 
 def _amounts(
@@ -314,6 +341,72 @@ def test_r54_r57_r60_r71_model_fields_and_registers_are_literal() -> None:
     assert ExposureInput.model_fields["low"].annotation is BucketAmounts
     assert DEFENSE_RESERVE_TRIGGERS == EXPECTED_TRIGGERS
     assert DEFENSE_BUCKET_CATEGORIES == EXPECTED_BUCKET_CATEGORIES
+
+
+def test_r79_error_code_register_and_remediation_table_are_literal() -> None:
+    assert DEFENSE_ERROR_CODES == EXPECTED_DEFENSE_ERROR_CODES
+    assert {
+        DEFENSE_REQUIRES_WAGES,
+        DEFENSE_REQUIRES_DEFENSE_PERSPECTIVE,
+        DEFENSE_INVALID_BUCKET_CATEGORY,
+        DEFENSE_INVALID_EXPOSURE_RANGE,
+        DEFENSE_EXPOSURE_BELOW_PAID,
+        DEFENSE_DUPLICATE_W1_PAID_COST,
+        DEFENSE_UNKNOWN_RESERVE_TRIGGER,
+        DEFENSE_INELIGIBLE_RESERVE_TRIGGER,
+        DEFENSE_INITIAL_REVIEW_REQUIRED,
+        DEFENSE_DUPLICATE_INITIAL_REVIEW_EVENT,
+        DEFENSE_TRIGGER_ORDER_INVALID,
+        DEFENSE_TRIGGER_OCCURRENCE_ID_MISSING,
+        DEFENSE_TRIGGER_SOURCE_REMOVED,
+        DEFENSE_TRIGGER_SOURCE_DATE_MISMATCH,
+        DEFENSE_REQUIRED_CARRIER_REMOVED,
+        DEFENSE_ARTIFACT_BINDING_MISSING,
+        DEFENSE_ARTIFACT_BINDING_MISMATCH,
+        DEFENSE_UNBOUND_RESERVE_NOTICE,
+        DEFENSE_ACCOUNTING_EQUATION_BROKEN,
+    } == EXPECTED_DEFENSE_ERROR_CODES
+    remediation = {
+        "DEFENSE_REQUIRES_WAGES": ("wages", "author scenario.wages"),
+        "DEFENSE_REQUIRES_DEFENSE_PERSPECTIVE": (
+            "perspective",
+            "set perspective: defense",
+        ),
+        "DEFENSE_INVALID_BUCKET_CATEGORY": ("category", "use the bucket's category"),
+        "DEFENSE_INVALID_EXPOSURE_RANGE": ("low", "order low, expected, high"),
+        "DEFENSE_EXPOSURE_BELOW_PAID": ("paid-to-date", "raise every ultimate bound"),
+        "DEFENSE_DUPLICATE_W1_PAID_COST": ("duplicate", "remove the W1 paid copy"),
+        "DEFENSE_UNKNOWN_RESERVE_TRIGGER": ("trigger", "use an R61 trigger"),
+        "DEFENSE_INELIGIBLE_RESERVE_TRIGGER": ("eligible", "seed its semantic source"),
+        "DEFENSE_INITIAL_REVIEW_REQUIRED": (
+            "initial_file_review",
+            "author it exactly once",
+        ),
+        "DEFENSE_DUPLICATE_INITIAL_REVIEW_EVENT": (
+            "InitialFileReview",
+            "remove it from reserve_events",
+        ),
+        "DEFENSE_TRIGGER_ORDER_INVALID": ("chronological", "order resolved events"),
+        "DEFENSE_TRIGGER_OCCURRENCE_ID_MISSING": (
+            "occurrence",
+            "retain the semantic event ID",
+        ),
+        "DEFENSE_TRIGGER_SOURCE_REMOVED": ("source", "retain one consumed source"),
+        "DEFENSE_TRIGGER_SOURCE_DATE_MISMATCH": (
+            "date",
+            "restore the semantic source date",
+        ),
+        "DEFENSE_REQUIRED_CARRIER_REMOVED": ("carrier", "retain the required artifact"),
+        "DEFENSE_ARTIFACT_BINDING_MISSING": ("binding", "restore the final binding"),
+        "DEFENSE_ARTIFACT_BINDING_MISMATCH": ("binding", "match event ID, subtype, date"),
+        "DEFENSE_UNBOUND_RESERVE_NOTICE": ("notice", "remove the unbound notice"),
+        "DEFENSE_ACCOUNTING_EQUATION_BROKEN": (
+            "incurred",
+            "set incurred to paid plus outstanding",
+        ),
+    }
+    assert set(remediation) == EXPECTED_DEFENSE_ERROR_CODES
+    assert all(fragment and edit for fragment, edit in remediation.values())
 
 
 def test_defense_seed_requires_wages_and_defense_perspective() -> None:
@@ -903,6 +996,29 @@ def test_three_event_ledger_materializes_literal_snapshots_and_bindings() -> Non
         "30000.00", "6900.00", "3000.00"
     )
     assert second.booked_snapshot.incurred.total == Decimal("40000.00")
+
+
+def test_r79_accounting_and_artifact_binding_codes_are_decisive() -> None:
+    defense = _three_event_defense()
+    snapshot = defense.initial_file_review.recommendation
+    with pytest.raises(ValidationError, match=DEFENSE_ACCOUNTING_EQUATION_BROKEN):
+        ReserveSnapshot(
+            paid=snapshot.paid,
+            outstanding_reserve=snapshot.outstanding_reserve,
+            incurred=_amounts("0.01", "0.00", "0.00"),
+        )
+
+    review = defense.initial_file_review
+    review_data = review.model_dump()
+    review_data.pop("artifact_binding")
+    with pytest.raises(ValidationError, match=DEFENSE_ARTIFACT_BINDING_MISSING):
+        InitialFileReview.model_validate(review_data)
+
+    review_data["artifact_binding"] = review.artifact_binding.model_copy(
+        update={"event_id": "reserve:wrong"}
+    )
+    with pytest.raises(ValidationError, match=DEFENSE_ARTIFACT_BINDING_MISMATCH):
+        InitialFileReview.model_validate(review_data)
 
 
 def test_reserve_adequacy_has_three_exact_states() -> None:

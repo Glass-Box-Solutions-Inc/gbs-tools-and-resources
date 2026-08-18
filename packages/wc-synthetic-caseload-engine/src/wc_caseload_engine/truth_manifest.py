@@ -26,6 +26,7 @@ import hashlib
 import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
+from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
@@ -34,6 +35,30 @@ from pydantic import BaseModel, ValidationError
 
 from wc_caseload_engine import __version__
 from wc_caseload_engine.case_facts import rating_manifest_block
+from wc_caseload_engine.defense_lens import (
+    DEFENSE_ARTIFACT_BINDING_MISSING,
+    DEFENSE_WIRE_BINDING_KEYS,
+    DEFENSE_WIRE_BUCKET_KEYS,
+    DEFENSE_WIRE_EXPOSURE_KEYS,
+    DEFENSE_WIRE_FACT_KEYS,
+    DEFENSE_WIRE_INITIAL_REVIEW_KEYS,
+    DEFENSE_WIRE_PAID_COST_KEYS,
+    DEFENSE_WIRE_PUBLIC_KEYS,
+    DEFENSE_WIRE_RESERVE_EVENT_KEYS,
+    DEFENSE_WIRE_SCORER_LABEL_KEYS,
+    DEFENSE_WIRE_SNAPSHOT_KEYS,
+    BucketAmounts,
+    DefenseLensFacts,
+    DefenseScorerLabels,
+    DefenseValidationError,
+    ExposureProjection,
+    InitialFileReview,
+    PaidCost,
+    ReserveArtifactBinding,
+    ReserveEvent,
+    ReserveSnapshot,
+    defense_wire_projection,
+)
 from wc_caseload_engine.medical_assertions import (
     AssertionQualityContract,
     AssertionValidationContext,
@@ -208,8 +233,16 @@ MONEY_V1_2_RATING_SCHEDULE_KEYS: Final = (
     "section4MetaSha256",
     "counselStatus",
 )
-
-MONEY_DEFENSE_SCOPE_UNSUPPORTED = "MONEY_DEFENSE_SCOPE_UNSUPPORTED"
+MONEY_V1_2_DEFENSE_KEYS: Final = DEFENSE_WIRE_FACT_KEYS
+MONEY_V1_2_DEFENSE_PUBLIC_KEYS: Final = DEFENSE_WIRE_PUBLIC_KEYS
+MONEY_V1_2_DEFENSE_BUCKET_KEYS: Final = DEFENSE_WIRE_BUCKET_KEYS
+MONEY_V1_2_DEFENSE_PAID_COST_KEYS: Final = DEFENSE_WIRE_PAID_COST_KEYS
+MONEY_V1_2_DEFENSE_EXPOSURE_KEYS: Final = DEFENSE_WIRE_EXPOSURE_KEYS
+MONEY_V1_2_DEFENSE_SNAPSHOT_KEYS: Final = DEFENSE_WIRE_SNAPSHOT_KEYS
+MONEY_V1_2_DEFENSE_INITIAL_REVIEW_KEYS: Final = DEFENSE_WIRE_INITIAL_REVIEW_KEYS
+MONEY_V1_2_DEFENSE_RESERVE_EVENT_KEYS: Final = DEFENSE_WIRE_RESERVE_EVENT_KEYS
+MONEY_V1_2_DEFENSE_BINDING_KEYS: Final = DEFENSE_WIRE_BINDING_KEYS
+MONEY_V1_2_DEFENSE_SCORER_LABEL_KEYS: Final = DEFENSE_WIRE_SCORER_LABEL_KEYS
 
 # ---------------------------------------------------------------------------
 # Amendment A1 — the frozen assertions-channel 1.0.0 projection (AJC-62)
@@ -682,11 +715,6 @@ def _money_channel(
 ) -> dict[str, Any]:
     """Build the complete, lossless money channel from decided facts."""
     defense = getattr(facts, "defense", None)
-    if defense is not None:
-        raise TruthManifestError(
-            f"{MONEY_DEFENSE_SCOPE_UNSUPPORTED}: non-null defense serialization "
-            "belongs to Money W2 Item 10"
-        )
     channel_version = (
         MONEY_CHANNEL_V1_2_VERSION
         if rating is not None or defense is not None
@@ -864,6 +892,11 @@ def _money_channel(
         )
     if rating is not None:
         channel["rating"] = _rating_channel_projection(rating)
+    if defense is not None:
+        channel["defense"] = defense_wire_projection(
+            defense,
+            include_scorer_labels=True,
+        )
     if channel_version == MONEY_CHANNEL_V1_2_VERSION:
         return {
             key: channel[key]
@@ -1867,6 +1900,172 @@ def _require_exact_keys(
         )
 
 
+def _defense_bucket_contract(value: Any, path: str) -> Mapping[str, Any]:
+    bucket = _mapping(value, path)
+    _require_exact_keys(
+        bucket,
+        allowed=MONEY_V1_2_DEFENSE_BUCKET_KEYS,
+        optional=(),
+        path=path,
+    )
+    try:
+        components = tuple(
+            Decimal(str(bucket[key]))
+            for key in ("indemnity", "medical", "expenseAlae")
+        )
+        stated_total = Decimal(str(bucket["total"]))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise TruthManifestError(
+            f"malformed money channel: {path} amounts must be decimal strings"
+        ) from exc
+    if sum(components, Decimal("0.00")) != stated_total:
+        raise TruthManifestError(
+            "DEFENSE_ACCOUNTING_EQUATION_BROKEN: "
+            f"{path}.total={bucket['total']!r} does not equal its three buckets"
+        )
+    return bucket
+
+
+def _defense_exposure_contract(value: Any, path: str) -> Mapping[str, Any]:
+    exposure = _mapping(value, path)
+    _require_exact_keys(
+        exposure,
+        allowed=MONEY_V1_2_DEFENSE_EXPOSURE_KEYS,
+        optional=(),
+        path=path,
+    )
+    for key in ("low", "expected", "high"):
+        _defense_bucket_contract(exposure[key], f"{path}.{key}")
+    _sequence(exposure["assumptions"], f"{path}.assumptions")
+    return exposure
+
+
+def _defense_snapshot_contract(value: Any, path: str) -> Mapping[str, Any]:
+    snapshot = _mapping(value, path)
+    _require_exact_keys(
+        snapshot,
+        allowed=MONEY_V1_2_DEFENSE_SNAPSHOT_KEYS,
+        optional=(),
+        path=path,
+    )
+    for key in MONEY_V1_2_DEFENSE_SNAPSHOT_KEYS:
+        _defense_bucket_contract(snapshot[key], f"{path}.{key}")
+    return snapshot
+
+
+def _defense_binding_contract(value: Any, path: str) -> Mapping[str, Any]:
+    if value is None:
+        raise TruthManifestError(
+            f"{DEFENSE_ARTIFACT_BINDING_MISSING}: {path}=None is not a binding"
+        )
+    binding = _mapping(value, path)
+    _require_exact_keys(
+        binding,
+        allowed=MONEY_V1_2_DEFENSE_BINDING_KEYS,
+        optional=(),
+        path=path,
+    )
+    return binding
+
+
+def _defense_initial_review_contract(value: Any, path: str) -> Mapping[str, Any]:
+    review = _mapping(value, path)
+    _require_exact_keys(
+        review,
+        allowed=MONEY_V1_2_DEFENSE_INITIAL_REVIEW_KEYS,
+        optional=(),
+        path=path,
+    )
+    _defense_exposure_contract(review["exposure"], f"{path}.exposure")
+    _defense_snapshot_contract(review["recommendation"], f"{path}.recommendation")
+    _defense_snapshot_contract(review["bookedSnapshot"], f"{path}.bookedSnapshot")
+    _sequence(review["discoveryPlan"], f"{path}.discoveryPlan")
+    _sequence(review["assumptions"], f"{path}.assumptions")
+    _defense_binding_contract(review["artifactBinding"], f"{path}.artifactBinding")
+    return review
+
+
+def _defense_reserve_event_contract(value: Any, path: str) -> Mapping[str, Any]:
+    event = _mapping(value, path)
+    _require_exact_keys(
+        event,
+        allowed=MONEY_V1_2_DEFENSE_RESERVE_EVENT_KEYS,
+        optional=("artifactBinding",),
+        path=path,
+    )
+    _defense_snapshot_contract(event["priorSnapshot"], f"{path}.priorSnapshot")
+    _defense_exposure_contract(event["exposure"], f"{path}.exposure")
+    _defense_snapshot_contract(event["recommendation"], f"{path}.recommendation")
+    _defense_snapshot_contract(event["bookedSnapshot"], f"{path}.bookedSnapshot")
+    if "artifactBinding" in event:
+        _defense_binding_contract(event["artifactBinding"], f"{path}.artifactBinding")
+    return event
+
+
+def _defense_wire_contract(
+    value: Any,
+    *,
+    include_scorer_labels: bool,
+    path: str,
+) -> Mapping[str, Any]:
+    defense = _mapping(value, path)
+    allowed = (
+        MONEY_V1_2_DEFENSE_KEYS
+        if include_scorer_labels
+        else MONEY_V1_2_DEFENSE_PUBLIC_KEYS
+    )
+    _require_exact_keys(defense, allowed=allowed, optional=(), path=path)
+    exposures = _sequence(defense["exposureEvents"], f"{path}.exposureEvents")
+    for index, exposure in enumerate(exposures):
+        _defense_exposure_contract(
+            exposure,
+            f"{path}.exposureEvents[{index}]",
+        )
+    paid_costs = _sequence(defense["paidCosts"], f"{path}.paidCosts")
+    for index, cost_value in enumerate(paid_costs):
+        cost_path = f"{path}.paidCosts[{index}]"
+        cost = _mapping(cost_value, cost_path)
+        _require_exact_keys(
+            cost,
+            allowed=MONEY_V1_2_DEFENSE_PAID_COST_KEYS,
+            optional=(),
+            path=cost_path,
+        )
+    reserve_events = _sequence(defense["reserveEvents"], f"{path}.reserveEvents")
+    for index, event in enumerate(reserve_events):
+        _defense_reserve_event_contract(
+            event,
+            f"{path}.reserveEvents[{index}]",
+        )
+    _defense_initial_review_contract(
+        defense["initialFileReview"],
+        f"{path}.initialFileReview",
+    )
+    if include_scorer_labels:
+        labels_path = f"{path}.scorerLabels"
+        labels = _mapping(defense["scorerLabels"], labels_path)
+        _require_exact_keys(
+            labels,
+            allowed=MONEY_V1_2_DEFENSE_SCORER_LABEL_KEYS,
+            optional=(),
+            path=labels_path,
+        )
+        if not isinstance(labels["stairStepping"], bool):
+            raise TruthManifestError(
+                f"malformed money channel: {labels_path}.stairStepping must be boolean"
+            )
+        if labels["reserveAdequacy"] not in {
+            "under_reserved",
+            "adequate",
+            "over_reserved",
+        }:
+            raise TruthManifestError(
+                f"malformed money channel: {labels_path}.reserveAdequacy has "
+                f"invalid value {labels['reserveAdequacy']!r}"
+            )
+    return defense
+
+
 def _money_channel_contract(
     channel: Mapping[str, Any],
     *,
@@ -1948,16 +2147,6 @@ def _money_channel_contract(
         path="channels.money.published",
     )
     if version == MONEY_CHANNEL_V1_2_VERSION:
-        if "defense" in channel and channel["defense"] is not None:
-            raise TruthManifestError(
-                f"{MONEY_DEFENSE_SCOPE_UNSUPPORTED}: non-null channels.money.defense "
-                "belongs to Money W2 Item 10"
-            )
-        if "defense" in published and published["defense"] is not None:
-            raise TruthManifestError(
-                f"{MONEY_DEFENSE_SCOPE_UNSUPPORTED}: non-null "
-                "channels.money.published.defense belongs to Money W2 Item 10"
-            )
         if ("rating" in channel) != ("rating" in published):
             raise TruthManifestError(
                 "malformed money channel: v1.2 rating must appear in both "
@@ -1967,6 +2156,39 @@ def _money_channel_contract(
             raise TruthManifestError(
                 "malformed money channel: v1.2 rating projections disagree"
             )
+        if ("defense" in channel) != ("defense" in published):
+            raise TruthManifestError(
+                "malformed money channel: v1.2 defense must appear in both "
+                "channels.money.defense and channels.money.published.defense"
+            )
+        if "defense" in channel:
+            scorer_defense = _defense_wire_contract(
+                channel["defense"],
+                include_scorer_labels=True,
+                path="channels.money.defense",
+            )
+            public_defense = _defense_wire_contract(
+                published["defense"],
+                include_scorer_labels=False,
+                path="channels.money.published.defense",
+            )
+            expected_public = {
+                key: scorer_defense[key]
+                for key in MONEY_V1_2_DEFENSE_PUBLIC_KEYS
+            }
+            if public_defense != expected_public:
+                raise TruthManifestError(
+                    "malformed money channel: v1.2 defense public and scorer "
+                    "projections disagree"
+                )
+            try:
+                _defense_facts_from_channel(channel)
+            except TruthManifestError:
+                raise
+            except (TypeError, ValueError, ValidationError) as exc:
+                raise TruthManifestError(
+                    f"malformed money channel defense: {exc}"
+                ) from exc
     return version
 
 
@@ -2003,6 +2225,207 @@ def _model_data(document: Mapping[str, Any], names: Mapping[str, str], path: str
     return {field: _required(document, key, path) for key, field in names.items()}
 
 
+def _defense_bucket_from_truth(value: Any, path: str) -> BucketAmounts:
+    document = _mapping(value, path)
+    return BucketAmounts(
+        indemnity=document["indemnity"],
+        medical=document["medical"],
+        expense_alae=document["expenseAlae"],
+    )
+
+
+def _defense_exposure_from_truth(value: Any, path: str) -> ExposureProjection:
+    document = _mapping(value, path)
+    return ExposureProjection(
+        trigger=document["trigger"],
+        effective_date=document["effectiveDate"],
+        low=_defense_bucket_from_truth(document["low"], f"{path}.low"),
+        expected=_defense_bucket_from_truth(document["expected"], f"{path}.expected"),
+        high=_defense_bucket_from_truth(document["high"], f"{path}.high"),
+        assumptions=tuple(document["assumptions"]),
+    )
+
+
+def _defense_snapshot_from_truth(value: Any, path: str) -> ReserveSnapshot:
+    document = _mapping(value, path)
+    return ReserveSnapshot(
+        paid=_defense_bucket_from_truth(document["paid"], f"{path}.paid"),
+        outstanding_reserve=_defense_bucket_from_truth(
+            document["outstandingReserve"],
+            f"{path}.outstandingReserve",
+        ),
+        incurred=_defense_bucket_from_truth(document["incurred"], f"{path}.incurred"),
+    )
+
+
+def _defense_binding_from_truth(value: Any, path: str) -> ReserveArtifactBinding:
+    document = _mapping(value, path)
+    return ReserveArtifactBinding(
+        event_id=document["eventId"],
+        document_index=document["documentIndex"],
+        subtype=document["subtype"],
+        document_date=document["documentDate"],
+    )
+
+
+def _canonical_defense_exposure(
+    nested: Any,
+    *,
+    exposures: tuple[ExposureProjection, ...],
+    exposure_documents: Sequence[Any],
+    path: str,
+) -> ExposureProjection:
+    nested_document = _mapping(nested, path)
+    matches = tuple(
+        index
+        for index, document in enumerate(exposure_documents)
+        if _mapping(document, f"channels.money.defense.exposureEvents[{index}]").get(
+            "trigger"
+        )
+        == nested_document.get("trigger")
+    )
+    if len(matches) != 1 or _mapping(
+        exposure_documents[matches[0]],
+        f"channels.money.defense.exposureEvents[{matches[0]}]",
+    ) != nested_document:
+        raise TruthManifestError(
+            f"malformed money channel defense: {path} must equal its one "
+            "trigger-matched exposureEvents member"
+        )
+    return exposures[matches[0]]
+
+
+def _defense_facts_from_channel(channel: Mapping[str, Any]) -> DefenseLensFacts | None:
+    if "defense" not in channel:
+        return None
+    defense_document = _mapping(channel["defense"], "channels.money.defense")
+    exposure_documents = _sequence(
+        defense_document["exposureEvents"],
+        "channels.money.defense.exposureEvents",
+    )
+    exposures = tuple(
+        _defense_exposure_from_truth(
+            value,
+            f"channels.money.defense.exposureEvents[{index}]",
+        )
+        for index, value in enumerate(exposure_documents)
+    )
+    paid_costs = tuple(
+        PaidCost(
+            id=document["id"],
+            date=document["date"],
+            bucket=document["bucket"],
+            category=document["category"],
+            amount=document["amount"],
+            source_document_subtype=document["sourceDocumentSubtype"],
+        )
+        for index, value in enumerate(
+            _sequence(defense_document["paidCosts"], "channels.money.defense.paidCosts")
+        )
+        for document in (
+            _mapping(value, f"channels.money.defense.paidCosts[{index}]"),
+        )
+    )
+
+    initial_document = _mapping(
+        defense_document["initialFileReview"],
+        "channels.money.defense.initialFileReview",
+    )
+    initial_exposure = _canonical_defense_exposure(
+        initial_document["exposure"],
+        exposures=exposures,
+        exposure_documents=exposure_documents,
+        path="channels.money.defense.initialFileReview.exposure",
+    )
+    initial_review = InitialFileReview(
+        event_id=initial_document["eventId"],
+        review_date=initial_document["reviewDate"],
+        case_evaluation=initial_document["caseEvaluation"],
+        compensability_posture=initial_document["compensabilityPosture"],
+        exposure=initial_exposure,
+        recommendation=_defense_snapshot_from_truth(
+            initial_document["recommendation"],
+            "channels.money.defense.initialFileReview.recommendation",
+        ),
+        booked_snapshot=_defense_snapshot_from_truth(
+            initial_document["bookedSnapshot"],
+            "channels.money.defense.initialFileReview.bookedSnapshot",
+        ),
+        litigation_budget=initial_document["litigationBudget"],
+        discovery_plan=tuple(initial_document["discoveryPlan"]),
+        assumptions=tuple(initial_document["assumptions"]),
+        authority_status=initial_document["authorityStatus"],
+        adoption_lag_days=initial_document["adoptionLagDays"],
+        artifact_binding=_defense_binding_from_truth(
+            initial_document["artifactBinding"],
+            "channels.money.defense.initialFileReview.artifactBinding",
+        ),
+    )
+
+    reserve_events: list[ReserveEvent] = []
+    for index, value in enumerate(
+        _sequence(defense_document["reserveEvents"], "channels.money.defense.reserveEvents")
+    ):
+        path = f"channels.money.defense.reserveEvents[{index}]"
+        event_document = _mapping(value, path)
+        if event_document["trigger"] == "initial_file_review":
+            raise TruthManifestError(
+                "DEFENSE_DUPLICATE_INITIAL_REVIEW_EVENT: "
+                f"{path}.trigger='initial_file_review' duplicates initialFileReview"
+            )
+        exposure = _canonical_defense_exposure(
+            event_document["exposure"],
+            exposures=exposures,
+            exposure_documents=exposure_documents,
+            path=f"{path}.exposure",
+        )
+        reserve_events.append(
+            ReserveEvent(
+                id=event_document["id"],
+                trigger=event_document["trigger"],
+                event_date=event_document["eventDate"],
+                prior_snapshot=_defense_snapshot_from_truth(
+                    event_document["priorSnapshot"],
+                    f"{path}.priorSnapshot",
+                ),
+                exposure=exposure,
+                recommendation=_defense_snapshot_from_truth(
+                    event_document["recommendation"],
+                    f"{path}.recommendation",
+                ),
+                booked_snapshot=_defense_snapshot_from_truth(
+                    event_document["bookedSnapshot"],
+                    f"{path}.bookedSnapshot",
+                ),
+                adoption_lag_days=event_document["adoptionLagDays"],
+                reason=event_document["reason"],
+                artifact_binding=(
+                    _defense_binding_from_truth(
+                        event_document["artifactBinding"],
+                        f"{path}.artifactBinding",
+                    )
+                    if "artifactBinding" in event_document
+                    else None
+                ),
+            )
+        )
+
+    labels_document = _mapping(
+        defense_document["scorerLabels"],
+        "channels.money.defense.scorerLabels",
+    )
+    return DefenseLensFacts(
+        exposure_events=exposures,
+        paid_costs=paid_costs,
+        initial_file_review=initial_review,
+        reserve_events=tuple(reserve_events),
+        scorer_labels=DefenseScorerLabels(
+            stair_stepping=labels_document["stairStepping"],
+            reserve_adequacy=labels_document["reserveAdequacy"],
+        ),
+    )
+
+
 def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
     """Reconstruct validated money facts, ignoring every unrelated channel."""
     _require_compatible_version(
@@ -2019,6 +2442,7 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
     _money_channel_contract(channel, kind=document.get("kind"))
 
     try:
+        defense = _defense_facts_from_channel(channel)
         wage_doc = _mapping(_required(channel, "wage", "channels.money"), "channels.money.wage")
         computation_doc = _mapping(
             _required(wage_doc, "computation", "channels.money.wage"),
@@ -2348,11 +2772,36 @@ def money_facts_from_truth(document: Mapping[str, Any]) -> MoneyFacts | None:
             benefits=benefits,
             settlement=settlement,
             penalties=penalties,
+            defense=defense,
         )
     except TruthManifestError:
         raise
     except (TypeError, ValueError, ValidationError) as exc:
         raise TruthManifestError(f"malformed money channel: {exc}") from exc
+
+
+def defense_facts_from_truth(document: Mapping[str, Any]) -> DefenseLensFacts | None:
+    """Reconstruct the optional exact-v1.2 defense group as the sole domain model."""
+    _require_compatible_version(
+        document,
+        key="schemaVersion",
+        path="$",
+        supported=SCHEMA_VERSION,
+        label="truth manifest envelope",
+    )
+    channels = _mapping(_required(document, "channels", "$"), "channels")
+    if "money" not in channels:
+        return None
+    channel = _mapping(channels["money"], "channels.money")
+    version = _money_channel_contract(channel, kind=document.get("kind"))
+    if version != MONEY_CHANNEL_V1_2_VERSION or "defense" not in channel:
+        return None
+    try:
+        return _defense_facts_from_channel(channel)
+    except TruthManifestError:
+        raise
+    except (DefenseValidationError, TypeError, ValueError, ValidationError) as exc:
+        raise TruthManifestError(f"malformed money channel defense: {exc}") from exc
 
 
 def rating_facts_from_truth(document: Mapping[str, Any]) -> RatingFacts | None:
@@ -2506,7 +2955,6 @@ __all__ = [
     "MONEY_CHANNEL_V1_1_VERSION",
     "MONEY_CHANNEL_V1_2_VERSION",
     "MONEY_CHANNEL_VERSION",
-    "MONEY_DEFENSE_SCOPE_UNSUPPORTED",
     "MONEY_V1_0_CASE_CHANNEL_KEYS",
     "MONEY_V1_0_OPTIONAL_CASE_CHANNEL_KEYS",
     "MONEY_V1_1_CASE_CHANNEL_KEYS",
@@ -2514,6 +2962,16 @@ __all__ = [
     "MONEY_V1_2_CASELOAD_CASE_KEYS",
     "MONEY_V1_2_CASELOAD_CHANNEL_KEYS",
     "MONEY_V1_2_CASE_CHANNEL_KEYS",
+    "MONEY_V1_2_DEFENSE_BINDING_KEYS",
+    "MONEY_V1_2_DEFENSE_BUCKET_KEYS",
+    "MONEY_V1_2_DEFENSE_EXPOSURE_KEYS",
+    "MONEY_V1_2_DEFENSE_INITIAL_REVIEW_KEYS",
+    "MONEY_V1_2_DEFENSE_KEYS",
+    "MONEY_V1_2_DEFENSE_PAID_COST_KEYS",
+    "MONEY_V1_2_DEFENSE_PUBLIC_KEYS",
+    "MONEY_V1_2_DEFENSE_RESERVE_EVENT_KEYS",
+    "MONEY_V1_2_DEFENSE_SCORER_LABEL_KEYS",
+    "MONEY_V1_2_DEFENSE_SNAPSHOT_KEYS",
     "MONEY_V1_2_OPTIONAL_CASE_CHANNEL_KEYS",
     "MONEY_V1_2_PUBLISHED_GROUP_KEYS",
     "MONEY_V1_2_RATING_IMPAIRMENT_KEYS",
@@ -2530,6 +2988,7 @@ __all__ = [
     "build_caseload_truth_manifest",
     "case_truth_name",
     "check_truth_dir_is_isolated",
+    "defense_facts_from_truth",
     "medical_assertions_from_truth",
     "money_facts_from_truth",
     "parse_medical_assertions_from_truth",

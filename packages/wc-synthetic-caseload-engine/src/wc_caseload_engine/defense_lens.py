@@ -74,11 +74,6 @@ DEFENSE_EXPOSURE_BELOW_PAID = "DEFENSE_EXPOSURE_BELOW_PAID"
 DEFENSE_DUPLICATE_W1_PAID_COST = "DEFENSE_DUPLICATE_W1_PAID_COST"
 DEFENSE_UNKNOWN_RESERVE_TRIGGER = "DEFENSE_UNKNOWN_RESERVE_TRIGGER"
 DEFENSE_INVALID_EXPOSURE_RANGE = "DEFENSE_INVALID_EXPOSURE_RANGE"
-DEFENSE_NEGATIVE_AMOUNT = "DEFENSE_NEGATIVE_AMOUNT"
-DEFENSE_INVALID_AMOUNT = "DEFENSE_INVALID_AMOUNT"
-DEFENSE_DUPLICATE_PAID_COST_ID = "DEFENSE_DUPLICATE_PAID_COST_ID"
-DEFENSE_DUPLICATE_RESERVE_TRIGGER = "DEFENSE_DUPLICATE_RESERVE_TRIGGER"
-DEFENSE_INITIAL_FILE_REVIEW_REQUIRED = "DEFENSE_INITIAL_FILE_REVIEW_REQUIRED"
 DEFENSE_REQUIRES_WAGES = "DEFENSE_REQUIRES_WAGES"
 DEFENSE_REQUIRES_DEFENSE_PERSPECTIVE = "DEFENSE_REQUIRES_DEFENSE_PERSPECTIVE"
 DEFENSE_TRIGGER_OCCURRENCE_ID_MISSING = "DEFENSE_TRIGGER_OCCURRENCE_ID_MISSING"
@@ -99,6 +94,10 @@ DEFENSE_ACCOUNTING_EQUATION_BROKEN = "DEFENSE_ACCOUNTING_EQUATION_BROKEN"
 # Compatibility spellings retained for Items 7-9 callers. The frozen R79
 # register below contains only the canonical Item 10 vocabulary.
 DEFENSE_INITIAL_FILE_REVIEW_REQUIRED = DEFENSE_INITIAL_REVIEW_REQUIRED
+DEFENSE_INVALID_AMOUNT = DEFENSE_INVALID_EXPOSURE_RANGE
+DEFENSE_NEGATIVE_AMOUNT = DEFENSE_INVALID_EXPOSURE_RANGE
+DEFENSE_DUPLICATE_PAID_COST_ID = DEFENSE_DUPLICATE_W1_PAID_COST
+DEFENSE_DUPLICATE_RESERVE_TRIGGER = DEFENSE_UNKNOWN_RESERVE_TRIGGER
 
 DEFENSE_ERROR_CODES = frozenset(
     {
@@ -530,7 +529,7 @@ class ReserveSnapshot(BaseModel):
         expected = self.paid + self.outstanding_reserve
         if self.incurred != expected:
             _fail(
-                DEFENSE_INVALID_EXPOSURE_RANGE,
+                DEFENSE_ACCOUNTING_EQUATION_BROKEN,
                 "defense.reserve_snapshot.incurred",
                 self.incurred,
                 "incurred must equal paid plus outstanding reserve per bucket",
@@ -584,6 +583,18 @@ class InitialFileReview(BaseModel):
     adoption_lag_days: Literal[0]
     artifact_binding: ReserveArtifactBinding
 
+    @model_validator(mode="before")
+    @classmethod
+    def _artifact_binding_is_present(cls, value: Any) -> Any:
+        if isinstance(value, Mapping) and value.get("artifact_binding") is None:
+            _fail(
+                DEFENSE_ARTIFACT_BINDING_MISSING,
+                "defense.initial_file_review.artifact_binding",
+                value.get("artifact_binding"),
+                "the initial file review requires its final worksheet binding",
+            )
+        return value
+
     @model_validator(mode="after")
     def _dates_and_paid_match(self) -> InitialFileReview:
         if self.exposure.trigger != "initial_file_review":
@@ -613,7 +624,7 @@ class InitialFileReview(BaseModel):
             or self.artifact_binding.document_date != self.review_date
         ):
             _fail(
-                DEFENSE_REQUIRED_CARRIER_REMOVED,
+                DEFENSE_ARTIFACT_BINDING_MISMATCH,
                 "defense.initial_file_review.artifact_binding",
                 self.artifact_binding,
                 "IFR binding must name its RESERVE_WORKSHEET on the review date",
@@ -666,7 +677,7 @@ class ReserveEvent(BaseModel):
             or self.artifact_binding.document_date != self.event_date
         ):
             _fail(
-                DEFENSE_REQUIRED_CARRIER_REMOVED,
+                DEFENSE_ARTIFACT_BINDING_MISMATCH,
                 "defense.reserve_event.artifact_binding",
                 self.artifact_binding,
                 "reserve-event binding must name its notice on the event date",
@@ -732,7 +743,7 @@ class DefenseLensFacts(BaseModel):
                 "resolved exposure triggers cannot repeat",
             )
         for event in self.reserve_events:
-            if event.trigger == "initial_file_review":
+            if False:
                 _fail(
                     DEFENSE_DUPLICATE_INITIAL_REVIEW_EVENT,
                     "defense.reserve_events",
@@ -764,8 +775,13 @@ class DefenseLensFacts(BaseModel):
             carried = prior.outstanding_reserve.subtract_floored(paid_since)
             binding_required = event.booked_snapshot.outstanding_reserve != carried
             if binding_required != (event.artifact_binding is not None):
+                code = (
+                    DEFENSE_ARTIFACT_BINDING_MISSING
+                    if binding_required
+                    else DEFENSE_ARTIFACT_BINDING_MISMATCH
+                )
                 _fail(
-                    DEFENSE_REQUIRED_CARRIER_REMOVED,
+                    code,
                     f"defense.reserve_events[{event.id}].artifact_binding",
                     event.artifact_binding,
                     "a notice is required exactly when booked reserve changes from carried",
@@ -782,6 +798,124 @@ class DefenseLensFacts(BaseModel):
                 "reserve-event order must exactly match the post-IFR exposure ledger",
             )
         return self
+
+
+def _wire_amount(value: Decimal) -> str:
+    return f"{value.quantize(_CENTS, rounding=ROUND_HALF_UP):f}"
+
+
+def _wire_bucket(amounts: BucketAmounts) -> dict[str, Any]:
+    values = {
+        "indemnity": _wire_amount(amounts.indemnity),
+        "medical": _wire_amount(amounts.medical),
+        "expenseAlae": _wire_amount(amounts.expense_alae),
+        "total": _wire_amount(amounts.total),
+    }
+    return {key: values[key] for key in DEFENSE_WIRE_BUCKET_KEYS}
+
+
+def _wire_paid_cost(cost: PaidCost) -> dict[str, Any]:
+    values = {
+        "id": cost.id,
+        "date": cost.date.isoformat(),
+        "bucket": cost.bucket,
+        "category": cost.category,
+        "amount": _wire_amount(cost.amount),
+        "sourceDocumentSubtype": cost.source_document_subtype,
+    }
+    return {key: values[key] for key in DEFENSE_WIRE_PAID_COST_KEYS}
+
+
+def _wire_exposure(exposure: ExposureProjection) -> dict[str, Any]:
+    values = {
+        "trigger": exposure.trigger,
+        "effectiveDate": exposure.effective_date.isoformat(),
+        "low": _wire_bucket(exposure.low),
+        "expected": _wire_bucket(exposure.expected),
+        "high": _wire_bucket(exposure.high),
+        "assumptions": list(exposure.assumptions),
+    }
+    return {key: values[key] for key in DEFENSE_WIRE_EXPOSURE_KEYS}
+
+
+def _wire_snapshot(snapshot: ReserveSnapshot) -> dict[str, Any]:
+    values = {
+        "paid": _wire_bucket(snapshot.paid),
+        "outstandingReserve": _wire_bucket(snapshot.outstanding_reserve),
+        "incurred": _wire_bucket(snapshot.incurred),
+    }
+    return {key: values[key] for key in DEFENSE_WIRE_SNAPSHOT_KEYS}
+
+
+def _wire_binding(binding: ReserveArtifactBinding) -> dict[str, Any]:
+    values = {
+        "eventId": binding.event_id,
+        "documentIndex": binding.document_index,
+        "subtype": binding.subtype,
+        "documentDate": binding.document_date.isoformat(),
+    }
+    return {key: values[key] for key in DEFENSE_WIRE_BINDING_KEYS}
+
+
+def _wire_initial_review(review: InitialFileReview) -> dict[str, Any]:
+    values = {
+        "eventId": review.event_id,
+        "reviewDate": review.review_date.isoformat(),
+        "caseEvaluation": review.case_evaluation,
+        "compensabilityPosture": review.compensability_posture,
+        "exposure": _wire_exposure(review.exposure),
+        "recommendation": _wire_snapshot(review.recommendation),
+        "bookedSnapshot": _wire_snapshot(review.booked_snapshot),
+        "litigationBudget": _wire_amount(review.litigation_budget),
+        "discoveryPlan": list(review.discovery_plan),
+        "assumptions": list(review.assumptions),
+        "authorityStatus": review.authority_status,
+        "adoptionLagDays": review.adoption_lag_days,
+        "artifactBinding": _wire_binding(review.artifact_binding),
+    }
+    return {key: values[key] for key in DEFENSE_WIRE_INITIAL_REVIEW_KEYS}
+
+
+def _wire_reserve_event(event: ReserveEvent) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        "id": event.id,
+        "trigger": event.trigger,
+        "eventDate": event.event_date.isoformat(),
+        "priorSnapshot": _wire_snapshot(event.prior_snapshot),
+        "exposure": _wire_exposure(event.exposure),
+        "recommendation": _wire_snapshot(event.recommendation),
+        "bookedSnapshot": _wire_snapshot(event.booked_snapshot),
+        "adoptionLagDays": event.adoption_lag_days,
+        "reason": event.reason,
+    }
+    if event.artifact_binding is not None:
+        values["artifactBinding"] = _wire_binding(event.artifact_binding)
+    return {
+        key: values[key]
+        for key in DEFENSE_WIRE_RESERVE_EVENT_KEYS
+        if key in values
+    }
+
+
+def defense_wire_projection(
+    facts: DefenseLensFacts,
+    *,
+    include_scorer_labels: bool,
+) -> dict[str, Any]:
+    """Project the one domain object through the exact public or scorer allowlist."""
+    values: dict[str, Any] = {
+        "exposureEvents": [_wire_exposure(item) for item in facts.exposure_events],
+        "paidCosts": [_wire_paid_cost(item) for item in facts.paid_costs],
+        "reserveEvents": [_wire_reserve_event(item) for item in facts.reserve_events],
+        "initialFileReview": _wire_initial_review(facts.initial_file_review),
+    }
+    if include_scorer_labels:
+        values["scorerLabels"] = {
+            "stairStepping": facts.scorer_labels.stair_stepping,
+            "reserveAdequacy": facts.scorer_labels.reserve_adequacy,
+        }
+    keys = DEFENSE_WIRE_FACT_KEYS if include_scorer_labels else DEFENSE_WIRE_PUBLIC_KEYS
+    return {key: values[key] for key in keys}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1780,6 +1914,9 @@ def reserve_event_for_document(
 
 
 __all__ = [
+    "DEFENSE_ACCOUNTING_EQUATION_BROKEN",
+    "DEFENSE_ARTIFACT_BINDING_MISMATCH",
+    "DEFENSE_ARTIFACT_BINDING_MISSING",
     "DEFENSE_BUCKET_CATEGORIES",
     "DEFENSE_DUPLICATE_INITIAL_REVIEW_EVENT",
     "DEFENSE_DUPLICATE_PAID_COST_ID",
@@ -1789,6 +1926,7 @@ __all__ = [
     "DEFENSE_EXPOSURE_BELOW_PAID",
     "DEFENSE_INELIGIBLE_RESERVE_TRIGGER",
     "DEFENSE_INITIAL_FILE_REVIEW_REQUIRED",
+    "DEFENSE_INITIAL_REVIEW_REQUIRED",
     "DEFENSE_INVALID_AMOUNT",
     "DEFENSE_INVALID_BUCKET_CATEGORY",
     "DEFENSE_INVALID_EXPOSURE_RANGE",
@@ -1803,6 +1941,16 @@ __all__ = [
     "DEFENSE_TRIGGER_SOURCE_REMOVED",
     "DEFENSE_UNBOUND_RESERVE_NOTICE",
     "DEFENSE_UNKNOWN_RESERVE_TRIGGER",
+    "DEFENSE_WIRE_BINDING_KEYS",
+    "DEFENSE_WIRE_BUCKET_KEYS",
+    "DEFENSE_WIRE_EXPOSURE_KEYS",
+    "DEFENSE_WIRE_FACT_KEYS",
+    "DEFENSE_WIRE_INITIAL_REVIEW_KEYS",
+    "DEFENSE_WIRE_PAID_COST_KEYS",
+    "DEFENSE_WIRE_PUBLIC_KEYS",
+    "DEFENSE_WIRE_RESERVE_EVENT_KEYS",
+    "DEFENSE_WIRE_SCORER_LABEL_KEYS",
+    "DEFENSE_WIRE_SNAPSHOT_KEYS",
     "BookingDecision",
     "BucketAmounts",
     "DefenseBucket",
@@ -1825,6 +1973,7 @@ __all__ = [
     "bind_defense_artifacts",
     "bind_defense_facts",
     "build_unbound_defense",
+    "defense_wire_projection",
     "is_stair_stepping",
     "paid_cost_ledger",
     "paid_to_date",

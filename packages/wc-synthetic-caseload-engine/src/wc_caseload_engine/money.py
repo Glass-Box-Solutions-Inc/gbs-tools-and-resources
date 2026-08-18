@@ -59,7 +59,11 @@ from typing import Any, Literal
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from wc_caseload_engine.defense_lens import DefenseLensFacts
+from wc_caseload_engine.defense_lens import (
+    DEFENSE_WIRE_PUBLIC_KEYS,
+    DefenseLensFacts,
+    defense_wire_projection,
+)
 from wc_caseload_engine.seeds import (
     PAY_PERIODS_PER_YEAR,
     SETTLEMENT_GROSS_MINIMUM,
@@ -2186,6 +2190,7 @@ GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
         "firstPdPaymentDays",
         "firstPaymentRule",
     ),
+    "defense": DEFENSE_WIRE_PUBLIC_KEYS,
 }
 
 
@@ -2366,6 +2371,11 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
         }
         block["penalties"]["firstPaymentRule"] = _first_payment_rule_block(
             penalties.first_payment_rule
+        )
+    if facts.defense is not None:
+        block["defense"] = defense_wire_projection(
+            facts.defense,
+            include_scorer_labels=False,
         )
     return block
 

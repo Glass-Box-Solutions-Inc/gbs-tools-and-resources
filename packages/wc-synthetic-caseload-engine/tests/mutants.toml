@@ -4676,3 +4676,21 @@ replace = '''    candidates.extend(
     )
     return candidates'''
 note = 'R75/R95. An extra forced reserve-change notice has no changed post-IFR event and must fail the carrier/event bijection.'
+
+[[mutant]]
+id = 'm23-21'
+title = 'STAIR-LABEL-LEAK'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_truth_manifest.py::test_r102_defense_labels_never_enter_analyzer_visible_projection'
+find = '''    block = money_manifest_block(facts)
+    block.pop("penalties", None)
+    return block'''
+replace = '''    block = money_manifest_block(facts)
+    block.pop("penalties", None)
+    if facts.defense is not None:
+        block["defense"]["scorerLabels"] = defense_wire_projection(
+            facts.defense,
+            include_scorer_labels=True,
+        )["scorerLabels"]
+    return block'''
+note = 'R78/R96/R102. Publishing scorerLabels hands the analyzer the stair-stepping and reserve-adequacy answers instead of preserving the scorer-only boundary.'

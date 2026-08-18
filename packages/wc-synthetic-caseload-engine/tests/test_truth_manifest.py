@@ -33,6 +33,14 @@ from wc_caseload_engine.case_facts import (
     CASE_FACTS_RATING_SCHEDULE_KEYS,
     facts_manifest_block,
 )
+from wc_caseload_engine.defense_lens import (
+    BucketAmounts,
+    DefenseLensFacts,
+    DefenseScorerLabels,
+    InitialFileReview,
+    ReserveArtifactBinding,
+    ReserveEvent,
+)
 from wc_caseload_engine.manifests import generate_case, generate_caseload, validate_output_tree
 from wc_caseload_engine.medical_assertions import (
     assertion_context,
@@ -52,7 +60,6 @@ from wc_caseload_engine.truth_manifest import (
     MONEY_CHANNEL_V1_1_VERSION,
     MONEY_CHANNEL_V1_2_VERSION,
     MONEY_CHANNEL_VERSION,
-    MONEY_DEFENSE_SCOPE_UNSUPPORTED,
     MONEY_V1_0_CASE_CHANNEL_KEYS,
     MONEY_V1_0_OPTIONAL_CASE_CHANNEL_KEYS,
     MONEY_V1_1_CASE_CHANNEL_KEYS,
@@ -74,6 +81,7 @@ from wc_caseload_engine.truth_manifest import (
     build_case_truth_manifest,
     build_caseload_truth_manifest,
     check_truth_dir_is_isolated,
+    defense_facts_from_truth,
     money_facts_from_truth,
     rating_facts_from_truth,
     read_truth_manifest,
@@ -168,6 +176,107 @@ EXPECTED_RATING_SCHEDULE_KEYS = (
     "section4Sha256",
     "section4MetaSha256",
     "counselStatus",
+)
+EXPECTED_DEFENSE_KEYS = (
+    "exposureEvents",
+    "paidCosts",
+    "reserveEvents",
+    "initialFileReview",
+    "scorerLabels",
+)
+EXPECTED_PUBLIC_DEFENSE_KEYS = EXPECTED_DEFENSE_KEYS[:-1]
+EXPECTED_DEFENSE_BUCKET_KEYS = ("indemnity", "medical", "expenseAlae", "total")
+EXPECTED_DEFENSE_PAID_COST_KEYS = (
+    "id",
+    "date",
+    "bucket",
+    "category",
+    "amount",
+    "sourceDocumentSubtype",
+)
+EXPECTED_DEFENSE_EXPOSURE_KEYS = (
+    "trigger",
+    "effectiveDate",
+    "low",
+    "expected",
+    "high",
+    "assumptions",
+)
+EXPECTED_DEFENSE_SNAPSHOT_KEYS = ("paid", "outstandingReserve", "incurred")
+EXPECTED_DEFENSE_IFR_KEYS = (
+    "eventId",
+    "reviewDate",
+    "caseEvaluation",
+    "compensabilityPosture",
+    "exposure",
+    "recommendation",
+    "bookedSnapshot",
+    "litigationBudget",
+    "discoveryPlan",
+    "assumptions",
+    "authorityStatus",
+    "adoptionLagDays",
+    "artifactBinding",
+)
+EXPECTED_DEFENSE_RESERVE_EVENT_KEYS = (
+    "id",
+    "trigger",
+    "eventDate",
+    "priorSnapshot",
+    "exposure",
+    "recommendation",
+    "bookedSnapshot",
+    "adoptionLagDays",
+    "reason",
+    "artifactBinding",
+)
+EXPECTED_DEFENSE_BINDING_KEYS = (
+    "eventId",
+    "documentIndex",
+    "subtype",
+    "documentDate",
+)
+EXPECTED_DEFENSE_SCORER_LABEL_KEYS = ("stairStepping", "reserveAdequacy")
+EXPECTED_DEFENSE_FACT_FIELDS = (
+    "exposure_events",
+    "paid_costs",
+    "initial_file_review",
+    "reserve_events",
+    "scorer_labels",
+)
+EXPECTED_DEFENSE_SCORER_LABEL_FIELDS = ("stair_stepping", "reserve_adequacy")
+EXPECTED_DEFENSE_IFR_FIELDS = (
+    "event_id",
+    "review_date",
+    "case_evaluation",
+    "compensability_posture",
+    "exposure",
+    "recommendation",
+    "booked_snapshot",
+    "litigation_budget",
+    "discovery_plan",
+    "assumptions",
+    "authority_status",
+    "adoption_lag_days",
+    "artifact_binding",
+)
+EXPECTED_DEFENSE_RESERVE_EVENT_FIELDS = (
+    "id",
+    "trigger",
+    "event_date",
+    "prior_snapshot",
+    "exposure",
+    "recommendation",
+    "booked_snapshot",
+    "adoption_lag_days",
+    "reason",
+    "artifact_binding",
+)
+EXPECTED_DEFENSE_BINDING_FIELDS = (
+    "event_id",
+    "document_index",
+    "subtype",
+    "document_date",
 )
 EXPECTED_V1_2_PUBLISHED_KEYS = (
     "wage",
@@ -396,6 +505,65 @@ def _rated_plan(
 @pytest.fixture(scope="module")
 def rated_plan() -> Any:
     return _rated_plan()
+
+
+def _defense_plan(case_id: str = "truth-defense") -> Any:
+    amounts = {
+        "low": {
+            "indemnity": 10000,
+            "medical": 15000,
+            "expense_alae": 5000,
+        },
+        "expected": {
+            "indemnity": 20000,
+            "medical": 30000,
+            "expense_alae": 10000,
+        },
+        "high": {
+            "indemnity": 40000,
+            "medical": 60000,
+            "expense_alae": 20000,
+        },
+    }
+    body = _seed_body(
+        case_id,
+        scenario={
+            "wages": {},
+            "defense_lens": {
+                "case_evaluation": "Accepted lumbar claim with active treatment.",
+                "assumptions": ["No unrecorded paid costs."],
+                "discovery_plan": ["Obtain prior treatment records."],
+                "litigation_budget": 25000,
+                "exposure_events": [
+                    {"trigger": "initial_file_review", **copy.deepcopy(amounts)},
+                    {"trigger": "compensability_decision", **copy.deepcopy(amounts)},
+                ],
+                "paid_costs": [
+                    {
+                        "id": "treatment-1",
+                        "date": "2021-07-01",
+                        "bucket": "medical",
+                        "category": "treatment",
+                        "amount": 100,
+                        "source_document_subtype": "MEDICAL_BILL",
+                    }
+                ],
+            },
+        },
+        rng_seed=4341,
+    )
+    body["perspective"] = "defense"
+    body["documents"] = {
+        "format_mix": {"pdf": 1.0},
+        "global_cap": 16,
+        "overrides": [{"subtype": "CLAIM_ACCEPTANCE_LETTER", "count": 1}],
+    }
+    return build_case_plan(parse_case_seed(body), case_number=1)
+
+
+@pytest.fixture(scope="module")
+def defense_plan() -> Any:
+    return _defense_plan()
 
 
 def _rating_from_literal_projection(document: dict[str, Any]) -> RatingFacts:
@@ -757,17 +925,164 @@ def test_r19_cross_version_and_missing_required_fields_fail_closed(
         money_facts_from_truth(w2)
 
 
-def test_v1_2_defense_reader_seam_accepts_only_null_reserved_slot(
-    rated_plan: Any,
+def test_r96_exact_defense_projection_inverse_and_single_model_round_trip(
+    defense_plan: Any,
 ) -> None:
-    document = build_case_truth_manifest(rated_plan)
-    document["channels"]["money"]["defense"] = None
-    assert money_facts_from_truth(document) == rated_plan.money_facts
-    assert rating_facts_from_truth(document) == rated_plan.case_facts.rating
+    assert tuple(DefenseLensFacts.model_fields) == EXPECTED_DEFENSE_FACT_FIELDS
+    assert tuple(DefenseScorerLabels.model_fields) == EXPECTED_DEFENSE_SCORER_LABEL_FIELDS
+    assert tuple(InitialFileReview.model_fields) == EXPECTED_DEFENSE_IFR_FIELDS
+    assert tuple(ReserveEvent.model_fields) == EXPECTED_DEFENSE_RESERVE_EVENT_FIELDS
+    assert tuple(ReserveArtifactBinding.model_fields) == EXPECTED_DEFENSE_BINDING_FIELDS
+    assert tuple(BucketAmounts.model_fields) == (
+        "indemnity",
+        "medical",
+        "expense_alae",
+    )
 
-    document["channels"]["money"]["defense"] = {"reserve": "premature"}
-    with pytest.raises(TruthManifestError, match=MONEY_DEFENSE_SCOPE_UNSUPPORTED):
-        money_facts_from_truth(document)
+    assert defense_plan.case_facts is not None
+    assert defense_plan.money_facts is not None
+    defense = defense_plan.money_facts.defense
+    assert defense is not None
+    document = build_case_truth_manifest(defense_plan)
+    channel = document["channels"]["money"]
+    scorer = channel["defense"]
+    public = facts_manifest_block(
+        defense_plan.case_facts,
+        defense_plan.money_facts,
+    )["money"]["defense"]
+
+    assert channel["channelVersion"] == "1.2.0"
+    assert tuple(scorer) == EXPECTED_DEFENSE_KEYS
+    assert tuple(public) == EXPECTED_PUBLIC_DEFENSE_KEYS
+    assert tuple(channel["published"]["defense"]) == EXPECTED_PUBLIC_DEFENSE_KEYS
+    assert public == channel["published"]["defense"] == {
+        key: scorer[key] for key in EXPECTED_PUBLIC_DEFENSE_KEYS
+    }
+    assert tuple(scorer["scorerLabels"]) == EXPECTED_DEFENSE_SCORER_LABEL_KEYS
+    assert scorer["scorerLabels"] == {
+        "stairStepping": False,
+        "reserveAdequacy": "under_reserved",
+    }
+    assert "scorerLabels" not in public
+
+    assert all(
+        tuple(event) == EXPECTED_DEFENSE_EXPOSURE_KEYS
+        for event in scorer["exposureEvents"]
+    )
+    assert all(
+        tuple(event[bound]) == EXPECTED_DEFENSE_BUCKET_KEYS
+        for event in scorer["exposureEvents"]
+        for bound in ("low", "expected", "high")
+    )
+    assert tuple(scorer["paidCosts"][0]) == EXPECTED_DEFENSE_PAID_COST_KEYS
+    initial = scorer["initialFileReview"]
+    assert tuple(initial) == EXPECTED_DEFENSE_IFR_KEYS
+    assert tuple(initial["artifactBinding"]) == EXPECTED_DEFENSE_BINDING_KEYS
+    for snapshot_name in ("recommendation", "bookedSnapshot"):
+        snapshot = initial[snapshot_name]
+        assert tuple(snapshot) == EXPECTED_DEFENSE_SNAPSHOT_KEYS
+        assert all(
+            tuple(snapshot[key]) == EXPECTED_DEFENSE_BUCKET_KEYS
+            for key in EXPECTED_DEFENSE_SNAPSHOT_KEYS
+        )
+    assert len(scorer["reserveEvents"]) == 1
+    reserve_event = scorer["reserveEvents"][0]
+    assert tuple(reserve_event) == EXPECTED_DEFENSE_RESERVE_EVENT_KEYS[:-1]
+    assert "artifactBinding" not in reserve_event
+
+    inverse = defense_facts_from_truth(document)
+    assert inverse == defense
+    assert inverse is not None
+    assert inverse.initial_file_review.exposure is inverse.exposure_events[0]
+    assert inverse.reserve_events[0].exposure is inverse.exposure_events[1]
+    money_inverse = money_facts_from_truth(document)
+    assert money_inverse is not None
+    assert money_inverse.defense == defense
+
+
+@pytest.mark.parametrize("change", ["missing", "unknown", "null-binding"])
+def test_r77_defense_projection_rejects_nested_schema_drift(
+    defense_plan: Any,
+    change: str,
+) -> None:
+    document = build_case_truth_manifest(defense_plan)
+    defense = document["channels"]["money"]["defense"]
+    public = document["channels"]["money"]["published"]["defense"]
+    if change == "missing":
+        del defense["initialFileReview"]["litigationBudget"]
+        del public["initialFileReview"]["litigationBudget"]
+    elif change == "unknown":
+        defense["scorerLabels"]["policy"] = "ordinary"
+    else:
+        defense["initialFileReview"]["artifactBinding"] = None
+        public["initialFileReview"]["artifactBinding"] = None
+    with pytest.raises(TruthManifestError, match=r"defense|DEFENSE_ARTIFACT"):
+        defense_facts_from_truth(document)
+
+
+def test_r96_inverse_rejects_duplicate_ifr_inside_reserve_events(
+    defense_plan: Any,
+) -> None:
+    document = build_case_truth_manifest(defense_plan)
+    scorer = document["channels"]["money"]["defense"]
+    public = document["channels"]["money"]["published"]["defense"]
+    duplicate = copy.deepcopy(scorer["reserveEvents"][0])
+    duplicate.update(
+        {
+            "id": "reserve:initial_file_review",
+            "trigger": "initial_file_review",
+            "eventDate": scorer["initialFileReview"]["reviewDate"],
+            "exposure": copy.deepcopy(scorer["exposureEvents"][0]),
+        }
+    )
+    duplicate.pop("artifactBinding", None)
+    scorer["reserveEvents"].insert(0, duplicate)
+    public["reserveEvents"].insert(0, copy.deepcopy(duplicate))
+    with pytest.raises(
+        TruthManifestError,
+        match="DEFENSE_DUPLICATE_INITIAL_REVIEW_EVENT",
+    ):
+        defense_facts_from_truth(document)
+
+
+R102_DEFENSE_FORBIDDEN_TOKENS = (
+    "adjuster_diligence",
+    "adjuster.diligence",
+    "stair_stepping",
+    "reserve_adequacy",
+    "negligent",
+    "scorerLabels",
+    "apportionedPdDollars",
+    "apportioned_pd_dollars",
+    "bensonSplit",
+    "benson_split",
+    "section4664Offset",
+    "section_4664_offset",
+)
+
+
+def _r102_visible_leaks(payloads: list[tuple[str, str]]) -> dict[str, str]:
+    return {
+        token: location
+        for location, payload in payloads
+        for token in R102_DEFENSE_FORBIDDEN_TOKENS
+        if token in payload
+    }
+
+
+def test_r102_defense_labels_never_enter_analyzer_visible_projection(
+    defense_plan: Any,
+) -> None:
+    """m23-21: scorer quality labels cannot cross the public allowlist."""
+    assert defense_plan.case_facts is not None
+    public = facts_manifest_block(defense_plan.case_facts, defense_plan.money_facts)
+    payloads = [("caseFacts", json.dumps(public, sort_keys=True))]
+    assert not _r102_visible_leaks(payloads)
+
+    for token in R102_DEFENSE_FORBIDDEN_TOKENS:
+        assert _r102_visible_leaks([("planted-copy", token)]) == {
+            token: "planted-copy"
+        }
 
 
 @pytest.mark.parametrize("change", ["missing", "unknown"])
@@ -1523,6 +1838,54 @@ def test_case_tree_contains_no_scorer_only_vocabulary(tmp_path: Path) -> None:
         or (term == "truth" and term.encode() in path.read_bytes().lower())
     }
     assert not leaks
+
+
+@pytest.mark.slow
+@requires_substrate
+def test_r102_generated_defense_tree_has_no_quality_or_m5_leakage(
+    tmp_path: Path,
+) -> None:
+    plan = _defense_plan("defense-leakage-probe")
+    result = generate_case(plan.seed, tmp_path)
+    payloads: list[tuple[str, str]] = []
+    rendered_paths = {render.path for render in result.renders}
+    for path in result.directory.rglob("*"):
+        if not path.is_file() or path in rendered_paths or TRUTH_DIR in path.parts:
+            continue
+        relative = str(path.relative_to(result.directory))
+        payloads.append((f"filename:{relative}", relative))
+        payloads.append(
+            (
+                relative,
+                path.read_bytes().decode("utf-8", errors="replace"),
+            )
+        )
+    for render in result.renders:
+        relative = str(render.path.relative_to(result.directory))
+        payloads.append((f"filename:{relative}", relative))
+        payloads.append(
+            (
+                relative,
+                extract_text(render.path, render.doc_format),
+            )
+        )
+    assert not _r102_visible_leaks(payloads)
+
+    planted = tmp_path / "planted-visible-copy"
+    shutil.copytree(result.directory, planted)
+    planted_file = planted / "planted-leak.txt"
+    planted_file.write_text("\n".join(R102_DEFENSE_FORBIDDEN_TOKENS), encoding="utf-8")
+    planted_payloads = [
+        (
+            str(path.relative_to(planted)),
+            path.read_bytes().decode("utf-8", errors="replace"),
+        )
+        for path in planted.rglob("*")
+        if path.is_file() and path.suffix in {".json", ".yaml", ".txt"}
+    ]
+    assert set(_r102_visible_leaks(planted_payloads)) == set(
+        R102_DEFENSE_FORBIDDEN_TOKENS
+    )
 
 
 @pytest.mark.slow

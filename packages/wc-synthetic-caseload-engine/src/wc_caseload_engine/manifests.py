@@ -902,9 +902,9 @@ def _validate_money(block: dict[str, Any], documents: list[Any], case_label: str
         problems.extend(_validate_penalties(penalty_section, subtypes, case_label))
 
     for key, fields in GOVERNED_MONEY_FIELDS.items():
-        if key in ("settlement", "penalties") and money.get(key) is None:
-            # Absent for a case that did not settle — see SettlementFact. Absent
-            # is fine; *present* was being skipped along with it, so a settlement
+        if key in ("settlement", "penalties", "defense") and money.get(key) is None:
+            # Optional groups are absent when their feature gate is closed. Absent
+            # is fine; *present* was being skipped along with it, so a group
             # was the one group whose shape and governance nothing checked. An
             # ungoverned field there is an extraction label the documents never
             # promised, which is exactly what this loop exists to refuse.
