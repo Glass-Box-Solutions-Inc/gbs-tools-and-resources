@@ -70,10 +70,8 @@ _MONEY_NAME = re.compile(
 #: entry is wrong and the entry is where the argument happens.
 UNGOVERNED_MONEY_MODULES: dict[str, str] = {
     "pdf_templates.medical.billing_records": (
-        "Provider charges and payments. The schema publishes no medical-charge "
-        "fact, so a drawn charge contradicts nothing. BENEFIT_PAYMENT_LEDGER is "
-        "the one subtype here that carries governed money and it is overridden; "
-        "the other 28 are bills and liens."
+        "Provider charges, payments, and lien balances only. Those values have "
+        "no published medical-charge or lien-balance counterpart."
     ),
     "pdf_templates.medical.treating_physician_report": (
         "Work-restriction and treatment-cost asides. No published counterpart."

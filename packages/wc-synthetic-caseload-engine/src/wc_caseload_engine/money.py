@@ -47,14 +47,23 @@ and asserts nothing about the law in the meantime.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import random
 from contextlib import contextmanager
 from decimal import ROUND_HALF_UP, Context, Decimal, localcontext
+from fractions import Fraction
+from pathlib import Path
 from typing import Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from wc_caseload_engine.defense_lens import (
+    DEFENSE_WIRE_PUBLIC_KEYS,
+    DefenseLensFacts,
+    defense_wire_projection,
+)
 from wc_caseload_engine.seeds import (
     PAY_PERIODS_PER_YEAR,
     SETTLEMENT_GROSS_MINIMUM,
@@ -69,6 +78,24 @@ CENTS = Decimal("0.01")
 """Quantum every currency figure is rounded to."""
 
 ZERO = Decimal("0.00")
+
+WEEKLY_BENEFIT_FRACTION = Fraction(2, 3)
+"""Exact statutory two-thirds multiplier used by the rate table."""
+
+MONEY_RATE_UNSUPPORTED_DOI = "MONEY_RATE_UNSUPPORTED_DOI"
+"""Stable code for a DOI outside the vendored DIR table coverage."""
+
+MONEY_ERROR_CODES = frozenset({MONEY_RATE_UNSUPPORTED_DOI})
+
+
+class MoneyRateError(ValueError):
+    """A rate cannot be selected for the requested date of injury."""
+
+    code = MONEY_RATE_UNSUPPORTED_DOI
+
+    def __init__(self, doi: dt.date) -> None:
+        self.doi = doi
+        super().__init__(f"{self.code}: no benefit-rate era covers DOI {doi.isoformat()}")
 
 _ARITHMETIC_CONTEXT = Context(prec=28, rounding=ROUND_HALF_UP)
 """Precision every inexact money operation runs under.
@@ -200,12 +227,12 @@ class RateBasis(BaseModel):
     effective_from: dt.date
     effective_to: dt.date | None = None
 
-    td_fraction: Decimal
+    td_fraction: Fraction
     """Fraction of AWW that becomes the temporary-disability weekly rate."""
 
     td_max_weekly: Decimal
     td_min_weekly: Decimal
-    pd_fraction: Decimal
+    pd_fraction: Fraction
     pd_max_weekly: Decimal
     pd_min_weekly: Decimal
 
@@ -260,10 +287,45 @@ class RateBasis(BaseModel):
         return self
 
     def covers(self, when: dt.date) -> bool:
-        if when < self.effective_from:
-            return False
-        return self.effective_to is None or when <= self.effective_to
+        """Whether *when* is in this artifact row's half-open DOI window."""
+        return self.effective_from <= when and (
+            self.effective_to is None or when < self.effective_to
+        )
 
+
+class PDBand(BaseModel):
+    """One complete permanent-disability bracket from the DIR artifact."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rating_from: int
+    rating_to: int
+    min_weekly_rate: Decimal
+    max_weekly_rate: Decimal
+    sjdb_voucher: Decimal
+
+    @model_validator(mode="after")
+    def _band_is_ordered(self) -> PDBand:
+        if self.rating_from > self.rating_to:
+            raise ValueError("PD band rating_from must not exceed rating_to")
+        if self.min_weekly_rate > self.max_weekly_rate:
+            raise ValueError("PD band minimum must not exceed maximum")
+        return self
+
+
+class RateTableEra(BaseModel):
+    """Complete canonical artifact row, including metadata not in MoneyFacts."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    effective_from: dt.date
+    effective_to: dt.date
+    min_average_weekly_earnings: Decimal
+    max_average_weekly_earnings: Decimal
+    td_min_weekly_rate: Decimal
+    td_max_weekly_rate: Decimal
+    pd_bands: tuple[PDBand, ...]
+    basis: RateBasis
 
 class PenaltyBasis(BaseModel):
     """The automatic late-indemnity increase binding for one DOI vintage.
@@ -359,92 +421,65 @@ def statutory_deadline_basis_for(doi: dt.date) -> StatutoryDeadlineBasis:
     return UNCONFIRMED_STATUTORY_DEADLINE_TABLE[0]
 
 
-UNCONFIRMED_RATE_TABLE: tuple[RateBasis, ...] = (
-    RateBasis(
-        label="doi-pre-2014",
-        # Open at the bottom, so the row :func:`rate_basis_for` falls back to is
-        # a row that actually *covers* the date it was handed. Written as
-        # 1900-01-01 it returned a basis whose own ``covers()`` said no — a
-        # fallback contradicting itself, which is a worse answer than either
-        # raising or answering.
-        effective_from=dt.date.min,
-        effective_to=dt.date(2013, 12, 31),
-        td_fraction=Decimal("0.6667"),
-        td_max_weekly=money(1066.72),
-        td_min_weekly=money(160.00),
-        pd_fraction=Decimal("0.6667"),
-        pd_max_weekly=money(270.00),
-        pd_min_weekly=money(160.00),
-        authority=(
-            "Temporary and permanent disability indemnity rates for dates of injury "
-            "before 2014. COUNSEL-UNCONFIRMED placeholder — the figures, the fraction "
-            "and the bracket boundaries are all unverified."
-        ),
-    ),
-    RateBasis(
-        label="doi-2014-2018",
-        effective_from=dt.date(2014, 1, 1),
-        effective_to=dt.date(2018, 12, 31),
-        td_fraction=Decimal("0.6667"),
-        td_max_weekly=money(1215.27),
-        td_min_weekly=money(182.29),
-        pd_fraction=Decimal("0.6667"),
-        pd_max_weekly=money(290.00),
-        pd_min_weekly=money(160.00),
-        authority=(
-            "Temporary and permanent disability indemnity rates for dates of injury "
-            "2014-2018. COUNSEL-UNCONFIRMED placeholder."
-        ),
-    ),
-    RateBasis(
-        label="doi-2019-2022",
-        effective_from=dt.date(2019, 1, 1),
-        effective_to=dt.date(2022, 12, 31),
-        td_fraction=Decimal("0.6667"),
-        td_max_weekly=money(1539.71),
-        td_min_weekly=money(230.95),
-        pd_fraction=Decimal("0.6667"),
-        pd_max_weekly=money(290.00),
-        pd_min_weekly=money(160.00),
-        authority=(
-            "Temporary and permanent disability indemnity rates for dates of injury "
-            "2019-2022. COUNSEL-UNCONFIRMED placeholder."
-        ),
-    ),
-    RateBasis(
-        label="doi-2023-onward",
-        effective_from=dt.date(2023, 1, 1),
-        effective_to=None,
-        td_fraction=Decimal("0.6667"),
-        td_max_weekly=money(1619.15),
-        td_min_weekly=money(242.86),
-        pd_fraction=Decimal("0.6667"),
-        pd_max_weekly=money(290.00),
-        pd_min_weekly=money(160.00),
-        authority=(
-            "Temporary and permanent disability indemnity rates for dates of injury "
-            "2023 onward. COUNSEL-UNCONFIRMED placeholder."
-        ),
-    ),
-)
-"""Engine-default rate vintages. **Every row is unverified.**
+RATE_TABLE_ARTIFACT_PATH = Path(__file__).with_name("data") / "benefit-rate-table.json"
+RATE_TABLE_ARTIFACT_SHA256 = "7a873d8048bcc9ae169528aec1f8b2e0ed12ac04ccc71add2de4e402bef3fc73"
+RATE_TABLE_DATASET_ID = "ca_wc_td_pd_sjdb"
+RATE_TABLE_DATASET_VERSION = "2026-07-30.1"
+RATE_TABLE_SOURCE_URL = "https://www.dir.ca.gov/dwc/WorkersCompensationBenefits.htm"
+RATE_TABLE_SNAPSHOT_SHA256 = "71d07c81b45e1a96cecdcce899ee5c6c3226b0aeaefe686327583f68109c5f2f"
 
-Shipped so that a seed need not restate the law to render a coherent document,
-and named ``UNCONFIRMED_`` so that nobody reaches for it believing otherwise.
-Three things follow from that name and are enforced by tests:
 
-1. no row may set ``counsel_confirmed``;
-2. every row's ``authority`` says so in its own text;
-3. the manifest publishes the flag, so a consumer sees the caveat without
-   reading this file.
+def _load_rate_table_artifact() -> tuple[RateTableEra, ...]:
+    """Build the complete rate table from the vendored canonical JSON bytes."""
+    raw = RATE_TABLE_ARTIFACT_PATH.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != RATE_TABLE_ARTIFACT_SHA256:
+        raise RuntimeError("benefit-rate-table.json digest does not match the pinned artifact")
+    payload = json.loads(raw, parse_float=Decimal)
+    authority = "DIR-published benefit-rate table; COUNSEL-UNCONFIRMED."
+    rows: list[RateTableEra] = []
+    for era in payload["eras"]:
+        bands = tuple(
+            PDBand(
+                rating_from=band["ratingFrom"],
+                rating_to=band["ratingTo"],
+                min_weekly_rate=money(band["minWeeklyRate"]),
+                max_weekly_rate=money(band["maxWeeklyRate"]),
+                sjdb_voucher=money(band["sjdbVoucher"]),
+            )
+            for band in era["pdBands"]
+        )
+        from_date = dt.date.fromisoformat(era["effectiveFrom"])
+        to_date = dt.date.fromisoformat(era["effectiveTo"])
+        basis = RateBasis(
+                label=f"doi-{era['sourceLabel'].replace('/', '-')}",
+                effective_from=from_date,
+                effective_to=to_date,
+                td_fraction=WEEKLY_BENEFIT_FRACTION,
+                td_max_weekly=money(era["tdMaxWeeklyRate"]),
+                td_min_weekly=money(era["tdMinWeeklyRate"]),
+                pd_fraction=WEEKLY_BENEFIT_FRACTION,
+                pd_max_weekly=max(b.max_weekly_rate for b in bands),
+                pd_min_weekly=min(b.min_weekly_rate for b in bands),
+                authority=authority,
+            )
+        rows.append(
+            RateTableEra(
+                effective_from=from_date,
+                effective_to=to_date,
+                min_average_weekly_earnings=money(era["minAverageWeeklyEarnings"]),
+                max_average_weekly_earnings=money(era["maxAverageWeeklyEarnings"]),
+                td_min_weekly_rate=money(era["tdMinWeeklyRate"]),
+                td_max_weekly_rate=money(era["tdMaxWeeklyRate"]),
+                pd_bands=bands,
+                basis=basis,
+            )
+        )
+    return tuple(rows)
 
-The date brackets are themselves unverified. A vintage boundary is a legal
-question — several provisions changed materially and the change is keyed to the
-date of injury — and getting the boundary wrong is as consequential as getting
-the number wrong. :func:`rate_basis_for` is the seam where a dated rate
-authority (KB-167) replaces the whole table; nothing else in this package reads
-it directly.
-"""
+
+RATE_TABLE_ERAS = _load_rate_table_artifact()
+RATE_TABLE_ARTIFACT_ERAS = RATE_TABLE_ERAS
+UNCONFIRMED_RATE_TABLE: tuple[RateBasis, ...] = tuple(era.basis for era in RATE_TABLE_ERAS)
 
 
 def rate_basis_for(doi: dt.date) -> RateBasis:
@@ -461,14 +496,14 @@ def rate_basis_for(doi: dt.date) -> RateBasis:
     no dependency on work running in another repository, and that work needs no
     knowledge of this one beyond the shape it returns.
 
-    Falls back to the earliest vintage for a date before the table opens, rather
-    than raising. A synthetic corpus should not be un-generatable because a seed
-    reached back further than the placeholder table does.
+    Dates outside the artifact's explicit coverage fail closed. Serving the
+    nearest era would fabricate a legal answer for a DOI the authority does not
+    cover.
     """
     for basis in UNCONFIRMED_RATE_TABLE:
         if basis.covers(doi):
             return basis
-    return UNCONFIRMED_RATE_TABLE[0]
+    raise MoneyRateError(doi)
 
 
 #: The six numbers that make a rate binding. A seed stating all six has authored
@@ -518,7 +553,11 @@ def _apply_rate_basis_override(basis: RateBasis, seed: CaseSeed) -> RateBasis:
     for name in _RATE_BASIS_FIGURES:
         value = getattr(override, name)
         if value is not None:
-            changes[name] = money(value) if name.endswith("_weekly") else Decimal(str(value))
+            changes[name] = (
+                money(value)
+                if name.endswith("_weekly")
+                else Fraction(Decimal(str(value)))
+            )
     if override.authority is not None:
         changes["authority"] = override.authority
     # Every numeric figure authored, or only some, or none? That distinction is
@@ -1011,6 +1050,7 @@ class MoneyFacts(BaseModel):
     benefits: BenefitLedger = Field(default_factory=BenefitLedger)
     settlement: SettlementFact | None = None
     penalties: PenaltyLedger | None = None
+    defense: DefenseLensFacts | None = None
 
     @property
     def aww(self) -> Decimal:
@@ -1435,11 +1475,23 @@ def _compute_aww(wages: WageScenario, periods: tuple[EarningsPeriod, ...]) -> Aw
     )
 
 
+def _apply_benefit_fraction(value: Decimal, fraction: Fraction) -> Decimal:
+    """Apply an exact rational multiplier before the final cents boundary."""
+    return value * Decimal(fraction.numerator) / Decimal(fraction.denominator)
+
+
 def compute_comp_rate(aww: Decimal, basis: RateBasis) -> CompRate:
     """AWW to weekly indemnity rates under *basis*, recording which bound bound."""
     with _exact():
-        td_raw = (aww * basis.td_fraction).quantize(CENTS, rounding=ROUND_HALF_UP)
-        pd_raw = (aww * basis.pd_fraction).quantize(CENTS, rounding=ROUND_HALF_UP)
+        # Convert numerator and denominator independently.  In particular, do
+        # not materialize two-thirds as a Decimal or float before the existing
+        # final cents boundary.
+        td_raw = (
+            _apply_benefit_fraction(aww, basis.td_fraction)
+        ).quantize(CENTS, rounding=ROUND_HALF_UP)
+        pd_raw = (
+            _apply_benefit_fraction(aww, basis.pd_fraction)
+        ).quantize(CENTS, rounding=ROUND_HALF_UP)
     td_rate, td_bound = _bounded(td_raw, basis.td_min_weekly, basis.td_max_weekly)
     pd_rate, pd_bound = _bounded(pd_raw, basis.pd_min_weekly, basis.pd_max_weekly)
     return CompRate(
@@ -2138,6 +2190,7 @@ GOVERNED_MONEY_FIELDS: dict[str, tuple[str, ...]] = {
         "firstPdPaymentDays",
         "firstPaymentRule",
     ),
+    "defense": DEFENSE_WIRE_PUBLIC_KEYS,
 }
 
 
@@ -2319,6 +2372,11 @@ def _money_manifest_block(facts: MoneyFacts) -> dict[str, Any]:
         block["penalties"]["firstPaymentRule"] = _first_payment_rule_block(
             penalties.first_payment_rule
         )
+    if facts.defense is not None:
+        block["defense"] = defense_wire_projection(
+            facts.defense,
+            include_scorer_labels=False,
+        )
     return block
 
 
@@ -2353,14 +2411,24 @@ __all__ = [
     "DILIGENCE_LATENESS",
     "GOVERNED_MONEY_FIELDS",
     "IRREGULARITY_THRESHOLD",
+    "MONEY_ERROR_CODES",
+    "MONEY_RATE_UNSUPPORTED_DOI",
     "PD_ADVANCE_INTERVAL_DAYS",
     "PD_ADVANCE_SCHEDULE_AUTHORITY",
+    "RATE_TABLE_ARTIFACT_ERAS",
+    "RATE_TABLE_ARTIFACT_PATH",
+    "RATE_TABLE_DATASET_ID",
+    "RATE_TABLE_DATASET_VERSION",
+    "RATE_TABLE_ERAS",
+    "RATE_TABLE_SNAPSHOT_SHA256",
+    "RATE_TABLE_SOURCE_URL",
     "SHORT_HISTORY_WEEKS",
     "TD_PAYMENT_DUE_AUTHORITY",
     "TD_PAYMENT_DUE_DAYS",
     "UNCONFIRMED_PENALTY_TABLE",
     "UNCONFIRMED_RATE_TABLE",
     "UNCONFIRMED_STATUTORY_DEADLINE_TABLE",
+    "WEEKLY_BENEFIT_FRACTION",
     "AwwComputation",
     "BenefitGap",
     "BenefitLedger",
@@ -2369,11 +2437,14 @@ __all__ = [
     "FirstPaymentRule",
     "InKindWage",
     "MoneyFacts",
+    "MoneyRateError",
+    "PDBand",
     "PdAdvance",
     "PenaltyAssessment",
     "PenaltyBasis",
     "PenaltyLedger",
     "RateBasis",
+    "RateTableEra",
     "SettlementFact",
     "StatutoryDeadlineBasis",
     "StatutoryDueDate",

@@ -1,0 +1,80 @@
+{
+ "source_url": "https://www.dir.ca.gov/dwc/pdr.pdf",
+ "sha256": "cfabf43b57533b90133f71aecf882c8b17a5dad3659db7aea6e810728f664201",
+ "document": "Schedule for Rating Permanent Disabilities (January 2005), California DWC",
+ "section": "Section 4 - Occupational Variants",
+ "pdf_pages": "66-73 (printed pages 4-2 through 4-9; each logical row spans two column-half pages: groups 110-330 and 331-590)",
+ "extraction_date": "2026-08-14",
+ "extraction_methods": [
+  "parse1: pdftotext -layout token parse (poppler)",
+  "parse2: pdfplumber 0.11.9 word-coordinate parse (independent column x-center + row y-anchor assignment)"
+ ],
+ "cross_check": {
+  "rows": 113,
+  "columns": 45,
+  "cells": 5085,
+  "disagreements": 0,
+  "agreement_rate": 1.0,
+  "visually_resolved_cells": 0,
+  "visual_spot_checks": [
+   {
+    "row": "03.01 -- 03.06",
+    "group": "110",
+    "letter": "G",
+    "pdf_page": 66,
+    "printed_page": "4-2"
+   },
+   {
+    "row": "06.05.00.00",
+    "group": "213",
+    "letter": "F",
+    "pdf_page": 66,
+    "printed_page": "4-2"
+   },
+   {
+    "row": "11.03.04.00",
+    "group": "321",
+    "letter": "C",
+    "pdf_page": 66,
+    "printed_page": "4-2"
+   },
+   {
+    "row": "08.01 -- 08.02",
+    "group": "490",
+    "letter": "J",
+    "pdf_page": 67,
+    "printed_page": "4-3"
+   },
+   {
+    "row": "15.01 -- 15.03",
+    "group": "590",
+    "letter": "J",
+    "pdf_page": 71,
+    "printed_page": "4-7"
+   },
+   {
+    "row": "17.01.02.XX",
+    "group": "111",
+    "letter": "D",
+    "pdf_page": 72,
+    "printed_page": "4-8"
+   },
+   {
+    "row": "17.01.02.XX",
+    "group": "482",
+    "letter": "J",
+    "pdf_page": 73,
+    "printed_page": "4-9"
+   }
+  ]
+ },
+ "notes": [
+  "Row 13.07.08.00 (Cranial Nerve - Spinal Accessory) has no variant letters in the source; the PDF prints a cross-reference: use variant from 11.03.04.00, 15.01.XX.XX, or 16.02.01.00 as appropriate. It is intentionally absent from the matrix.",
+  "The source PDF labels the LEG-AMPUT row '17.01.02.XX' on the left column-half pages and '17.01.02.00' on the right column-half pages; both halves were verified visually to be the same row and merged under '17.01.02.XX' (imp table has 17.01.02.01 and 17.01.02.02).",
+  "Row keys are the labels as printed: exact codes (XX.XX.XX.XX), prefix ranges (e.g. '03.01 -- 03.06'), and wildcard families (e.g. '13.11.01.XX', '15.05.XX.XX'). All 113 labels resolve to >=1 entry in pd-calculator data/pdrs-2005-official.json imp; 214/215 imp keys are covered, the only uncovered key being 13.07.08.00 per the note above."
+ ],
+ "validation": {
+  "group_columns_match_pdrs_2005_official_json": true,
+  "all_letters_in_C_to_J": true
+ }
+}

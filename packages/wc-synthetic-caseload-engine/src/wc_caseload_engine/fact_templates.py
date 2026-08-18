@@ -17,6 +17,7 @@ from __future__ import annotations
 import random
 import re
 from decimal import Decimal
+from html import escape
 from typing import Any, Final
 
 import structlog
@@ -28,6 +29,7 @@ from wc_caseload_engine.case_facts import (
     SUBSTRATE_STATUS_PHRASES,
     CaseFacts,
 )
+from wc_caseload_engine.defense_lens import InitialFileReview, ReserveEvent
 from wc_caseload_engine.medical_story import (
     PTP_APPORTIONMENT_SURFACES,
     SUPPLEMENTAL_MEDLEGAL_SURFACES,
@@ -41,6 +43,7 @@ from wc_caseload_engine.money import (
     TD_PAYMENT_DUE_DAYS,
     MoneyFacts,
 )
+from wc_caseload_engine.rating import RATING_CARRIER_SUBTYPES, RatingFacts
 from wc_caseload_engine.seeds import (
     SETTLEMENT_FEE_RATE,
     settlement_deductions,
@@ -188,6 +191,23 @@ def _money_of(template: Any) -> MoneyFacts | None:
     needs it.
     """
     return getattr(template, "_wc_money_facts", None)
+
+
+def _reserve_event_of(template: Any) -> InitialFileReview | ReserveEvent | None:
+    """The exact R72/R73 object bound to this reserve artifact, if present."""
+    context = getattr(getattr(template, "doc_spec", None), "context", None)
+    if isinstance(context, dict):
+        event = context.get("reserve_event")
+        if isinstance(event, (InitialFileReview, ReserveEvent)):
+            return event
+    event = getattr(template, "_wc_reserve_event", None)
+    return event if isinstance(event, (InitialFileReview, ReserveEvent)) else None
+
+
+def _rating_of(template: Any) -> RatingFacts | None:
+    """Return the sole canonical W2 rating object carried by CaseFacts."""
+    facts = _facts_of(template)
+    return None if facts is None else facts.rating
 
 
 def _subtype_of(template: Any) -> str:
@@ -3943,6 +3963,207 @@ def build_fact_aware_templates() -> dict[str, type]:
     billing_module = import_substrate("pdf_templates.medical.billing_records")
     memo_module = import_substrate("pdf_templates.summaries.settlement_memo")
 
+    reserve_bucket_rows = (
+        ("Indemnity", "indemnity"),
+        ("Medical", "medical"),
+        ("Expense / ALAE", "expense_alae"),
+        ("Total", "total"),
+    )
+
+    def reserve_money(value: Decimal) -> str:
+        return f"${value:,.2f}"
+
+    def reserve_table_style() -> Any:
+        from reportlab.lib import colors
+
+        return TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ]
+        )
+
+    def exposure_table(exposure: Any) -> Any:
+        data = [["Bucket", "Low", "Expected", "High"]]
+        for label, field in reserve_bucket_rows:
+            data.append(
+                [
+                    label,
+                    reserve_money(getattr(exposure.low, field)),
+                    reserve_money(getattr(exposure.expected, field)),
+                    reserve_money(getattr(exposure.high, field)),
+                ]
+            )
+        table = Table(
+            data,
+            colWidths=[1.45 * inch, 1.35 * inch, 1.35 * inch, 1.35 * inch],
+        )
+        table.setStyle(reserve_table_style())
+        return table
+
+    def snapshot_table(snapshot: Any) -> Any:
+        data = [["Bucket", "Paid", "Outstanding Reserve", "Incurred"]]
+        for label, field in reserve_bucket_rows:
+            data.append(
+                [
+                    label,
+                    reserve_money(getattr(snapshot.paid, field)),
+                    reserve_money(getattr(snapshot.outstanding_reserve, field)),
+                    reserve_money(getattr(snapshot.incurred, field)),
+                ]
+            )
+        table = Table(
+            data,
+            colWidths=[1.45 * inch, 1.2 * inch, 1.65 * inch, 1.2 * inch],
+        )
+        table.setStyle(reserve_table_style())
+        return table
+
+    def reserve_header(template: Any, title: str, effective_date: Any) -> list[Any]:
+        story: list[Any] = []
+        story.append(Paragraph(escape(title), template.styles["CenterBold"]))
+        story.append(Spacer(1, 0.12 * inch))
+        story.append(
+            Paragraph(
+                f"<b>Effective Date:</b> {effective_date.strftime('%B %d, %Y')}",
+                template.styles["BodyText14"],
+            )
+        )
+        return story
+
+    def reserve_section(story: list[Any], template: Any, title: str, table: Any) -> None:
+        story.append(Spacer(1, 0.14 * inch))
+        story.append(Paragraph(f"<b>{escape(title)}</b>", template.styles["SectionHeader"]))
+        story.append(Spacer(1, 0.06 * inch))
+        story.append(table)
+
+    def reserve_list(story: list[Any], template: Any, title: str, values: Any) -> None:
+        story.append(Spacer(1, 0.12 * inch))
+        story.append(Paragraph(f"<b>{escape(title)}</b>", template.styles["SectionHeader"]))
+        for value in values:
+            story.append(
+                Paragraph(f"• {escape(str(value))}", template.styles["BodyText14"])
+            )
+
+    class FactAwareInitialFileReview(_SpecCapture, billing_module.BillingRecords):  # type: ignore[misc,name-defined]
+        """The sole IFR worksheet, rendered only from its bound R72 object."""
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            event = _reserve_event_of(self)
+            if not isinstance(event, InitialFileReview):
+                return list(super().build_story(doc_spec))
+
+            story = reserve_header(self, "Initial File Review", event.review_date)
+            story.extend(
+                [
+                    Paragraph(
+                        f"<b>Event ID:</b> {escape(event.event_id)}",
+                        self.styles["BodyText14"],
+                    ),
+                    Paragraph(
+                        f"<b>Compensability Posture:</b> "
+                        f"{escape(event.compensability_posture)}",
+                        self.styles["BodyText14"],
+                    ),
+                    Paragraph(
+                        f"<b>Case Evaluation:</b> {escape(event.case_evaluation)}",
+                        self.styles["BodyText14"],
+                    ),
+                    Paragraph(
+                        f"<b>Litigation Budget:</b> "
+                        f"{reserve_money(event.litigation_budget)}",
+                        self.styles["BodyText14"],
+                    ),
+                    Paragraph(
+                        f"<b>Authority Status:</b> {escape(event.authority_status)}",
+                        self.styles["BodyText14"],
+                    ),
+                    Paragraph(
+                        f"<b>Adoption Lag:</b> {event.adoption_lag_days} days",
+                        self.styles["BodyText14"],
+                    ),
+                ]
+            )
+            reserve_section(
+                story, self, "Ultimate Exposure Range", exposure_table(event.exposure)
+            )
+            reserve_section(
+                story,
+                self,
+                "Recommended Snapshot",
+                snapshot_table(event.recommendation),
+            )
+            reserve_section(
+                story,
+                self,
+                "Booked Snapshot",
+                snapshot_table(event.booked_snapshot),
+            )
+            reserve_list(story, self, "Discovery Plan", event.discovery_plan)
+            reserve_list(story, self, "IFR Assumptions", event.assumptions)
+            reserve_list(story, self, "Exposure Assumptions", event.exposure.assumptions)
+            return story
+
+    class FactAwareReserveChangeNotice(_SpecCapture, billing_module.BillingRecords):  # type: ignore[misc,name-defined]
+        """One changed post-IFR reserve event, rendered from that exact R73 object."""
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            event = _reserve_event_of(self)
+            if not isinstance(event, ReserveEvent):
+                return list(super().build_story(doc_spec))
+
+            story = reserve_header(self, "Reserve Change Notice", event.event_date)
+            story.extend(
+                [
+                    Paragraph(
+                        f"<b>Event ID:</b> {escape(event.id)}",
+                        self.styles["BodyText14"],
+                    ),
+                    Paragraph(
+                        f"<b>Trigger:</b> {escape(event.trigger)}",
+                        self.styles["BodyText14"],
+                    ),
+                    Paragraph(
+                        f"<b>Reason:</b> {escape(event.reason)}",
+                        self.styles["BodyText14"],
+                    ),
+                    Paragraph(
+                        f"<b>Adoption Lag:</b> {event.adoption_lag_days} days",
+                        self.styles["BodyText14"],
+                    ),
+                ]
+            )
+            reserve_section(
+                story, self, "Ultimate Exposure Range", exposure_table(event.exposure)
+            )
+            reserve_section(
+                story,
+                self,
+                "Prior Booked Snapshot",
+                snapshot_table(event.prior_snapshot),
+            )
+            reserve_section(
+                story,
+                self,
+                "Recommended Snapshot",
+                snapshot_table(event.recommendation),
+            )
+            reserve_section(
+                story,
+                self,
+                "New Booked Snapshot",
+                snapshot_table(event.booked_snapshot),
+            )
+            reserve_list(story, self, "Exposure Assumptions", event.exposure.assumptions)
+            return story
+
     class FactAwareWageStatement(_SpecCapture, wage_module.WageStatement):  # type: ignore[misc,name-defined]
         """Prints the ledger's earnings and rate instead of inventing both.
 
@@ -4370,6 +4591,58 @@ def build_fact_aware_templates() -> dict[str, type]:
         settled files, and a target twelve times the executed gross is not a
         valuation — it is a label an analyzer would learn as noise.
         """
+
+        def build_story(self, doc_spec: Any) -> list[Any]:
+            subtype = str(doc_spec.subtype.value)
+            rating = _rating_of(self)
+            if subtype not in RATING_CARRIER_SUBTYPES or rating is None:
+                return list(super().build_story(doc_spec))
+
+            title = {
+                "IMPAIRMENT_RATING_WORKSHEET": "IMPAIRMENT RATING WORKSHEET",
+                "PD_RATING_CALCULATION_WORKSHEET": (
+                    "PERMANENT DISABILITY RATING CALCULATION WORKSHEET"
+                ),
+                "PD_RATING_CONVERSION": "PERMANENT DISABILITY RATING CONVERSION",
+            }[subtype]
+            story: list[Any] = [
+                Paragraph(title, self.styles["CenterBold"]),
+                Spacer(1, 0.2 * inch),
+                Paragraph(
+                    f"<b>Applicant:</b> {self.case.applicant.full_name}",
+                    self.styles["BodyText14"],
+                ),
+                Paragraph(
+                    f"<b>Date of Injury:</b> {rating.date_of_injury:%m/%d/%Y}",
+                    self.styles["BodyText14"],
+                ),
+                Paragraph(
+                    f"<b>Schedule:</b> {rating.schedule.edition} PDRS",
+                    self.styles["BodyText14"],
+                ),
+                Paragraph(
+                    f"<b>Occupation:</b> {rating.occupation_title} "
+                    f"(group {rating.occupation_group}); "
+                    f"<b>Age at injury:</b> {rating.applicant_age}",
+                    self.styles["BodyText14"],
+                ),
+                Spacer(1, 0.15 * inch),
+                self.make_hr(),
+                Paragraph("RATING STRING", self.styles["SectionHeader"]),
+            ]
+            for line in rating.rating_string.splitlines():
+                story.append(Paragraph(line, self.styles["BodyText14"]))
+            story.extend(
+                [
+                    Spacer(1, 0.15 * inch),
+                    Paragraph(
+                        "Selected unapportioned permanent disability: "
+                        f"{rating.final_pd_percent}%",
+                        self.styles["BodyText14"],
+                    ),
+                ]
+            )
+            return story
 
         def _make_pd_analysis_section(self) -> list[Any]:
             story = list(super()._make_pd_analysis_section())
@@ -5293,6 +5566,8 @@ def build_fact_aware_templates() -> dict[str, type]:
         "STIPULATIONS_WITH_REQUEST_FOR_AWARD_PARTIAL": FactAwareStipulations,
         "STIPS_WITH_REQUEST_FOR_AWARD_PACKAGE": FactAwareStipulations,
         "BENEFIT_PAYMENT_LEDGER": FactAwareBenefitPaymentLedger,
+        "RESERVE_WORKSHEET": FactAwareInitialFileReview,
+        "RESERVE_CHANGE_NOTICE": FactAwareReserveChangeNotice,
         "COMPROMISE_AND_RELEASE": FactAwareCompromiseAndRelease,
         "COMPROMISE_AND_RELEASE_STANDARD": FactAwareCompromiseAndRelease,
         "COMPROMISE_AND_RELEASE_PD_ONLY": FactAwareCompromiseAndRelease,

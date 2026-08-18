@@ -168,6 +168,7 @@ def _post_recon_litigation(
             priority=22,
             author_role=ROLE_APPLICANT_ATTORNEY,
             stage="post_recon",
+            semantic_event_id="recon:petition",
         ),
         DatedCandidate(
             subtype="NOTICE_OF_HEARING_COURT_ISSUED",

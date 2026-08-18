@@ -44,6 +44,7 @@ from wc_caseload_engine.case_facts import (
     CaseFacts,
     facts_manifest_block,
 )
+from wc_caseload_engine.defense_lens import reserve_event_for_document
 from wc_caseload_engine.money import (
     GOVERNED_MONEY_FIELDS,
     MoneyFacts,
@@ -317,6 +318,19 @@ def generate_case(
             if story_plan is not None
             else None
         )
+        reserve_event = None
+        defense = (
+            None if plan.money_facts is None else plan.money_facts.defense
+        )
+        if defense is not None and document.subtype in {
+            "RESERVE_WORKSHEET",
+            "RESERVE_CHANGE_NOTICE",
+        }:
+            reserve_event = reserve_event_for_document(
+                defense,
+                document_index=document.index,
+                subtype=document.subtype,
+            )
         result = render_document(
             seed=seed,
             cast=plan.cast,
@@ -331,6 +345,7 @@ def generate_case(
             content_flags=document.content_flags,
             case_facts=plan.case_facts,
             money_facts=plan.money_facts,
+            reserve_event=reserve_event,
             packet_index=packet_counter,
             report_ordinal=report_counter,
             letter_ordinal=letter_counter,
@@ -346,6 +361,7 @@ def generate_case(
                 if medical_story is not None
                 else None
             ),
+            semantic_event_id=document.semantic_event_id,
         )
         if document.subtype in SUBPOENAED_RECORDS_SUBTYPES:
             packet_counter += 1
@@ -887,9 +903,9 @@ def _validate_money(block: dict[str, Any], documents: list[Any], case_label: str
         problems.extend(_validate_penalties(penalty_section, subtypes, case_label))
 
     for key, fields in GOVERNED_MONEY_FIELDS.items():
-        if key in ("settlement", "penalties") and money.get(key) is None:
-            # Absent for a case that did not settle — see SettlementFact. Absent
-            # is fine; *present* was being skipped along with it, so a settlement
+        if key in ("settlement", "penalties", "defense") and money.get(key) is None:
+            # Optional groups are absent when their feature gate is closed. Absent
+            # is fine; *present* was being skipped along with it, so a group
             # was the one group whose shape and governance nothing checked. An
             # ungoverned field there is an extraction label the documents never
             # promised, which is exactly what this loop exists to refuse.

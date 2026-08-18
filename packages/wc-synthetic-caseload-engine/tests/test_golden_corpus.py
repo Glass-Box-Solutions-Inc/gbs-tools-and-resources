@@ -289,17 +289,29 @@ AJC62_GOLDEN_CONTRACT = Path(__file__).resolve().parent / "fixtures" / (
 """R67/R73: raw hashes of the three no-re-record goldens at eedad1093, plus the
 complete pre-M3 ``doctrine-showcase`` payload for step 13's addition-only proof."""
 
+R109_MONEY_SHOWCASE_CONTROLLED_SHA256 = (
+    "a8db048b3ad7b23a4c85bdf4732628ccf04f3b3f47cae99e6f760bf59ecda2ea"
+)
+"""R109's sole successor to AJC-62's historical money-showcase recording.
+
+The complete historical payload stays frozen in :data:`AJC62_GOLDEN_CONTRACT`.
+Only the exact controlled re-record is admitted here; the narrower 29-path
+oracle belongs to ``tests/test_money_w2_baseline.py``.
+"""
+
 
 def test_pre_m3_unchanged_corpus_golden_files_match_the_frozen_ajc62_baseline() -> None:
-    """AJC-62 R73: three corpora receive no re-record — not even a deliberate one.
+    """AJC-62 R73: demo/personas stay frozen; R109 admits one exact money successor.
 
     The ordinary golden gate compares fresh generation against the committed
     golden, so it goes green again the moment somebody re-records — which is
-    exactly the move this baseline exists to forbid for ``demo-caseload``,
-    ``money-showcase`` and ``personas-showcase`` during AJC-62. The comparison
-    is the raw SHA-256 of the committed golden files' own bytes against the
-    frozen fixture, so a re-record cannot ride through on a green ``--check``:
-    the file moved, and this says so regardless of what generated it.
+    exactly the move this baseline exists to forbid for ``demo-caseload`` and
+    ``personas-showcase``. R109 is the sole subsequent exception: it admits
+    only the literal hash below for ``money-showcase``. Its exact 29-path
+    rate-derived diff remains independently enforced by
+    ``tests/test_money_w2_baseline.py``. The comparison is the raw SHA-256 of
+    the committed golden files' own bytes, so a further re-record cannot ride
+    through on a green ``--check``.
 
     ``doctrine-showcase`` is deliberately absent from the hash set — R73 grants
     it exactly one addition-only re-record at build step 13, proved by its own
@@ -310,10 +322,13 @@ def test_pre_m3_unchanged_corpus_golden_files_match_the_frozen_ajc62_baseline() 
     assert set(frozen) == {"demo-caseload", "money-showcase", "personas-showcase"}, (
         "the frozen contract must cover exactly the three no-re-record corpora"
     )
+    assert frozen["money-showcase"] != R109_MONEY_SHOWCASE_CONTROLLED_SHA256
 
     golden_dir = Path(__file__).resolve().parent / "golden"
     drifted: list[str] = []
     for name, expected in sorted(frozen.items()):
+        if name == "money-showcase":
+            expected = R109_MONEY_SHOWCASE_CONTROLLED_SHA256
         actual = hashlib.sha256((golden_dir / f"{name}.json").read_bytes()).hexdigest()
         if actual != expected:
             drifted.append(f"{name}: recorded {expected}, committed file is {actual}")

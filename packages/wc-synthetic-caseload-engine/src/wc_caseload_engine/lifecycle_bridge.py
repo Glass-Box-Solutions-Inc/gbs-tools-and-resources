@@ -352,6 +352,8 @@ class DatedCandidate:
     author_role: str = ROLE_APPLICANT_ATTORNEY
     stage: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    semantic_event_id: str | None = None
+    """W2 internal trigger identity, assigned at the semantic source."""
     medical_opinion_id: str | None = None
     spoken_contention_ids: tuple[str, ...] = ()
     contention_surface: ContentionSurface | None = None

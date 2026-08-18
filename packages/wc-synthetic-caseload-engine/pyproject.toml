@@ -40,7 +40,7 @@ wc-caseload = "wc_caseload_engine.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-wc_caseload_engine = ["py.typed", "data/*.txt"]
+wc_caseload_engine = ["py.typed", "data/*.txt", "data/*.json"]
 
 [tool.ruff]
 line-length = 100

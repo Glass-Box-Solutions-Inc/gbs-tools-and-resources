@@ -207,6 +207,44 @@ _PRIOR_CLAIM_WITH_AWARD = {
 
 
 REGISTRY: dict[str, RegisteredMessage] = {
+    "defense-lens-requires-defense-perspective": RegisteredMessage(
+        where="CaseSeed._defense_lens_requires_defense_perspective",
+        directives=(
+            "change the top-level perspective or remove scenario.defense_lens",
+        ),
+        trigger={
+            "scenario": {
+                "wages": {},
+                "defense_lens": {
+                    "case_evaluation": "Initial defense evaluation.",
+                    "assumptions": [],
+                    "discovery_plan": [],
+                    "litigation_budget": 1000,
+                    "exposure_events": [
+                        {
+                            "trigger": "initial_file_review",
+                            "low": {
+                                "indemnity": 1000,
+                                "medical": 1000,
+                                "expense_alae": 1000,
+                            },
+                            "expected": {
+                                "indemnity": 2000,
+                                "medical": 2000,
+                                "expense_alae": 2000,
+                            },
+                            "high": {
+                                "indemnity": 3000,
+                                "medical": 3000,
+                                "expense_alae": 3000,
+                            },
+                        }
+                    ],
+                },
+            }
+        },
+        resolution={"perspective": "defense"},
+    ),
     "unknown_condition_key": RegisteredMessage(
         where="MedicalConditionEntry._key_is_a_catalog_key",
         directives=("Use one of: {}",),
