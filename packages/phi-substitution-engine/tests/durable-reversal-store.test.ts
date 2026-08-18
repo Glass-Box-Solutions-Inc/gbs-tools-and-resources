@@ -47,9 +47,13 @@ const WITNESS = brand<SubstitutionToken>("[[Witness]]");
 
 interface DekCacheHarnessOptions {
   readonly clock?: ReturnType<typeof makeClock>;
+  readonly wrapSpool?: (spool: SpoolVolume) => SpoolVolume;
   readonly cacheOptions?: Readonly<{
     readonly maxEntries?: number;
     readonly ttlMs?: number;
+    readonly weakReferenceFactoryForTesting?: (
+      store: DurableReversalStore,
+    ) => { deref(): DurableReversalStore | undefined };
   }>;
 }
 
@@ -70,9 +74,10 @@ function makeDekCacheHarness(options: DekCacheHarnessOptions = {}) {
       return dek;
     },
   };
+  const mountedSpool = backend.mount({}, clock.now);
   const dependencies = {
     keyProvider,
-    spoolVolume: backend.mount({}, clock.now),
+    spoolVolume: options.wrapSpool?.(mountedSpool) ?? mountedSpool,
     classifyRetention: async () => "matter" as const,
     nowEpochMilliseconds: clock.now,
     maximumEncounteredTokenBatch: 256,
@@ -96,6 +101,43 @@ function cacheScope(label: string): { matterId: MatterId; attemptId: OperationAt
     matterId: brand<MatterId>(`matter-cache-${label}`),
     attemptId: brand<OperationAttemptId>(`attempt-cache-${label}`),
     canonical: `Canonical ${label}`,
+  };
+}
+
+function makeNonceStall() {
+  let targetMatter: string | undefined;
+  let markReached: (() => void) | undefined;
+  let waitForRelease: Promise<void> | undefined;
+  return {
+    wrap: (inner: SpoolVolume): SpoolVolume => ({
+      ensureDekGeneration: (input) => inner.ensureDekGeneration(input),
+      reserveNonce: async (input) => {
+        if (String(input.matterId) === targetMatter) {
+          targetMatter = undefined;
+          markReached?.();
+          await waitForRelease;
+        }
+        return inner.reserveNonce(input);
+      },
+      prepare: (input) => inner.prepare(input),
+      publish: (input) => inner.publish(input),
+      flush: (input) => inner.flush(input),
+      readCurrent: (input) => inner.readCurrent(input),
+    }),
+    stallNext: (matterId: MatterId) => {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let reached!: () => void;
+      const reachedPromise = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      targetMatter = String(matterId);
+      markReached = reached;
+      waitForRelease = released;
+      return { reached: reachedPromise, release };
+    },
   };
 }
 
@@ -484,6 +526,43 @@ describe("L2.4 DurableReversalStore — bounded DEK cache (GLY-343)", () => {
     expect(h.unwrapInvocations()).toBe(2);
   });
 
+  it("copies cold and warm DEKs before an in-flight record can be evicted (MC/MD)", async () => {
+    const nonceStall = makeNonceStall();
+    const h = makeDekCacheHarness({
+      cacheOptions: { maxEntries: 1, ttlMs: 60_000 },
+      wrapSpool: nonceStall.wrap,
+    });
+
+    const assertStalledRecordSurvivesEviction = async (
+      target: ReturnType<typeof cacheScope>,
+      evictor: ReturnType<typeof cacheScope>,
+    ): Promise<void> => {
+      const stall = nonceStall.stallNext(target.matterId);
+      const pendingRecord = h.store.record(recordInput(target));
+      await stall.reached; // #unwrapDek returned; record() is suspended before its first DEK use
+      await h.store.record(recordInput(evictor)); // maxEntries:1 evicts and zeroizes target's cache entry
+      stall.release();
+      await pendingRecord;
+      const reopened = await h.store.resolveEncounteredTokens(resolveInput({ matterId: target.matterId }));
+      expect(reopened.get(CLAIMANT)).toBe(target.canonical);
+    };
+
+    // Cold path exercises operationBytes = Buffer.from(cacheBytes) (MD).
+    await assertStalledRecordSurvivesEviction(cacheScope("copy-cold"), cacheScope("copy-cold-evictor"));
+
+    // Warm the second scope, then exercise return Buffer.from(cached.bytes) (MC).
+    const warmScope = cacheScope("copy-warm");
+    await h.store.record(recordInput(warmScope));
+    await assertStalledRecordSurvivesEviction(
+      {
+        ...warmScope,
+        attemptId: brand<OperationAttemptId>("attempt-cache-copy-warm-target"),
+        canonical: "Canonical copy-warm target",
+      },
+      cacheScope("copy-warm-evictor"),
+    );
+  });
+
   it("evicts the least-recently-used DEK while retained entries remain warm (M2 disable LRU eviction)", async () => {
     const h = makeDekCacheHarness({ cacheOptions: { maxEntries: 2, ttlMs: 60_000 } });
     const a = cacheScope("lru-a");
@@ -541,6 +620,65 @@ describe("L2.4 DurableReversalStore — bounded DEK cache (GLY-343)", () => {
     expect(first.get(CLAIMANT)).toBe(scope.canonical);
     expect(second.get(CLAIMANT)).toBe(scope.canonical);
     expect(h.unwrapInvocations()).toBe(1);
+  });
+
+  it("maxEntries:0 bypasses retention, zeroizes provider allocations, and still round-trips", async () => {
+    const h = makeDekCacheHarness({ cacheOptions: { maxEntries: 0, ttlMs: 60_000 } });
+    const scope = cacheScope("max-zero");
+    await h.store.record(recordInput(scope));
+    expect([...h.unwrappedDekReferences[0]!].every((byte) => byte === 0)).toBe(true);
+
+    const reopened = await h.store.resolveEncounteredTokens(resolveInput({ matterId: scope.matterId }));
+    expect(reopened.get(CLAIMANT)).toBe(scope.canonical);
+    expect(h.unwrapInvocations()).toBe(2);
+    expect([...h.unwrappedDekReferences[1]!].every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("ttlMs:0 bypasses retention, zeroizes provider allocations, and still round-trips", async () => {
+    const h = makeDekCacheHarness({ cacheOptions: { maxEntries: 1, ttlMs: 0 } });
+    const scope = cacheScope("ttl-zero");
+    await h.store.record(recordInput(scope));
+    expect([...h.unwrappedDekReferences[0]!].every((byte) => byte === 0)).toBe(true);
+
+    const reopened = await h.store.resolveEncounteredTokens(resolveInput({ matterId: scope.matterId }));
+    expect(reopened.get(CLAIMANT)).toBe(scope.canonical);
+    expect(h.unwrapInvocations()).toBe(2);
+    expect([...h.unwrappedDekReferences[1]!].every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("rejects cache options that loosen the default entry or TTL bounds", () => {
+    expect(() => makeDekCacheHarness({ cacheOptions: { maxEntries: 257 } })).toThrow(RangeError);
+    expect(() => makeDekCacheHarness({ cacheOptions: { ttlMs: 15 * 60 * 1_000 + 1 } })).toThrow(RangeError);
+  });
+
+  it("expiry timer callback retains only a weak store reference and no-ops after collection", async () => {
+    let dereferenceInvocations = 0;
+    const h = makeDekCacheHarness({
+      cacheOptions: {
+        maxEntries: 1,
+        ttlMs: 1,
+        weakReferenceFactoryForTesting: () => ({
+          deref: () => {
+            dereferenceInvocations += 1;
+            return undefined; // simulate collection before the armed timer fires
+          },
+        }),
+      },
+    });
+    await h.store.record(recordInput(cacheScope("weak-timer")));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(dereferenceInvocations).toBe(1);
+
+    // Structural backstop: the timer closure itself must never mention `this`; the only route back to
+    // the store is the weak reference dereference above.
+    const src = readFileSync(new URL("../src/tokens/durable/durable-reversal-store.ts", import.meta.url), "utf8");
+    const callbackStart = src.indexOf("const expiryTimer = setTimeout(() => {");
+    const callbackEnd = src.indexOf("}, delayMs);", callbackStart);
+    expect(callbackStart).toBeGreaterThan(-1);
+    expect(callbackEnd).toBeGreaterThan(callbackStart);
+    const callbackSource = src.slice(callbackStart, callbackEnd);
+    expect(callbackSource).toContain("weakStore.deref()");
+    expect(callbackSource).not.toContain("this.");
   });
 });
 

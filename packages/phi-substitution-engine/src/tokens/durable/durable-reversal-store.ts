@@ -55,6 +55,10 @@ interface DekCacheEntry {
   readonly expiresAtEpochMs: number;
 }
 
+interface DurableReversalStoreWeakReference {
+  deref(): DurableReversalStore | undefined;
+}
+
 /**
  * Internal-only configuration. The dependency port and the store's published constructor signature
  * stay seam-frozen; tests/composition roots that need tighter bounds may structurally add this
@@ -64,6 +68,10 @@ interface DurableReversalStoreInternalDependencies extends DurableReversalStoreD
   readonly dekCacheOptions?: Readonly<{
     readonly maxEntries?: number;
     readonly ttlMs?: number;
+    /** Test-only factory for simulating collection before an armed expiry timer fires. */
+    readonly weakReferenceFactoryForTesting?: (
+      store: DurableReversalStore,
+    ) => DurableReversalStoreWeakReference;
   }>;
 }
 
@@ -81,17 +89,20 @@ export class DurableReversalStore implements ReversalWriteStore {
   readonly #dekCache = new Map<string, DekCacheEntry>();
   readonly #dekCacheMaxEntries: number;
   readonly #dekCacheTtlMs: number;
+  readonly #weakReferenceFactory: (
+    store: DurableReversalStore,
+  ) => DurableReversalStoreWeakReference;
   #dekCacheExpiryTimer: ReturnType<typeof setTimeout> | undefined;
 
   public constructor(dependencies: DurableReversalStoreDependencies) {
     const internalDependencies = dependencies as DurableReversalStoreInternalDependencies;
     const maxEntries = internalDependencies.dekCacheOptions?.maxEntries ?? DEFAULT_DEK_CACHE_MAX_ENTRIES;
     const ttlMs = internalDependencies.dekCacheOptions?.ttlMs ?? DEFAULT_DEK_CACHE_TTL_MS;
-    if (!Number.isSafeInteger(maxEntries) || maxEntries < 0) {
-      throw new RangeError("dek_cache_max_entries_must_be_a_nonnegative_safe_integer");
+    if (!Number.isSafeInteger(maxEntries) || maxEntries < 0 || maxEntries > DEFAULT_DEK_CACHE_MAX_ENTRIES) {
+      throw new RangeError("dek_cache_max_entries_must_be_between_zero_and_default");
     }
-    if (!Number.isFinite(ttlMs) || ttlMs < 0) {
-      throw new RangeError("dek_cache_ttl_ms_must_be_a_nonnegative_finite_number");
+    if (!Number.isFinite(ttlMs) || ttlMs < 0 || ttlMs > DEFAULT_DEK_CACHE_TTL_MS) {
+      throw new RangeError("dek_cache_ttl_ms_must_be_between_zero_and_default");
     }
     this.#keyProvider = dependencies.keyProvider;
     this.#spool = dependencies.spoolVolume;
@@ -99,6 +110,8 @@ export class DurableReversalStore implements ReversalWriteStore {
     this.#nowEpochMilliseconds = dependencies.nowEpochMilliseconds;
     this.#dekCacheMaxEntries = maxEntries;
     this.#dekCacheTtlMs = ttlMs;
+    this.#weakReferenceFactory = internalDependencies.dekCacheOptions?.weakReferenceFactoryForTesting
+      ?? ((store) => new WeakRef(store));
     this.maximumEncounteredTokenBatch = dependencies.maximumEncounteredTokenBatch;
   }
 
@@ -444,12 +457,18 @@ export class DurableReversalStore implements ReversalWriteStore {
       MAX_TIMER_DELAY_MS,
       Math.max(0, nextExpiry - this.#nowEpochMilliseconds()),
     );
-    this.#dekCacheExpiryTimer = setTimeout(() => {
-      this.#dekCacheExpiryTimer = undefined;
-      this.#pruneExpiredDeks(this.#nowEpochMilliseconds());
-      this.#scheduleDekCacheExpiry();
+    const weakStore = this.#weakReferenceFactory(this);
+    const expiryTimer = setTimeout(() => {
+      const store = weakStore.deref();
+      if (store === undefined) {
+        return;
+      }
+      store.#dekCacheExpiryTimer = undefined;
+      store.#pruneExpiredDeks(store.#nowEpochMilliseconds());
+      store.#scheduleDekCacheExpiry();
     }, delayMs);
+    this.#dekCacheExpiryTimer = expiryTimer;
     // Cache hygiene must not keep an otherwise-idle process alive.
-    this.#dekCacheExpiryTimer.unref();
+    expiryTimer.unref();
   }
 }
