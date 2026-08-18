@@ -349,7 +349,8 @@ def test_envelope_schema_version_is_required_and_well_formed(
 
 
 def test_envelope_schema_version_accepts_minor_and_rejects_other_major(
-    tmp_path: Path, money_plans: tuple[Any, ...],
+    tmp_path: Path,
+    money_plans: tuple[Any, ...],
 ) -> None:
     compatible = build_case_truth_manifest(money_plans[0])
     compatible["schemaVersion"] = "1.9.0"
@@ -466,8 +467,7 @@ def test_output_validator_recomputes_truth_penalty_amount(
     problems = validate_output_tree(out_dir).problems
 
     assert any(
-        "assessments[1].amount is" in problem and "product" in problem
-        for problem in problems
+        "assessments[1].amount is" in problem and "product" in problem for problem in problems
     )
 
 
@@ -497,8 +497,7 @@ def test_output_validator_rejects_assessment_for_unpaid_schedule_entry(
     schedule_entry = next(
         item
         for item in penalties["schedule"]
-        if (item["source"], item["ordinal"])
-        == (assessment["source"], assessment["ordinal"])
+        if (item["source"], item["ordinal"]) == (assessment["source"], assessment["ordinal"])
     )
     schedule_entry["unpaid"] = True
     _rewrite_json(path, truth)
@@ -568,9 +567,9 @@ def test_output_validator_recomputes_the_published_penalty_block(
 
     problems = validate_output_tree(out_dir).problems
 
-    assert any(
-        "published" in problem and "totalIncrease" in problem for problem in problems
-    ), problems
+    assert any("published" in problem and "totalIncrease" in problem for problem in problems), (
+        problems
+    )
 
 
 def test_penalty_validation_is_exact_under_a_reduced_ambient_precision(
@@ -678,9 +677,7 @@ def test_scorer_vocabulary_covers_every_emitted_truth_key(tmp_path: Path) -> Non
         structural |= set(record) & {"truthFile"}
 
     unclassified = (
-        structural
-        - SCORER_ONLY_ENVELOPE_KEY_NAMES
-        - ENVELOPE_KEYS_THAT_ARE_NOT_SENTINELS.keys()
+        structural - SCORER_ONLY_ENVELOPE_KEY_NAMES - ENVELOPE_KEYS_THAT_ARE_NOT_SENTINELS.keys()
     )
     assert not unclassified, (
         f"truth envelopes emit {sorted(unclassified)}, which neither "
@@ -1209,8 +1206,7 @@ def _assert_channel_collections_match_ajc61_projection(
         _ajc61_projection(c, AJC61_CONTENTION_FIELDS) for c in ledger.contentions
     ]
     assert channel["medicalOpinions"] == [
-        _ajc61_projection(o, AJC61_MEDICAL_OPINION_FIELDS)
-        for o in ledger.medical_opinions
+        _ajc61_projection(o, AJC61_MEDICAL_OPINION_FIELDS) for o in ledger.medical_opinions
     ]
     assert channel["apportionmentAssertions"] == [
         _ajc61_projection(a, AJC61_APPORTIONMENT_ASSERTION_FIELDS)
@@ -1222,17 +1218,20 @@ def _v1_graded_ledger(plan: Any) -> Any:
     ledger = plan.medical_assertions
     assert ledger is not None
     context = assertion_context(plan.seed, plan.timeline)
-    projection = project_medical_history(
-        plan.medical_history, context.current_body_parts
-    )
+    projection = project_medical_history(plan.medical_history, context.current_body_parts)
     return grade_ledger(context, projection, ledger, quality_contract="1.0.0")
 
 
 def _m4_response_plan(case_id: str = "assertions-m4-response") -> Any:
-    """The frozen §2 witness-2 chain reused by the 2.1 dispatch oracle."""
+    """The frozen §2 response chain plus a money channel for R98 isolation."""
     from test_medical_assertions import _assertion, _ledger, _opinion
 
-    plan = _m3_plan(case_id)
+    body = _m3_seed_body(case_id)
+    body["scenario"]["wages"] = {
+        "pattern": "regular",
+        "base_weekly_wage": 1000.0,
+    }
+    plan = build_case_plan(parse_case_seed(body), case_number=1)
     base = _opinion(
         "opn-01",
         report_date=dt.date(2023, 2, 1),
@@ -1248,17 +1247,11 @@ def _m4_response_plan(case_id: str = "assertions-m4-response") -> Any:
         examination_performed=False,
         revision_rationale="the additional records confirm the same allocation",
     )
-    base_row = _assertion(
-        "app-01", opinion_id="opn-01", condition_ids=("cond-00",)
-    )
-    response_row = _assertion(
-        "app-02", opinion_id="opn-02", condition_ids=("cond-00",)
-    )
+    base_row = _assertion("app-01", opinion_id="opn-01", condition_ids=("cond-00",))
+    response_row = _assertion("app-02", opinion_id="opn-02", condition_ids=("cond-00",))
     return replace(
         plan,
-        medical_assertions=_ledger(
-            opinions=(base, response), assertions=(base_row, response_row)
-        ),
+        medical_assertions=_ledger(opinions=(base, response), assertions=(base_row, response_row)),
     )
 
 
@@ -1540,9 +1533,7 @@ def _m3_complete_scenario() -> dict[str, Any]:
                     "description": "revised lumbar split after the new records",
                     "disability_causation_stated": True,
                     "reasonable_medical_probability": True,
-                    "causal_rationale": (
-                        "the new imaging shows greater degenerative contribution"
-                    ),
+                    "causal_rationale": ("the new imaging shows greater degenerative contribution"),
                     "percentage_rationale": "the revised share follows the new imaging",
                     "revised_from_percent": 20,
                     "revision_rationale": (
@@ -1740,12 +1731,7 @@ def _exercise_m3_internal_state(plan: Any) -> None:
             author_role="physician",
         ),
         contentions=tuple(
-            StoryContention(
-                **{
-                    name: getattr(c, name)
-                    for name in StoryContention.model_fields
-                }
-            )
+            StoryContention(**{name: getattr(c, name) for name in StoryContention.model_fields})
             for c in ledger.contentions
         ),
         medical_opinion=StoryMedicalOpinion(
@@ -1754,9 +1740,7 @@ def _exercise_m3_internal_state(plan: Any) -> None:
     )
     story_plan = MedicalStoryPlan(by_document_index={7: story})
     assert story_plan.by_document_index[7].medical_opinion is not None
-    assert story_plan.by_document_index[7].medical_opinion.event_kind == (
-        "supplemental_report"
-    )
+    assert story_plan.by_document_index[7].medical_opinion.event_kind == ("supplemental_report")
     for record in (
         *story.contentions,
         story.medical_opinion,
@@ -1807,11 +1791,9 @@ def test_assertions_channel_1_round_trips_the_complete_ajc61_projection() -> Non
 
 
 def test_v1_and_v2_rederive_response_quality_under_their_exact_version_contracts() -> None:
-    """A2-R7: one semantic response chain is thin in v1, supported in v2."""
+    """R98: default-v1/v2-opt-in differ only in assertions on this plan."""
     plan = _m4_response_plan()
-    document_snapshot = tuple(
-        (item.index, item.subtype, item.doc_date) for item in plan.documents
-    )
+    document_snapshot = tuple((item.index, item.subtype, item.doc_date) for item in plan.documents)
     default_payload = build_case_truth_manifest(plan)
     v1_payload = build_case_truth_manifest(plan, truth_manifest_version=1)
     v2_payload = build_case_truth_manifest(plan, truth_manifest_version=2)
@@ -1821,6 +1803,16 @@ def test_v1_and_v2_rederive_response_quality_under_their_exact_version_contracts
     )
     v1_channel = v1_payload["channels"]["assertions"]
     v2_channel = v2_payload["channels"]["assertions"]
+    assert default_payload["channels"]["assertions"]["channelVersion"] == "1.0.0"
+    assert v1_channel["channelVersion"] == "1.0.0"
+    assert v2_channel["channelVersion"] == "2.0.0"
+    assert "money" in v1_payload["channels"]
+    assert json.dumps(v1_payload["channels"]["money"], separators=(",", ":")) == (
+        json.dumps(v2_payload["channels"]["money"], separators=(",", ":"))
+    )
+    assert json.dumps(v1_channel, separators=(",", ":")) != json.dumps(
+        v2_channel, separators=(",", ":")
+    )
     assert [row["quality"] for row in v1_channel["apportionmentAssertions"]] == [
         "supported",
         "thin",
@@ -1843,22 +1835,21 @@ def test_v1_and_v2_rederive_response_quality_under_their_exact_version_contracts
     assert parsed_v1 is not None and parsed_v2 is not None
     assert parsed_v1[2].apportionment_assertions[1].quality == "thin"
     assert parsed_v2[2].apportionment_assertions[1].quality == "supported"
-    assert tuple(
-        (item.index, item.subtype, item.doc_date) for item in plan.documents
-    ) == document_snapshot
+    assert (
+        tuple((item.index, item.subtype, item.doc_date) for item in plan.documents)
+        == document_snapshot
+    )
     assert v2_channel["contentionDocuments"] == []
 
     compatible_minor = copy.deepcopy(v2_payload)
     compatible_minor["channels"]["assertions"]["channelVersion"] = "2.1.0"
-    compatible_minor["channels"]["assertions"]["ledgerDigest"] = (
-        assertion_ledger_digest(compatible_minor["channels"]["assertions"])
+    compatible_minor["channels"]["assertions"]["ledgerDigest"] = assertion_ledger_digest(
+        compatible_minor["channels"]["assertions"]
     )
     try:
         parsed_minor = medical_assertions_from_truth(compatible_minor)
     except ValueError as error:
-        raise AssertionError(
-            f"compatible assertions minor did not normalize: {error}"
-        ) from error
+        raise AssertionError(f"compatible assertions minor did not normalize: {error}") from error
     assert parsed_minor is not None
     assert parsed_minor[2] == parsed_v2[2]
 
@@ -1876,8 +1867,7 @@ def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> N
     assert tm.ASSERTIONS_V1_CASE_CHANNEL_KEYS == AJC61_CASE_CHANNEL_KEYS
     assert tm.ASSERTIONS_V1_VALIDATION_CONTEXT_KEYS == AJC61_VALIDATION_CONTEXT_KEYS
     assert (
-        tm.ASSERTIONS_V1_OPTIONAL_VALIDATION_CONTEXT_KEYS
-        == AJC61_OPTIONAL_VALIDATION_CONTEXT_KEYS
+        tm.ASSERTIONS_V1_OPTIONAL_VALIDATION_CONTEXT_KEYS == AJC61_OPTIONAL_VALIDATION_CONTEXT_KEYS
     )
     assert tm.ASSERTIONS_V1_MEDICAL_HISTORY_KEYS == AJC61_MEDICAL_HISTORY_KEYS
     assert tm.ASSERTIONS_V1_CONDITION_FIELDS == AJC61_CONDITION_FIELDS
@@ -1885,10 +1875,7 @@ def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> N
     assert tm.ASSERTIONS_V1_PRIOR_AWARD_FIELDS == AJC61_PRIOR_AWARD_FIELDS
     assert tm.ASSERTIONS_V1_CONTENTION_FIELDS == AJC61_CONTENTION_FIELDS
     assert tm.ASSERTIONS_V1_MEDICAL_OPINION_FIELDS == AJC61_MEDICAL_OPINION_FIELDS
-    assert (
-        tm.ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS
-        == AJC61_APPORTIONMENT_ASSERTION_FIELDS
-    )
+    assert tm.ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS == AJC61_APPORTIONMENT_ASSERTION_FIELDS
     assert tm.ASSERTIONS_V1_CASELOAD_CHANNEL_KEYS == AJC61_CASELOAD_CHANNEL_KEYS
     assert tm.ASSERTIONS_V1_CASELOAD_CASE_KEYS == AJC61_CASELOAD_CASE_KEYS
 
@@ -1911,9 +1898,7 @@ def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> N
     for record in channel["medicalHistory"]["priorClaims"]:
         assert set(record) <= {_camel_case(f) for f in AJC61_PRIOR_CLAIM_FIELDS}
         if "award" in record:
-            assert set(record["award"]) <= {
-                _camel_case(f) for f in AJC61_PRIOR_AWARD_FIELDS
-            }
+            assert set(record["award"]) <= {_camel_case(f) for f in AJC61_PRIOR_AWARD_FIELDS}
 
     for emitted_items, source_items, fields in (
         (channel["contentions"], v1_ledger.contentions, AJC61_CONTENTION_FIELDS),
@@ -1933,13 +1918,9 @@ def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> N
             assert emitted == _ajc61_projection(source, fields)
             assert set(emitted) <= allowed
             outside_allowlist = {
-                _camel_case(name)
-                for name in type(source).model_fields
-                if name not in fields
+                _camel_case(name) for name in type(source).model_fields if name not in fields
             }
-            assert not (set(emitted) & outside_allowlist), sorted(
-                set(emitted) & outside_allowlist
-            )
+            assert not (set(emitted) & outside_allowlist), sorted(set(emitted) & outside_allowlist)
 
     channel_text = json.dumps(channel)
     for name in M3_FORBIDDEN_CHANNEL_FIELDS:
@@ -1952,9 +1933,7 @@ def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> N
         plan=plan,
         truth_path=truth_dir / "unused.truth.json",
     )
-    rollup = json.loads(
-        json.dumps(build_caseload_truth_manifest("a1-anti-expansion", [result]))
-    )
+    rollup = json.loads(json.dumps(build_caseload_truth_manifest("a1-anti-expansion", [result])))
     caseload_channel = rollup["channels"]["assertions"]
     assert tuple(caseload_channel) == AJC61_CASELOAD_CHANNEL_KEYS
     for entry in caseload_channel["cases"]:
@@ -1977,12 +1956,26 @@ def test_assertion_bearing_case_keeps_envelope_1_and_uses_assertions_channel_1()
 
 
 def test_assertion_absent_case_remains_byte_identical_envelope_1() -> None:
-    """No assertions block, no assertions channel, envelope unchanged — the
-    byte-identity half is carried by the golden gate over all four corpora."""
+    """R98 Form C: absent v1/v2 agree; a response-chain neighbor differs."""
     plan = _plan("assertions-absent", scenario={"medical_history": {}})
-    truth = build_case_truth_manifest(plan)
-    assert truth["schemaVersion"] == "1.0.0"
-    assert "assertions" not in truth["channels"]
+    default_truth = build_case_truth_manifest(plan)
+    v1_truth = build_case_truth_manifest(plan, truth_manifest_version=1)
+    v2_truth = build_case_truth_manifest(plan, truth_manifest_version=2)
+    assert default_truth["schemaVersion"] == "1.0.0"
+    assert "assertions" not in default_truth["channels"]
+    assert json.dumps(default_truth, separators=(",", ":")) == json.dumps(
+        v1_truth, separators=(",", ":")
+    )
+    assert json.dumps(v1_truth, separators=(",", ":")) == json.dumps(
+        v2_truth, separators=(",", ":")
+    )
+
+    positive = _m4_response_plan("assertions-present-neighbor")
+    positive_v1 = build_case_truth_manifest(positive, truth_manifest_version=1)
+    positive_v2 = build_case_truth_manifest(positive, truth_manifest_version=2)
+    assert positive_v1["channels"]["assertions"]["channelVersion"] == "1.0.0"
+    assert positive_v2["channels"]["assertions"]["channelVersion"] == "2.0.0"
+    assert positive_v1["channels"]["assertions"] != positive_v2["channels"]["assertions"]
 
 
 def test_read_truth_manifest_accepts_every_writer_emitted_shape(tmp_path: Path) -> None:
@@ -2012,8 +2005,7 @@ def test_legacy_v1_without_assertions_remains_valid() -> None:
         "kind": "case",
         "audience": "analyzer-scorer",
         "leakageRule": (
-            "Scorer-only ground truth; never use this artifact as an input to "
-            "document analysis."
+            "Scorer-only ground truth; never use this artifact as an input to document analysis."
         ),
         "caseId": "legacy",
         "provenance": {"generator": "wc-synthetic-caseload-engine@0.0.0"},
@@ -2048,9 +2040,7 @@ def test_mixed_caseload_keeps_every_envelope_at_1_and_indexes_assertions(
     from wc_caseload_engine.truth_manifest import build_caseload_truth_manifest
 
     bearing = _fake_result("bearing", _assertion_plan("bearing"), tmp_path)
-    absent = _fake_result(
-        "absent", _plan("absent", scenario={"medical_history": {}}), tmp_path
-    )
+    absent = _fake_result("absent", _plan("absent", scenario={"medical_history": {}}), tmp_path)
     rollup = build_caseload_truth_manifest("mixed", [bearing, absent])
     assert rollup["schemaVersion"] == "1.0.0"
     channel = rollup["channels"]["assertions"]
@@ -2077,10 +2067,7 @@ def test_assertion_rollup_counts_match_case_channels(tmp_path: Path) -> None:
         "apportionmentAssertions": len(ledger.apportionment_assertions),
     }
     assert channel["qualityCounts"] == v1_ledger.quality_counts()
-    assert (
-        sum(channel["apportionmentStateCounts"].values())
-        == len(ledger.medical_opinions)
-    )
+    assert sum(channel["apportionmentStateCounts"].values()) == len(ledger.medical_opinions)
     assert set(channel["determinationKindCounts"]) == {
         "allocated",
         "noNonindustrialShare",
@@ -2120,9 +2107,7 @@ def test_output_validator_rejects_tampered_assertion_quality_after_digest_recomp
     payload = _assertion_truth()
     channel = payload["channels"]["assertions"]
     original = channel["contentions"][0]["quality"]
-    channel["contentions"][0]["quality"] = (
-        "supported" if original != "supported" else "thin"
-    )
+    channel["contentions"][0]["quality"] = "supported" if original != "supported" else "thin"
     channel["ledgerDigest"] = assertion_ledger_digest(channel)
     with pytest.raises(TruthManifestError, match="does not match the rederived grade"):
         medical_assertions_from_truth(payload)
@@ -2133,9 +2118,7 @@ def test_output_validator_rejects_tampered_assertion_reference_after_digest_reco
     channel = payload["channels"]["assertions"]
     channel["contentions"][0]["targetConditionId"] = "cond-77"
     channel["ledgerDigest"] = assertion_ledger_digest(channel)
-    with pytest.raises(
-        TruthManifestError, match="references unknown condition 'cond-77'"
-    ):
+    with pytest.raises(TruthManifestError, match="references unknown condition 'cond-77'"):
         medical_assertions_from_truth(payload)
 
 
@@ -2191,9 +2174,7 @@ def test_truth_projection_round_trips_every_evidence_and_quality_input() -> None
 
     plan = _assertion_plan()
     context = assertion_context(plan.seed, plan.timeline)
-    plan_projection = project_medical_history(
-        plan.medical_history, context.current_body_parts
-    )
+    plan_projection = project_medical_history(plan.medical_history, context.current_body_parts)
     parsed = medical_assertions_from_truth(_assertion_truth())
     assert parsed is not None
     truth_context, truth_projection, _ledger = parsed
@@ -2206,19 +2187,12 @@ def test_plan_and_truth_paths_use_one_assertion_validation_context_and_rule_impl
     import wc_caseload_engine.planner as planner_module
     import wc_caseload_engine.truth_manifest as truth_module
 
+    assert truth_module.validate_medical_assertions is assertion_module.validate_medical_assertions
     assert (
-        truth_module.validate_medical_assertions
-        is assertion_module.validate_medical_assertions
-    )
-    assert (
-        planner_module.validate_medical_assertions
-        is assertion_module.validate_medical_assertions
+        planner_module.validate_medical_assertions is assertion_module.validate_medical_assertions
     )
     assert truth_module.grade_ledger is assertion_module.grade_ledger
-    assert (
-        truth_module.AssertionValidationContext
-        is assertion_module.AssertionValidationContext
-    )
+    assert truth_module.AssertionValidationContext is assertion_module.AssertionValidationContext
 
 
 def test_validate_out_assertions_path_requires_no_substrate_checkout_or_import_call(

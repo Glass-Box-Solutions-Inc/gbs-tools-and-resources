@@ -3945,3 +3945,63 @@ test = 'tests/test_ajc63_validator.py::test_assertions_v2_item_5a_inherits_only_
 find = '''            if target is not None and target.report_date >= opinion.report_date:'''
 replace = '''            if target is not None and target.report_date > opinion.report_date:'''
 note = 'AJC-63 M4. Response and supersession targets must move strictly backward.'
+
+[[mutant]]
+id = 'm23-13'
+title = 'MONEY-V1_1-GLOBAL-UPGRADE'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_money_w2_baseline.py::test_seven_money_truth_bytes_are_exactly_pre_w2_at_channel_1_1_0'
+find = '''MONEY_CHANNEL_VERSION = "1.1.0"'''
+replace = '''MONEY_CHANNEL_VERSION = "1.2.0"'''
+note = 'AJC-44/AJC-45 W2 work item 1. The seven exact pre-W2 truth bytes pin the global money writer at 1.1.0.'
+
+[[mutant]]
+id = 'm23-24'
+title = 'ABSENT-RATING-PLACEHOLDER-STREAM'
+file = 'src/wc_caseload_engine/case_facts.py'
+test = 'tests/test_money_w2_baseline.py::test_rating_absence_registry_retirement_and_unrelated_stream_bytes'
+find = '''    mmi = getattr(timeline, "resolution_date", None)
+    onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
+    if mmi is None:
+        mmi = onset + timedelta(days=300)
+    # TODO(AJC-44 R111): populate these only from the future scenario.rating
+    # input.  A QME/AME evaluation is not itself an impairment rating.
+    wpi = None
+    pd = None'''
+replace = '''    rng = _rng(seed, "rating")
+    mmi = getattr(timeline, "resolution_date", None)
+    onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
+    if mmi is None:
+        mmi = onset + timedelta(days=300)
+    wpi = rng.randint(3, 24) if seed.lifecycle.eval_type != "none" else None
+    pd = min(100, int(wpi * 1.4)) if wpi is not None else None'''
+note = 'AJC-44/AJC-45 W2 work item 1. Restoring the placeholder and retired facts:rating salt violates both independent halves of the guard.'
+
+[[mutant]]
+id = 'm23-25'
+title = 'ABSENT-DEFENSE-CONSTRUCTION'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_money_w2_baseline.py::test_defense_absent_baseline_has_a_live_one_input_positive_neighbor'
+find = '''    channel: dict[str, Any] = {
+        "channelVersion": MONEY_CHANNEL_VERSION,
+        "wage": {'''
+replace = '''    channel: dict[str, Any] = {
+        "channelVersion": MONEY_CHANNEL_VERSION,
+        "defenseConstruction": {"method": "fabricated"},
+        "wage": {'''
+note = 'AJC-44/AJC-45 W2 work item 1. A defense-absent baseline must not acquire a fabricated defense construction.'
+
+[[mutant]]
+id = 'm23-26'
+title = 'ASSERTIONS-DEFAULT-V2'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_truth_manifest.py::test_v1_and_v2_rederive_response_quality_under_their_exact_version_contracts'
+find = '''def build_case_truth_manifest(
+    plan: CasePlan,
+    truth_manifest_version: int = 1,
+) -> dict[str, Any]:'''
+replace = '''def build_case_truth_manifest(
+    plan: CasePlan,
+    truth_manifest_version: int = 2,
+) -> dict[str, Any]:'''
+note = 'AJC-44/AJC-45 W2 work item 1. The assertion-bearing response-chain witness pins the default writer to assertions 1.0.0.'

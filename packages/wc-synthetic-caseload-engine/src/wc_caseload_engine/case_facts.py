@@ -109,6 +109,7 @@ operative report, a QME's surgical history and a treating physician's plan must
 all name the same procedure or the file is describing two different operations.
 """
 
+
 class DiagnosticFact(BaseModel):
     """One diagnostic study — performed, or deliberately not.
 
@@ -303,9 +304,10 @@ class CaseFacts(BaseModel):
         a document naming it is not incoherent. Only a modality that appears
         nowhere as performed is greppable as an absence.
         """
-        return frozenset(
-            fact.modality for fact in self.absent_diagnostics
-        ) - self.performed_modalities()
+        return (
+            frozenset(fact.modality for fact in self.absent_diagnostics)
+            - self.performed_modalities()
+        )
 
     def diagnostic_for(self, index: int) -> DiagnosticFact | None:
         """The performed study the imaging report at *index* should report.
@@ -532,9 +534,7 @@ def resolve_adjuster_diligence(seed: CaseSeed) -> str:
     on the ``facts:`` namespace, so it can never perturb a stream an existing
     document reads.
     """
-    return seed.scenario.adjuster.diligence or _weighted(
-        _rng(seed, "adjuster"), DILIGENCE_WEIGHTS
-    )
+    return seed.scenario.adjuster.diligence or _weighted(_rng(seed, "adjuster"), DILIGENCE_WEIGHTS)
 
 
 def resolve_attorney_cadence(seed: CaseSeed) -> str:
@@ -603,9 +603,7 @@ def _derive_late_benefit_events(
         days_late = (actual - due).days
         if days_late > 0:
             events.append(
-                LateBenefitEvent(
-                    kind=kind, due_date=due, actual_date=actual, days_late=days_late
-                )
+                LateBenefitEvent(kind=kind, due_date=due, actual_date=actual, days_late=days_late)
             )
     return tuple(events)
 
@@ -695,9 +693,7 @@ def resolve_surgery_status(seed: CaseSeed) -> str:
     # knob reaches — and lands as an uncoded operation instead.
     codeable = any(part in SURGERY_CPT_CODES for part in parts)
     return (
-        "performed"
-        if (seed.injury.type != "death" and not psych and codeable and coin)
-        else "none"
+        "performed" if (seed.injury.type != "death" and not psych and codeable and coin) else "none"
     )
 
 
@@ -874,9 +870,7 @@ def _derive_visits(
         # months after injury cannot contain a seven-month hole, and the
         # trajectory it *can* show is still a gap.
         wanted = _rng(seed, "treatment").choice((120, 150, 180, 210))
-        room = (
-            (horizon - onset).days - (3 + step * follow_ups) if horizon is not None else wanted
-        )
+        room = (horizon - onset).days - (3 + step * follow_ups) if horizon is not None else wanted
         gap_days = max(0, min(wanted, room))
 
     offset = 0
@@ -938,13 +932,14 @@ def derive_case_facts(seed: CaseSeed, timeline: Any, cast: Any = None) -> CaseFa
     visits = _derive_visits(seed, timeline, surgery, status)
     trajectory = _derive_trajectory(seed, status)
 
-    rng = _rng(seed, "rating")
     mmi = getattr(timeline, "resolution_date", None)
     onset = getattr(timeline, "injury_date", None) or seed.injury.onset_date
     if mmi is None:
         mmi = onset + timedelta(days=300)
-    wpi = rng.randint(3, 24) if seed.lifecycle.eval_type != "none" else None
-    pd = min(100, int(wpi * 1.4)) if wpi is not None else None
+    # TODO(AJC-44 R111): populate these only from the future scenario.rating
+    # input.  A QME/AME evaluation is not itself an impairment rating.
+    wpi = None
+    pd = None
 
     facts = CaseFacts(
         diagnostics=diagnostics,
@@ -1047,9 +1042,7 @@ def facts_manifest_block(facts: CaseFacts, money: Any = None) -> dict[str, Any]:
         "treatment": {
             "status": facts.treatment_status,
             "trajectory": facts.trajectory,
-            "dischargeDate": (
-                facts.discharge_date.isoformat() if facts.discharge_date else None
-            ),
+            "dischargeDate": (facts.discharge_date.isoformat() if facts.discharge_date else None),
             "gapStart": facts.treatment_gap[0].isoformat() if facts.treatment_gap else None,
             "gapEnd": facts.treatment_gap[1].isoformat() if facts.treatment_gap else None,
         },

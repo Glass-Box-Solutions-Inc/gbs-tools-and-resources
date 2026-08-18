@@ -103,8 +103,7 @@ def _refusals(block: dict, documents: list, case_id: str, *, given: str) -> list
         return _validate_money(block, documents, case_id)
     except Exception as exc:
         pytest.fail(
-            f"the validator raised {type(exc).__name__} on {given} rather than "
-            f"refusing it: {exc}"
+            f"the validator raised {type(exc).__name__} on {given} rather than refusing it: {exc}"
         )
 
 
@@ -146,6 +145,7 @@ def _facts(scenario: dict[str, Any] | None, diligence: str = "ordinary", **kwarg
 
 WAGES = {"pattern": "regular", "base_weekly_wage": 1000.0}
 
+
 def _docs(
     *subtypes: str,
     settlement: dict[str, Any] | None = None,
@@ -168,11 +168,10 @@ def _docs(
     if carriers:
         approval = (settlement or {}).get("approvalDate") or "2026-01-01"
         funding = (settlement or {}).get("fundingDate") or "2026-01-01"
-        entries.append(
-            {"subtype": "ORDER_APPROVING_SETTLEMENT", "documentDate": approval}
-        )
+        entries.append({"subtype": "ORDER_APPROVING_SETTLEMENT", "documentDate": approval})
         entries.append({"subtype": "BENEFIT_PAYMENT_LEDGER", "documentDate": funding})
     return entries
+
 
 """A plain, steady history. The baseline every opposite draw varies from."""
 
@@ -288,8 +287,11 @@ class TestTheNamedMethod:
         assert described.wages.concurrent_employment is True
 
         # And the other four are still free to be argued over the plain history.
-        for method in ("actual_weekly_earnings", "irregular_earnings_average",
-                       "short_history_projection"):
+        for method in (
+            "actual_weekly_earnings",
+            "irregular_earnings_average",
+            "short_history_projection",
+        ):
             assert _facts({"wages": dict(WAGES, method=method)}).method == method
 
     def test_a_seeded_method_wins_and_is_recorded_as_authored(self) -> None:
@@ -337,11 +339,7 @@ class TestTheNamedMethod:
         for pattern in ("regular", "irregular", "seasonal"):
             for concurrent in (False, True):
                 facts = _facts(
-                    {
-                        "wages": dict(
-                            WAGES, pattern=pattern, concurrent_employment=concurrent
-                        )
-                    }
+                    {"wages": dict(WAGES, pattern=pattern, concurrent_employment=concurrent)}
                 )
                 assert facts.method != "earning_capacity"
 
@@ -430,9 +428,7 @@ class TestTheNamedMethod:
         assert flat["patternSource"] == "derived"
 
         # And a described history is authored, because the knob drew the periods.
-        described = money_manifest_block(
-            _facts({"wages": dict(WAGES, pattern="seasonal")})
-        )["wage"]
+        described = money_manifest_block(_facts({"wages": dict(WAGES, pattern="seasonal")}))["wage"]
         assert described["pattern"] == "seasonal"
         assert described["patternSource"] == "seed"
 
@@ -444,10 +440,7 @@ class TestTheNamedMethod:
         label Pydantic supplied — provenance asserting an author who never
         spoke. `model_fields_set` is the only thing that can tell them apart.
         """
-        assert (
-            money_manifest_block(_facts({"wages": {}}))["wage"]["patternSource"]
-            == "derived"
-        )
+        assert money_manifest_block(_facts({"wages": {}}))["wage"]["patternSource"] == "derived"
         assert (
             money_manifest_block(_facts({"wages": {"base_weekly_wage": 1000.0}}))["wage"][
                 "patternSource"
@@ -473,11 +466,7 @@ class TestTheNamedMethod:
 
         # The controls: each figure is honoured once its enabler is present.
         capped = _facts(
-            {
-                "wages": dict(
-                    WAGES, method="earning_capacity", earning_capacity_weekly=7777.0
-                )
-            }
+            {"wages": dict(WAGES, method="earning_capacity", earning_capacity_weekly=7777.0)}
         )
         assert capped.aww == money(7777.0)
         both = _facts(
@@ -521,16 +510,12 @@ class TestTheAverageIsDerivableNotAsserted:
             "in-kind",
         ],
     )
-    def test_the_aww_follows_from_the_periods_on_the_statement(
-        self, wages: dict[str, Any]
-    ) -> None:
+    def test_the_aww_follows_from_the_periods_on_the_statement(self, wages: dict[str, Any]) -> None:
         facts = _facts({"wages": wages})
         computation = facts.wages.computation
         primary = facts.wages.primary_periods
         considered = (
-            facts.wages.periods
-            if computation.method == "concurrent_aggregate"
-            else primary
+            facts.wages.periods if computation.method == "concurrent_aggregate" else primary
         )
 
         gross = sum((period.gross for period in considered), Decimal("0"))
@@ -617,17 +602,14 @@ class TestTheAverageIsDerivableNotAsserted:
         )
         covered = computation.weeks_considered
         assert summed > covered, (
-            f"the probe needs an overlap to discriminate: summed {summed} against "
-            f"covered {covered}"
+            f"the probe needs an overlap to discriminate: summed {summed} against covered {covered}"
         )
         assert covered == Decimal("48.0000"), covered
         assert computation.aww == (computation.gross_considered / covered).quantize(
             Decimal("0.01")
         ), (computation.aww, computation.gross_considered, covered)
         # …and explicitly not the summed-weeks answer the defect published.
-        assert computation.aww != (computation.gross_considered / summed).quantize(
-            Decimal("0.01")
-        )
+        assert computation.aww != (computation.gross_considered / summed).quantize(Decimal("0.01"))
 
     def test_the_gross_on_each_period_is_its_own_parts(self) -> None:
         """Overtime is *inside* gross, as payroll prints it — checked, not assumed."""
@@ -668,9 +650,7 @@ class TestTheRateFollowsFromTheAverage:
     """The comp rate is reproducible from the wage facts by the named method."""
 
     @pytest.mark.parametrize("base", [400.0, 1000.0, 2200.0, 6000.0])
-    def test_the_rate_recomputes_from_the_aww_and_the_published_basis(
-        self, base: float
-    ) -> None:
+    def test_the_rate_recomputes_from_the_aww_and_the_published_basis(self, base: float) -> None:
         facts = _facts({"wages": dict(WAGES, base_weekly_wage=base)})
         rate = facts.wages.rate
         recomputed = compute_comp_rate(facts.aww, rate.basis)
@@ -933,9 +913,7 @@ class TestTheBenefitLedger:
             if period.days_late:
                 assert period.date_paid is not None
                 assert (period.date_paid - period.end).days > period.days_late
-        dry = _facts(
-            {"wages": WAGES, "benefits": {"td_weeks": 24, "late_payments": 0}}
-        )
+        dry = _facts({"wages": WAGES, "benefits": {"td_weeks": 24, "late_payments": 0}})
         assert dry.benefits.late_payment_count == 0
         assert dry.benefits.max_days_late == 0
 
@@ -1022,9 +1000,7 @@ class TestTheBenefitLedger:
         runway holds a dozen is a request reduced by a factor of forty.
         """
         plan = build_case_plan(
-            parse_case_seed(
-                _seed_body({"wages": WAGES, "benefits": {"td_weeks": 520}})
-            )
+            parse_case_seed(_seed_body({"wages": WAGES, "benefits": {"td_weeks": 520}}))
         )
         assert any("td_weeks" in warning for warning in plan.warnings), plan.warnings
 
@@ -1182,9 +1158,7 @@ class TestTheBenefitLedger:
                             f"period resumes after it (doi={doi} td_gap_days={gap_days})"
                         )
         assert checked > 20, f"the sweep only reached {checked} seeds"
-        assert gapped > 0, (
-            "the sweep produced no gaps at all, so it proves nothing about them"
-        )
+        assert gapped > 0, "the sweep produced no gaps at all, so it proves nothing about them"
 
     def test_no_benefit_event_falls_past_the_horizon(self) -> None:
         """A payment no document in the case can report is one the case never reached.
@@ -1210,8 +1184,14 @@ class TestTheBenefitLedger:
             for doi in ("2024-06-01", "2025-01-15", "2025-06-01")
             for stage in ("intake", "discovery", "active_treatment")
         ] + [
-            (doi, {"target_stage": "resolved", "eval_type": "none",
-                   "resolution": {"type": resolution}})
+            (
+                doi,
+                {
+                    "target_stage": "resolved",
+                    "eval_type": "none",
+                    "resolution": {"type": resolution},
+                },
+            )
             for doi in ("2023-06-01", "2024-01-10")
             for resolution in ("c_and_r", "stipulations")
         ]
@@ -1267,8 +1247,12 @@ class TestTheBenefitLedger:
         facts = _facts(
             {
                 "wages": WAGES,
-                "benefits": {"td_weeks": 4, "pd_advances": 4, "late_payments": 4,
-                             "max_days_late": 62},
+                "benefits": {
+                    "td_weeks": 4,
+                    "pd_advances": 4,
+                    "late_payments": 4,
+                    "max_days_late": 62,
+                },
             }
         )
         advances = facts.benefits.pd_advances
@@ -1286,9 +1270,7 @@ class TestTheBenefitLedger:
         rate = facts.wages.rate.td_weekly_rate
         for period in facts.benefits.td_periods:
             assert period.amount == money(rate * period.weeks)
-        assert facts.benefits.td_total == money(
-            sum(p.amount for p in facts.benefits.td_periods)
-        )
+        assert facts.benefits.td_total == money(sum(p.amount for p in facts.benefits.td_periods))
 
     def test_pd_advances_are_countable_and_dated(self) -> None:
         wet = _facts({"wages": WAGES, "benefits": {"pd_advances": 4}})
@@ -1346,9 +1328,7 @@ class TestTheAutomaticLateIndemnityIncrease:
             ("td_period", 2),
         ]
         for assessment in ledger.assessments:
-            assert assessment.amount == money(
-                assessment.principal * assessment.increase_fraction
-            )
+            assert assessment.amount == money(assessment.principal * assessment.increase_fraction)
         assert ledger.total_increase == money(sum(item.amount for item in ledger.assessments))
         assert ledger.principal_assessed == money(
             sum(item.principal for item in ledger.assessments)
@@ -1356,9 +1336,7 @@ class TestTheAutomaticLateIndemnityIncrease:
 
     @staticmethod
     def _seed(case_id: str) -> Any:
-        return parse_case_seed(
-            _seed_body({"wages": WAGES, "penalties": {}}, case_id=case_id)
-        )
+        return parse_case_seed(_seed_body({"wages": WAGES, "penalties": {}}, case_id=case_id))
 
     def test_operationally_late_but_statutorily_timely_is_not_assessed(self) -> None:
         onset = date(2021, 6, 14)
@@ -1414,12 +1392,8 @@ class TestTheAutomaticLateIndemnityIncrease:
 
         assessment = ledger.assessments[0]
         assert assessment.rule == "first_td_payment"
-        assert assessment.days_late == (
-            assessment.date_paid - assessment.statutory_due_date
-        ).days
-        assert assessment.amount == money(
-            assessment.principal * assessment.increase_fraction
-        )
+        assert assessment.days_late == (assessment.date_paid - assessment.statutory_due_date).days
+        assert assessment.amount == money(assessment.principal * assessment.increase_fraction)
 
     def test_only_first_pd_advance_can_have_a_statutory_assessment(self) -> None:
         onset = date(2021, 6, 14)
@@ -1676,9 +1650,7 @@ class TestTheStatutoryDeadlineIsAnchoredToTheAccrualItPays:
 
     @staticmethod
     def _ledger(benefits: dict[str, Any], case_id: str = "accrual-anchor") -> Any:
-        facts = _facts(
-            {"wages": WAGES, "benefits": benefits, "penalties": {}}, case_id=case_id
-        )
+        facts = _facts({"wages": WAGES, "benefits": benefits, "penalties": {}}, case_id=case_id)
         assert facts is not None and facts.penalties is not None
         return facts
 
@@ -1706,8 +1678,9 @@ class TestTheStatutoryDeadlineIsAnchoredToTheAccrualItPays:
         schedule rather than on the one entry that was noticed, because the
         defect was a property of the model and not of that row.
         """
-        facts = self._ledger({"td_weeks": 24, "td_gap_days": 45, "late_payments": 2,
-                              "max_days_late": 30})
+        facts = self._ledger(
+            {"td_weeks": 24, "td_gap_days": 45, "late_payments": 2, "max_days_late": 30}
+        )
         periods = facts.benefits.td_periods
         assert len(periods) > 1, "one installment cannot show a ladder drifting"
 
@@ -1731,9 +1704,7 @@ class TestTheStatutoryDeadlineIsAnchoredToTheAccrualItPays:
         so the authored delay *is* the statutory delay — which is what makes the
         published exposure checkable against the seed that produced it.
         """
-        facts = self._ledger(
-            {"td_weeks": 24, "late_payments": 1, "max_days_late": 15}, "one-late"
-        )
+        facts = self._ledger({"td_weeks": 24, "late_payments": 1, "max_days_late": 15}, "one-late")
         ledger = facts.penalties
 
         assert ledger.assessed_count == 1
@@ -1759,9 +1730,7 @@ class TestTheStatutoryDeadlineIsAnchoredToTheAccrualItPays:
             {"td_weeks": 24, "late_payments": 3, "max_days_late": 15}, "inv-three"
         )
 
-        totals = [
-            ledger.penalties.total_increase for ledger in (timely, one_late, three_late)
-        ]
+        totals = [ledger.penalties.total_increase for ledger in (timely, one_late, three_late)]
         assert totals[0] == Decimal("0.00")
         assert totals[0] < totals[1] < totals[2], (
             f"the assessed exposure {totals} does not follow late_payments"
@@ -1780,9 +1749,7 @@ class TestTheStatutoryDeadlineIsAnchoredToTheAccrualItPays:
         control read as carrier lateness. The blocks on either side are still
         paid on their own due dates.
         """
-        facts = self._ledger(
-            {"td_weeks": 24, "td_gap_days": 45, "late_payments": 0}, "gap-only"
-        )
+        facts = self._ledger({"td_weeks": 24, "td_gap_days": 45, "late_payments": 0}, "gap-only")
         assert facts.benefits.gaps, "the probe needs a gap to acquit"
         assert facts.penalties.assessments == ()
 
@@ -1865,8 +1832,7 @@ class TestTheStatutoryDeadlineIsAnchoredToTheAccrualItPays:
         )
 
         latest_payment = max(
-            period.date_paid
-            for period in (early_block_paid_last, later_block_paid_first)
+            period.date_paid for period in (early_block_paid_last, later_block_paid_first)
         )
         assert latest_payment != later_block_paid_first.date_paid, (
             "the probe needs the last-listed payment to not be the last made"
@@ -1929,9 +1895,7 @@ class TestTheSettlementObject:
             assert settlement.approval_date is not None
             assert settlement.funding_date is not None
             assert settlement.funding_lag_days == days
-            assert (
-                settlement.funding_date - settlement.approval_date
-            ).days == days
+            assert (settlement.funding_date - settlement.approval_date).days == days
 
     def test_an_exact_funding_date_overrides_the_interval(self) -> None:
         import datetime as dt
@@ -2104,9 +2068,8 @@ class TestDeterminism:
         exported = {
             name
             for name in money_module.__all__
-            if callable(getattr(money_module, name)) and not isinstance(
-                getattr(money_module, name), type
-            )
+            if callable(getattr(money_module, name))
+            and not isinstance(getattr(money_module, name), type)
         }
         assert exported == set(calls), (
             "money.__all__ exports a callable this sweep does not exercise: "
@@ -2185,8 +2148,7 @@ class TestDeterminism:
 
         exact_weeks = sum((p.weeks for p in periods), Decimal("0"))
         assert exact_weeks > SHORT_HISTORY_WEEKS, (
-            f"the probe history must sit just *above* the threshold; it totals "
-            f"{exact_weeks}"
+            f"the probe history must sit just *above* the threshold; it totals {exact_weeks}"
         )
 
         original = decimal.getcontext().prec
@@ -2257,17 +2219,13 @@ class TestThePlan:
                 lifecycle["resolution"] = {"type": "c_and_r"}
             for rng_seed in range(4242, 4272):
                 plan = build_case_plan(
-                    parse_case_seed(
-                        _seed_body(scenario, rng_seed=rng_seed, lifecycle=lifecycle)
-                    )
+                    parse_case_seed(_seed_body(scenario, rng_seed=rng_seed, lifecycle=lifecycle))
                 )
                 facts = plan.money_facts
                 assert facts is not None
                 if not facts.benefits.td_periods:
                     continue
-                last = max(
-                    (p.date_paid or p.end) for p in facts.benefits.td_periods
-                )
+                last = max((p.date_paid or p.end) for p in facts.benefits.td_periods)
                 for document in plan.documents:
                     if document.subtype == MONEY_TD_SUBTYPE:
                         checked += 1
@@ -2304,8 +2262,7 @@ class TestThePlan:
         assert facts is not None
 
         far = timeline.clamp(
-            max((p.date_paid or p.end) for p in facts.benefits.td_periods)
-            + timedelta(days=400)
+            max((p.date_paid or p.end) for p in facts.benefits.td_periods) + timedelta(days=400)
         )
         existing = [DatedCandidate(subtype=MONEY_TD_SUBTYPE, doc_date=far)]
         added = _money_candidates(seed, facts, timeline, existing)
@@ -2330,9 +2287,7 @@ class TestThePlan:
         """
         lifecycle = {"target_stage": "intake", "eval_type": "none"}
         dry = build_case_plan(parse_case_seed(_seed_body(None, lifecycle=lifecycle)))
-        wet = build_case_plan(
-            parse_case_seed(_seed_body({"wages": WAGES}, lifecycle=lifecycle))
-        )
+        wet = build_case_plan(parse_case_seed(_seed_body({"wages": WAGES}, lifecycle=lifecycle)))
         added = {d.subtype for d in wet.documents} - {d.subtype for d in dry.documents}
         assert added & set(MONEY_FLOOR_SUBTYPES), added
 
@@ -2441,9 +2396,7 @@ class TestTheFloorGuaranteesTheSettlementCarriers:
                     assert settlement is not None
                     dated: dict[str, list[date]] = {}
                     for candidate in plan.documents:
-                        dated.setdefault(candidate.subtype, []).append(
-                            candidate.doc_date
-                        )
+                        dated.setdefault(candidate.subtype, []).append(candidate.doc_date)
 
                     where = f"seed {1000 + offset}/{resolution}/{settlement_scenario}"
                     if settlement.approval_date is not None:
@@ -2550,9 +2503,7 @@ class TestPublication:
         the page reproduces would put the asserted figure this layer exists to
         remove into the one method whose whole point is combining employments.
         """
-        primary = [
-            {"period_start": "2021-05-31", "period_end": "2021-06-13", "gross": 2000.0}
-        ]
+        primary = [{"period_start": "2021-05-31", "period_end": "2021-06-13", "gross": 2000.0}]
         start = date(2020, 6, 15)
         concurrent = [
             {
@@ -2578,18 +2529,14 @@ class TestPublication:
         assert computation.method == "concurrent_aggregate"
         assert computation.gross_considered == money(104000)
         assert computation.aww == money(
-            (computation.gross_considered / computation.weeks_considered).quantize(
-                Decimal("0.01")
-            )
+            (computation.gross_considered / computation.weeks_considered).quantize(Decimal("0.01"))
         )
 
         # And a derived concurrent history — where the engine builds both sides
         # over the same windows — is unaffected, which is what keeps every
         # money-showcase figure where it was.
         aligned = _facts({"wages": dict(WAGES, concurrent_employment=True)})
-        primary_weeks = sum(
-            (p.weeks for p in aligned.wages.primary_periods), Decimal("0")
-        )
+        primary_weeks = sum((p.weeks for p in aligned.wages.primary_periods), Decimal("0"))
         assert aligned.wages.computation.weeks_considered == primary_weeks
 
     def test_a_history_with_no_primary_period_is_refused(self) -> None:
@@ -2786,9 +2733,7 @@ class TestTheDocumentsCarryTheNumbers:
         assert block["rate"]["pdWeeklyRate"] in page
         assert UNCONFIRMED_NOTICE in texts[MONEY_WAGE_SUBTYPE]
 
-    def test_every_governed_wage_and_rate_field_reaches_the_page(
-        self, tmp_path: Path
-    ) -> None:
+    def test_every_governed_wage_and_rate_field_reaches_the_page(self, tmp_path: Path) -> None:
         """The governance rule, checked instead of stated.
 
         ``GOVERNED_MONEY_FIELDS`` says a published fact is one a document
@@ -2917,10 +2862,7 @@ class TestTheDocumentsCarryTheNumbers:
         }
         assert set(GOVERNED_MONEY_FIELDS["settlement"]) == set(carried)
 
-        dates = {
-            d["subtype"]: date.fromisoformat(d["documentDate"])
-            for d in manifest["documents"]
-        }
+        dates = {d["subtype"]: date.fromisoformat(d["documentDate"]) for d in manifest["documents"]}
         for field, (subtype, label) in carried.items():
             assert subtype in texts, f"no {subtype} in the folder to carry {field}"
             page = " ".join(texts[subtype].replace(",", "").split())
@@ -2942,9 +2884,7 @@ class TestTheDocumentsCarryTheNumbers:
         # And the opposite draw: the release, which is dated before both events,
         # names neither of them.
         release = " ".join(texts["COMPROMISE_AND_RELEASE_STANDARD"].split())
-        assert dates["COMPROMISE_AND_RELEASE_STANDARD"] < date.fromisoformat(
-            block["approvalDate"]
-        )
+        assert dates["COMPROMISE_AND_RELEASE_STANDARD"] < date.fromisoformat(block["approvalDate"])
         assert "Date Approved:" not in release
         assert "Date Funded:" not in release
 
@@ -2989,9 +2929,9 @@ class TestTheDocumentsCarryTheNumbers:
         assert amount(r"average weekly wage of \$([\d,]+\.\d\d)(?!\d|\.\d)") == Decimal(
             block["wage"]["averageWeeklyWage"]
         )
-        assert amount(
-            r"at the rate of \$([\d,]+\.\d\d)(?!\d|\.\d) per week"
-        ) == Decimal(block["rate"]["tdWeeklyRate"])
+        assert amount(r"at the rate of \$([\d,]+\.\d\d)(?!\d|\.\d) per week") == Decimal(
+            block["rate"]["tdWeeklyRate"]
+        )
         assert amount(r"totaling \$([\d,]+\.\d\d)(?!\d|\.\d)") == Decimal(
             block["benefits"]["tdTotal"]
         )
@@ -3011,9 +2951,7 @@ class TestTheDocumentsCarryTheNumbers:
         )
         assert amount(r"Settlement Gross: \$([\d,]+\.\d\d)(?!\d|\.\d)") == gross
 
-    def test_the_award_reconciles_at_every_gross_the_schema_accepts(
-        self, tmp_path: Path
-    ) -> None:
+    def test_the_award_reconciles_at_every_gross_the_schema_accepts(self, tmp_path: Path) -> None:
         """The split held above $5,500 and gave up below it, silently.
 
         The first version clamped the reimbursement into the substrate's own
@@ -3040,9 +2978,7 @@ class TestTheDocumentsCarryTheNumbers:
                 documents={"format_mix": {"pdf": 1.0}},
             )
             page = texts["STIPULATIONS_WITH_REQUEST_FOR_AWARD"]
-            published = Decimal(
-                manifest["caseFacts"]["money"]["settlement"]["grossAmount"]
-            )
+            published = Decimal(manifest["caseFacts"]["money"]["settlement"]["grossAmount"])
 
             def amount(pattern: str, text: str = page, where: int = gross) -> Decimal:
                 found = re.search(pattern, text)
@@ -3084,8 +3020,7 @@ class TestTheDocumentsCarryTheNumbers:
             # them is the defect this whole class keeps reproducing.
             tabled = amount(r"Less: Attorney Fees \(15%\) \(\$([\d,]+\.\d\d)\)")
             assert tabled == fee, (
-                f"gross {gross}: the award's table says {tabled} and its "
-                f"stipulation 6 says {fee}"
+                f"gross {gross}: the award's table says {tabled} and its stipulation 6 says {fee}"
             )
             stated_net = amount(r"payable to applicant is \$([\d,]+\.\d\d)")
             assert stated_net == pd_gross - fee, (
@@ -3126,9 +3061,7 @@ class TestTheDocumentsCarryTheNumbers:
                 documents={"format_mix": {"pdf": 1.0}},
             )
             page = texts["COMPROMISE_AND_RELEASE_STANDARD"]
-            published = Decimal(
-                manifest["caseFacts"]["money"]["settlement"]["grossAmount"]
-            )
+            published = Decimal(manifest["caseFacts"]["money"]["settlement"]["grossAmount"])
 
             def amount(pattern: str, text: str = page, where: int = gross) -> Decimal:
                 found = re.search(pattern, text)
@@ -3150,12 +3083,9 @@ class TestTheDocumentsCarryTheNumbers:
             # round-9 correction, matched on the substrate's bold wrapper, fixed
             # the award and missed the release for two rounds. The release is
             # the document that gets signed.
-            prose_fee = amount(
-                r"in the amount of \$([\d,]+\.\d\d) \(15% of gross settlement\)"
-            )
+            prose_fee = amount(r"in the amount of \$([\d,]+\.\d\d) \(15% of gross settlement\)")
             assert prose_fee == fee, (
-                f"gross {gross}: the release's table says {fee} and its section 9 "
-                f"says {prose_fee}"
+                f"gross {gross}: the release's table says {fee} and its section 9 says {prose_fee}"
             )
             # Costs are whole dollars by construction, so section 9 prints them
             # without cents where the table pads them. Same figure, and the
@@ -3174,8 +3104,7 @@ class TestTheDocumentsCarryTheNumbers:
                 Decimal(value) for value in settlement_deductions(gross)[1:]
             )
             assert costs == expected_costs, (
-                f"gross {gross}: costs of {costs} are not this settlement's "
-                f"({expected_costs})"
+                f"gross {gross}: costs of {costs} are not this settlement's ({expected_costs})"
             )
             assert set_aside == expected_set_aside, (
                 f"gross {gross}: a set-aside of {set_aside} is not this "
@@ -3185,9 +3114,7 @@ class TestTheDocumentsCarryTheNumbers:
                 f"gross {gross}: {printed} - {fee} - {costs} - {set_aside} != {net}"
             )
 
-    def test_the_order_approving_the_settlement_says_it_approved_one(
-        self, tmp_path: Path
-    ) -> None:
+    def test_the_order_approving_the_settlement_says_it_approved_one(self, tmp_path: Path) -> None:
         """The designated approval evidence was a document denying a settlement existed.
 
         `MinutesOrders` ignores its `approving_settlement` variant and draws its
@@ -3235,9 +3162,7 @@ class TestTheDocumentsCarryTheNumbers:
         assert money["benefits"]["pdTotal"] in page
         assert money["settlement"]["fundingDate"] in page
 
-    def test_no_payment_record_reports_the_settlements_future(
-        self, tmp_path: Path
-    ) -> None:
+    def test_no_payment_record_reports_the_settlements_future(self, tmp_path: Path) -> None:
         """The rule the release fix established, applied to the path it missed.
 
         `_rewrite_benefit_record` appended the approval and funding dates to
@@ -3293,9 +3218,7 @@ class TestTheDocumentsCarryTheNumbers:
         for period in periods[:6]:
             assert f"{period.gross:.2f}" in page, period
 
-    def test_the_payment_record_prints_the_gap_and_the_lateness(
-        self, tmp_path: Path
-    ) -> None:
+    def test_the_payment_record_prints_the_gap_and_the_lateness(self, tmp_path: Path) -> None:
         subtype = "TD_PAYMENT_RECORD_ONGOING"
         assert subtype in BENEFIT_RECORD_SUBTYPES
         manifest, texts, _ = self._generate(
@@ -3317,9 +3240,7 @@ class TestTheDocumentsCarryTheNumbers:
         assert "33" in page
         assert manifest["caseFacts"]["money"]["benefits"]["tdTotal"] in page
 
-    def test_the_settlement_gross_on_the_release_is_the_ledgers(
-        self, tmp_path: Path
-    ) -> None:
+    def test_the_settlement_gross_on_the_release_is_the_ledgers(self, tmp_path: Path) -> None:
         subtype = "COMPROMISE_AND_RELEASE_STANDARD"
         manifest, texts, _ = self._generate(
             tmp_path,
@@ -3342,9 +3263,7 @@ class TestTheDocumentsCarryTheNumbers:
             d["md5Checksum"] for d in second["documents"]
         ]
         assert first["caseFacts"] == second["caseFacts"]
-        assert (dir_a / CASE_FACTS_NAME).read_bytes() == (
-            dir_b / CASE_FACTS_NAME
-        ).read_bytes()
+        assert (dir_a / CASE_FACTS_NAME).read_bytes() == (dir_b / CASE_FACTS_NAME).read_bytes()
         assert len(first["documents"]) > 10, "the probe needs a real case behind it"
 
     def test_validate_accepts_a_money_bearing_case(self, tmp_path: Path) -> None:
@@ -3414,8 +3333,7 @@ class TestTheGovernanceTableBindsBothWays:
                 del block["money"][group][field]
                 problems = _validate_money(block, documents, "c")
                 assert any(
-                    "missing governed field" in problem and field in problem
-                    for problem in problems
+                    "missing governed field" in problem and field in problem for problem in problems
                 ), f"deleting {group}.{field} was accepted: {problems}"
                 checked += 1
         assert checked == sum(len(f) for f in GOVERNED_MONEY_FIELDS.values())
@@ -3444,9 +3362,9 @@ class TestTheGovernanceTableBindsBothWays:
         ):
             block = self._block()
             block["money"][group][field] = bad
-            assert any(
-                field in problem for problem in _validate_money(block, documents, "c")
-            ), f"{group}.{field} = {bad!r} was accepted"
+            assert any(field in problem for problem in _validate_money(block, documents, "c")), (
+                f"{group}.{field} = {bad!r} was accepted"
+            )
 
     def test_a_lag_between_two_stated_dates_is_a_fact_not_an_option(self) -> None:
         from wc_caseload_engine.manifests import _validate_money
@@ -3606,8 +3524,7 @@ class TestASettlementIsLargeEnoughForItsOwnDocument:
                 },
             ).settlement.gross_amount
             assert published == published.to_integral_value(), (
-                f"rng_seed {seed_value}: a derived gross of {published} was "
-                "published with cents"
+                f"rng_seed {seed_value}: a derived gross of {published} was published with cents"
             )
 
 
@@ -3653,9 +3570,9 @@ class TestTheOrderIsDatedOnTheApprovalItIs:
                     if candidate.subtype == MONEY_APPROVAL_SUBTYPE
                 ]
                 assert orders, f"{approval}/{resolution}: no approving order"
-                assert all(
-                    when == date.fromisoformat(approval) for when in orders
-                ), f"{approval}/{resolution}: order dated {orders}, not on the approval"
+                assert all(when == date.fromisoformat(approval) for when in orders), (
+                    f"{approval}/{resolution}: order dated {orders}, not on the approval"
+                )
 
     def test_the_whole_settlement_chain_is_ordered_not_just_each_link(self) -> None:
         """Pinning one node to an authored date broke the link before it.
@@ -3702,9 +3619,7 @@ class TestTheOrderIsDatedOnTheApprovalItIs:
                     dated.setdefault(candidate.subtype, []).append(candidate.doc_date)
 
                 instruments = [
-                    when
-                    for subtype in MONEY_INSTRUMENT_SUBTYPES
-                    for when in dated.get(subtype, [])
+                    when for subtype in MONEY_INSTRUMENT_SUBTYPES for when in dated.get(subtype, [])
                 ]
                 assert instruments, f"{where}: no settlement instrument planned"
                 assert max(instruments) <= settlement.approval_date, (
@@ -3760,8 +3675,7 @@ class TestTheOrderIsDatedOnTheApprovalItIs:
 
             # …and said so, rather than adjusting a stated control in silence.
             assert any(
-                "approval_date" in warning and "2021-06-15" in warning
-                for warning in plan.warnings
+                "approval_date" in warning and "2021-06-15" in warning for warning in plan.warnings
             ), plan.warnings
 
             # A stated funding date is carried by the same shift. Leaving it
@@ -3798,9 +3712,7 @@ class TestTheOrderIsDatedOnTheApprovalItIs:
             for candidate in plan.documents:
                 dated.setdefault(candidate.subtype, []).append(candidate.doc_date)
             instruments = [
-                when
-                for subtype in MONEY_INSTRUMENT_SUBTYPES
-                for when in dated.get(subtype, [])
+                when for subtype in MONEY_INSTRUMENT_SUBTYPES for when in dated.get(subtype, [])
             ]
             assert instruments, resolution
             assert min(instruments) >= timeline.claim_filed_date, (
@@ -3839,11 +3751,7 @@ class TestTheOrderIsDatedOnTheApprovalItIs:
             )
         )
         assert plan.money_facts.settlement.funding_date is None
-        dropped = [
-            warning
-            for warning in plan.warnings
-            if "not yet funded" in warning
-        ]
+        dropped = [warning for warning in plan.warnings if "not yet funded" in warning]
         assert dropped, plan.warnings
         assert any("funding_date of 2025-12-31" in warning for warning in dropped), dropped
         assert not any("for this adjuster" in warning for warning in dropped), dropped
@@ -3853,13 +3761,9 @@ class TestTheOrderIsDatedOnTheApprovalItIs:
         # moving the approval earlier, which makes the shift larger — exactly
         # backwards. Mutation found this claim unguarded: zeroing the shift left
         # every other assertion here green.
-        shift = (
-            plan.money_facts.settlement.approval_date - date(2021, 6, 15)
-        ).days
+        shift = (plan.money_facts.settlement.approval_date - date(2021, 6, 15)).days
         assert shift > 0, shift
-        assert any(
-            f"carried {shift} day(s) forward" in warning for warning in dropped
-        ), dropped
+        assert any(f"carried {shift} day(s) forward" in warning for warning in dropped), dropped
 
         # The opposite draw: with no stated date, the lag is what to name.
         by_lag = build_case_plan(
@@ -4080,12 +3984,15 @@ class TestTheBasisSaysHowMuchOfItWasAuthored:
         from wc_caseload_engine.money import rate_basis_for
 
         table = rate_basis_for(date(2021, 6, 14))
-        basis = _facts(
-            {"wages": dict(WAGES, rate_basis={"td_fraction": 0.5})}
-        ).wages.rate.basis
+        basis = _facts({"wages": dict(WAGES, rate_basis={"td_fraction": 0.5})}).wages.rate.basis
         assert basis.td_fraction == Decimal("0.5")
-        for field in ("pd_fraction", "td_max_weekly", "td_min_weekly",
-                      "pd_max_weekly", "pd_min_weekly"):
+        for field in (
+            "pd_fraction",
+            "td_max_weekly",
+            "td_min_weekly",
+            "pd_max_weekly",
+            "pd_min_weekly",
+        ):
             assert getattr(basis, field) == getattr(table, field)
 
 
@@ -4109,9 +4016,7 @@ class TestASeedWithoutWagesProducesNoMoneyArtifacts:
         *AWW_METHODS,
     )
 
-    def test_no_money_marker_appears_anywhere_in_a_wage_free_case(
-        self, tmp_path: Path
-    ) -> None:
+    def test_no_money_marker_appears_anywhere_in_a_wage_free_case(self, tmp_path: Path) -> None:
         seed = parse_case_seed(
             _seed_body(
                 None,
@@ -4138,9 +4043,7 @@ class TestASeedWithoutWagesProducesNoMoneyArtifacts:
         assert "money" not in (directory / CASE_FACTS_NAME).read_text(encoding="utf-8")
 
         for document in manifest["documents"]:
-            text = extract_text(
-                directory / "documents" / document["filename"], document["format"]
-            )
+            text = extract_text(directory / "documents" / document["filename"], document["format"])
             for marker in self.MARKERS:
                 assert marker not in text, (document["subtype"], marker)
 
@@ -4241,9 +4144,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         )
         generate_case(seed, tmp_path, 1)
         directory = tmp_path / seed.case_id
-        return directory, json.loads(
-            (directory / MANIFEST_NAME).read_text(encoding="utf-8")
-        )
+        return directory, json.loads((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
 
     @staticmethod
     def _rewrite(directory: Path, manifest: dict[str, Any]) -> None:
@@ -4254,9 +4155,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         """
         import yaml
 
-        (directory / MANIFEST_NAME).write_text(
-            json.dumps(manifest, indent=2), encoding="utf-8"
-        )
+        (directory / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         header = (directory / CASE_FACTS_NAME).read_text(encoding="utf-8").split("\n")
         preamble = "\n".join(line for line in header if line.startswith("#"))
         (directory / CASE_FACTS_NAME).write_text(
@@ -4390,9 +4289,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         # `bool` is a subclass of `int`, so an isinstance check passed
         # `tdPeriodCount: True` and it then compared equal to a length of one.
         boolean = {"money": money_manifest_block(facts)}
-        boolean["money"]["benefits"]["tdPeriods"] = boolean["money"]["benefits"][
-            "tdPeriods"
-        ][:1]
+        boolean["money"]["benefits"]["tdPeriods"] = boolean["money"]["benefits"]["tdPeriods"][:1]
         boolean["money"]["benefits"]["tdPeriodCount"] = True
         problems = _validate_money(boolean, documents, "c")
         assert any("expected a count of zero or more" in p for p in problems), problems
@@ -4435,8 +4332,12 @@ class TestTheValidatorRefusesAnUncheckableClaim:
         facts = _facts(
             {
                 "wages": WAGES,
-                "benefits": {"td_weeks": 8, "pd_advances": 2, "late_payments": 3,
-                             "max_days_late": 30},
+                "benefits": {
+                    "td_weeks": 8,
+                    "pd_advances": 2,
+                    "late_payments": 3,
+                    "max_days_late": 30,
+                },
             }
         )
         documents = _docs(
@@ -4554,9 +4455,7 @@ class TestTheValidatorRefusesAnUncheckableClaim:
 
         def problems(docs: list[dict[str, Any]]) -> list[str]:
             return [
-                p
-                for p in _validate_money(block, docs, "c")
-                if "cannot report its own future" in p
+                p for p in _validate_money(block, docs, "c") if "cannot report its own future" in p
             ]
 
         # Nothing in the folder to read either date from.
@@ -4564,33 +4463,39 @@ class TestTheValidatorRefusesAnUncheckableClaim:
 
         # The release and a payment record are not carriers, however they are
         # dated: neither is the document that effects either event.
-        assert len(
-            problems(
-                [
-                    {"subtype": MONEY_WAGE_SUBTYPE, "documentDate": "2026-01-01"},
-                    {
-                        "subtype": "COMPROMISE_AND_RELEASE_STANDARD",
-                        "documentDate": "2026-01-01",
-                    },
-                    {"subtype": MONEY_TD_SUBTYPE, "documentDate": "2026-01-01"},
-                ]
+        assert (
+            len(
+                problems(
+                    [
+                        {"subtype": MONEY_WAGE_SUBTYPE, "documentDate": "2026-01-01"},
+                        {
+                            "subtype": "COMPROMISE_AND_RELEASE_STANDARD",
+                            "documentDate": "2026-01-01",
+                        },
+                        {"subtype": MONEY_TD_SUBTYPE, "documentDate": "2026-01-01"},
+                    ]
+                )
             )
-        ) == 2
+            == 2
+        )
 
         # The right subtypes, dated before the events they would report, are
         # still refused — this is the half of the rule the first fix lacked.
-        assert len(
-            problems(
-                [
-                    {"subtype": MONEY_WAGE_SUBTYPE, "documentDate": "2021-01-01"},
-                    {
-                        "subtype": "ORDER_APPROVING_SETTLEMENT",
-                        "documentDate": "2024-12-31",
-                    },
-                    {"subtype": "BENEFIT_PAYMENT_LEDGER", "documentDate": "2025-02-04"},
-                ]
+        assert (
+            len(
+                problems(
+                    [
+                        {"subtype": MONEY_WAGE_SUBTYPE, "documentDate": "2021-01-01"},
+                        {
+                            "subtype": "ORDER_APPROVING_SETTLEMENT",
+                            "documentDate": "2024-12-31",
+                        },
+                        {"subtype": "BENEFIT_PAYMENT_LEDGER", "documentDate": "2025-02-04"},
+                    ]
+                )
             )
-        ) == 2
+            == 2
+        )
 
         # A document with no date of its own vouches for nothing. The wage
         # statement rides along because the AWW rule returns before this one,
@@ -4630,13 +4535,9 @@ class TestTheValidatorRefusesAnUncheckableClaim:
 def test_the_rate_derivation_takes_no_dependency_on_the_fabricated_rating() -> None:
     """ISC-169 — AJC-44 inherits a clean surface.
 
-    ``case_facts.py`` still reaches its whole-person impairment by
-    ``rng.randint(3, 24)`` and its permanent disability by multiplying that by
-    1.4. Those are placeholders for a rating that never happened, and correcting
-    them is a separate piece of work. Building the comp rate on top of them
-    would make this layer's arithmetic depend on a number that is about to
-    change — so the money module never reads either field, and this asserts it
-    rather than trusting a reviewer to notice.
+    A med-legal evaluation without ``scenario.rating`` is not a rating.  Its
+    WPI and PD projection therefore stays null, and the money module never reads
+    either field.
 
     Two probes, because either alone is weak. The source sweep would miss an
     indirect read through ``CaseFacts``; the behavioural sweep would miss a read
@@ -4661,8 +4562,9 @@ def test_the_rate_derivation_takes_no_dependency_on_the_fabricated_rating() -> N
         if isinstance(node, ast.Attribute):
             assert node.attr not in {"wpi", "pd"}, node.attr
 
-    # Behavioural: the rating varies with eval_type (``none`` leaves wpi/pd
-    # unset), and the money must not move with it.
+    # Behavioural: qme/ame/none are all rating-absent today, and money must not
+    # move with eval_type.  TODO(AJC-44 R111): add exactly one rating-present
+    # row when scenario.rating enters the schema.
     rates = set()
     for eval_type in ("qme", "ame", "none"):
         seed = parse_case_seed(
@@ -4675,7 +4577,8 @@ def test_the_rate_derivation_takes_no_dependency_on_the_fabricated_rating() -> N
         clinical = derive_case_facts(seed, timeline)
         facts = derive_money_facts(seed, timeline)
         rates.add((facts.aww, facts.wages.rate.td_weekly_rate))
-        assert (clinical.wpi is None) == (eval_type == "none")
+        rating = getattr(seed.scenario, "rating", None)
+        assert (rating is None) == (clinical.wpi is None) == (clinical.pd is None)
     assert len(rates) == 1, rates
 
 

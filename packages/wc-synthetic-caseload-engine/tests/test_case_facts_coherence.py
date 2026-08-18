@@ -164,9 +164,7 @@ class TestTheLedgerIsDerivedAndPublished:
                 f"rng_seed={rng_seed}: ledger and bridge disagree about surgery"
             )
 
-    def test_the_manifest_and_the_artifact_both_publish_the_ledger(
-        self, tmp_path: Path
-    ) -> None:
+    def test_the_manifest_and_the_artifact_both_publish_the_ledger(self, tmp_path: Path) -> None:
         seed = _seed("ledger-published", {"surgery": "performed"})
         manifest, _ = _render(seed, tmp_path)
         assert "caseFacts" in manifest
@@ -228,9 +226,7 @@ class TestNoDocumentClaimsAnAbsentStudy:
         assert governed, "the probe emitted no imaging report to check"
         assert not self._violations(plan.case_facts, governed)
 
-    def test_the_qme_states_the_absence_rather_than_ignoring_it(
-        self, tmp_path: Path
-    ) -> None:
+    def test_the_qme_states_the_absence_rather_than_ignoring_it(self, tmp_path: Path) -> None:
         """The other half: a deliberate absence is *recorded*, not merely omitted."""
         seed = _seed(
             "absent-stated",
@@ -295,9 +291,7 @@ class TestTheQmeCitesOnlyPerformedStudies:
         assert plan.case_facts is not None
         starved = "This review considered the MRI only."
         missing = [
-            f.display
-            for f in plan.case_facts.performed_diagnostics
-            if f.display not in starved
+            f.display for f in plan.case_facts.performed_diagnostics if f.display not in starved
         ]
         assert missing == ["CT"], missing
 
@@ -427,9 +421,7 @@ class TestDispatchAndComposition:
         plain, _, _ = _load_template("DIAGNOSTICS_IMAGING", fact_aware=False)
         assert plain.__module__.startswith("pdf_templates")
 
-    def test_doctrine_and_fact_aware_content_compose_on_one_document(
-        self, tmp_path: Path
-    ) -> None:
+    def test_doctrine_and_fact_aware_content_compose_on_one_document(self, tmp_path: Path) -> None:
         """Both seams fire on the same document.
 
         Doctrine injection wraps whatever ``_load_template`` returns, so a
@@ -499,9 +491,7 @@ class TestClosedCoherenceRules:
         for phrase in ("status post", "post-operative rehabilitation"):
             assert phrase not in whole, f"a surgery-free case says {phrase!r}"
 
-    def test_isc92_positive_control_surgery_reaches_the_documents(
-        self, tmp_path: Path
-    ) -> None:
+    def test_isc92_positive_control_surgery_reaches_the_documents(self, tmp_path: Path) -> None:
         seed = _seed("isc92-yes", {"surgery": "performed"})
         _, texts = _render(seed, tmp_path)
         assert "status post" in _flat(" ".join(texts.values())), (
@@ -711,10 +701,15 @@ class TestOnlyGovernedFactsArePublished:
 
     def test_ungoverned_facts_survive_on_the_model(self) -> None:
         """Unpublished is not underived — Phase 2 needs these."""
-        facts = build_case_plan(_seed("internal", {"surgery": "performed"})).case_facts
+        seed = _seed("internal", {"surgery": "performed"})
+        facts = build_case_plan(seed).case_facts
         assert facts is not None
         assert facts.mmi_date is not None
         assert facts.visits, "visit series was dropped rather than unpublished"
+        rating = getattr(seed.scenario, "rating", None)
+        assert (rating is None) == (facts.wpi is None) == (facts.pd is None)
+        # TODO(AJC-44 R111): add one rating-present neighboring row when
+        # scenario.rating exists; the current schema has no such input.
 
     #: Ledger fields that must never be published. Every one is a *field name*,
     #: which is why the check below walks keys.
@@ -1011,9 +1006,9 @@ class TestValidateRejectsMalformedUncodedShapes:
         _tamper_ledger_copies(case_dir, poison)
         report = validate_output_tree(tmp_path)
         assert not report.ok
-        assert any(
-            "does not declare the operation uncoded" in p for p in report.problems
-        ), report.problems
+        assert any("does not declare the operation uncoded" in p for p in report.problems), (
+            report.problems
+        )
 
     def test_a_no_surgery_case_with_the_marker_fails(self, tmp_path: Path) -> None:
         case_dir = self._rendered(tmp_path, "shape-none", "none")
@@ -1298,9 +1293,9 @@ class TestMultiPartAttribution:
         ledger = manifest["caseFacts"]["surgery"]["cptCode"]
         assert ledger == facts.surgery.cpt_code
         operated = (facts.surgery.body_part or "").replace("_", " ")
-        other_codes = {
-            code for allowed in PART_ORACLE.values() if allowed for code in allowed
-        } - {ledger}
+        other_codes = {code for allowed in PART_ORACLE.values() if allowed for code in allowed} - {
+            ledger
+        }
         for subtype in ("OPERATIVE_HOSPITAL_RECORDS", "DISCHARGE_SUMMARY"):
             flat = _flat(texts[subtype])
             assert f"cpt {ledger}" in flat, subtype
@@ -1452,6 +1447,7 @@ class TestUncodedOperations:
             facts = derive_case_facts(seed, build_case_plan(seed).timeline)
             assert facts.surgery.status == "none", rng_seed
 
+
 class TestSharedCodeDescriptionsAgree:
     def test_substrate_and_table_descriptions_lockstep(self) -> None:
         """A code both sources can emit must carry one description, or the
@@ -1460,9 +1456,7 @@ class TestSharedCodeDescriptionsAgree:
 
         constants = import_substrate("data.wc_constants")
         substrate = {
-            code: desc
-            for pool in constants.SURGICAL_CPT_POOLS.values()
-            for code, desc in pool
+            code: desc for pool in constants.SURGICAL_CPT_POOLS.values() for code, desc in pool
         }
         for part, (code, desc) in SURGERY_CPT_CODES.items():
             if code in substrate:
