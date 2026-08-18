@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { Pool, type PoolConfig } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { TenantId } from "../src/core/brands";
-import { AzureSpoolMaintenance } from "../src/tokens/durable/azure/azure-spool-maintenance";
+import {
+  AzureSpoolMaintenance,
+  DEFAULT_SUPERSEDE_RETENTION_MS,
+} from "../src/tokens/durable/azure/azure-spool-maintenance";
 import type { BlobProperties, BlobStore } from "../src/tokens/durable/azure/blob-store";
 import type { ControlPlane } from "../src/tokens/durable/azure/control-plane";
 import { PostgresControlPlane, runMigrations } from "../src/tokens/durable/azure/postgres-control-plane";
@@ -223,6 +226,10 @@ function maintenance(
 }
 
 describe("AzureSpoolMaintenance unit", () => {
+  it("defaults to 189216000000ms under HIPAA 45 CFR §164.530(j) / §164.316(b)(2)(i)", () => {
+    expect(DEFAULT_SUPERSEDE_RETENTION_MS).toBe(189_216_000_000);
+  });
+
   it("ORACLE-MAINTENANCE-WINDOW-ORDER accepts equality and rejects either invalid inequality", () => {
     const controlPlane = new InMemoryControlPlane({
       quarantineGraceMilliseconds: 10,

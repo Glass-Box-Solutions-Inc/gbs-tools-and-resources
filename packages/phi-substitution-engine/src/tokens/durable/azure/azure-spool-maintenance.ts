@@ -17,7 +17,7 @@ export interface AzureSpoolMaintenanceOptions {
   readonly blobStore: BlobStore;
   readonly uploadHorizonMs: number;
   readonly graceMs: number;
-  /** Defaults to 30 days; controls when a superseded record becomes a Path-1 candidate. */
+  /** Defaults to six years; controls when a superseded record becomes a Path-1 candidate. */
   readonly supersedeRetentionMs?: number;
   /** Rename-delay heuristic only. Defaults to 60 seconds. */
   readonly readDrainMs?: number;
@@ -26,7 +26,13 @@ export interface AzureSpoolMaintenanceOptions {
   readonly includeHardDelete?: boolean;
 }
 
-export const DEFAULT_SUPERSEDE_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+// HIPAA 45 CFR §164.530(j) / §164.316(b)(2)(i) — 6-year retention for required documentation,
+// adopted as the conservative floor for PHI-processing artifacts under the org's BAA posture;
+// superseded reversal records may be needed to reconstruct historical egress, so they retain for
+// 6 years after supersession by default; deployments may adjust via the SUPERSEDE_RETENTION_MS env
+// knob subject to counsel. Six years is modeled as 6 * 365 days (189_216_000_000 ms); leap-day
+// precision is immaterial and simplicity wins for this fixed conservative floor.
+export const DEFAULT_SUPERSEDE_RETENTION_MS = 6 * 365 * 24 * 60 * 60 * 1_000;
 export const DEFAULT_READ_DRAIN_MS = 60_000;
 
 function checkedDuration(value: number, label: string): number {

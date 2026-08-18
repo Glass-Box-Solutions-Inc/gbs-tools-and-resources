@@ -195,7 +195,7 @@ export interface CurrentControlPlaneSnapshot {
 
 const DEFAULT_UPLOAD_HORIZON_MS = 48 * 60 * 60 * 1_000;
 const DEFAULT_QUARANTINE_GRACE_MS = 24 * 60 * 60 * 1_000;
-const DEFAULT_SUPERSEDE_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+const DEFAULT_SUPERSEDE_RETENTION_MS = 6 * 365 * 24 * 60 * 60 * 1_000;
 const DEFAULT_READ_DRAIN_MS = 60_000;
 const MAX_NONCE_COUNTER = 2n ** 96n - 1n;
 
