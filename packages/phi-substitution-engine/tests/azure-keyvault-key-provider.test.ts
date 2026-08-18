@@ -49,6 +49,7 @@ class FakeKekCryptoClient implements KekCryptoClient {
   public readonly keyVersion = branded<WrappingKeyVersion>("version-1");
   public unwrapCalls = 0;
   public unwrapResult: Uint8Array | undefined;
+  public lastReturnedPlaintext: Uint8Array | undefined;
 
   public wrapKey(plaintext: Uint8Array): Promise<Uint8Array> {
     const payload = Uint8Array.from(plaintext, (value) => value ^ 0x5a);
@@ -59,7 +60,9 @@ class FakeKekCryptoClient implements KekCryptoClient {
   public unwrapKey(wrapped: Uint8Array): Promise<Uint8Array> {
     this.unwrapCalls += 1;
     if (this.unwrapResult !== undefined) {
-      return Promise.resolve(this.unwrapResult.slice());
+      const plaintext = this.unwrapResult.slice();
+      this.lastReturnedPlaintext = plaintext;
+      return Promise.resolve(plaintext);
     }
     if (wrapped.byteLength <= 1 + CHECKSUM_BYTES || wrapped[0] !== FAKE_TAG) {
       return Promise.reject(new Error("opaque_fake_rejected_payload"));
@@ -70,7 +73,9 @@ class FakeKekCryptoClient implements KekCryptoClient {
     if (!Buffer.from(checksum).equals(actual)) {
       return Promise.reject(new Error("opaque_fake_rejected_payload"));
     }
-    return Promise.resolve(Uint8Array.from(payload, (value) => value ^ 0x5a));
+    const plaintext = Uint8Array.from(payload, (value) => value ^ 0x5a);
+    this.lastReturnedPlaintext = plaintext;
+    return Promise.resolve(plaintext);
   }
 }
 
@@ -94,6 +99,22 @@ describe("AzureKeyVaultKeyProvider", () => {
     });
 
     expect(unwrapped).toEqual(fixture.originalDek);
+  });
+
+  it("zeroizes the provider-owned unwrap intermediate after transferring a fresh caller-owned DEK", async () => {
+    const client = new FakeKekCryptoClient();
+    const fixture = await wrappedFixture(client);
+
+    const unwrapped = await fixture.provider.unwrap({
+      scope: SCOPE,
+      key: fixture.key,
+      wrappedDek: fixture.wrappedDek,
+      bindingDigest: fixture.bindingDigest,
+    });
+
+    expect(unwrapped).toEqual(fixture.originalDek);
+    expect(unwrapped).not.toBe(client.lastReturnedPlaintext);
+    expect(client.lastReturnedPlaintext).toEqual(new Uint8Array(65));
   });
 
   it("MUT-KEK-BINDING-BYPASS: rejects relocation under a different binding digest", async () => {
