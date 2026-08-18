@@ -366,13 +366,16 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
   public async prepare(input: PrepareReversalWriteInput): Promise<PreparedReversalWrite> {
     const handle = this.#nextPreparedHandle();
     const key = asString(handle);
+    // Prepared-row lifecycle age belongs to the plane clock. The producer timestamp remains
+    // metadata inside the encrypted record and must not drive reclamation eligibility.
+    const createdAtMs = checkedDuration(this.#nowEpochMilliseconds(), "created_at_ms");
     const row: PreparedRow = {
       preparedBlobId: handle,
       tenant: asString(input.encryptedRecord.meta.tenantId),
       mappingKey: input.mappingKey,
       idempotencyKey: input.idempotencyKey,
       scopeDigest: input.immutableScopeDigest,
-      createdAtMs: input.encryptedRecord.meta.createdAtEpochMs,
+      createdAtMs,
       stagingPath: `staging/${asString(handle)}`,
       blobPath: `blobs/${asString(handle)}`,
       state: "uploading",

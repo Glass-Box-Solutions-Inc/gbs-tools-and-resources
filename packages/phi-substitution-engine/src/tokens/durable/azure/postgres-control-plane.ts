@@ -274,11 +274,14 @@ export class PostgresControlPlane implements ControlPlane {
 
   public async insertPreparedUploading(input: InsertPreparedUploadingInput): Promise<void> {
     safeEpochMs(input.createdAtEpochMs, "created_at_ms");
+    // Reclamation and prepared-row age share the database clock. This assumes the Azure job and
+    // PostgreSQL clocks are NTP-tight infrastructure, unlike arbitrary application replicas.
     const result = await this.#pool.query(
       `INSERT INTO reversal_prepared (
          prepared_blob_id, tenant_id, mapping_key, idempotency_key, scope_digest,
          staging_path, blob_path, created_at_ms, state
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'uploading')
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7,
+                 (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint, 'uploading')
        ON CONFLICT (prepared_blob_id) DO NOTHING`,
       [
         input.preparedBlobId,
@@ -288,7 +291,6 @@ export class PostgresControlPlane implements ControlPlane {
         input.immutableScopeDigest,
         input.stagingPath,
         input.blobPath,
-        input.createdAtEpochMs,
       ],
     );
     if (result.rowCount !== 1) {
