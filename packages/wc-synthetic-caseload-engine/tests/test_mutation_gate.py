@@ -32,6 +32,7 @@ from mutation_gate import (
     REGISTRY,
     Mutant,
     load,
+    mutation_syntax_error,
     partition,
     preflight,
     pristine_verdict,
@@ -283,10 +284,9 @@ class TestTheRegistryItselfIsSound:
             if original.count(mutant.find) != 1:
                 continue  # PATCH-MISS is the campaign's finding, not this one's
             mutated = original.replace(mutant.find, mutant.replace, 1)
-            try:
-                compile(mutated, str(mutant.path), "exec")
-            except SyntaxError as exc:
-                broken.append(f"{mutant.id}: {exc.msg} at line {exc.lineno}")
+            syntax_error = mutation_syntax_error(mutant.path, mutated)
+            if syntax_error is not None:
+                broken.append(f"{mutant.id}: {syntax_error}")
         assert not broken, "\n".join(broken)
 
     def test_every_registered_mutation_applies_exactly_once(self) -> None:

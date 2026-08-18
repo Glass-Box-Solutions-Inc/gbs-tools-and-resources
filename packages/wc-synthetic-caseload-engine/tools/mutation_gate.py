@@ -63,6 +63,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import yaml
+
 PACKAGE = Path(__file__).resolve().parent.parent
 TOOLS = Path(__file__).resolve().parent
 REGISTRY = PACKAGE / "tests" / "mutants.toml"
@@ -78,6 +80,22 @@ REJECTED_EXIT_CODES = frozenset({2, 3, 4, 5})
 
 #: The one verdict that counts as proof.
 RED = "RED"
+
+
+def mutation_syntax_error(path: Path, source: str) -> str | None:
+    """Return a native-format syntax error, or ``None`` when *source* parses."""
+    try:
+        if path.suffix == ".py":
+            compile(source, str(path), "exec")
+        elif path.suffix == ".json":
+            json.loads(source)
+        elif path.suffix in {".yaml", ".yml"}:
+            yaml.safe_load(source)
+        else:
+            return f"unsupported mutation source format {path.suffix!r}"
+    except (SyntaxError, json.JSONDecodeError, yaml.YAMLError) as exc:
+        return str(exc)
+    return None
 
 
 @dataclass(frozen=True)
@@ -340,13 +358,13 @@ def run_one(
         )
 
     mutated = original.replace(mutant.find, mutant.replace, 1)
-    try:
-        compile(mutated, str(mutant.path), "exec")
-    except SyntaxError as exc:
+    syntax_error = mutation_syntax_error(mutant.path, mutated)
+    if syntax_error is not None:
         return Verdict(
             "INVALID-MUTATION",
-            f"the mutated source does not compile ({exc.msg}, line {exc.lineno}); a "
-            "mutation must be valid Python or it proves the parser works",
+            f"the mutated source does not parse as {mutant.path.suffix} "
+            f"({syntax_error}); a mutation must be valid in its source format or it "
+            "proves only that the parser works",
         )
 
     try:

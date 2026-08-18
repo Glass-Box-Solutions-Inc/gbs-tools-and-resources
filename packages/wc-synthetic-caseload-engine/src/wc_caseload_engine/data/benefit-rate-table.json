@@ -1,0 +1,646 @@
+{
+  "datasetId": "ca_wc_td_pd_sjdb",
+  "jurisdiction": "CA",
+  "datasetVersion": "2026-07-30.1",
+  "source": {
+    "publisher": "California Department of Industrial Relations, Division of Workers' Compensation",
+    "title": "Workers' compensation benefits — Temporary / permanent disability and SJDB",
+    "url": "https://www.dir.ca.gov/dwc/WorkersCompensationBenefits.htm",
+    "retrievedAt": "2026-07-30T00:00:00.000Z",
+    "snapshotFile": "__fixtures__/dir-workers-compensation-benefits-2026-07-30.html",
+    "snapshotSha256": "71d07c81b45e1a96cecdcce899ee5c6c3226b0aeaefe686327583f68109c5f2f"
+  },
+  "coverage": {
+    "dateOfInjuryFrom": "2010-01-01",
+    "dateOfInjuryTo": "2027-01-01",
+    "belowCoverageReason": "DIR's current benefits publication tabulates dates of injury from 2010-01-01 onward. Earlier eras require the archived DIR tables or the dated text of Lab. Code § 4453 (KB-150), neither of which is ingested yet.",
+    "atOrAboveCoverageReason": "Lab. Code § 4453(a)(10) adjusts the limits every January 1, so this snapshot expires. The 2027-01-01 figures were not published when the snapshot was taken, and serving the prior era in their place would be a fabricated answer."
+  },
+  "citations": {
+    "temporaryDisability": [
+      "Cal. Lab. Code § 4453(a) (minimum and maximum average weekly earnings, by date of injury)",
+      "Cal. Lab. Code § 4453(a)(10) (state-average-weekly-wage indexing, injuries on or after 2006-01-01)",
+      "Cal. Lab. Code § 4653 (temporary total disability at two-thirds of average weekly earnings)",
+      "Cal. Lab. Code § 4661.5 (payment made two years or more after date of injury)"
+    ],
+    "permanentDisability": [
+      "Cal. Lab. Code § 4453(b) (average weekly earnings for permanent partial disability)",
+      "Cal. Lab. Code § 4658 (permanent disability weeks by rating)",
+      "Cal. Lab. Code § 4659 (permanent total disability; life pension)"
+    ],
+    "supplementalJobDisplacement": [
+      "Cal. Lab. Code § 4658.5 (voucher, injuries 2004-01-01 through 2012-12-31)",
+      "Cal. Lab. Code § 4658.7 (voucher, injuries on or after 2013-01-01)"
+    ]
+  },
+  "reviewStatus": "unverified",
+  "reviewNotes": [
+    "UNVERIFIED. Every figure and citation is unverified professional data until counsel confirms it. Figures marked `dir_published` were printed by DIR in the snapshot named in `source`; that is provenance, not legal verification.",
+    "DERIVED MAXIMA. DIR printed an explicit temporary-disability maximum only through the 1/1/12 era. From 1/1/13 onward the maximum is derived as round(2/3 x maximum average weekly earnings, 2), per Lab. Code § 4653. The derivation reproduces all 3 maxima DIR did print and all 17 minima DIR prints, which is evidence the rule is right — not proof that it is the rule counsel would apply.",
+    "DATE OF INJURY IS THE ANCHOR, WITH ONE EXCEPTION. These windows are keyed to date of injury. Lab. Code § 4661.5 makes a temporary total disability payment made two years or more after the date of injury turn on the rate in effect on the PAYMENT date instead. That exception is modelled in `benefit-rate-anchors.ts`, not here.",
+    "CUMULATIVE TRAUMA UNRESOLVED. \"Date of injury\" is itself a legal construct for cumulative trauma (Lab. Code § 5412). This dataset takes a date; it does not decide what that date is.",
+    "PD 100% IS OUT OF RANGE BY DESIGN. DIR publishes permanent-disability bands up to 99 percent. A 100 percent rating is permanent TOTAL disability, paid at the temporary-disability rate for life under Lab. Code § 4659, and is deliberately not answerable from the PD bands.",
+    "THE § 4661.5 FLOOR PROVISO IS NOT MODELLED. § 4661.5 excludes the payment-date rate when it produces a LOWER payment because of a reduction in the minimum average weekly earnings. That is a computation concern, not a rate-selection concern; only the maximum is exposed under the delayed rule, so the unmodelled floor cannot be silently applied."
+  ],
+  "eras": [
+    {
+      "effectiveFrom": "2010-01-01",
+      "sourceLabel": "1/1/10",
+      "minAverageWeeklyEarnings": 222,
+      "maxAverageWeeklyEarnings": 1480.04,
+      "tdMinWeeklyRate": 148,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 986.69,
+      "tdMaxDerivation": "dir_published",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 14,
+          "minWeeklyRate": 130,
+          "maxWeeklyRate": 230,
+          "sjdbVoucher": 4000
+        },
+        {
+          "ratingFrom": 15,
+          "ratingTo": 25,
+          "minWeeklyRate": 130,
+          "maxWeeklyRate": 230,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 26,
+          "ratingTo": 49,
+          "minWeeklyRate": 130,
+          "maxWeeklyRate": 230,
+          "sjdbVoucher": 8000
+        },
+        {
+          "ratingFrom": 50,
+          "ratingTo": 99,
+          "minWeeklyRate": 130,
+          "maxWeeklyRate": 270,
+          "sjdbVoucher": 10000
+        }
+      ],
+      "effectiveTo": "2011-01-01"
+    },
+    {
+      "effectiveFrom": "2011-01-01",
+      "sourceLabel": "1/1/11",
+      "minAverageWeeklyEarnings": 222,
+      "maxAverageWeeklyEarnings": 1480.04,
+      "tdMinWeeklyRate": 148,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 986.69,
+      "tdMaxDerivation": "dir_published",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 14,
+          "minWeeklyRate": 130,
+          "maxWeeklyRate": 230,
+          "sjdbVoucher": 4000
+        },
+        {
+          "ratingFrom": 15,
+          "ratingTo": 25,
+          "minWeeklyRate": 130,
+          "maxWeeklyRate": 230,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 26,
+          "ratingTo": 49,
+          "minWeeklyRate": 130,
+          "maxWeeklyRate": 230,
+          "sjdbVoucher": 8000
+        },
+        {
+          "ratingFrom": 50,
+          "ratingTo": 99,
+          "minWeeklyRate": 130,
+          "maxWeeklyRate": 270,
+          "sjdbVoucher": 10000
+        }
+      ],
+      "effectiveTo": "2012-01-01"
+    },
+    {
+      "effectiveFrom": "2012-01-01",
+      "sourceLabel": "1/1/12",
+      "minAverageWeeklyEarnings": 227.36,
+      "maxAverageWeeklyEarnings": 1515.75,
+      "tdMinWeeklyRate": 151.57,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1010.5,
+      "tdMaxDerivation": "dir_published",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 14,
+          "minWeeklyRate": 130,
+          "maxWeeklyRate": 230,
+          "sjdbVoucher": 4000
+        },
+        {
+          "ratingFrom": 15,
+          "ratingTo": 25,
+          "minWeeklyRate": 130,
+          "maxWeeklyRate": 230,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 26,
+          "ratingTo": 49,
+          "minWeeklyRate": 130,
+          "maxWeeklyRate": 230,
+          "sjdbVoucher": 8000
+        },
+        {
+          "ratingFrom": 50,
+          "ratingTo": 99,
+          "minWeeklyRate": 130,
+          "maxWeeklyRate": 270,
+          "sjdbVoucher": 10000
+        }
+      ],
+      "effectiveTo": "2013-01-01"
+    },
+    {
+      "effectiveFrom": "2013-01-01",
+      "sourceLabel": "1/1/13",
+      "minAverageWeeklyEarnings": 240,
+      "maxAverageWeeklyEarnings": 1600.08,
+      "tdMinWeeklyRate": 160,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1066.72,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 230,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 270,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2014-01-01"
+    },
+    {
+      "effectiveFrom": "2014-01-01",
+      "sourceLabel": "1/1/14",
+      "minAverageWeeklyEarnings": 241.78,
+      "maxAverageWeeklyEarnings": 1611.96,
+      "tdMinWeeklyRate": 161.19,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1074.64,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2015-01-01"
+    },
+    {
+      "effectiveFrom": "2015-01-01",
+      "sourceLabel": "1/1/15",
+      "minAverageWeeklyEarnings": 248.24,
+      "maxAverageWeeklyEarnings": 1654.94,
+      "tdMinWeeklyRate": 165.49,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1103.29,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2016-01-01"
+    },
+    {
+      "effectiveFrom": "2016-01-01",
+      "sourceLabel": "1/1/16",
+      "minAverageWeeklyEarnings": 253.89,
+      "maxAverageWeeklyEarnings": 1692.64,
+      "tdMinWeeklyRate": 169.26,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1128.43,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2017-01-01"
+    },
+    {
+      "effectiveFrom": "2017-01-01",
+      "sourceLabel": "1/1/17",
+      "minAverageWeeklyEarnings": 263.82,
+      "maxAverageWeeklyEarnings": 1758.85,
+      "tdMinWeeklyRate": 175.88,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1172.57,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2018-01-01"
+    },
+    {
+      "effectiveFrom": "2018-01-01",
+      "sourceLabel": "1/1/18",
+      "minAverageWeeklyEarnings": 273.44,
+      "maxAverageWeeklyEarnings": 1822.91,
+      "tdMinWeeklyRate": 182.29,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1215.27,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2019-01-01"
+    },
+    {
+      "effectiveFrom": "2019-01-01",
+      "sourceLabel": "1/1/19",
+      "minAverageWeeklyEarnings": 281.57,
+      "maxAverageWeeklyEarnings": 1877.07,
+      "tdMinWeeklyRate": 187.71,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1251.38,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2020-01-01"
+    },
+    {
+      "effectiveFrom": "2020-01-01",
+      "sourceLabel": "1/1/20",
+      "minAverageWeeklyEarnings": 292.36,
+      "maxAverageWeeklyEarnings": 1949.15,
+      "tdMinWeeklyRate": 194.91,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1299.43,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2021-01-01"
+    },
+    {
+      "effectiveFrom": "2021-01-01",
+      "sourceLabel": "1/1/21",
+      "minAverageWeeklyEarnings": 305.16,
+      "maxAverageWeeklyEarnings": 2034.47,
+      "tdMinWeeklyRate": 203.44,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1356.31,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2022-01-01"
+    },
+    {
+      "effectiveFrom": "2022-01-01",
+      "sourceLabel": "1/1/22",
+      "minAverageWeeklyEarnings": 346.42,
+      "maxAverageWeeklyEarnings": 2309.56,
+      "tdMinWeeklyRate": 230.95,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1539.71,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2023-01-01"
+    },
+    {
+      "effectiveFrom": "2023-01-01",
+      "sourceLabel": "1/1/23",
+      "minAverageWeeklyEarnings": 364.29,
+      "maxAverageWeeklyEarnings": 2428.72,
+      "tdMinWeeklyRate": 242.86,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1619.15,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2024-01-01"
+    },
+    {
+      "effectiveFrom": "2024-01-01",
+      "sourceLabel": "1/1/24",
+      "minAverageWeeklyEarnings": 364.29,
+      "maxAverageWeeklyEarnings": 2428.72,
+      "tdMinWeeklyRate": 242.86,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1619.15,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2025-01-01"
+    },
+    {
+      "effectiveFrom": "2025-01-01",
+      "sourceLabel": "1/1/25",
+      "minAverageWeeklyEarnings": 378.05,
+      "maxAverageWeeklyEarnings": 2520.43,
+      "tdMinWeeklyRate": 252.03,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1680.29,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2026-01-01"
+    },
+    {
+      "effectiveFrom": "2026-01-01",
+      "sourceLabel": "1/1/26",
+      "minAverageWeeklyEarnings": 396.92,
+      "maxAverageWeeklyEarnings": 2646.17,
+      "tdMinWeeklyRate": 264.61,
+      "tdMinDerivation": "dir_published",
+      "tdMaxWeeklyRate": 1764.11,
+      "tdMaxDerivation": "derived_two_thirds_awe",
+      "pdBands": [
+        {
+          "ratingFrom": 1,
+          "ratingTo": 54,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 55,
+          "ratingTo": 69,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        },
+        {
+          "ratingFrom": 70,
+          "ratingTo": 99,
+          "minWeeklyRate": 160,
+          "maxWeeklyRate": 290,
+          "sjdbVoucher": 6000
+        }
+      ],
+      "effectiveTo": "2027-01-01"
+    }
+  ]
+}

@@ -175,7 +175,7 @@ def rendered_scenarios(
             assert facts.settlement is not None
             assert facts.settlement.kind == "stipulations"
         elif name == "delayed-benefits":
-            assert facts.wages.rate.basis.label == "doi-pre-2014"
+            assert facts.wages.rate.basis.label == "doi-1-1-13"
             assert facts.benefits.late_payment_count > 0
             assert facts.benefits.gaps
         if name == "penalised-benefits":

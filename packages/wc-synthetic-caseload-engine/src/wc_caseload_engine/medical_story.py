@@ -751,6 +751,11 @@ def _bound_candidate(
         author_role=_bound_author_role(binding),
         stage=base.stage if base is not None else "contention_loop",
         metadata=metadata,
+        semantic_event_id=(
+            None
+            if binding.medical_opinion_id is None
+            else f"medical-opinion:{binding.medical_opinion_id}"
+        ),
         medical_opinion_id=binding.medical_opinion_id,
         spoken_contention_ids=binding.spoken_contention_ids,
         contention_surface=surface,

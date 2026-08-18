@@ -1012,15 +1012,16 @@ def test_ajc63_default_and_feature_absent_outputs_are_byte_identical_to_post_ajc
         "medical-story-showcase.json": (
             "60dff418398a4849eb3023f418e2deecc0d04f03ee8ed5b738309886dc2ed639"
         ),
-        "money-showcase.json": "40beeaf1b7a0e6458c0ad9cd1536fb945459049c6ef62f367921f2870a3f6f73",
+        "money-showcase.json": "a8db048b3ad7b23a4c85bdf4732628ccf04f3b3f47cae99e6f760bf59ecda2ea",
         "personas-showcase.json": (
             "f89280b194ef08877b81a9876e38c9752e8460ad3cd5d7441cd4e156c4dd8275"
         ),
     }
     golden_dir = Path(__file__).parent / "golden"
-    assert {path.name for path in golden_dir.glob("*.json")} == set(
-        expected_golden_hashes
-    )
+    assert {path.name for path in golden_dir.glob("*.json")} == {
+        *expected_golden_hashes,
+        "money-w2-showcase.json",
+    }
     assert {
         name: hashlib.sha256((golden_dir / name).read_bytes()).hexdigest()
         for name in expected_golden_hashes

@@ -17,34 +17,73 @@ import json
 import shutil
 from dataclasses import replace
 from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from conftest import requires_substrate
+from conftest import extract_text, requires_substrate
+from wc_caseload_engine import truth_manifest as truth_manifest_module
+from wc_caseload_engine.case_facts import (
+    CASE_FACTS_MONEY_RATING_KEYS,
+    CASE_FACTS_RATING_IMPAIRMENT_KEYS,
+    CASE_FACTS_RATING_KEYS,
+    CASE_FACTS_RATING_SCHEDULE_KEYS,
+    facts_manifest_block,
+)
+from wc_caseload_engine.defense_lens import (
+    BucketAmounts,
+    DefenseLensFacts,
+    DefenseScorerLabels,
+    InitialFileReview,
+    ReserveArtifactBinding,
+    ReserveEvent,
+)
 from wc_caseload_engine.manifests import generate_case, generate_caseload, validate_output_tree
 from wc_caseload_engine.medical_assertions import (
     assertion_context,
     grade_ledger,
     project_medical_history,
 )
-from wc_caseload_engine.money import money_manifest_block
+from wc_caseload_engine.money import MoneyFacts, money_manifest_block
 from wc_caseload_engine.planner import build_case_plan
+from wc_caseload_engine.rating import RatingFacts, RatingImpairment
+from wc_caseload_engine.rating_sources import RatingScheduleBinding
+from wc_caseload_engine.renderer import render_document
 from wc_caseload_engine.seeds import parse_case_seed
 from wc_caseload_engine.truth_manifest import (
     CASELOAD_TRUTH_NAME,
     CASELOAD_TRUTH_PROVENANCE_KEYS,
+    MONEY_CHANNEL_V1_0_VERSION,
+    MONEY_CHANNEL_V1_1_VERSION,
+    MONEY_CHANNEL_V1_2_VERSION,
+    MONEY_CHANNEL_VERSION,
+    MONEY_V1_0_CASE_CHANNEL_KEYS,
+    MONEY_V1_0_OPTIONAL_CASE_CHANNEL_KEYS,
+    MONEY_V1_1_CASE_CHANNEL_KEYS,
+    MONEY_V1_1_OPTIONAL_CASE_CHANNEL_KEYS,
+    MONEY_V1_2_CASE_CHANNEL_KEYS,
+    MONEY_V1_2_CASELOAD_CASE_KEYS,
+    MONEY_V1_2_CASELOAD_CHANNEL_KEYS,
+    MONEY_V1_2_OPTIONAL_CASE_CHANNEL_KEYS,
+    MONEY_V1_2_PUBLISHED_GROUP_KEYS,
+    MONEY_V1_2_RATING_IMPAIRMENT_KEYS,
+    MONEY_V1_2_RATING_KEYS,
+    MONEY_V1_2_RATING_SCHEDULE_KEYS,
     PENALTY_ASSESSMENT_KEY_NAMES,
     SCORER_ONLY_ENVELOPE_KEY_NAMES,
+    SUPPORTED_MONEY_CHANNEL_VERSIONS,
     TRUTH_DIR,
     TRUTH_PROVENANCE_KEYS,
     TruthManifestError,
     build_case_truth_manifest,
     build_caseload_truth_manifest,
     check_truth_dir_is_isolated,
+    defense_facts_from_truth,
     money_facts_from_truth,
+    rating_facts_from_truth,
     read_truth_manifest,
     write_case_truth_manifest,
     write_caseload_truth_manifest,
@@ -70,6 +109,317 @@ ENVELOPE_KEYS_THAT_ARE_NOT_SENTINELS: dict[str, str] = {
     "caseloadId": "the caseload identifier is the corpus's public name",
     "provenance": "manifest.json carries its own provenance block for the analyzer",
     "cases": "the caseload index lists cases the analyzer can already enumerate",
+}
+
+EXPECTED_MONEY_VERSIONS = ("1.0.0", "1.1.0", "1.2.0")
+EXPECTED_V1_0_CASE_KEYS = (
+    "channelVersion",
+    "wage",
+    "benefits",
+    "published",
+    "settlement",
+)
+EXPECTED_V1_1_CASE_KEYS = (
+    "channelVersion",
+    "wage",
+    "benefits",
+    "published",
+    "settlement",
+    "penalties",
+)
+EXPECTED_V1_2_CASE_KEYS = (
+    "channelVersion",
+    "wage",
+    "benefits",
+    "published",
+    "rating",
+    "defense",
+    "settlement",
+    "penalties",
+)
+EXPECTED_RATING_KEYS = (
+    "schedule",
+    "dateOfInjury",
+    "applicantAge",
+    "occupationGroup",
+    "occupationTitle",
+    "impairments",
+    "combinationMethod",
+    "kiteImpairmentIds",
+    "scheduledCombinedRating",
+    "combinedRating",
+    "finalPdPercent",
+    "ratingString",
+)
+EXPECTED_RATING_IMPAIRMENT_KEYS = (
+    "id",
+    "bodyPart",
+    "impairmentNumber",
+    "description",
+    "wpi",
+    "adjustmentMethod",
+    "fecRank",
+    "adjustmentFactor",
+    "scheduleAdjusted",
+    "variant",
+    "occupationAdjusted",
+    "ageBand",
+    "ageAdjusted",
+    "ratingString",
+)
+EXPECTED_RATING_SCHEDULE_KEYS = (
+    "edition",
+    "sourceUrl",
+    "pdfSha256",
+    "extractedTextSha256",
+    "tablesSha256",
+    "section4Sha256",
+    "section4MetaSha256",
+    "counselStatus",
+)
+EXPECTED_DEFENSE_KEYS = (
+    "exposureEvents",
+    "paidCosts",
+    "reserveEvents",
+    "initialFileReview",
+    "scorerLabels",
+)
+EXPECTED_PUBLIC_DEFENSE_KEYS = EXPECTED_DEFENSE_KEYS[:-1]
+EXPECTED_DEFENSE_BUCKET_KEYS = ("indemnity", "medical", "expenseAlae", "total")
+EXPECTED_DEFENSE_PAID_COST_KEYS = (
+    "id",
+    "date",
+    "bucket",
+    "category",
+    "amount",
+    "sourceDocumentSubtype",
+)
+EXPECTED_DEFENSE_EXPOSURE_KEYS = (
+    "trigger",
+    "effectiveDate",
+    "low",
+    "expected",
+    "high",
+    "assumptions",
+)
+EXPECTED_DEFENSE_SNAPSHOT_KEYS = ("paid", "outstandingReserve", "incurred")
+EXPECTED_DEFENSE_IFR_KEYS = (
+    "eventId",
+    "reviewDate",
+    "caseEvaluation",
+    "compensabilityPosture",
+    "exposure",
+    "recommendation",
+    "bookedSnapshot",
+    "litigationBudget",
+    "discoveryPlan",
+    "assumptions",
+    "authorityStatus",
+    "adoptionLagDays",
+    "artifactBinding",
+)
+EXPECTED_DEFENSE_RESERVE_EVENT_KEYS = (
+    "id",
+    "trigger",
+    "eventDate",
+    "priorSnapshot",
+    "exposure",
+    "recommendation",
+    "bookedSnapshot",
+    "adoptionLagDays",
+    "reason",
+    "artifactBinding",
+)
+EXPECTED_DEFENSE_BINDING_KEYS = (
+    "eventId",
+    "documentIndex",
+    "subtype",
+    "documentDate",
+)
+EXPECTED_DEFENSE_SCORER_LABEL_KEYS = ("stairStepping", "reserveAdequacy")
+EXPECTED_DEFENSE_FACT_FIELDS = (
+    "exposure_events",
+    "paid_costs",
+    "initial_file_review",
+    "reserve_events",
+    "scorer_labels",
+)
+EXPECTED_DEFENSE_SCORER_LABEL_FIELDS = ("stair_stepping", "reserve_adequacy")
+EXPECTED_DEFENSE_IFR_FIELDS = (
+    "event_id",
+    "review_date",
+    "case_evaluation",
+    "compensability_posture",
+    "exposure",
+    "recommendation",
+    "booked_snapshot",
+    "litigation_budget",
+    "discovery_plan",
+    "assumptions",
+    "authority_status",
+    "adoption_lag_days",
+    "artifact_binding",
+)
+EXPECTED_DEFENSE_RESERVE_EVENT_FIELDS = (
+    "id",
+    "trigger",
+    "event_date",
+    "prior_snapshot",
+    "exposure",
+    "recommendation",
+    "booked_snapshot",
+    "adoption_lag_days",
+    "reason",
+    "artifact_binding",
+)
+EXPECTED_DEFENSE_BINDING_FIELDS = (
+    "event_id",
+    "document_index",
+    "subtype",
+    "document_date",
+)
+EXPECTED_V1_2_PUBLISHED_KEYS = (
+    "wage",
+    "rate",
+    "benefits",
+    "rating",
+    "defense",
+    "settlement",
+    "penalties",
+)
+EXPECTED_V1_2_CASELOAD_KEYS = (
+    "channelVersion",
+    "caseCount",
+    "moneyCaseCount",
+    "cases",
+)
+EXPECTED_V1_2_CASELOAD_CASE_KEYS = (
+    "caseId",
+    "truthFile",
+    "seedHash",
+    "averageWeeklyWage",
+    "tdWeeklyRate",
+    "tdBound",
+    "method",
+    "settlementGrossAmount",
+)
+
+
+def _literal_money_truth(
+    channel_version: str,
+    *,
+    rating: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Independent compact fixture; no production writer or constant supplies it."""
+    published: dict[str, Any] = {
+        "wage": {},
+        "rate": {},
+        "benefits": {},
+    }
+    channel: dict[str, Any] = {
+        "channelVersion": channel_version,
+        "wage": {
+            "periods": [],
+            "inKind": [],
+            "employmentStart": None,
+            "concurrentEmployment": False,
+            "pattern": "regular",
+            "patternSource": "seed",
+            "computation": {
+                "method": "actual_weekly_earnings",
+                "methodSource": "derived",
+                "methodReason": "literal fixture",
+                "periodsConsidered": 0,
+                "weeksConsidered": "0",
+                "grossConsidered": "0",
+                "inKindWeekly": "0",
+                "averageWeeklyWage": "1000.00",
+            },
+            "rate": {
+                "averageWeeklyWage": "1000.00",
+                "tdWeeklyRate": "666.67",
+                "tdBound": "unbounded",
+                "pdWeeklyRate": "290.00",
+                "pdBound": "max",
+                "basis": {
+                    "label": "literal-2012",
+                    "effectiveFrom": "2012-01-01",
+                    "effectiveTo": "2013-01-01",
+                    "tdFraction": "2/3",
+                    "tdMaxWeekly": "1010.50",
+                    "tdMinWeekly": "151.57",
+                    "pdFraction": "2/3",
+                    "pdMaxWeekly": "290.00",
+                    "pdMinWeekly": "130.00",
+                    "authority": "literal fixture authority",
+                    "counselConfirmed": False,
+                    "source": "engine_default_table",
+                },
+            },
+        },
+        "benefits": {"tdPeriods": [], "pdAdvances": [], "gaps": []},
+        "published": published,
+    }
+    if rating is not None:
+        channel["rating"] = copy.deepcopy(rating)
+        published["rating"] = copy.deepcopy(rating)
+    return {
+        "schemaVersion": "1.0.0",
+        "kind": "case",
+        "caseId": "literal-money",
+        "seedHash": "0" * 64,
+        "provenance": {},
+        "channels": {"money": channel},
+    }
+
+
+LITERAL_RATING_V1_2: dict[str, Any] = {
+    "schedule": {
+        "edition": "January 2005",
+        "sourceUrl": "https://www.dir.ca.gov/dwc/pdr.pdf",
+        "pdfSha256": "cfabf43b57533b90133f71aecf882c8b17a5dad3659db7aea6e810728f664201",
+        "extractedTextSha256": (
+            "827d66440bc9161743aa6add355c823a6d7d5913162df140f38bc871f83f47b1"
+        ),
+        "tablesSha256": (
+            "a7177da9a12cda090a767f3dccd9e604f3686ba2ded7b0ff36e3dae6e6ca2791"
+        ),
+        "section4Sha256": (
+            "23a56ded69f1cffd6ae9c2dc613c52d2e5750a9bd432a86fd5d00d50f3419e83"
+        ),
+        "section4MetaSha256": (
+            "7847c7410dc348de7092fd1283077c1645192b36e01b7e0ee5230cc3cacb52e6"
+        ),
+        "counselStatus": "PDRS_2005_SOURCE_VERIFIED_POST2013_FACTOR_COUNSEL_RULED",
+    },
+    "dateOfInjury": "2012-06-15",
+    "applicantAge": 30,
+    "occupationGroup": "470",
+    "occupationTitle": "Warehouse worker",
+    "impairments": [
+        {
+            "id": "cervical",
+            "bodyPart": "cervical_spine",
+            "impairmentNumber": "15.01.02.02",
+            "description": "Cervical N{EN DASH} Range of Motion N{EN DASH} Soft Tissue Lesion",
+            "wpi": 8,
+            "adjustmentMethod": "fec_rank_table",
+            "fecRank": 5,
+            "adjustmentFactor": None,
+            "scheduleAdjusted": 10,
+            "variant": "H",
+            "occupationAdjusted": 13,
+            "ageBand": "27-31",
+            "ageAdjusted": 11,
+            "ratingString": "15.01.02.02 - 8 - [5]10 - 470H - 13 - 11%",
+        }
+    ],
+    "combinationMethod": "single",
+    "kiteImpairmentIds": None,
+    "scheduledCombinedRating": 11,
+    "combinedRating": 11,
+    "finalPdPercent": 11,
+    "ratingString": "15.01.02.02 - 8 - [5]10 - 470H - 13 - 11%",
 }
 
 
@@ -112,6 +462,154 @@ def _plan(
     return build_case_plan(
         parse_case_seed(_seed_body(case_id, scenario=scenario, doi=doi, rng_seed=rng_seed)),
         case_number=1,
+    )
+
+
+def _rated_plan(
+    case_id: str = "truth-rated",
+    *,
+    doi: str = "2013-06-14",
+    rng_seed: int = 4340,
+) -> Any:
+    body = _seed_body(
+        case_id,
+        scenario={
+            "wages": {},
+            "rating": {
+                "schedule": "pdrs_2005",
+                "occupation_group": "470",
+                "impairments": [
+                    {
+                        "id": "lumbar",
+                        "body_part": "lumbar_spine",
+                        "impairment_number": "15.01.02.02",
+                        "wpi": 8,
+                    }
+                ],
+                "combination_method": "single",
+            },
+        },
+        doi=doi,
+        rng_seed=rng_seed,
+    )
+    body["profile"] = {
+        "applicant": {"age": 30, "occupation": "Warehouse worker"}
+    }
+    body["documents"] = {
+        "format_mix": {"pdf": 1.0},
+        "include_only": ["PD_RATING_CALCULATION_WORKSHEET"],
+    }
+    return build_case_plan(parse_case_seed(body), case_number=1)
+
+
+@pytest.fixture(scope="module")
+def rated_plan() -> Any:
+    return _rated_plan()
+
+
+def _defense_plan(case_id: str = "truth-defense") -> Any:
+    amounts = {
+        "low": {
+            "indemnity": 10000,
+            "medical": 15000,
+            "expense_alae": 5000,
+        },
+        "expected": {
+            "indemnity": 20000,
+            "medical": 30000,
+            "expense_alae": 10000,
+        },
+        "high": {
+            "indemnity": 40000,
+            "medical": 60000,
+            "expense_alae": 20000,
+        },
+    }
+    body = _seed_body(
+        case_id,
+        scenario={
+            "wages": {},
+            "defense_lens": {
+                "case_evaluation": "Accepted lumbar claim with active treatment.",
+                "assumptions": ["No unrecorded paid costs."],
+                "discovery_plan": ["Obtain prior treatment records."],
+                "litigation_budget": 25000,
+                "exposure_events": [
+                    {"trigger": "initial_file_review", **copy.deepcopy(amounts)},
+                    {"trigger": "compensability_decision", **copy.deepcopy(amounts)},
+                ],
+                "paid_costs": [
+                    {
+                        "id": "treatment-1",
+                        "date": "2021-07-01",
+                        "bucket": "medical",
+                        "category": "treatment",
+                        "amount": 100,
+                        "source_document_subtype": "MEDICAL_BILL",
+                    }
+                ],
+            },
+        },
+        rng_seed=4341,
+    )
+    body["perspective"] = "defense"
+    body["documents"] = {
+        "format_mix": {"pdf": 1.0},
+        "global_cap": 16,
+        "overrides": [{"subtype": "CLAIM_ACCEPTANCE_LETTER", "count": 1}],
+    }
+    return build_case_plan(parse_case_seed(body), case_number=1)
+
+
+@pytest.fixture(scope="module")
+def defense_plan() -> Any:
+    return _defense_plan()
+
+
+def _rating_from_literal_projection(document: dict[str, Any]) -> RatingFacts:
+    schedule_doc = document["schedule"]
+    schedule = RatingScheduleBinding(
+        edition=schedule_doc["edition"],
+        source_url=schedule_doc["sourceUrl"],
+        pdf_sha256=schedule_doc["pdfSha256"],
+        extracted_text_sha256=schedule_doc["extractedTextSha256"],
+        tables_sha256=schedule_doc["tablesSha256"],
+        section4_sha256=schedule_doc["section4Sha256"],
+        section4_meta_sha256=schedule_doc["section4MetaSha256"],
+        counsel_status=schedule_doc["counselStatus"],
+    )
+    impairments = tuple(
+        RatingImpairment(
+            id=row["id"],
+            body_part=row["bodyPart"],
+            impairment_number=row["impairmentNumber"],
+            description=row["description"],
+            wpi=row["wpi"],
+            adjustment_method=row["adjustmentMethod"],
+            fec_rank=row["fecRank"],
+            adjustment_factor=row["adjustmentFactor"],
+            schedule_adjusted=row["scheduleAdjusted"],
+            variant=row["variant"],
+            occupation_adjusted=row["occupationAdjusted"],
+            age_band=row["ageBand"],
+            age_adjusted=row["ageAdjusted"],
+            rating_string=row["ratingString"],
+        )
+        for row in document["impairments"]
+    )
+    return RatingFacts(
+        schedule=schedule,
+        date_of_injury=document["dateOfInjury"],
+        applicant_age=document["applicantAge"],
+        occupation_group=document["occupationGroup"],
+        occupation_title=document["occupationTitle"],
+        impairments=impairments,
+        combination_method=document["combinationMethod"],
+        kite_impairment_ids=document["kiteImpairmentIds"],
+        scheduled_combined_rating=document["scheduledCombinedRating"],
+        combined_rating=document["combinedRating"],
+        final_pd_percent=document["finalPdPercent"],
+        rating_string=document["ratingString"],
     )
 
 
@@ -245,7 +743,9 @@ def test_money_channel_round_trips_four_materially_different_plans(
         assert reconstructed == plan.money_facts
 
     oldest_basis = money_plans[0].money_facts.wages.rate.basis
-    assert oldest_basis.effective_from.isoformat() == "0001-01-01"
+    assert oldest_basis.effective_from.isoformat() == "2013-01-01"
+    assert oldest_basis.td_fraction == Fraction(2, 3)
+    assert oldest_basis.pd_fraction == Fraction(2, 3)
 
 
 @pytest.mark.parametrize("decimal_field", ["listed_gross", "rate_fraction"])
@@ -276,6 +776,481 @@ def test_money_gate_omits_channel_and_reimports_as_none() -> None:
     document = build_case_truth_manifest(plan)
     assert document["channels"] == {}
     assert money_facts_from_truth(document) is None
+    assert rating_facts_from_truth(document) is None
+
+
+def test_r17_r18_money_versions_and_allowlists_are_literal() -> None:
+    assert MONEY_CHANNEL_V1_0_VERSION == "1.0.0"
+    assert MONEY_CHANNEL_V1_1_VERSION == "1.1.0"
+    assert MONEY_CHANNEL_V1_2_VERSION == "1.2.0"
+    assert MONEY_CHANNEL_VERSION == "1.1.0"
+    assert SUPPORTED_MONEY_CHANNEL_VERSIONS == EXPECTED_MONEY_VERSIONS
+    assert MONEY_V1_0_CASE_CHANNEL_KEYS == EXPECTED_V1_0_CASE_KEYS
+    assert MONEY_V1_0_OPTIONAL_CASE_CHANNEL_KEYS == ("settlement",)
+    assert MONEY_V1_1_CASE_CHANNEL_KEYS == EXPECTED_V1_1_CASE_KEYS
+    assert MONEY_V1_1_OPTIONAL_CASE_CHANNEL_KEYS == (
+        "settlement",
+        "penalties",
+    )
+    assert MONEY_V1_2_CASE_CHANNEL_KEYS == EXPECTED_V1_2_CASE_KEYS
+    assert MONEY_V1_2_OPTIONAL_CASE_CHANNEL_KEYS == (
+        "rating",
+        "defense",
+        "settlement",
+        "penalties",
+    )
+    assert MONEY_V1_2_PUBLISHED_GROUP_KEYS == EXPECTED_V1_2_PUBLISHED_KEYS
+    assert MONEY_V1_2_CASELOAD_CHANNEL_KEYS == EXPECTED_V1_2_CASELOAD_KEYS
+    assert MONEY_V1_2_CASELOAD_CASE_KEYS == EXPECTED_V1_2_CASELOAD_CASE_KEYS
+    assert MONEY_V1_2_RATING_KEYS == EXPECTED_RATING_KEYS
+    assert MONEY_V1_2_RATING_IMPAIRMENT_KEYS == EXPECTED_RATING_IMPAIRMENT_KEYS
+    assert MONEY_V1_2_RATING_SCHEDULE_KEYS == EXPECTED_RATING_SCHEDULE_KEYS
+    assert CASE_FACTS_RATING_KEYS == EXPECTED_RATING_KEYS
+    assert CASE_FACTS_MONEY_RATING_KEYS == EXPECTED_RATING_KEYS
+    assert CASE_FACTS_RATING_IMPAIRMENT_KEYS == EXPECTED_RATING_IMPAIRMENT_KEYS
+    assert CASE_FACTS_RATING_SCHEDULE_KEYS == EXPECTED_RATING_SCHEDULE_KEYS
+
+
+def test_r97_independent_literal_1_0_1_1_and_1_2_fixtures_parse_exactly() -> None:
+    literal_1_0 = _literal_money_truth("1.0.0")
+    literal_1_1 = _literal_money_truth("1.1.0")
+    literal_1_2 = _literal_money_truth("1.2.0", rating=LITERAL_RATING_V1_2)
+    literal_1_1_bytes = json.dumps(literal_1_1, indent=2, ensure_ascii=False) + "\n"
+
+    facts_1_0 = money_facts_from_truth(literal_1_0)
+    facts_1_1 = money_facts_from_truth(literal_1_1)
+    facts_1_2 = money_facts_from_truth(literal_1_2)
+    assert facts_1_0 == facts_1_1 == facts_1_2
+    assert rating_facts_from_truth(literal_1_0) is None
+    assert rating_facts_from_truth(literal_1_1) is None
+    assert rating_facts_from_truth(literal_1_2) == _rating_from_literal_projection(
+        LITERAL_RATING_V1_2
+    )
+    assert json.dumps(literal_1_1, indent=2, ensure_ascii=False) + "\n" == (
+        literal_1_1_bytes
+    )
+
+
+def test_r97_literal_1_0_1_1_and_1_2_fixtures_dispatch_exactly(
+    money_plans: tuple[Any, ...], rated_plan: Any
+) -> None:
+    current = build_case_truth_manifest(money_plans[0])
+    current_bytes = json.dumps(current, indent=2, ensure_ascii=False) + "\n"
+    current_channel = current["channels"]["money"]
+    assert current_channel["channelVersion"] == "1.1.0"
+    assert tuple(current_channel) == tuple(
+        key for key in EXPECTED_V1_1_CASE_KEYS if key in current_channel
+    )
+    assert money_facts_from_truth(current) == money_plans[0].money_facts
+    assert rating_facts_from_truth(current) is None
+    assert json.dumps(current, indent=2, ensure_ascii=False) + "\n" == current_bytes
+
+    legacy = copy.deepcopy(current)
+    legacy["channels"]["money"]["channelVersion"] = "1.0.0"
+    legacy_before = copy.deepcopy(legacy)
+    assert tuple(legacy["channels"]["money"]) == tuple(
+        key
+        for key in EXPECTED_V1_0_CASE_KEYS
+        if key in legacy["channels"]["money"]
+    )
+    assert money_facts_from_truth(legacy) == money_plans[0].money_facts
+    assert rating_facts_from_truth(legacy) is None
+    assert legacy == legacy_before
+
+    w2 = build_case_truth_manifest(rated_plan)
+    w2_channel = w2["channels"]["money"]
+    assert w2_channel["channelVersion"] == "1.2.0"
+    assert tuple(w2_channel) == tuple(
+        key for key in EXPECTED_V1_2_CASE_KEYS if key in w2_channel
+    )
+    assert "rating" in w2_channel
+    assert "defense" not in w2_channel
+    assert money_facts_from_truth(w2) == rated_plan.money_facts
+    assert rating_facts_from_truth(w2) == rated_plan.case_facts.rating
+
+
+def test_money_reader_rejects_invented_1_9_0(
+    money_plans: tuple[Any, ...],
+) -> None:
+    """m23-14: exact dispatch rejects an invented same-major version."""
+    document = build_case_truth_manifest(money_plans[0])
+    document["channels"]["money"]["channelVersion"] = "1.9.0"
+    with pytest.raises(TruthManifestError, match=r"1[.]9[.]0"):
+        money_facts_from_truth(document)
+
+
+@pytest.mark.parametrize("version", [None, "1.1", "one.one.zero"])
+def test_money_reader_rejects_missing_or_malformed_version(
+    money_plans: tuple[Any, ...], version: str | None
+) -> None:
+    document = build_case_truth_manifest(money_plans[0])
+    if version is None:
+        del document["channels"]["money"]["channelVersion"]
+    else:
+        document["channels"]["money"]["channelVersion"] = version
+    with pytest.raises(TruthManifestError, match="channelVersion"):
+        money_facts_from_truth(document)
+
+
+def test_money_reader_rejects_rating_under_v1_1(
+    money_plans: tuple[Any, ...], rated_plan: Any
+) -> None:
+    """m23-15: v1.1 cannot silently drop a v1.2 rating group."""
+    current = build_case_truth_manifest(money_plans[0])
+    rating = build_case_truth_manifest(rated_plan)["channels"]["money"][
+        "rating"
+    ]
+    current["channels"]["money"]["rating"] = rating
+    with pytest.raises(TruthManifestError, match="rating"):
+        money_facts_from_truth(current)
+
+
+def test_r19_cross_version_and_missing_required_fields_fail_closed(
+    money_plans: tuple[Any, ...], rated_plan: Any
+) -> None:
+    w1 = build_case_truth_manifest(money_plans[0])
+    with_defense = copy.deepcopy(w1)
+    with_defense["channels"]["money"]["defense"] = None
+    with pytest.raises(TruthManifestError, match="defense"):
+        money_facts_from_truth(with_defense)
+
+    penalties = build_case_truth_manifest(money_plans[-1])
+    penalties["channels"]["money"]["channelVersion"] = "1.0.0"
+    with pytest.raises(TruthManifestError, match="penalties"):
+        money_facts_from_truth(penalties)
+
+    w2 = build_case_truth_manifest(rated_plan)
+    del w2["channels"]["money"]["wage"]
+    with pytest.raises(TruthManifestError, match="wage"):
+        money_facts_from_truth(w2)
+
+
+def test_r96_exact_defense_projection_inverse_and_single_model_round_trip(
+    defense_plan: Any,
+) -> None:
+    assert tuple(DefenseLensFacts.model_fields) == EXPECTED_DEFENSE_FACT_FIELDS
+    assert tuple(DefenseScorerLabels.model_fields) == EXPECTED_DEFENSE_SCORER_LABEL_FIELDS
+    assert tuple(InitialFileReview.model_fields) == EXPECTED_DEFENSE_IFR_FIELDS
+    assert tuple(ReserveEvent.model_fields) == EXPECTED_DEFENSE_RESERVE_EVENT_FIELDS
+    assert tuple(ReserveArtifactBinding.model_fields) == EXPECTED_DEFENSE_BINDING_FIELDS
+    assert tuple(BucketAmounts.model_fields) == (
+        "indemnity",
+        "medical",
+        "expense_alae",
+    )
+
+    assert defense_plan.case_facts is not None
+    assert defense_plan.money_facts is not None
+    defense = defense_plan.money_facts.defense
+    assert defense is not None
+    document = build_case_truth_manifest(defense_plan)
+    channel = document["channels"]["money"]
+    scorer = channel["defense"]
+    public = facts_manifest_block(
+        defense_plan.case_facts,
+        defense_plan.money_facts,
+    )["money"]["defense"]
+
+    assert channel["channelVersion"] == "1.2.0"
+    assert tuple(scorer) == EXPECTED_DEFENSE_KEYS
+    assert tuple(public) == EXPECTED_PUBLIC_DEFENSE_KEYS
+    assert tuple(channel["published"]["defense"]) == EXPECTED_PUBLIC_DEFENSE_KEYS
+    assert public == channel["published"]["defense"] == {
+        key: scorer[key] for key in EXPECTED_PUBLIC_DEFENSE_KEYS
+    }
+    assert tuple(scorer["scorerLabels"]) == EXPECTED_DEFENSE_SCORER_LABEL_KEYS
+    assert scorer["scorerLabels"] == {
+        "stairStepping": False,
+        "reserveAdequacy": "under_reserved",
+    }
+    assert "scorerLabels" not in public
+
+    assert all(
+        tuple(event) == EXPECTED_DEFENSE_EXPOSURE_KEYS
+        for event in scorer["exposureEvents"]
+    )
+    assert all(
+        tuple(event[bound]) == EXPECTED_DEFENSE_BUCKET_KEYS
+        for event in scorer["exposureEvents"]
+        for bound in ("low", "expected", "high")
+    )
+    assert tuple(scorer["paidCosts"][0]) == EXPECTED_DEFENSE_PAID_COST_KEYS
+    initial = scorer["initialFileReview"]
+    assert tuple(initial) == EXPECTED_DEFENSE_IFR_KEYS
+    assert tuple(initial["artifactBinding"]) == EXPECTED_DEFENSE_BINDING_KEYS
+    for snapshot_name in ("recommendation", "bookedSnapshot"):
+        snapshot = initial[snapshot_name]
+        assert tuple(snapshot) == EXPECTED_DEFENSE_SNAPSHOT_KEYS
+        assert all(
+            tuple(snapshot[key]) == EXPECTED_DEFENSE_BUCKET_KEYS
+            for key in EXPECTED_DEFENSE_SNAPSHOT_KEYS
+        )
+    assert len(scorer["reserveEvents"]) == 1
+    reserve_event = scorer["reserveEvents"][0]
+    assert tuple(reserve_event) == EXPECTED_DEFENSE_RESERVE_EVENT_KEYS[:-1]
+    assert "artifactBinding" not in reserve_event
+
+    inverse = defense_facts_from_truth(document)
+    assert inverse == defense
+    assert inverse is not None
+    assert inverse.initial_file_review.exposure is inverse.exposure_events[0]
+    assert inverse.reserve_events[0].exposure is inverse.exposure_events[1]
+    money_inverse = money_facts_from_truth(document)
+    assert money_inverse is not None
+    assert money_inverse.defense == defense
+
+
+@pytest.mark.parametrize("change", ["missing", "unknown", "null-binding"])
+def test_r77_defense_projection_rejects_nested_schema_drift(
+    defense_plan: Any,
+    change: str,
+) -> None:
+    document = build_case_truth_manifest(defense_plan)
+    defense = document["channels"]["money"]["defense"]
+    public = document["channels"]["money"]["published"]["defense"]
+    if change == "missing":
+        del defense["initialFileReview"]["litigationBudget"]
+        del public["initialFileReview"]["litigationBudget"]
+    elif change == "unknown":
+        defense["scorerLabels"]["policy"] = "ordinary"
+    else:
+        defense["initialFileReview"]["artifactBinding"] = None
+        public["initialFileReview"]["artifactBinding"] = None
+    with pytest.raises(TruthManifestError, match=r"defense|DEFENSE_ARTIFACT"):
+        defense_facts_from_truth(document)
+
+
+def test_r96_inverse_rejects_duplicate_ifr_inside_reserve_events(
+    defense_plan: Any,
+) -> None:
+    document = build_case_truth_manifest(defense_plan)
+    scorer = document["channels"]["money"]["defense"]
+    public = document["channels"]["money"]["published"]["defense"]
+    duplicate = copy.deepcopy(scorer["reserveEvents"][0])
+    duplicate.update(
+        {
+            "id": "reserve:initial_file_review",
+            "trigger": "initial_file_review",
+            "eventDate": scorer["initialFileReview"]["reviewDate"],
+            "exposure": copy.deepcopy(scorer["exposureEvents"][0]),
+        }
+    )
+    duplicate.pop("artifactBinding", None)
+    scorer["reserveEvents"].insert(0, duplicate)
+    public["reserveEvents"].insert(0, copy.deepcopy(duplicate))
+    with pytest.raises(
+        TruthManifestError,
+        match="DEFENSE_DUPLICATE_INITIAL_REVIEW_EVENT",
+    ):
+        defense_facts_from_truth(document)
+
+
+R102_DEFENSE_FORBIDDEN_TOKENS = (
+    "adjuster_diligence",
+    "adjuster.diligence",
+    "stair_stepping",
+    "reserve_adequacy",
+    "negligent",
+    "scorerLabels",
+    "apportionedPdDollars",
+    "apportioned_pd_dollars",
+    "bensonSplit",
+    "benson_split",
+    "section4664Offset",
+    "section_4664_offset",
+)
+
+
+def _r102_visible_leaks(payloads: list[tuple[str, str]]) -> dict[str, str]:
+    return {
+        token: location
+        for location, payload in payloads
+        for token in R102_DEFENSE_FORBIDDEN_TOKENS
+        if token in payload
+    }
+
+
+def test_r102_defense_labels_never_enter_analyzer_visible_projection(
+    defense_plan: Any,
+) -> None:
+    """m23-21: scorer quality labels cannot cross the public allowlist."""
+    assert defense_plan.case_facts is not None
+    public = facts_manifest_block(defense_plan.case_facts, defense_plan.money_facts)
+    payloads = [("caseFacts", json.dumps(public, sort_keys=True))]
+    assert not _r102_visible_leaks(payloads)
+
+    for token in R102_DEFENSE_FORBIDDEN_TOKENS:
+        assert _r102_visible_leaks([("planted-copy", token)]) == {
+            token: "planted-copy"
+        }
+
+
+@pytest.mark.parametrize("change", ["missing", "unknown"])
+def test_r51_rating_projection_rejects_missing_or_unknown_keys(
+    rated_plan: Any, change: str
+) -> None:
+    document = build_case_truth_manifest(rated_plan)
+    rating = document["channels"]["money"]["rating"]
+    published = document["channels"]["money"]["published"]["rating"]
+    if change == "missing":
+        del rating["occupationTitle"]
+        del published["occupationTitle"]
+    else:
+        rating["artifactRating"] = 9
+        published["artifactRating"] = 9
+    with pytest.raises(TruthManifestError, match="rating"):
+        rating_facts_from_truth(document)
+
+
+def test_r51_both_adjustment_keys_are_required_and_mutually_exclusive() -> None:
+    post2013 = build_case_truth_manifest(_rated_plan("truth-dfec", doi="2013-06-14"))
+    post2013_row = post2013["channels"]["money"]["rating"]["impairments"][0]
+    assert "fecRank" in post2013_row and post2013_row["fecRank"] is None
+    assert post2013_row["adjustmentFactor"] == "1.4"
+
+    fec = build_case_truth_manifest(_rated_plan("truth-fec", doi="2012-06-14"))
+    fec_row = fec["channels"]["money"]["rating"]["impairments"][0]
+    assert isinstance(fec_row["fecRank"], int)
+    assert "adjustmentFactor" in fec_row and fec_row["adjustmentFactor"] is None
+    assert rating_facts_from_truth(fec) == _rated_plan(
+        "truth-fec", doi="2012-06-14"
+    ).case_facts.rating
+
+
+def test_r46_writer_passes_the_single_rating_reference_to_money_channel(
+    rated_plan: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """m23-27: no copied or independently computed rating DTO enters truth."""
+    assert rated_plan.case_facts is not None
+    expected = rated_plan.case_facts.rating
+    assert expected is not None
+    captured: list[RatingFacts | None] = []
+    original = truth_manifest_module._money_channel
+
+    def capture_reference(
+        facts: MoneyFacts, *, rating: RatingFacts | None
+    ) -> dict[str, Any]:
+        captured.append(rating)
+        return original(facts, rating=rating)
+
+    monkeypatch.setattr(
+        truth_manifest_module,
+        "_money_channel",
+        capture_reference,
+    )
+    document = truth_manifest_module.build_case_truth_manifest(rated_plan)
+    assert captured == [expected]
+    assert captured[0] is expected
+    assert rating_facts_from_truth(document) == expected
+
+
+def test_mixed_money_caseload_selects_1_2_but_keeps_narrow_member_rows(
+    tmp_path: Path, money_plans: tuple[Any, ...], rated_plan: Any
+) -> None:
+    """m23-45: one rated case upgrades only the aggregate channel version."""
+    truth_dir = tmp_path / TRUTH_DIR
+    w1 = money_plans[0]
+    plans = (w1, rated_plan)
+    results = []
+    for plan in plans:
+        path = write_case_truth_manifest(plan, truth_dir)
+        results.append(
+            SimpleNamespace(
+                case_id=plan.seed.case_id,
+                plan=plan,
+                truth_path=path,
+            )
+        )
+    member_versions = tuple(
+        read_truth_manifest(result.truth_path)["channels"]["money"][
+            "channelVersion"
+        ]
+        for result in results
+    )
+    assert member_versions == ("1.1.0", "1.2.0")
+
+    mixed = build_caseload_truth_manifest("mixed-money", results)
+    channel = mixed["channels"]["money"]
+    assert channel["channelVersion"] == "1.2.0"
+    assert tuple(channel) == EXPECTED_V1_2_CASELOAD_KEYS
+    assert all(
+        tuple(row) == tuple(
+            key for key in EXPECTED_V1_2_CASELOAD_CASE_KEYS if key in row
+        )
+        for row in channel["cases"]
+    )
+    assert all("rating" not in row and "defense" not in row for row in channel["cases"])
+
+    all_w1 = build_caseload_truth_manifest("all-w1", results[:1])
+    assert all_w1["channels"]["money"] == {
+        "channelVersion": "1.1.0",
+        "caseCount": 1,
+        "moneyCaseCount": 1,
+        "cases": [
+            {
+                "caseId": "truth-regular",
+                "truthFile": "truth/truth-regular.truth.json",
+                "seedHash": w1.seed.seed_hash(),
+                "averageWeeklyWage": "1001.15",
+                "tdWeeklyRate": "667.43",
+                "tdBound": "unbounded",
+                "method": "actual_weekly_earnings",
+                "settlementGrossAmount": "88000.00",
+            }
+        ],
+    }
+
+
+@requires_substrate
+def test_r87_seed_to_paper_public_inverse_and_scorer_round_trip(
+    tmp_path: Path, rated_plan: Any
+) -> None:
+    assert rated_plan.case_facts is not None
+    rating = rated_plan.case_facts.rating
+    assert rating is not None
+    assert "rating" not in MoneyFacts.model_fields
+
+    public = facts_manifest_block(rated_plan.case_facts, rated_plan.money_facts)
+    truth = build_case_truth_manifest(rated_plan)
+    scorer = truth["channels"]["money"]["rating"]
+    assert tuple(public["rating"]) == EXPECTED_RATING_KEYS
+    assert tuple(public["money"]["rating"]) == EXPECTED_RATING_KEYS
+    assert tuple(scorer) == EXPECTED_RATING_KEYS
+    assert tuple(scorer["schedule"]) == EXPECTED_RATING_SCHEDULE_KEYS
+    assert all(
+        tuple(row) == EXPECTED_RATING_IMPAIRMENT_KEYS
+        for row in scorer["impairments"]
+    )
+    assert public["rating"] == public["money"]["rating"] == scorer
+    assert truth["channels"]["money"]["published"]["rating"] == scorer
+
+    analyzer_extraction = _rating_from_literal_projection(public["rating"])
+    inverse = rating_facts_from_truth(truth)
+    assert analyzer_extraction == rating
+    assert inverse == rating
+
+    for index, subtype in enumerate(
+        (
+            "IMPAIRMENT_RATING_WORKSHEET",
+            "PD_RATING_CALCULATION_WORKSHEET",
+            "PD_RATING_CONVERSION",
+        )
+    ):
+        result = render_document(
+            seed=rated_plan.seed,
+            cast=rated_plan.cast,
+            subtype=subtype,
+            doc_date=rated_plan.timeline.horizon,
+            doc_format="pdf",
+            index=600 + index,
+            out_path=tmp_path / f"{subtype}.pdf",
+            case_facts=rated_plan.case_facts,
+            money_facts=rated_plan.money_facts,
+        )
+        text = extract_text(result.path, result.doc_format)
+        for row in rating.impairments:
+            assert row.rating_string in text
+        assert f"{rating.final_pd_percent}%" in text
 
 
 def test_envelope_is_complete_timeless_and_byte_deterministic(
@@ -307,7 +1282,7 @@ def test_published_block_is_the_existing_public_contract(money_plans: tuple[Any,
     assert channel["published"] == money_manifest_block(plan.money_facts)
 
 
-def test_unknown_channel_is_ignored_and_money_major_is_guarded(
+def test_unknown_channel_is_ignored_and_money_exact_version_is_guarded(
     money_plans: tuple[Any, ...],
 ) -> None:
     plan = money_plans[0]
@@ -315,16 +1290,24 @@ def test_unknown_channel_is_ignored_and_money_major_is_guarded(
     document["channels"]["defects"] = {"channelVersion": "19.0.0"}
     assert money_facts_from_truth(document) == plan.money_facts
 
-    compatible = copy.deepcopy(document)
-    compatible["channels"]["money"]["channelVersion"] = "1.9.0"
-    assert money_facts_from_truth(compatible) == plan.money_facts
-
     incompatible = copy.deepcopy(document)
     incompatible["channels"]["money"]["channelVersion"] = "2.4.0"
-    with pytest.raises(TruthManifestError) as raised:
+    # Caught broadly on purpose: with the version guard disabled, the exact
+    # per-version dispatch crashes (KeyError) before any refusal. The claim
+    # is a clean TruthManifestError refusal, so any other outcome must fail
+    # this test on an assertion, not error out of it (m16-1's kill class).
+    refusal: TruthManifestError | None = None
+    try:
         money_facts_from_truth(incompatible)
-    assert "2.4.0" in str(raised.value)
-    assert "1.1.0" in str(raised.value)
+    except TruthManifestError as error:
+        refusal = error
+    except Exception as error:
+        raise AssertionError(
+            f"expected TruthManifestError, got {type(error).__name__}: {error}"
+        ) from error
+    assert refusal is not None, "an incompatible money major was accepted"
+    assert "2.4.0" in str(refusal)
+    assert "1.1.0" in str(refusal)
 
     with pytest.raises(TruthManifestError, match=r"channels[.]money must be an object"):
         money_facts_from_truth({"schemaVersion": "1.0.0", "channels": {"money": []}})
@@ -349,7 +1332,8 @@ def test_envelope_schema_version_is_required_and_well_formed(
 
 
 def test_envelope_schema_version_accepts_minor_and_rejects_other_major(
-    tmp_path: Path, money_plans: tuple[Any, ...],
+    tmp_path: Path,
+    money_plans: tuple[Any, ...],
 ) -> None:
     compatible = build_case_truth_manifest(money_plans[0])
     compatible["schemaVersion"] = "1.9.0"
@@ -365,10 +1349,10 @@ def test_envelope_schema_version_accepts_minor_and_rejects_other_major(
     assert "1.0.0" in str(raised.value)
 
 
-def test_additive_1_1_money_channel_keeps_same_major_acceptance(
+def test_exact_1_0_money_channel_rejects_1_1_penalty_fields(
     money_plans: tuple[Any, ...],
 ) -> None:
-    """A 1.0 contract consumer accepts the additive 1.1 penalty channel by major."""
+    """The historical 1.0 contract never silently drops 1.1 penalties."""
     plan = money_plans[-1]
     document = build_case_truth_manifest(plan)
     channel = document["channels"]["money"]
@@ -378,7 +1362,8 @@ def test_additive_1_1_money_channel_keeps_same_major_acceptance(
 
     prior_minor = copy.deepcopy(document)
     prior_minor["channels"]["money"]["channelVersion"] = "1.0.0"
-    assert money_facts_from_truth(prior_minor) == plan.money_facts
+    with pytest.raises(TruthManifestError, match="penalties"):
+        money_facts_from_truth(prior_minor)
 
 
 def test_rollup_indexes_money_and_non_money_cases_and_resolves_paths(
@@ -466,8 +1451,7 @@ def test_output_validator_recomputes_truth_penalty_amount(
     problems = validate_output_tree(out_dir).problems
 
     assert any(
-        "assessments[1].amount is" in problem and "product" in problem
-        for problem in problems
+        "assessments[1].amount is" in problem and "product" in problem for problem in problems
     )
 
 
@@ -497,8 +1481,7 @@ def test_output_validator_rejects_assessment_for_unpaid_schedule_entry(
     schedule_entry = next(
         item
         for item in penalties["schedule"]
-        if (item["source"], item["ordinal"])
-        == (assessment["source"], assessment["ordinal"])
+        if (item["source"], item["ordinal"]) == (assessment["source"], assessment["ordinal"])
     )
     schedule_entry["unpaid"] = True
     _rewrite_json(path, truth)
@@ -568,9 +1551,9 @@ def test_output_validator_recomputes_the_published_penalty_block(
 
     problems = validate_output_tree(out_dir).problems
 
-    assert any(
-        "published" in problem and "totalIncrease" in problem for problem in problems
-    ), problems
+    assert any("published" in problem and "totalIncrease" in problem for problem in problems), (
+        problems
+    )
 
 
 def test_penalty_validation_is_exact_under_a_reduced_ambient_precision(
@@ -678,9 +1661,7 @@ def test_scorer_vocabulary_covers_every_emitted_truth_key(tmp_path: Path) -> Non
         structural |= set(record) & {"truthFile"}
 
     unclassified = (
-        structural
-        - SCORER_ONLY_ENVELOPE_KEY_NAMES
-        - ENVELOPE_KEYS_THAT_ARE_NOT_SENTINELS.keys()
+        structural - SCORER_ONLY_ENVELOPE_KEY_NAMES - ENVELOPE_KEYS_THAT_ARE_NOT_SENTINELS.keys()
     )
     assert not unclassified, (
         f"truth envelopes emit {sorted(unclassified)}, which neither "
@@ -869,6 +1850,54 @@ def test_case_tree_contains_no_scorer_only_vocabulary(tmp_path: Path) -> None:
         or (term == "truth" and term.encode() in path.read_bytes().lower())
     }
     assert not leaks
+
+
+@pytest.mark.slow
+@requires_substrate
+def test_r102_generated_defense_tree_has_no_quality_or_m5_leakage(
+    tmp_path: Path,
+) -> None:
+    plan = _defense_plan("defense-leakage-probe")
+    result = generate_case(plan.seed, tmp_path)
+    payloads: list[tuple[str, str]] = []
+    rendered_paths = {render.path for render in result.renders}
+    for path in result.directory.rglob("*"):
+        if not path.is_file() or path in rendered_paths or TRUTH_DIR in path.parts:
+            continue
+        relative = str(path.relative_to(result.directory))
+        payloads.append((f"filename:{relative}", relative))
+        payloads.append(
+            (
+                relative,
+                path.read_bytes().decode("utf-8", errors="replace"),
+            )
+        )
+    for render in result.renders:
+        relative = str(render.path.relative_to(result.directory))
+        payloads.append((f"filename:{relative}", relative))
+        payloads.append(
+            (
+                relative,
+                extract_text(render.path, render.doc_format),
+            )
+        )
+    assert not _r102_visible_leaks(payloads)
+
+    planted = tmp_path / "planted-visible-copy"
+    shutil.copytree(result.directory, planted)
+    planted_file = planted / "planted-leak.txt"
+    planted_file.write_text("\n".join(R102_DEFENSE_FORBIDDEN_TOKENS), encoding="utf-8")
+    planted_payloads = [
+        (
+            str(path.relative_to(planted)),
+            path.read_bytes().decode("utf-8", errors="replace"),
+        )
+        for path in planted.rglob("*")
+        if path.is_file() and path.suffix in {".json", ".yaml", ".txt"}
+    ]
+    assert set(_r102_visible_leaks(planted_payloads)) == set(
+        R102_DEFENSE_FORBIDDEN_TOKENS
+    )
 
 
 @pytest.mark.slow
@@ -1209,8 +2238,7 @@ def _assert_channel_collections_match_ajc61_projection(
         _ajc61_projection(c, AJC61_CONTENTION_FIELDS) for c in ledger.contentions
     ]
     assert channel["medicalOpinions"] == [
-        _ajc61_projection(o, AJC61_MEDICAL_OPINION_FIELDS)
-        for o in ledger.medical_opinions
+        _ajc61_projection(o, AJC61_MEDICAL_OPINION_FIELDS) for o in ledger.medical_opinions
     ]
     assert channel["apportionmentAssertions"] == [
         _ajc61_projection(a, AJC61_APPORTIONMENT_ASSERTION_FIELDS)
@@ -1222,17 +2250,20 @@ def _v1_graded_ledger(plan: Any) -> Any:
     ledger = plan.medical_assertions
     assert ledger is not None
     context = assertion_context(plan.seed, plan.timeline)
-    projection = project_medical_history(
-        plan.medical_history, context.current_body_parts
-    )
+    projection = project_medical_history(plan.medical_history, context.current_body_parts)
     return grade_ledger(context, projection, ledger, quality_contract="1.0.0")
 
 
 def _m4_response_plan(case_id: str = "assertions-m4-response") -> Any:
-    """The frozen §2 witness-2 chain reused by the 2.1 dispatch oracle."""
+    """The frozen §2 response chain plus a money channel for R98 isolation."""
     from test_medical_assertions import _assertion, _ledger, _opinion
 
-    plan = _m3_plan(case_id)
+    body = _m3_seed_body(case_id)
+    body["scenario"]["wages"] = {
+        "pattern": "regular",
+        "base_weekly_wage": 1000.0,
+    }
+    plan = build_case_plan(parse_case_seed(body), case_number=1)
     base = _opinion(
         "opn-01",
         report_date=dt.date(2023, 2, 1),
@@ -1248,17 +2279,11 @@ def _m4_response_plan(case_id: str = "assertions-m4-response") -> Any:
         examination_performed=False,
         revision_rationale="the additional records confirm the same allocation",
     )
-    base_row = _assertion(
-        "app-01", opinion_id="opn-01", condition_ids=("cond-00",)
-    )
-    response_row = _assertion(
-        "app-02", opinion_id="opn-02", condition_ids=("cond-00",)
-    )
+    base_row = _assertion("app-01", opinion_id="opn-01", condition_ids=("cond-00",))
+    response_row = _assertion("app-02", opinion_id="opn-02", condition_ids=("cond-00",))
     return replace(
         plan,
-        medical_assertions=_ledger(
-            opinions=(base, response), assertions=(base_row, response_row)
-        ),
+        medical_assertions=_ledger(opinions=(base, response), assertions=(base_row, response_row)),
     )
 
 
@@ -1540,9 +2565,7 @@ def _m3_complete_scenario() -> dict[str, Any]:
                     "description": "revised lumbar split after the new records",
                     "disability_causation_stated": True,
                     "reasonable_medical_probability": True,
-                    "causal_rationale": (
-                        "the new imaging shows greater degenerative contribution"
-                    ),
+                    "causal_rationale": ("the new imaging shows greater degenerative contribution"),
                     "percentage_rationale": "the revised share follows the new imaging",
                     "revised_from_percent": 20,
                     "revision_rationale": (
@@ -1740,12 +2763,7 @@ def _exercise_m3_internal_state(plan: Any) -> None:
             author_role="physician",
         ),
         contentions=tuple(
-            StoryContention(
-                **{
-                    name: getattr(c, name)
-                    for name in StoryContention.model_fields
-                }
-            )
+            StoryContention(**{name: getattr(c, name) for name in StoryContention.model_fields})
             for c in ledger.contentions
         ),
         medical_opinion=StoryMedicalOpinion(
@@ -1754,9 +2772,7 @@ def _exercise_m3_internal_state(plan: Any) -> None:
     )
     story_plan = MedicalStoryPlan(by_document_index={7: story})
     assert story_plan.by_document_index[7].medical_opinion is not None
-    assert story_plan.by_document_index[7].medical_opinion.event_kind == (
-        "supplemental_report"
-    )
+    assert story_plan.by_document_index[7].medical_opinion.event_kind == ("supplemental_report")
     for record in (
         *story.contentions,
         story.medical_opinion,
@@ -1807,11 +2823,9 @@ def test_assertions_channel_1_round_trips_the_complete_ajc61_projection() -> Non
 
 
 def test_v1_and_v2_rederive_response_quality_under_their_exact_version_contracts() -> None:
-    """A2-R7: one semantic response chain is thin in v1, supported in v2."""
+    """R98: default-v1/v2-opt-in differ only in assertions on this plan."""
     plan = _m4_response_plan()
-    document_snapshot = tuple(
-        (item.index, item.subtype, item.doc_date) for item in plan.documents
-    )
+    document_snapshot = tuple((item.index, item.subtype, item.doc_date) for item in plan.documents)
     default_payload = build_case_truth_manifest(plan)
     v1_payload = build_case_truth_manifest(plan, truth_manifest_version=1)
     v2_payload = build_case_truth_manifest(plan, truth_manifest_version=2)
@@ -1821,6 +2835,16 @@ def test_v1_and_v2_rederive_response_quality_under_their_exact_version_contracts
     )
     v1_channel = v1_payload["channels"]["assertions"]
     v2_channel = v2_payload["channels"]["assertions"]
+    assert default_payload["channels"]["assertions"]["channelVersion"] == "1.0.0"
+    assert v1_channel["channelVersion"] == "1.0.0"
+    assert v2_channel["channelVersion"] == "2.0.0"
+    assert "money" in v1_payload["channels"]
+    assert json.dumps(v1_payload["channels"]["money"], separators=(",", ":")) == (
+        json.dumps(v2_payload["channels"]["money"], separators=(",", ":"))
+    )
+    assert json.dumps(v1_channel, separators=(",", ":")) != json.dumps(
+        v2_channel, separators=(",", ":")
+    )
     assert [row["quality"] for row in v1_channel["apportionmentAssertions"]] == [
         "supported",
         "thin",
@@ -1843,22 +2867,21 @@ def test_v1_and_v2_rederive_response_quality_under_their_exact_version_contracts
     assert parsed_v1 is not None and parsed_v2 is not None
     assert parsed_v1[2].apportionment_assertions[1].quality == "thin"
     assert parsed_v2[2].apportionment_assertions[1].quality == "supported"
-    assert tuple(
-        (item.index, item.subtype, item.doc_date) for item in plan.documents
-    ) == document_snapshot
+    assert (
+        tuple((item.index, item.subtype, item.doc_date) for item in plan.documents)
+        == document_snapshot
+    )
     assert v2_channel["contentionDocuments"] == []
 
     compatible_minor = copy.deepcopy(v2_payload)
     compatible_minor["channels"]["assertions"]["channelVersion"] = "2.1.0"
-    compatible_minor["channels"]["assertions"]["ledgerDigest"] = (
-        assertion_ledger_digest(compatible_minor["channels"]["assertions"])
+    compatible_minor["channels"]["assertions"]["ledgerDigest"] = assertion_ledger_digest(
+        compatible_minor["channels"]["assertions"]
     )
     try:
         parsed_minor = medical_assertions_from_truth(compatible_minor)
     except ValueError as error:
-        raise AssertionError(
-            f"compatible assertions minor did not normalize: {error}"
-        ) from error
+        raise AssertionError(f"compatible assertions minor did not normalize: {error}") from error
     assert parsed_minor is not None
     assert parsed_minor[2] == parsed_v2[2]
 
@@ -1876,8 +2899,7 @@ def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> N
     assert tm.ASSERTIONS_V1_CASE_CHANNEL_KEYS == AJC61_CASE_CHANNEL_KEYS
     assert tm.ASSERTIONS_V1_VALIDATION_CONTEXT_KEYS == AJC61_VALIDATION_CONTEXT_KEYS
     assert (
-        tm.ASSERTIONS_V1_OPTIONAL_VALIDATION_CONTEXT_KEYS
-        == AJC61_OPTIONAL_VALIDATION_CONTEXT_KEYS
+        tm.ASSERTIONS_V1_OPTIONAL_VALIDATION_CONTEXT_KEYS == AJC61_OPTIONAL_VALIDATION_CONTEXT_KEYS
     )
     assert tm.ASSERTIONS_V1_MEDICAL_HISTORY_KEYS == AJC61_MEDICAL_HISTORY_KEYS
     assert tm.ASSERTIONS_V1_CONDITION_FIELDS == AJC61_CONDITION_FIELDS
@@ -1885,10 +2907,7 @@ def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> N
     assert tm.ASSERTIONS_V1_PRIOR_AWARD_FIELDS == AJC61_PRIOR_AWARD_FIELDS
     assert tm.ASSERTIONS_V1_CONTENTION_FIELDS == AJC61_CONTENTION_FIELDS
     assert tm.ASSERTIONS_V1_MEDICAL_OPINION_FIELDS == AJC61_MEDICAL_OPINION_FIELDS
-    assert (
-        tm.ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS
-        == AJC61_APPORTIONMENT_ASSERTION_FIELDS
-    )
+    assert tm.ASSERTIONS_V1_APPORTIONMENT_ASSERTION_FIELDS == AJC61_APPORTIONMENT_ASSERTION_FIELDS
     assert tm.ASSERTIONS_V1_CASELOAD_CHANNEL_KEYS == AJC61_CASELOAD_CHANNEL_KEYS
     assert tm.ASSERTIONS_V1_CASELOAD_CASE_KEYS == AJC61_CASELOAD_CASE_KEYS
 
@@ -1911,9 +2930,7 @@ def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> N
     for record in channel["medicalHistory"]["priorClaims"]:
         assert set(record) <= {_camel_case(f) for f in AJC61_PRIOR_CLAIM_FIELDS}
         if "award" in record:
-            assert set(record["award"]) <= {
-                _camel_case(f) for f in AJC61_PRIOR_AWARD_FIELDS
-            }
+            assert set(record["award"]) <= {_camel_case(f) for f in AJC61_PRIOR_AWARD_FIELDS}
 
     for emitted_items, source_items, fields in (
         (channel["contentions"], v1_ledger.contentions, AJC61_CONTENTION_FIELDS),
@@ -1933,13 +2950,9 @@ def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> N
             assert emitted == _ajc61_projection(source, fields)
             assert set(emitted) <= allowed
             outside_allowlist = {
-                _camel_case(name)
-                for name in type(source).model_fields
-                if name not in fields
+                _camel_case(name) for name in type(source).model_fields if name not in fields
             }
-            assert not (set(emitted) & outside_allowlist), sorted(
-                set(emitted) & outside_allowlist
-            )
+            assert not (set(emitted) & outside_allowlist), sorted(set(emitted) & outside_allowlist)
 
     channel_text = json.dumps(channel)
     for name in M3_FORBIDDEN_CHANNEL_FIELDS:
@@ -1952,9 +2965,7 @@ def test_assertions_channel_1_serializes_only_the_frozen_ajc61_projection() -> N
         plan=plan,
         truth_path=truth_dir / "unused.truth.json",
     )
-    rollup = json.loads(
-        json.dumps(build_caseload_truth_manifest("a1-anti-expansion", [result]))
-    )
+    rollup = json.loads(json.dumps(build_caseload_truth_manifest("a1-anti-expansion", [result])))
     caseload_channel = rollup["channels"]["assertions"]
     assert tuple(caseload_channel) == AJC61_CASELOAD_CHANNEL_KEYS
     for entry in caseload_channel["cases"]:
@@ -1977,12 +2988,26 @@ def test_assertion_bearing_case_keeps_envelope_1_and_uses_assertions_channel_1()
 
 
 def test_assertion_absent_case_remains_byte_identical_envelope_1() -> None:
-    """No assertions block, no assertions channel, envelope unchanged — the
-    byte-identity half is carried by the golden gate over all four corpora."""
+    """R98 Form C: absent v1/v2 agree; a response-chain neighbor differs."""
     plan = _plan("assertions-absent", scenario={"medical_history": {}})
-    truth = build_case_truth_manifest(plan)
-    assert truth["schemaVersion"] == "1.0.0"
-    assert "assertions" not in truth["channels"]
+    default_truth = build_case_truth_manifest(plan)
+    v1_truth = build_case_truth_manifest(plan, truth_manifest_version=1)
+    v2_truth = build_case_truth_manifest(plan, truth_manifest_version=2)
+    assert default_truth["schemaVersion"] == "1.0.0"
+    assert "assertions" not in default_truth["channels"]
+    assert json.dumps(default_truth, separators=(",", ":")) == json.dumps(
+        v1_truth, separators=(",", ":")
+    )
+    assert json.dumps(v1_truth, separators=(",", ":")) == json.dumps(
+        v2_truth, separators=(",", ":")
+    )
+
+    positive = _m4_response_plan("assertions-present-neighbor")
+    positive_v1 = build_case_truth_manifest(positive, truth_manifest_version=1)
+    positive_v2 = build_case_truth_manifest(positive, truth_manifest_version=2)
+    assert positive_v1["channels"]["assertions"]["channelVersion"] == "1.0.0"
+    assert positive_v2["channels"]["assertions"]["channelVersion"] == "2.0.0"
+    assert positive_v1["channels"]["assertions"] != positive_v2["channels"]["assertions"]
 
 
 def test_read_truth_manifest_accepts_every_writer_emitted_shape(tmp_path: Path) -> None:
@@ -2012,8 +3037,7 @@ def test_legacy_v1_without_assertions_remains_valid() -> None:
         "kind": "case",
         "audience": "analyzer-scorer",
         "leakageRule": (
-            "Scorer-only ground truth; never use this artifact as an input to "
-            "document analysis."
+            "Scorer-only ground truth; never use this artifact as an input to document analysis."
         ),
         "caseId": "legacy",
         "provenance": {"generator": "wc-synthetic-caseload-engine@0.0.0"},
@@ -2048,9 +3072,7 @@ def test_mixed_caseload_keeps_every_envelope_at_1_and_indexes_assertions(
     from wc_caseload_engine.truth_manifest import build_caseload_truth_manifest
 
     bearing = _fake_result("bearing", _assertion_plan("bearing"), tmp_path)
-    absent = _fake_result(
-        "absent", _plan("absent", scenario={"medical_history": {}}), tmp_path
-    )
+    absent = _fake_result("absent", _plan("absent", scenario={"medical_history": {}}), tmp_path)
     rollup = build_caseload_truth_manifest("mixed", [bearing, absent])
     assert rollup["schemaVersion"] == "1.0.0"
     channel = rollup["channels"]["assertions"]
@@ -2077,10 +3099,7 @@ def test_assertion_rollup_counts_match_case_channels(tmp_path: Path) -> None:
         "apportionmentAssertions": len(ledger.apportionment_assertions),
     }
     assert channel["qualityCounts"] == v1_ledger.quality_counts()
-    assert (
-        sum(channel["apportionmentStateCounts"].values())
-        == len(ledger.medical_opinions)
-    )
+    assert sum(channel["apportionmentStateCounts"].values()) == len(ledger.medical_opinions)
     assert set(channel["determinationKindCounts"]) == {
         "allocated",
         "noNonindustrialShare",
@@ -2120,9 +3139,7 @@ def test_output_validator_rejects_tampered_assertion_quality_after_digest_recomp
     payload = _assertion_truth()
     channel = payload["channels"]["assertions"]
     original = channel["contentions"][0]["quality"]
-    channel["contentions"][0]["quality"] = (
-        "supported" if original != "supported" else "thin"
-    )
+    channel["contentions"][0]["quality"] = "supported" if original != "supported" else "thin"
     channel["ledgerDigest"] = assertion_ledger_digest(channel)
     with pytest.raises(TruthManifestError, match="does not match the rederived grade"):
         medical_assertions_from_truth(payload)
@@ -2133,9 +3150,7 @@ def test_output_validator_rejects_tampered_assertion_reference_after_digest_reco
     channel = payload["channels"]["assertions"]
     channel["contentions"][0]["targetConditionId"] = "cond-77"
     channel["ledgerDigest"] = assertion_ledger_digest(channel)
-    with pytest.raises(
-        TruthManifestError, match="references unknown condition 'cond-77'"
-    ):
+    with pytest.raises(TruthManifestError, match="references unknown condition 'cond-77'"):
         medical_assertions_from_truth(payload)
 
 
@@ -2191,9 +3206,7 @@ def test_truth_projection_round_trips_every_evidence_and_quality_input() -> None
 
     plan = _assertion_plan()
     context = assertion_context(plan.seed, plan.timeline)
-    plan_projection = project_medical_history(
-        plan.medical_history, context.current_body_parts
-    )
+    plan_projection = project_medical_history(plan.medical_history, context.current_body_parts)
     parsed = medical_assertions_from_truth(_assertion_truth())
     assert parsed is not None
     truth_context, truth_projection, _ledger = parsed
@@ -2206,19 +3219,12 @@ def test_plan_and_truth_paths_use_one_assertion_validation_context_and_rule_impl
     import wc_caseload_engine.planner as planner_module
     import wc_caseload_engine.truth_manifest as truth_module
 
+    assert truth_module.validate_medical_assertions is assertion_module.validate_medical_assertions
     assert (
-        truth_module.validate_medical_assertions
-        is assertion_module.validate_medical_assertions
-    )
-    assert (
-        planner_module.validate_medical_assertions
-        is assertion_module.validate_medical_assertions
+        planner_module.validate_medical_assertions is assertion_module.validate_medical_assertions
     )
     assert truth_module.grade_ledger is assertion_module.grade_ledger
-    assert (
-        truth_module.AssertionValidationContext
-        is assertion_module.AssertionValidationContext
-    )
+    assert truth_module.AssertionValidationContext is assertion_module.AssertionValidationContext
 
 
 def test_validate_out_assertions_path_requires_no_substrate_checkout_or_import_call(

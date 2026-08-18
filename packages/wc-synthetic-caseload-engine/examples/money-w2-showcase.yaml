@@ -1,0 +1,335 @@
+# Money W2 showcase — official ratings, explicit Kite elections, and
+# three-bucket defense reserve behavior in one deterministic CI corpus.
+#
+# Every rating and ultimate-exposure operand below is authored.  Adjuster
+# diligence is deliberately absent from every case: the existing
+# ``facts:adjuster`` stream selects the policy behavior, and the corpus proves
+# that selection only from booked snapshots and scorer-only outcomes.
+#
+# @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
+
+caseload_id: money-w2-showcase
+
+defaults:
+  documents:
+    format_mix: {pdf: 1.0}
+    global_cap: 48
+  output:
+    filename_style: neutral
+    formats: [pdf]
+
+cases:
+  # R38's literal 2005-2012 worked example.
+  - case_id: w2-rating-anchor
+    rng_seed: 62001
+    profile:
+      applicant: {age: 44, occupation: Warehouse worker}
+    injury:
+      type: specific
+      date_of_injury: 2012-06-15
+      body_parts: [{part: cervical_spine, icd10: M54.2}]
+    lifecycle: {target_stage: medical_legal, eval_type: qme}
+    scenario:
+      wages: {}
+      rating:
+        schedule: pdrs_2005
+        occupation_group: "470"
+        impairments:
+          - {id: cervical, body_part: cervical_spine, impairment_number: 15.01.02.02, wpi: 8}
+        combination_method: single
+
+  # The post-2013 branch applies flat 1.4 and still runs occupation and age.
+  - case_id: w2-rating-dfec
+    rng_seed: 62002
+    profile:
+      applicant: {age: 43, occupation: Warehouse worker}
+    injury:
+      type: specific
+      date_of_injury: 2013-01-01
+      body_parts: [{part: cervical_spine, icd10: M54.2}]
+    lifecycle: {target_stage: medical_legal, eval_type: qme}
+    scenario:
+      wages: {}
+      rating:
+        schedule: pdrs_2005
+        occupation_group: "470"
+        impairments:
+          - {id: cervical, body_part: cervical_spine, impairment_number: 15.01.02.02, wpi: 8}
+        combination_method: single
+
+  # The Kite hook is only prose here; omission of kite_addition preserves CVC.
+  - case_id: w2-rating-paired
+    rng_seed: 62003
+    profile:
+      applicant: {age: 44, occupation: Warehouse worker}
+    injury:
+      type: specific
+      date_of_injury: 2012-06-15
+      body_parts: [{part: shoulder}, {part: knee}]
+    lifecycle:
+      target_stage: medical_legal
+      eval_type: qme
+      doctrine_hooks: [kite]
+    scenario:
+      wages: {}
+      rating:
+        schedule: pdrs_2005
+        occupation_group: "470"
+        impairments:
+          - {id: shoulder, body_part: shoulder, impairment_number: 16.02.01.00, wpi: 8}
+          - {id: knee, body_part: knee, impairment_number: 17.05.04.00, wpi: 12}
+        combination_method: cvc
+
+  # The otherwise identical two-row shape explicitly elects its complete pair.
+  - case_id: w2-rating-election
+    rng_seed: 62004
+    profile:
+      applicant: {age: 44, occupation: Warehouse worker}
+    injury:
+      type: specific
+      date_of_injury: 2012-06-15
+      body_parts: [{part: shoulder}, {part: knee}]
+    lifecycle:
+      target_stage: medical_legal
+      eval_type: qme
+      doctrine_hooks: [kite]
+    scenario:
+      wages: {}
+      rating:
+        schedule: pdrs_2005
+        occupation_group: "470"
+        impairments:
+          - {id: shoulder, body_part: shoulder, impairment_number: 16.02.01.00, wpi: 8}
+          - {id: knee, body_part: knee, impairment_number: 17.05.04.00, wpi: 12}
+        combination_method: cvc
+        kite_addition: {impairment_ids: [knee, shoulder]}
+
+  # Each row reaches a high enough rating that addition must cap at 100.
+  - case_id: w2-rating-ceiling
+    rng_seed: 62005
+    profile:
+      applicant: {age: 44, occupation: Warehouse worker}
+    injury:
+      type: specific
+      date_of_injury: 2012-06-15
+      body_parts: [{part: shoulder}, {part: knee}]
+    lifecycle: {target_stage: medical_legal, eval_type: qme}
+    scenario:
+      wages: {}
+      rating:
+        schedule: pdrs_2005
+        occupation_group: "470"
+        impairments:
+          - {id: shoulder, body_part: shoulder, impairment_number: 16.02.01.00, wpi: 40}
+          - {id: knee, body_part: knee, impairment_number: 17.05.04.00, wpi: 40}
+        combination_method: cvc
+        kite_addition: {impairment_ids: [shoulder, knee]}
+
+  # Derived attentive handling: a three-bucket IFR books the full recommendation.
+  - case_id: w2-file-review
+    rng_seed: 61001
+    perspective: defense
+    injury:
+      type: specific
+      date_of_injury: 2022-01-10
+      body_parts: [{part: lumbar_spine, icd10: M54.5}]
+    lifecycle: {target_stage: medical_legal, claim_response: accepted, eval_type: qme}
+    scenario:
+      wages: {}
+      benefits: {td_weeks: 0, late_payments: 0, pd_advances: 0}
+      defense_lens:
+        case_evaluation: Accepted lumbar claim with active conservative care.
+        assumptions: [No surgery has been authorized.]
+        discovery_plan: [Obtain prior lumbar treatment records.]
+        litigation_budget: 18000
+        exposure_events:
+          - trigger: initial_file_review
+            low: {indemnity: 18000, medical: 27000, expense_alae: 5000}
+            expected: {indemnity: 24000, medical: 36000, expense_alae: 10000}
+            high: {indemnity: 36000, medical: 54000, expense_alae: 15000}
+
+  # Derived ordinary handling: the 50% increase crosses the materiality rule.
+  - case_id: w2-reserve-development
+    rng_seed: 61000
+    perspective: defense
+    injury:
+      type: specific
+      date_of_injury: 2022-01-10
+      body_parts: [{part: lumbar_spine, icd10: M54.5}]
+    lifecycle: {target_stage: resolved, claim_response: accepted, eval_type: qme}
+    scenario:
+      wages: {}
+      benefits: {td_weeks: 0, late_payments: 0, pd_advances: 0}
+      defense_lens:
+        case_evaluation: Accepted claim with material new treatment information.
+        assumptions: [No paid costs exist outside the authored ledger.]
+        discovery_plan: [Update the treatment chronology.]
+        litigation_budget: 24000
+        exposure_events:
+          - trigger: initial_file_review
+            low: {indemnity: 20000, medical: 30000, expense_alae: 10000}
+            expected: {indemnity: 30000, medical: 40000, expense_alae: 10000}
+            high: {indemnity: 45000, medical: 60000, expense_alae: 15000}
+          - trigger: compensability_decision
+            low: {indemnity: 30000, medical: 45000, expense_alae: 15000}
+            expected: {indemnity: 45000, medical: 60000, expense_alae: 15000}
+            high: {indemnity: 60000, medical: 80000, expense_alae: 20000}
+
+  # Derived negligent handling: three successive post-IFR increases remain
+  # partial adoptions and satisfy the exact stair-step predicate.
+  - case_id: w2-reserve-sequence
+    rng_seed: 61002
+    perspective: defense
+    profile:
+      applicant: {age: 44, occupation: Warehouse worker}
+    injury:
+      type: specific
+      date_of_injury: 2022-01-10
+      body_parts: [{part: lumbar_spine, icd10: M54.5}]
+    lifecycle: {target_stage: resolved, claim_response: accepted, eval_type: qme}
+    scenario:
+      wages: {}
+      benefits: {td_weeks: 0, late_payments: 0, pd_advances: 0}
+      rating:
+        schedule: pdrs_2005
+        occupation_group: "470"
+        impairments:
+          - {id: lumbar, body_part: lumbar_spine, impairment_number: 15.03.01.00, wpi: 8}
+        combination_method: single
+      defense_lens:
+        case_evaluation: Accepted claim with a sequence of upward information.
+        assumptions: [No paid costs exist outside the authored ledger.]
+        discovery_plan: [Prepare the file for trial setting.]
+        litigation_budget: 32000
+        exposure_events:
+          - trigger: initial_file_review
+            low: {indemnity: 30000, medical: 50000, expense_alae: 10000}
+            expected: {indemnity: 40000, medical: 50000, expense_alae: 10000}
+            high: {indemnity: 50000, medical: 60000, expense_alae: 15000}
+          - trigger: compensability_decision
+            low: {indemnity: 40000, medical: 55000, expense_alae: 10000}
+            expected: {indemnity: 50000, medical: 58000, expense_alae: 12000}
+            high: {indemnity: 60000, medical: 70000, expense_alae: 16000}
+          - trigger: formal_rating
+            low: {indemnity: 50000, medical: 60000, expense_alae: 12000}
+            expected: {indemnity: 60000, medical: 66000, expense_alae: 14000}
+            high: {indemnity: 70000, medical: 80000, expense_alae: 18000}
+          - trigger: mmi
+            low: {indemnity: 60000, medical: 65000, expense_alae: 15000}
+            expected: {indemnity: 70000, medical: 74000, expense_alae: 16000}
+            high: {indemnity: 80000, medical: 90000, expense_alae: 20000}
+
+  # Derived ordinary handling: 100k -> 120k is material; 120k -> 115k is not.
+  # With no paid costs, the booked totals are exactly 75k -> 120k -> 120k.
+  - case_id: w2-reserve-reassessment
+    rng_seed: 61005
+    perspective: defense
+    injury:
+      type: specific
+      date_of_injury: 2022-01-10
+      body_parts: [{part: lumbar_spine, icd10: M54.5}]
+    lifecycle: {target_stage: resolved, claim_response: accepted, eval_type: qme}
+    scenario:
+      wages: {}
+      benefits: {td_weeks: 0, late_payments: 0, pd_advances: 0}
+      defense_lens: &reassessment
+        case_evaluation: Accepted claim with a later downward reassessment.
+        assumptions: [No paid costs exist outside the authored ledger.]
+        discovery_plan: [Reconcile the final medical record.]
+        litigation_budget: 28000
+        exposure_events:
+          - trigger: initial_file_review
+            low: {indemnity: 36000, medical: 45000, expense_alae: 9000}
+            expected: {indemnity: 40000, medical: 50000, expense_alae: 10000}
+            high: {indemnity: 44000, medical: 55000, expense_alae: 11000}
+          - trigger: compensability_decision
+            low: {indemnity: 43200, medical: 54000, expense_alae: 10800}
+            expected: {indemnity: 48000, medical: 60000, expense_alae: 12000}
+            high: {indemnity: 52800, medical: 66000, expense_alae: 13200}
+          - trigger: mmi
+            low: {indemnity: 41400, medical: 51750, expense_alae: 10350}
+            expected: {indemnity: 46000, medical: 57500, expense_alae: 11500}
+            high: {indemnity: 50600, medical: 63250, expense_alae: 12650}
+
+  # Exact-neighbor exposure inputs with a derived attentive policy.
+  - case_id: w2-reserve-neighbor
+    rng_seed: 61009
+    perspective: defense
+    injury:
+      type: specific
+      date_of_injury: 2022-01-10
+      body_parts: [{part: lumbar_spine, icd10: M54.5}]
+    lifecycle: {target_stage: resolved, claim_response: accepted, eval_type: qme}
+    scenario:
+      wages: {}
+      benefits: {td_weeks: 0, late_payments: 0, pd_advances: 0}
+      defense_lens: *reassessment
+
+  # Both W2 groups share one case without crossing rating percent into dollars.
+  - case_id: w2-joint-evaluation
+    rng_seed: 61012
+    perspective: defense
+    profile:
+      applicant: {age: 44, occupation: Warehouse worker}
+    injury:
+      type: specific
+      date_of_injury: 2012-06-15
+      body_parts: [{part: cervical_spine, icd10: M54.2}]
+    lifecycle: {target_stage: medical_legal, claim_response: accepted, eval_type: qme}
+    scenario:
+      wages: {}
+      benefits: {td_weeks: 0, late_payments: 0, pd_advances: 0}
+      rating:
+        schedule: pdrs_2005
+        occupation_group: "470"
+        impairments:
+          - {id: cervical, body_part: cervical_spine, impairment_number: 15.01.02.02, wpi: 8}
+        combination_method: single
+      defense_lens:
+        case_evaluation: Accepted cervical claim with a completed formal rating.
+        assumptions: [The selected rating remains unapportioned.]
+        discovery_plan: [Confirm the final medical record is complete.]
+        litigation_budget: 16000
+        exposure_events:
+          - trigger: initial_file_review
+            low: {indemnity: 18000, medical: 22000, expense_alae: 5000}
+            expected: {indemnity: 24000, medical: 30000, expense_alae: 6000}
+            high: {indemnity: 32000, medical: 40000, expense_alae: 8000}
+
+  # One authored assertion ledger is emitted under default v1 and separately
+  # generated with the CLI's explicit assertions-v2 opt-in by the corpus test.
+  - case_id: w2-assertion-channel
+    rng_seed: 62012
+    injury:
+      type: specific
+      date_of_injury: 2023-02-06
+      mechanism: shoulder strain while moving boxed inventory
+      body_parts: [{part: shoulder, icd10: S43.409A}]
+    lifecycle: {target_stage: medical_legal, claim_response: accepted, eval_type: qme}
+    scenario:
+      medical_history:
+        sample_conditions: false
+        conditions:
+          - label: industrial shoulder strain
+            origin: industrial
+            body_part: shoulder
+            icd10: S43.409A
+            severity: moderate
+            trajectory: stable
+            symptomatic_before_doi: false
+      medical_assertions:
+        sample_assertions: false
+        sample_contention_documents: false
+        medical_opinions:
+          - id: opn-01
+            author_role: qme
+            report_stage: final
+            report_date: 2023-11-15
+            apportionment_state: determined
+            determination_kind: no_nonindustrial_share
+            determination_rationale: The accepted shoulder strain wholly causes the disability.
+            examination_performed: true
+            reviewed_condition_ids: [cond-00]
+            aoe_coe_finding: industrial
+            aoe_coe_rationale: The lifting mechanism and immediate symptoms support causation.
+            rationale: The opinion rests on examination and the treatment record.
