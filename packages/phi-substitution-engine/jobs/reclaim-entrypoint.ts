@@ -1,5 +1,9 @@
 import { Pool } from "pg";
-import { AzureSpoolMaintenance } from "../src/tokens/durable/azure/azure-spool-maintenance";
+import {
+  AzureSpoolMaintenance,
+  DEFAULT_READ_DRAIN_MS,
+  DEFAULT_SUPERSEDE_RETENTION_MS,
+} from "../src/tokens/durable/azure/azure-spool-maintenance";
 import { PostgresControlPlane, runMigrations } from "../src/tokens/durable/azure/postgres-control-plane";
 import {
   azureFilesBlobStoreFromEnvironment,
@@ -43,6 +47,14 @@ async function main(): Promise<void> {
       true,
     );
     const graceMs = integerEnvironment("RECLAIM_GRACE_MS", DEFAULT_GRACE_MS, true);
+    const supersedeRetentionMs = integerEnvironment(
+      "SUPERSEDE_RETENTION_MS",
+      DEFAULT_SUPERSEDE_RETENTION_MS,
+      true,
+    );
+    if (supersedeRetentionMs < graceMs || graceMs < DEFAULT_READ_DRAIN_MS) {
+      throw new Error("invalid_RETENTION_WINDOW_ORDER");
+    }
     const limit = integerEnvironment("RECLAIM_LIMIT", DEFAULT_LIMIT, false);
     const nowEpochMs = Date.now();
     pool = new Pool(postgresConfigFromEnvironment());
@@ -56,12 +68,16 @@ async function main(): Promise<void> {
         quarantinedBeforeEpochMs: Math.max(0, nowEpochMs - graceMs),
         limit,
         includeHardDelete: true,
+        supersedeRetentionMs,
+        readDrainMs: DEFAULT_READ_DRAIN_MS,
       })
       : await new AzureSpoolMaintenance({
         controlPlane,
         blobStore: azureFilesBlobStoreFromEnvironment(),
         uploadHorizonMs,
         graceMs,
+        supersedeRetentionMs,
+        readDrainMs: DEFAULT_READ_DRAIN_MS,
         now: () => nowEpochMs,
         includeHardDelete: mode === "full",
       }).reclaimOrphanedPrepared({

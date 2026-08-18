@@ -1,0 +1,456 @@
+GLY-345 mutation evidence
+START=2026-08-18T09:49:26.714Z
+
+[1/50] MUT-RETENTION-BIND-PROCESS-MEMORY
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:const existing = this.#operationRetention.get(operationKey);
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: keeps a durable operation binding
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[2/50] MUT-RETENTION-BIND-TOKEN-SCOPED
+ANCHOR=src/tokens/durable/dev/in-memory-spool-volume.ts:1x:const key = `${blob.meta.tenantId as unknown as string}\0${blob.meta.attemptId a
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-reversal-store.test.ts :: rejects a sequential classifier flip
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[3/50] MUT-RETENTION-BIND-MATTER-SCOPED
+ANCHOR=src/tokens/durable/dev/in-memory-spool-volume.ts:1x:const key = `${blob.meta.tenantId as unknown as string}\0${blob.meta.attemptId a
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-reversal-store.test.ts :: keys bindings by exact tenant
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[4/50] MUT-RETENTION-BIND-LAST-WRITER-WINS
+ANCHOR=src/tokens/durable/dev/in-memory-spool-volume.ts:1x:throw new Error("operation_retention_binding_mismatch");
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-reversal-store.test.ts :: rejects a sequential classifier flip
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[5/50] MUT-RETENTION-BIND-NONATOMIC-ANCHOR
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:if (insertedBinding) this.#operationRetention.delete(operationKey);
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: rolls back both binding
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[6/50] MUT-RETENTION-MISMATCH-ACCEPT
+ANCHOR=src/tokens/durable/dev/in-memory-spool-volume.ts:1x:throw new Error("operation_retention_binding_mismatch");
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-reversal-store.test.ts :: rejects a sequential classifier flip
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[7/50] MUT-RETENTION-BIND-DROP-ON-CRASH
+ANCHOR=src/tokens/durable/dev/in-memory-spool-volume.ts:1x:public crash(): void {\n    for (const [key, claim] of this.#claims) {
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-reversal-store.test.ts :: persists a committed anchor
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[8/50] MUT-RETENTION-BIND-GC-AFTER-BLOB
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:delete row.quarantineBlob;\n      if (row.quarantineBlob === undefined) {\n       
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: keeps a durable operation binding
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[9/50] MUT-RETENTION-MISMATCH-LEAK-DETAIL
+ANCHOR=src/tokens/durable/durable-reversal-store.ts:1x:throw new ReversalFailedError();\n    }\n  }\n\n  /**\n   * Resolve encountered token
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-reversal-store.test.ts :: record rejection has the fixed
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[10/50] MUT-RETENTION-BINDING-KEY-NONINJECTIVE
+ANCHOR=src/tokens/durable/dev/in-memory-spool-volume.ts:1x:const key = `${blob.meta.tenantId as unknown as string}\0${blob.meta.attemptId a
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-reversal-store.test.ts :: keys bindings by exact tenant
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[11/50] MUT-RETENTION-BIND-INBAND-OVERRIDE
+ANCHOR=src/tokens/durable/dev/in-memory-spool-volume.ts:1x:throw new Error("operation_retention_binding_mismatch");
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-reversal-store.test.ts :: has no in-band override
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[12/50] MUT-ANCHOR-NON-READ-COMMITTED
+ANCHOR=src/tokens/durable/azure/postgres-control-plane.ts:1x:SET TRANSACTION ISOLATION LEVEL READ COMMITTED
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: keeps the READ COMMITTED
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[13/50] MUT-ANCHOR-SELECT-THEN-INSERT
+ANCHOR=src/tokens/durable/azure/postgres-control-plane.ts:1x:INSERT INTO reversal_operation_retention (
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: keeps the READ COMMITTED
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[14/50] MUT-SUPERSEDE-LEAVE-OLD-COMMITTED
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:oldPrepared.state = "superseded";
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: advances current and atomically
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[15/50] MUT-SUPERSEDE-LEAVE-CLAIM-REFERENCE
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:oldClaim.preparedBlobId = null;
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: advances current and atomically
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[16/50] MUT-SUPERSEDE-NONATOMIC-WITH-CAS
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:for (const [key, value] of claims) {\n        this.#claims.set(key, value);\n     
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: makes every intra-flush advance gate
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[17/50] MUT-SUPERSEDE-BEFORE-CAS-WINS
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:for (const [key, value] of current) this.#current.set(key, value);
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: makes every intra-flush advance gate
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[18/50] MUT-CAS-LOSER-STAYS-COMMITTED
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:this.#fault("flushAfterLoserClaim");\n      row.state = "superseded";
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: makes both losing-CAS gates
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[19/50] MUT-SUPERSEDED-FLUSH-RESURRECTS
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:if (claim.state === "superseded") return Promise.resolve();
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: advances current and atomically
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[20/50] MUT-SUPERSEDED-FLUSH-FAILS-IDEMPOTENCY
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:if (claim.state === "superseded") return Promise.resolve();
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: advances current and atomically
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[21/50] MUT-FLUSHED-NONCURRENT-NO-SELF-HEAL
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:this.#selfHealIfStale(existing, nowEpochMilliseconds);
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: self-heals a stale non-current
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[22/50] MUT-SUPERSEDE-RECLAIM-BEFORE-WINDOW
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:return supersededAt + BigInt(Math.max(supersedeRetentionMs, readDrainMs));
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: computes matter and detector candidacy
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[23/50] MUT-SUPERSEDE-CANDIDACY-OMITS-DRAIN-MAX
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:return drain > policy ? drain : policy;
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: keeps the drain MAX floor
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[24/50] MUT-DETECTOR-SUPERSEDE-DROPS-EXPIRY-FLOOR
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:const policy = row.retentionExpiresAtMs < window ? row.retentionExpiresAtMs : wi
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: computes matter and detector candidacy
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[25/50] MUT-SUPERSEDED-MATTER-NEVER
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:return supersededAt + BigInt(Math.max(supersedeRetentionMs, readDrainMs));
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: computes matter and detector candidacy
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[26/50] MUT-NONSUPERSEDED-MATTER-RECLAIMABLE
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:if (row.state !== "superseded" || row.supersededAtMs === undefined) return undef | src/tokens/durable/dev/in-memory-control-plane.ts:1x:(row.state === "superseded" &&\n          (this.#supersededCandidacy | src/tokens/durable/dev/in-memory-control-plane.ts:1x:const supersededAt = BigInt(row.supersededAtMs);
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: computes matter and detector candidacy
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[27/50] MUT-RETENTION-NUMERIC-TO-BIGINT
+ANCHOR=migrations/0001_phi_reversal_control_plane.sql:1x:retention_expires_at_ms NUMERIC(20,0)
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: keeps the expand migration
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[28/50] MUT-RETENTION-ORIGIN-TRUST-BACKFILLED-CREATED
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:const supersededAt = BigInt(row.supersededAtMs);
+VERIFIED_APPLIED=true
+RED_TEST=tests/durable-control-plane.test.ts :: keeps the drain MAX floor
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[29/50] MUT-TX-NOW-REPLICA-CLOCK
+ANCHOR=src/tokens/durable/azure/postgres-control-plane.ts:1x:const current = currentResult.rows[0];\n        const clock = await client.query<
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: contains fatal legacy class
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[30/50] MUT-SUPERSEDE-SKIP-UNREFERENCED-GUARD
+ANCHOR=src/tokens/durable/azure/postgres-control-plane.ts:2x:AND NOT EXISTS (\n             SELECT 1 FROM reversal_claim c WHERE c.prepared_bl
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: filters Path-1 references before LIMIT
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[31/50] MUT-SUPERSEDE-PRIVATE-BUDGET
+ANCHOR=src/tokens/durable/azure/azure-spool-maintenance.ts:1x:uploadHorizonEpochMs: Math.max(0, nowEpochMs - this.#uploadHorizonMs),\n        l
+VERIFIED_APPLIED=true
+RED_TEST=tests/azure-spool-maintenance.test.ts :: shares one global inspection budget
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[32/50] MUT-SUPERSEDE-RECOVERY-SELECTOR-OMITTED
+ANCHOR=src/tokens/durable/dev/in-memory-control-plane.ts:1x:row.state === "reclaim_marked" ||
+VERIFIED_APPLIED=true
+RED_TEST=tests/azure-spool-maintenance.test.ts :: recovers a reclaim_marked row
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[33/50] MUT-READ-OLD-POINTER-NO-QUARANTINE-FALLBACK
+ANCHOR=src/tokens/durable/azure/azure-files-spool-volume.ts:1x:for (const path of [pointer.blobPath, quarantine, pointer.blobPath]) {
+VERIFIED_APPLIED=true
+RED_TEST=tests/azure-files-spool-volume.test.ts :: reads a snapshotted old pointer
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[34/50] MUT-READ-INVENTS-UNENFORCEABLE-DEADLINE
+ANCHOR=src/tokens/durable/azure/azure-files-spool-volume.ts:1x:const quarantine = `reclaim-quarantine/${pointer.preparedBlobId as unknown as st
+VERIFIED_APPLIED=true
+RED_TEST=tests/azure-files-spool-volume.test.ts :: reads a snapshotted old pointer
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[35/50] MUT-QUARANTINE-GRACE-SHORTER-THAN-DRAIN
+ANCHOR=src/tokens/durable/azure/azure-spool-maintenance.ts:1x:if (this.#supersedeRetentionMs < this.#graceMs || this.#graceMs < this.#readDrai
+VERIFIED_APPLIED=true
+RED_TEST=tests/azure-spool-maintenance.test.ts :: ORACLE-MAINTENANCE-WINDOW-ORDER
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[36/50] MUT-SUPERSEDE-WINDOW-SHORTER-THAN-GRACE
+ANCHOR=src/tokens/durable/azure/azure-spool-maintenance.ts:1x:if (this.#supersedeRetentionMs < this.#graceMs || this.#graceMs < this.#readDrai
+VERIFIED_APPLIED=true
+RED_TEST=tests/azure-spool-maintenance.test.ts :: ORACLE-MAINTENANCE-WINDOW-ORDER
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[37/50] MUT-SUPERSEDE-HARD-DELETE-DIRECT
+ANCHOR=src/tokens/durable/azure/azure-spool-maintenance.ts:1x:await this.#blobStore.rename(row.blobPath, destination);
+VERIFIED_APPLIED=true
+RED_TEST=tests/azure-spool-maintenance.test.ts :: Path 1 quarantines old unreferenced
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[38/50] MUT-SUPERSEDE-HARD-DELETE-OMITS-GRACE
+ANCHOR=src/tokens/durable/azure/azure-spool-maintenance.ts:1x:olderThanEpochMs: Math.max(0, nowEpochMs - this.#graceMs),
+VERIFIED_APPLIED=true
+RED_TEST=tests/azure-spool-maintenance.test.ts :: Path 3 keeps young quarantine
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[39/50] MUT-QUARANTINE-MISSING-BOTH-AS-SUCCESS
+ANCHOR=src/tokens/durable/azure/azure-spool-maintenance.ts:1x:if (sourceHead === undefined) {\n      throw new Error("azure_spool_maintenance_q
+VERIFIED_APPLIED=true
+RED_TEST=tests/azure-spool-maintenance.test.ts :: leaves reclaim_marked and fails when both
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[40/50] MUT-MIGRATION-NONIDEMPOTENT
+ANCHOR=migrations/0001_phi_reversal_control_plane.sql:1x:ADD COLUMN IF NOT EXISTS operation_key TEXT
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: keeps the expand migration
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[41/50] MUT-MIGRATION-DELETE-LEGACY-ROW
+ANCHOR=migrations/0001_phi_reversal_control_plane.sql:1x:-- GLY-345 v3 additive delta. runMigrations() already wraps this file in one tra
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: keeps the expand migration
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[42/50] MUT-MIGRATION-IGNORE-MIXED-LEGACY-CLASS
+ANCHOR=migrations/0001_phi_reversal_control_plane.sql:1x:HAVING count(DISTINCT CASE
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: contains fatal legacy class
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[43/50] MUT-MIGRATION-SILENT-FINITE-MATTER-AS-DETECTOR
+ANCHOR=migrations/0001_phi_reversal_control_plane.sql:1x:c.expires_at_ms <> c.created_at_ms::numeric + 86400000::numeric
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: contains fatal legacy class
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[44/50] MUT-MIGRATION-SKIP-ROW-COUNT-GUARD
+ANCHOR=migrations/0001_phi_reversal_control_plane.sql:1x:IF prepared_count > 100000 THEN
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: keeps the expand migration
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[45/50] MUT-MIGRATION-VALIDATE-HOT-CONSTRAINTS
+ANCHOR=migrations/0001_phi_reversal_control_plane.sql:1x:) NOT VALID;\n\nALTER TABLE reversal_prepared\n  ADD CONSTRAINT reversal_prepared_g
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: keeps the expand migration
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[46/50] MUT-MIGRATION-ADDS-REQUIRED-CHECK-DURING-EXPAND
+ANCHOR=migrations/0001_phi_reversal_control_plane.sql:1x:ALTER TABLE reversal_prepared ADD COLUMN IF NOT EXISTS reclaim_after_ms NUMERIC(
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: keeps the expand migration
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[47/50] MUT-MIGRATION-RETENTION-CHECK-REJECTS-NULL-METADATA
+ANCHOR=migrations/0001_phi_reversal_control_plane.sql:1x:operation_key IS NULL\n    OR record_created_at_ms IS NULL
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: keeps the expand migration
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[48/50] MUT-MIGRATION-ASSUME-CONSTRAINT-NAME
+ANCHOR=migrations/0001_phi_reversal_control_plane.sql:6x:pg_get_constraintdef(c.oid) | migrations/0001_phi_reversal_control_plane.sql:5x:pg_get_constraintdef(c.oid) | migrations/0001_phi_reversal_control_plane.sql:4x:pg_get_constraintdef(c.oid) | migrations/0001_phi_reversal_control_plane.sql:3x:pg_get_constraintdef(c.oid) | migrations/0001_phi_reversal_control_plane.sql:2x:pg_get_constraintdef(c.oid) | migrations/0001_phi_reversal_control_plane.sql:1x:pg_get_constraintdef(c.oid)
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: discovers anonymous state checks
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[49/50] MUT-MIGRATION-TRUST-LEGACY-FLUSHED-AT
+ANCHOR=migrations/0001_phi_reversal_control_plane.sql:1x:mc.db_now_ms AS migration_superseded_at_ms
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: discovers anonymous state checks
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+[50/50] MUT-SELF-HEAL-DROPS-F-A-ROW-LOCK
+ANCHOR=src/tokens/durable/azure/postgres-control-plane.ts:2x:FROM reversal_prepared\n       WHERE prepared_blob_id = $1\n       FOR UPDATE`,\n  
+VERIFIED_APPLIED=true
+RED_TEST=tests/postgres-control-plane.test.ts :: contains fatal legacy class
+RED_EXIT=1
+RESTORED=true
+GREEN_EXIT=0
+RESULT=PASS
+
+END=2026-08-18T09:52:06.561Z
+TOTAL=50
+FAILURES=0

@@ -221,6 +221,116 @@ describe("L2.4 DurableReversalStore — durability + envelope + idempotency (§6
   });
 });
 
+describe("GLY-345 Part A — operation retention binding", () => {
+  it("rejects a sequential classifier flip for one tenant/attempt with the fixed surface", async () => {
+    let classification: "matter" | "detector-only" = "matter";
+    const h = makeHarness({ retention: async () => classification, clock: () => T0 });
+    const attemptId = brand<OperationAttemptId>("retention-bound-attempt");
+
+    await h.store.record(recordInput({ attemptId, token: CLAIMANT }));
+    classification = "detector-only";
+    let caught: unknown;
+    try {
+      await h.store.record(recordInput({ attemptId, token: WITNESS, canonical: "Second canonical" }));
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ReversalFailedError);
+    expect(caught).toMatchObject({ code: "REVERSAL_FAILED", message: "reversal_failed" });
+    expect((caught as Error & { cause?: unknown }).cause).toBeUndefined();
+    expect(h.spy.counts.published).toBe(1);
+    expect(await h.store.resolveEncounteredTokens(resolveInput({ tokens: [CLAIMANT, WITNESS] })))
+      .toEqual(new Map([[CLAIMANT, "Maria García"]]));
+  });
+
+  it("serializes a cross-replica opposite-class race to exactly one successful class", async () => {
+    const backend = new InMemoryReversalSpoolBackend();
+    const keyProvider = new InMemoryKeyProvider();
+    const matter = makeHarness({ backend, keyProvider, retention: "matter", clock: () => T0 });
+    const detector = makeHarness({ backend, keyProvider, retention: "detector-only", clock: () => T0 });
+    const attemptId = brand<OperationAttemptId>("cross-replica-retention-race");
+
+    const results = await Promise.allSettled([
+      matter.store.record(recordInput({ attemptId, token: CLAIMANT })),
+      detector.store.record(recordInput({ attemptId, token: WITNESS, canonical: "Witness canonical" })),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected?.status === "rejected" ? rejected.reason : undefined).toBeInstanceOf(ReversalFailedError);
+    const resolved = await matter.store.resolveEncounteredTokens(resolveInput({ tokens: [CLAIMANT, WITNESS] }));
+    expect(resolved.size).toBe(1);
+  });
+
+  it("persists a committed anchor across prepare-response loss and remount", async () => {
+    const backend = new InMemoryReversalSpoolBackend();
+    const keyProvider = new InMemoryKeyProvider();
+    const inner = backend.mount({}, () => T0);
+    const responseLost: SpoolVolume = {
+      ensureDekGeneration: (input) => inner.ensureDekGeneration(input),
+      reserveNonce: (input) => inner.reserveNonce(input),
+      prepare: async (input) => {
+        await inner.prepare(input);
+        throw new Error("lost_after_anchor_commit");
+      },
+      publish: (input) => inner.publish(input),
+      flush: (input) => inner.flush(input),
+      readCurrent: (input) => inner.readCurrent(input),
+    };
+    const failed = new DurableReversalStore({
+      keyProvider,
+      spoolVolume: responseLost,
+      classifyRetention: async () => "matter",
+      nowEpochMilliseconds: () => T0,
+      maximumEncounteredTokenBatch: 256,
+    });
+    const attemptId = brand<OperationAttemptId>("lost-anchor-response");
+    await expect(failed.record(recordInput({ attemptId }))).rejects.toBeInstanceOf(ReversalFailedError);
+
+    backend.crash();
+    const retry = makeHarness({ backend, keyProvider, retention: "detector-only", clock: () => T0 });
+    await expect(retry.store.record(recordInput({ attemptId, token: WITNESS })))
+      .rejects.toBeInstanceOf(ReversalFailedError);
+  });
+
+  it("keys bindings by exact tenant NUL attempt, independent of matter and delimiter-free aliases", async () => {
+    let classification: "matter" | "detector-only" = "matter";
+    const h = makeHarness({ retention: async () => classification, clock: () => T0 });
+    const attemptC = brand<OperationAttemptId>("c");
+    const attemptBc = brand<OperationAttemptId>("bc");
+    const tenantAb = brand<TenantId>("ab");
+    const tenantA = brand<TenantId>("a");
+
+    await h.store.record(recordInput({ tenantId: tenantAb, attemptId: attemptC, token: CLAIMANT }));
+    classification = "detector-only";
+    await h.store.record(recordInput({ tenantId: tenantA, attemptId: attemptBc, token: WITNESS }));
+
+    classification = "detector-only";
+    await expect(h.store.record(recordInput({
+      tenantId: tenantAb,
+      matterId: brand<MatterId>("changed-matter"),
+      attemptId: attemptC,
+      token: brand<SubstitutionToken>("[[Other]]"),
+    }))).rejects.toBeInstanceOf(ReversalFailedError);
+  });
+
+  it("has no in-band override: a wrong bound attempt remains rejected while a new attempt binds", async () => {
+    let classification: "matter" | "detector-only" = "matter";
+    const h = makeHarness({ retention: async () => classification, clock: () => T0 });
+    const oldAttempt = brand<OperationAttemptId>("wrong-first-binding");
+    await h.store.record(recordInput({ attemptId: oldAttempt }));
+    classification = "detector-only";
+
+    await expect(h.store.record(recordInput({ attemptId: oldAttempt, token: WITNESS })))
+      .rejects.toBeInstanceOf(ReversalFailedError);
+    await expect(h.store.record(recordInput({
+      attemptId: brand<OperationAttemptId>("replacement-operation"),
+      token: WITNESS,
+    }))).resolves.toBeUndefined();
+  });
+});
+
 describe("L2.4 DurableReversalStore — idempotency (§3.1.3, §6)", () => {
   it("same-attempt exact replay is a durable no-op — exactly one commit", async () => {
     const h = makeHarness();
