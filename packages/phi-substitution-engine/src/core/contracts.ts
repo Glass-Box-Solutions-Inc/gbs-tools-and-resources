@@ -139,7 +139,8 @@ export type PhiEngineFailureCode =
   | "UNCLASSIFIED_PROVIDER_FIELD"
   | "AUDIT_DURABILITY_UNAVAILABLE"
   | "REVERSAL_FAILED"
-  | "PROVIDER_SAFETY_GATE_FAILED";
+  | "PROVIDER_SAFETY_GATE_FAILED"
+  | "CALL_INTERRUPTED";
 
 export interface PhiEngineError extends Error {
   readonly name: "PhiEngineError";

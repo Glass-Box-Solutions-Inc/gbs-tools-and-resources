@@ -13,6 +13,7 @@ import type { AiOperation, IdentifierCounts } from "../core/contracts";
 export type PhiAuditOutcome =
   | "completed"
   | "cancelled"
+  | "interrupted"
   | "failed_closed"
   | "reversal_failed"
   | "unknown_after_send";
