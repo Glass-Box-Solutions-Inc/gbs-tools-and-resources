@@ -231,7 +231,8 @@ export class PostgresControlPlane implements ControlPlane {
     await this.#pool.query(
       `INSERT INTO reversal_dek_generation (
          dek_scope_key, tenant_id, matter_id, purpose, dek_generation_id, wrapped_dek, created_at_ms
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ) VALUES ($1, $2, $3, $4, $5, $6,
+                 (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint)
        ON CONFLICT (dek_scope_key) DO NOTHING`,
       [
         scopeKey,
@@ -240,7 +241,6 @@ export class PostgresControlPlane implements ControlPlane {
         input.scope.purpose,
         encodeTextKey(minted.dekGenerationId as unknown as string),
         Buffer.from(minted.wrappedDek),
-        Date.now(),
       ],
     );
     const winner = await this.#pool.query<DekRow>(
@@ -273,6 +273,7 @@ export class PostgresControlPlane implements ControlPlane {
   }
 
   public async insertPreparedUploading(input: InsertPreparedUploadingInput): Promise<void> {
+    // Fail closed on producer metadata validity; it gates no persisted lifecycle-age value.
     safeEpochMs(input.createdAtEpochMs, "created_at_ms");
     // Reclamation and prepared-row age share the database clock. This assumes the Azure job and
     // PostgreSQL clocks are NTP-tight infrastructure, unlike arbitrary application replicas.

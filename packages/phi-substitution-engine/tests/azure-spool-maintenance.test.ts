@@ -145,7 +145,9 @@ async function seedUploading(
     blobPath,
     createdAtEpochMs: createdAtEpochMs,
   });
-  if (backdatePool !== undefined) {
+  if (controlPlane instanceof InMemoryControlPlane) {
+    controlPlane.debugSetPreparedCreatedAtMs(handle, createdAtEpochMs);
+  } else if (backdatePool !== undefined) {
     await backdatePool.query(
       `UPDATE reversal_prepared SET created_at_ms = $2 WHERE prepared_blob_id = $1`,
       [handle, createdAtEpochMs],

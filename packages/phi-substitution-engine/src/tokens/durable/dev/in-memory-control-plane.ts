@@ -330,7 +330,9 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
   }
 
   public insertPreparedUploading(input: InsertPreparedUploadingInput): Promise<void> {
+    // Validate producer metadata independently from plane-authoritative lifecycle age.
     checkedDuration(input.createdAtEpochMs, "created_at_ms");
+    const createdAtMs = checkedDuration(this.#nowEpochMilliseconds(), "created_at_ms");
     const key = asString(input.preparedBlobId);
     if (this.#prepared.has(key)) {
       return Promise.reject(new Error("insert_prepared_duplicate_handle"));
@@ -341,7 +343,7 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       mappingKey: input.mappingKey,
       idempotencyKey: input.idempotencyKey,
       scopeDigest: input.immutableScopeDigest,
-      createdAtMs: input.createdAtEpochMs,
+      createdAtMs,
       stagingPath: input.stagingPath,
       blobPath: input.blobPath,
       state: "uploading",
@@ -1071,6 +1073,16 @@ export class InMemoryControlPlane implements SpoolVolume, SpoolMaintenance, Azur
       throw new Error("debug_prepared_absent");
     }
     delete row.blob;
+  }
+
+  public debugSetPreparedCreatedAtMs(preparedBlobId: PreparedWriteHandle, createdAtMs: number): void {
+    checkedDuration(createdAtMs, "debug_created_at_ms");
+    const key = asString(preparedBlobId);
+    const row = this.#prepared.get(key);
+    if (row === undefined) {
+      throw new Error("debug_prepared_absent");
+    }
+    this.#prepared.set(key, { ...row, createdAtMs });
   }
 
   public debugSetPreparedState(

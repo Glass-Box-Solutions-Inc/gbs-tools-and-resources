@@ -424,7 +424,7 @@ describe("GLY-346 Lane A — control-plane state-machine conformance", () => {
   });
 
   it("orders Path-1 recovery and fresh candidates like Postgres, not insertion order", async () => {
-    const controlPlane = new InMemoryControlPlane();
+    const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 });
     const freshLaterId = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000002");
     const freshEarlierId = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000001");
     const recoveryId = brand<PreparedWriteHandle>("00000000-0000-4000-8000-000000000003");
