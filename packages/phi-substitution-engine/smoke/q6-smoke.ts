@@ -291,13 +291,17 @@ async function noPinnedPartialsCheck(context: SmokeContext): Promise<Record<stri
   const matterId = brand<MatterId>(`${context.tenantId}-expired`);
   const token = brand<SubstitutionToken>("[[Adjuster]]");
   const attemptId = brand<OperationAttemptId>(`${context.tenantId}-expired-attempt`);
+  const realNow = Date.now();
+  const expiredAtEpochMs = realNow - 60_000;
   const expiredInput = directPrepareInput(directBlob({
     tenantId: context.tenantId,
     matterId,
     token,
     attemptId,
-    createdAtEpochMs: FIXED_NOW - 2_000,
-    expiresAtEpochMs: BigInt(FIXED_NOW - 1),
+    // Detector expiry must equal created + 24h exactly (GLY-345 anchor validation).
+    // The database clock owns expiry, so use a real-clock deadline with ample NTP-skew margin.
+    createdAtEpochMs: expiredAtEpochMs - 86_400_000,
+    expiresAtEpochMs: BigInt(expiredAtEpochMs),
     marker: 9,
   }));
   const volume = new AzureFilesSpoolVolume(controlPlane, context.blobStore, () => FIXED_NOW);
@@ -306,7 +310,7 @@ async function noPinnedPartialsCheck(context: SmokeContext): Promise<Record<stri
   assertSmoke(published.kind === "published", "expired_expected_publication");
   const expired = await controlPlane.expirePendingDetach({
     commit: published.commit,
-    nowEpochMilliseconds: FIXED_NOW,
+    nowEpochMilliseconds: realNow,
   });
   assertSmoke(expired, "expired_claim_not_tombstoned");
   await maintenance.reclaimOrphanedPrepared({ olderThanEpochMs: FIXED_NOW - 1_000, limit: 100 });
