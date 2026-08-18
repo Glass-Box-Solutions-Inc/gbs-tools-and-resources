@@ -18,6 +18,7 @@ import {
 } from "../src/tokens/durable/azure/runtime-config";
 import { InMemoryKeyProvider } from "../src/tokens/durable/dev/in-memory-key-provider";
 import { DurableReversalStore } from "../src/tokens/durable/durable-reversal-store";
+import { MATTER_EXPIRES_AT } from "../src/tokens/durable/aad";
 import { idempotencyKeyOf, mappingKeyOf, scopeDigestOf } from "../src/tokens/durable/keys";
 import type {
   DekGenerationId,
@@ -255,6 +256,7 @@ async function noPinnedPartialsCheck(context: SmokeContext): Promise<Record<stri
   const partialStaging = `staging/${partialHandle as unknown as string}`;
   const partialBlob = `blobs/${partialHandle as unknown as string}`;
   const partialMapping = brand<ReversalMappingKey>(`${context.tenantId}\0partial-mapping`);
+  const partialAttemptId = brand<OperationAttemptId>(`${context.tenantId}-partial-attempt`);
   await controlPlane.insertPreparedUploading({
     preparedBlobId: partialHandle,
     tenantId: context.tenantId,
@@ -263,7 +265,10 @@ async function noPinnedPartialsCheck(context: SmokeContext): Promise<Record<stri
     immutableScopeDigest: brand<ReversalScopeDigest>("partial-scope"),
     stagingPath: partialStaging,
     blobPath: partialBlob,
+    attemptId: partialAttemptId,
+    retentionClass: "matter",
     createdAtEpochMs: FIXED_NOW - 1_000,
+    expiresAtEpochMs: MATTER_EXPIRES_AT,
   });
   await context.blobStore.putStaging(partialStaging, Uint8Array.of(1, 2, 3));
   const maintenance = new AzureSpoolMaintenance({
@@ -286,13 +291,17 @@ async function noPinnedPartialsCheck(context: SmokeContext): Promise<Record<stri
   const matterId = brand<MatterId>(`${context.tenantId}-expired`);
   const token = brand<SubstitutionToken>("[[Adjuster]]");
   const attemptId = brand<OperationAttemptId>(`${context.tenantId}-expired-attempt`);
+  const realNow = Date.now();
+  const expiredAtEpochMs = realNow - 60_000;
   const expiredInput = directPrepareInput(directBlob({
     tenantId: context.tenantId,
     matterId,
     token,
     attemptId,
-    createdAtEpochMs: FIXED_NOW - 2_000,
-    expiresAtEpochMs: BigInt(FIXED_NOW - 1),
+    // Detector expiry must equal created + 24h exactly (GLY-345 anchor validation).
+    // The database clock owns expiry, so use a real-clock deadline with ample NTP-skew margin.
+    createdAtEpochMs: expiredAtEpochMs - 86_400_000,
+    expiresAtEpochMs: BigInt(expiredAtEpochMs),
     marker: 9,
   }));
   const volume = new AzureFilesSpoolVolume(controlPlane, context.blobStore, () => FIXED_NOW);
@@ -301,7 +310,7 @@ async function noPinnedPartialsCheck(context: SmokeContext): Promise<Record<stri
   assertSmoke(published.kind === "published", "expired_expected_publication");
   const expired = await controlPlane.expirePendingDetach({
     commit: published.commit,
-    nowEpochMilliseconds: FIXED_NOW,
+    nowEpochMilliseconds: realNow,
   });
   assertSmoke(expired, "expired_claim_not_tombstoned");
   await maintenance.reclaimOrphanedPrepared({ olderThanEpochMs: FIXED_NOW - 1_000, limit: 100 });
@@ -393,7 +402,8 @@ async function main(): Promise<void> {
     await scopedPool.query(
       `TRUNCATE TABLE
          reversal_current, reversal_claim, reversal_ordinal_seq, reversal_prepared,
-         reversal_nonce_counter, reversal_dek_generation CASCADE`,
+         reversal_nonce_counter, reversal_dek_generation,
+         reversal_operation_retention CASCADE`,
     );
     const context: SmokeContext = {
       pool: scopedPool,
