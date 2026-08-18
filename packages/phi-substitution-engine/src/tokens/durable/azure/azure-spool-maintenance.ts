@@ -17,7 +17,7 @@ export interface AzureSpoolMaintenanceOptions {
   readonly blobStore: BlobStore;
   readonly uploadHorizonMs: number;
   readonly graceMs: number;
-  /** Defaults to 30 days; controls when a superseded record becomes a Path-1 candidate. */
+  /** Defaults to six years; controls when a superseded record becomes a Path-1 candidate. */
   readonly supersedeRetentionMs?: number;
   /** Rename-delay heuristic only. Defaults to 60 seconds. */
   readonly readDrainMs?: number;
@@ -26,7 +26,8 @@ export interface AzureSpoolMaintenanceOptions {
   readonly includeHardDelete?: boolean;
 }
 
-export const DEFAULT_SUPERSEDE_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+import { DEFAULT_SUPERSEDE_RETENTION_MS } from "../retention-defaults";
+export { DEFAULT_SUPERSEDE_RETENTION_MS };
 export const DEFAULT_READ_DRAIN_MS = 60_000;
 
 function checkedDuration(value: number, label: string): number {
