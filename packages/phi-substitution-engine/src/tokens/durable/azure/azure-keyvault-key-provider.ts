@@ -68,22 +68,32 @@ export class AzureKeyVaultKeyProvider implements KeyProvider {
     }
 
     const plaintext = await this.#client.unwrapKey(input.wrappedDek);
-    if (plaintext.byteLength !== WRAPPED_PLAINTEXT_BYTES || plaintext[0] !== ENCODING_VERSION) {
-      failValidation();
+    try {
+      if (plaintext.byteLength !== WRAPPED_PLAINTEXT_BYTES || plaintext[0] !== ENCODING_VERSION) {
+        failValidation();
+      }
+
+      const embeddedDigest = plaintext.subarray(VERSION_BYTES, VERSION_BYTES + BINDING_DIGEST_BYTES);
+      const digestMatches =
+        embeddedDigest.byteLength === input.bindingDigest.byteLength &&
+        timingSafeEqual(Buffer.from(embeddedDigest), Buffer.from(input.bindingDigest));
+
+      if (!this.#handleMatches(input.scope, input.key) || !digestMatches) {
+        // All provider-controlled mismatches expose the same fail-closed error surface.
+        failValidation();
+      }
+
+      const dek = plaintext.slice(VERSION_BYTES + BINDING_DIGEST_BYTES, WRAPPED_PLAINTEXT_BYTES);
+      return dek as unknown as DekMaterial;
+    } finally {
+      // Defense in depth only: wipe the provider-owned intermediate after copying the caller-owned DEK.
+      // Typed-array zeroization cannot guarantee removal of SDK/runtime copies and must remain best-effort.
+      try {
+        plaintext.fill(0);
+      } catch {
+        // Never replace the unwrap result or fixed validation failure with a best-effort wipe failure.
+      }
     }
-
-    const embeddedDigest = plaintext.subarray(VERSION_BYTES, VERSION_BYTES + BINDING_DIGEST_BYTES);
-    const digestMatches =
-      embeddedDigest.byteLength === input.bindingDigest.byteLength &&
-      timingSafeEqual(Buffer.from(embeddedDigest), Buffer.from(input.bindingDigest));
-
-    if (!this.#handleMatches(input.scope, input.key) || !digestMatches) {
-      // All provider-controlled mismatches expose the same fail-closed error surface.
-      failValidation();
-    }
-
-    const dek = plaintext.slice(VERSION_BYTES + BINDING_DIGEST_BYTES, WRAPPED_PLAINTEXT_BYTES);
-    return dek as unknown as DekMaterial;
   }
 
   #handleMatches(scope: WrappingKeyScope, key: WrappingKeyHandle): boolean {

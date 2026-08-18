@@ -17,7 +17,13 @@
  */
 import type { Brand, DictionaryVersion, MatterId, OperationAttemptId, SubstitutionToken, TenantId } from "../../core/brands";
 
-/** 256-bit plaintext data-encryption key. Sensitive: only ever a lexical local or a `#private` cache slot. */
+/**
+ * 256-bit plaintext data-encryption key. Sensitive: only ever a lexical local or a `#private` cache slot.
+ * A value returned by `KeyProvider.unwrap` is an ownership transfer: the allocation is caller-owned
+ * and may be overwritten or zeroized. Providers MUST return a fresh allocation they neither retain
+ * nor pool; otherwise cache-eviction zeroization can silently corrupt provider-retained key material
+ * and surface later as unrelated decryption failures.
+ */
 export type DekMaterial = Brand<Uint8Array, "DekMaterial">;
 /** Opaque KEK-wrapped DEK bytes. Durable, non-secret-at-rest (only the KEK can unwrap). */
 export type WrappedDekMaterial = Brand<Uint8Array, "WrappedDekMaterial">;
@@ -81,6 +87,11 @@ export interface KeyProvider {
   getWrappingKey(scope: WrappingKeyScope): Promise<WrappingKeyHandle>;
   /** Binds the wrapped payload to `bindingDigest`; unwrap fails closed unless the same digest is presented. */
   wrap(input: WrapDekInput): Promise<WrappedDekMaterial>;
+  /**
+   * Transfers ownership of a fresh DEK allocation to the caller. The caller may overwrite/zeroize
+   * it; implementations MUST NOT retain or pool the returned allocation. A retained buffer would be
+   * silently corrupted by store cache-eviction zeroization, surfacing as unrelated decryption failures.
+   */
   unwrap(input: UnwrapDekInput): Promise<DekMaterial>;
 }
 
