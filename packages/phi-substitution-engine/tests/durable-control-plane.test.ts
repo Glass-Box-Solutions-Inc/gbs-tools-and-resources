@@ -858,11 +858,12 @@ describe("GLY-345 Part B — superseded lifecycle conformance", () => {
 
   it("keeps the detector floor inert at production windows because authenticated expiry wins", async () => {
     const day = 86_400_000;
+    const regulationDerivedWindow = 6 * 365 * day;
     const c = clock(T0);
     const controlPlane = new InMemoryControlPlane({
       nowEpochMilliseconds: c.now,
       quarantineGraceMilliseconds: day,
-      supersedeRetentionMilliseconds: 30 * day,
+      supersedeRetentionMilliseconds: regulationDerivedWindow,
       readDrainMilliseconds: 60_000,
     });
     const detector = await prepare(controlPlane, {
@@ -878,14 +879,14 @@ describe("GLY-345 Part B — superseded lifecycle conformance", () => {
     expect((await controlPlane.selectFinalizedOrphansForReclaim({
       olderThanEpochMs: 0,
       limit: 10,
-      supersedeRetentionMs: 30 * day,
+      supersedeRetentionMs: regulationDerivedWindow,
       readDrainMs: 60_000,
     })).rows).toEqual([]);
     c.set(T0 + day);
     expect((await controlPlane.selectFinalizedOrphansForReclaim({
       olderThanEpochMs: 0,
       limit: 10,
-      supersedeRetentionMs: 30 * day,
+      supersedeRetentionMs: regulationDerivedWindow,
       readDrainMs: 60_000,
     })).rows.map((row) => row.preparedBlobId)).toEqual([detector.prepared.handle]);
     expect(controlPlane.debugPrepared(detector.prepared.handle)?.reclaimAfterMs).toBe(BigInt(T0 + day));
