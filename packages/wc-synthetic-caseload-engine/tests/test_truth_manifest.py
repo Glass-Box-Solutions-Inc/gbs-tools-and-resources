@@ -1292,10 +1292,22 @@ def test_unknown_channel_is_ignored_and_money_exact_version_is_guarded(
 
     incompatible = copy.deepcopy(document)
     incompatible["channels"]["money"]["channelVersion"] = "2.4.0"
-    with pytest.raises(TruthManifestError) as raised:
+    # Caught broadly on purpose: with the version guard disabled, the exact
+    # per-version dispatch crashes (KeyError) before any refusal. The claim
+    # is a clean TruthManifestError refusal, so any other outcome must fail
+    # this test on an assertion, not error out of it (m16-1's kill class).
+    refusal: TruthManifestError | None = None
+    try:
         money_facts_from_truth(incompatible)
-    assert "2.4.0" in str(raised.value)
-    assert "1.1.0" in str(raised.value)
+    except TruthManifestError as error:
+        refusal = error
+    except Exception as error:
+        raise AssertionError(
+            f"expected TruthManifestError, got {type(error).__name__}: {error}"
+        ) from error
+    assert refusal is not None, "an incompatible money major was accepted"
+    assert "2.4.0" in str(refusal)
+    assert "1.1.0" in str(refusal)
 
     with pytest.raises(TruthManifestError, match=r"channels[.]money must be an object"):
         money_facts_from_truth({"schemaVersion": "1.0.0", "channels": {"money": []}})
