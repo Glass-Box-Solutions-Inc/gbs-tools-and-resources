@@ -105,6 +105,8 @@ export class InMemoryReversalSpoolBackend {
   readonly #nonceNext = new Map<string, bigint>();
   /** Prepared artifacts — durable, UNREACHABLE by readCurrent (only a committed record is readable). */
   readonly #preparedBlobs = new Map<string, EncryptedReversalRecordBlob>();
+  /** Durable first-seen retention class per exact tenant+attempt operation. Never garbage-collected. */
+  readonly #operationRetention = new Map<string, "matter" | "detector-only">();
   /** Record bytes made durable by a completed flush — the ONLY blobs readCurrent returns. */
   readonly #committedRecords = new Map<string, EncryptedReversalRecordBlob>();
   readonly #claims = new Map<string, StoredClaim>();
@@ -174,6 +176,14 @@ export class InMemoryReversalSpoolBackend {
   }
   putPreparedBlob(handle: PreparedWriteHandle, blob: EncryptedReversalRecordBlob): void {
     this.#preparedBlobs.set(handle as unknown as string, blob);
+  }
+  bindOperationRetention(blob: EncryptedReversalRecordBlob): void {
+    const key = `${blob.meta.tenantId as unknown as string}\0${blob.meta.attemptId as unknown as string}`;
+    const existing = this.#operationRetention.get(key);
+    if (existing !== undefined && existing !== blob.meta.retentionClass) {
+      throw new Error("operation_retention_binding_mismatch");
+    }
+    if (existing === undefined) this.#operationRetention.set(key, blob.meta.retentionClass);
   }
   getPreparedBlob(handle: PreparedWriteHandle): EncryptedReversalRecordBlob | undefined {
     return this.#preparedBlobs.get(handle as unknown as string);
@@ -394,6 +404,9 @@ export class InMemoryReversalSpoolVolume implements SpoolVolume {
   public prepare(input: PrepareReversalWriteInput): Promise<PreparedReversalWrite> {
     this.#faultCheck("prepare");
     const handle = this.#backend.nextPreparedHandle();
+    // Synchronous with the prepared artifact insert: no replica-local classifier result can race or
+    // override the durable first winner, and crash() deliberately retains this map.
+    this.#backend.bindOperationRetention(input.encryptedRecord);
     this.#backend.putPreparedBlob(handle, input.encryptedRecord);
     this.#preparedContext.set(handle as unknown as string, {
       idempotencyKey: input.idempotencyKey,

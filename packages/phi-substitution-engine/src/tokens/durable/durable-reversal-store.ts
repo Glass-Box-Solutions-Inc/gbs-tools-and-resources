@@ -45,6 +45,35 @@ import type {
 
 /** §6 / roadmap A#5/D5: detector-only mappings expire 24h after creation. */
 const DETECTOR_TTL_MS = 86_400_000n;
+const DEFAULT_DEK_CACHE_MAX_ENTRIES = 256;
+const DEFAULT_DEK_CACHE_TTL_MS = 15 * 60 * 1_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+interface DekCacheEntry {
+  /** Owned by the cache and never handed to an operation by reference. */
+  readonly bytes: Uint8Array;
+  readonly expiresAtEpochMs: number;
+}
+
+interface DurableReversalStoreWeakReference {
+  deref(): DurableReversalStore | undefined;
+}
+
+/**
+ * Internal-only configuration. The dependency port and the store's published constructor signature
+ * stay seam-frozen; tests/composition roots that need tighter bounds may structurally add this
+ * optional member to the constructor input without changing any existing caller.
+ */
+interface DurableReversalStoreInternalDependencies extends DurableReversalStoreDependencies {
+  readonly dekCacheOptions?: Readonly<{
+    readonly maxEntries?: number;
+    readonly ttlMs?: number;
+    /** Test-only factory for simulating collection before an armed expiry timer fires. */
+    readonly weakReferenceFactoryForTesting?: (
+      store: DurableReversalStore,
+    ) => DurableReversalStoreWeakReference;
+  }>;
+}
 
 export class DurableReversalStore implements ReversalWriteStore {
   /** The ONLY public own property (required by `ReversalStore`). A number — nothing sensitive. */
@@ -57,13 +86,32 @@ export class DurableReversalStore implements ReversalWriteStore {
   readonly #spool: SpoolVolume;
   readonly #classifyRetention: (input: RetentionClassificationInput) => Promise<ReversalRetentionClass>;
   readonly #nowEpochMilliseconds: () => number;
-  readonly #dekCache = new Map<string, Uint8Array>();
+  readonly #dekCache = new Map<string, DekCacheEntry>();
+  readonly #dekCacheMaxEntries: number;
+  readonly #dekCacheTtlMs: number;
+  readonly #weakReferenceFactory: (
+    store: DurableReversalStore,
+  ) => DurableReversalStoreWeakReference;
+  #dekCacheExpiryTimer: ReturnType<typeof setTimeout> | undefined;
 
   public constructor(dependencies: DurableReversalStoreDependencies) {
+    const internalDependencies = dependencies as DurableReversalStoreInternalDependencies;
+    const maxEntries = internalDependencies.dekCacheOptions?.maxEntries ?? DEFAULT_DEK_CACHE_MAX_ENTRIES;
+    const ttlMs = internalDependencies.dekCacheOptions?.ttlMs ?? DEFAULT_DEK_CACHE_TTL_MS;
+    if (!Number.isSafeInteger(maxEntries) || maxEntries < 0 || maxEntries > DEFAULT_DEK_CACHE_MAX_ENTRIES) {
+      throw new RangeError("dek_cache_max_entries_must_be_between_zero_and_default");
+    }
+    if (!Number.isFinite(ttlMs) || ttlMs < 0 || ttlMs > DEFAULT_DEK_CACHE_TTL_MS) {
+      throw new RangeError("dek_cache_ttl_ms_must_be_between_zero_and_default");
+    }
     this.#keyProvider = dependencies.keyProvider;
     this.#spool = dependencies.spoolVolume;
     this.#classifyRetention = dependencies.classifyRetention;
     this.#nowEpochMilliseconds = dependencies.nowEpochMilliseconds;
+    this.#dekCacheMaxEntries = maxEntries;
+    this.#dekCacheTtlMs = ttlMs;
+    this.#weakReferenceFactory = internalDependencies.dekCacheOptions?.weakReferenceFactoryForTesting
+      ?? ((store) => new WeakRef(store));
     this.maximumEncounteredTokenBatch = dependencies.maximumEncounteredTokenBatch;
   }
 
@@ -326,17 +374,101 @@ export class DurableReversalStore implements ReversalWriteStore {
       .update(`${scope.tenantId}\0${scope.matterId}\0${dekGenerationId}\0${wrappingKeyVersion}\0${keyHandle.keyId}\0`, "utf8")
       .update(wrappedDek as unknown as Uint8Array)
       .digest("hex");
+    const nowEpochMs = this.#nowEpochMilliseconds();
+    this.#pruneExpiredDeks(nowEpochMs);
     const cached = this.#dekCache.get(cacheKey);
     if (cached !== undefined) {
-      return cached;
+      // Map insertion order is the LRU order. Promote on every hit.
+      this.#dekCache.delete(cacheKey);
+      this.#dekCache.set(cacheKey, cached);
+      // Never expose the cache-owned bytes. A concurrent miss may evict/zero its own cache entry
+      // while this operation is suspended at a later await; the operation's copy remains intact.
+      return Buffer.from(cached.bytes);
     }
     const bindingDigest = dekBindingDigestOf(scope, keyHandle);
     const dek = await this.#keyProvider.unwrap({ scope, key: keyHandle, wrappedDek, bindingDigest });
     if ((dek as Uint8Array).byteLength !== DEK_BYTES) {
       throw new ReversalFailedError();
     }
-    const bytes = dek as unknown as Uint8Array;
-    this.#dekCache.set(cacheKey, bytes);
-    return bytes;
+    // The provider-returned allocation becomes cache-owned. Only a copy leaves this method, so
+    // eviction can best-effort-zero the cached allocation without corrupting an in-flight operation.
+    const cacheBytes = dek as unknown as Uint8Array;
+    const operationBytes = Buffer.from(cacheBytes);
+
+    if (this.#dekCacheMaxEntries === 0 || this.#dekCacheTtlMs === 0) {
+      cacheBytes.fill(0);
+      return operationBytes;
+    }
+
+    // Two concurrent cold misses can finish out of order. Replacing the first cache-owned allocation
+    // must zero it before the second becomes authoritative.
+    this.#evictDek(cacheKey);
+    this.#dekCache.set(cacheKey, {
+      bytes: cacheBytes,
+      expiresAtEpochMs: this.#nowEpochMilliseconds() + this.#dekCacheTtlMs,
+    });
+    this.#evictLeastRecentlyUsedDeks();
+    this.#scheduleDekCacheExpiry();
+    return operationBytes;
+  }
+
+  #pruneExpiredDeks(nowEpochMs: number): void {
+    for (const [cacheKey, entry] of this.#dekCache) {
+      if (nowEpochMs >= entry.expiresAtEpochMs) {
+        this.#evictDek(cacheKey);
+      }
+    }
+  }
+
+  #evictLeastRecentlyUsedDeks(): void {
+    while (this.#dekCache.size > this.#dekCacheMaxEntries) {
+      const leastRecentlyUsed = this.#dekCache.keys().next().value;
+      if (leastRecentlyUsed === undefined) {
+        return;
+      }
+      this.#evictDek(leastRecentlyUsed);
+    }
+  }
+
+  #evictDek(cacheKey: string): void {
+    const entry = this.#dekCache.get(cacheKey);
+    if (entry === undefined) {
+      return;
+    }
+    this.#dekCache.delete(cacheKey);
+    // Defense-in-depth only: this overwrites the cache's live allocation, not copies the runtime,
+    // crypto implementation, allocator, or process may have made.
+    entry.bytes.fill(0);
+  }
+
+  #scheduleDekCacheExpiry(): void {
+    if (this.#dekCacheExpiryTimer !== undefined) {
+      clearTimeout(this.#dekCacheExpiryTimer);
+      this.#dekCacheExpiryTimer = undefined;
+    }
+    let nextExpiry = Number.POSITIVE_INFINITY;
+    for (const entry of this.#dekCache.values()) {
+      nextExpiry = Math.min(nextExpiry, entry.expiresAtEpochMs);
+    }
+    if (!Number.isFinite(nextExpiry)) {
+      return;
+    }
+    const delayMs = Math.min(
+      MAX_TIMER_DELAY_MS,
+      Math.max(0, nextExpiry - this.#nowEpochMilliseconds()),
+    );
+    const weakStore = this.#weakReferenceFactory(this);
+    const expiryTimer = setTimeout(() => {
+      const store = weakStore.deref();
+      if (store === undefined) {
+        return;
+      }
+      store.#dekCacheExpiryTimer = undefined;
+      store.#pruneExpiredDeks(store.#nowEpochMilliseconds());
+      store.#scheduleDekCacheExpiry();
+    }, delayMs);
+    this.#dekCacheExpiryTimer = expiryTimer;
+    // Cache hygiene must not keep an otherwise-idle process alive.
+    expiryTimer.unref();
   }
 }

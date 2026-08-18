@@ -11,6 +11,7 @@ import type {
 import type { ReversalRecordInput } from "../src/core/contracts";
 import { AzureFilesBlobStore } from "../src/tokens/durable/azure/azure-files-blob-store";
 import { AzureFilesSpoolVolume } from "../src/tokens/durable/azure/azure-files-spool-volume";
+import { AzureSpoolMaintenance } from "../src/tokens/durable/azure/azure-spool-maintenance";
 import type { BlobProperties, BlobStore } from "../src/tokens/durable/azure/blob-store";
 import type {
   ClaimBlobReference,
@@ -33,6 +34,7 @@ import type {
 } from "../src/tokens/durable/azure/control-plane";
 import { PostgresControlPlane, runMigrations } from "../src/tokens/durable/azure/postgres-control-plane";
 import { decodeReversalBlob, encodeReversalBlob } from "../src/tokens/durable/azure/reversal-blob-codec";
+import { InMemoryControlPlane } from "../src/tokens/durable/dev/in-memory-control-plane";
 import { InMemoryKeyProvider } from "../src/tokens/durable/dev/in-memory-key-provider";
 import { ReversalFailedError } from "../src/tokens/index";
 import { DurableReversalStore } from "../src/tokens/durable/durable-reversal-store";
@@ -134,6 +136,12 @@ class MemoryBlobStore implements BlobStore {
   }
 }
 
+class FailingPutBlobStore extends MemoryBlobStore {
+  public override putStaging(): Promise<void> {
+    return Promise.reject(new Error("simulated_staging_write_failure"));
+  }
+}
+
 interface FakePrepared {
   readonly input: InsertPreparedUploadingInput;
   state: "uploading" | "finalized" | "committed";
@@ -212,6 +220,7 @@ class MemoryControlPlane implements ControlPlane {
       return Promise.reject(new Error("fake_missing_blob_attributes"));
     }
     return Promise.resolve({
+      kind: "blob",
       blobPath: claim.prepared.input.blobPath,
       blobEtag: claim.prepared.etag,
       blobLength: claim.prepared.len,
@@ -279,6 +288,51 @@ describe("reversal blob codec", () => {
 });
 
 describe("AzureFilesSpoolVolume unit", () => {
+  it("uses plane time for adapter-prepared Path-1 and crash-left Path-2a rows", async () => {
+    const oneHundredHours = 100 * 60 * 60 * 1_000;
+    const uploadHorizon = 48 * 60 * 60 * 1_000;
+    const controlPlane = new InMemoryControlPlane({ nowEpochMilliseconds: () => T0 });
+    const input = (suffix: string): PrepareReversalWriteInput => {
+      const encryptedRecord = blobFixture();
+      return {
+        idempotencyKey: brand<ReversalIdempotencyKey>(`idempotency-${suffix}`),
+        mappingKey: brand<ReversalMappingKey>(`mapping-${suffix}`),
+        immutableScopeDigest: brand<ReversalScopeDigest>(`scope-${suffix}`),
+        encryptedRecord: {
+          ...encryptedRecord,
+          meta: { ...encryptedRecord.meta, createdAtEpochMs: T0 - oneHundredHours },
+        },
+      };
+    };
+
+    const interrupted = new AzureFilesSpoolVolume(controlPlane, new FailingPutBlobStore(), () => T0);
+    await expect(interrupted.prepare(input("uploading"))).rejects.toThrow("simulated_staging_write_failure");
+    const uploadingHandle = controlPlane.debugPreparedHandles()[0];
+    expect(uploadingHandle).toBeDefined();
+    if (uploadingHandle === undefined) throw new Error("expected uploading row");
+
+    const completed = new AzureFilesSpoolVolume(controlPlane, new MemoryBlobStore(), () => T0);
+    const finalized = await completed.prepare(input("finalized"));
+    const threshold = T0 - uploadHorizon;
+
+    await expect(controlPlane.markStaleUploads({
+      uploadHorizonEpochMs: threshold,
+      limit: 10,
+    })).resolves.toEqual([]);
+    await expect(controlPlane.selectFinalizedOrphansForReclaim({
+      olderThanEpochMs: threshold,
+      limit: 10,
+    })).resolves.toEqual({ rows: [], skippedReferenced: 0 });
+    expect(controlPlane.debugPrepared(uploadingHandle)).toMatchObject({
+      state: "uploading",
+      createdAtMs: T0,
+    });
+    expect(controlPlane.debugPrepared(finalized.handle)).toMatchObject({
+      state: "finalized",
+      createdAtMs: T0,
+    });
+  });
+
   it("prepares, publishes, flushes, and reads the exact encrypted record", async () => {
     const controlPlane = new MemoryControlPlane();
     const blobs = new MemoryBlobStore();
@@ -318,6 +372,36 @@ describe("AzureFilesSpoolVolume unit", () => {
     await volume.flush(published.commit);
     await blobs.remove(`blobs/${prepared.handle as unknown as string}`);
 
+    await expect(volume.readCurrent([{ mappingKey }])).rejects.toThrow("integrity");
+  });
+
+  it("reads a snapshotted old pointer through original-to-quarantine fallback during grace", async () => {
+    const controlPlane = new MemoryControlPlane();
+    const blobs = new MemoryBlobStore();
+    const volume = new AzureFilesSpoolVolume(controlPlane, blobs, () => T0);
+    const mappingKey = brand<ReversalMappingKey>("tenant\u0000matter\u00001\u0000[[OldPointer]]");
+    const record = blobFixture();
+    const prepared = await volume.prepare({
+      idempotencyKey: brand<ReversalIdempotencyKey>("tenant\0attempt-old\0[[OldPointer]]"),
+      mappingKey,
+      immutableScopeDigest: brand<ReversalScopeDigest>("scope-old-pointer"),
+      encryptedRecord: record,
+    });
+    const published = await volume.publish(prepared);
+    if (published.kind !== "published") throw new Error("expected_publish");
+    await volume.flush(published.commit);
+
+    const original = `blobs/${prepared.handle as unknown as string}`;
+    const quarantine = `reclaim-quarantine/${prepared.handle as unknown as string}`;
+    await blobs.rename(original, quarantine);
+    const quarantinedBytes = await blobs.get(quarantine);
+    if (quarantinedBytes === undefined) throw new Error("expected quarantine bytes");
+    // Azure Files may assign a destination ETag during rename; fallback authenticates the immutable
+    // envelope after enforcing the durable length rather than assuming ETag preservation.
+    await blobs.putStaging(quarantine, quarantinedBytes);
+    await expect(volume.readCurrent([{ mappingKey }])).resolves.toEqual([{ mappingKey, encryptedRecord: record }]);
+
+    await blobs.remove(quarantine);
     await expect(volume.readCurrent([{ mappingKey }])).rejects.toThrow("integrity");
   });
 });
@@ -398,7 +482,7 @@ describe.skipIf(!LIVE)("AzureFilesSpoolVolume live", () => {
     keyProvider = new InMemoryKeyProvider();
     await pool.query(
       `TRUNCATE TABLE reversal_current, reversal_claim, reversal_ordinal_seq, reversal_prepared,
-       reversal_nonce_counter, reversal_dek_generation CASCADE`,
+       reversal_operation_retention, reversal_nonce_counter, reversal_dek_generation CASCADE`,
     );
   });
 
@@ -485,5 +569,75 @@ describe.skipIf(!LIVE)("AzureFilesSpoolVolume live", () => {
       dictionaryVersion: input.dictionaryVersion,
       tokens: [input.token],
     })).rejects.toBeInstanceOf(ReversalFailedError);
+  }, 120_000);
+
+  it("preserves a snapshotted old pointer across supersession, rename crash, and fresh-job recovery", async () => {
+    const oldInput = makeInput("old-pointer-fallback");
+    const freshInput: ReversalRecordInput = {
+      ...oldInput,
+      canonical: `${oldInput.canonical} newer`,
+      attemptId: brand<OperationAttemptId>(`attempt-new-${randomUUID()}`),
+    };
+    const firstVolume = new AzureFilesSpoolVolume(controlPlane, blobs, () => now);
+    await makeStore(firstVolume, "matter").record(oldInput);
+    const mappingKey = mappingKeyOf(
+      oldInput.tenantId,
+      oldInput.matterId,
+      oldInput.dictionaryVersion,
+      oldInput.token,
+    );
+    const snapshotted = await controlPlane.readCurrentPointers([mappingKey]);
+    expect(snapshotted).toHaveLength(1);
+    const oldPointer = snapshotted[0]!;
+
+    await makeStore(new AzureFilesSpoolVolume(new PostgresControlPlane(pool), blobs, () => now), "matter")
+      .record(freshInput);
+    await pool.query(
+      `UPDATE reversal_prepared SET superseded_at_ms = 0
+       WHERE prepared_blob_id = $1 AND state = 'superseded'`,
+      [oldPointer.preparedBlobId],
+    );
+    const freshPlane = new PostgresControlPlane(pool);
+    const selected = await freshPlane.selectFinalizedOrphansForReclaim({
+      olderThanEpochMs: 0,
+      limit: 1,
+      supersedeRetentionMs: 100,
+      readDrainMs: 0,
+    });
+    expect(selected.rows.map((row) => row.preparedBlobId)).toEqual([oldPointer.preparedBlobId]);
+    const quarantine = `reclaim-quarantine/${oldPointer.preparedBlobId as unknown as string}`;
+    await blobs.rename(oldPointer.blobPath, quarantine); // simulated process death before DB update
+
+    const pinnedPlane = new Proxy(freshPlane, {
+      get(target, property, receiver) {
+        if (property === "readCurrentPointers") return () => Promise.resolve([oldPointer]);
+        const value = Reflect.get(target, property, receiver) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as ControlPlane;
+    const staleRead = await new AzureFilesSpoolVolume(pinnedPlane, blobs, () => now)
+      .readCurrent([{ mappingKey }]);
+    expect(staleRead[0]?.encryptedRecord.meta.attemptId).toBe(oldInput.attemptId);
+    const currentRead = await new AzureFilesSpoolVolume(freshPlane, blobs, () => now)
+      .readCurrent([{ mappingKey }]);
+    expect(currentRead[0]?.encryptedRecord.meta.attemptId).toBe(freshInput.attemptId);
+
+    const recovery = await new AzureSpoolMaintenance({
+      controlPlane: freshPlane,
+      blobStore: blobs,
+      uploadHorizonMs: 86_400_000,
+      graceMs: 100,
+      supersedeRetentionMs: 100,
+      readDrainMs: 0,
+      now: Date.now,
+      includeHardDelete: false,
+    }).reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 1 });
+    expect(recovery.reclaimed).toBe(1);
+    const state = await pool.query<{ readonly state: string }>(
+      `SELECT state FROM reversal_prepared WHERE prepared_blob_id = $1`,
+      [oldPointer.preparedBlobId],
+    );
+    expect(state.rows).toEqual([{ state: "quarantined" }]);
+    expect(await blobs.head(quarantine)).toBeDefined();
   }, 120_000);
 });

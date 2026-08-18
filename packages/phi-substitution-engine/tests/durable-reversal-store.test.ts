@@ -10,8 +10,20 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ReversalFailedError } from "../src/tokens/index";
 import { InMemoryReversalStore } from "../src/tokens/index";
-import { buildReversalAad, DurableReversalStore, InMemoryKeyProvider, mappingKeyOf } from "../src/tokens/durable/index";
-import type { DurableReversalRecordMeta, EncryptedReversalRecordBlob, ReversalAadFields, SpoolVolume } from "../src/tokens/durable/index";
+import {
+  buildReversalAad,
+  DurableReversalStore,
+  InMemoryKeyProvider,
+  InMemoryReversalSpoolBackend,
+  mappingKeyOf,
+} from "../src/tokens/durable/index";
+import type {
+  DurableReversalRecordMeta,
+  EncryptedReversalRecordBlob,
+  KeyProvider,
+  ReversalAadFields,
+  SpoolVolume,
+} from "../src/tokens/durable/index";
 import {
   brand,
   DEFAULT_MATTER,
@@ -32,6 +44,102 @@ import { expectNoCanary } from "./test-helpers";
 
 const CLAIMANT = DEFAULT_TOKEN;
 const WITNESS = brand<SubstitutionToken>("[[Witness]]");
+
+interface DekCacheHarnessOptions {
+  readonly clock?: ReturnType<typeof makeClock>;
+  readonly wrapSpool?: (spool: SpoolVolume) => SpoolVolume;
+  readonly cacheOptions?: Readonly<{
+    readonly maxEntries?: number;
+    readonly ttlMs?: number;
+    readonly weakReferenceFactoryForTesting?: (
+      store: DurableReversalStore,
+    ) => { deref(): DurableReversalStore | undefined };
+  }>;
+}
+
+/** Uses the KeyProvider port as the test seam to count unwraps and retain cache-owned allocations. */
+function makeDekCacheHarness(options: DekCacheHarnessOptions = {}) {
+  const clock = options.clock ?? makeClock();
+  const backend = new InMemoryReversalSpoolBackend();
+  const delegate = new InMemoryKeyProvider();
+  const unwrappedDekReferences: Uint8Array[] = [];
+  let unwrapInvocations = 0;
+  const keyProvider: KeyProvider = {
+    getWrappingKey: (scope) => delegate.getWrappingKey(scope),
+    wrap: (input) => delegate.wrap(input),
+    unwrap: async (input) => {
+      const dek = await delegate.unwrap(input);
+      unwrapInvocations += 1;
+      unwrappedDekReferences.push(dek as unknown as Uint8Array);
+      return dek;
+    },
+  };
+  const mountedSpool = backend.mount({}, clock.now);
+  const dependencies = {
+    keyProvider,
+    spoolVolume: options.wrapSpool?.(mountedSpool) ?? mountedSpool,
+    classifyRetention: async () => "matter" as const,
+    nowEpochMilliseconds: clock.now,
+    maximumEncounteredTokenBatch: 256,
+  };
+  // Keep the published constructor signature frozen. The store reads this structurally optional,
+  // internal-only member; omitting it exercises the production defaults.
+  const configuredDependencies = options.cacheOptions === undefined
+    ? dependencies
+    : { ...dependencies, dekCacheOptions: options.cacheOptions };
+  const store = new DurableReversalStore(configuredDependencies);
+  return {
+    store,
+    clock,
+    unwrappedDekReferences,
+    unwrapInvocations: () => unwrapInvocations,
+  };
+}
+
+function cacheScope(label: string): { matterId: MatterId; attemptId: OperationAttemptId; canonical: string } {
+  return {
+    matterId: brand<MatterId>(`matter-cache-${label}`),
+    attemptId: brand<OperationAttemptId>(`attempt-cache-${label}`),
+    canonical: `Canonical ${label}`,
+  };
+}
+
+function makeNonceStall() {
+  let targetMatter: string | undefined;
+  let markReached: (() => void) | undefined;
+  let waitForRelease: Promise<void> | undefined;
+  return {
+    wrap: (inner: SpoolVolume): SpoolVolume => ({
+      ensureDekGeneration: (input) => inner.ensureDekGeneration(input),
+      reserveNonce: async (input) => {
+        if (String(input.matterId) === targetMatter) {
+          targetMatter = undefined;
+          markReached?.();
+          await waitForRelease;
+        }
+        return inner.reserveNonce(input);
+      },
+      prepare: (input) => inner.prepare(input),
+      publish: (input) => inner.publish(input),
+      flush: (input) => inner.flush(input),
+      readCurrent: (input) => inner.readCurrent(input),
+    }),
+    stallNext: (matterId: MatterId) => {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let reached!: () => void;
+      const reachedPromise = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      targetMatter = String(matterId);
+      markReached = reached;
+      waitForRelease = released;
+      return { reached: reachedPromise, release };
+    },
+  };
+}
 
 describe("L2.4 DurableReversalStore — durability + envelope + idempotency (§6, L8, N5)", () => {
   it("record resolves only after durable flush (MUT-RETURN-BEFORE-FLUSH)", async () => {
@@ -110,6 +218,116 @@ describe("L2.4 DurableReversalStore — durability + envelope + idempotency (§6
     await h.store.record(recordInput({ canonical: "Robert O'Neil" }));
     const map = await h.store.resolveEncounteredTokens(resolveInput());
     expect(map.get(CLAIMANT)).toBe("Robert O'Neil");
+  });
+});
+
+describe("GLY-345 Part A — operation retention binding", () => {
+  it("rejects a sequential classifier flip for one tenant/attempt with the fixed surface", async () => {
+    let classification: "matter" | "detector-only" = "matter";
+    const h = makeHarness({ retention: async () => classification, clock: () => T0 });
+    const attemptId = brand<OperationAttemptId>("retention-bound-attempt");
+
+    await h.store.record(recordInput({ attemptId, token: CLAIMANT }));
+    classification = "detector-only";
+    let caught: unknown;
+    try {
+      await h.store.record(recordInput({ attemptId, token: WITNESS, canonical: "Second canonical" }));
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ReversalFailedError);
+    expect(caught).toMatchObject({ code: "REVERSAL_FAILED", message: "reversal_failed" });
+    expect((caught as Error & { cause?: unknown }).cause).toBeUndefined();
+    expect(h.spy.counts.published).toBe(1);
+    expect(await h.store.resolveEncounteredTokens(resolveInput({ tokens: [CLAIMANT, WITNESS] })))
+      .toEqual(new Map([[CLAIMANT, "Maria García"]]));
+  });
+
+  it("serializes a cross-replica opposite-class race to exactly one successful class", async () => {
+    const backend = new InMemoryReversalSpoolBackend();
+    const keyProvider = new InMemoryKeyProvider();
+    const matter = makeHarness({ backend, keyProvider, retention: "matter", clock: () => T0 });
+    const detector = makeHarness({ backend, keyProvider, retention: "detector-only", clock: () => T0 });
+    const attemptId = brand<OperationAttemptId>("cross-replica-retention-race");
+
+    const results = await Promise.allSettled([
+      matter.store.record(recordInput({ attemptId, token: CLAIMANT })),
+      detector.store.record(recordInput({ attemptId, token: WITNESS, canonical: "Witness canonical" })),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected?.status === "rejected" ? rejected.reason : undefined).toBeInstanceOf(ReversalFailedError);
+    const resolved = await matter.store.resolveEncounteredTokens(resolveInput({ tokens: [CLAIMANT, WITNESS] }));
+    expect(resolved.size).toBe(1);
+  });
+
+  it("persists a committed anchor across prepare-response loss and remount", async () => {
+    const backend = new InMemoryReversalSpoolBackend();
+    const keyProvider = new InMemoryKeyProvider();
+    const inner = backend.mount({}, () => T0);
+    const responseLost: SpoolVolume = {
+      ensureDekGeneration: (input) => inner.ensureDekGeneration(input),
+      reserveNonce: (input) => inner.reserveNonce(input),
+      prepare: async (input) => {
+        await inner.prepare(input);
+        throw new Error("lost_after_anchor_commit");
+      },
+      publish: (input) => inner.publish(input),
+      flush: (input) => inner.flush(input),
+      readCurrent: (input) => inner.readCurrent(input),
+    };
+    const failed = new DurableReversalStore({
+      keyProvider,
+      spoolVolume: responseLost,
+      classifyRetention: async () => "matter",
+      nowEpochMilliseconds: () => T0,
+      maximumEncounteredTokenBatch: 256,
+    });
+    const attemptId = brand<OperationAttemptId>("lost-anchor-response");
+    await expect(failed.record(recordInput({ attemptId }))).rejects.toBeInstanceOf(ReversalFailedError);
+
+    backend.crash();
+    const retry = makeHarness({ backend, keyProvider, retention: "detector-only", clock: () => T0 });
+    await expect(retry.store.record(recordInput({ attemptId, token: WITNESS })))
+      .rejects.toBeInstanceOf(ReversalFailedError);
+  });
+
+  it("keys bindings by exact tenant NUL attempt, independent of matter and delimiter-free aliases", async () => {
+    let classification: "matter" | "detector-only" = "matter";
+    const h = makeHarness({ retention: async () => classification, clock: () => T0 });
+    const attemptC = brand<OperationAttemptId>("c");
+    const attemptBc = brand<OperationAttemptId>("bc");
+    const tenantAb = brand<TenantId>("ab");
+    const tenantA = brand<TenantId>("a");
+
+    await h.store.record(recordInput({ tenantId: tenantAb, attemptId: attemptC, token: CLAIMANT }));
+    classification = "detector-only";
+    await h.store.record(recordInput({ tenantId: tenantA, attemptId: attemptBc, token: WITNESS }));
+
+    classification = "detector-only";
+    await expect(h.store.record(recordInput({
+      tenantId: tenantAb,
+      matterId: brand<MatterId>("changed-matter"),
+      attemptId: attemptC,
+      token: brand<SubstitutionToken>("[[Other]]"),
+    }))).rejects.toBeInstanceOf(ReversalFailedError);
+  });
+
+  it("has no in-band override: a wrong bound attempt remains rejected while a new attempt binds", async () => {
+    let classification: "matter" | "detector-only" = "matter";
+    const h = makeHarness({ retention: async () => classification, clock: () => T0 });
+    const oldAttempt = brand<OperationAttemptId>("wrong-first-binding");
+    await h.store.record(recordInput({ attemptId: oldAttempt }));
+    classification = "detector-only";
+
+    await expect(h.store.record(recordInput({ attemptId: oldAttempt, token: WITNESS })))
+      .rejects.toBeInstanceOf(ReversalFailedError);
+    await expect(h.store.record(recordInput({
+      attemptId: brand<OperationAttemptId>("replacement-operation"),
+      token: WITNESS,
+    }))).resolves.toBeUndefined();
   });
 });
 
@@ -396,6 +614,181 @@ describe("L2.4 DurableReversalStore — tenant isolation + nonce uniqueness (L8,
 
     const hex = [...first, ...second].map((n) => Buffer.from(n).toString("hex"));
     expect(new Set(hex).size).toBe(hex.length); // all 16 distinct across concurrency + remount
+  });
+});
+
+describe("L2.4 DurableReversalStore — bounded DEK cache (GLY-343)", () => {
+  it("TTL expiry forces a transparent re-unwrap (M1 disable TTL expiry check)", async () => {
+    const clock = makeClock(T0);
+    const h = makeDekCacheHarness({ clock, cacheOptions: { maxEntries: 2, ttlMs: 100 } });
+    const scope = cacheScope("ttl");
+    await h.store.record(recordInput(scope));
+    expect(h.unwrapInvocations()).toBe(1);
+
+    clock.advance(99);
+    const warm = await h.store.resolveEncounteredTokens(resolveInput({ matterId: scope.matterId }));
+    expect(warm.get(CLAIMANT)).toBe(scope.canonical);
+    expect(h.unwrapInvocations()).toBe(1);
+
+    clock.advance(1); // exact cache-expiry instant
+    const reopened = await h.store.resolveEncounteredTokens(resolveInput({ matterId: scope.matterId }));
+    expect(reopened.get(CLAIMANT)).toBe(scope.canonical);
+    expect(h.unwrapInvocations()).toBe(2);
+  });
+
+  it("copies cold and warm DEKs before an in-flight record can be evicted (MC/MD)", async () => {
+    const nonceStall = makeNonceStall();
+    const h = makeDekCacheHarness({
+      cacheOptions: { maxEntries: 1, ttlMs: 60_000 },
+      wrapSpool: nonceStall.wrap,
+    });
+
+    const assertStalledRecordSurvivesEviction = async (
+      target: ReturnType<typeof cacheScope>,
+      evictor: ReturnType<typeof cacheScope>,
+    ): Promise<void> => {
+      const stall = nonceStall.stallNext(target.matterId);
+      const pendingRecord = h.store.record(recordInput(target));
+      await stall.reached; // #unwrapDek returned; record() is suspended before its first DEK use
+      await h.store.record(recordInput(evictor)); // maxEntries:1 evicts and zeroizes target's cache entry
+      stall.release();
+      await pendingRecord;
+      const reopened = await h.store.resolveEncounteredTokens(resolveInput({ matterId: target.matterId }));
+      expect(reopened.get(CLAIMANT)).toBe(target.canonical);
+    };
+
+    // Cold path exercises operationBytes = Buffer.from(cacheBytes) (MD).
+    await assertStalledRecordSurvivesEviction(cacheScope("copy-cold"), cacheScope("copy-cold-evictor"));
+
+    // Warm the second scope, then exercise return Buffer.from(cached.bytes) (MC).
+    const warmScope = cacheScope("copy-warm");
+    await h.store.record(recordInput(warmScope));
+    await assertStalledRecordSurvivesEviction(
+      {
+        ...warmScope,
+        attemptId: brand<OperationAttemptId>("attempt-cache-copy-warm-target"),
+        canonical: "Canonical copy-warm target",
+      },
+      cacheScope("copy-warm-evictor"),
+    );
+  });
+
+  it("evicts the least-recently-used DEK while retained entries remain warm (M2 disable LRU eviction)", async () => {
+    const h = makeDekCacheHarness({ cacheOptions: { maxEntries: 2, ttlMs: 60_000 } });
+    const a = cacheScope("lru-a");
+    const b = cacheScope("lru-b");
+    const c = cacheScope("lru-c");
+    await h.store.record(recordInput(a));
+    await h.store.record(recordInput(b));
+    await h.store.resolveEncounteredTokens(resolveInput({ matterId: a.matterId })); // A becomes MRU; B becomes LRU
+    await h.store.record(recordInput(c)); // evicts B
+    expect(h.unwrapInvocations()).toBe(3);
+
+    const retainedA = await h.store.resolveEncounteredTokens(resolveInput({ matterId: a.matterId }));
+    const retainedC = await h.store.resolveEncounteredTokens(resolveInput({ matterId: c.matterId }));
+    expect(retainedA.get(CLAIMANT)).toBe(a.canonical);
+    expect(retainedC.get(CLAIMANT)).toBe(c.canonical);
+    expect(h.unwrapInvocations()).toBe(3); // both retained entries hit the cache
+
+    const reopenedB = await h.store.resolveEncounteredTokens(resolveInput({ matterId: b.matterId }));
+    expect(reopenedB.get(CLAIMANT)).toBe(b.canonical);
+    expect(h.unwrapInvocations()).toBe(4); // evicted B transparently re-unwraps
+  });
+
+  it("best-effort zeroizes the cache-owned DEK allocation on eviction (M3 remove fill(0))", async () => {
+    const h = makeDekCacheHarness({ cacheOptions: { maxEntries: 1, ttlMs: 60_000 } });
+    const a = cacheScope("zero-a");
+    const b = cacheScope("zero-b");
+    await h.store.record(recordInput(a));
+    const evictedReference = h.unwrappedDekReferences[0]!;
+    expect([...evictedReference].some((byte) => byte !== 0)).toBe(true);
+
+    await h.store.record(recordInput(b));
+    expect([...evictedReference].every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("round-trips every scope after repeated maxEntries eviction and re-unwrap", async () => {
+    const h = makeDekCacheHarness({ cacheOptions: { maxEntries: 1, ttlMs: 60_000 } });
+    const a = cacheScope("roundtrip-a");
+    const b = cacheScope("roundtrip-b");
+    await h.store.record(recordInput(a));
+    await h.store.record(recordInput(b)); // evicts A
+
+    const reopenedA = await h.store.resolveEncounteredTokens(resolveInput({ matterId: a.matterId }));
+    const reopenedB = await h.store.resolveEncounteredTokens(resolveInput({ matterId: b.matterId }));
+    expect(reopenedA.get(CLAIMANT)).toBe(a.canonical);
+    expect(reopenedB.get(CLAIMANT)).toBe(b.canonical);
+    expect(h.unwrapInvocations()).toBe(4); // write A, write B, reopen A, reopen B
+  });
+
+  it("defaults preserve repeat-use cache hits when constructed without cache options", async () => {
+    const h = makeDekCacheHarness();
+    const scope = cacheScope("defaults");
+    await h.store.record(recordInput(scope));
+    const first = await h.store.resolveEncounteredTokens(resolveInput({ matterId: scope.matterId }));
+    const second = await h.store.resolveEncounteredTokens(resolveInput({ matterId: scope.matterId }));
+    expect(first.get(CLAIMANT)).toBe(scope.canonical);
+    expect(second.get(CLAIMANT)).toBe(scope.canonical);
+    expect(h.unwrapInvocations()).toBe(1);
+  });
+
+  it("maxEntries:0 bypasses retention, zeroizes provider allocations, and still round-trips", async () => {
+    const h = makeDekCacheHarness({ cacheOptions: { maxEntries: 0, ttlMs: 60_000 } });
+    const scope = cacheScope("max-zero");
+    await h.store.record(recordInput(scope));
+    expect([...h.unwrappedDekReferences[0]!].every((byte) => byte === 0)).toBe(true);
+
+    const reopened = await h.store.resolveEncounteredTokens(resolveInput({ matterId: scope.matterId }));
+    expect(reopened.get(CLAIMANT)).toBe(scope.canonical);
+    expect(h.unwrapInvocations()).toBe(2);
+    expect([...h.unwrappedDekReferences[1]!].every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("ttlMs:0 bypasses retention, zeroizes provider allocations, and still round-trips", async () => {
+    const h = makeDekCacheHarness({ cacheOptions: { maxEntries: 1, ttlMs: 0 } });
+    const scope = cacheScope("ttl-zero");
+    await h.store.record(recordInput(scope));
+    expect([...h.unwrappedDekReferences[0]!].every((byte) => byte === 0)).toBe(true);
+
+    const reopened = await h.store.resolveEncounteredTokens(resolveInput({ matterId: scope.matterId }));
+    expect(reopened.get(CLAIMANT)).toBe(scope.canonical);
+    expect(h.unwrapInvocations()).toBe(2);
+    expect([...h.unwrappedDekReferences[1]!].every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("rejects cache options that loosen the default entry or TTL bounds", () => {
+    expect(() => makeDekCacheHarness({ cacheOptions: { maxEntries: 257 } })).toThrow(RangeError);
+    expect(() => makeDekCacheHarness({ cacheOptions: { ttlMs: 15 * 60 * 1_000 + 1 } })).toThrow(RangeError);
+  });
+
+  it("expiry timer callback retains only a weak store reference and no-ops after collection", async () => {
+    let dereferenceInvocations = 0;
+    const h = makeDekCacheHarness({
+      cacheOptions: {
+        maxEntries: 1,
+        ttlMs: 1,
+        weakReferenceFactoryForTesting: () => ({
+          deref: () => {
+            dereferenceInvocations += 1;
+            return undefined; // simulate collection before the armed timer fires
+          },
+        }),
+      },
+    });
+    await h.store.record(recordInput(cacheScope("weak-timer")));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(dereferenceInvocations).toBe(1);
+
+    // Structural backstop: the timer closure itself must never mention `this`; the only route back to
+    // the store is the weak reference dereference above.
+    const src = readFileSync(new URL("../src/tokens/durable/durable-reversal-store.ts", import.meta.url), "utf8");
+    const callbackStart = src.indexOf("const expiryTimer = setTimeout(() => {");
+    const callbackEnd = src.indexOf("}, delayMs);", callbackStart);
+    expect(callbackStart).toBeGreaterThan(-1);
+    expect(callbackEnd).toBeGreaterThan(callbackStart);
+    const callbackSource = src.slice(callbackStart, callbackEnd);
+    expect(callbackSource).toContain("weakStore.deref()");
+    expect(callbackSource).not.toContain("this.");
   });
 });
 

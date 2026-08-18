@@ -129,6 +129,7 @@ async function seedUploading(
   blobs: FakeBlobStore,
   createdAtEpochMs: number,
   withStaging = true,
+  backdatePool?: Pool,
 ): Promise<SeededPrepared> {
   fixtureSequence += 1;
   const handle = brand<PreparedWriteHandle>(randomUUID());
@@ -142,8 +143,19 @@ async function seedUploading(
     immutableScopeDigest: brand<ReversalScopeDigest>(`scope-${fixtureSequence}`),
     stagingPath,
     blobPath,
+    attemptId: brand(`attempt-${fixtureSequence}`),
+    retentionClass: "matter",
     createdAtEpochMs: createdAtEpochMs,
+    expiresAtEpochMs: 2n ** 64n - 1n,
   });
+  if (controlPlane instanceof InMemoryControlPlane) {
+    controlPlane.debugSetPreparedCreatedAtMs(handle, createdAtEpochMs);
+  } else if (backdatePool !== undefined) {
+    await backdatePool.query(
+      `UPDATE reversal_prepared SET created_at_ms = $2 WHERE prepared_blob_id = $1`,
+      [handle, createdAtEpochMs],
+    );
+  }
   if (withStaging) {
     await blobs.putStaging(stagingPath, Uint8Array.of(fixtureSequence & 0xff, 2, 3));
   }
@@ -161,8 +173,9 @@ async function seedFinalized(
   controlPlane: ControlPlane,
   blobs: FakeBlobStore,
   createdAtEpochMs = T0,
+  backdatePool?: Pool,
 ): Promise<SeededPrepared> {
-  const seeded = await seedUploading(controlPlane, blobs, createdAtEpochMs);
+  const seeded = await seedUploading(controlPlane, blobs, createdAtEpochMs, true, backdatePool);
   const finalized = await blobs.finalize(seeded.stagingPath, seeded.blobPath);
   await controlPlane.markFinalized({
     preparedBlobId: seeded.handle,
@@ -203,11 +216,48 @@ function maintenance(
     blobStore,
     uploadHorizonMs,
     graceMs,
+    supersedeRetentionMs: graceMs,
+    readDrainMs: 0,
     now: () => now,
   });
 }
 
 describe("AzureSpoolMaintenance unit", () => {
+  it("ORACLE-MAINTENANCE-WINDOW-ORDER accepts equality and rejects either invalid inequality", () => {
+    const controlPlane = new InMemoryControlPlane({
+      quarantineGraceMilliseconds: 10,
+      supersedeRetentionMilliseconds: 10,
+      readDrainMilliseconds: 10,
+    });
+    const blobs = new FakeBlobStore();
+    expect(() => new AzureSpoolMaintenance({
+      controlPlane,
+      blobStore: blobs,
+      uploadHorizonMs: 1,
+      graceMs: 10,
+      supersedeRetentionMs: 10,
+      readDrainMs: 10,
+    })).not.toThrow();
+    expect(() => new AzureSpoolMaintenance({
+      controlPlane,
+      blobStore: blobs,
+      uploadHorizonMs: 1,
+      graceMs: 9,
+      supersedeRetentionMs: 10,
+      readDrainMs: 10,
+    })).toThrow("retention_window_order");
+    expect(() => new AzureSpoolMaintenance({
+      controlPlane,
+      blobStore: blobs,
+      uploadHorizonMs: 1,
+      graceMs: 10,
+      supersedeRetentionMs: 9,
+      readDrainMs: 10,
+    })).toThrow("retention_window_order");
+    expect(blobs.renameCalls).toEqual([]);
+    expect(blobs.removeCalls).toEqual([]);
+  });
+
   it("Path 1 quarantines old unreferenced finalized rows and counts referenced candidates", async () => {
     const controlPlane = new InMemoryControlPlane();
     const blobs = new FakeBlobStore();
@@ -215,7 +265,7 @@ describe("AzureSpoolMaintenance unit", () => {
     const referenced = await seedFinalized(controlPlane, blobs);
     const published = await controlPlane.publish({
       prepared: { handle: referenced.handle },
-      expiresAtEpochMs: BigInt(T0 + 10_000),
+      expiresAtEpochMs: 2n ** 64n - 1n,
       nowEpochMilliseconds: T0,
     });
     if (published.kind !== "published") throw new Error("expected published");
@@ -244,7 +294,7 @@ describe("AzureSpoolMaintenance unit", () => {
     const referenced = await seedFinalized(controlPlane, blobs);
     const published = await controlPlane.publish({
       prepared: { handle: referenced.handle },
-      expiresAtEpochMs: BigInt(T0 + 10_000),
+      expiresAtEpochMs: 2n ** 64n - 1n,
       nowEpochMilliseconds: T0,
     });
     if (published.kind !== "published") throw new Error("expected published");
@@ -274,7 +324,7 @@ describe("AzureSpoolMaintenance unit", () => {
       const referenced = await seedFinalized(controlPlane, blobs, T0 - 2 + index);
       const published = await controlPlane.publish({
         prepared: { handle: referenced.handle },
-        expiresAtEpochMs: BigInt(T0 + 10_000),
+        expiresAtEpochMs: 2n ** 64n - 1n,
         nowEpochMilliseconds: T0,
       });
       if (published.kind !== "published") throw new Error("expected published");
@@ -313,7 +363,7 @@ describe("AzureSpoolMaintenance unit", () => {
       const referenced = await seedFinalized(controlPlane, blobs);
       const published = await controlPlane.publish({
         prepared: { handle: referenced.handle },
-        expiresAtEpochMs: BigInt(T0 + 10_000),
+        expiresAtEpochMs: 2n ** 64n - 1n,
         nowEpochMilliseconds: T0,
       });
       if (published.kind !== "published") throw new Error("expected published");
@@ -398,6 +448,8 @@ describe("AzureSpoolMaintenance unit", () => {
       blobStore: blobs,
       uploadHorizonMs: 100,
       graceMs: 100,
+      supersedeRetentionMs: 100,
+      readDrainMs: 0,
       now: () => T0 + 1_000,
       includeHardDelete: false,
     });
@@ -415,6 +467,7 @@ describe("AzureSpoolMaintenance unit", () => {
     const quarantined = await seedQuarantined(controlPlane, blobs, T0 + 700);
     const finalized = await seedFinalized(controlPlane, blobs);
     const uploading = await seedUploading(controlPlane, blobs, T0);
+    const secondUploading = await seedUploading(controlPlane, blobs, T0);
 
     const outcome = await maintenance(controlPlane, blobs, T0 + 1_000, 100, 100)
       .reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
@@ -424,6 +477,7 @@ describe("AzureSpoolMaintenance unit", () => {
     expect(outcome.reclaimed).toBe(2);
     expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe("quarantined");
     expect(controlPlane.debugPrepared(uploading.handle)).toBeUndefined();
+    expect(controlPlane.debugPrepared(secondUploading.handle)?.state).toBe("uploading");
     expect(controlPlane.debugPrepared(quarantined.handle)?.state).toBe("quarantined");
     expect(blobs.has(`reclaim-quarantine/${quarantined.handle as unknown as string}`)).toBe(true);
   });
@@ -448,6 +502,43 @@ describe("AzureSpoolMaintenance unit", () => {
     expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe("quarantined");
     expect(blobs.has(quarantinePath)).toBe(true);
     expect(blobs.renameCalls).toEqual([]);
+  });
+
+  it("leaves reclaim_marked and fails when both original and quarantine are absent", async () => {
+    const controlPlane = new InMemoryControlPlane();
+    const blobs = new FakeBlobStore();
+    const finalized = await seedFinalized(controlPlane, blobs);
+    await controlPlane.selectFinalizedOrphansForReclaim({
+      olderThanEpochMs: T0 + 1,
+      limit: 1,
+      supersedeRetentionMs: 1,
+      readDrainMs: 0,
+    });
+    await blobs.remove(finalized.blobPath);
+
+    await expect(maintenance(controlPlane, blobs, T0 + 100, 10_000, 10_000)
+      .reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 }))
+      .rejects.toThrow("quarantine_both_paths_absent");
+    expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe("reclaim_marked");
+  });
+
+  it("leaves reclaim_marked and fails when the quarantine candidate length differs", async () => {
+    const controlPlane = new InMemoryControlPlane();
+    const blobs = new FakeBlobStore();
+    const finalized = await seedFinalized(controlPlane, blobs);
+    await controlPlane.selectFinalizedOrphansForReclaim({
+      olderThanEpochMs: T0 + 1,
+      limit: 1,
+      supersedeRetentionMs: 1,
+      readDrainMs: 0,
+    });
+    blobs.put(finalized.blobPath, Uint8Array.of(9));
+
+    await expect(maintenance(controlPlane, blobs, T0 + 100, 10_000, 10_000)
+      .reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 }))
+      .rejects.toThrow("quarantine_length_mismatch");
+    expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe("reclaim_marked");
+    expect(blobs.has(`reclaim-quarantine/${finalized.handle as unknown as string}`)).toBe(false);
   });
 });
 
@@ -487,6 +578,7 @@ describe.skipIf(!LIVE)("AzureSpoolMaintenance live Postgres", () => {
          reversal_claim,
          reversal_ordinal_seq,
          reversal_prepared,
+         reversal_operation_retention,
          reversal_nonce_counter,
          reversal_dek_generation
        CASCADE`,
@@ -503,8 +595,8 @@ describe.skipIf(!LIVE)("AzureSpoolMaintenance live Postgres", () => {
 
   it("runs Path 1 quarantine and Path 2 stale-upload deletion against real metadata", async () => {
     const blobs = new FakeBlobStore();
-    const finalized = await seedFinalized(controlPlane, blobs, T0);
-    const uploading = await seedUploading(controlPlane, blobs, T0);
+    const finalized = await seedFinalized(controlPlane, blobs, T0, pool);
+    const uploading = await seedUploading(controlPlane, blobs, T0, true, pool);
 
     const outcome = await maintenance(controlPlane, blobs, T0 + 1_000, 100, 10_000)
       .reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 10 });
@@ -532,10 +624,10 @@ describe.skipIf(!LIVE)("AzureSpoolMaintenance live Postgres", () => {
     const blobs = new FakeBlobStore();
 
     for (let index = 0; index < 2; index += 1) {
-      const referenced = await seedFinalized(controlPlane, blobs, T0 - 2 + index);
+      const referenced = await seedFinalized(controlPlane, blobs, T0 - 2 + index, pool);
       const published = await controlPlane.publish({
         prepared: { handle: referenced.handle },
-        expiresAtEpochMs: BigInt(T0 + 10_000),
+        expiresAtEpochMs: 2n ** 64n - 1n,
         nowEpochMilliseconds: T0,
       });
       if (published.kind !== "published") throw new Error("expected published");
@@ -550,7 +642,7 @@ describe.skipIf(!LIVE)("AzureSpoolMaintenance live Postgres", () => {
         [referenced.handle],
       );
     }
-    const reclaimable = await seedFinalized(controlPlane, blobs, T0);
+    const reclaimable = await seedFinalized(controlPlane, blobs, T0, pool);
 
     await expect(controlPlane.previewReclamation({
       olderThanEpochMs: T0 + 1,
