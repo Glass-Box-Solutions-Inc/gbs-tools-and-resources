@@ -10,8 +10,20 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ReversalFailedError } from "../src/tokens/index";
 import { InMemoryReversalStore } from "../src/tokens/index";
-import { buildReversalAad, DurableReversalStore, InMemoryKeyProvider, mappingKeyOf } from "../src/tokens/durable/index";
-import type { DurableReversalRecordMeta, EncryptedReversalRecordBlob, ReversalAadFields, SpoolVolume } from "../src/tokens/durable/index";
+import {
+  buildReversalAad,
+  DurableReversalStore,
+  InMemoryKeyProvider,
+  InMemoryReversalSpoolBackend,
+  mappingKeyOf,
+} from "../src/tokens/durable/index";
+import type {
+  DurableReversalRecordMeta,
+  EncryptedReversalRecordBlob,
+  KeyProvider,
+  ReversalAadFields,
+  SpoolVolume,
+} from "../src/tokens/durable/index";
 import {
   brand,
   DEFAULT_MATTER,
@@ -32,6 +44,60 @@ import { expectNoCanary } from "./test-helpers";
 
 const CLAIMANT = DEFAULT_TOKEN;
 const WITNESS = brand<SubstitutionToken>("[[Witness]]");
+
+interface DekCacheHarnessOptions {
+  readonly clock?: ReturnType<typeof makeClock>;
+  readonly cacheOptions?: Readonly<{
+    readonly maxEntries?: number;
+    readonly ttlMs?: number;
+  }>;
+}
+
+/** Uses the KeyProvider port as the test seam to count unwraps and retain cache-owned allocations. */
+function makeDekCacheHarness(options: DekCacheHarnessOptions = {}) {
+  const clock = options.clock ?? makeClock();
+  const backend = new InMemoryReversalSpoolBackend();
+  const delegate = new InMemoryKeyProvider();
+  const unwrappedDekReferences: Uint8Array[] = [];
+  let unwrapInvocations = 0;
+  const keyProvider: KeyProvider = {
+    getWrappingKey: (scope) => delegate.getWrappingKey(scope),
+    wrap: (input) => delegate.wrap(input),
+    unwrap: async (input) => {
+      const dek = await delegate.unwrap(input);
+      unwrapInvocations += 1;
+      unwrappedDekReferences.push(dek as unknown as Uint8Array);
+      return dek;
+    },
+  };
+  const dependencies = {
+    keyProvider,
+    spoolVolume: backend.mount({}, clock.now),
+    classifyRetention: async () => "matter" as const,
+    nowEpochMilliseconds: clock.now,
+    maximumEncounteredTokenBatch: 256,
+  };
+  // Keep the published constructor signature frozen. The store reads this structurally optional,
+  // internal-only member; omitting it exercises the production defaults.
+  const configuredDependencies = options.cacheOptions === undefined
+    ? dependencies
+    : { ...dependencies, dekCacheOptions: options.cacheOptions };
+  const store = new DurableReversalStore(configuredDependencies);
+  return {
+    store,
+    clock,
+    unwrappedDekReferences,
+    unwrapInvocations: () => unwrapInvocations,
+  };
+}
+
+function cacheScope(label: string): { matterId: MatterId; attemptId: OperationAttemptId; canonical: string } {
+  return {
+    matterId: brand<MatterId>(`matter-cache-${label}`),
+    attemptId: brand<OperationAttemptId>(`attempt-cache-${label}`),
+    canonical: `Canonical ${label}`,
+  };
+}
 
 describe("L2.4 DurableReversalStore — durability + envelope + idempotency (§6, L8, N5)", () => {
   it("record resolves only after durable flush (MUT-RETURN-BEFORE-FLUSH)", async () => {
@@ -396,6 +462,85 @@ describe("L2.4 DurableReversalStore — tenant isolation + nonce uniqueness (L8,
 
     const hex = [...first, ...second].map((n) => Buffer.from(n).toString("hex"));
     expect(new Set(hex).size).toBe(hex.length); // all 16 distinct across concurrency + remount
+  });
+});
+
+describe("L2.4 DurableReversalStore — bounded DEK cache (GLY-343)", () => {
+  it("TTL expiry forces a transparent re-unwrap (M1 disable TTL expiry check)", async () => {
+    const clock = makeClock(T0);
+    const h = makeDekCacheHarness({ clock, cacheOptions: { maxEntries: 2, ttlMs: 100 } });
+    const scope = cacheScope("ttl");
+    await h.store.record(recordInput(scope));
+    expect(h.unwrapInvocations()).toBe(1);
+
+    clock.advance(99);
+    const warm = await h.store.resolveEncounteredTokens(resolveInput({ matterId: scope.matterId }));
+    expect(warm.get(CLAIMANT)).toBe(scope.canonical);
+    expect(h.unwrapInvocations()).toBe(1);
+
+    clock.advance(1); // exact cache-expiry instant
+    const reopened = await h.store.resolveEncounteredTokens(resolveInput({ matterId: scope.matterId }));
+    expect(reopened.get(CLAIMANT)).toBe(scope.canonical);
+    expect(h.unwrapInvocations()).toBe(2);
+  });
+
+  it("evicts the least-recently-used DEK while retained entries remain warm (M2 disable LRU eviction)", async () => {
+    const h = makeDekCacheHarness({ cacheOptions: { maxEntries: 2, ttlMs: 60_000 } });
+    const a = cacheScope("lru-a");
+    const b = cacheScope("lru-b");
+    const c = cacheScope("lru-c");
+    await h.store.record(recordInput(a));
+    await h.store.record(recordInput(b));
+    await h.store.resolveEncounteredTokens(resolveInput({ matterId: a.matterId })); // A becomes MRU; B becomes LRU
+    await h.store.record(recordInput(c)); // evicts B
+    expect(h.unwrapInvocations()).toBe(3);
+
+    const retainedA = await h.store.resolveEncounteredTokens(resolveInput({ matterId: a.matterId }));
+    const retainedC = await h.store.resolveEncounteredTokens(resolveInput({ matterId: c.matterId }));
+    expect(retainedA.get(CLAIMANT)).toBe(a.canonical);
+    expect(retainedC.get(CLAIMANT)).toBe(c.canonical);
+    expect(h.unwrapInvocations()).toBe(3); // both retained entries hit the cache
+
+    const reopenedB = await h.store.resolveEncounteredTokens(resolveInput({ matterId: b.matterId }));
+    expect(reopenedB.get(CLAIMANT)).toBe(b.canonical);
+    expect(h.unwrapInvocations()).toBe(4); // evicted B transparently re-unwraps
+  });
+
+  it("best-effort zeroizes the cache-owned DEK allocation on eviction (M3 remove fill(0))", async () => {
+    const h = makeDekCacheHarness({ cacheOptions: { maxEntries: 1, ttlMs: 60_000 } });
+    const a = cacheScope("zero-a");
+    const b = cacheScope("zero-b");
+    await h.store.record(recordInput(a));
+    const evictedReference = h.unwrappedDekReferences[0]!;
+    expect([...evictedReference].some((byte) => byte !== 0)).toBe(true);
+
+    await h.store.record(recordInput(b));
+    expect([...evictedReference].every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("round-trips every scope after repeated maxEntries eviction and re-unwrap", async () => {
+    const h = makeDekCacheHarness({ cacheOptions: { maxEntries: 1, ttlMs: 60_000 } });
+    const a = cacheScope("roundtrip-a");
+    const b = cacheScope("roundtrip-b");
+    await h.store.record(recordInput(a));
+    await h.store.record(recordInput(b)); // evicts A
+
+    const reopenedA = await h.store.resolveEncounteredTokens(resolveInput({ matterId: a.matterId }));
+    const reopenedB = await h.store.resolveEncounteredTokens(resolveInput({ matterId: b.matterId }));
+    expect(reopenedA.get(CLAIMANT)).toBe(a.canonical);
+    expect(reopenedB.get(CLAIMANT)).toBe(b.canonical);
+    expect(h.unwrapInvocations()).toBe(4); // write A, write B, reopen A, reopen B
+  });
+
+  it("defaults preserve repeat-use cache hits when constructed without cache options", async () => {
+    const h = makeDekCacheHarness();
+    const scope = cacheScope("defaults");
+    await h.store.record(recordInput(scope));
+    const first = await h.store.resolveEncounteredTokens(resolveInput({ matterId: scope.matterId }));
+    const second = await h.store.resolveEncounteredTokens(resolveInput({ matterId: scope.matterId }));
+    expect(first.get(CLAIMANT)).toBe(scope.canonical);
+    expect(second.get(CLAIMANT)).toBe(scope.canonical);
+    expect(h.unwrapInvocations()).toBe(1);
   });
 });
 
