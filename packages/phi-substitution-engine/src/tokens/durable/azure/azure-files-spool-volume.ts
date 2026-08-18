@@ -61,7 +61,10 @@ export class AzureFilesSpoolVolume implements SpoolVolume {
       immutableScopeDigest: input.immutableScopeDigest,
       stagingPath: staging,
       blobPath: blob,
+      attemptId: input.encryptedRecord.meta.attemptId,
+      retentionClass: input.encryptedRecord.meta.retentionClass,
       createdAtEpochMs: input.encryptedRecord.meta.createdAtEpochMs,
+      expiresAtEpochMs: input.encryptedRecord.meta.expiresAtEpochMs,
     });
     const encoded = encodeReversalBlob(input.encryptedRecord);
     await this.#blobStore.putStaging(staging, encoded);
@@ -91,6 +94,22 @@ export class AzureFilesSpoolVolume implements SpoolVolume {
 
   public async flush(commit: PublishedCommitHandle): Promise<void> {
     const reference = await this.#controlPlane.readClaimBlobReference(commit);
+    if (reference.kind === "superseded") {
+      await this.#controlPlane.flushClaim({
+        kind: "superseded",
+        commit,
+        nowEpochMilliseconds: this.#nowEpochMilliseconds(),
+      });
+      return;
+    }
+    if (reference.kind === "stale-flushed") {
+      await this.#controlPlane.flushClaim({
+        kind: "stale-flushed",
+        commit,
+        nowEpochMilliseconds: this.#nowEpochMilliseconds(),
+      });
+      return;
+    }
     const head = await this.#blobStore.head(reference.blobPath);
     if (
       head === undefined ||
@@ -100,6 +119,7 @@ export class AzureFilesSpoolVolume implements SpoolVolume {
       throw new Error("azure_files_spool_flush_blob_integrity_failure");
     }
     await this.#controlPlane.flushClaim({
+      kind: "blob",
       commit,
       nowEpochMilliseconds: this.#nowEpochMilliseconds(),
       blobEtag: head.etag,
@@ -116,19 +136,27 @@ export class AzureFilesSpoolVolume implements SpoolVolume {
   }
 
   async #readPointer(pointer: CurrentPointerRow): Promise<ReversalLookupResult> {
-    const [head, bytes] = await Promise.all([
-      this.#blobStore.head(pointer.blobPath),
-      this.#blobStore.get(pointer.blobPath),
-    ]);
-    if (
-      head === undefined ||
-      bytes === undefined ||
-      head.etag !== pointer.blobEtag ||
-      BigInt(head.len) !== pointer.blobLength ||
-      BigInt(bytes.byteLength) !== pointer.blobLength
-    ) {
-      throw new Error("azure_files_spool_read_integrity_failure");
+    const quarantine = `reclaim-quarantine/${pointer.preparedBlobId as unknown as string}`;
+    for (const path of [pointer.blobPath, quarantine, pointer.blobPath]) {
+      const [head, bytes] = await Promise.all([
+        this.#blobStore.head(path),
+        this.#blobStore.get(path),
+      ]);
+      // A rename can race between HEAD and GET. Probe the next bounded location on any partial
+      // absence, but never accept present bytes with mismatched durable attributes.
+      if (head === undefined || bytes === undefined) {
+        continue;
+      }
+      const isQuarantineFallback = path === quarantine;
+      if (
+        (!isQuarantineFallback && head.etag !== pointer.blobEtag) ||
+        BigInt(head.len) !== pointer.blobLength ||
+        BigInt(bytes.byteLength) !== pointer.blobLength
+      ) {
+        throw new Error("azure_files_spool_read_integrity_failure");
+      }
+      return { mappingKey: pointer.mappingKey, encryptedRecord: decodeReversalBlob(bytes) };
     }
-    return { mappingKey: pointer.mappingKey, encryptedRecord: decodeReversalBlob(bytes) };
+    throw new Error("azure_files_spool_read_integrity_failure");
   }
 }

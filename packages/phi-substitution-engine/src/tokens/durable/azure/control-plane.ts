@@ -1,5 +1,6 @@
-import type { TenantId } from "../../../core/brands";
+import type { OperationAttemptId, TenantId } from "../../../core/brands";
 import type {
+  ReversalRetentionClass,
   DekGeneration,
   EnsureDekGenerationInput,
   GcmNonce96,
@@ -17,12 +18,13 @@ export type PreparedControlPlaneState =
   | "uploading"
   | "finalized"
   | "committed"
+  | "superseded"
   | "orphaned"
   | "upload_reclaim_marked"
   | "reclaim_marked"
   | "quarantined";
 
-export type ClaimControlPlaneState = "pending" | "flushed" | "expired";
+export type ClaimControlPlaneState = "pending" | "flushed" | "expired" | "superseded";
 
 export interface InsertPreparedUploadingInput {
   readonly preparedBlobId: PreparedWriteHandle;
@@ -32,7 +34,10 @@ export interface InsertPreparedUploadingInput {
   readonly immutableScopeDigest: ReversalScopeDigest;
   readonly stagingPath: string;
   readonly blobPath: string;
+  readonly attemptId: OperationAttemptId;
+  readonly retentionClass: ReversalRetentionClass;
   readonly createdAtEpochMs: number;
+  readonly expiresAtEpochMs: bigint;
 }
 
 export interface MarkFinalizedInput {
@@ -47,13 +52,18 @@ export interface PublishPreparedInput {
   readonly nowEpochMilliseconds: number;
 }
 
-export interface FlushClaimInput {
+export type FlushClaimInput = Readonly<{
   readonly commit: PublishedCommitHandle;
   readonly nowEpochMilliseconds: number;
-  /** HEAD attributes read by the blob-plane adapter immediately before this call. */
-  readonly blobEtag: string;
-  readonly blobLength: bigint;
-}
+} & (
+  | {
+      readonly kind?: "blob";
+      /** HEAD attributes read by the blob-plane adapter immediately before this call. */
+      readonly blobEtag: string;
+      readonly blobLength: bigint;
+    }
+  | { readonly kind: "stale-flushed" | "superseded" }
+)>;
 
 export interface ExpirePendingDetachInput {
   readonly commit: PublishedCommitHandle;
@@ -69,6 +79,13 @@ export interface PreparedControlPlaneRow {
   readonly stagingPath: string;
   readonly blobPath: string;
   readonly createdAtEpochMs: number;
+  readonly operationKey: string | null;
+  readonly recordCreatedAtEpochMs: number | null;
+  readonly retentionClass: ReversalRetentionClass | null;
+  readonly retentionOrigin: "anchored" | "backfilled" | null;
+  readonly retentionExpiresAtEpochMs: bigint | null;
+  readonly supersededAtEpochMs: number | null;
+  readonly reclaimAfterEpochMs: bigint | null;
   readonly state: PreparedControlPlaneState;
   readonly blobEtag: string | null;
   readonly blobLength: bigint | null;
@@ -102,15 +119,21 @@ export interface CurrentPointerRow {
 }
 
 /** Durable blob address for a pending/flushed claim; used to HEAD before `flushClaim`. */
-export interface ClaimBlobReference {
-  readonly blobPath: string;
-  readonly blobEtag: string;
-  readonly blobLength: bigint;
-}
+export type ClaimBlobReference =
+  | Readonly<{
+      readonly kind: "blob";
+      readonly blobPath: string;
+      readonly blobEtag: string;
+      readonly blobLength: bigint;
+    }>
+  | Readonly<{ readonly kind: "stale-flushed" }>
+  | Readonly<{ readonly kind: "superseded" }>;
 
 export interface ReclaimQueryInput {
   readonly olderThanEpochMs: number;
   readonly limit: number;
+  readonly supersedeRetentionMs: number;
+  readonly readDrainMs: number;
 }
 
 export interface StaleUploadReclaimInput {
@@ -121,9 +144,12 @@ export interface StaleUploadReclaimInput {
 export interface ReclaimBlobRow {
   readonly preparedBlobId: PreparedWriteHandle;
   readonly blobPath: string;
+  readonly blobLength: bigint;
 }
 
-export interface ReclaimUploadRow extends ReclaimBlobRow {
+export interface ReclaimUploadRow {
+  readonly preparedBlobId: PreparedWriteHandle;
+  readonly blobPath: string;
   readonly stagingPath: string;
 }
 
@@ -148,6 +174,8 @@ export interface ReclaimPreviewInput {
   readonly quarantinedBeforeEpochMs: number;
   readonly limit: number;
   readonly includeHardDelete: boolean;
+  readonly supersedeRetentionMs: number;
+  readonly readDrainMs: number;
 }
 
 export interface ReclaimPreviewOutcome {
