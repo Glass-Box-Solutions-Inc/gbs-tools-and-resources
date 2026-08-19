@@ -1,0 +1,43 @@
+GLY-355 named mutations — each applied ALONE against dcbda46 + slice-1, anchor-grep verified, full `npm test -- --reporter=verbose`, then restored.
+
+GLY-355-MUT-EVIDENCE-MISMATCH-ACCEPT
+ANCHOR VERIFIED: 298: if (false && !decisionMatches(decision, request)) reject(request); // GLY-355-MUT-EVIDENCE-MISMATCH-ACCEPT
+RED: FAIL tests/original-egress-authorizer.test.ts > GLY-355 production original-egress authorizer > ORACLE-EVIDENCE-MISMATCH-REJECT/CALLER-BOOLEAN: exact decision binding has no permissive bypass
+RED: AssertionError: promise resolved "{ tenantId: 'tenant-gly-355', …(12) }" instead of rejecting
+RED: tests/original-egress-authorizer.test.ts:143:69
+FULL SUITE: Test Files 1 failed | 24 passed (25); Tests 1 failed | 465 passed | 27 skipped (493)
+RESTORED: exact `if (!decisionMatches(decision, request)) reject(request);` anchor reinstated.
+
+GLY-355-MUT-AUTH-BEFORE-PREPARE
+ANCHOR VERIFIED: 306: void audit.prepare(prepared); // GLY-355-MUT-AUTH-BEFORE-PREPARE
+RED: FAIL tests/original-egress-authorizer.test.ts > GLY-355 production original-egress authorizer > ORACLE-AUTH-AWAITS-PREPARE: authorization cannot resolve while durable PREPARE is pending
+RED: AssertionError: expected true to be false // Object.is equality
+RED: tests/original-egress-authorizer.test.ts:183:21
+FULL SUITE: Test Files 1 failed | 24 passed (25); Tests 2 failed | 464 passed | 27 skipped (493); Errors 1 error
+RESTORED: exact `receipt = await audit.prepare(prepared);` anchor reinstated.
+
+GLY-355-MUT-FINALIZE-TWICE
+ANCHOR VERIFIED: 250: if (false && finalized) reject(request); // GLY-355-MUT-FINALIZE-TWICE
+RED: FAIL tests/original-egress-authorizer.test.ts > GLY-355 production original-egress authorizer > ORACLE-AUTH-FINALIZE-ONCE/NONSERIALIZABLE: capability throws on serialization and second finalization
+RED: AssertionError: promise resolved "undefined" instead of rejecting
+RED: tests/original-egress-authorizer.test.ts:203:53
+FULL SUITE: Test Files 1 failed | 24 passed (25); Tests 1 failed | 465 passed | 27 skipped (493)
+RESTORED: exact `if (finalized) reject(request);` anchor reinstated.
+
+GLY-355-MUT-SERIALIZABLE-HANDLE
+ANCHOR VERIFIED: 260: toJSON: (): never => undefined as never, // GLY-355-MUT-SERIALIZABLE-HANDLE
+RED: FAIL tests/original-egress-authorizer.test.ts > GLY-355 production original-egress authorizer > ORACLE-AUTH-FINALIZE-ONCE/NONSERIALIZABLE: capability throws on serialization and second finalization
+RED: AssertionError: expected [Function] to throw an error
+RED: tests/original-egress-authorizer.test.ts:200:49
+FULL SUITE: Test Files 1 failed | 24 passed (25); Tests 1 failed | 465 passed | 27 skipped (493)
+RESTORED: throwing `toJSON(): never` guard reinstated.
+
+GLY-355-MUT-CALLER-BOOLEAN
+ANCHOR VERIFIED: 301: ) reject(request); // GLY-355-MUT-CALLER-BOOLEAN
+RED: FAIL tests/original-egress-authorizer.test.ts > GLY-355 production original-egress authorizer > ORACLE-EVIDENCE-MISMATCH-REJECT/CALLER-BOOLEAN: exact decision binding has no permissive bypass
+RED: AssertionError: promise resolved "{ tenantId: 'tenant-gly-355', …(12) }" instead of rejecting
+RED: tests/original-egress-authorizer.test.ts:143:69
+FULL SUITE: Test Files 1 failed | 24 passed (25); Tests 1 failed | 465 passed | 27 skipped (493)
+RESTORED: exact-match rejection has no caller boolean branch.
+
+FINAL RESTORE GREEN (full suite): Test Files 25 passed (25); Tests 466 passed | 27 skipped (493).
