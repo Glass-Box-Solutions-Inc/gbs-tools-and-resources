@@ -50,6 +50,7 @@ const PHI_ENGINE_FAILURE_CODES: ReadonlySet<string> = new Set<PhiEngineFailureCo
   "AUDIT_DURABILITY_UNAVAILABLE",
   "REVERSAL_FAILED",
   "PROVIDER_SAFETY_GATE_FAILED",
+  "CALL_INTERRUPTED",
 ]);
 
 /** True only for a recognized, fixed, safe PhiEngineFailureCode (never a raw upstream code). */
