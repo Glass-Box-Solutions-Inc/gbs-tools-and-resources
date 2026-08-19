@@ -78,6 +78,7 @@ export interface CreateProductionProtectedOriginalEgressAuthorizerOptions {
 
 const ENGINE_VERSION = /^[A-Za-z0-9._-]{1,64}$/;
 const ENGINE_POLICY_VERSION = /^sha256:[0-9a-f]{64}$/;
+const SAFE_RESULT_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const ISO_8601_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const PURPOSES: readonly AiOperation[] = ["generation", "stream", "embedding", "graph_extraction"];
 const AUDIT_OUTCOMES: readonly PhiAuditOutcome[] = [
@@ -118,7 +119,7 @@ function snapshotRequest(input: OriginalEgressAuthorizationRequest): OriginalEgr
     if (
       typeof tenantId !== "string" || typeof matterId !== "string" || typeof actorId !== "string" ||
       typeof operationId !== "string" || typeof attemptId !== "string" ||
-      typeof destinationKey !== "string" || destinationKey.length === 0 ||
+      typeof destinationKey !== "string" || !SAFE_RESULT_IDENTIFIER.test(destinationKey) ||
       !includes(PROTOCOLS, protocol) || !includes(CONTENT_CLASSES, contentClass) ||
       !ENGINE_POLICY_VERSION.test(enginePolicyVersion) || !includes(PURPOSES, purpose)
     ) throw new Error();
@@ -237,6 +238,7 @@ function authorizationHandle(
   clock: () => string,
 ): OriginalEgressAuthorization {
   let finalized = false;
+  let finalizing = false;
   const handle = Object.assign(Object.create(null) as object, {
     tenantId: request.context.tenantId,
     matterId: request.context.matterId,
@@ -250,16 +252,21 @@ function authorizationHandle(
     enginePolicyVersion: decision.enginePolicyVersion,
     expiresAt: decision.expiresAt,
     finalize: async (outcome: PhiAuditOutcome, failureCode?: PhiEngineFailureCode): Promise<void> => {
-      if (finalized) reject(request);
-      finalized = true;
+      if (finalized || finalizing) reject(request);
       if (!includes(AUDIT_OUTCOMES, outcome)) reject(request);
       if (failureCode !== undefined && !isPhiEngineFailureCode(failureCode)) reject(request);
       const occurredAt = clock();
       const safeFailure = failureCode === undefined ? null : failureCode;
+      finalizing = true;
       try {
         await audit.finalize(receipt, preparedToTerminalEvent(prepared, outcome, safeFailure, occurredAt));
+        // The handle owns concurrent/finalize-once admission; the emitter owns durable idempotency.
+        // Latch only after persistence so a transient terminal-write failure remains retryable.
+        finalized = true;
       } catch {
         throw new PhiEngineError("AUDIT_DURABILITY_UNAVAILABLE", request.context.operationId);
+      } finally {
+        finalizing = false;
       }
     },
     toJSON: (): never => {
@@ -280,14 +287,21 @@ export function createProductionProtectedOriginalEgressAuthorizer(
     new ExactAllowListAuditSerializer(),
     deps.clock,
   );
+  // Kept for the authorizer lifetime: a finalized operation must never obtain a second capability.
+  // Reserve before any await so concurrent calls cannot both reach emitter.prepare/#inFlight.set.
+  const issuedAttemptIds = new Set<string>();
   const authorizer = Object.assign(Object.create(null) as object, {
     authorizeOriginalEgress: async (
       input: OriginalEgressAuthorizationRequest,
     ): Promise<OriginalEgressAuthorization> => {
       const request = snapshotRequest(input);
-      if (request.enginePolicyVersion !== deps.enginePolicyVersion) reject(request);
-      let rawDecision: AuthorizedOriginalEgressDecision;
+      const attemptKey = request.context.attemptId as string;
+      if (issuedAttemptIds.has(attemptKey)) reject(request);
+      issuedAttemptIds.add(attemptKey);
+      let durablePrepared = false;
       try {
+        if (request.enginePolicyVersion !== deps.enginePolicyVersion) reject(request);
+        let rawDecision: AuthorizedOriginalEgressDecision;
         const query: OriginalEgressPolicyQuery = Object.freeze({
           context: request.context,
           destinationKey: request.destinationKey,
@@ -295,34 +309,43 @@ export function createProductionProtectedOriginalEgressAuthorizer(
           contentClass: request.contentClass,
           enginePolicyVersion: request.enginePolicyVersion,
         });
-        rawDecision = await deps.policy.requireAuthorizedOriginalEgress(query);
-      } catch {
-        reject(request);
-      }
-      const decision = snapshotDecision(rawDecision, request);
-      if (!decisionMatches(decision, request)) reject(request);
-      const preparedAt = deps.clock();
-      const now = asEpoch(preparedAt);
-      const expiry = asEpoch(decision.expiresAt);
-      if (now === null || expiry === null || expiry <= now) reject(request);
-      const prepared = preparedRecord(request, deps.engineVersion, preparedAt);
-      let receipt: AuditPreparationReceipt;
-      try {
-        receipt = await audit.prepare(prepared);
-      } catch {
-        throw new PhiEngineError("AUDIT_DURABILITY_UNAVAILABLE", request.context.operationId);
-      }
-      const afterPrepare = asEpoch(deps.clock());
-      if (afterPrepare === null || expiry <= afterPrepare) {
         try {
-          await audit.finalize(
-            receipt,
-            preparedToTerminalEvent(prepared, "failed_closed", "PROVIDER_SAFETY_GATE_FAILED", deps.clock()),
-          );
-        } catch { /* the caller still receives only the fixed authorization rejection */ }
-        reject(request);
+          rawDecision = await deps.policy.requireAuthorizedOriginalEgress(query);
+        } catch {
+          reject(request);
+        }
+        const decision = snapshotDecision(rawDecision, request);
+        if (!decisionMatches(decision, request)) reject(request);
+        const preparedAt = deps.clock();
+        const now = asEpoch(preparedAt);
+        const expiry = asEpoch(decision.expiresAt);
+        if (now === null || expiry === null || expiry <= now) reject(request);
+        const prepared = preparedRecord(request, deps.engineVersion, preparedAt);
+        let receipt: AuditPreparationReceipt;
+        try {
+          receipt = await audit.prepare(prepared);
+          durablePrepared = true;
+        } catch {
+          throw new PhiEngineError("AUDIT_DURABILITY_UNAVAILABLE", request.context.operationId);
+        }
+        const afterPrepare = asEpoch(deps.clock());
+        if (afterPrepare === null || expiry <= afterPrepare) {
+          try {
+            await audit.finalize(
+              receipt,
+              preparedToTerminalEvent(prepared, "failed_closed", "PROVIDER_SAFETY_GATE_FAILED", deps.clock()),
+            );
+          } catch { /* the caller still receives only the fixed authorization rejection */ }
+          reject(request);
+        }
+        return authorizationHandle(request, decision, receipt, audit, prepared, deps.clock);
+      } catch (error) {
+        // Before a durable PREPARE there is no issued capability/attempt, so a corrected retry is legal.
+        // Once PREPARE lands the key stays reserved permanently, preventing #inFlight overwrite.
+        if (!durablePrepared) issuedAttemptIds.delete(attemptKey);
+        if (isPhiEngineError(error)) throw error;
+        throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", request.context.operationId);
       }
-      return authorizationHandle(request, decision, receipt, audit, prepared, deps.clock);
     },
   });
   return Object.freeze(authorizer) as ProtectedOriginalEgressAuthorizer;

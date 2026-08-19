@@ -72,6 +72,21 @@ interface: its documented `engineVersion` must identify the supplied engine, and
 Production source must also enforce N7 layer-1 import scanning so development factories cannot create
 a second engine outside this boundary.
 
+### Production original-egress authorization
+
+`createProductionProtectedOriginalEgressAuthorizer(...)` is the narrow exception path for original
+case identifiers, TTS text, and audio streams sent to an explicitly authorized HTTPS/WSS
+destination. Its request and returned capability contain identity and policy metadata only—there is
+no field for text, identifiers, audio bytes, or a caller-controlled BAA/allow boolean. The injected
+policy must return unexpired evidence exactly matching the destination, protocol, content class, and
+`enginePolicyVersion`; otherwise authorization fails closed.
+
+Authorization resolves only after metadata-only audit PREPARE is durable. A given `attemptId` can
+receive only one operation-scoped, non-serializable capability. Call `finalize(outcome, failureCode?)`
+after the protected operation; duplicate finalization rejects, while a transient terminal-write
+failure may be retried because the audit emitter owns durable idempotency. The production factory has
+no development or permissive fallback.
+
 ### Node support
 
 The supported floor is Node `>=20.19.0`; CI pins Node `20.20.2` and installs with

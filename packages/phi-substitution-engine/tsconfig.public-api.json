@@ -4,6 +4,6 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src/**/*.ts", "type-tests/**/*.ts"],
+  "include": ["src/**/*.ts", "type-tests/production-factory.ts", "type-tests/**/*.ts"],
   "exclude": ["node_modules", "dist", "tests"]
 }

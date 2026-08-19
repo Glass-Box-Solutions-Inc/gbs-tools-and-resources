@@ -47,6 +47,7 @@ class Primary implements AuditPrimaryStore {
   public prepared: PhiAuditPreparedRecord[] = [];
   public finalized: PhiAuditEvent[] = [];
   public unavailable = false;
+  public finalizeFailures = 0;
   public gate: Promise<void> | undefined;
 
   public async prepare(record: PhiAuditPreparedRecord) {
@@ -58,6 +59,10 @@ class Primary implements AuditPrimaryStore {
   }
 
   public finalize(event: PhiAuditEvent): Promise<void> {
+    if (this.finalizeFailures > 0) {
+      this.finalizeFailures -= 1;
+      return Promise.reject(new Error("transient finalize outage"));
+    }
     this.finalized.push(event);
     return Promise.resolve();
   }
@@ -194,6 +199,25 @@ describe("GLY-355 production original-egress authorizer", () => {
     );
   });
 
+  it("ORACLE-SECOND-AUTHORIZATION-PER-ATTEMPT: one attempt receives one capability and one PREPARE", async () => {
+    const value = rig();
+    await value.authorizer.authorizeOriginalEgress(REQUEST);
+    await expect(value.authorizer.authorizeOriginalEgress(REQUEST)).rejects.toMatchObject({
+      code: "PROVIDER_SAFETY_GATE_FAILED",
+    });
+    expect(value.primary.prepared).toHaveLength(1);
+  });
+
+  it("ORACLE-DESTINATION-KEY-GRAMMAR: unsafe destination metadata rejects before policy and PREPARE", async () => {
+    const value = rig();
+    await expect(value.authorizer.authorizeOriginalEgress({
+      ...REQUEST,
+      destinationKey: " unsafe destination ",
+    })).rejects.toMatchObject({ code: "PROVIDER_SAFETY_GATE_FAILED" });
+    expect(value.queries).toHaveLength(0);
+    expect(value.primary.prepared).toHaveLength(0);
+  });
+
   it("ORACLE-AUTH-FINALIZE-ONCE/NONSERIALIZABLE: capability throws on serialization and second finalization", async () => {
     const value = rig();
     const authorization = await value.authorizer.authorizeOriginalEgress(REQUEST);
@@ -203,6 +227,18 @@ describe("GLY-355 production original-egress authorizer", () => {
     await expect(authorization.finalize("completed")).rejects.toMatchObject({
       code: "PROVIDER_SAFETY_GATE_FAILED",
     });
+    expect(value.primary.finalized).toHaveLength(1);
+  });
+
+  it("ORACLE-FINALIZE-DURABILITY-RETRY: a failed terminal write can retry through emitter idempotency", async () => {
+    const value = rig();
+    const authorization = await value.authorizer.authorizeOriginalEgress(REQUEST);
+    value.primary.finalizeFailures = 1;
+    await expect(authorization.finalize("completed")).rejects.toMatchObject({
+      code: "AUDIT_DURABILITY_UNAVAILABLE",
+    });
+    expect(value.primary.finalized).toHaveLength(0);
+    await authorization.finalize("completed");
     expect(value.primary.finalized).toHaveLength(1);
   });
 });
