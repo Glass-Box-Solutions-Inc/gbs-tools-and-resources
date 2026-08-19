@@ -15,7 +15,7 @@ The 17-mutant requested set is reported below. No new long sweep was started in 
 | `GLY-353-MUT-TRACE-RAW` | PROVEN-RED | `expected 'Hello Alice Example' not to contain 'Alice Example'` at line 363 |
 | `GLY-353-MUT-TEXT-RESULT-RAW` | PROVEN-RED | expected display `Hello Alice Example`, received `Hello [[Claimant]]` at line 373 |
 | `GLY-353-MUT-TOOL-ARGUMENT-PARTIAL` | PROVEN-RED | `promise resolved ... instead of rejecting`; partial envelope contained `toolCalls: []` at line 444 |
-| `GLY-353-MUT-STREAM-NO-BACKPRESSURE` | **SURVIVED** | Named oracle exited 0 after anchor `void Promise.resolve().then(() => sink(safe));` was verified. Coverage gap: the test continuation runs before provider chunk-two advancement, then releases the sink gate. |
+| `GLY-353-MUT-STREAM-NO-BACKPRESSURE` | PROVEN-RED | Corrected 2026-08-18 by reviewer (claude-opus-5) full-suite run: `ORACLE-PROD-STREAM-SINK-FAILURE` (`tests/production-factory.test.ts:596`) → `AssertionError: promise resolved "{ providerId: 'azure-baa', …(2) }" instead of rejecting`; 2 unhandled rejections carried the PHI canary (`Error: sink Alice Example`). Sol's initial SURVIVED was a false survival from a single-file mutant run. Residual defect is in the NAMED oracle only: `ORACLE-PROD-STREAM-BACKPRESSURE` releases its sink gate before provider chunk-two advancement, so it asserts nothing under this mutation — follow-up filed. Process rule: mutant sweeps run the FULL suite. |
 | `GLY-353-MUT-STREAM-BUFFER-ALL` | PROVEN-RED | `Test timed out in 10000ms` waiting for the first live chunk at line 534 |
 | `GLY-353-MUT-STREAM-DOUBLE-SEND` | PROVEN-RED | `expected 2 to be 1` provider stream calls at line 605 |
 | `GLY-353-MUT-STREAM-TAIL-BEFORE-TOOLS` | PROVEN-RED | `expected [] to include '{"name":"[[Claimant]]"}'` at line 561 |
@@ -37,3 +37,9 @@ The 17-mutant requested set is reported below. No new long sweep was started in 
 - Raw RED: `AssertionError: expected [Function] to throw an error` at `tests/evidence-canonicalization.test.ts:79`; Vitest exited 1.
 - Restored anchor verified at `src/coverage/evidence-canonicalization.ts:62`.
 - Restore GREEN: `Tests  5 passed (5)` for `tests/evidence-canonicalization.test.ts`.
+
+## Reviewer adjudications (2026-08-18, claude-opus-5 delta re-check)
+
+- `GLY-353-MUT-STREAM-NO-BACKPRESSURE`: alone-RED via `ORACLE-PROD-STREAM-SINK-FAILURE` (see corrected row). §4.6.4 ordering + §4.6.5 sink-rejection terminal are contract-load-bearing and gated.
+- `ORACLE-PROD-ABORT-ONCE-LATCH-SHAPE`: advisory-only source-text assertion — NOT counted as coverage; behavior covered by ORACLE-PROD-ABORT-SINK-RACE / -IN-FLIGHT / -IN-FLIGHT-STREAM / -LATE-ABORT.
+- Follow-up required: fix `ORACLE-PROD-STREAM-BACKPRESSURE` timing (sink gate released before chunk-two advancement).
