@@ -40,7 +40,7 @@
     "truth/w2-reserve-reassessment.truth.json",
     "truth/w2-reserve-sequence.truth.json"
   ],
-  "corpusTree": "bd7acebf9b582ee584c9ebe7f0c1651159ff07fb89aa40de3040285c139663c4",
+  "corpusTree": "8ea46f2398ba4ae2171969f8e35b8338b1792f7c0ea8e9a0513d1fefda701524",
   "caseload": "f1fd7d5f4a87e43768af1fab5384323f2cc7d5f5d2edd6676815edd2fb6cf0fe",
   "cases": {
     "w2-assertion-channel": {
@@ -57,21 +57,21 @@
       "documentCount": 48,
       "distinctSubtypes": 32,
       "fileCount": 51,
-      "tree": "16a652732204d3492261121ceaeb4922b26dffc8c21a4b9b53c3e130028a3b19",
-      "documents": "3d7baeedfa1e53531ae2d1b6d736ba65fbdf88a1a1d16d45b82e4efcbc9783a5",
-      "manifest": "a258310f992f502d9500b17d384ee64c253125d79e8f2a7d9b893bb049b435df",
+      "tree": "6bf994775808a1db0df3e3d112c3b687be2fbd68cbb78af0d334d647a2d7cb47",
+      "documents": "eb5574608b626a5158968f7c632624d4166df43639ed00c0b402872e6d24b091",
+      "manifest": "8829d855152a201c92e9ba57434ea8c6fcd8cdcac738d7c8c80dfe9b875a8375",
       "seed": "19fe17880623b57f15cc751c2e9be385c0f91119a40e1849d8ee3f94ad631610",
-      "facts": "3e691cb1254e6584acd42f5deafcf10eb86f4cfe0d976cb3b7bd0c5e40ebd0be"
+      "facts": "aa07119ef6f1f7f9deb891f6c2c6b20ae88be9de5ae498b69e169e6d44bec619"
     },
     "w2-joint-evaluation": {
       "documentCount": 48,
       "distinctSubtypes": 30,
       "fileCount": 51,
-      "tree": "67bbae673928507041c0cb81a3883bada32e71bbccac52c9ad0319d6d840c998",
-      "documents": "a7079606a9353852be3dd6bc788d3ecb755046dc9e69306db63ed65b96b29efa",
-      "manifest": "f8c62fdb1de3f394ded8d4c4199e964416927a7390e09f38dcece26d8d2be96c",
+      "tree": "aaa92b268beb85a95cb11139e3de36d5361b09717ca423fa37e9e5c04cd87a36",
+      "documents": "8c7ab3e712813727919c3b80fe7bf277398f6893de44fdd9b00806ea4524b75f",
+      "manifest": "6ec3faefa3d36f8aa3c0e9dcec3d26833f7edab317d73c63c1b5830365f8e1f6",
       "seed": "eb0bc2dddde2198f144d321692300294f7c29a2da11138ca05591fb9d2777c88",
-      "facts": "925a2cf777e4ae32146b544a82e1d0f4ca4c0e38b3ca06dfaa8fe14cb93e044e"
+      "facts": "5272770419de5af4d2e51f2ce7d9e1a6855397428d8391e194210d8c1bf97097"
     },
     "w2-rating-anchor": {
       "documentCount": 48,
@@ -127,41 +127,41 @@
       "documentCount": 48,
       "distinctSubtypes": 30,
       "fileCount": 51,
-      "tree": "a7c99cd3a01843a50e62b1688148f78f388c5b3da30f890a9cf1ddc18d69b728",
-      "documents": "8fc330a1bd142b953d9817741736f15676de1f9fca452d089343d89bf93a27f5",
-      "manifest": "cacd9aec4defc8127352e305d7f5eaf418180133b0f9334a8202522215461891",
+      "tree": "c61c25763352a65a7ffd7e54219633d40c03bba32f28740abaa4cd974eb25024",
+      "documents": "850250fa8af37eeda7136b0fc270183e2cac53b5f6a16f13086bcc2d32f70e79",
+      "manifest": "b67d104b5064a15413bfb7c4ddc659b2c992785ab790467548dd3db3800a5dbb",
       "seed": "d513e6214d2ffde4580813d9221b420b6f0970a0de063c249cfbdb6a04fa6196",
-      "facts": "8cee2ee189760c9f94cb6cb4b5276a93d9c1f5d97b79aa4f32d709bf490bab68"
+      "facts": "200aab82c26584d4ef9b106d8471f0c32ebb2fd9dadc9b6bb56a0cabf430fba1"
     },
     "w2-reserve-neighbor": {
       "documentCount": 48,
       "distinctSubtypes": 31,
       "fileCount": 51,
-      "tree": "ce67c06278a830739da301919cb1ef41d822c812364ab9d818f6aada0645772f",
-      "documents": "8369b2d8d60bc9eaf523d9be07b39069ef89b9209d3a38e07b772b503983e8d7",
-      "manifest": "5d976499d3f2447edb596907e832d237460b31c5283367c9f76e221cc1e273d0",
+      "tree": "9dbc32f75778c11a39744e2a40cb3f3092943e5307067ca5193695a5ef0205b2",
+      "documents": "e73cd4f19b55908d9c20e98103e4547664226f9e9522169a08696900fc7703bf",
+      "manifest": "3493cd2c40773d44b0957a8fc00e97435682813f633a8b74c803a4781096e034",
       "seed": "b2ac71dbc85b8948277ae829d4201e83850e93e3dc620d9e513a2ae5997e1bda",
-      "facts": "01b0e5f207f2deb8c9fc9473298dedac7392656c2d98d32bf6e5b37b62fb44eb"
+      "facts": "c847ca2413fd51535927334dd62137caef384db88fea9fc40d5b34f69488cf38"
     },
     "w2-reserve-reassessment": {
       "documentCount": 48,
       "distinctSubtypes": 26,
       "fileCount": 51,
-      "tree": "ac8229f09e1e0b202c942d31f83cd68778865190777c744d6d713af37436622f",
-      "documents": "ac0846c3c59c8b5b062c7a9d8fde75e33040bc30ed52ccc09a870450f3ce2803",
-      "manifest": "0304e0413febb23ce621a44f67fc3261dae8f397a0221123c592f56407953c57",
+      "tree": "a00c6d313e3ae87c2b97c012709ea510f6f3926a2caf77fbdc36130354c6ea50",
+      "documents": "c98fabfbdd910406d44340b0f377465f2cc677708a5e5590cc0e2519d3ab69b1",
+      "manifest": "81ef04ab2efaed4b391fb1f602587577e493e35a2346ac2cbf375e00d44ccf68",
       "seed": "98c03e70da83c2c47a5db09cc1800b7cba69aff722b5b3451ac437d8c1ecc9b8",
-      "facts": "eeaf00665e93c5b79c554c9cf0fe72b8e8c6cd4e73afc5db9dcc6f06d64a0fd2"
+      "facts": "b9f68cfe257f7e863b61fda37c43f6f748ed811735c98d19d18edef6b31adead"
     },
     "w2-reserve-sequence": {
       "documentCount": 48,
       "distinctSubtypes": 28,
       "fileCount": 51,
-      "tree": "9bcea1a0b110c37f8b970d8b0764bad0aa5b3363982bec828d9d3955e3c4f743",
-      "documents": "674c1ccfd088ecea6d10141b616045cd87704020a4a1d048fc8f095d9c1bb07b",
-      "manifest": "278bdfff56b2705de86276c23e3bd69f7819f2c6bf3cb8b0a21e21f22c6174e5",
+      "tree": "a25d947cba10b6399aaa8c51620ae6ed7783a246f917f92bb04f81d5e1742965",
+      "documents": "a5baf92d52e5f4d37a5441b93411d0c154de031195c643f6258e7f392b293668",
+      "manifest": "b614d405bc29a8393647f3ee0c7ab197d4118936130ed2789a4c826cdf8c93d1",
       "seed": "6bf225db6e834a14794504cca83b33fd914ff48abf0d7272bbde63bb3be64268",
-      "facts": "ab6ff76cf6fc1c2911af7d7be029a1248a11ff506874b2251a8274aae2e78689"
+      "facts": "3b05a38daedc5626d52ebe6671b355400ab9af792589a387c5ddb7eee43606d8"
     }
   }
 }
