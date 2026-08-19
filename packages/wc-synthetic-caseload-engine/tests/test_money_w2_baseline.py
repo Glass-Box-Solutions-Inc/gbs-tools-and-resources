@@ -278,15 +278,24 @@ _R109_RENDERED_CAPTURES = {
         "money.settlement.grossAmount",
     ),
     "release_distribution_fee": (
-        re.compile(r"Less: Attorney Fees \(15%\)\s+(\(\$[\d,]+\.\d\d\))"),
+        re.compile(
+            r"Less: Attorney Fees \(15%\) \[ENGINE_POLICY_UNCONFIRMED\]"
+            r"\s+(\(\$[\d,]+\.\d\d\))"
+        ),
         "money.settlement.grossAmount",
     ),
     "release_distribution_costs": (
-        re.compile(r"Less: Costs and Expenses\s+(\(\$[\d,]+\.\d\d\))"),
+        re.compile(
+            r"Less: Costs and Expenses \[ENGINE_POLICY_UNCONFIRMED\]"
+            r"\s+(\(\$[\d,]+\.\d\d\))"
+        ),
         "money.settlement.grossAmount",
     ),
     "release_distribution_msa": (
-        re.compile(r"Less: Medicare Set-Aside Allocation\s+(\(\$[\d,]+\.\d\d\))"),
+        re.compile(
+            r"Less: Medicare Set-Aside Allocation \[ENGINE_POLICY_UNCONFIRMED\]"
+            r"\s+(\(\$[\d,]+\.\d\d\))"
+        ),
         "money.settlement.grossAmount",
     ),
     "release_distribution_net": (
@@ -750,7 +759,20 @@ def test_r109_controlled_money_showcase_golden_diff_allowlist() -> None:
             assert actual[name] == captured[name], name
 
     changes = _scalar_differences(captured["money-showcase"], actual["money-showcase"])
-    allowed = {"$.corpusTree", "$.caseload"}
+    allowed = {
+        "$.corpusTree",
+        "$.caseload",
+        # AJC-64 item 0d re-recorded this golden for the settlement labels, and
+        # a re-record restamps `recordedWith` with the recording checkout. Those
+        # two fields describe the MACHINE, not the corpus — the same class
+        # `golden_gate.REDACTED_KEYS` already exempts for
+        # `provenance.substrateSha`, and the gate prints them beside a failure
+        # as context rather than treating them as drift. Admitted here for that
+        # reason and no other: every field below this line is corpus content,
+        # and none of it is loosened.
+        "$.recordedWith.substratePin",
+        "$.recordedWith.substrateSha",
+    }
     for case_id in (
         "atypical-earner",
         "capped-executive",
