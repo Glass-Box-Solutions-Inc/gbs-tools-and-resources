@@ -985,7 +985,22 @@ def test_hikida_justice_variants_render_the_frozen_four_cell_semantics():
 
 
 def test_sibtf_surfaces_render_exact_section_4751_alternatives_and_no_wrong_threshold():
-    """R19 — the prior-35% invention is gone; both statutory limbs remain."""
+    """R19 — the prior-35% invention is gone; both statutory limbs remain.
+
+    **Re-pointed by AJC-64 item 0a (M5-R39a/R39b).** This test was written
+    while ``renderer.py`` overrode the register split on the M3 story path, so
+    a QME — a *medical* target — rendered the statutory elements paragraph.
+    Item 0a deleted that override: the corrected elements are now the only
+    section 4751 legal text and they live in ``legal_paragraphs``, while a
+    medical target draws the three untouched evaluator paragraphs. Asserting
+    the elements against a QME's rendered text would now be asserting the
+    defect back.
+
+    The claim the test exists for is unchanged and is asserted in both places
+    it can fail: the rendered medical surface carries no wrong threshold, and
+    the shipped legal pool states both statutory limbs. The per-subtype pool
+    equality that pins this exhaustively lives in ``test_ajc64_item0a.py``.
+    """
     seed, plan = _case("surface-initial-medlegal")
     document, story = _bound("surface-initial-medlegal", "opn-02")
     assert document.subtype == "QME_COMPREHENSIVE_REPORT"
@@ -1000,6 +1015,10 @@ def test_sibtf_surfaces_render_exact_section_4751_alternatives_and_no_wrong_thre
     )
     expected = DOCTRINE_CONTENT["sibtf"]
     assert "preexisting permanent partial disability" in expected.legal_paragraphs[0]
+
+    # The legal pool states both limbs, with each floor attached to the
+    # subsequent injury.
+    legal_text = " ".join(expected.legal_paragraphs)
     for marker in (
         "subsequent compensable injury producing additional permanent partial disability",
         "combined permanent disability greater than that from the subsequent injury alone",
@@ -1008,8 +1027,13 @@ def test_sibtf_surfaces_render_exact_section_4751_alternatives_and_no_wrong_thre
         "unadjusted for age or occupation, of at least five percent",
         "unadjusted for age or occupation, of at least thirty-five percent",
     ):
-        assert marker in rendered
+        assert marker in legal_text
+
+    # The rendered medical surface draws evaluator prose and states no
+    # threshold at all — least of all the superseded one.
+    assert rendered.count("section 4751") >= 1
     assert "preexisting disability of at least thirty-five percent" not in rendered.lower()
+    assert "a preexisting disability of at least thirty-five percent" not in legal_text
 
 
 def _fresh_imr_case(case_id: str) -> tuple[Any, Any]:

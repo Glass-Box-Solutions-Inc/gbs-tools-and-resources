@@ -410,7 +410,15 @@ MEDICAL_STORY_SIBTF_SECTION_4751_PARAGRAPHS: tuple[str, ...] = (
         "disability alone, unadjusted for age or occupation, of at least thirty-five percent."
     ),
 )
-"""The corrected section 4751 expression selected only on the M3 story path."""
+"""The corrected section 4751 elements, stated once.
+
+AJC-64 item 0a (M5-R39a): the thirty-five and five percent floors attach to the
+*subsequent* injury, not the preexisting disability. This tuple is the single
+source of that element language; ``DOCTRINE_CONTENT["sibtf"].legal_paragraphs[1]``
+incorporates it verbatim and appends the joinder sentences that shared the
+superseded paragraph. It is no longer selected by a flag: the corrected text is
+the only text, on every render path.
+"""
 
 
 DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
@@ -729,11 +737,9 @@ DOCTRINE_CONTENT: Mapping[str, DoctrineContent] = {
             "sustains a subsequent industrial injury and the combined permanent disability "
             "reaches seventy percent or more. The section 4751 thresholds must be pleaded and "
             "proved.",
-            "A claim under section 4751 requires either a preexisting disability of at least "
-            "thirty-five percent, or a subsequent injury to an opposite and corresponding member "
-            "producing at least five percent, together with the statutory combined threshold. The "
-            "Fund is a separate party and must be joined; a case in chief resolved without "
-            "joinder does not resolve the claim against it.",
+            MEDICAL_STORY_SIBTF_SECTION_4751_PARAGRAPHS[0]
+            + " The Fund is a separate party and must be joined; a case in chief resolved "
+            "without joinder does not resolve the claim against it.",
             "The applicant is on notice that the section 4751 claim will require evidence of the "
             "labor-disabling character of the preexisting condition at the time of the subsequent "
             "injury, independent of the medical evidence supporting the case in chief.",

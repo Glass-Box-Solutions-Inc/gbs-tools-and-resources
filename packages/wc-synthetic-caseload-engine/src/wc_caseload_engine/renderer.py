@@ -80,7 +80,6 @@ from wc_caseload_engine.determinism import (
 )
 from wc_caseload_engine.doctrine import (
     DOCTRINE_CONTENT,
-    MEDICAL_STORY_SIBTF_SECTION_4751_PARAGRAPHS,
     content_flags_for,
     heading_for_register,
     register_for_subtype,
@@ -611,6 +610,13 @@ def doctrine_flowables(
 
     Returns an empty list when no flagged hook has content for *subtype*, so a
     heading is never emitted over nothing.
+
+    ``medical_story_enabled`` no longer selects content. AJC-64 item 0a
+    (M5-R39a) deleted the flag-conditioned §4751 pool: the corrected statement
+    of the section's elements is now the only statement, on every render path,
+    so a carrier without the M3 flag no longer receives a misstatement of law.
+    The keyword is retained because callers still declare it and because
+    ``m24-27`` restores the deleted condition against it.
     """
     from reportlab.platypus import Paragraph, Spacer
 
@@ -621,11 +627,7 @@ def doctrine_flowables(
         if content is None:
             log.warning("render.unknown_doctrine_hook", hook=hook, subtype=subtype)
             continue
-        pool = (
-            MEDICAL_STORY_SIBTF_SECTION_4751_PARAGRAPHS
-            if medical_story_enabled and hook == "sibtf"
-            else content.paragraphs_for(subtype)
-        )
+        pool = content.paragraphs_for(subtype)
         if not pool:
             continue
         facts = getattr(template, "_wc_case_facts", None)
