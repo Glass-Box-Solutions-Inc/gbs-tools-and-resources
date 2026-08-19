@@ -536,3 +536,7 @@ None for the principal. The binding rulings select: a PHI-free envelope with in-
 | R3 | §4.7.4 makes `CALL_INTERRUPTED` authoritative when a pre-abort, zero-egress PREPARE is not durable; the caller never receives the durability failure. |
 
 **Freeze:** v2.1 is the implementation contract. Later implementation changes require an explicit dated amendment or a new reviewed specification revision.
+
+## Amendment 2026-08-18 — orchestrator ruling: exact Node engine floor
+
+This is a **legitimately-better-design** amendment to §8.1, ruled by the orchestrator on 2026-08-18: the normative `package.json` `engines.node` floor is `>=20.19.0`, not `>=20`. The exact floor aligns the published package contract with the Node 20 CI pin and the transitive development-tool closure validated by `ORACLE-NODE20-LOCK-CLOSURE`. It changes no production API or runtime behavior.

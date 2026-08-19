@@ -70,6 +70,15 @@ describe("GLY-353 RFC 8785 evidence canonicalization", () => {
     ]))).toThrowError("INVALID_AZURE_EGRESS_POLICY_CLAIMS");
   });
 
+  it("ORACLE-EVIDENCE-PLANE-LOGGING-ENABLED: an enabled body-logging plane rejects", () => {
+    const loggingPlanes = [{
+      plane: "APP_INSIGHTS",
+      bodyLoggingDisabled: false,
+    }] as unknown as readonly LoggingPlaneBodyAttestation[];
+    expect(() => canonicalizeAzureEgressPolicySignedClaims(claims(loggingPlanes)))
+      .toThrowError("INVALID_AZURE_EGRESS_POLICY_CLAIMS");
+  });
+
   it("ORACLE-EVIDENCE-ENGINE-POLICY-NORMALIZATION: normalized mode and BAA matrix bind under JCS", () => {
     const a = computeEnginePolicyVersion({
       engineMode: "production",
