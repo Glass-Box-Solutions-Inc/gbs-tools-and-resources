@@ -88,6 +88,13 @@ from wc_caseload_engine.seeds import (
     settlement_deductions,
 )
 
+LABEL_RE = r"\[ENGINE_POLICY_UNCONFIRMED\]"
+"""AJC-64 item 0d labels each invented deduction rate on the page (M5-R41).
+
+The extractors below require the token rather than tolerating it, so a stripped
+label fails here too and not only in the item's own module.
+"""
+
 
 def _refusals(block: dict, documents: list, case_id: str, *, given: str) -> list[str]:
     """``_validate_money``, with a crash reported as a failure of the calling guard.
@@ -3044,7 +3051,9 @@ class TestTheDocumentsCarryTheNumbers:
             # The same figure appears twice on this page — once in the summary
             # table, once in stipulation 6 — and a fix that reached only one of
             # them is the defect this whole class keeps reproducing.
-            tabled = amount(r"Less: Attorney Fees \(15%\) \(\$([\d,]+\.\d\d)\)")
+            tabled = amount(
+                r"Less: Attorney Fees \(15%\) " + LABEL_RE + r" \(\$([\d,]+\.\d\d)\)"
+            )
             assert tabled == fee, (
                 f"gross {gross}: the award's table says {tabled} and its stipulation 6 says {fee}"
             )
@@ -3095,9 +3104,16 @@ class TestTheDocumentsCarryTheNumbers:
                 return Decimal(found.group(1).replace(",", ""))
 
             printed = amount(r"Gross Settlement Amount \$([\d,]+\.\d\d)")
-            fee = amount(r"Less: Attorney Fees \(15%\) \(\$([\d,]+\.\d\d)\)")
-            costs = amount(r"Less: Costs and Expenses \(\$([\d,]+\.\d\d)\)")
-            set_aside = amount(r"Less: Medicare Set-Aside Allocation \(\$([\d,]+\.\d\d)\)")
+            fee = amount(
+                r"Less: Attorney Fees \(15%\) " + LABEL_RE + r" \(\$([\d,]+\.\d\d)\)"
+            )
+            costs = amount(
+                r"Less: Costs and Expenses " + LABEL_RE + r" \(\$([\d,]+\.\d\d)\)"
+            )
+            set_aside = amount(
+                r"Less: Medicare Set-Aside Allocation " + LABEL_RE
+                + r" \(\$([\d,]+\.\d\d)\)"
+            )
             net = amount(r"Net to Applicant \$(-?[\d,]+\.\d\d)")
 
             assert printed == published

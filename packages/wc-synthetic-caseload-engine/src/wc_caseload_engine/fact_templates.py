@@ -56,6 +56,29 @@ log = structlog.get_logger(__name__)
 CENTS = Decimal("0.01")
 """Quantum every currency figure on a rendered page is rounded to."""
 
+ENGINE_POLICY_UNCONFIRMED_LABEL = "[ENGINE_POLICY_UNCONFIRMED]"
+"""AJC-64 item 0d (M5-R41): the deduction rows say who authored their rates.
+
+``SETTLEMENT_FEE_RATE`` (15%), ``SETTLEMENT_COSTS_DIVISOR`` (2.5%) and
+``SETTLEMENT_SET_ASIDE_DIVISOR`` (20%) are **invented and uncited**, and all
+three print as dollar lines. An MSA is an actuarial CMS projection, not a fifth
+of the gross; the fee is WCAB-discretionary under §4906 / 8 CCR §10844 and 15%
+is the top of the band applied universally.
+
+This item changes **no value** — labelling is not a legal ruling, which is why
+it lands while SI-M5-007 stays open as the upgrade path. The label lands per
+family, because the three constants do not all print on all eleven settlement
+subtypes: the C&R family prints fee-on-gross, costs and (when authored) the MSA
+row — up to three labelled lines; the stipulations family prints the fee on the
+**award component** only — one labelled line; ``ORDER_APPROVING_SETTLEMENT``
+prints no deduction breakdown at all, and a label appearing there would mean
+this item fabricated one.
+
+The token is a module constant for reference; the row labels themselves carry it
+as **literal** string constants, because M5-R41a's AST freeze exempts exactly
+those string-constant nodes and nothing else.
+"""
+
 #: The candidate list ``DiagnosticReport`` draws its modality from.
 #:
 #: Matched exactly, so the interception below can tell that draw apart from
@@ -2400,11 +2423,16 @@ def _restate_distribution(
     net = Decimal(gross) - fee - Decimal(costs) - Decimal(set_aside)
     rows: list[list[Any]] = [
         ["Gross Settlement Amount", f"${gross:,.2f}"],
-        ["Less: Attorney Fees (15%)", f"(${fee:,.2f})"],
-        ["Less: Costs and Expenses", f"(${costs:,.2f})"],
+        ["Less: Attorney Fees (15%) [ENGINE_POLICY_UNCONFIRMED]", f"(${fee:,.2f})"],
+        ["Less: Costs and Expenses [ENGINE_POLICY_UNCONFIRMED]", f"(${costs:,.2f})"],
     ]
     if wants_msa:
-        rows.append(["Less: Medicare Set-Aside Allocation", f"(${set_aside:,.2f})"])
+        rows.append(
+            [
+                "Less: Medicare Set-Aside Allocation [ENGINE_POLICY_UNCONFIRMED]",
+                f"(${set_aside:,.2f})",
+            ]
+        )
     rows.append(["Net to Applicant", f"${net:,.2f}"])
     if not _replace_table_after(
         story, "Distribution of Settlement", rows, [4 * inch, 2.5 * inch], styles
@@ -2426,7 +2454,7 @@ def _restate_award_summary(
     fee, net_award = _fee_and_net(award._answer)
     rows: list[list[Any]] = [
         ["Permanent Disability (Gross)", f"${award._answer:,.2f}"],
-        ["Less: Attorney Fees (15%)", f"(${fee:,.2f})"],
+        ["Less: Attorney Fees (15%) [ENGINE_POLICY_UNCONFIRMED]", f"(${fee:,.2f})"],
         ["Net Permanent Disability to Applicant", f"${net_award:,.2f}"],
         ["Self-Procured Medical Reimbursement", f"${reimbursement._answer:,.2f}"],
         ["Settlement Gross", f"${gross:,.2f}"],
