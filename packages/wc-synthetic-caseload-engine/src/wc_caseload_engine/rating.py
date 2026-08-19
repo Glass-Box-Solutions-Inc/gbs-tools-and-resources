@@ -575,7 +575,33 @@ def fec_adjusted_rating(
 
 
 def dfec_adjusted_rating(wpi: int) -> int:
-    """Apply the post-2013 flat 1.4 policy with half-up rounding and cap."""
+    """Apply the post-2013 flat 1.4 policy with half-up rounding and cap.
+
+    **Authority: Labor Code section 4660.1(b)**, which replaced the 2005
+    schedule's diminished-future-earning-capacity adjustment with a flat 1.4
+    multiplier for injuries on or after 2013-01-01. Register rows
+    **SI-W2-001** and **SI-W2-003**, ANSWERED 08-17-2026.
+
+    AJC-64 item 0b (M5-R42(c)) adds this citation and nothing else — no
+    behavior and no value changes; ``grep 4660`` previously returned nothing in
+    either ``rating.py`` or ``rating_sources.py``, so the one legal proposition
+    this function embodies was attributed to no source at all.
+
+    The three figures here do **not** share a class, and saying so is the point
+    of the citation:
+
+    * ``1.4`` is ``LEGAL_BINDING`` — it is the statute's own multiplier;
+    * ``ROUND_HALF_UP`` is ``ENGINE_POLICY`` — §4660.1(b) prescribes no
+      rounding mode (guarded by ``m23-52``);
+    * the ``100`` cap is a separate ``ENGINE_POLICY`` (guarded by ``m23-53``).
+
+    The statutory text is sha256-pinned by item 0e; an unpinned citation fails
+    ``M5_STATUTE_PIN_MISSING``, so this docstring does not ship without that pin.
+
+    *(The KB's SI-W2-003 note preferred "adopt the chart, not a bare multiply"
+    while W2 implements the multiply. Recorded as a question for a future
+    ticket; M5 does not change the arithmetic.)*
+    """
     rounded = int(
         (Decimal(wpi) * Decimal("1.4")).to_integral_value(rounding=ROUND_HALF_UP)
     )

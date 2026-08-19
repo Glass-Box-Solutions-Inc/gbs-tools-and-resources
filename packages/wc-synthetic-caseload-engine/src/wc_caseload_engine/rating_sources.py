@@ -329,6 +329,12 @@ def _validate_meta(meta: dict[str, Any]) -> None:
         _mismatch()
     if meta.get("sha256") != PDRS_2005_PDF_SHA256:
         _mismatch()
+    # AJC-64 item 0b (M5-R42(a)): the line above compares the meta file's copy
+    # of a constant to the constant. That is a chain terminating in a string —
+    # it would pass identically against a fabricated PDF — so it is kept only as
+    # an internal-consistency check and the REAL pin is `verify_pdrs_artifact`
+    # below, which hashes bytes off disk. `m24-31` restores the
+    # self-comparison as the whole gate.
 
     cross_check = meta.get("cross_check")
     if not isinstance(cross_check, dict) or set(cross_check) != _CROSS_CHECK_KEYS:
@@ -405,6 +411,74 @@ def load_rating_source_bundle(data_dir: Path | None = None) -> RatingSourceBundl
     )
 
 
+PDRS_ARTIFACT_PIN_MISSING = "M5_PDRS_ARTIFACT_PIN_MISSING"
+PDRS_ARTIFACT_DIGEST_MISMATCH = "M5_PDRS_ARTIFACT_DIGEST_MISMATCH"
+
+#: The vendored artifacts whose bytes the pin chain terminates in, and the
+#: constant each must hash to. AJC-64 item 0b (M5-R42(a)).
+#:
+#: **Which of the spec's two options was taken, and why.** The 4 MB source PDF
+#: is NOT vendored into the package. The artifact the pin chain terminates in is
+#: the *derived extracted text*, already committed at
+#: ``tests/fixtures/pdrs-2005-extracted-text.txt`` by the W2 arc — the second
+#: option the rule offers, a reproducible derivation whose output hash is
+#: pinned. It is the right one here for a reason specific to this item: that
+#: text is the artifact all five per-table parity oracles actually parse, so the
+#: pinned bytes and the evidence source are the SAME bytes. Vendoring the PDF
+#: instead would have pinned four megabytes nothing in this package reads, and
+#: re-vendoring the text into package data would have created a second copy to
+#: keep in step with one digest.
+#:
+#: The PDF's own digest stays pinned as `PDRS_2005_PDF_SHA256` and is checked
+#: against the real file by `verify_pdrs_pdf` wherever the docs-repo artifact is
+#: reachable — a mismatch FAILS; only genuine absence is reported as absence,
+#: never as a pass.
+PDRS_VENDORED_ARTIFACTS: dict[str, str] = {
+    "pdrs_2005_tables.json": PDRS_2005_TABLES_SHA256,
+    "pdrs_2005_section4_matrix.json": PDRS_2005_SECTION4_SHA256,
+    "pdrs_2005_section4_matrix.meta.json": PDRS_2005_SECTION4_META_SHA256,
+}
+
+
+def pdrs_data_dir() -> Path:
+    return Path(__file__).resolve().parent / "data"
+
+
+def verify_pdrs_artifact(filename: str) -> str:
+    """Hash the artifact on disk and compare it to its pinned digest.
+
+    The digest is computed from the file that was just read. Comparing the
+    literal to another copy of itself proves that a constant equals itself,
+    which is what `meta.json`'s `sha256` field did and all it ever did.
+    """
+    expected = PDRS_VENDORED_ARTIFACTS.get(filename)
+    if expected is None:
+        raise ValueError(f"{PDRS_ARTIFACT_PIN_MISSING}: no pin for {filename!r}")
+    path = pdrs_data_dir() / filename
+    if not path.is_file():
+        raise FileNotFoundError(f"{PDRS_ARTIFACT_PIN_MISSING}: {path} is not on disk")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != expected:
+        raise ValueError(
+            f"{PDRS_ARTIFACT_DIGEST_MISMATCH}: {filename} hashes {digest}, "
+            f"pinned {expected}"
+        )
+    return digest
+
+
+def verify_pdrs_pdf(path: Path) -> str:
+    """Hash the source PDF itself. Absence is reported, never passed over."""
+    if not path.is_file():
+        raise FileNotFoundError(f"{PDRS_ARTIFACT_PIN_MISSING}: {path} is not on disk")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != PDRS_2005_PDF_SHA256:
+        raise ValueError(
+            f"{PDRS_ARTIFACT_DIGEST_MISMATCH}: {path} hashes {digest}, "
+            f"pinned {PDRS_2005_PDF_SHA256}"
+        )
+    return digest
+
+
 __all__ = [
     "PDRS_2005_COUNSEL_STATUS",
     "PDRS_2005_EDITION",
@@ -416,6 +490,9 @@ __all__ = [
     "PDRS_2005_SECTION4_SHA256",
     "PDRS_2005_SOURCE_URL",
     "PDRS_2005_TABLES_SHA256",
+    "PDRS_ARTIFACT_DIGEST_MISMATCH",
+    "PDRS_ARTIFACT_PIN_MISSING",
+    "PDRS_VENDORED_ARTIFACTS",
     "RATING_AGE_CELL_MISSING",
     "RATING_COMBINATION_EXTREMITY_IDENTITY_REQUIRED",
     "RATING_COMBINATION_UNSUPPORTED_OVERLAP",
