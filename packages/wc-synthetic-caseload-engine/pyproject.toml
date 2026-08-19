@@ -40,7 +40,14 @@ wc-caseload = "wc_caseload_engine.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-wc_caseload_engine = ["py.typed", "data/*.txt", "data/*.json"]
+wc_caseload_engine = [
+  "py.typed",
+  "data/*.txt",
+  "data/*.json",
+  # AJC-64 item 0e: the sha256-pinned statutory artifacts. They ship as package
+  # data because the pin is only evidence if the bytes travel with the code.
+  "data/statutes/*.txt",
+]
 
 [tool.ruff]
 line-length = 100
