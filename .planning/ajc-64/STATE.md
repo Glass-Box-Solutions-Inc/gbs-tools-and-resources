@@ -1,6 +1,6 @@
 # AJC-64 M5 Lane A build state
 
-Branch: ajc-64-m5-lane-a | Spec: adjudica-documentation-rollback/Plans/research/wcce-medical-story/ajc64-m5-spec.md @ 0f9c62d (rev 13.2, FROZEN)
+Branch: ajc-64-m5-lane-a | Spec: adjudica-documentation-rollback/Plans/research/wcce-medical-story/ajc64-m5-spec.md @ rev 13.3 (FROZEN + administrative mutant allocation @ docs 9d4bb54)
 S0-TREE: bb29564f266781455015dfb9063a8e25af3c5343 | Seating: Sonnet implements, sol review loop, Gemini after 3 non-approving rounds, Fable orchestrates/QCs/commits
 
 | item | status | evidence | last update |
@@ -36,13 +36,13 @@ S0-TREE: bb29564f266781455015dfb9063a8e25af3c5343 | Seating: Sonnet implements, 
 | Fix-round gate bundle | GREEN | full suite 2163 collected / 0 failed; ruff All checks passed; preflight 328 guards 1:1; golden gate PASSED 6/6 (money-showcase deliberately re-recorded for F2 prose labels, named successor 540571c2…7953e633a in test_golden_corpus.py + test_ajc63_validator.py, label-only: facts/seed did not move); m11-1 re-anchored (F2 duplicated its find text) + m24-147..155 all RED alone with anchors verified present and no residue | 08-19 |
 | 1 | QC-COMMITTED 3f069e8 (cherry-pick from ajc-64-m5-item1 5e1836c) + c4b4cbe S2 final | Opus supervision F1 fixed; 29/29; golden gate PASSED | 08-19 |
 | 2, 3 | PENDING (parallel wave) | — | — |
-| 4 | PENDING — GATED on Kopping pin | — | — |
+| 4 | UNGATED — Kopping PINNED 08-20 (cluster 2296517, raw 381f76f7, canonical 0f352b8f; verbatim holding of record, register ce9f170) | pin + m24-214/215 in d6e8530 | 08-20 |
 | 5, 7 | PENDING (parallel wave) | — | — |
 | 6, 8 | PENDING (parallel wave) | — | — |
 | 9 | PENDING | — | — |
 | 10, 11, 12 | PENDING (serial) | — | — |
 
-Escalations open: Kopping pin (needs CourtListener API token or alternate provenance — Alex); §4663 pre-2016 residual gap (recorded, mutant-guarded, acceptable unless Alex wants a secondary source).
+Escalations: NONE OPEN. Kopping pin DISCHARGED 08-20 (Alex token via JTT g4; pinned d6e8530). §4663 residual ACCEPTED by Alex 08-20 (JTT g5, register 578c3c0). Mutant count: 422 at 5a6d1d8 → 428 at e22e128 (sol round-4 corrected figure). Vendored-artifact exception: case-kopping-2006-142-cal-app-4th-1099.html carries source-verbatim trailing whitespace (raw-digest-pinned; NEVER trim; range-scoped git diff --check excludes vendored artifacts by design).
 
 ## Review log
 | round | reviewer | verdict | disposition |
