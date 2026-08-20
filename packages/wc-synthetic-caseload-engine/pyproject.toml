@@ -51,6 +51,7 @@ wc_caseload_engine = [
   # AJC-64 item 0e: the sha256-pinned statutory artifacts. They ship as package
   # data because the pin is only evidence if the bytes travel with the code.
   "data/statutes/*.txt",
+  "data/statutes/*.html",
 ]
 
 [tool.ruff]
