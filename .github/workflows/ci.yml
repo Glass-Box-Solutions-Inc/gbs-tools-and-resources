@@ -417,7 +417,10 @@ jobs:
     name: "wc-synthetic-caseload-engine"
     needs: changes
     if: needs.changes.outputs.wc-synthetic-caseload-engine == 'true'
-    runs-on: ubuntu-latest
+    # ubuntu-22.04 pinned (not latest) for poppler 22.02.0 — see the mutation
+    # job's runs-on comment. Without it the PDRS derivation test skips (no
+    # pdftotext) and its coverage silently vanishes from this job.
+    runs-on: ubuntu-22.04
     defaults:
       run:
         working-directory: packages/wc-synthetic-caseload-engine
@@ -431,7 +434,7 @@ jobs:
       # The label-position leakage probe (AJC-61) OCRs image-only PDF pages —
       # an OCR-only surface that cannot be certified without the engine, and
       # the scan fails loudly rather than skipping when it is missing.
-      - name: Install tesseract (OCR-only leakage surfaces)
+      - name: Install tesseract + poppler (OCR leakage surfaces; PDRS derivation guard)
         # timeout-minutes + apt transport timeouts/retries: on 2026-08-18 an
         # archive.ubuntu.com stall held six shard jobs in this step for 50-64
         # minutes (AJC-83); a hung mirror must fail fast and retry, never park
@@ -439,7 +442,7 @@ jobs:
         timeout-minutes: 10
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -q
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -q tesseract-ocr
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -q tesseract-ocr poppler-utils
       - name: Lint (ruff)
         run: python -m ruff check src/ tests/
       - name: Test
@@ -516,7 +519,12 @@ jobs:
     name: "wc-synthetic-caseload-engine (mutation gate ${{ matrix.shard }}/10)"
     needs: changes
     if: needs.changes.outputs.wc-synthetic-caseload-engine == 'true'
-    runs-on: ubuntu-latest
+    # ubuntu-22.04 pinned, not latest: the PDRS derivation guard (m24-205,
+    # AJC-64 item 0b) reproduces the pinned extraction with pdftotext and the
+    # extraction digest is pinned against poppler 22.02.0 — the version 22.04
+    # ships. ubuntu-latest (24.04) carries a newer poppler whose output hashes
+    # differently, which would turn the guard's honest skip into a false red.
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -537,15 +545,17 @@ jobs:
       # cause of the shard 5-9 GUARD-NOT-GREEN failures on a08f8f4: a clean
       # checkout passes both guards in isolation WITH tesseract and fails
       # with the scan's own RuntimeError without it.
-      - name: Install tesseract (OCR-only leakage surfaces)
+      - name: Install tesseract + poppler (OCR leakage surfaces; PDRS derivation guard)
         # timeout-minutes + apt transport timeouts/retries: on 2026-08-18 an
         # archive.ubuntu.com stall held six shard jobs in this step for 50-64
         # minutes (AJC-83); a hung mirror must fail fast and retry, never park
-        # the job against GitHub's 6-hour ceiling.
+        # the job against GitHub's 6-hour ceiling. poppler-utils added for
+        # m24-205's derivation-reproduction guard (skips without pdftotext,
+        # and the gate rightly scores a skipped guard GUARD-NOT-GREEN).
         timeout-minutes: 10
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -q
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -q tesseract-ocr
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -q tesseract-ocr poppler-utils
       - name: Every registered guard collects exactly one test
         run: python tools/mutation_gate.py --preflight --shard ${{ matrix.shard }}/10
       - name: Every guard still catches its own defect
