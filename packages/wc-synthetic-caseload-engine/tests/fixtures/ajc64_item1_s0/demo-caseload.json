@@ -1,0 +1,112 @@
+{
+  "format": 3,
+  "corpus": "demo-caseload",
+  "spec": "examples/demo-caseload.yaml",
+  "tier": "suite",
+  "recordedWith": {
+    "engine": "0.9.0",
+    "substratePin": "cb485354f16164ca2d422804fe9d40f9a2250920",
+    "substrateSha": "70c8f3bed4c8df9b352e557e4128460798c62bfb",
+    "python": "3.12.13",
+    "dependencies": {
+      "reportlab": "4.5.1",
+      "python-docx": "1.2.0",
+      "pymupdf": "1.28.2",
+      "pillow": "11.3.0",
+      "faker": "34.0.2",
+      "pyyaml": "6.0.3",
+      "pydantic": "2.13.4"
+    },
+    "systemFonts": {
+      "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf": "39c29931201f08dd"
+    }
+  },
+  "caseCount": 7,
+  "documentCount": 331,
+  "fileCount": 361,
+  "rootFiles": [
+    "caseload_manifest.json",
+    "truth/alvarez-denied-recon-remand.truth.json",
+    "truth/caseload.truth.json",
+    "truth/castellanos-trial-recon-denied.truth.json",
+    "truth/nguyen-cr-three-liens.truth.json",
+    "truth/okafor-ct-ur-imr.truth.json",
+    "truth/ramirez-death-dependency.truth.json",
+    "truth/whitaker-defense-qme-surveillance.truth.json",
+    "truth/whitfield-early-intake.truth.json"
+  ],
+  "corpusTree": "0b3bec482144958bb300d710d76ccffd64f7d3356669a6c77cb30cdc17033ee2",
+  "caseload": "d90519477ccd0d5e4edf8de8dc4115fccbead2bfcdc228e44699e01aa587eaf2",
+  "cases": {
+    "alvarez-denied-recon-remand": {
+      "documentCount": 55,
+      "distinctSubtypes": 30,
+      "fileCount": 58,
+      "tree": "86e19affc571ee745efdf7b4492325a6bc7d8c09810a11c1e4e5361fd31bc1aa",
+      "documents": "239619b5c62d55b1bf49ea8779bb92cf06c0f252feb92fc75358a96b974d0727",
+      "manifest": "b1b77c88d5ef46e98da6013d7180ab1a00ddd5c64f1b09fc9e8d70fad33e7b8a",
+      "seed": "f34850ab271ff67e41039c2de988d75f9c0ed5f1e1d60d740ac7a1ae2d3bc5ae",
+      "facts": "bcf08dafe29b2d141b02687264afd910657acbbfdb0f650015ba89c4d016c914"
+    },
+    "castellanos-trial-recon-denied": {
+      "documentCount": 55,
+      "distinctSubtypes": 25,
+      "fileCount": 58,
+      "tree": "cb2091af164923a27d9b723e6df7a30e896cdbbeea9dccc0394c11df7bee7af0",
+      "documents": "b6e18c397b8b9c5108c52fceb361145f5b036b9035907f6b4d87abee9b7e5434",
+      "manifest": "75c146a9f715154afa330557c7e97e8d3d6dd6dd9f9bbecf91298a0a9ba1091e",
+      "seed": "7bf7359544d80b44825ec94e2ad06febe60b0f9e60821a3d875d6bf82492e7f0",
+      "facts": "2b9bd4bbc45250d002dbf36865af53799a7866af777d71029beeb2eca3e90407"
+    },
+    "nguyen-cr-three-liens": {
+      "documentCount": 60,
+      "distinctSubtypes": 35,
+      "fileCount": 63,
+      "tree": "b345b33c9c16437fbe40b6e5681b864f3d837baf5bb8823b70e9201865ec930a",
+      "documents": "6bd19ccb942666d6f06af8de7cd564396caa87c7eb5d298531f3cae4751d124d",
+      "manifest": "643bb49d1a8a132754797069a3397e88b5592ccbd9c95898385d22f617794f43",
+      "seed": "4506c915893b208b5bfd10358356fa890e4b31a61724dded03a10806bff1f41e",
+      "facts": "efbfc7b3fd786706977b893b598dc9740c075953b8e851d783fbccb30e8a8450"
+    },
+    "okafor-ct-ur-imr": {
+      "documentCount": 50,
+      "distinctSubtypes": 25,
+      "fileCount": 53,
+      "tree": "919d4eb4fb0513937e2671153afd4319061c063a955769dcb54de4b003b9c7a9",
+      "documents": "d1e92457d94bfdb5da1b240b14e6a452bc06ddf9bcb048e3bbae3a821d1fd6fc",
+      "manifest": "a937c9c6b7e3c356afab8524121fca2ff066a30786b14ad8aa8b92049311b679",
+      "seed": "d69e868aa098767789bcb64c038a6424d3cb7e7c0fa3883fed6a953c55e3b558",
+      "facts": "944436340467a842cab8f0b0d6fdf826033344e09ac60011729572ca97ce527e"
+    },
+    "ramirez-death-dependency": {
+      "documentCount": 40,
+      "distinctSubtypes": 28,
+      "fileCount": 43,
+      "tree": "2c0d627ee3a6b089fbdae2c2815f4a9f256ec8964770995704511ad94b31333f",
+      "documents": "841c9deee158552e6bf8535f82be8865c1f3548658b03d83444c2661469b6553",
+      "manifest": "b4a73e8958f231c197c4bf184f3971da035a5bbbe4c2b06834f537e4011aec69",
+      "seed": "5cf102b8b3b6af1055a6f01753d2370f90946ecb875740c8675b317b37c30189",
+      "facts": "7c53105764a27c578743979e1cb7bb9c7487f5c7f90306a88c9e752898e6c93b"
+    },
+    "whitaker-defense-qme-surveillance": {
+      "documentCount": 55,
+      "distinctSubtypes": 28,
+      "fileCount": 58,
+      "tree": "5d3aad4aec761e178cd32d09e7d93a385f117b9db5a54f3278dff059875388ba",
+      "documents": "d4e5df52126950200b3474ae1c4b7d75dec961146f46a7880f535e3582c9ed28",
+      "manifest": "0e0e856f64dd7fc2d887e53667e78faf7c9249a73927d0bf5bcf9d06b9e3d5e1",
+      "seed": "07b7e9103480960cedf5d7cd6d711c1eb353340eb8ec2d688a9788faa7e1ea5f",
+      "facts": "d2eaac8496fbaacb90268331d15d0750bb53ec0b1ea392e8b8709e6275fb4592"
+    },
+    "whitfield-early-intake": {
+      "documentCount": 16,
+      "distinctSubtypes": 14,
+      "fileCount": 19,
+      "tree": "49078197f96733a331a40b6438a8eef9cb7ca3f2e213075bc2d48bbc34da1350",
+      "documents": "0761ed764a77044522ed0629898ab0b30c949990927b3b7ed2feb1b3ba84dfa3",
+      "manifest": "d98cdb78a4a8504f3e5bde6e7554686f7ce7b6aed916222d74d9a7308427dd36",
+      "seed": "a35b90fdff2342374f328c469e8ad184e715fc10d567d1dfbd7eb89d941e07b4",
+      "facts": "e88bbd067a7cd4ee0423cd296d5548231ee1a2a86a7ec36f32ab812d728dc589"
+    }
+  }
+}

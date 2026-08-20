@@ -40,7 +40,19 @@ wc-caseload = "wc_caseload_engine.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-wc_caseload_engine = ["py.typed", "data/*.txt", "data/*.json"]
+wc_caseload_engine = [
+  "py.typed",
+  "data/*.txt",
+  "data/*.json",
+  # AJC-64 item 0b (round-1 finding F5): the published PDRS source PDF. It
+  # ships so the rating-lane provenance chain terminates in the real bytes
+  # in-tree rather than in whichever repositories happen to sit beside this one.
+  "data/*.pdf",
+  # AJC-64 item 0e: the sha256-pinned statutory artifacts. They ship as package
+  # data because the pin is only evidence if the bytes travel with the code.
+  "data/statutes/*.txt",
+  "data/statutes/*.html",
+]
 
 [tool.ruff]
 line-length = 100

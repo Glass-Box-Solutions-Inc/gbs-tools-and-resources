@@ -1,0 +1,90 @@
+{
+  "format": 3,
+  "corpus": "medical-story-showcase",
+  "spec": "examples/medical-story-showcase.yaml",
+  "tier": "suite",
+  "recordedWith": {
+    "engine": "0.9.0",
+    "substratePin": "2168d066120c57f7585a2f674629979432ef674a",
+    "substrateSha": "2168d066120c57f7585a2f674629979432ef674a",
+    "python": "3.12.13",
+    "dependencies": {
+      "reportlab": "4.5.1",
+      "python-docx": "1.2.0",
+      "pymupdf": "1.28.2",
+      "pillow": "11.3.0",
+      "faker": "34.0.2",
+      "pyyaml": "6.0.3",
+      "pydantic": "2.13.4"
+    },
+    "systemFonts": {
+      "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf": "39c29931201f08dd"
+    }
+  },
+  "caseCount": 5,
+  "documentCount": 318,
+  "fileCount": 340,
+  "rootFiles": [
+    "caseload_manifest.json",
+    "truth/caseload.truth.json",
+    "truth/diabetic-neuropathy-cts-confound.truth.json",
+    "truth/flagship-nonindustrial-cancer-noise-a.truth.json",
+    "truth/flagship-nonindustrial-cancer-noise-b.truth.json",
+    "truth/flagship-nonindustrial-cancer-noise-c.truth.json",
+    "truth/lc4664-prior-award-overlap.truth.json"
+  ],
+  "corpusTree": "626214c1ff995f7335d8be6a8fd2a97be0f08f4abfc3836ddf03321edcd109a8",
+  "caseload": "51718c828231b37eb99a7e1bbd23114cf30e8a87de2cc3aca81a990820e690eb",
+  "cases": {
+    "diabetic-neuropathy-cts-confound": {
+      "documentCount": 70,
+      "distinctSubtypes": 44,
+      "fileCount": 73,
+      "tree": "ff3588bb955e7945a1e54747284a106ed404cee60e86cc1bcaf6ebfc53f242bf",
+      "documents": "b89a4632aea964d29908dece2f34ed2e1a22a987deda84ccfb01d11e3d356180",
+      "manifest": "8b402fc323009c8e34742725c8d212d4ea0aa9b06929a01a693a43bc507d9646",
+      "seed": "61b4a3eb52ab6b93358d646f8081c64508a5520f3ad81a5bb402e17740646d13",
+      "facts": "917818c55f39b4ff28fe46185aaf136361aeec7b40a7fd3943ac5cf24a0a120e"
+    },
+    "flagship-nonindustrial-cancer-noise-a": {
+      "documentCount": 63,
+      "distinctSubtypes": 39,
+      "fileCount": 66,
+      "tree": "0316f6411efe118f7d2eaa4b3be6bb12ab1ffa8ab927efc802a2bcd9e2547f85",
+      "documents": "1197047659a6c96ad015d5ed3b8d4ec25938d392cb88bf60bd1141bc9c9c3a54",
+      "manifest": "b9a7d4b5ab9847e0ae5dbd6de3419fc2d82434d29fdeadf67825daaf828cd6bb",
+      "seed": "ee130483f4f4c9c67a3b8c031035cdb51b4e2af5610e1ba7043b1108763b5529",
+      "facts": "af063aa40ff88c2a3ea712b5300889cad7f5dd3ae5f7f414fcb80fb14e51c522"
+    },
+    "flagship-nonindustrial-cancer-noise-b": {
+      "documentCount": 66,
+      "distinctSubtypes": 43,
+      "fileCount": 69,
+      "tree": "022bdd82eea98b12001157cbb1605cb676fe2343845213793195d1625d560f0b",
+      "documents": "4f3253882b380ad0fa6ec02303c98f9373a4ccba688f76277cf086b268d899e2",
+      "manifest": "477aea8f1afcb301514cf36c92125253cdc8b9de2c8d27dd2335fbb6223ff50c",
+      "seed": "2c1399b990b91e672c90dc9bf0b8ffcb1951edb8a09d636072f5605819301800",
+      "facts": "e8c8efd3e1b572f6c4275714d52c54eaea962526cca2683aa7a5fb5c280f000d"
+    },
+    "flagship-nonindustrial-cancer-noise-c": {
+      "documentCount": 53,
+      "distinctSubtypes": 33,
+      "fileCount": 56,
+      "tree": "8359f487a4eb3b73487cb60b5d6789dfa331907471bf2d32c18e6b234667c8cb",
+      "documents": "b0bcbf9b747b3dae508f0b97b4345f431c91bf00d2d97a1e85616ab930b63d04",
+      "manifest": "c466342b96fdc91c41947097fa8d00a21c903df24e92cf3e3c1179316ed82721",
+      "seed": "3b2602dc588d9859636b38a1e5c8abae8f53c8533eb95f0c57e3932856272c3f",
+      "facts": "a6a0ab12d0b6b06b31dfe645b5633dde149459c69d71fea80aa16a15e2efe9e4"
+    },
+    "lc4664-prior-award-overlap": {
+      "documentCount": 66,
+      "distinctSubtypes": 29,
+      "fileCount": 69,
+      "tree": "93891698ba11d3374865e318d44cc1dfed1becf3cc37a5c8625d4c00a520f366",
+      "documents": "6d3ee799b77c3240a98b219124e1e8a6e0ccfd526e108815c75e28b10d1dc59f",
+      "manifest": "efd0da338b2dd68802fc21acf37869b635ddd089b8ead05aca5956f728a98b62",
+      "seed": "a9f29516e02df5ccae312a2f486f4b4354707dc881061b6236824c7c0d5b73f6",
+      "facts": "ce0049497c166f02e27460faae1e8fd1c5d3b7458e0601aa368001f49475d638"
+    }
+  }
+}

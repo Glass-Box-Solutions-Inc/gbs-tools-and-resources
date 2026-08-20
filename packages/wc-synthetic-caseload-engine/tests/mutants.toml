@@ -861,8 +861,10 @@ id = 'm11-1'
 title = 'the release fee sentence goes back to matching only bold figures'
 file = 'src/wc_caseload_engine/fact_templates.py'
 test = 'tests/test_money_spine.py::TestTheDocumentsCarryTheNumbers::test_the_release_reconciles_and_never_owes_the_applicant_money'
-find = '''    re.compile(r"(?<=in the amount of )\$[\d,]+(?:\.\d+)?(?= \(15% of gross settlement\))"),'''
-replace = '''    re.compile(r"(?<=in the amount of )ZZZ-no-such-token"),'''
+find = '''    re.compile(r"(?<=which equals )<b>\$[\d,]+(?:\.\d+)?</b>"),
+    re.compile(r"(?<=in the amount of )\$[\d,]+(?:\.\d+)?(?= \(15% of gross settlement\))"),'''
+replace = '''    re.compile(r"(?<=which equals )<b>\$[\d,]+(?:\.\d+)?</b>"),
+    re.compile(r"(?<=in the amount of )ZZZ-no-such-token"),'''
 
 [[mutant]]
 id = 'm11-2'
@@ -4731,3 +4733,582 @@ replace = '''  - case_id: w2-rating-anchor
       wages: {}
       rating:'''
 note = 'R100/R102/R105. A W2 golden case must prove booking policy from derived behavior; authoring diligence in the raw showcase bypasses that oracle.'
+
+# ---------------------------------------------------------------------------
+# AJC-64 / M5 — item 0a, the section 4751 corrected-law fix (M5-R39).
+# ---------------------------------------------------------------------------
+
+[[mutant]]
+id = 'm24-27'
+title = 'SIBTF-4751-LEGACY-PARAGRAPH'
+file = 'src/wc_caseload_engine/renderer.py'
+test = 'tests/test_ajc64_item0a.py::TestFlagArms::test_both_flag_arms_draw_identical_pools_for_every_target'
+find = '        pool = content.paragraphs_for(subtype)'
+replace = '''        from wc_caseload_engine.doctrine import (
+            MEDICAL_STORY_SIBTF_SECTION_4751_PARAGRAPHS,
+        )
+
+        pool = (
+            MEDICAL_STORY_SIBTF_SECTION_4751_PARAGRAPHS
+            if medical_story_enabled and hook == "sibtf"
+            else content.paragraphs_for(subtype)
+        )'''
+note = 'M5-R39a. Restores the M3 flag condition, so a carrier without the medical-story flag renders the superseded section 4751 threshold again. Guarded by both flag arms, because the flagged arm alone was always correct.'
+
+[[mutant]]
+id = 'm24-68'
+title = 'SIBTF-4751-ELEMENT-DROPPED'
+file = 'src/wc_caseload_engine/doctrine.py'
+test = 'tests/test_ajc64_item0a.py::TestSection4751Elements::test_the_whole_element_inventory_is_verbatim_and_complete'
+find = '''        "disability; combined permanent disability greater than that from the subsequent "
+        "injury alone; combined permanent disability of at least seventy percent; and "'''
+replace = '''        "disability; combined permanent disability of at least seventy percent; and "'''
+note = 'M5-R36a. Drops the "greater than the subsequent injury alone" element from the shipped paragraph. The inventory is a verbatim-substring contract, so a dropped or reworded element reddens where a label-matching contract would not.'
+
+[[mutant]]
+id = 'm24-69'
+title = 'SIBTF-4751-THRESHOLD-ALTERED'
+file = 'src/wc_caseload_engine/doctrine.py'
+test = 'tests/test_ajc64_item0a.py::TestSection4751Elements::test_every_threshold_is_stated_and_no_other_number_is'
+find = '        "injury alone; combined permanent disability of at least seventy percent; and "'
+replace = '        "injury alone; combined permanent disability of at least seventy-five percent; and "'
+note = 'M5-R36a. Retunes the combined threshold from seventy to seventy-five percent — a LEGAL_BINDING figure, wrong by five points and invisible to any oracle that only counts elements.'
+
+[[mutant]]
+id = 'm24-125'
+title = 'SIBTF-POOL-COLLAPSED-TO-ONE'
+file = 'src/wc_caseload_engine/doctrine.py'
+test = 'tests/test_ajc64_item0a.py::TestSibtfPools::test_every_target_subtype_pool_is_exactly_pinned'
+find = '''        medical_paragraphs=(
+            "This addendum addresses what Labor Code section 4751 asks of a medical evaluator: "
+            "whether a preexisting condition, if established, was labor disabling before the "
+            "industrial injury, and what the combined effect of it and the current impairment "
+            "would be. I have answered on the records provided and identified what a section "
+            "4751 claim would still need.",
+            "Section 4751 requires that the preexisting disability be labor disabling rather than "
+            "merely present, and that the subsequent industrial injury combine with it to produce "
+            "a substantially greater disability. Where the records establish a prior condition I "
+            "have stated it as a whole person figure with the basis for it, so the section 4751 "
+            "threshold can be tested against evidence rather than asserted.",
+            "Where a prior labor-disabling condition is established, my opinion on whether its "
+            "combined effect with the current industrial injury exceeds the sum of their separate "
+            "effects is stated above with the reasoning. Whether that satisfies the thresholds of "
+            "section 4751 is a legal determination that I do not make.",
+        ),
+        legal_paragraphs=(
+            "Labor Code section 4751 provides benefits from the Subsequent Injuries Benefits "
+            "Trust Fund where an employee with a preexisting permanent partial disability "
+            "sustains a subsequent industrial injury and the combined permanent disability "
+            "reaches seventy percent or more. The section 4751 thresholds must be pleaded and "
+            "proved.",
+            MEDICAL_STORY_SIBTF_SECTION_4751_PARAGRAPHS[0]
+            + " The Fund is a separate party and must be joined; a case in chief resolved "
+            "without joinder does not resolve the claim against it.",
+            "The applicant is on notice that the section 4751 claim will require evidence of the "
+            "labor-disabling character of the preexisting condition at the time of the subsequent "
+            "injury, independent of the medical evidence supporting the case in chief.",
+        ),
+'''
+replace = '''        medical_paragraphs=MEDICAL_STORY_SIBTF_SECTION_4751_PARAGRAPHS,
+        legal_paragraphs=MEDICAL_STORY_SIBTF_SECTION_4751_PARAGRAPHS,
+'''
+note = 'M5-R39b. Revision 7 own prescription: replace the sibtf paragraph pool with the one-element corrected tuple. It discharges the defect by deleting the surrounding correct content — three medical-evaluator paragraphs and the joinder sentences — and passes any forbidden-phrase absence check perfectly. Only per-subtype pool equality catches it.'
+
+[[mutant]]
+id = 'm24-126'
+title = 'SIBTF-FORBIDDEN-PHRASE-RESTORED'
+file = 'src/wc_caseload_engine/doctrine.py'
+test = 'tests/test_ajc64_item0a.py::TestForbiddenPhraseSweep::test_no_folded_literal_states_the_forbidden_phrase'
+find = '''            MEDICAL_STORY_SIBTF_SECTION_4751_PARAGRAPHS[0]
+            + " The Fund is a separate party and must be joined; a case in chief resolved "
+            "without joinder does not resolve the claim against it.",'''
+replace = '''            "A claim under section 4751 requires either a preexisting disability of at least "
+            "thirty-five percent, or a subsequent injury to an opposite and corresponding member "
+            "producing at least five percent, together with the statutory combined threshold. The "
+            "Fund is a separate party and must be joined; a case in chief resolved without "
+            "joinder does not resolve the claim against it.",'''
+note = 'M5-R39c. Restores the defective sentence AS SPLIT LITERALS, exactly as the original was written. A raw-source substring search returns False against this shape, so only the AST-folded sweep reddens — which is the whole reason the instrument folds.'
+
+# ---------------------------------------------------------------------------
+# AJC-64 / M5 — item 0e, statute pinning and the prose sweep (M5-R47).
+# ---------------------------------------------------------------------------
+
+[[mutant]]
+id = 'm24-98'
+title = 'STATUTE-PIN-DIGEST-BYPASS'
+file = 'src/wc_caseload_engine/statutes.py'
+test = 'tests/test_ajc64_item0e.py::TestPinnedDigests::test_a_corrupted_artifact_fails_closed'
+find = '''    payload = pin.path.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != pin.sha256:
+        raise StatutePinError(
+            f"{STATUTE_PIN_DIGEST_MISMATCH}: section {section} artifact hashes "'''
+replace = '''    payload = pin.path.read_bytes()
+    digest = pin.sha256
+    if digest != pin.sha256:
+        raise StatutePinError(
+            f"{STATUTE_PIN_DIGEST_MISMATCH}: section {section} artifact hashes "'''
+note = 'M5-R47. Compares the pinned digest to itself instead of to the artifact — the same self-comparison defect item 0b fixes for the PDRS PDF. The pin then passes against any bytes at all, which is a provenance chain terminating in a string.'
+
+[[mutant]]
+id = 'm24-127'
+title = 'CANONICALIZATION-LOWERCASES'
+file = 'src/wc_caseload_engine/statutes.py'
+test = 'tests/test_ajc64_item0e.py::TestCanonicalization::test_a_subdivision_marker_differing_only_in_case_is_not_equal'
+find = '    text = _WHITESPACE.sub(" ", text)'
+replace = '''    text = _WHITESPACE.sub(" ", text)
+    text = text.lower()'''
+note = 'M5-R47b. Adds a case fold to step 5, so two sources differing only in the case of a subdivision marker compare equal. This is the canonicalizer being quietly widened until the cross-check passes — the exact failure the pinned rule exists to prevent.'
+
+[[mutant]]
+id = 'm24-128'
+title = 'CONFLATION-DOCSTRING-RESTORED'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_ajc64_item0e.py::TestProseSweep::test_no_docstring_states_a_forbidden_claim'
+find = '    """The regions this award covered, which is why it is a tuple rather than one.'
+replace = '''    """Section 4664(b) and (c) both operate per region of the body, which is why
+    this is a tuple of regions rather than one.'''
+note = 'M5-R47c. Restores the conflation docstring: (b) is an EXISTENCE presumption operating per prior award, not per region — only (c)(1) is regional. Documentation that contradicts the code is how the next implementer reintroduces the bug.'
+
+[[mutant]]
+id = 'm24-135'
+title = 'CONFLATION-COMMENT-RESTORED'
+file = 'src/wc_caseload_engine/medical_history.py'
+test = 'tests/test_ajc64_item0e.py::TestProseSweep::test_no_comment_states_a_forbidden_claim'
+find = 'PRESUMPTION_DEFAULT_BY_RESOLUTION: Final[dict[str, bool]] = {'
+replace = '''# Section 4664(b) and (c) both operate per region
+# of the body, so the presumption is regional too.
+PRESUMPTION_DEFAULT_BY_RESOLUTION: Final[dict[str, bool]] = {'''
+note = 'M5-R47c. The same false proposition, planted as a COMMENT BLOCK split across two lines. Python ast discards comments, so only the tokenize half sees it — and only after adjacent same-column lines are joined, because neither line carries the whole phrase.'
+
+# ---------------------------------------------------------------------------
+# AJC-64 / M5 — item 0c, the derived authority status (M5-R40).
+# ---------------------------------------------------------------------------
+
+[[mutant]]
+id = 'm24-28'
+title = 'IFR-AUTHORITY-STATUS-HARDCODED'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_ajc64_item0c.py::TestDerivedValueOnTheObject::test_the_built_review_carries_the_derived_status'
+find = '        authority_status=resolve_authority_status(),'
+replace = '        authority_status="ENGINE_POLICY_WITH_COUNSEL_CONFIRMED_INPUTS",'
+note = 'M5-R40. Restores the self-certification: every Initial File Review declares its inputs counsel-confirmed while nothing checks any input, and money.py labels its own rate bindings COUNSEL-UNCONFIRMED throughout.'
+
+[[mutant]]
+id = 'm24-83'
+title = 'IFR-FIGURE-MAP-ROW-DROPPED'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_ajc64_item0c.py::TestRendererPathParity::test_the_printed_path_set_equals_the_map'
+find = '    "booked_snapshot.outstanding_reserve.medical": "ENGINE_POLICY_UNCONFIRMED",'
+replace = ''
+note = 'M5-R36b. Drops one printed figure from the inventory. The parity oracle walks the paths from the renderer rather than from a transcript, so an under-covering map fails instead of looking complete — which is how revision 7 lost six total columns.'
+
+[[mutant]]
+id = 'm24-84'
+title = 'IFR-DERIVED-TOTAL-FLIPPED-CONFIRMED'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_ajc64_item0c.py::TestFigureMap::test_the_map_is_exactly_the_pinned_inventory'
+find = '    "recommendation.incurred.total": "DERIVED",'
+replace = '    "recommendation.incurred.total": "LEGAL_BINDING",'
+note = 'M5-R36b. Flips a doubly derived total to a confirmed class while every leaf under it stays unconfirmed — a total more confirmed than its inputs. The map is pinned against literals in the test, so the class cannot re-classify its own oracle.'
+
+[[mutant]]
+id = 'm24-124'
+title = 'DERIVED-RESOLUTION-NOT-TRANSITIVE'
+file = 'src/wc_caseload_engine/defense_lens.py'
+test = 'tests/test_ajc64_item0c.py::TestResolution::test_resolution_is_transitive_to_a_fixed_point'
+find = '''    result = all(
+        _figure_is_confirmed(
+            source, classes, derived_inputs, memo, visiting | {path}
+        )
+        for source in inputs
+    )'''
+replace = '''    result = all(
+        classes.get(source) in CONFIRMED_FIGURE_CLASSES
+        or classes.get(source) == DERIVED_FIGURE_CLASS
+        for source in inputs
+    )'''
+note = 'M5-R36b-dep. Resolves one level only: incurred.total sees three inputs already marked DERIVED and calls itself confirmed, which is vacuous. The unconfirmed leaf sits two levels down, where a one-level walk never reaches it.'
+
+# ---------------------------------------------------------------------------
+# AJC-64 / M5 — item 0d, labelling the invented settlement deductions (M5-R41).
+# PRE-LANE: this item labels, it never computes.
+# ---------------------------------------------------------------------------
+
+[[mutant]]
+id = 'm24-29'
+title = 'SETTLEMENT-LABEL-STRIPPED'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_ajc64_item0d.py::TestLabelPlacement::test_exactly_the_three_deduction_labels_carry_the_token'
+find = '        ["Less: Costs and Expenses [ENGINE_POLICY_UNCONFIRMED]", f"(${costs:,.2f})"],'
+replace = '        ["Less: Costs and Expenses", f"(${costs:,.2f})"],'
+note = 'M5-R41. Strips the label from one of the three C&R deduction lines, so a 2.5%-of-gross costs figure prints as if it were an authored or cited quantity. Counted rather than set-compared, because the fee label is built twice and a set check would survive on the other copy.'
+
+[[mutant]]
+id = 'm24-60'
+title = 'SETTLEMENT-CONSTANT-VALUE-DRIFT'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_ajc64_item0d.py::TestSourceConstants::test_the_rates_are_exactly_the_pinned_values'
+find = 'SETTLEMENT_COSTS_DIVISOR = 40'
+replace = 'SETTLEMENT_COSTS_DIVISOR = 50'
+note = 'M5-R41a. A value change inside a labelling item. Any value move is Lane B and gated on SI-M5-007, which stays open as the upgrade path — a labeling policy is not a legal value, which is why 0d lands while that row is open.'
+
+[[mutant]]
+id = 'm24-61'
+title = 'SETTLEMENT-DEFAULT-DRIFT'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_ajc64_item0d.py::TestIdentityProperty::test_the_cr_family_figures_match_the_literal_equations[True-41]'
+find = '''    fee = (Decimal(gross) * SETTLEMENT_FEE_RATE).quantize(Decimal("0.01"))
+    return fee, max(gross // SETTLEMENT_COSTS_DIVISOR, 1), max(
+        gross // SETTLEMENT_SET_ASIDE_DIVISOR, 1
+    )'''
+replace = '''    fee = (Decimal(gross) * SETTLEMENT_FEE_RATE).quantize(Decimal("0.01"))
+    return fee, max(gross // SETTLEMENT_COSTS_DIVISOR, 2), max(
+        gross // SETTLEMENT_SET_ASIDE_DIVISOR, 1
+    )'''
+note = 'M5-R41a. Moves the costs floor from one dollar to two. The literal reference equation restates the floors independently, so a floor change cannot be absorbed by an oracle that called the production helper.'
+
+[[mutant]]
+id = 'm24-62'
+title = 'SETTLEMENT-LABEL-MISPLACED'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_ajc64_item0d.py::TestLabelPlacement::test_no_derived_or_gross_row_carries_the_token[Net to Applicant]'
+find = '    rows.append(["Net to Applicant", f"${net:,.2f}"])'
+replace = '    rows.append(["Net to Applicant [ENGINE_POLICY_UNCONFIRMED]", f"${net:,.2f}"])'
+note = 'M5-R41. Attaches the label to the NET line instead of the deduction lines. Misplacement is the reachable defect for a labelling item — it has no seed-authored-vs-invented condition to invert — and it makes a false claim in both directions: the net is derived, not an invented rate.'
+
+[[mutant]]
+id = 'm24-63'
+title = 'SETTLEMENT-OVERRIDE-PATH-ADDED'
+file = 'src/wc_caseload_engine/seeds.py'
+test = 'tests/test_ajc64_item0d.py::TestArithmeticFreeze::test_the_region_is_unchanged_but_for_its_label_constants[seeds.settlement_deductions]'
+find = '    fee = (Decimal(gross) * SETTLEMENT_FEE_RATE).quantize(Decimal("0.01"))'
+replace = '''    import os
+
+    rate = Decimal(os.environ.get("WC_SETTLEMENT_FEE_RATE", str(SETTLEMENT_FEE_RATE)))
+    fee = (Decimal(gross) * rate).quantize(Decimal("0.01"))'''
+note = 'M5-R41. Adds an override surface that can change a deduction value from outside the seed. FORBIDDEN in this item; the node-by-node freeze against S0-TREE catches it even where the default keeps every figure identical, which is exactly the case a value oracle alone would pass.'
+
+[[mutant]]
+id = 'm24-96'
+title = 'MSA-PREDICATE-DRIFT'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_ajc64_item0d.py::TestMedicareSetAsidePredicate::test_the_predicate_reads_the_render_context_flag'
+find = '        return bool(context.get("medicare_set_aside", False))'
+replace = '        return not bool(context.get("medicare_set_aside", False))'
+note = 'M5-R41a (PRE-LANE). Inverts the Medicare set-aside predicate, so a release for a seed that said msa:false prints a set-aside row and one that asked for it does not. The label must not be implemented by re-shaping a branch, and the MSA-off literal is what catches it.'
+
+[[mutant]]
+id = 'm24-146'
+title = 'REIMBURSEMENT-ROUNDING-RETUNED'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_ajc64_item0d.py::TestIdentityProperty::test_the_stips_family_figures_match_the_literal_equations[99999]'
+find = '    nearest = int(Decimal(total * 5) / Decimal(100) + Decimal("0.5"))'
+replace = '    nearest = int(Decimal(total * 5) / Decimal(100))'
+note = 'M5-R41. Drops the half-up term from the stipulations self-procured reimbursement, flooring instead of rounding to nearest. The stips reference equation is restated independently of the helper, so this reddens rather than being agreed with.'
+
+[[mutant]]
+id = 'm24-147'
+title = 'DRAW-CONSISTENCY-FORMULA-NAIVE'
+file = 'src/wc_caseload_engine/money.py'
+test = 'tests/test_ajc64_item0d.py::TestDrawConsistencyWeeks::test_the_derived_gross_recovers_its_drawn_weeks_exactly[draw-4084-4084-290.00-2670.00-13980.00-39]'
+find = '        gross = money(wages_facts.rate.pd_weekly_rate * weeks + benefits.td_total)'
+replace = '        gross = money(wages_facts.rate.pd_weekly_rate * weeks)'
+note = 'M5-R41 (F3-round-11), restored per round-1 finding F4. Replaces the anchored derivation with the naive rate-times-weeks form, dropping the temporary-disability total. The settlement then follows from the permanent-disability exposure alone, which is the first number in this module that would follow from nothing — and the recovered draw-consistency weeks miss by the whole td_total. Round 1 repointed this mutant at an outward-leak probe on an unreachability argument that concerned a DIFFERENT function (the reimbursement clamp in _reimbursement_nearest_five_percent); the derived-gross branch has no clamp and the fixture is constructible, so the repoint is withdrawn. The leak probe keeps its own guard as m24-203.'
+
+[[mutant]]
+id = 'm24-31'
+title = 'PDRS-PDF-PIN-SELF-COMPARE'
+file = 'src/wc_caseload_engine/rating_sources.py'
+test = 'tests/test_ajc64_item0b.py::TestPinTerminatesInBytes::test_a_corrupted_artifact_fails_closed'
+find = '''    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != PDRS_2005_PDF_SHA256:'''
+replace = '''    digest = PDRS_2005_PDF_SHA256
+    if digest != PDRS_2005_PDF_SHA256:'''
+note = 'M5-R42(a). Restores the self-comparison: the pinned constant is compared to another copy of itself instead of to the artifact, so the gate passes against any bytes at all. That is a provenance chain terminating in a string, and it is what meta.json sha256 field did and all it ever did.'
+
+[[mutant]]
+id = 'm24-30'
+title = 'PDRS-FEC-CELL-FABRICATED'
+file = 'src/wc_caseload_engine/data/pdrs_2005_tables.json'
+test = 'tests/test_ajc64_item0b.py::TestPerTableParity::test_the_fec_table_matches_the_source_cell_for_cell'
+find = '"8|100": 100'
+replace = '"8|100": 99'
+note = 'M5-R42(b). Fabricates one FEC cell. The old oracle compared the JSON to production lookups that read the same JSON and would have agreed with this happily; the parity oracle parses the cell out of the pinned extracted text instead.'
+
+[[mutant]]
+id = 'm24-45'
+title = 'PDRS-IMPAIRMENT-CELL-FABRICATED'
+file = 'src/wc_caseload_engine/data/pdrs_2005_tables.json'
+test = 'tests/test_ajc64_item0b.py::TestPerTableParity::test_the_impairment_register_matches_the_source'
+find = '"03.01.00.00": [5, "Valvular Heart Disease"]'
+replace = '"03.01.00.00": [4, "Valvular Heart Disease"]'
+note = 'M5-R42(b). Retunes one impairment number FEC rank. A rank is what selects the whole FEC row, so a single wrong digit here moves every rating that impairment can produce.'
+
+[[mutant]]
+id = 'm24-46'
+title = 'PDRS-OCCUPATIONAL-CELL-FABRICATED'
+file = 'src/wc_caseload_engine/data/pdrs_2005_tables.json'
+test = 'tests/test_ajc64_item0b.py::TestPerTableParity::test_the_occupational_table_matches_the_source'
+find = '"0": [0, 0, 0, 0, 0, 0, 0, 0]'
+replace = '"0": [0, 0, 0, 0, 0, 0, 0, 1]'
+note = 'M5-R42(b). Fabricates one occupational-adjustment cell, on the zero row where a stray value is least likely to be noticed by eye.'
+
+[[mutant]]
+id = 'm24-48'
+title = 'PDRS-AGE-CELL-FABRICATED'
+file = 'src/wc_caseload_engine/data/pdrs_2005_tables.json'
+test = 'tests/test_ajc64_item0b.py::TestPerTableParity::test_the_age_table_matches_the_source'
+find = '"100": [100, 100, 100, 100, 100, 100, 100, 100, 100, 100]'
+replace = '"100": [100, 100, 100, 100, 100, 100, 100, 100, 100, 99]'
+note = 'M5-R42(b). Fabricates one age-adjustment cell at the 100 percent row, where the correct value is a saturated constant and a wrong one still looks plausible.'
+
+[[mutant]]
+id = 'm24-47'
+title = 'PDRS-SECTION4-CELL-FABRICATED'
+file = 'src/wc_caseload_engine/data/pdrs_2005_section4_matrix.json'
+test = 'tests/test_ajc64_item0b.py::TestPerTableParity::test_the_section4_matrix_matches_the_source'
+find = """"03.01 -- 03.06": {
+  "110": "G\""""
+replace = """"03.01 -- 03.06": {
+  "110": "H\""""
+note = 'M5-R42(b). Fabricates one occupational-variant letter. Section 4 is the table the spec recorded as having NO artifact-to-source oracle at all; this is the mutant that proves it now has one.'
+
+[[mutant]]
+id = 'm24-39'
+title = 'DFEC-CITATION-STRIPPED'
+file = 'src/wc_caseload_engine/rating.py'
+test = 'tests/test_ajc64_item0b.py::TestDfecCitation::test_the_citation_is_present'
+find = '''    **Authority: Labor Code section 4660.1(b)**, which replaced the 2005
+    schedule's diminished-future-earning-capacity adjustment with a flat 1.4
+    multiplier for injuries on or after 2013-01-01. Register rows
+    **SI-W2-001** and **SI-W2-003**, ANSWERED 08-17-2026.'''
+replace = '''    The post-2013 factor, applied as the engine has always applied it.'''
+note = 'M5-R42(c). Strips the section 4660.1(b) attribution back out. grep 4660 returned nothing across rating.py and rating_sources.py before this item, so the one legal proposition the function embodies was sourced to nothing; a test asserts the citation is present precisely so the attribution cannot rot.'
+
+[[mutant]]
+id = 'm24-136'
+title = 'SECTION-4663-STABILITY-SELF-COMPARED'
+file = 'src/wc_caseload_engine/statutes.py'
+test = 'tests/test_ajc64_item0e.py::TestSection4663DatedApplicability::test_the_amending_act_artifact_hashes_to_its_pin'
+find = '''    payload = path.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != SECTION_4663_AMENDING_ACT_SHA256:'''
+replace = '''    payload = load_section("4663").encode("utf-8")
+    digest = SECTION_4663_AMENDING_ACT_SHA256
+    if digest != SECTION_4663_AMENDING_ACT_SHA256:'''
+note = 'M5-R47a. Turns the amendment comparison into a self-comparison: the "enacted 2016 text" becomes the CURRENT text, so the (a)/(c) stability assertion compares the current section to itself and passes no matter what the amendment did. This is the exact shape of the defect item 0b fixes for the PDRS PDF, reappearing in the one place the spec warned an implementer would be tempted to make the comparison pass.'
+
+[[mutant]]
+id = 'm24-149'
+title = 'REGULATORY-CROSS-CHECK-CONTAINMENT'
+file = 'src/wc_caseload_engine/statutes.py'
+test = 'tests/test_ajc64_item0e.py::TestRegulatorySectionsCorroboration::test_a_truncated_row_fails_closed'
+find = '    if corroborant != pinned:'
+replace = '    if corroborant not in pinned and pinned not in corroborant:'
+note = 'M5-R47. Restores the round-1 comparator: substring containment either direction. A corroborant holding a single sentence of the section passes, and so does one holding the section plus a paragraph of anything else — truncation and appended text are exactly what containment cannot see, which is why both are probed separately.'
+
+[[mutant]]
+id = 'm24-148'
+title = 'CANONICALIZER-STRIPS-SECTION-SIGILS'
+file = 'src/wc_caseload_engine/statutes.py'
+test = 'tests/test_ajc64_item0e.py::TestRegulatorySectionsCorroboration::test_the_heading_normalization_is_narrow'
+find = '''    text = _WHITESPACE.sub(" ", text)
+    return text.strip()'''
+replace = '''    text = _WHITESPACE.sub(" ", text)
+    text = text.replace("§", "")
+    return text.strip()'''
+note = 'M5-R47b. Widens the CANONICALIZER to delete every section sigil, which is the lazy way to make the regulatory cross-check pass. It also erases sigils inside statutory cross-references, where they carry meaning. The narrow strip_section_heading normalization removes one heading token at position zero instead, and this mutant proves the difference is tested rather than merely described.'
+
+# ---------------------------------------------------------------------------
+# AJC-64 M5 round-2 allocation ruling (finding R2-5).
+#
+# These ids start at m24-200, not m24-150. The spec reserves m24-150..169 for
+# Lane B (item 13), and the round-1 fix round consumed m24-150..155 out of that
+# block before the reservation was noticed. Renumbered into m24-200.., an
+# untouched range: 150-169 is returned to Lane B intact and 170+ is untouched.
+# The orchestrator files the spec-side allocation note.
+#
+# Renumbering is safe only because every guard is named by node id rather than
+# by mutant id, and `--preflight` re-proves that each renumbered guard still
+# collects exactly one test.
+# ---------------------------------------------------------------------------
+[[mutant]]
+id = 'm24-200'
+title = 'PROSE-DEDUCTION-LABEL-DROPPED'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_ajc64_item0d.py::TestRenderedLabelCoverage::test_no_settlement_document_prints_an_unlabelled_deduction[c_and_r-True]'
+find = '    _label_prose_deductions(story)'
+replace = '    pass  # prose left unlabelled'
+note = 'M5-R41 (round-1 finding F2). Restores the round-1 state: the distribution TABLE carries the label and the operative prose the parties sign does not. The signed paragraph is the worse place to leave an invented rate unattributed, and only a rendered-output probe can see it — a source scan for the label string passes with this mutation applied, because the table constants still hold it.'
+
+[[mutant]]
+id = 'm24-201'
+title = 'PROSE-LABEL-SKIPS-SET-ASIDE'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_ajc64_item0d.py::TestRenderedLabelCoverage::test_no_settlement_document_prints_an_unlabelled_deduction[c_and_r-True]'
+find = '''    # Medicare set-aside: "acknowledge that $X of the settlement"
+    re.compile(
+        r"(?<=acknowledge that )"
+        + _PROSE_MONEY
+        + _NOT_ALREADY_LABELLED
+        + r"(?= of the settlement)"
+    ),'''
+replace = ''
+note = 'M5-R41. Drops the set-aside sentence from the prose label set, so the MSA figure prints unattributed in the paragraph while remaining labelled in the table. The set-aside sentence states no percentage, so a labeller scoped to fifteen-percent paragraphs never reaches it — which is why the pass runs over every paragraph.'
+
+[[mutant]]
+id = 'm24-202'
+title = 'RENDERED-FEE-BASE-USES-GROSS'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_ajc64_item0d.py::TestForcedSubtypeFigureProperty::test_the_subtype_prints_exactly_the_reference_figures[STIPULATIONS_WITH_REQUEST_FOR_AWARD-True]'
+find = '    fee, net_award = _fee_and_net(award._answer)'
+replace = '    fee, net_award = _fee_and_net(gross)'
+note = 'M5-R41 (round-1 finding F3). Computes the stipulations fee on the GROSS instead of the permanent-disability award component left after the self-procured reimbursement. Round 1 read this figure back through the same helper it was checking, so the two agreed by construction; the render-path oracle reads the number off the produced page and compares it to an independently restated equation. Round-2 finding R2-1 repointed the guard from the next()-selected single page to the forced full matrix (all eleven registry subtypes, set-aside on and off, generated grosses), so the stipulations fee base is now checked on every stipulations subtype rather than on whichever one a seed happened to emit.'
+
+[[mutant]]
+id = 'm24-203'
+title = 'DRAW-CONSISTENCY-DIAGNOSTIC-LEAKED'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc64_item0d.py::TestDrawConsistencyDiagnosticStaysInternal::test_the_truth_manifest_publishes_no_draw_diagnostic'
+find = '''            "grossAmount": _channel_decimal(settlement.gross_amount),'''
+replace = '''            "grossAmount": _channel_decimal(settlement.gross_amount),
+            "drawConsistencyWeeks": str(
+                (settlement.gross_amount - facts.benefits.td_total)
+                / facts.wages.rate.pd_weekly_rate
+            ),'''
+note = 'M5-R41 (F3-round-11). draw_consistency_weeks is a TEST/LEDGER-ONLY diagnostic: computed in the item-0d test module and recorded in the evidence ledger, it must reach no model, manifest, document surface or export. Round-2 finding R2-3 rejected the previous form, which planted an unused helper inside one of the two modules the oracle grepped — a mutant and a guard aimed at each other rather than at the boundary. This publishes the diagnostic on a REAL outward path: the truth manifest settlement block, the scorer-facing envelope most likely to absorb a diagnostic by accident. Split from m24-147 per round-1 finding F4 — a leak probe and a formula guard fail for different reasons and must be able to fail independently.'
+
+[[mutant]]
+id = 'm24-204'
+title = 'PDRS-EXTRACTED-TEXT-UNPINNED'
+file = 'src/wc_caseload_engine/rating_sources.py'
+test = 'tests/test_ajc64_item0b.py::TestPinTerminatesInBytes::test_every_artifact_the_oracles_read_is_pinned'
+find = '    "pdrs-2005-extracted-text.txt": PDRS_2005_EXTRACTED_TEXT_SHA256,'
+replace = ''
+note = 'M5-R42(a), round-1 finding F5. Drops the extracted text from the vendored-artifact pin set. That file is the one the five per-table parity oracles actually parse, so leaving it unpinned means the tables are checked cell-for-cell against a source nothing vouches for — the chain terminates one hop short of where the evidence is read.'
+
+[[mutant]]
+id = 'm24-205'
+title = 'PDRS-DERIVATION-ARGS-DROPPED'
+file = 'tools/pdrs_extract.py'
+test = 'tests/test_ajc64_item0b.py::TestPinTerminatesInBytes::test_the_derivation_actually_reproduces_the_pinned_text'
+find = 'PDFTOTEXT_ARGS: tuple[str, ...] = ("-layout",)'
+replace = 'PDFTOTEXT_ARGS: tuple[str, ...] = ()'
+note = 'M5-R42(a), round-1 finding F5. Drops -layout from the pinned derivation. The default reading-order mode collapses the column structure the parity oracles read cell positions out of, producing 3e95899b… instead of 827d6644…. Proves the recorded arguments are part of the contract rather than decoration, and that the reproducibility check actually re-runs the derivation.'
+# ---------------------------------------------------------------------------
+# AJC-64 / M5 — item 1, baseline instruments (M5-R27.3, M5-R30/M5-R30a).
+# ---------------------------------------------------------------------------
+
+[[mutant]]
+id = 'm24-23'
+title = 'MONEY-V1_3-GLOBAL-UPGRADE'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc64_item1.py::test_r27_money_channel_constants_are_literal'
+find = 'MONEY_CHANNEL_VERSION = "1.1.0"'
+replace = 'MONEY_CHANNEL_VERSION = "1.2.0"'
+note = 'M5-R27.3. MONEY_CHANNEL_VERSION is the DEFAULT WRITER version, never the maximum supported one — a "helpful" bump of this constant is the single edit that would silently upgrade every existing corpus to a channel shape it never opted into. Guarded by literal equality, not a range or membership check.'
+
+[[mutant]]
+id = 'm24-206'
+title = 'PROSE-LABEL-NOT-IDEMPOTENT'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_ajc64_item0d.py::TestProseLabellingIsIdempotent::test_every_pattern_carries_the_already_labelled_guard'
+find = '''    re.compile(r"(?<=plus costs of )" + _PROSE_MONEY + _NOT_ALREADY_LABELLED),'''
+replace = '''    re.compile(r"(?<=plus costs of )" + _PROSE_MONEY),'''
+note = 'M5-R41, round-2 finding R2-6. Removes the already-labelled guard from the costs pattern, which is one of the two that has no trailing lookahead to protect it incidentally. The pass then double-labels the costs figure on a second application. The function documents idempotence as its own guarantee, and round 1 enforced that guarantee in the substitution callback by testing whether the matched MONEY TOKEN ended with the label — which it never can, so the check could not fire.'
+
+[[mutant]]
+id = 'm24-207'
+title = 'CANONICAL-DIGEST-READ-FROM-PROVENANCE'
+file = 'tests/test_ajc64_item0e.py'
+test = 'tests/test_ajc64_item0e.py::TestRegulatorySectionsCorroboration::test_the_canonical_digest_is_not_derivable_from_the_fixture_dir[4663]'
+find = '''        expected = self.CANONICAL_SHA256[section]
+        for path in sorted(self.SNAPSHOT_DIR.iterdir()):'''
+replace = '''        expected = self._provenance()["sections"][section]["sha256"]
+        for path in sorted(self.SNAPSHOT_DIR.iterdir()):'''
+note = 'M5-R47, round-2 finding R2-4. Puts the expectation back beside the data it judges: the digest is read out of the fixture directory own provenance.json instead of being pinned in the consuming test. Editing the snapshot and its neighbouring digest together then keeps the cross-check green, which is the file-integrity check round 1 shipped in place of a corroboration.'
+
+[[mutant]]
+id = 'm24-208'
+title = 'DRAW-ORACLE-DERIVES-ITS-OWN-EXPECTATION'
+file = 'tests/test_ajc64_item0d.py'
+test = 'tests/test_ajc64_item0d.py::TestDrawConsistencyWeeks::test_the_oracle_consults_no_production_expectation_helper'
+find = '''        facts = self._derived_case(case_id, rng_seed)'''
+replace = '''        from wc_caseload_engine.money import _rng
+
+        facts = self._derived_case(case_id, rng_seed)'''
+note = 'M5-R41 (F3-round-11), round-2 finding R2-2. Reintroduces the production _rng import the round-1 oracle used to manufacture its own expected weeks. That is the Form A anti-pattern: an oracle that reaches into the module under test for its expectation agrees with whatever arithmetic that module contains. The expectation must come from the pinned literal fixtures.'
+
+[[mutant]]
+id = 'm24-209'
+title = 'PROPERTY-SAMPLE-REFROZEN'
+file = 'tests/test_ajc64_item0d.py'
+test = 'tests/test_ajc64_item0d.py::TestEverySubtypeIsExercised::test_the_sample_is_not_frozen_across_runs'
+find = '''    generator = random.Random(f"{PROPERTY_SEED}:{cell}")'''
+replace = '''    generator = random.Random(f"0:{cell}")'''
+note = 'M5-R41, round-3 finding R3-1. Re-freezes the property sample by cutting the run seed out of the generator, so every run draws the same values again. This is the defect rounds 1 and 2 both shipped in different spellings — eight sha256-hashed case ids, then a PRNG memoized into a module-level tuple at import. Each looks like generation and behaves like a fixed grid, which is why the guard drives sample_grosses under three different run seeds and requires the draw to move.'
+
+[[mutant]]
+id = 'm24-210'
+title = 'PROPERTY-RUN-SEED-REFROZEN'
+file = 'tests/test_ajc64_item0d.py'
+test = 'tests/test_ajc64_item0d.py::TestEverySubtypeIsExercised::test_the_run_seed_itself_is_not_constant'
+find = '''    return random.SystemRandom().getrandbits(64)'''
+replace = '''    return 42'''
+note = 'M5-R41, Gemini circuit-breaker finding G-1. Refreezes the property sample one level ABOVE m24-209: rather than cutting the seed out of the sampler, it makes the seed itself a constant. Every CI run then draws the same grosses and the suite stays green, which is the R3-1 defect restored in a place the R3-1 guard cannot see — that guard monkeypatches PROPERTY_SEED and so proves only that sample_grosses READS it, never that its SOURCE varies.'
+
+[[mutant]]
+id = 'm24-211'
+title = 'DRAW-CONSISTENCY-DIAGNOSTIC-LEAKED-TO-PAPER'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_ajc64_item0d.py::TestDrawConsistencyDiagnosticStaysInternal::test_no_generated_artifact_mentions_the_draw_diagnostic'
+find = 'ENGINE_POLICY_UNCONFIRMED_LABEL = "[ENGINE_POLICY_UNCONFIRMED]"'
+replace = 'ENGINE_POLICY_UNCONFIRMED_LABEL = "[ENGINE_POLICY_UNCONFIRMED] drawConsistencyWeeks"'
+note = 'Sibling of m24-203, registered by the G-3 mutant audit. Same titled defect — the test-only draw diagnostic reaches an outward surface — reached by a different edit: the rendered PAGE rather than the truth-manifest channel. m24-203 guard did not redden under it (verified SURVIVED as audit probe m24-912), because that guard reads only the scorer envelope. The invariant is covered by the class, so the sibling is registered against the artifact-sweep test rather than the guard being widened: a leak to paper and a leak to the envelope are different failures and should be separately attributable.'
+
+[[mutant]]
+id = 'm24-212'
+title = 'PROPERTY-SAMPLE-CELLS-COLLAPSED'
+file = 'tests/test_ajc64_item0d.py'
+test = 'tests/test_ajc64_item0d.py::TestEverySubtypeIsExercised::test_each_cell_draws_its_own_values'
+find = '    generator = random.Random(f"{PROPERTY_SEED}:{cell}")'
+replace = '    generator = random.Random(f"{PROPERTY_SEED}")'
+note = 'Sibling of m24-209, registered by the G-3 mutant audit. Collapses the per-cell seeding so all 22 subtype/MSA cells draw the SAME grosses — the sample still varies per run, so m24-209 guard stays green (verified SURVIVED as audit probe m24-914), but 22 cells then prove what one cell proves. Registered against the per-cell test rather than widening m24-209, because varying-with-run and varying-with-cell are two independent properties.'
+
+[[mutant]]
+id = 'm24-213'
+title = 'CANONICAL-DIGEST-COMPUTED-IN-THE-CORROBORATION'
+file = 'tests/test_ajc64_item0e.py'
+test = 'tests/test_ajc64_item0e.py::TestRegulatorySectionsCorroboration::test_the_corroboration_reads_its_expectation_from_the_pin'
+find = '''        expected = self.CANONICAL_SHA256[section]
+        pinned = self._canonical(load_section(section), section)'''
+replace = '''        pinned = self._canonical(load_section(section), section)
+        expected = hashlib.sha256(pinned.encode("utf-8")).hexdigest()'''
+note = 'Registered by the G-3 mutant audit, which found this spelling UNCOVERED (audit probe m24-913 SURVIVED every existing guard). m24-207 moves the expectation into provenance.json, which the not-derivable-from-the-fixture-dir guard sees; this instead recomputes it from the very text under test, which that guard cannot see because nothing new appears in the fixture directory. The comparison becomes a tautology passing against any content. Unlike m24-211/212 the invariant was NOT covered anywhere, so a new structural guard was added rather than a sibling merely registered.'
+
+[[mutant]]
+id = 'm24-214'
+title = 'KOPPING-PIN-SELF-COMPARE'
+file = 'src/wc_caseload_engine/statutes.py'
+test = 'tests/test_ajc64_item0e.py::TestKoppingPin::test_a_corrupted_artifact_fails_closed'
+find = '''    payload = pin.path.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != pin.sha256:
+        raise StatutePinError(
+            f"{STATUTE_PIN_DIGEST_MISMATCH}: {pin.citation} artifact hashes to "'''
+replace = '''    payload = pin.path.read_bytes()
+    digest = pin.sha256
+    if digest != pin.sha256:
+        raise StatutePinError(
+            f"{STATUTE_PIN_DIGEST_MISMATCH}: {pin.citation} artifact hashes to "'''
+note = 'M5-R20a. Restores the self-comparison on the case-law pin: the pinned constant is compared to another copy of itself instead of to the retrieved artifact, so the gate passes against any bytes at all. Same defect m24-31 covers for the PDRS PDF — registered separately because a provenance chain that terminates in a string rather than in bytes has to be proved terminated for EACH artifact class, and case law arrived through a different retrieval path from both leginfo and the schedule.'
+
+[[mutant]]
+id = 'm24-215'
+title = 'KOPPING-HOLDING-SUBSTRING-DECORATIVE'
+file = 'src/wc_caseload_engine/statutes.py'
+test = 'tests/test_ajc64_item0e.py::TestKoppingPin::test_a_holding_absent_from_the_opinion_fails_closed'
+find = '    if KOPPING_PIN.holding not in canonical:'
+replace = '    if False:'
+note = 'M5-R20a. Makes the holding check decorative, so a pin whose artifact is the WRONG DOCUMENT passes: the digests still verify (they describe whatever was fetched) and only the substring assertion ties the citation to the text. This is the check that made the difference in practice — the paraphrase this pin carried while unpinned appears nowhere in the opinion, so a decorative check would have shipped a holding the court never wrote.'

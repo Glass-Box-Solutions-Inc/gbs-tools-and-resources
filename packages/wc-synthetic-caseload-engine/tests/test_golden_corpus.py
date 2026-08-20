@@ -299,6 +299,33 @@ Only the exact controlled re-record is admitted here; the narrower 29-path
 oracle belongs to ``tests/test_money_w2_baseline.py``.
 """
 
+M5_ITEM_0D_MONEY_SHOWCASE_CONTROLLED_SHA256 = (
+    "540571c2689d3fa031aaf4065660439f39a3dab2d3cc20e5cccca4c7953e633a"
+)
+"""AJC-64 item 0d's successor to R109's recording (M5-R30).
+
+Item 0d labels the invented settlement deduction rates
+``ENGINE_POLICY_UNCONFIRMED`` on the page, which moves rendered bytes on every
+compromise and release in this corpus. Review round 1 (finding F2) extended the
+labelling from the settlement *tables* to the duplicate figures restated in the
+signed documents' **prose**, which moves the same four cases again; this digest
+supersedes round 1's ``866022279cb6…d02b2b78`` for that reason. The re-record
+is re-proved, not carried over: the drift report named ``tree``, ``documents``,
+``manifest`` and ``corpusTree`` on capped-executive, irregular-earner,
+neglected-file and steady-earner, and named ``facts`` and ``seed`` on none of
+them. M5-R30 confines golden movement to items
+0a, 0c and 0d, each under its own allowlist, and this is 0d's.
+
+**A named successor rather than a loosened guard.** The point of this test is
+that no build step may re-record these corpora "deliberately or otherwise", so
+each authorized re-record is admitted as its own literal digest, in its own
+constant, with its own reason — exactly the shape R109 established. The item's
+allowlist is proved separately, and proved to be *labels only*: the executed
+pre/post diff moved ``tree``, ``documents``, ``manifest`` and ``corpusTree``
+and did **not** move ``facts`` or ``seed`` on any case, which is what
+distinguishes a labelling change from a value change.
+"""
+
 
 def test_pre_m3_unchanged_corpus_golden_files_match_the_frozen_ajc62_baseline() -> None:
     """AJC-62 R73: demo/personas stay frozen; R109 admits one exact money successor.
@@ -323,12 +350,20 @@ def test_pre_m3_unchanged_corpus_golden_files_match_the_frozen_ajc62_baseline() 
         "the frozen contract must cover exactly the three no-re-record corpora"
     )
     assert frozen["money-showcase"] != R109_MONEY_SHOWCASE_CONTROLLED_SHA256
+    # Each successor is distinct from the one it supersedes, so a constant
+    # copied instead of re-derived fails here rather than silently re-freezing
+    # the previous recording under a new name.
+    assert (
+        M5_ITEM_0D_MONEY_SHOWCASE_CONTROLLED_SHA256
+        != R109_MONEY_SHOWCASE_CONTROLLED_SHA256
+    )
+    assert frozen["money-showcase"] != M5_ITEM_0D_MONEY_SHOWCASE_CONTROLLED_SHA256
 
     golden_dir = Path(__file__).resolve().parent / "golden"
     drifted: list[str] = []
     for name, expected in sorted(frozen.items()):
         if name == "money-showcase":
-            expected = R109_MONEY_SHOWCASE_CONTROLLED_SHA256
+            expected = M5_ITEM_0D_MONEY_SHOWCASE_CONTROLLED_SHA256
         actual = hashlib.sha256((golden_dir / f"{name}.json").read_bytes()).hexdigest()
         if actual != expected:
             drifted.append(f"{name}: recorded {expected}, committed file is {actual}")

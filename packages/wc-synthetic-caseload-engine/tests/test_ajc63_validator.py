@@ -1012,7 +1012,17 @@ def test_ajc63_default_and_feature_absent_outputs_are_byte_identical_to_post_ajc
         "medical-story-showcase.json": (
             "60dff418398a4849eb3023f418e2deecc0d04f03ee8ed5b738309886dc2ed639"
         ),
-        "money-showcase.json": "a8db048b3ad7b23a4c85bdf4732628ccf04f3b3f47cae99e6f760bf59ecda2ea",
+        # AJC-64 item 0d (M5-R30): the settlement deduction rows now carry the
+        # ENGINE_POLICY_UNCONFIRMED label, which moves rendered bytes on every
+        # compromise and release in this corpus. Superseding R109's
+        # a8db048b3ad7…ecda2ea, admitted as its own literal digest so the
+        # re-record stays a reviewable decision rather than a silent refreeze.
+        # The item's own allowlist proof is what establishes this is a LABEL
+        # change: `facts` and `seed` did not move on any case.
+        # Round-1 finding F2 extended that labelling to the prose duplicates in
+        # the signed documents, superseding 866022279cb6…d02b2b78. Still a
+        # label-only move: facts and seed did not drift on any case.
+        "money-showcase.json": "540571c2689d3fa031aaf4065660439f39a3dab2d3cc20e5cccca4c7953e633a",
         "personas-showcase.json": (
             "f89280b194ef08877b81a9876e38c9752e8460ad3cd5d7441cd4e156c4dd8275"
         ),

@@ -56,6 +56,29 @@ log = structlog.get_logger(__name__)
 CENTS = Decimal("0.01")
 """Quantum every currency figure on a rendered page is rounded to."""
 
+ENGINE_POLICY_UNCONFIRMED_LABEL = "[ENGINE_POLICY_UNCONFIRMED]"
+"""AJC-64 item 0d (M5-R41): the deduction rows say who authored their rates.
+
+``SETTLEMENT_FEE_RATE`` (15%), ``SETTLEMENT_COSTS_DIVISOR`` (2.5%) and
+``SETTLEMENT_SET_ASIDE_DIVISOR`` (20%) are **invented and uncited**, and all
+three print as dollar lines. An MSA is an actuarial CMS projection, not a fifth
+of the gross; the fee is WCAB-discretionary under §4906 / 8 CCR §10844 and 15%
+is the top of the band applied universally.
+
+This item changes **no value** — labelling is not a legal ruling, which is why
+it lands while SI-M5-007 stays open as the upgrade path. The label lands per
+family, because the three constants do not all print on all eleven settlement
+subtypes: the C&R family prints fee-on-gross, costs and (when authored) the MSA
+row — up to three labelled lines; the stipulations family prints the fee on the
+**award component** only — one labelled line; ``ORDER_APPROVING_SETTLEMENT``
+prints no deduction breakdown at all, and a label appearing there would mean
+this item fabricated one.
+
+The token is a module constant for reference; the row labels themselves carry it
+as **literal** string constants, because M5-R41a's AST freeze exempts exactly
+those string-constant nodes and nothing else.
+"""
+
 #: The candidate list ``DiagnosticReport`` draws its modality from.
 #:
 #: Matched exactly, so the interception below can tell that draw apart from
@@ -2316,6 +2339,75 @@ _NET_IN_PROSE: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?<=payable to applicant is )<b>\$[\d,]+(?:\.\d+)?</b>"),
 )
 
+#: AJC-64 item 0d (M5-R41), review round 1 finding F2. The three invented
+#: deduction rates print **twice** on a compromise and release: once in the
+#: distribution table and again in the operative prose the parties sign. Round 1
+#: labelled the table and left the prose bare, which is the worse of the two
+#: places to leave unlabelled — the table is a summary, the paragraph is the
+#: signed term.
+#:
+#: Read from the substrate's own sentences
+#: (``pdf_templates/legal/compromise_and_release.py:192,227``):
+#:   "...of $4,900 (15% of gross settlement) plus costs of $816. These amounts..."
+#:   "...acknowledge that $6,533 of the settlement proceeds..."   (set-aside)
+#: and the stipulations award's "which equals <b>$X</b>" fee sentence.
+#:
+#: Each pattern matches the **money token only**, so the label is appended after
+#: the figure and no surrounding wording moves.
+#: Appended to every prose-deduction pattern so a figure that ALREADY carries
+#: the token cannot match a second time.
+#:
+#: Round-2 finding R2-6. The pass claimed idempotence, and the claim was
+#: enforced in the substitution callback by asking whether ``match.group(0)``
+#: ended with the label — but every one of these patterns captures the money
+#: token ONLY, and a money token never ends with the label, so the check could
+#: never fire. Two of the four patterns were saved anyway by their trailing
+#: lookaheads (the label lands between the figure and the text the lookahead
+#: requires, so the second pass finds nothing); the award-fee and costs
+#: patterns had no such lookahead and double-labelled on a second invocation.
+#:
+#: Enforcing it in the pattern rather than in the callback makes the property
+#: structural: a future pattern added to the tuple below inherits it, whereas a
+#: callback check has to be remembered and — as this finding shows — can be
+#: written in a form that silently never triggers.
+_NOT_ALREADY_LABELLED = r"(?! \[ENGINE_POLICY_UNCONFIRMED\])"
+
+#: A money token that cannot match a PREFIX of itself.
+#:
+#: The possessive quantifiers are load-bearing, not stylistic. With ordinary
+#: greedy quantifiers, ``\$[\d,]+(?:\.\d+)?`` followed by a negative lookahead
+#: backtracks: on an already-labelled ``$816.00 [ENGINE_POLICY_UNCONFIRMED]``
+#: the full token fails the lookahead, so the engine retries at ``$816.0``,
+#: whose next character is ``0`` rather than a space — the lookahead passes and
+#: the pass labels a truncated figure, producing
+#: ``$816.0 [ENGINE_POLICY_UNCONFIRMED]0 [ENGINE_POLICY_UNCONFIRMED]``. The
+#: idempotence test caught exactly that. Possessive matching forbids the retry,
+#: so the token is all-or-nothing.
+_PROSE_MONEY = r"\$[\d,]++(?:\.\d++)?+"
+
+_PROSE_DEDUCTIONS: tuple[re.Pattern[str], ...] = (
+    # Fee, release form: "in the amount of $X (15% of gross settlement)"
+    re.compile(
+        r"(?<=in the amount of )"
+        + _PROSE_MONEY
+        + _NOT_ALREADY_LABELLED
+        + r"(?= \(15% of gross settlement\))"
+    ),
+    # Fee, award form: "which equals <b>$X</b>"
+    re.compile(
+        r"(?<=which equals )<b>" + _PROSE_MONEY + r"</b>" + _NOT_ALREADY_LABELLED
+    ),
+    # Costs: "plus costs of $X"
+    re.compile(r"(?<=plus costs of )" + _PROSE_MONEY + _NOT_ALREADY_LABELLED),
+    # Medicare set-aside: "acknowledge that $X of the settlement"
+    re.compile(
+        r"(?<=acknowledge that )"
+        + _PROSE_MONEY
+        + _NOT_ALREADY_LABELLED
+        + r"(?= of the settlement)"
+    ),
+)
+
 _MONEY_AFTER_AWW = re.compile(r"average weekly wage of \$[\d,]+(?:\.\d+)?")
 
 #: Any money token at all — used only to decide whether an uncorrected
@@ -2400,11 +2492,16 @@ def _restate_distribution(
     net = Decimal(gross) - fee - Decimal(costs) - Decimal(set_aside)
     rows: list[list[Any]] = [
         ["Gross Settlement Amount", f"${gross:,.2f}"],
-        ["Less: Attorney Fees (15%)", f"(${fee:,.2f})"],
-        ["Less: Costs and Expenses", f"(${costs:,.2f})"],
+        ["Less: Attorney Fees (15%) [ENGINE_POLICY_UNCONFIRMED]", f"(${fee:,.2f})"],
+        ["Less: Costs and Expenses [ENGINE_POLICY_UNCONFIRMED]", f"(${costs:,.2f})"],
     ]
     if wants_msa:
-        rows.append(["Less: Medicare Set-Aside Allocation", f"(${set_aside:,.2f})"])
+        rows.append(
+            [
+                "Less: Medicare Set-Aside Allocation [ENGINE_POLICY_UNCONFIRMED]",
+                f"(${set_aside:,.2f})",
+            ]
+        )
     rows.append(["Net to Applicant", f"${net:,.2f}"])
     if not _replace_table_after(
         story, "Distribution of Settlement", rows, [4 * inch, 2.5 * inch], styles
@@ -2426,7 +2523,7 @@ def _restate_award_summary(
     fee, net_award = _fee_and_net(award._answer)
     rows: list[list[Any]] = [
         ["Permanent Disability (Gross)", f"${award._answer:,.2f}"],
-        ["Less: Attorney Fees (15%)", f"(${fee:,.2f})"],
+        ["Less: Attorney Fees (15%) [ENGINE_POLICY_UNCONFIRMED]", f"(${fee:,.2f})"],
         ["Net Permanent Disability to Applicant", f"${net_award:,.2f}"],
         ["Self-Procured Medical Reimbursement", f"${reimbursement._answer:,.2f}"],
         ["Settlement Gross", f"${gross:,.2f}"],
@@ -2467,6 +2564,53 @@ def _restate_fee_prose(story: list[Any], fee: Decimal, net: Decimal | None = Non
             story[index] = Paragraph(replaced, item.style)
         elif _ANY_MONEY.search(text):
             log.warning("fact_templates.fee_prose_not_restated", sentence=text[:120])
+
+    _label_prose_deductions(story)
+
+
+def _label_prose_deductions(story: list[Any]) -> None:
+    """Append the engine-policy label to every deduction figure stated in prose.
+
+    AJC-64 item 0d (M5-R41), round-1 finding F2. The fee, the costs and the
+    Medicare set-aside each print twice on a release — in the distribution table
+    and again in the operative paragraph — and round 1 labelled only the table.
+    An unlabelled figure in the signed term is the one that matters: it is the
+    sentence a reader treats as the agreement.
+
+    Runs over **every** paragraph rather than only the fifteen-percent ones,
+    because the set-aside sentence never mentions a percentage and would
+    otherwise never be reached.
+
+    Idempotent by construction — every pattern ends in
+    :data:`_NOT_ALREADY_LABELLED`, so a figure that already carries the token
+    does not match and cannot be labelled twice. Proved by applying the pass
+    twice and comparing, not asserted here.
+
+    Deliberately **not** called from inside ``_restate_distribution`` or
+    ``_restate_award_summary``: those are AST-frozen node-by-node under M5-R41a
+    with a closed exemption for label string constants only. Adding a call there
+    would have forced the exemption wider, which is the guard-weakening move
+    M5-R46 exists to catch. This function is reached from ``_restate_fee_prose``,
+    which is not a frozen region.
+    """
+    from reportlab.platypus import Paragraph
+
+    for index, item in enumerate(story):
+        text = getattr(item, "text", None)
+        if not isinstance(text, str) or "$" not in text:
+            continue
+        replaced = text
+        for pattern in _PROSE_DEDUCTIONS:
+            replaced = pattern.sub(
+                # No skip-if-labelled test here: every pattern carries
+                # _NOT_ALREADY_LABELLED, so an already-labelled figure does not
+                # match in the first place. The callback that used to do this
+                # inspected the money token alone and could never fire (R2-6).
+                lambda match: f"{match.group(0)} {ENGINE_POLICY_UNCONFIRMED_LABEL}",
+                replaced,
+            )
+        if replaced != text:
+            story[index] = Paragraph(replaced, item.style)
 
 
 def _bold_like(pattern: re.Pattern[str], money: str) -> str:

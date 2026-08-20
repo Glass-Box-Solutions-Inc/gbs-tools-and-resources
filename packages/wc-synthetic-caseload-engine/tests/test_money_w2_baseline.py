@@ -25,7 +25,10 @@ from conftest import extract_text, requires_substrate
 from money_coherence import GOVERNED_ON_THE_PAGE, sweep
 from wc_caseload_engine import money as money_module
 from wc_caseload_engine.case_facts import CaseFacts, derive_case_facts
-from wc_caseload_engine.fact_templates import fact_aware_templates
+from wc_caseload_engine.fact_templates import (
+    ENGINE_POLICY_UNCONFIRMED_LABEL,
+    fact_aware_templates,
+)
 from wc_caseload_engine.lifecycle_bridge import build_timeline
 from wc_caseload_engine.manifests import generate_caseload
 from wc_caseload_engine.money import RateBasis
@@ -278,15 +281,24 @@ _R109_RENDERED_CAPTURES = {
         "money.settlement.grossAmount",
     ),
     "release_distribution_fee": (
-        re.compile(r"Less: Attorney Fees \(15%\)\s+(\(\$[\d,]+\.\d\d\))"),
+        re.compile(
+            r"Less: Attorney Fees \(15%\) \[ENGINE_POLICY_UNCONFIRMED\]"
+            r"\s+(\(\$[\d,]+\.\d\d\))"
+        ),
         "money.settlement.grossAmount",
     ),
     "release_distribution_costs": (
-        re.compile(r"Less: Costs and Expenses\s+(\(\$[\d,]+\.\d\d\))"),
+        re.compile(
+            r"Less: Costs and Expenses \[ENGINE_POLICY_UNCONFIRMED\]"
+            r"\s+(\(\$[\d,]+\.\d\d\))"
+        ),
         "money.settlement.grossAmount",
     ),
     "release_distribution_msa": (
-        re.compile(r"Less: Medicare Set-Aside Allocation\s+(\(\$[\d,]+\.\d\d\))"),
+        re.compile(
+            r"Less: Medicare Set-Aside Allocation \[ENGINE_POLICY_UNCONFIRMED\]"
+            r"\s+(\(\$[\d,]+\.\d\d\))"
+        ),
         "money.settlement.grossAmount",
     ),
     "release_distribution_net": (
@@ -294,7 +306,10 @@ _R109_RENDERED_CAPTURES = {
         "money.settlement.grossAmount",
     ),
     "release_fee_prose": (
-        re.compile(r"fees in (?:the )?amount of (\$[\d,]+(?:\.\d\d)?) \(15% of gross settlement\)"),
+        re.compile(
+            r"fees in (?:the )?amount of (\$[\d,]+(?:\.\d\d)?)"
+            r" \[ENGINE_POLICY_UNCONFIRMED\] \(15% of gross settlement\)"
+        ),
         "money.settlement.grossAmount",
     ),
     "release_prose_settlement_amount": (
@@ -302,7 +317,10 @@ _R109_RENDERED_CAPTURES = {
         "money.settlement.grossAmount",
     ),
     "release_prose_costs": (
-        re.compile(r"plus costs of (\$[\d,]+(?:\.\d\d)?)\. These amounts"),
+        re.compile(
+            r"plus costs of (\$[\d,]+(?:\.\d\d)?)"
+            r" \[ENGINE_POLICY_UNCONFIRMED\]\. These amounts"
+        ),
         "money.settlement.grossAmount",
     ),
     "release_settlement_amount": (
@@ -330,7 +348,10 @@ _R109_RENDERED_CAPTURES = {
         "money.settlement.grossAmount",
     ),
     "stipulations_prose_fee": (
-        re.compile(r"which equals (\$[\d,]+(?:\.\d\d)?), to be paid"),
+        re.compile(
+            r"which equals (\$[\d,]+(?:\.\d\d)?)"
+            r" \[ENGINE_POLICY_UNCONFIRMED\], to be paid"
+        ),
         "money.settlement.grossAmount",
     ),
     "stipulations_prose_net": (
@@ -507,7 +528,20 @@ def _normalize_changed_rate_captures(
     changed_rules: set[str],
     capture_rules: Mapping[str, tuple[re.Pattern[str], str]] = _R109_RENDERED_CAPTURES,
 ) -> str:
-    """Erase only named, anchored R109 values; every other rendered byte stays visible."""
+    """Erase only named, anchored R109 values; every other rendered byte stays visible.
+
+    **AJC-64 item 0d additionally neutralizes its label token** (M5-R41). This
+    comparison exists to prove that nothing but a governed *rate* moved between
+    the pre-W2 baseline and now. The `ENGINE_POLICY_UNCONFIRMED` marker is not a
+    rate and not a figure — it is provenance printed beside one, and item 0d is
+    the ticket that puts it there deliberately, on both the table rows and the
+    prose duplicates.
+
+    Neutralized rather than admitted wholesale: the token is removed from BOTH
+    sides, so the **numbers around it are still compared byte for byte**. A rate
+    that drifted under cover of the labelling change still fails here, which is
+    the property this normalizer is for.
+    """
     for name in sorted(changed_rules):
         pattern, _path = capture_rules[name]
 
@@ -520,6 +554,10 @@ def _normalize_changed_rate_captures(
             )
 
         text = pattern.sub(replace, text)
+    # Stripped LAST, after the anchored rate captures have run: those patterns
+    # require the label (that is how they prove it is on the page), so removing
+    # it first would stop them matching and silently un-neutralize every rate.
+    text = text.replace(f" {ENGINE_POLICY_UNCONFIRMED_LABEL}", "")
     return " ".join(text.split())
 
 
@@ -750,7 +788,20 @@ def test_r109_controlled_money_showcase_golden_diff_allowlist() -> None:
             assert actual[name] == captured[name], name
 
     changes = _scalar_differences(captured["money-showcase"], actual["money-showcase"])
-    allowed = {"$.corpusTree", "$.caseload"}
+    allowed = {
+        "$.corpusTree",
+        "$.caseload",
+        # AJC-64 item 0d re-recorded this golden for the settlement labels, and
+        # a re-record restamps `recordedWith` with the recording checkout. Those
+        # two fields describe the MACHINE, not the corpus — the same class
+        # `golden_gate.REDACTED_KEYS` already exempts for
+        # `provenance.substrateSha`, and the gate prints them beside a failure
+        # as context rather than treating them as drift. Admitted here for that
+        # reason and no other: every field below this line is corpus content,
+        # and none of it is loosened.
+        "$.recordedWith.substratePin",
+        "$.recordedWith.substrateSha",
+    }
     for case_id in (
         "atypical-earner",
         "capped-executive",

@@ -1,0 +1,45 @@
+{
+  "_comment": [
+    "AJC-64 item 0e (M5-R47) — the regulatory_sections corroborant snapshots.",
+    "These are the ACTUAL rows from the wc-knowledge-base Postgres",
+    "regulatory_sections table (Prisma model RegulatorySection), not a copy of",
+    "the leginfo artifacts they are compared against. That independence is the",
+    "entire evidentiary value: a corroborant derived from the pinned source",
+    "would make the cross-check a self-comparison, which is the defect this",
+    "snapshot exists to avoid.",
+    "The row is a CORROBORANT ONLY and never the pinned source — it carries no",
+    "hash-pinned provenance chain of its own upstream, which is why leginfo",
+    "remains the pinned authority and this is the second opinion."
+  ],
+  "retrieved_on": "2026-08-19",
+  "retrieved_from": "wc-knowledge-base backend DATABASE_URL, us-west-3.pg.psdb.cloud:5432/postgres",
+  "query": "SELECT section_number, source_type, full_text, last_amended, source_url FROM regulatory_sections WHERE section_number IN ('4663','4664')",
+  "sections": {
+    "4663": {
+      "file": "regulatory-sections-4663.txt",
+      "sha256": "0c8b46059f385d04ddad0934e3241785bf1ca08cfa9d563ffa278c2f13fbeb81",
+      "source_type": "labor_code",
+      "chars": 1805,
+      "last_amended": "2016-01-01",
+      "source_url": "https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?lawCode=LAB&sectionNum=4663"
+    },
+    "4664": {
+      "file": "regulatory-sections-4664.txt",
+      "sha256": "ab55b05b1ab95d04a3bdac4aad5fc22521c3e303d1141e8b22c9ea8c3a2d88e1",
+      "source_type": "labor_code",
+      "chars": 1479,
+      "last_amended": "2004-01-01",
+      "source_url": "https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?lawCode=LAB&sectionNum=4664"
+    }
+  },
+  "known_formatting_difference": [
+    "The database row prefixes its section heading with a section sigil:",
+    "'§4663.' where the leginfo artifact reads '4663.'. That is the ONLY",
+    "difference between the two sources after canonicalization — the remaining",
+    "1799 (4663) and 1467 (4664) characters are identical, including the",
+    "enacting-history parenthetical.",
+    "It is handled by strip_section_heading(), a narrow declared normalization",
+    "of the leading heading token only, NOT by widening canonicalize_statute_text.",
+    "A section sigil anywhere else in the body is left untouched and is probed."
+  ]
+}

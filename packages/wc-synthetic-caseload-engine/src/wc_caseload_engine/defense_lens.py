@@ -568,6 +568,234 @@ class ReserveArtifactBinding(BaseModel):
     document_date: date
 
 
+AUTHORITY_STATUS_CONFIRMED = "ENGINE_POLICY_WITH_COUNSEL_CONFIRMED_INPUTS"
+AUTHORITY_STATUS_UNCONFIRMED = "MIXED_OR_UNCONFIRMED"
+
+CONFIRMED_FIGURE_CLASSES = frozenset({"LEGAL_BINDING", "PRIMARY_SOURCE_LITERAL"})
+"""The only two R21 classes that count as counsel-confirmed authority.
+
+``ENGINE_POLICY`` and ``ENGINE_POLICY_UNCONFIRMED`` are the engine speaking for
+itself, which is the thing an authority status is supposed to distinguish.
+"""
+
+DERIVED_FIGURE_CLASS = "DERIVED"
+
+IFR_FIGURE_CLASSES: dict[str, str] = {
+    # AJC-64 item 0c (M5-R36b). Thirty-eight numeric paths, keyed by the EXACT
+    # printed model path — never a concept — so an omitted figure is detectable
+    # by walking the renderer rather than by reading this list and agreeing
+    # with it. Axis order is <root>.<measure>.<bucket>, which is the order
+    # ``getattr(exposure.low, "indemnity")`` actually reads.
+    # Exposure grid — three measures x four buckets (fact_templates.py:3993-4001)
+    "exposure.low.indemnity": "ENGINE_POLICY_UNCONFIRMED",
+    "exposure.low.medical": "ENGINE_POLICY_UNCONFIRMED",
+    "exposure.low.expense_alae": "ENGINE_POLICY_UNCONFIRMED",
+    "exposure.low.total": "DERIVED",
+    "exposure.expected.indemnity": "ENGINE_POLICY_UNCONFIRMED",
+    "exposure.expected.medical": "ENGINE_POLICY_UNCONFIRMED",
+    "exposure.expected.expense_alae": "ENGINE_POLICY_UNCONFIRMED",
+    "exposure.expected.total": "DERIVED",
+    "exposure.high.indemnity": "ENGINE_POLICY_UNCONFIRMED",
+    "exposure.high.medical": "ENGINE_POLICY_UNCONFIRMED",
+    "exposure.high.expense_alae": "ENGINE_POLICY_UNCONFIRMED",
+    "exposure.high.total": "DERIVED",
+    # Recommended snapshot — three measures x four buckets (:4011-4019, root :4102)
+    "recommendation.paid.indemnity": "ENGINE_POLICY_UNCONFIRMED",
+    "recommendation.paid.medical": "ENGINE_POLICY_UNCONFIRMED",
+    "recommendation.paid.expense_alae": "ENGINE_POLICY_UNCONFIRMED",
+    "recommendation.paid.total": "DERIVED",
+    "recommendation.outstanding_reserve.indemnity": "ENGINE_POLICY_UNCONFIRMED",
+    "recommendation.outstanding_reserve.medical": "ENGINE_POLICY_UNCONFIRMED",
+    "recommendation.outstanding_reserve.expense_alae": "ENGINE_POLICY_UNCONFIRMED",
+    "recommendation.outstanding_reserve.total": "DERIVED",
+    "recommendation.incurred.indemnity": "DERIVED",
+    "recommendation.incurred.medical": "DERIVED",
+    "recommendation.incurred.expense_alae": "DERIVED",
+    "recommendation.incurred.total": "DERIVED",
+    # Booked snapshot — identical shape (root :4107)
+    "booked_snapshot.paid.indemnity": "ENGINE_POLICY_UNCONFIRMED",
+    "booked_snapshot.paid.medical": "ENGINE_POLICY_UNCONFIRMED",
+    "booked_snapshot.paid.expense_alae": "ENGINE_POLICY_UNCONFIRMED",
+    "booked_snapshot.paid.total": "DERIVED",
+    "booked_snapshot.outstanding_reserve.indemnity": "ENGINE_POLICY_UNCONFIRMED",
+    "booked_snapshot.outstanding_reserve.medical": "ENGINE_POLICY_UNCONFIRMED",
+    "booked_snapshot.outstanding_reserve.expense_alae": "ENGINE_POLICY_UNCONFIRMED",
+    "booked_snapshot.outstanding_reserve.total": "DERIVED",
+    "booked_snapshot.incurred.indemnity": "DERIVED",
+    "booked_snapshot.incurred.medical": "DERIVED",
+    "booked_snapshot.incurred.expense_alae": "DERIVED",
+    "booked_snapshot.incurred.total": "DERIVED",
+    # Scalars (:4080, :4088)
+    "litigation_budget": "ENGINE_POLICY_UNCONFIRMED",
+    "adoption_lag_days": "ENGINE_POLICY_UNCONFIRMED",
+}
+
+IFR_DERIVED_INPUTS: dict[str, tuple[str, ...]] = {
+    # M5-R36b-dep. ``DERIVED`` without a stated input set is an exemption
+    # wearing a class name: "confirmed iff its inputs are" cannot be computed
+    # from a key that names no inputs. Pinned as a literal, never inferred from
+    # key spelling.
+    "exposure.low.total": (
+        "exposure.low.indemnity",
+        "exposure.low.medical",
+        "exposure.low.expense_alae",
+    ),
+    "exposure.expected.total": (
+        "exposure.expected.indemnity",
+        "exposure.expected.medical",
+        "exposure.expected.expense_alae",
+    ),
+    "exposure.high.total": (
+        "exposure.high.indemnity",
+        "exposure.high.medical",
+        "exposure.high.expense_alae",
+    ),
+    "recommendation.paid.total": (
+        "recommendation.paid.indemnity",
+        "recommendation.paid.medical",
+        "recommendation.paid.expense_alae",
+    ),
+    "recommendation.outstanding_reserve.total": (
+        "recommendation.outstanding_reserve.indemnity",
+        "recommendation.outstanding_reserve.medical",
+        "recommendation.outstanding_reserve.expense_alae",
+    ),
+    "booked_snapshot.paid.total": (
+        "booked_snapshot.paid.indemnity",
+        "booked_snapshot.paid.medical",
+        "booked_snapshot.paid.expense_alae",
+    ),
+    "booked_snapshot.outstanding_reserve.total": (
+        "booked_snapshot.outstanding_reserve.indemnity",
+        "booked_snapshot.outstanding_reserve.medical",
+        "booked_snapshot.outstanding_reserve.expense_alae",
+    ),
+    # Incurred is paid + outstanding reserve per bucket, and the engine
+    # ENFORCES that equation at :535-543 — a real derivation, not a naming
+    # coincidence.
+    "recommendation.incurred.indemnity": (
+        "recommendation.paid.indemnity",
+        "recommendation.outstanding_reserve.indemnity",
+    ),
+    "recommendation.incurred.medical": (
+        "recommendation.paid.medical",
+        "recommendation.outstanding_reserve.medical",
+    ),
+    "recommendation.incurred.expense_alae": (
+        "recommendation.paid.expense_alae",
+        "recommendation.outstanding_reserve.expense_alae",
+    ),
+    "booked_snapshot.incurred.indemnity": (
+        "booked_snapshot.paid.indemnity",
+        "booked_snapshot.outstanding_reserve.indemnity",
+    ),
+    "booked_snapshot.incurred.medical": (
+        "booked_snapshot.paid.medical",
+        "booked_snapshot.outstanding_reserve.medical",
+    ),
+    "booked_snapshot.incurred.expense_alae": (
+        "booked_snapshot.paid.expense_alae",
+        "booked_snapshot.outstanding_reserve.expense_alae",
+    ),
+    # Doubly derived: a sum of derived incurreds. This is the pair that makes
+    # the resolution transitive rather than one level deep — m24-124.
+    "recommendation.incurred.total": (
+        "recommendation.incurred.indemnity",
+        "recommendation.incurred.medical",
+        "recommendation.incurred.expense_alae",
+    ),
+    "booked_snapshot.incurred.total": (
+        "booked_snapshot.incurred.indemnity",
+        "booked_snapshot.incurred.medical",
+        "booked_snapshot.incurred.expense_alae",
+    ),
+}
+
+
+class AuthorityDerivationError(RuntimeError):
+    """The figure map and its derivation graph do not describe each other."""
+
+
+def _figure_is_confirmed(
+    path: str,
+    classes: Mapping[str, str],
+    derived_inputs: Mapping[str, tuple[str, ...]],
+    memo: dict[str, bool],
+    visiting: frozenset[str],
+) -> bool:
+    if path in memo:
+        return memo[path]
+    if path in visiting:
+        raise AuthorityDerivationError(
+            f"derivation graph is cyclic at {path!r}; a figure cannot derive from itself"
+        )
+    figure_class = classes.get(path)
+    if figure_class is None:
+        raise AuthorityDerivationError(f"no R21 class for printed figure {path!r}")
+    if figure_class != DERIVED_FIGURE_CLASS:
+        result = figure_class in CONFIRMED_FIGURE_CLASSES
+        memo[path] = result
+        return result
+    inputs = derived_inputs.get(path)
+    if not inputs:
+        raise AuthorityDerivationError(
+            f"{path!r} is classified DERIVED but states no inputs; a derivation "
+            "without an input set cannot be resolved and must not default to confirmed"
+        )
+    # Transitive to a fixed point, NOT one level: incurred.total sums three
+    # incurred values that each sum two leaves. Asking only whether the three
+    # inputs are themselves DERIVED is vacuous — m24-124 restores exactly that.
+    result = all(
+        _figure_is_confirmed(
+            source, classes, derived_inputs, memo, visiting | {path}
+        )
+        for source in inputs
+    )
+    memo[path] = result
+    return result
+
+
+def resolve_authority_status(
+    classes: Mapping[str, str] = IFR_FIGURE_CLASSES,
+    derived_inputs: Mapping[str, tuple[str, ...]] = IFR_DERIVED_INPUTS,
+) -> str:
+    """Derive the IFR authority status; never assert it (M5-R40).
+
+    ``ENGINE_POLICY_WITH_COUNSEL_CONFIRMED_INPUTS`` **only if every**
+    contributing figure resolves to a confirmed class — a derived total is
+    confirmed exactly when every figure it sums is, so a total can never be
+    more confirmed than its inputs. At baseline every leaf is
+    ``ENGINE_POLICY_UNCONFIRMED`` and the honest answer is
+    ``MIXED_OR_UNCONFIRMED``; a document that certified its own inputs is the
+    architecture-weakening shortcut this replaces.
+    """
+    resolved = resolved_figures(classes, derived_inputs)
+    if all(resolved.values()):
+        return AUTHORITY_STATUS_CONFIRMED
+    return AUTHORITY_STATUS_UNCONFIRMED
+
+
+def resolved_figures(
+    classes: Mapping[str, str] = IFR_FIGURE_CLASSES,
+    derived_inputs: Mapping[str, tuple[str, ...]] = IFR_DERIVED_INPUTS,
+) -> dict[str, bool]:
+    """Per-figure confirmation, which is what makes transitivity observable.
+
+    The aggregate status collapses to ``MIXED_OR_UNCONFIRMED`` the moment any
+    leaf is unconfirmed, so it cannot distinguish a correct transitive walk
+    from a one-level one — both answer "mixed". The per-path answer can: under
+    a one-level walk a doubly derived total reports **confirmed** while a leaf
+    two levels beneath it reports unconfirmed, which is a contradiction the
+    aggregate hides. m24-124 is scored here for exactly that reason.
+    """
+    memo: dict[str, bool] = {}
+    empty: frozenset[str] = frozenset()
+    return {
+        path: _figure_is_confirmed(path, classes, derived_inputs, memo, empty)
+        for path in classes
+    }
+
+
 class InitialFileReview(BaseModel):
     """The required IFR, materialized only after its final artifact is bound."""
 
@@ -1851,7 +2079,7 @@ def bind_defense_facts(
         litigation_budget=state.scenario.litigation_budget,
         discovery_plan=state.scenario.discovery_plan,
         assumptions=state.scenario.assumptions,
-        authority_status="ENGINE_POLICY_WITH_COUNSEL_CONFIRMED_INPUTS",
+        authority_status=resolve_authority_status(),
         adoption_lag_days=0,
         artifact_binding=bindings.initial_file_review,
     )
@@ -1921,6 +2149,9 @@ def reserve_event_for_document(
 
 
 __all__ = [
+    "AUTHORITY_STATUS_CONFIRMED",
+    "AUTHORITY_STATUS_UNCONFIRMED",
+    "CONFIRMED_FIGURE_CLASSES",
     "DEFENSE_ACCOUNTING_EQUATION_BROKEN",
     "DEFENSE_ARTIFACT_BINDING_MISMATCH",
     "DEFENSE_ARTIFACT_BINDING_MISSING",
@@ -1958,6 +2189,10 @@ __all__ = [
     "DEFENSE_WIRE_RESERVE_EVENT_KEYS",
     "DEFENSE_WIRE_SCORER_LABEL_KEYS",
     "DEFENSE_WIRE_SNAPSHOT_KEYS",
+    "DERIVED_FIGURE_CLASS",
+    "IFR_DERIVED_INPUTS",
+    "IFR_FIGURE_CLASSES",
+    "AuthorityDerivationError",
     "BookingDecision",
     "BucketAmounts",
     "DefenseBucket",
@@ -1988,7 +2223,9 @@ __all__ = [
     "recommended_reserve_snapshot",
     "reserve_adequacy",
     "reserve_event_for_document",
+    "resolve_authority_status",
     "resolve_trigger_occurrences",
+    "resolved_figures",
     "validate_exposure_against_paid",
     "validate_required_trigger_sources",
     "validate_reserve_artifact_candidates",

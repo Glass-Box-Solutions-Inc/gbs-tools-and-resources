@@ -308,12 +308,25 @@ class PriorAward(BaseModel):
 
     id: str
     body_parts: tuple[str, ...] = Field(min_length=1)
-    """Section 4664(b) and (c) both operate per region of the body, which is why this
-    is a tuple of regions rather than one. Not yet honoured — M3 renders it."""
+    """The regions this award covered, which is why it is a tuple rather than one.
+
+    Section 4664(b) and (c) do **not** both operate per region. (b) is an
+    existence presumption and operates per **prior award**; only (c)(1) is
+    regional, and it caps the accumulation of awards within one region at 100
+    percent. Corrected by AJC-64 item 0e (M5-R47c) — documentation that
+    contradicts the code is how the next implementer reintroduces the bug.
+    Not yet honoured — M3 renders it.
+    """
 
     pd_percent: int = Field(ge=1, le=100)
-    """The figure section 4664 subtracts. Not yet honoured — M5 owns the subtraction,
-    and even a real QME declines to perform it in the report."""
+    """The permanent disability this prior award actually issued at.
+
+    It is **not** the figure section 4664 subtracts. Section 4664 subtracts a
+    proved **overlap**, not an award's ``pd_percent``, and under M5-R19c the
+    subtracted figure is this award scaled by an authored overlap quantum.
+    Corrected by AJC-64 item 0e (M5-R47c). Not yet honoured — M5 owns the
+    subtraction, and even a real QME declines to perform it in the report.
+    """
 
     award_date: dt.date
     resolution_type: Literal["stipulated_award", "findings_and_award", "c_and_r"]
@@ -324,8 +337,10 @@ class PriorAward(BaseModel):
     Carries the **resolved** value. The seed field is ``bool | None``; when the
     author says nothing, :data:`PRESUMPTION_DEFAULT_BY_RESOLUTION` supplies the
     default from how the award issued — counsel resolved §2-Q7 on 2026-08-10:
-    a stipulated award presumes, a findings-and-award presumes (counsel-assumed,
-    M5 micro-confirm), a compromise and release never does. An explicit seed
+    a stipulated award presumes, a findings-and-award presumes (**SI-M5-003,
+    CONFIRMED 2026-08-18** — the micro-confirm this sentence once said was
+    outstanding is a register row of record), a compromise and release never
+    does. An explicit seed
     value always wins. M2's assertion layer consumes this; M5 owns the offset
     arithmetic.
     """
@@ -1224,7 +1239,8 @@ def _condition_from_entry(entry: Any, index: int, injured: frozenset[str]) -> Me
 #: Section 4664(b)'s presumption default, keyed by the *resolved* award
 #: resolution. Counsel resolved §2-Q7 on 2026-08-10: "No - only a stip" — a
 #: compromise and release never presumes; a stipulated award does; a prior
-#: findings-and-award also presumes (counsel-assumed, micro-confirm at M5 spec).
+#: findings-and-award also presumes — SI-M5-003, CONFIRMED 2026-08-18, so this
+#: is a resolved row rather than the open assumption this comment used to record.
 #: This supplies only the DEFAULT: an explicit seed ``conclusively_presumed``
 #: always wins, including when it differs from its own resolution's default,
 #: because an authored override is an authored fact rather than incoherence.
