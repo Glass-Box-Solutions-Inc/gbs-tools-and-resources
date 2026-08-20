@@ -72,7 +72,9 @@ __all__ = [
     "StatutePinError",
     "canonicalize_statute_text",
     "corroborate_against_snapshot",
+    "kopping_opinion_text",
     "load_section",
+    "require_kopping_holding",
     "require_kopping_pin",
     "section_4663_amending_act_text",
     "section_text_for_doi",
@@ -262,6 +264,24 @@ SECTION_4663_AMENDING_ACT_SHA256 = (
 )
 
 #: The subdivisions M5-R16 actually models. Only these are asserted stable.
+#:
+#: .. warning::
+#:
+#:    **Do not extend this tuple without first fixing**
+#:    :func:`subdivision_text`. It slices a subdivision by finding the NEXT
+#:    subdivision marker in the canonical text, and it cannot tell a marker
+#:    that opens a subdivision from the same characters appearing as an inline
+#:    cross-reference. §4663(e) contains a literal "(a)" inside its sentence,
+#:    so asking for "(e)" today returns text truncated at that cross-reference
+#:    rather than at the start of the next subdivision.
+#:
+#:    The defect is latent, not live: it is unreachable while this tuple holds
+#:    only ``("(a)", "(c)")``, whose slices contain no inline marker. Adding
+#:    ``"(e)"`` — or any subdivision whose body cites another — makes it live
+#:    immediately and silently, returning a short string rather than raising.
+#:    Reported by the Gemini circuit-breaker review as G-2 and ticketed
+#:    separately; recorded here so the next person to widen the set trips over
+#:    the warning at the exact line that would break.
 SECTION_4663_MODELLED_SUBDIVISIONS = ("(a)", "(c)")
 
 SECTION_4663_STABILITY_LIMITATION = (
@@ -338,56 +358,96 @@ class CasePin:
     retrieved_on: dt.date | None
     filename: str | None
     sha256: str | None
+    canonical_sha256: str | None = None
 
     @property
     def pinned(self) -> bool:
         return self.sha256 is not None
 
+    @property
+    def path(self) -> Path:
+        """The vendored artifact. Raises rather than guessing when unpinned."""
+        if self.filename is None:
+            raise StatutePinError(
+                f"{KOPPING_PIN_ABSENT}: {self.citation} has no vendored artifact"
+            )
+        return statutes_dir() / self.filename
+
+
+COURTLISTENER_OPINIONS_URL = (
+    "https://www.courtlistener.com/api/rest/v4/opinions/?cluster={cluster}"
+)
+"""The one case-law retrieval path. Recorded so a pin names where its bytes came from."""
+
+KOPPING_CLUSTER_ID = 2296517
+"""CourtListener's cluster id for the opinion. Part of the provenance, not a guess."""
 
 KOPPING_PIN = CasePin(
     citation="Kopping v. WCAB (2006) 142 Cal.App.4th 1099",
     holding=(
-        "the defendant bears the burden of proving overlap between the prior and "
-        "the current permanent disability in order to obtain the section 4664 credit"
+        "The burden of proving overlap is part of the employer\u2019s overall "
+        "burden of proving apportionment, which was not altered by section "
+        "4664(b), except to create the conclusive presumption that flows from "
+        "proving the existence of a prior permanent disability award."
     ),
-    retrieved_url=None,
-    retrieved_on=None,
-    filename=None,
-    sha256=None,
+    retrieved_url=COURTLISTENER_OPINIONS_URL.format(cluster=KOPPING_CLUSTER_ID),
+    retrieved_on=dt.date(2026, 8, 20),
+    filename="case-kopping-2006-142-cal-app-4th-1099.html",
+    sha256="381f76f76f9ab5bc94e7adf94f93cb3ceda5d7cacb495a396ff44e9941faf81a",
+    canonical_sha256=(
+        "0f352b8f8d85e72066a109992cfa7964bdc1fdb240976d2df81889ab35863d72"
+    ),
 )
-"""**NOT PINNED — blocking finding escalated by item 0e (M5-R20a).**
+"""**PINNED** — the M5-R20a escalation is discharged (2026-08-20).
 
-Three candidate public sources were attempted on 2026-08-19 and none yielded
-retrievable opinion **text**:
+Item 0e originally recorded this as a blocking finding: three public sources were
+attempted on 2026-08-19 and none yielded retrievable opinion **text** —
+``courts.ca.gov`` 404s for a 2006 opinion, ``law.justia.com`` and
+``caselaw.findlaw.com`` answered 403, and CourtListener's detail endpoints
+answered ``401`` without a token while its public HTML page sat behind a WAF
+challenge (``x-amzn-waf-action: challenge``). That finding was correct and is
+what produced the resolution: an API token was provisioned and the same
+CourtListener endpoint that answered 401 now answers 200.
 
-* ``courts.ca.gov`` — the published-opinion archive returns 404 for a 2006
-  opinion; the archive does not retain them;
-* ``courtlistener.com`` — the search API is reachable anonymously and confirms
-  the opinion exists (cluster ``2296517``, filed 2006-09-11, Cal. Ct. App.),
-  but the opinion-detail endpoint answers ``401`` without an API token and the
-  public HTML page is behind a WAF challenge (``x-amzn-waf-action: challenge``);
-* ``law.justia.com`` / ``caselaw.findlaw.com`` — ``403``.
+```text
+RETRIEVED   2026-08-20 from the CourtListener REST API v4, authenticated,
+            cluster 2296517 — case_name "Kopping v. Workers' Compensation
+            Appeals Board", date_filed 2006-09-11, precedential_status
+            "Published", citation 142 Cal. App. 4th 1099 (also 48 Cal. Rptr. 3d
+            618). One opinion, type "010combined".
+ARTIFACT    the served ``html_with_citations`` body, vendored VERBATIM as
+            data/statutes/case-kopping-2006-142-cal-app-4th-1099.html
+            (52,292 bytes).
+DIGESTS     sha256 of the fetched bytes, per M5-R20a's evidence contract, AND
+            sha256 of the canonical form. Both are pinned: the raw digest is the
+            identity of what was retrieved, the canonical digest is what the
+            holding oracle reads, so widening the canonicalizer to make a
+            comparison pass moves a pinned value instead of passing quietly.
+HOLDING     a LITERAL sentence of the opinion, not a paraphrase — M5-R20a
+            requires the holding be present as a literal substring of the
+            fetched text, and the paraphrase this pin carried while unpinned
+            ("the defendant bears the burden of proving overlap...") appears
+            nowhere in it. The sentence chosen states both halves of the rule
+            M5-R20a relies on: the burden sits on the employer, and §4664(b)'s
+            conclusive presumption does not carry it.
+```
 
-Re-attempted independently the same day rather than inherited on trust, because
-"a previous attempt failed" is the claim most likely to be wrong. The result was
-the same, and the failure modes were observed directly:
-``courtlistener.com``'s search API answers 200 anonymously and returns the
-cluster metadata quoted above, while ``/api/rest/v4/opinions/?cluster=2296517``
-and ``/api/rest/v4/clusters/2296517/`` both answer ``401`` and the public HTML
-page returns an empty body under ``x-amzn-waf-action: challenge``;
-``law.justia.com`` and ``caselaw.findlaw.com`` answer ``403``; ``casetext.com``
-answers ``410``.
+The rule, in the spec's own words, is unchanged: **the defendant bears the burden
+of proving overlap** between the prior and the current permanent disability in
+order to obtain the §4664 credit, and the §4664(b) presumption establishes only
+the prior award's continued existence. Kopping is a published Court of Appeal
+decision and controls over Strong and Sanchez on this single point.
 
-Confirming that a case exists is metadata, not provenance: nothing above lets
-the holding sentence be asserted as a literal substring of retrieved bytes.
-Per M5-R20a this is **never** resolved by downgrading the grade — the pin is
-recorded absent, the Kopping-dependent burden grading stays DRAFT, and item 4
-does not start until counsel or the orchestrator supplies a retrievable
-source. :func:`require_kopping_pin` is the fail-closed accessor that keeps
-that decision out of an implementer's hands.
+The KB corpus gap recorded at §12.9 is NOT closed by this: the knowledge base
+still does not hold the holding, and its Kopping citation records remain
+unverified. This pin comes from the court record, which is what M5-R20a asked
+for.
 """
 
 KOPPING_PIN_ABSENT = "M5_KOPPING_PIN_ABSENT"
+
+
+KOPPING_HOLDING_ABSENT = "M5_KOPPING_HOLDING_ABSENT"
 
 
 def require_kopping_pin() -> CasePin:
@@ -399,6 +459,57 @@ def require_kopping_pin() -> CasePin:
             "(M5-R20a)"
         )
     return KOPPING_PIN
+
+
+def kopping_opinion_text() -> str:
+    """The canonical opinion text, verified against BOTH pinned digests.
+
+    The chain terminates in bytes, like every other pin in this module: the
+    vendored file is hashed and compared to the raw digest, then canonicalized
+    and compared to the canonical digest. Checking only the canonical form would
+    let a re-canonicalization pass silently; checking only the raw form would
+    let the canonicalizer be widened underneath the holding oracle.
+    """
+    pin = require_kopping_pin()
+    if not pin.path.is_file():
+        raise StatutePinError(
+            f"{STATUTE_PIN_MISSING}: {pin.citation} names artifact "
+            f"{pin.filename}, which is not in the package data"
+        )
+    payload = pin.path.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != pin.sha256:
+        raise StatutePinError(
+            f"{STATUTE_PIN_DIGEST_MISMATCH}: {pin.citation} artifact hashes to "
+            f"{digest}, pinned {pin.sha256}"
+        )
+    canonical = canonicalize_statute_text(payload.decode("utf-8"))
+    canonical_digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    if canonical_digest != pin.canonical_sha256:
+        raise StatutePinError(
+            f"{STATUTE_PIN_DIGEST_MISMATCH}: {pin.citation} canonicalizes to "
+            f"{canonical_digest}, pinned {pin.canonical_sha256} — the artifact "
+            "is intact, so the canonicalizer moved"
+        )
+    return canonical
+
+
+def require_kopping_holding() -> str:
+    """The holding, proved present as a literal substring (M5-R20a).
+
+    M5-R20a's evidence contract is not "a digest exists"; it is that the
+    sentence the burden rule rests on is IN the retrieved opinion. A pinned
+    artifact whose text does not contain the holding would be provenance for
+    the wrong document.
+    """
+    canonical = kopping_opinion_text()
+    if KOPPING_PIN.holding not in canonical:
+        raise StatutePinError(
+            f"{KOPPING_HOLDING_ABSENT}: the pinned holding is not a literal "
+            f"substring of {KOPPING_PIN.filename}; the citation and the "
+            "artifact disagree about what the case held"
+        )
+    return KOPPING_PIN.holding
 
 
 REGULATORY_SECTIONS_SNAPSHOT_ABSENT = "M5_REGULATORY_SECTIONS_SNAPSHOT_ABSENT"

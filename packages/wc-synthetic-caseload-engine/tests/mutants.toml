@@ -4839,9 +4839,15 @@ title = 'STATUTE-PIN-DIGEST-BYPASS'
 file = 'src/wc_caseload_engine/statutes.py'
 test = 'tests/test_ajc64_item0e.py::TestPinnedDigests::test_a_corrupted_artifact_fails_closed'
 find = '''    payload = pin.path.read_bytes()
-    digest = hashlib.sha256(payload).hexdigest()'''
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != pin.sha256:
+        raise StatutePinError(
+            f"{STATUTE_PIN_DIGEST_MISMATCH}: section {section} artifact hashes "'''
 replace = '''    payload = pin.path.read_bytes()
-    digest = pin.sha256'''
+    digest = pin.sha256
+    if digest != pin.sha256:
+        raise StatutePinError(
+            f"{STATUTE_PIN_DIGEST_MISMATCH}: section {section} artifact hashes "'''
 note = 'M5-R47. Compares the pinned digest to itself instead of to the artifact — the same self-comparison defect item 0b fixes for the PDRS PDF. The pin then passes against any bytes at all, which is a provenance chain terminating in a string.'
 
 [[mutant]]
@@ -5242,3 +5248,67 @@ test = 'tests/test_ajc64_item0d.py::TestEverySubtypeIsExercised::test_the_sample
 find = '''    generator = random.Random(f"{PROPERTY_SEED}:{cell}")'''
 replace = '''    generator = random.Random(f"0:{cell}")'''
 note = 'M5-R41, round-3 finding R3-1. Re-freezes the property sample by cutting the run seed out of the generator, so every run draws the same values again. This is the defect rounds 1 and 2 both shipped in different spellings — eight sha256-hashed case ids, then a PRNG memoized into a module-level tuple at import. Each looks like generation and behaves like a fixed grid, which is why the guard drives sample_grosses under three different run seeds and requires the draw to move.'
+
+[[mutant]]
+id = 'm24-210'
+title = 'PROPERTY-RUN-SEED-REFROZEN'
+file = 'tests/test_ajc64_item0d.py'
+test = 'tests/test_ajc64_item0d.py::TestEverySubtypeIsExercised::test_the_run_seed_itself_is_not_constant'
+find = '''    return random.SystemRandom().getrandbits(64)'''
+replace = '''    return 42'''
+note = 'M5-R41, Gemini circuit-breaker finding G-1. Refreezes the property sample one level ABOVE m24-209: rather than cutting the seed out of the sampler, it makes the seed itself a constant. Every CI run then draws the same grosses and the suite stays green, which is the R3-1 defect restored in a place the R3-1 guard cannot see — that guard monkeypatches PROPERTY_SEED and so proves only that sample_grosses READS it, never that its SOURCE varies.'
+
+[[mutant]]
+id = 'm24-211'
+title = 'DRAW-CONSISTENCY-DIAGNOSTIC-LEAKED-TO-PAPER'
+file = 'src/wc_caseload_engine/fact_templates.py'
+test = 'tests/test_ajc64_item0d.py::TestDrawConsistencyDiagnosticStaysInternal::test_no_generated_artifact_mentions_the_draw_diagnostic'
+find = 'ENGINE_POLICY_UNCONFIRMED_LABEL = "[ENGINE_POLICY_UNCONFIRMED]"'
+replace = 'ENGINE_POLICY_UNCONFIRMED_LABEL = "[ENGINE_POLICY_UNCONFIRMED] drawConsistencyWeeks"'
+note = 'Sibling of m24-203, registered by the G-3 mutant audit. Same titled defect — the test-only draw diagnostic reaches an outward surface — reached by a different edit: the rendered PAGE rather than the truth-manifest channel. m24-203 guard did not redden under it (verified SURVIVED as audit probe m24-912), because that guard reads only the scorer envelope. The invariant is covered by the class, so the sibling is registered against the artifact-sweep test rather than the guard being widened: a leak to paper and a leak to the envelope are different failures and should be separately attributable.'
+
+[[mutant]]
+id = 'm24-212'
+title = 'PROPERTY-SAMPLE-CELLS-COLLAPSED'
+file = 'tests/test_ajc64_item0d.py'
+test = 'tests/test_ajc64_item0d.py::TestEverySubtypeIsExercised::test_each_cell_draws_its_own_values'
+find = '    generator = random.Random(f"{PROPERTY_SEED}:{cell}")'
+replace = '    generator = random.Random(f"{PROPERTY_SEED}")'
+note = 'Sibling of m24-209, registered by the G-3 mutant audit. Collapses the per-cell seeding so all 22 subtype/MSA cells draw the SAME grosses — the sample still varies per run, so m24-209 guard stays green (verified SURVIVED as audit probe m24-914), but 22 cells then prove what one cell proves. Registered against the per-cell test rather than widening m24-209, because varying-with-run and varying-with-cell are two independent properties.'
+
+[[mutant]]
+id = 'm24-213'
+title = 'CANONICAL-DIGEST-COMPUTED-IN-THE-CORROBORATION'
+file = 'tests/test_ajc64_item0e.py'
+test = 'tests/test_ajc64_item0e.py::TestRegulatorySectionsCorroboration::test_the_corroboration_reads_its_expectation_from_the_pin'
+find = '''        expected = self.CANONICAL_SHA256[section]
+        pinned = self._canonical(load_section(section), section)'''
+replace = '''        pinned = self._canonical(load_section(section), section)
+        expected = hashlib.sha256(pinned.encode("utf-8")).hexdigest()'''
+note = 'Registered by the G-3 mutant audit, which found this spelling UNCOVERED (audit probe m24-913 SURVIVED every existing guard). m24-207 moves the expectation into provenance.json, which the not-derivable-from-the-fixture-dir guard sees; this instead recomputes it from the very text under test, which that guard cannot see because nothing new appears in the fixture directory. The comparison becomes a tautology passing against any content. Unlike m24-211/212 the invariant was NOT covered anywhere, so a new structural guard was added rather than a sibling merely registered.'
+
+[[mutant]]
+id = 'm24-214'
+title = 'KOPPING-PIN-SELF-COMPARE'
+file = 'src/wc_caseload_engine/statutes.py'
+test = 'tests/test_ajc64_item0e.py::TestKoppingPin::test_a_corrupted_artifact_fails_closed'
+find = '''    payload = pin.path.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != pin.sha256:
+        raise StatutePinError(
+            f"{STATUTE_PIN_DIGEST_MISMATCH}: {pin.citation} artifact hashes to "'''
+replace = '''    payload = pin.path.read_bytes()
+    digest = pin.sha256
+    if digest != pin.sha256:
+        raise StatutePinError(
+            f"{STATUTE_PIN_DIGEST_MISMATCH}: {pin.citation} artifact hashes to "'''
+note = 'M5-R20a. Restores the self-comparison on the case-law pin: the pinned constant is compared to another copy of itself instead of to the retrieved artifact, so the gate passes against any bytes at all. Same defect m24-31 covers for the PDRS PDF — registered separately because a provenance chain that terminates in a string rather than in bytes has to be proved terminated for EACH artifact class, and case law arrived through a different retrieval path from both leginfo and the schedule.'
+
+[[mutant]]
+id = 'm24-215'
+title = 'KOPPING-HOLDING-SUBSTRING-DECORATIVE'
+file = 'src/wc_caseload_engine/statutes.py'
+test = 'tests/test_ajc64_item0e.py::TestKoppingPin::test_a_holding_absent_from_the_opinion_fails_closed'
+find = '    if KOPPING_PIN.holding not in canonical:'
+replace = '    if False:'
+note = 'M5-R20a. Makes the holding check decorative, so a pin whose artifact is the WRONG DOCUMENT passes: the digests still verify (they describe whatever was fetched) and only the substring assertion ties the citation to the text. This is the check that made the difference in practice — the paraphrase this pin carried while unpinned appears nowhere in the opinion, so a decorative check would have shipped a holding the court never wrote.'

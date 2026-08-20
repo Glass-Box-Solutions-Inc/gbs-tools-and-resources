@@ -1368,6 +1368,32 @@ class TestEverySubtypeIsExercised:
         for draw in draws:
             assert draw[: len(boundary_grosses())] == boundary_grosses()
 
+    def test_the_run_seed_itself_is_not_constant(self) -> None:
+        """m24-210 — the refreeze one level up (Gemini finding G-1).
+
+        ``test_the_sample_is_not_frozen_across_runs`` proves ``sample_grosses``
+        READS the run seed, by monkeypatching it. It cannot see a refreeze of
+        where that seed COMES FROM: replace the ``SystemRandom`` draw in
+        ``_property_seed`` with a constant and every property becomes a fixed
+        grid on every CI run, with the whole suite green — the exact R3-1
+        defect, restored one level up and invisible to the R3-1 guard.
+
+        So the source is asserted directly: with the override absent, repeated
+        calls must disagree. Sixty-four random bits repeat with probability
+        ~2**-64, so a collision here is a constant, not bad luck.
+        """
+        monkey = os.environ.pop(PROPERTY_SEED_ENV, None)
+        try:
+            seeds_drawn = {_property_seed() for _ in range(8)}
+        finally:
+            if monkey is not None:
+                os.environ[PROPERTY_SEED_ENV] = monkey
+        assert len(seeds_drawn) == 8, (
+            "_property_seed() returned a repeated value with no override set; "
+            "the run seed is constant, so every run samples the same grosses"
+        )
+        assert all(value != 0 for value in seeds_drawn)
+
     def test_a_failure_is_reproducible_from_the_reported_seed(self) -> None:
         """The bargain that makes per-run sampling safe."""
         floor, ceiling = property_gross_bounds()

@@ -24,13 +24,19 @@ So the oracles here are about bytes and refusals rather than about content:
   Python's ``ast`` preserves docstrings and discards comments, so the comment
   half runs on ``tokenize`` (``m24-128`` / ``m24-135``, one per half).
 
-**One escalation remains, recorded as a test rather than as prose** so it
-cannot be forgotten: the Kopping opinion is **not pinned**, because no
-retrievable public source was found (CourtListener answered 401 behind a WAF
-challenge; Justia and FindLaw 403; Casetext 410). It is asserted to fail
-closed, and when it lands, its test is the thing that changes.
+**Both escalations this module opened are now discharged**, and in each case the
+test was the thing that changed rather than a line of prose.
 
-The second escalation is **discharged**: the ``regulatory_sections``
+The Kopping opinion is **pinned** (2026-08-20). It was recorded absent for two
+rounds because no retrievable public source existed — CourtListener answered 401
+behind a WAF challenge, Justia and FindLaw 403, Casetext 410. An API token was
+provisioned, the same CourtListener endpoint answered 200, and the opinion is
+pinned from the court record with both its raw and canonical digests, its
+retrieval provenance, and its holding proved present as a **literal substring**
+of the fetched text (M5-R20a). The refusal path is kept and still tested against
+an unpinned case, because it guards the next pin as much as this one.
+
+The regulatory-sections escalation is likewise discharged: the ``regulatory_sections``
 corroborating snapshots WERE obtained from the wc-kb Postgres instance and are
 vendored under ``tests/fixtures/regulatory-sections/`` with provenance. The
 cross-check is now a full-text exact comparison against those independently
@@ -43,10 +49,12 @@ in this module.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import datetime as dt
 import hashlib
 import io
 import json
+import re
 import tokenize
 from pathlib import Path
 from typing import Any, ClassVar
@@ -61,6 +69,7 @@ from wc_caseload_engine.statutes import (
     SECTION_4663_MODELLED_SUBDIVISIONS,
     SECTION_4663_STABILITY_LIMITATION,
     STATUTE_PINS,
+    CasePin,
     StatutePinError,
     canonicalize_statute_text,
     corroborate_against_snapshot,
@@ -391,6 +400,53 @@ class TestRegulatorySectionsCorroboration:
         assert row == pinned
         assert len(pinned) == self.CANONICAL_CHARS[section]
 
+    def test_the_corroboration_reads_its_expectation_from_the_pin(self) -> None:
+        """m24-213 — the mutant audit (G-3) found this uncovered.
+
+        ``test_the_canonical_digest_is_not_derivable_from_the_fixture_dir``
+        proves the digest is not READABLE from the fixture directory. It says
+        nothing about the corroboration test computing the expectation for
+        itself: replace ``expected = self.CANONICAL_SHA256[section]`` with a
+        fresh ``sha256`` over the very text being checked and the comparison
+        becomes a tautology that passes against any content at all — R2-4's
+        defect restored in the one test that matters, and the audit sibling
+        probing exactly that SURVIVED every existing guard.
+
+        So the invariant is asserted structurally: the corroboration test must
+        name the pinned constant, and must not compute a digest of its own.
+        """
+        module = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        target = next(
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "test_the_real_row_corroborates_the_pinned_text_exactly"
+        )
+        names = {
+            node.attr for node in ast.walk(target) if isinstance(node, ast.Attribute)
+        }
+        assert "CANONICAL_SHA256" in names, (
+            "the corroboration test no longer reads the pinned canonical "
+            "digest; an expectation it computes itself is a tautology"
+        )
+        # It may hash the two sources (that IS the comparison), but the value
+        # it compares them against must come from the pin, so the pin must be
+        # the thing assigned to `expected`.
+        assigned = [
+            node
+            for node in ast.walk(target)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "expected" for t in node.targets
+            )
+        ]
+        assert len(assigned) == 1, "expected is assigned more than once"
+        source = ast.dump(assigned[0].value)
+        assert "CANONICAL_SHA256" in source, (
+            "`expected` is no longer the pinned literal; it is computed from "
+            f"{source[:120]}"
+        )
+
     @pytest.mark.parametrize("section", ["4663", "4664"])
     def test_the_canonical_digest_is_not_derivable_from_the_fixture_dir(
         self, section: str
@@ -501,18 +557,170 @@ class TestRegulatorySectionsCorroboration:
 
 
 class TestKoppingPin:
-    """ESCALATION — the opinion is not pinned, and the gate holds (M5-R20a)."""
+    """The M5-R20a pin — landed 2026-08-20, escalation discharged.
 
-    def test_the_pin_is_recorded_absent(self) -> None:
-        assert KOPPING_PIN.pinned is False
-        assert KOPPING_PIN.sha256 is None
-        assert KOPPING_PIN.retrieved_url is None
+    This class asserted the ESCALATION for two rounds: the opinion was not
+    retrievable from any public source without credentials, so the pin was
+    recorded absent and the gate held. A CourtListener API token was
+    provisioned; the same endpoint that answered 401 answers 200, and the
+    opinion is now pinned from the court record.
+
+    The tests changed shape rather than being deleted, which is what M5-R20a
+    asked for: "when either lands, its test is the thing that changes."
+    """
+
+    #: The canonical digest, pinned HERE as well as in the module — R2-4's rule.
+    #: An expectation living only beside the thing it judges is not an
+    #: expectation, and this is the same defect one artifact class over.
+    CANONICAL_SHA256 = (
+        "0f352b8f8d85e72066a109992cfa7964bdc1fdb240976d2df81889ab35863d72"
+    )
+    RAW_SHA256 = "381f76f76f9ab5bc94e7adf94f93cb3ceda5d7cacb495a396ff44e9941faf81a"
+
+    def test_the_pin_is_recorded_present_with_its_provenance(self) -> None:
+        assert KOPPING_PIN.pinned is True
         assert KOPPING_PIN.citation == "Kopping v. WCAB (2006) 142 Cal.App.4th 1099"
+        assert KOPPING_PIN.sha256 == self.RAW_SHA256
+        assert KOPPING_PIN.canonical_sha256 == self.CANONICAL_SHA256
+        assert KOPPING_PIN.retrieved_on == dt.date(2026, 8, 20)
+        # The retrieval path is recorded, and it is the court record — not
+        # leginfo, not the KB, both of which M5-R20a rules out for case law.
+        assert KOPPING_PIN.retrieved_url == (
+            "https://www.courtlistener.com/api/rest/v4/opinions/?cluster=2296517"
+        )
+        assert "courtlistener.com" in KOPPING_PIN.retrieved_url
+        assert "leginfo" not in KOPPING_PIN.retrieved_url
 
-    def test_requesting_the_pin_refuses_rather_than_returning_a_surrogate(self) -> None:
-        """There is no partial-shipping form and no pre-pin surrogate grade."""
+    def test_requesting_the_pin_returns_it_rather_than_refusing(self) -> None:
+        assert require_kopping_pin() is KOPPING_PIN
+
+    def test_the_artifact_hashes_to_both_pinned_digests(self) -> None:
+        """m24-214: the chain terminates in bytes, not in a string."""
+        payload = KOPPING_PIN.path.read_bytes()
+        assert hashlib.sha256(payload).hexdigest() == self.RAW_SHA256
+        canonical = statutes.kopping_opinion_text()
+        assert (
+            hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            == self.CANONICAL_SHA256
+        )
+
+    def test_the_holding_is_a_literal_substring_of_the_opinion(self) -> None:
+        """M5-R20a's actual evidence contract (m24-215).
+
+        Not "a digest exists" — that the sentence the burden rule rests on is
+        IN the retrieved text. The paraphrase this pin carried while unpinned
+        is asserted ABSENT, because it is what a pin would have shipped if the
+        substring check were decorative.
+        """
+        canonical = statutes.kopping_opinion_text()
+        assert statutes.require_kopping_holding() == KOPPING_PIN.holding
+        assert KOPPING_PIN.holding in canonical
+
+        paraphrase = (
+            "the defendant bears the burden of proving overlap between the "
+            "prior and the current permanent disability"
+        )
+        assert paraphrase not in canonical, (
+            "the paraphrase is in the opinion after all — then it, not a "
+            "chosen sentence, is the literal holding to pin"
+        )
+
+    def test_a_holding_absent_from_the_opinion_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """m24-215 — the substring check must REFUSE, not merely be present.
+
+        Asserting the real holding is in the real opinion cannot distinguish a
+        live check from a decorative one: both pass while the artifact is
+        correct. The check only earns its place on a pin whose text does NOT
+        carry the holding, which is exactly the case M5-R20a exists to prevent
+        — and exactly what this pin would have been had the paraphrase been
+        kept, since it appears nowhere in the opinion.
+        """
+        wrong = dataclasses.replace(
+            KOPPING_PIN,
+            holding="The employer need not prove overlap to obtain the credit.",
+        )
+        monkeypatch.setattr(statutes, "KOPPING_PIN", wrong)
+        with pytest.raises(StatutePinError, match="KOPPING_HOLDING_ABSENT"):
+            statutes.require_kopping_holding()
+
+    def test_the_holding_states_both_halves_of_the_rule(self) -> None:
+        """The burden sits on the employer AND §4664(b) does not carry it."""
+        holding = KOPPING_PIN.holding
+        assert "burden of proving overlap" in holding
+        assert "employer" in holding
+        assert "4664(b)" in holding
+        assert "conclusive presumption" in holding
+
+    def test_the_opinion_is_the_right_case(self) -> None:
+        """A pinned artifact for the wrong document is worse than no pin."""
+        canonical = statutes.kopping_opinion_text()
+        assert "Kopping" in canonical
+        assert "Workers" in canonical and "Compensation Appeals Board" in canonical
+        assert "4664" in canonical
+        # The REPORTER citation is cluster metadata, not body text: the opinion
+        # carries star pagination instead, opening at *1103. So identity is
+        # asserted from what the body actually contains — the star pages must
+        # fall inside the range 142 Cal.App.4th 1099 et seq. begins at.
+        star_pages = {
+            int(match)
+            for match in re.findall(r"\*(\d{4})\b", canonical)
+        }
+        assert star_pages, "no star pagination found; this may not be a reporter text"
+        assert all(1099 <= page <= 1130 for page in star_pages), (
+            f"star pages {sorted(star_pages)} fall outside 142 Cal.App.4th 1099"
+        )
+        assert "ROBIE" in canonical, "the authoring justice is not named"
+
+    def test_a_corrupted_artifact_fails_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """m24-214: the digest is compared to the FILE, not to itself.
+
+        The first version of this test hashed a forged file and then raised the
+        error it was checking for — it asserted that ``pytest.raises`` catches
+        what the test itself throws, and m24-214 survived it untouched. The
+        production path has to be the thing that refuses, so the artifact
+        directory is redirected at a forged file and ``kopping_opinion_text``
+        is called for real.
+        """
+        forged = tmp_path / KOPPING_PIN.filename
+        forged.write_bytes(b"<p>not the opinion</p>")
+        monkeypatch.setattr(statutes, "statutes_dir", lambda: tmp_path)
+        # The RAW-bytes branch must be the one that fires. Matching only the
+        # error code would let m24-214 through: with the raw check self-
+        # comparing, the canonical check catches the forgery a moment later and
+        # raises the same code with a different sentence — a real refusal from
+        # the wrong guard, which would report the canonicalizer as broken when
+        # the byte chain is what failed.
+        with pytest.raises(StatutePinError, match="artifact hashes to"):
+            statutes.kopping_opinion_text()
+
+    def test_an_absent_artifact_is_reported_not_passed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(statutes, "statutes_dir", lambda: tmp_path)
+        with pytest.raises(StatutePinError, match="STATUTE_PIN_MISSING"):
+            statutes.kopping_opinion_text()
+
+    def test_an_unpinned_case_still_refuses(self) -> None:
+        """The refusal path is the gate, and it must survive the pin landing.
+
+        Deleting this with the escalation would leave M5-R20a's hard
+        prerequisite unguarded for the next case pinned.
+        """
+        unpinned = CasePin(
+            citation="Some v. Other (2020) 1 Cal.App.5th 1",
+            holding="something",
+            retrieved_url=None,
+            retrieved_on=None,
+            filename=None,
+            sha256=None,
+        )
+        assert unpinned.pinned is False
         with pytest.raises(StatutePinError, match="KOPPING_PIN_ABSENT"):
-            require_kopping_pin()
+            _ = unpinned.path
 
 
 # ---------------------------------------------------------------------------
