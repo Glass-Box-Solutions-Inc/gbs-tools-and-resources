@@ -32,3 +32,9 @@ Escalations open: Kopping pin (needs CourtListener API token or alternate proven
 | round | reviewer | verdict | disposition |
 |---|---|---|---|
 | 1 | sol (GPT-5.6, thread 01a01c33-f28a-76d1-a04f-71af099b4a58) | FINDINGS 2B/4M | F1-F5 ruled FIX, dispatched to owning implementer 08-19; F6 (exec attestation) satisfied by orchestrator gates + fix-round bundle |
+# AJC-64 item 1 build state (worktree ajc-64-item1, branch ajc-64-m5-item1)
+
+| item | status | evidence | date |
+|---|---|---|---|
+| 1 | BUILT — PROVISIONAL S2, re-capture required post F1-F5 merge | tests/test_ajc64_item1.py 29/29 pass; m24-23 RED-alone + clean revert; ruff clean; preflight 322/322; golden gate 5/6 OK (demo-caseload FAILED — pre-existing pymupdf 1.28.0-vs-1.28.2/substrate env drift, untouched by item 1, not caused by this work); full suite 1 failed (same demo-caseload drift) / rest green; never committed | 08-19 |
+| 1 fix round | F1-HIGH (Opus supervision) FIXED | recordedWith exemption narrowed from block-prefix to exact-leaf ($.recordedWith.substrateSha only); money-showcase's substratePin movement now explicit authorized-not-filtered entry citing commit e5e0874 (verified ancestor + git show matches before/after values); 2 new tests added (authorization exactness + e5e0874 positive control); re-run: targeted 29/29, ruff clean, preflight 322/322, m24-23 RED+clean-revert | 08-19 |

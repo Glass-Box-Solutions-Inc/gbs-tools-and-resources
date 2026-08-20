@@ -1,0 +1,112 @@
+{
+  "format": 3,
+  "corpus": "money-showcase",
+  "spec": "examples/money-showcase.yaml",
+  "tier": "ci",
+  "recordedWith": {
+    "engine": "0.9.0",
+    "substratePin": "2168d066120c57f7585a2f674629979432ef674a",
+    "substrateSha": "2168d066120c57f7585a2f674629979432ef674a",
+    "python": "3.12.13",
+    "dependencies": {
+      "reportlab": "4.5.1",
+      "python-docx": "1.2.0",
+      "pymupdf": "1.28.2",
+      "pillow": "11.3.0",
+      "faker": "34.0.2",
+      "pyyaml": "6.0.3",
+      "pydantic": "2.13.4"
+    },
+    "systemFonts": {
+      "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf": "39c29931201f08dd"
+    }
+  },
+  "caseCount": 7,
+  "documentCount": 517,
+  "fileCount": 547,
+  "rootFiles": [
+    "caseload_manifest.json",
+    "truth/atypical-earner.truth.json",
+    "truth/capped-executive.truth.json",
+    "truth/caseload.truth.json",
+    "truth/irregular-earner.truth.json",
+    "truth/neglected-file.truth.json",
+    "truth/new-hire.truth.json",
+    "truth/steady-earner.truth.json",
+    "truth/two-jobs.truth.json"
+  ],
+  "corpusTree": "b724b28a9d00180a443d34e45c2f0e004eb7062af2a40b9c7820931b214cd5f9",
+  "caseload": "9e44477f8497ed8d80aab704ea2c89f310a597475d23e724ae114e39c40a2f0a",
+  "cases": {
+    "atypical-earner": {
+      "documentCount": 64,
+      "distinctSubtypes": 39,
+      "fileCount": 67,
+      "tree": "fc4eefe74dc9efc2792c987b8f6f0d9e5955cb136ed50e743d47f4cc922e8ab3",
+      "documents": "c68a3a6aac9b1208d9467ebf134e932cb68104f7a051dc144dd31b4593fa5f55",
+      "manifest": "c67fe34797f614fa28b9de5cc2fed940844e733ad15d71a22aabc6ba89804784",
+      "seed": "2fa8f80d20c31b31e03260103a95a0ad734f91499fcf16073baa68c73ba4a979",
+      "facts": "014ac1a7ef3553e33cc6c58f9db2dbbf072c2caacdecf423862c3c222c4f052a"
+    },
+    "capped-executive": {
+      "documentCount": 80,
+      "distinctSubtypes": 48,
+      "fileCount": 83,
+      "tree": "fefd43e4f5197e5ef75660bbc862ecd0d7d69828fa70e264f9588957027872ae",
+      "documents": "2d4e7648bb6d2ad920165814799163191422dbc920cd7949b717a18b00671846",
+      "manifest": "5b5c0445a009e57e1f7b3074e74d7bb323796e5457976b1dfedb7c3ca29c655a",
+      "seed": "38358e9762c991dbddebb556bd61d8c1fe15cda939497f3fc4a3314fc8814762",
+      "facts": "e7623dabf487dbedaca0e58cb4f4e2c82fdd04014d172d00aecc5789d3359c7f"
+    },
+    "irregular-earner": {
+      "documentCount": 75,
+      "distinctSubtypes": 51,
+      "fileCount": 78,
+      "tree": "90a38da7c340e15d134b0e6066206a0b98cadc2091277bc03ebb2c7ea7e22698",
+      "documents": "28395a4ea719b5f82cfbd71c25766424a4a80d1d68e941ce0c5bc9d173e9b320",
+      "manifest": "0b588bc11b4819ae7f9809788f4b78402ed448cce3fe6392dd2c99519198f577",
+      "seed": "36d9efb81e7589fc35d5eaa5814a69ea52c97d20e40928e9043cfed8a503169b",
+      "facts": "ecdb4cc820006887a158bcb30d6037da6eb0b8e01a9c11f554853633aadb5d14"
+    },
+    "neglected-file": {
+      "documentCount": 87,
+      "distinctSubtypes": 49,
+      "fileCount": 90,
+      "tree": "4277bfaf4f637efaefe61433afa5ec957f60c46da8963c5af597cdf3430529ce",
+      "documents": "b70368beacc448637ef9877996af77c187f8b83368eaf3add11f2d3cb4c16c7a",
+      "manifest": "fc57ed3f7d87ea842069b0ec3aa65924093b81572e3ad3d3904183b1d29b8aae",
+      "seed": "aeab96c44f1e7be4b656bc7b2218a0bc0775aafc3cebf5c54682311ea513919e",
+      "facts": "7cb8edff56d902703ae82d05732276bd064e9b7c1d83b91f17dd2b7397c76e92"
+    },
+    "new-hire": {
+      "documentCount": 58,
+      "distinctSubtypes": 37,
+      "fileCount": 61,
+      "tree": "3e594253b8532e6a42da895c6e4abdc5615499c85d74fdcd3b77c010c81f10b8",
+      "documents": "4cb796b205a653ef4ca76f19722c6a954acfad75b88d5f7bbdd53fe0f348a449",
+      "manifest": "a825c1093204bd19d6c47c1541648d972551b39a591231f318bb435f4684af3c",
+      "seed": "1f29584a62d42a25479d03f40c9456cfab9c2785d7be3e8e3a62ceae19eb0808",
+      "facts": "8bd505186ac129f4817cb2ddc6b7b616898a39f8c5acf9269a30969b82adaffc"
+    },
+    "steady-earner": {
+      "documentCount": 91,
+      "distinctSubtypes": 59,
+      "fileCount": 94,
+      "tree": "8d08aacc5cd86a7c58027154308f2cb34a895fc2ac8a9545c7adc3a28a7eb7bc",
+      "documents": "3816c6b1781e4046341253b9e02ca3788a4600b8d9e31f546d9a4d5fa784645a",
+      "manifest": "87446d8e6768d68f42f24355477971d1261ee497f57fc85e6151381580c4c345",
+      "seed": "8a113011c87e7583c255c37dbfb7db77ddcf02b93a26a77c1d6cf239e2f18315",
+      "facts": "6f4e19450e1879d0776307742489a55a194b6632d458e87e6959c962a7208721"
+    },
+    "two-jobs": {
+      "documentCount": 62,
+      "distinctSubtypes": 39,
+      "fileCount": 65,
+      "tree": "16f4ffa9d95bfaabc0c97710f27dfcbc74e7da21bb73bb91208da932dcb752ca",
+      "documents": "6ca03a41d10831f27f95d7b834fe1f4826b2eec637949c072e5d6c82044c127f",
+      "manifest": "ef841e46d719c95f959aed1bbe24c151a36321c4d7d101c3c91147925fecad9e",
+      "seed": "8d6abe5e277c8a49ef218940e4741a74cd76b0df6653a6ffc6c58094028a300f",
+      "facts": "6c4789dad5075f4a4232aa32649f05c6fafaf21db10a29f9f4a17f893da56455"
+    }
+  }
+}

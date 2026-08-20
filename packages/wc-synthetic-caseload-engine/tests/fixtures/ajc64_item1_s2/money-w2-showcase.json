@@ -1,0 +1,167 @@
+{
+  "format": 3,
+  "corpus": "money-w2-showcase",
+  "spec": "examples/money-w2-showcase.yaml",
+  "tier": "ci",
+  "recordedWith": {
+    "engine": "0.9.0",
+    "substratePin": "2168d066120c57f7585a2f674629979432ef674a",
+    "substrateSha": "2168d066120c57f7585a2f674629979432ef674a",
+    "python": "3.12.13",
+    "dependencies": {
+      "reportlab": "4.5.1",
+      "python-docx": "1.2.0",
+      "pymupdf": "1.28.2",
+      "pillow": "11.3.0",
+      "faker": "34.0.2",
+      "pyyaml": "6.0.3",
+      "pydantic": "2.13.4"
+    },
+    "systemFonts": {
+      "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf": "39c29931201f08dd"
+    }
+  },
+  "caseCount": 12,
+  "documentCount": 576,
+  "fileCount": 626,
+  "rootFiles": [
+    "caseload_manifest.json",
+    "truth/caseload.truth.json",
+    "truth/w2-assertion-channel.truth.json",
+    "truth/w2-file-review.truth.json",
+    "truth/w2-joint-evaluation.truth.json",
+    "truth/w2-rating-anchor.truth.json",
+    "truth/w2-rating-ceiling.truth.json",
+    "truth/w2-rating-dfec.truth.json",
+    "truth/w2-rating-election.truth.json",
+    "truth/w2-rating-paired.truth.json",
+    "truth/w2-reserve-development.truth.json",
+    "truth/w2-reserve-neighbor.truth.json",
+    "truth/w2-reserve-reassessment.truth.json",
+    "truth/w2-reserve-sequence.truth.json"
+  ],
+  "corpusTree": "8ea46f2398ba4ae2171969f8e35b8338b1792f7c0ea8e9a0513d1fefda701524",
+  "caseload": "f1fd7d5f4a87e43768af1fab5384323f2cc7d5f5d2edd6676815edd2fb6cf0fe",
+  "cases": {
+    "w2-assertion-channel": {
+      "documentCount": 48,
+      "distinctSubtypes": 28,
+      "fileCount": 51,
+      "tree": "c0da07a26604a4a918149ef05e2265fcff274c5302d6a984d44030f22a3fe8c3",
+      "documents": "e221ba0ccee64726a4f1c4007f536727047b600d4f641b2ea2eae70532dca8f2",
+      "manifest": "e509c1ceb69729b99a109142b7dddbe1e3315c27b3fa85621450248462c5133a",
+      "seed": "62992745ddda8404885a7e0207a296a536f5747cd2c0f68e00142c987a0f5755",
+      "facts": "98b9a22f59e412e36bc46c48b058a92b41aff6a851eff1abfafd47e4f70b6ea6"
+    },
+    "w2-file-review": {
+      "documentCount": 48,
+      "distinctSubtypes": 32,
+      "fileCount": 51,
+      "tree": "6bf994775808a1db0df3e3d112c3b687be2fbd68cbb78af0d334d647a2d7cb47",
+      "documents": "eb5574608b626a5158968f7c632624d4166df43639ed00c0b402872e6d24b091",
+      "manifest": "8829d855152a201c92e9ba57434ea8c6fcd8cdcac738d7c8c80dfe9b875a8375",
+      "seed": "19fe17880623b57f15cc751c2e9be385c0f91119a40e1849d8ee3f94ad631610",
+      "facts": "aa07119ef6f1f7f9deb891f6c2c6b20ae88be9de5ae498b69e169e6d44bec619"
+    },
+    "w2-joint-evaluation": {
+      "documentCount": 48,
+      "distinctSubtypes": 30,
+      "fileCount": 51,
+      "tree": "aaa92b268beb85a95cb11139e3de36d5361b09717ca423fa37e9e5c04cd87a36",
+      "documents": "8c7ab3e712813727919c3b80fe7bf277398f6893de44fdd9b00806ea4524b75f",
+      "manifest": "6ec3faefa3d36f8aa3c0e9dcec3d26833f7edab317d73c63c1b5830365f8e1f6",
+      "seed": "eb0bc2dddde2198f144d321692300294f7c29a2da11138ca05591fb9d2777c88",
+      "facts": "5272770419de5af4d2e51f2ce7d9e1a6855397428d8391e194210d8c1bf97097"
+    },
+    "w2-rating-anchor": {
+      "documentCount": 48,
+      "distinctSubtypes": 27,
+      "fileCount": 51,
+      "tree": "88be02568053cd2ef76b4257ddfd52abf3c18d04443cbffec1be6c9934d9e598",
+      "documents": "8a3a4df70821ec679d2c12a7070e5bc52a43b9479b765d35b39ae6ce5df1e02f",
+      "manifest": "bb0df0b3be8a18949b67d6953329dc1d7dc03aea420cdb5f992681cf58ed089c",
+      "seed": "f9e40b1599bf856b2d57fc4b490b633a57f2857846325da67dde3054e5429a6b",
+      "facts": "10197652cebdcc32a9d53d7134c4db6012b6caa2a07e509884a5cccbfceef2ff"
+    },
+    "w2-rating-ceiling": {
+      "documentCount": 48,
+      "distinctSubtypes": 34,
+      "fileCount": 51,
+      "tree": "5263f222518ee6898ca0f3190ddbb8d5d160ee4fa3dcc0a7b5f3c0d508f89863",
+      "documents": "02634cd67dbc94bd3ac48948a1630fe7769f19f516ff19fd1880e3f5db16f6ea",
+      "manifest": "342ac8f993ff3b241ffd6bcf7b23979a6c5d1702526a2a4e0ede0c52c00ca8f1",
+      "seed": "d65a5b480a911847ef80030b99b53904ece8685d9638c84ca80710dd784c565c",
+      "facts": "9d3badd20d9c6ef25c1917428476cfcad6f2b76f404a5e742dbd6c4afe776524"
+    },
+    "w2-rating-dfec": {
+      "documentCount": 48,
+      "distinctSubtypes": 28,
+      "fileCount": 51,
+      "tree": "83f19ddcca5a3077b45be413ac571d2bf5b4694783ea19aec55977ebea36c5c3",
+      "documents": "2d0dcaa478a42a1fa36ca058b12487c731b46885b1abe49f74e1865bbb9ba8f7",
+      "manifest": "643f1082cbd9719e25aa2734cfa258c6f6c455ba8ce19bc044bc70d6cca3770a",
+      "seed": "7af508d0c20841613f7de6dcce46d73204b06fe4c4796892694c47e667f085bb",
+      "facts": "ee6069862ef9047068f40a45e56208a7904a725ce0fb67c5bd302111f61bf3e0"
+    },
+    "w2-rating-election": {
+      "documentCount": 48,
+      "distinctSubtypes": 32,
+      "fileCount": 51,
+      "tree": "b788b6b3c8ccc70bc6f41f6c9591df07d0f3ed377962b934ea3b7abfdea65bdf",
+      "documents": "ffe7cc16cdbffe691e2e04431ed398b1446d12411e696cd6e927a80e112044b5",
+      "manifest": "edf45cecada317545599b25a35fc4bdf8668388c5930e4d548741a1771a797dc",
+      "seed": "bc2f43258973e60dcb40127f8d0540db9497843b59b0a7758afd22b4c218ad44",
+      "facts": "825dfca02f43de81f75f92617fd9cbfd3f83ed27560ff04a27646b0f49986073"
+    },
+    "w2-rating-paired": {
+      "documentCount": 48,
+      "distinctSubtypes": 33,
+      "fileCount": 51,
+      "tree": "d6b5e7a86a7864462777c616ddfbf835382c781722dc5d012b2e2c7816e2d2cc",
+      "documents": "164d00a8ddf703131d18e3e68fa80acf30839e674e5866cab70f87d05b7bed90",
+      "manifest": "d1075e1f3eba2afe790efbed0b69f209931573ae582201c9ff81972cfc0cf7b6",
+      "seed": "d47a84e9b14d94c85e3487fc5b543e6b8dcf1a660bdafeec51345df5dcfc55b9",
+      "facts": "147230c9742a707c32e21a5ed5fc2108d513be4464568acdbd17cab83a2713e2"
+    },
+    "w2-reserve-development": {
+      "documentCount": 48,
+      "distinctSubtypes": 30,
+      "fileCount": 51,
+      "tree": "c61c25763352a65a7ffd7e54219633d40c03bba32f28740abaa4cd974eb25024",
+      "documents": "850250fa8af37eeda7136b0fc270183e2cac53b5f6a16f13086bcc2d32f70e79",
+      "manifest": "b67d104b5064a15413bfb7c4ddc659b2c992785ab790467548dd3db3800a5dbb",
+      "seed": "d513e6214d2ffde4580813d9221b420b6f0970a0de063c249cfbdb6a04fa6196",
+      "facts": "200aab82c26584d4ef9b106d8471f0c32ebb2fd9dadc9b6bb56a0cabf430fba1"
+    },
+    "w2-reserve-neighbor": {
+      "documentCount": 48,
+      "distinctSubtypes": 31,
+      "fileCount": 51,
+      "tree": "9dbc32f75778c11a39744e2a40cb3f3092943e5307067ca5193695a5ef0205b2",
+      "documents": "e73cd4f19b55908d9c20e98103e4547664226f9e9522169a08696900fc7703bf",
+      "manifest": "3493cd2c40773d44b0957a8fc00e97435682813f633a8b74c803a4781096e034",
+      "seed": "b2ac71dbc85b8948277ae829d4201e83850e93e3dc620d9e513a2ae5997e1bda",
+      "facts": "c847ca2413fd51535927334dd62137caef384db88fea9fc40d5b34f69488cf38"
+    },
+    "w2-reserve-reassessment": {
+      "documentCount": 48,
+      "distinctSubtypes": 26,
+      "fileCount": 51,
+      "tree": "a00c6d313e3ae87c2b97c012709ea510f6f3926a2caf77fbdc36130354c6ea50",
+      "documents": "c98fabfbdd910406d44340b0f377465f2cc677708a5e5590cc0e2519d3ab69b1",
+      "manifest": "81ef04ab2efaed4b391fb1f602587577e493e35a2346ac2cbf375e00d44ccf68",
+      "seed": "98c03e70da83c2c47a5db09cc1800b7cba69aff722b5b3451ac437d8c1ecc9b8",
+      "facts": "b9f68cfe257f7e863b61fda37c43f6f748ed811735c98d19d18edef6b31adead"
+    },
+    "w2-reserve-sequence": {
+      "documentCount": 48,
+      "distinctSubtypes": 28,
+      "fileCount": 51,
+      "tree": "a25d947cba10b6399aaa8c51620ae6ed7783a246f917f92bb04f81d5e1742965",
+      "documents": "a5baf92d52e5f4d37a5441b93411d0c154de031195c643f6258e7f392b293668",
+      "manifest": "b614d405bc29a8393647f3ee0c7ab197d4118936130ed2789a4c826cdf8c93d1",
+      "seed": "6bf225db6e834a14794504cca83b33fd914ff48abf0d7272bbde63bb3be64268",
+      "facts": "3b05a38daedc5626d52ebe6671b355400ab9af792589a387c5ddb7eee43606d8"
+    }
+  }
+}

@@ -5172,3 +5172,15 @@ test = 'tests/test_ajc64_item0b.py::TestPinTerminatesInBytes::test_the_derivatio
 find = 'PDFTOTEXT_ARGS: tuple[str, ...] = ("-layout",)'
 replace = 'PDFTOTEXT_ARGS: tuple[str, ...] = ()'
 note = 'M5-R42(a), round-1 finding F5. Drops -layout from the pinned derivation. The default reading-order mode collapses the column structure the parity oracles read cell positions out of, producing 3e95899b… instead of 827d6644…. Proves the recorded arguments are part of the contract rather than decoration, and that the reproducibility check actually re-runs the derivation.'
+# ---------------------------------------------------------------------------
+# AJC-64 / M5 — item 1, baseline instruments (M5-R27.3, M5-R30/M5-R30a).
+# ---------------------------------------------------------------------------
+
+[[mutant]]
+id = 'm24-23'
+title = 'MONEY-V1_3-GLOBAL-UPGRADE'
+file = 'src/wc_caseload_engine/truth_manifest.py'
+test = 'tests/test_ajc64_item1.py::test_r27_money_channel_constants_are_literal'
+find = 'MONEY_CHANNEL_VERSION = "1.1.0"'
+replace = 'MONEY_CHANNEL_VERSION = "1.2.0"'
+note = 'M5-R27.3. MONEY_CHANNEL_VERSION is the DEFAULT WRITER version, never the maximum supported one — a "helpful" bump of this constant is the single edit that would silently upgrade every existing corpus to a channel shape it never opted into. Guarded by literal equality, not a range or membership check.'
