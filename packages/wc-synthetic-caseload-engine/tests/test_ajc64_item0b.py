@@ -77,7 +77,7 @@ class TestPinTerminatesInBytes:
         assert hashlib.sha256(payload).hexdigest() == digest
 
     def test_every_artifact_the_oracles_read_is_pinned(self) -> None:
-        """m24-154 — completeness, which the parametrized check cannot give.
+        """m24-204 — completeness, which the parametrized check cannot give.
 
         The per-artifact check above is parametrized *over* the pin set, so
         dropping an entry deletes the case that would have caught it: the guard

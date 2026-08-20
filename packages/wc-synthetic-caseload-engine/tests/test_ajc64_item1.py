@@ -82,16 +82,14 @@ GOLDEN_NAMES = (
 )
 
 # ---------------------------------------------------------------------------
-# PROVISIONAL S2 capture (SEQUENCING CAVEAT, binding).
+# S2 capture — FINAL (sequencing caveat DISCHARGED).
 #
-# A concurrent fix round (sol round-1 findings F1-F5) is landing on
-# ajc-64-m5-lane-a and WILL move goldens again (F2 changes rendered
-# settlement prose). The S2 captured here is therefore PROVISIONAL: it is
-# the post-0a/0c/0d/0e baseline as the tree stands at authoring time, NOT
-# the final post-remediation baseline M5-R30 describes. Re-capture (re-run
-# this module's fixture-freeze step and re-record the sha256 table below)
-# is REQUIRED after the F1-F5 fix commits merge to lane A. The orchestrator
-# owns triggering that re-capture.
+# This capture was originally provisional: sol's round-1 findings F1-F5 were
+# landing concurrently on ajc-64-m5-lane-a and F2 was known to move rendered
+# settlement prose. Those fix commits merged (ccd4f12) and the capture was
+# re-taken against the resulting tree on 08-19, so the table below is the
+# post-remediation baseline M5-R30 describes rather than a mid-flight
+# snapshot. `money-showcase` carries F2's re-recorded digest.
 # ---------------------------------------------------------------------------
 S2_IS_PROVISIONAL = False  # re-captured 08-19 after F1-F5 fix commits (ccd4f12) merged to lane A
 
@@ -149,9 +147,9 @@ def test_r30_s0_fixture_mirrors_the_ledger_sha256(name: str) -> None:
 @pytest.mark.parametrize("name", GOLDEN_NAMES)
 def test_r30_live_goldens_are_byte_identical_to_the_s2_capture(name: str) -> None:
     """S2 is a faithful capture: the live committed goldens equal it exactly,
-    byte for byte, right now. (This is expected to go red once the F1-F5 fix
-    round lands on lane A and moves goldens again — the PROVISIONAL-S2
-    sequencing caveat this module documents at S2_IS_PROVISIONAL.)"""
+    byte for byte. The F1-F5 fix round has landed and the capture was re-taken
+    against it, so this is no longer expected to go red on that account — a
+    failure here now means an unrecorded golden movement."""
     live = (GOLDEN_DIR / f"{name}.json").read_bytes()
     captured = (S2_FIXTURE_DIR / f"{name}.json").read_bytes()
     assert live == captured

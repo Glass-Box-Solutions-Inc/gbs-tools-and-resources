@@ -24,11 +24,18 @@ So the oracles here are about bytes and refusals rather than about content:
   Python's ``ast`` preserves docstrings and discards comments, so the comment
   half runs on ``tokenize`` (``m24-128`` / ``m24-135``, one per half).
 
-**Two escalations are recorded as tests rather than as prose**, so they cannot
-be forgotten: the Kopping opinion is **not pinned** (no retrievable public
-source), and the ``regulatory_sections`` corroborating snapshot has **not been
-obtained** (no database access from this package). Both are asserted to fail
-closed. When either lands, its test is the thing that changes.
+**One escalation remains, recorded as a test rather than as prose** so it
+cannot be forgotten: the Kopping opinion is **not pinned**, because no
+retrievable public source was found (CourtListener answered 401 behind a WAF
+challenge; Justia and FindLaw 403; Casetext 410). It is asserted to fail
+closed, and when it lands, its test is the thing that changes.
+
+The second escalation is **discharged**: the ``regulatory_sections``
+corroborating snapshots WERE obtained from the wc-kb Postgres instance and are
+vendored under ``tests/fixtures/regulatory-sections/`` with provenance. The
+cross-check is now a full-text exact comparison against those independently
+retrieved rows, in both directions, against a literal canonical digest pinned
+in this module.
 
 @Developed & Documented by Glass Box Solutions, Inc. using human ingenuity and modern technology
 """
@@ -42,7 +49,7 @@ import io
 import json
 import tokenize
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -328,20 +335,87 @@ class TestRegulatorySectionsCorroboration:
         # Independent store: the raw bytes differ from the pinned artifact's.
         assert raw != (statutes.statutes_dir() / f"lc-{section}.txt").read_bytes()
 
+    #: sha256 of the CANONICAL form of each section — the literal digest, held
+    #: in the consuming test rather than read from anywhere.
+    #:
+    #: Round-2 finding R2-4. The previous version hashed the raw snapshot and
+    #: compared it to a digest read out of the adjacent ``provenance.json``,
+    #: which is a file-integrity check on the fixture directory: edit both the
+    #: text and its neighbouring digest and it stays green. These constants sit
+    #: in the test, so BOTH independently retrieved sources — the pinned
+    #: leginfo artifact and the KB ``regulatory_sections`` row — must reduce,
+    #: under identical canonicalization, to one value fixed here in advance.
+    #: Nothing in the fixture directory can move it.
+    CANONICAL_SHA256: ClassVar[dict[str, str]] = {
+        "4663": "9ab13ad097f7e5b3f1460fc8420a33645e26f7808224a1d82d238301dfaa8b15",
+        "4664": "9ff019d5512b78a9eb7b63728f54d9839b889d788123c17f765798b9ffd77927",
+    }
+    CANONICAL_CHARS: ClassVar[dict[str, int]] = {"4663": 1793, "4664": 1461}
+
+    @staticmethod
+    def _canonical(text: str, section: str) -> str:
+        """The one canonicalization both sources are put through."""
+        return statutes.strip_section_heading(
+            canonicalize_statute_text(text), section
+        )
+
     @pytest.mark.parametrize("section", ["4663", "4664"])
     def test_the_real_row_corroborates_the_pinned_text_exactly(
         self, section: str
     ) -> None:
-        """Full-text exact equality, both directions, on the real data."""
+        """Full-text exact equality, both directions, on the real data.
+
+        Each source is reduced separately and hashed separately against the
+        literal digest above, so a failure names WHICH source moved instead of
+        only reporting that two things stopped agreeing.
+        """
         corroborate_against_snapshot(section, self.SNAPSHOT_DIR)
-        pinned = statutes.strip_section_heading(
-            canonicalize_statute_text(load_section(section)), section
+
+        expected = self.CANONICAL_SHA256[section]
+        pinned = self._canonical(load_section(section), section)
+        row = self._canonical(self._snapshot(section), section)
+
+        pinned_digest = hashlib.sha256(pinned.encode("utf-8")).hexdigest()
+        row_digest = hashlib.sha256(row.encode("utf-8")).hexdigest()
+        assert pinned_digest == expected, (
+            f"§{section}: the pinned leginfo artifact no longer canonicalizes "
+            f"to the digest recorded in this test ({pinned_digest} != {expected})"
         )
-        row = statutes.strip_section_heading(
-            canonicalize_statute_text(self._snapshot(section)), section
+        assert row_digest == expected, (
+            f"§{section}: the regulatory_sections row no longer canonicalizes "
+            f"to the digest recorded in this test ({row_digest} != {expected})"
         )
+        # Equality now follows from both digests, but it is asserted anyway:
+        # the digests could only collide by sha256 collision, and stating the
+        # contract directly costs nothing.
         assert row == pinned
-        assert len(pinned) == {"4663": 1793, "4664": 1461}[section]
+        assert len(pinned) == self.CANONICAL_CHARS[section]
+
+    @pytest.mark.parametrize("section", ["4663", "4664"])
+    def test_the_canonical_digest_is_not_derivable_from_the_fixture_dir(
+        self, section: str
+    ) -> None:
+        """m24-207: the digest must be pinned HERE, not read from provenance.
+
+        The point of R2-4 is that the expectation cannot live beside the data
+        it judges. This asserts the separation directly: the canonical digest
+        appears nowhere in the fixture directory, so no edit inside that
+        directory can supply it.
+        """
+        expected = self.CANONICAL_SHA256[section]
+        for path in sorted(self.SNAPSHOT_DIR.iterdir()):
+            body = path.read_bytes()
+            assert expected.encode("ascii") not in body, (
+                f"the canonical digest for §{section} is recorded inside "
+                f"{path.name}; the test's expectation must not be readable "
+                "from the fixture it checks"
+            )
+        # And it is genuinely the canonical digest, not the raw one — the raw
+        # snapshot hashes to something else entirely.
+        raw = (
+            self.SNAPSHOT_DIR / f"regulatory-sections-{section}.txt"
+        ).read_bytes()
+        assert hashlib.sha256(raw).hexdigest() != expected
 
     def test_an_absent_snapshot_fails_closed(self, tmp_path: Path) -> None:
         for section in statutes.CORROBORATED_SECTIONS:
