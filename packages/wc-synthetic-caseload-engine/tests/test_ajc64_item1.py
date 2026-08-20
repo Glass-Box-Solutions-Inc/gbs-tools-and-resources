@@ -93,7 +93,7 @@ GOLDEN_NAMES = (
 # is REQUIRED after the F1-F5 fix commits merge to lane A. The orchestrator
 # owns triggering that re-capture.
 # ---------------------------------------------------------------------------
-S2_IS_PROVISIONAL = True
+S2_IS_PROVISIONAL = False  # re-captured 08-19 after F1-F5 fix commits (ccd4f12) merged to lane A
 
 # sha256 of each mirrored tests/fixtures/ajc64_item1_s0/*.json, recorded at
 # authoring time against the ledger source
@@ -115,7 +115,7 @@ S2_SHA256 = {
     "demo-caseload": "f56160aa08dd6e6660a593b4d2e463c6a630c24277f5a6a6135b48ac41dd0e66",
     "doctrine-showcase": "11c0b95f5f4659112eaff4a04acc6eba96b6c63647f99d270c1e83dcaeb03df9",
     "medical-story-showcase": "60dff418398a4849eb3023f418e2deecc0d04f03ee8ed5b738309886dc2ed639",
-    "money-showcase": "866022279cb609fda48b84c6641a1b7e44eb90e189d7780410d9d3fad02b2b78",
+    "money-showcase": "540571c2689d3fa031aaf4065660439f39a3dab2d3cc20e5cccca4c7953e633a",
     "money-w2-showcase": "20bd48bbf99748beb87c2dc3f93fde2da61c352da07481122bfd4327c982d6c6",
     "personas-showcase": "f89280b194ef08877b81a9876e38c9752e8460ad3cd5d7441cd4e156c4dd8275",
 }
