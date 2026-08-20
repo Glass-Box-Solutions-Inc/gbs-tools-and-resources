@@ -300,13 +300,20 @@ oracle belongs to ``tests/test_money_w2_baseline.py``.
 """
 
 M5_ITEM_0D_MONEY_SHOWCASE_CONTROLLED_SHA256 = (
-    "866022279cb609fda48b84c6641a1b7e44eb90e189d7780410d9d3fad02b2b78"
+    "540571c2689d3fa031aaf4065660439f39a3dab2d3cc20e5cccca4c7953e633a"
 )
 """AJC-64 item 0d's successor to R109's recording (M5-R30).
 
-Item 0d labels the three invented settlement deduction rates
+Item 0d labels the invented settlement deduction rates
 ``ENGINE_POLICY_UNCONFIRMED`` on the page, which moves rendered bytes on every
-compromise and release in this corpus. M5-R30 confines golden movement to items
+compromise and release in this corpus. Review round 1 (finding F2) extended the
+labelling from the settlement *tables* to the duplicate figures restated in the
+signed documents' **prose**, which moves the same four cases again; this digest
+supersedes round 1's ``866022279cb6…d02b2b78`` for that reason. The re-record
+is re-proved, not carried over: the drift report named ``tree``, ``documents``,
+``manifest`` and ``corpusTree`` on capped-executive, irregular-earner,
+neglected-file and steady-earner, and named ``facts`` and ``seed`` on none of
+them. M5-R30 confines golden movement to items
 0a, 0c and 0d, each under its own allowlist, and this is 0d's.
 
 **A named successor rather than a loosened guard.** The point of this test is

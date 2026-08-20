@@ -65,6 +65,7 @@ __all__ = [
     "SECTION_4663_AMENDING_ACT_SHA256",
     "SECTION_4663_MODELLED_SUBDIVISIONS",
     "SECTION_4663_STABILITY_LIMITATION",
+    "SECTION_SIGIL",
     "STATUTE_PINS",
     "CasePin",
     "StatutePin",
@@ -76,6 +77,7 @@ __all__ = [
     "section_4663_amending_act_text",
     "section_text_for_doi",
     "statutes_dir",
+    "strip_section_heading",
     "subdivision_text",
 ]
 
@@ -110,6 +112,34 @@ def canonicalize_statute_text(raw: str) -> str:
     text = html.unescape(text)
     text = unicodedata.normalize("NFC", text)
     text = _WHITESPACE.sub(" ", text)
+    return text.strip()
+
+
+SECTION_SIGIL = "§"
+
+def strip_section_heading(text: str, section: str) -> str:
+    """Drop the leading ``§NNNN.`` / ``NNNN.`` heading token, and nothing else.
+
+    The two sources format the section's own heading differently: the
+    ``regulatory_sections`` row writes ``§4663.`` where the leginfo artifact
+    writes ``4663.``. That is a difference in how each store labels the row,
+    not a difference in the law.
+
+    **Why this is not a widened canonicalizer.** M5-R47b forbids relaxing
+    :func:`canonicalize_statute_text` until a comparison passes, and adding a
+    "strip § characters" rule there would be exactly that — it would silently
+    erase a sigil appearing anywhere in the body, including inside a
+    cross-reference, and no test would notice. This function instead removes
+    **one specific token at position zero**, matched against the section number
+    it was asked about. A sigil anywhere else survives, and that is probed.
+    """
+    head = text
+    if head.startswith(SECTION_SIGIL):
+        head = head[len(SECTION_SIGIL) :].lstrip()
+    prefix = f"{section}."
+    if head.startswith(prefix):
+        return head[len(prefix) :].strip()
+    # No recognisable heading: return the text untouched rather than guessing.
     return text.strip()
 
 
@@ -399,16 +429,34 @@ def corroborate_against_snapshot(section: str, snapshot_dir: Path) -> None:
             f"{REGULATORY_SECTIONS_SNAPSHOT_ABSENT}: no corroborating snapshot "
             f"for section {section} at {path}"
         )
-    corroborant = canonicalize_statute_text(path.read_text(encoding="utf-8"))
-    pinned = canonicalize_statute_text(load_section(section))
-    # The pinned artifact carries the section number and the enacting-history
-    # parenthetical; the database row holds the body. Compare on the body.
-    body = pinned.split(" ", 1)[1] if pinned.startswith(f"{section}.") else pinned
-    if corroborant not in body and body not in corroborant:
+    corroborant = strip_section_heading(
+        canonicalize_statute_text(path.read_text(encoding="utf-8")), section
+    )
+    pinned = strip_section_heading(
+        canonicalize_statute_text(load_section(section)), section
+    )
+    # EXACT equality on the FULL remaining text, in both directions. The
+    # previous form accepted substring containment either way, which is not a
+    # comparison at all: a corroborant holding one sentence of the section
+    # passed, and so did one holding the section plus a paragraph of anything
+    # else. Truncation and appended text are the two failure modes a
+    # containment test is structurally blind to, and both are probed.
+    if corroborant != pinned:
         raise StatutePinError(
             f"{REGULATORY_SECTIONS_MISMATCH}: section {section} — leginfo and "
-            "regulatory_sections disagree after canonicalization"
+            "regulatory_sections disagree after canonicalization "
+            f"(leginfo {len(pinned)} chars, regulatory_sections "
+            f"{len(corroborant)} chars; first divergence at index "
+            f"{_first_divergence(pinned, corroborant)})"
         )
+
+
+def _first_divergence(left: str, right: str) -> int:
+    """Index of the first differing character, for a readable failure."""
+    for index, (a, b) in enumerate(zip(left, right, strict=False)):
+        if a != b:
+            return index
+    return min(len(left), len(right))
 
 
 def load_section(section: str) -> str:

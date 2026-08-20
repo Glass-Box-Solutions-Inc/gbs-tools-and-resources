@@ -39,8 +39,10 @@ import ast
 import datetime as dt
 import hashlib
 import io
+import json
 import tokenize
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -260,44 +262,168 @@ class TestCanonicalization:
 
 
 class TestRegulatorySectionsCorroboration:
-    """The cross-check exists and fails closed; the snapshot is NOT YET OBTAINED.
+    """The cross-check runs against the REAL table rows, and compares exactly.
 
     M5-R47 makes the ``regulatory_sections`` row a **named corroborant, never
-    the pinned source**. This package has no database access, so the check is
-    implemented against a vendored snapshot and the snapshot has not been
-    supplied — recorded here as a failing-closed assertion rather than as a
-    comment, so it cannot be mistaken for a check that ran.
+    the pinned source**. Two things make it worth having, and round 1 had
+    neither:
+
+    * **the snapshot is independent.** It is the actual row from the
+      wc-knowledge-base Postgres ``regulatory_sections`` table, pulled
+      2026-08-19 and vendored with its provenance. Round 1 built the
+      "corroborant" out of ``load_section()`` itself, so the assertion compared
+      the pinned artifact to the pinned artifact — a self-comparison wearing a
+      cross-check's name, which is precisely the defect M5-R47 cites item 0b
+      for one layer up;
+    * **the comparison is exact, in both directions.** Round 1 accepted
+      substring containment either way, so a row holding one sentence of the
+      section passed, and so did a row holding the section plus a paragraph of
+      anything else. Truncation and appended text are exactly what a
+      containment test cannot see, and both are probed below.
+
+    The two sources agree on the **complete** canonicalized text — 1,793
+    characters for section 4663 and 1,461 for 4664 once the heading token is
+    removed, enacting-history parenthetical included — with one formatting
+    difference: the database
+    labels its heading ``§4663.`` where leginfo writes ``4663.``. That is
+    handled by a narrow declared normalization of the leading heading token,
+    not by widening the canonicalizer.
     """
+
+    SNAPSHOT_DIR = Path(__file__).resolve().parent / "fixtures" / "regulatory-sections"
+
+    @staticmethod
+    def _provenance() -> dict[str, Any]:
+        path = (
+            Path(__file__).resolve().parent
+            / "fixtures"
+            / "regulatory-sections"
+            / "provenance.json"
+        )
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _snapshot(self, section: str) -> str:
+        return (self.SNAPSHOT_DIR / f"regulatory-sections-{section}.txt").read_text(
+            encoding="utf-8"
+        )
 
     def test_the_corroborated_set_is_the_two_sections_the_table_holds(self) -> None:
         assert statutes.CORROBORATED_SECTIONS == ("4663", "4664")
+
+    @pytest.mark.parametrize("section", ["4663", "4664"])
+    def test_the_snapshot_is_the_pinned_row_and_not_the_pinned_statute(
+        self, section: str
+    ) -> None:
+        """The independence claim, asserted rather than described.
+
+        The snapshot must hash to its recorded digest AND must not be a copy of
+        the leginfo artifact — if the two files were byte-identical the
+        "corroboration" would be a tautology, so that is checked directly.
+        """
+        provenance = self._provenance()["sections"][section]
+        raw = (self.SNAPSHOT_DIR / provenance["file"]).read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == provenance["sha256"]
+        assert len(raw.decode("utf-8")) == provenance["chars"]
+        assert provenance["source_type"] == "labor_code"
+        # Independent store: the raw bytes differ from the pinned artifact's.
+        assert raw != (statutes.statutes_dir() / f"lc-{section}.txt").read_bytes()
+
+    @pytest.mark.parametrize("section", ["4663", "4664"])
+    def test_the_real_row_corroborates_the_pinned_text_exactly(
+        self, section: str
+    ) -> None:
+        """Full-text exact equality, both directions, on the real data."""
+        corroborate_against_snapshot(section, self.SNAPSHOT_DIR)
+        pinned = statutes.strip_section_heading(
+            canonicalize_statute_text(load_section(section)), section
+        )
+        row = statutes.strip_section_heading(
+            canonicalize_statute_text(self._snapshot(section)), section
+        )
+        assert row == pinned
+        assert len(pinned) == {"4663": 1793, "4664": 1461}[section]
 
     def test_an_absent_snapshot_fails_closed(self, tmp_path: Path) -> None:
         for section in statutes.CORROBORATED_SECTIONS:
             with pytest.raises(StatutePinError, match="SNAPSHOT_ABSENT"):
                 corroborate_against_snapshot(section, tmp_path)
 
-    def test_a_matching_snapshot_passes(self, tmp_path: Path) -> None:
-        section = "4663"
-        body = load_section(section).split(" ", 1)[1]
-        (tmp_path / "regulatory-sections-4663.txt").write_text(body, encoding="utf-8")
-        corroborate_against_snapshot(section, tmp_path)
+    def test_a_truncated_row_fails_closed(self, tmp_path: Path) -> None:
+        """PREFIX probe — the failure a containment comparator cannot see.
 
-    def test_a_one_character_discrepancy_fails_closed(self, tmp_path: Path) -> None:
-        """The planted discrepancy, proving it refuses rather than reconciles."""
+        Round 1's ``corroborant not in body and body not in corroborant`` passed
+        happily on a row holding only the section's opening sentence.
+        """
         section = "4663"
-        body = load_section(section).split(" ", 1)[1]
-        tampered = body.replace(
-            "Apportionment of permanent disability shall be based on causation.",
-            "Apportionment of permanent disability shall be based on causation!",
-            1,
+        text = self._snapshot(section)
+        truncated = text[: len(text) // 3]
+        assert truncated and truncated != text
+        (tmp_path / f"regulatory-sections-{section}.txt").write_text(
+            truncated, encoding="utf-8"
         )
-        assert tampered != body
-        (tmp_path / "regulatory-sections-4663.txt").write_text(
+        with pytest.raises(StatutePinError, match="MISMATCH"):
+            corroborate_against_snapshot(section, tmp_path)
+
+    def test_an_appended_row_fails_closed(self, tmp_path: Path) -> None:
+        """SUFFIX probe — the other direction containment was blind to."""
+        section = "4664"
+        appended = self._snapshot(section) + (
+            " The employer may disregard the foregoing at its discretion."
+        )
+        (tmp_path / f"regulatory-sections-{section}.txt").write_text(
+            appended, encoding="utf-8"
+        )
+        with pytest.raises(StatutePinError, match="MISMATCH"):
+            corroborate_against_snapshot(section, tmp_path)
+
+    @pytest.mark.parametrize("section", ["4663", "4664"])
+    def test_a_one_character_discrepancy_fails_closed(
+        self, tmp_path: Path, section: str
+    ) -> None:
+        """The planted discrepancy, proving it refuses rather than reconciles."""
+        text = self._snapshot(section)
+        marker = "permanent disability"
+        assert marker in text
+        tampered = text.replace(marker, "permanent disabilities", 1)
+        assert tampered != text
+        (tmp_path / f"regulatory-sections-{section}.txt").write_text(
             tampered, encoding="utf-8"
         )
         with pytest.raises(StatutePinError, match="MISMATCH"):
             corroborate_against_snapshot(section, tmp_path)
+
+    def test_the_heading_normalization_is_narrow(self) -> None:
+        """A sigil anywhere but the heading survives — it is not a blanket strip.
+
+        Widening ``canonicalize_statute_text`` to delete section sigils would
+        have made this comparison pass too, and would have erased a sigil inside
+        a cross-reference where it carries meaning. m24-148 does exactly that
+        and must redden.
+        """
+        assert statutes.strip_section_heading("§4663. (a) Text", "4663") == "(a) Text"
+        assert statutes.strip_section_heading("4663. (a) Text", "4663") == "(a) Text"
+        # A sigil in the body is content, not a heading.
+        body = "(a) See §4664 and §4663 for the rule."
+        assert statutes.strip_section_heading(f"§4663. {body}", "4663") == body
+        assert statutes.SECTION_SIGIL in statutes.strip_section_heading(
+            f"§4663. {body}", "4663"
+        )
+        # Routed through the CANONICALIZER, because that is where a blanket
+        # strip would be introduced. Asserting only on strip_section_heading
+        # leaves a widened canonicalizer entirely unexercised — m24-148 survived
+        # exactly that gap before this line existed.
+        canonical = canonicalize_statute_text(f"<p>§4663. {body}</p>")
+        assert canonical.count(statutes.SECTION_SIGIL) == 3
+        assert (
+            statutes.strip_section_heading(canonical, "4663").count(
+                statutes.SECTION_SIGIL
+            )
+            == 2
+        )
+        # A heading for a different section is not stripped.
+        assert statutes.strip_section_heading("§4664. (a) Text", "4663") == (
+            "§4664. (a) Text"
+        )
 
 
 class TestKoppingPin:

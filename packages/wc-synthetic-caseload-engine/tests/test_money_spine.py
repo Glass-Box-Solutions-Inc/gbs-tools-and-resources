@@ -3043,7 +3043,9 @@ class TestTheDocumentsCarryTheNumbers:
             # The substrate truncates `award * 0.15` to an integer, so an award
             # of $5,225 printed "$783" for a true $783.75 — a sentence the page
             # contradicts, and one this round's split had made reachable.
-            fee = amount(r"which equals \$([\d,]+\.\d\d)")
+            # Labelled in prose too (F2): the award's stipulation 6 states the
+            # same invented rate the table does.
+            fee = amount(r"which equals \$([\d,]+\.\d\d) " + LABEL_RE)
             assert fee == (pd_gross * Decimal("0.15")).quantize(Decimal("0.01")), (
                 f"gross {gross}: the award prints a 15% fee of {fee} on {pd_gross}, "
                 f"which is {pd_gross * Decimal('0.15')}"
@@ -3125,14 +3127,23 @@ class TestTheDocumentsCarryTheNumbers:
             # round-9 correction, matched on the substrate's bold wrapper, fixed
             # the award and missed the release for two rounds. The release is
             # the document that gets signed.
-            prose_fee = amount(r"in the amount of \$([\d,]+\.\d\d) \(15% of gross settlement\)")
+            # The label is REQUIRED here, not tolerated (round-1 finding F2):
+            # this is the signed operative term, and an unlabelled invented rate
+            # in the paragraph the parties execute is worse than one in a
+            # summary table.
+            prose_fee = amount(
+                r"in the amount of \$([\d,]+\.\d\d) " + LABEL_RE
+                + r" \(15% of gross settlement\)"
+            )
             assert prose_fee == fee, (
                 f"gross {gross}: the release's table says {fee} and its section 9 says {prose_fee}"
             )
             # Costs are whole dollars by construction, so section 9 prints them
             # without cents where the table pads them. Same figure, and the
             # assertion is on the figure.
-            prose_costs = amount(r"plus costs of \$([\d,]+(?:\.\d\d)?)")
+            prose_costs = amount(
+                r"plus costs of \$([\d,]+(?:\.\d\d)?) " + LABEL_RE
+            )
             assert prose_costs == costs, (
                 f"gross {gross}: the release's table says costs of {costs} and "
                 f"its section 9 says {prose_costs}"

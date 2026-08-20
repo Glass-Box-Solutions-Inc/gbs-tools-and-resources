@@ -33,7 +33,9 @@ from __future__ import annotations
 
 import ast
 import copy
+import hashlib
 import json
+import re
 from collections import Counter
 from decimal import Decimal
 from pathlib import Path
@@ -41,6 +43,7 @@ from typing import Any
 
 import pytest
 
+from conftest import requires_substrate
 from wc_caseload_engine import fact_templates, seeds
 from wc_caseload_engine.fact_templates import (
     ENGINE_POLICY_UNCONFIRMED_LABEL,
@@ -530,36 +533,468 @@ class TestLabelPlacement:
 
 
 class TestDrawConsistencyWeeks:
-    """The item-0d test/ledger-only diagnostic (F3-round-11).
+    """The item-0d test/ledger-only diagnostic (F3-round-11), as a FORMULA guard.
 
-    `draw_consistency_weeks` is computed here and recorded in the evidence
-    ledger. It is **not** a shipped field: it reaches no model, no manifest, no
-    document surface and no export, and the outward-boundary probe below asserts
-    that by name rather than by an absence sweep that would pass on a typo.
+    Round 1 repointed ``m24-147`` at an outward-leak probe on the grounds that
+    the reimbursement clamp arm was unreachable. That analysis was about the
+    wrong function: the clamp lives in
+    ``_reimbursement_nearest_five_percent``, and ``draw_consistency_weeks`` is a
+    reading of the **derived-gross** branch in ``money.py``, which has no clamp
+    in it. Sol's finding stands and the repoint is withdrawn — the contractual
+    formula is guarded here, and the leak probe keeps its own separate guard and
+    its own mutant below.
+
+    The contract, read from ``money.py:1785-1803``::
+
+        weeks = rng.randint(20, 120)                        # money:settlement
+        gross = money(pd_weekly_rate * weeks + td_total)    # anchored to the file
+        gross = money(max(_whole_dollars(gross), SETTLEMENT_GROSS_MINIMUM))
+
+    so the weeks the settlement was drawn against are recoverable from the
+    published figures. The recovery is stated **independently** here rather than
+    by calling the derivation, which is the whole point of a formula guard: an
+    oracle that calls the function it checks agrees with any arithmetic that
+    function happens to contain.
+
+    The whole-dollar rounding is why the recovery is a bounded comparison rather
+    than an exact division — ``(gross - td_total) / pd_weekly_rate`` lands within
+    one dollar's worth of weeks of the drawn value, and the naive form that
+    drops ``td_total`` misses by the entire temporary-disability total, which is
+    thousands of dollars. The two are never confusable, and ``m24-147`` proves
+    it.
     """
 
+    CASE_IDS = ("draw-a", "draw-b", "draw-c", "draw-d")
+
     @staticmethod
-    def draw_consistency_weeks(gross: int) -> int:
-        """Whole weeks the labelled deductions would cover at the award rate.
+    def _derived_case(case_id: str) -> tuple[Any, Any]:
+        """A case whose gross is DERIVED — the branch this formula describes."""
+        from test_money_spine import WAGES, _seed_body
+        from wc_caseload_engine.lifecycle_bridge import build_timeline
+        from wc_caseload_engine.money import derive_money_facts
+        from wc_caseload_engine.seeds import parse_case_seed
 
-        A derived diagnostic over figures this item does not change, so it is a
-        reading of the deduction shape rather than a new quantity in it.
+        body = _seed_body(
+            {"wages": WAGES, "benefits": {"td_weeks": 12}},
+            case_id=case_id,
+            lifecycle={
+                "target_stage": "resolved",
+                "eval_type": "none",
+                # No settlement.gross_amount: that is what selects the derived
+                # branch. A stated gross would make this fixture vacuous.
+                "resolution": {"type": "c_and_r"},
+            },
+        )
+        seed = parse_case_seed(body)
+        return seed, derive_money_facts(seed, build_timeline(seed), "ordinary")
+
+    @staticmethod
+    def draw_consistency_weeks(gross: Decimal, td_total: Decimal, pd_rate: Decimal) -> Decimal:
+        """Recover the drawn weeks from the published figures.
+
+        Restated from the derivation by reading it, never by calling it.
         """
-        figures = reference_cr_deductions(gross, wants_msa=True)
-        deducted = figures["fee"] + figures["costs"] + figures["set_aside"]
-        return int(deducted // Decimal(290))
+        return (Decimal(gross) - Decimal(td_total)) / Decimal(pd_rate)
 
-    @pytest.mark.parametrize("gross", [g for g in GROSS_VALUES if g >= 1_000])
-    def test_the_derived_branch_is_positive_and_monotone(self, gross: int) -> None:
-        """The positive fixture: the branch computes, not merely returns zero."""
-        weeks = self.draw_consistency_weeks(gross)
-        assert weeks >= 1
-        assert self.draw_consistency_weeks(gross * 2) >= weeks
+    @pytest.mark.parametrize("case_id", CASE_IDS)
+    def test_the_derived_gross_recovers_the_weeks_it_was_drawn_against(
+        self, case_id: str
+    ) -> None:
+        """m24-147: the positive derived-branch fixture.
+
+        The seeded draw is reproduced independently from the same
+        ``money:settlement`` stream, so the expected value is not read out of
+        the object under test.
+        """
+        from wc_caseload_engine.money import _rng
+
+        seed, facts = self._derived_case(case_id)
+        gross = facts.settlement.gross_amount
+        td_total = facts.benefits.td_total
+        pd_rate = facts.wages.rate.pd_weekly_rate
+        drawn = Decimal(_rng(seed, "settlement").randint(20, 120))
+
+        recovered = self.draw_consistency_weeks(gross, td_total, pd_rate)
+        # Within one whole dollar's worth of weeks — that rounding is the only
+        # slack the derivation introduces, and it is stated rather than absorbed
+        # into a loose tolerance.
+        assert abs(recovered - drawn) <= (Decimal(1) / pd_rate), (
+            f"{case_id}: gross {gross} with td_total {td_total} at {pd_rate}/wk "
+            f"recovers {recovered} weeks, drawn {drawn}"
+        )
+        assert 20 <= drawn <= 120
+        # The td_total term is load-bearing: dropping it moves the answer by
+        # thousands of dollars' worth of weeks, which is what m24-147 does.
+        assert td_total > 0, "the fixture must carry temporary disability"
+        naive = Decimal(gross) / Decimal(pd_rate)
+        assert abs(naive - drawn) > 1, (
+            f"{case_id}: the naive gross/rate form is not distinguishable here"
+        )
+
+    @pytest.mark.parametrize("case_id", CASE_IDS)
+    def test_the_derived_gross_matches_the_restated_derivation_exactly(
+        self, case_id: str
+    ) -> None:
+        """The full contract, including the whole-dollar floor step."""
+        from wc_caseload_engine.money import (
+            SETTLEMENT_GROSS_MINIMUM,
+            _rng,
+            _whole_dollars,
+            money,
+        )
+
+        seed, facts = self._derived_case(case_id)
+        drawn = Decimal(_rng(seed, "settlement").randint(20, 120))
+        pd_rate = facts.wages.rate.pd_weekly_rate
+        td_total = facts.benefits.td_total
+        rebuilt = money(pd_rate * drawn + td_total)
+        rebuilt = money(
+            max(_whole_dollars(rebuilt), Decimal(SETTLEMENT_GROSS_MINIMUM))
+        )
+        assert facts.settlement.gross_amount == rebuilt
+
+
+class TestDrawConsistencyDiagnosticStaysInternal:
+    """The outward-boundary probe, kept as its own guard (round-1 finding F4).
+
+    Sol rejected folding this into ``m24-147``, and rightly: a leak probe and a
+    formula guard fail for different reasons and must be able to fail
+    independently. It keeps its own mutant, ``m24-153``.
+
+    ``draw_consistency_weeks`` is a **test/ledger-only** diagnostic: it is
+    computed in this module and recorded in the evidence ledger, and it must
+    reach no model, manifest, document surface or export.
+    """
 
     def test_the_diagnostic_never_reaches_an_outward_surface(self) -> None:
-        """The outward-boundary field-set probe, by name."""
         for module in (seeds, fact_templates):
             source = Path(module.__file__).read_text(encoding="utf-8")
             assert "draw_consistency_weeks" not in source, (
                 f"{module.__name__} names a test-only diagnostic"
             )
+
+
+
+# ==========================================================================
+# Round-1 findings F2 and F3 — the RENDER-PATH oracles.
+#
+# Round 1 checked the label by reading `fact_templates.py`'s source and checked
+# the arithmetic through helper calls. Both are one step removed from the claim:
+# the claim is about what a generated settlement document says. These oracles
+# render real cases and read the produced pages.
+# ==========================================================================
+
+RENDER_LABEL = "[ENGINE_POLICY_UNCONFIRMED]"
+
+#: Deterministic gross values. Derived from the CASE ID by sha256 — never from
+#: the wall clock and never from a bare `random.seed()` — so a failure is
+#: reproducible from the case id printed beside it (F3's sampling rule).
+PROPERTY_CASE_IDS = (
+    "prop-alpha",
+    "prop-bravo",
+    "prop-charlie",
+    "prop-delta",
+    "prop-echo",
+    "prop-foxtrot",
+    "prop-golf",
+    "prop-hotel",
+)
+
+
+def gross_for_case(case_id: str, *, low: int = 2, high: int = 400_000) -> int:
+    """A gross drawn deterministically from the case id.
+
+    Seeded from the id rather than from a clock so the same case always draws
+    the same figure and a reported failure can be re-run verbatim. The span
+    covers the floor-binding region and ordinary settlement magnitudes alike.
+    """
+    digest = hashlib.sha256(case_id.encode("utf-8")).digest()
+    span = high - low + 1
+    return low + (int.from_bytes(digest[:8], "big") % span)
+
+
+#: The subtypes a settlement case can actually emit, with the resolution that
+#: produces each. The registry holds eleven settlement entries; a seed produces
+#: the C&R family or the stipulations family plus the approval order, so the
+#: property is exercised over both families and the approval document.
+FAMILY_RESOLUTIONS = (
+    ("c_and_r", True),
+    ("c_and_r", False),
+    ("stipulations", True),
+    ("stipulations", False),
+)
+
+
+def _settlement_seed_body(
+    case_id: str, gross: int, *, resolution: str, msa: bool
+) -> dict[str, Any]:
+    return {
+        "case_id": case_id,
+        "rng_seed": 4242,
+        "injury": {
+            "type": "specific",
+            "date_of_injury": "2021-06-14",
+            "body_parts": [{"part": "lumbar_spine"}],
+        },
+        "lifecycle": {
+            "target_stage": "resolved",
+            "eval_type": "none",
+            "resolution": {"type": resolution, "msa": msa},
+        },
+        "scenario": {
+            "wages": {"pattern": "regular", "base_weekly_wage": 1000.0},
+            "benefits": {"td_weeks": 0, "pd_advances": 0},
+            "settlement": {"gross_amount": gross},
+        },
+        "output": {"formats": ["pdf"]},
+        "documents": {"format_mix": {"pdf": 1.0}},
+    }
+
+
+def render_settlement_case(
+    tmp_path: Path, case_id: str, gross: int, *, resolution: str, msa: bool
+) -> dict[str, str]:
+    """Generate one settlement case and return {subtype: extracted text}."""
+    from conftest import extract_text
+    from wc_caseload_engine.manifests import MANIFEST_NAME, generate_case
+    from wc_caseload_engine.seeds import parse_case_seed
+
+    seed = parse_case_seed(
+        _settlement_seed_body(case_id, gross, resolution=resolution, msa=msa)
+    )
+    generate_case(seed, tmp_path, 1)
+    directory = tmp_path / seed.case_id
+    manifest = json.loads((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
+    return {
+        document["subtype"]: " ".join(
+            extract_text(
+                directory / "documents" / document["filename"], document["format"]
+            ).split()
+        )
+        for document in manifest["documents"]
+    }
+
+
+#: Every rendered sentence or row that states one of the three invented rates,
+#: as it appears in EXTRACTED TEXT (markup already stripped). Each pattern
+#: captures the figure and REQUIRES the label after it — an unlabelled
+#: occurrence simply fails to match, and the anti-probe below turns a
+#: no-match into a failure rather than a silent pass.
+LABELLED_RENDER_SITES = {
+    "cr_table_fee": re.compile(
+        r"Less: Attorney Fees \(15%\) \[ENGINE_POLICY_UNCONFIRMED\] \(\$([\d,]+\.\d\d)\)"
+    ),
+    "cr_table_costs": re.compile(
+        r"Less: Costs and Expenses \[ENGINE_POLICY_UNCONFIRMED\] \(\$([\d,]+\.\d\d)\)"
+    ),
+    "cr_table_msa": re.compile(
+        r"Less: Medicare Set-Aside Allocation \[ENGINE_POLICY_UNCONFIRMED\] "
+        r"\(\$([\d,]+\.\d\d)\)"
+    ),
+    "cr_prose_fee": re.compile(
+        r"in the amount of \$([\d,]+\.\d\d) \[ENGINE_POLICY_UNCONFIRMED\] "
+        r"\(15% of gross settlement\)"
+    ),
+    "cr_prose_costs": re.compile(
+        r"plus costs of \$([\d,]+(?:\.\d\d)?) \[ENGINE_POLICY_UNCONFIRMED\]"
+    ),
+    "cr_prose_msa": re.compile(
+        r"acknowledge that \$([\d,]+(?:\.\d\d)?) \[ENGINE_POLICY_UNCONFIRMED\] "
+        r"of the settlement"
+    ),
+    "stips_table_fee": re.compile(
+        r"Less: Attorney Fees \(15%\) \[ENGINE_POLICY_UNCONFIRMED\] \(\$([\d,]+\.\d\d)\)"
+    ),
+    "stips_prose_fee": re.compile(
+        r"which equals \$([\d,]+\.\d\d) \[ENGINE_POLICY_UNCONFIRMED\]"
+    ),
+}
+
+#: The bare forms. If one of these matches WITHOUT the label following it, an
+#: invented rate reached paper unattributed — which is the whole defect.
+UNLABELLED_RENDER_PROBES = {
+    "cr_table_fee": re.compile(r"Less: Attorney Fees \(15%\) \(\$[\d,]+\.\d\d\)"),
+    "cr_table_costs": re.compile(r"Less: Costs and Expenses \(\$[\d,]+\.\d\d\)"),
+    "cr_table_msa": re.compile(
+        r"Less: Medicare Set-Aside Allocation \(\$[\d,]+\.\d\d\)"
+    ),
+    "cr_prose_fee": re.compile(
+        r"in the amount of \$[\d,]+\.\d\d \(15% of gross settlement\)"
+    ),
+    "cr_prose_costs": re.compile(r"plus costs of \$[\d,]+(?:\.\d\d)?\. These amounts"),
+    "cr_prose_msa": re.compile(
+        r"acknowledge that \$[\d,]+(?:\.\d\d)? of the settlement"
+    ),
+    "stips_prose_fee": re.compile(r"which equals \$[\d,]+\.\d\d, to be paid"),
+}
+
+
+@requires_substrate
+class TestRenderedLabelCoverage:
+    """F2 — every printed deduction figure carries the label, on real pages.
+
+    Round 1 asserted the label by reading the renderer's source. That proves a
+    string exists in a module; it does not prove a generated document shows it,
+    and it could not have caught the prose duplicates, which are produced by a
+    different code path from the table rows.
+    """
+
+    @pytest.mark.parametrize(("resolution", "msa"), FAMILY_RESOLUTIONS)
+    def test_no_settlement_document_prints_an_unlabelled_deduction(
+        self, tmp_path: Path, resolution: str, msa: bool
+    ) -> None:
+        """The anti-probe, across every settlement variant a seed can emit."""
+        case_id = f"f2-{resolution}-{'msa' if msa else 'nomsa'}"
+        texts = render_settlement_case(
+            tmp_path, case_id, 250_000, resolution=resolution, msa=msa
+        )
+        settlement_pages = {
+            subtype: page
+            for subtype, page in texts.items()
+            if subtype in SETTLEMENT_REGISTRY_SUBTYPES
+        }
+        assert settlement_pages, f"{case_id} rendered no settlement document"
+        for subtype, page in settlement_pages.items():
+            for name, probe in UNLABELLED_RENDER_PROBES.items():
+                assert not probe.search(page), (
+                    f"{case_id}/{subtype} prints an UNLABELLED invented rate "
+                    f"({name}): {probe.pattern}"
+                )
+
+    @pytest.mark.parametrize(("resolution", "msa"), FAMILY_RESOLUTIONS)
+    def test_the_expected_labelled_sites_are_actually_present(
+        self, tmp_path: Path, resolution: str, msa: bool
+    ) -> None:
+        """The positive control: absence-only probes pass on an empty page.
+
+        Each family is asserted to CONTAIN its labelled sites, so a renderer
+        that stopped emitting the rows entirely — which would satisfy every
+        anti-probe above perfectly — fails here instead.
+        """
+        case_id = f"f2pos-{resolution}-{'msa' if msa else 'nomsa'}"
+        texts = render_settlement_case(
+            tmp_path, case_id, 250_000, resolution=resolution, msa=msa
+        )
+        joined = " ".join(
+            page for subtype, page in texts.items()
+            if subtype in SETTLEMENT_REGISTRY_SUBTYPES
+        )
+        if resolution == "c_and_r":
+            required = ["cr_table_fee", "cr_table_costs", "cr_prose_fee",
+                        "cr_prose_costs"]
+            if msa:
+                required.extend(["cr_table_msa", "cr_prose_msa"])
+        else:
+            required = ["stips_table_fee", "stips_prose_fee"]
+        for name in required:
+            assert LABELLED_RENDER_SITES[name].search(joined), (
+                f"{case_id}: expected labelled site {name} is absent from the "
+                "rendered settlement documents"
+            )
+
+    def test_the_approval_order_still_prints_no_deduction_breakdown(
+        self, tmp_path: Path
+    ) -> None:
+        """ORDER_APPROVING_SETTLEMENT restates; it computes nothing of its own.
+
+        A labelled line appearing here would mean item 0d fabricated a
+        breakdown, so its absence is asserted on the rendered page and not only
+        from the class body.
+        """
+        texts = render_settlement_case(
+            tmp_path, "f2-approval", 250_000, resolution="c_and_r", msa=True
+        )
+        page = texts.get("ORDER_APPROVING_SETTLEMENT")
+        assert page, "the settled case rendered no approval order"
+        assert RENDER_LABEL not in page
+        for row in LABELLED_ROWS:
+            assert row not in page
+
+
+@requires_substrate
+class TestRenderedFigureProperty:
+    """F3 — the identity property, computed from the RENDERED page.
+
+    Round 1's oracle called `settlement_deductions` and `_fee_and_net` over a
+    fixed fifteen-value grid. That checks the helpers agree with an equation; it
+    does not check that the figure a document PRINTS is that value, which is the
+    property M5-R41 actually states ("every figure on every subtype
+    byte-identical to its pre-item value").
+
+    Here every settlement figure is read back off the generated page and
+    compared to the literal reference equations, for deterministically drawn
+    grosses across both families with the set-aside on and off.
+    """
+
+    @pytest.mark.parametrize("case_id", PROPERTY_CASE_IDS)
+    @pytest.mark.parametrize("msa", [True, False])
+    def test_the_cr_page_prints_exactly_the_reference_figures(
+        self, tmp_path: Path, case_id: str, msa: bool
+    ) -> None:
+        gross = gross_for_case(case_id)
+        texts = render_settlement_case(
+            tmp_path,
+            f"{case_id}-cr-{'msa' if msa else 'nomsa'}",
+            gross,
+            resolution="c_and_r",
+            msa=msa,
+        )
+        page = next(
+            page for subtype, page in texts.items() if subtype in CR_FAMILY
+        )
+        expected = reference_cr_deductions(gross, wants_msa=msa)
+
+        def printed(name: str) -> Decimal:
+            found = LABELLED_RENDER_SITES[name].search(page)
+            assert found, (
+                f"{case_id} (gross {gross}, msa={msa}): {name} is not on the page"
+            )
+            return Decimal(found.group(1).replace(",", ""))
+
+        assert printed("cr_table_fee") == expected["fee"]
+        assert printed("cr_table_costs") == expected["costs"]
+        assert printed("cr_prose_fee") == expected["fee"], (
+            "the table and the signed paragraph state different fees"
+        )
+        assert printed("cr_prose_costs") == expected["costs"]
+        if msa:
+            assert printed("cr_table_msa") == expected["set_aside"]
+        else:
+            assert not LABELLED_RENDER_SITES["cr_table_msa"].search(page), (
+                "a set-aside row printed for a seed that said msa: false"
+            )
+
+    @pytest.mark.parametrize("case_id", PROPERTY_CASE_IDS)
+    def test_the_stips_page_prints_the_fee_on_the_award_component(
+        self, tmp_path: Path, case_id: str
+    ) -> None:
+        """The fee base differs by family, and this is the half that proves it.
+
+        A gross-based expectation would reject correct stipulations output: the
+        award path reimburses a self-procured amount first and takes fifteen
+        percent of what remains.
+        """
+        gross = gross_for_case(case_id)
+        texts = render_settlement_case(
+            tmp_path, f"{case_id}-stips", gross, resolution="stipulations", msa=False
+        )
+        page = next(
+            page for subtype, page in texts.items() if subtype in STIPS_FAMILY
+        )
+        expected = reference_stips_figures(gross)
+        found = LABELLED_RENDER_SITES["stips_table_fee"].search(page)
+        assert found, f"{case_id} (gross {gross}): no labelled stips fee row"
+        assert Decimal(found.group(1).replace(",", "")) == expected["fee"]
+        # And it is NOT fifteen percent of the gross, which is the mistake a
+        # single universal equation makes.
+        gross_based = (Decimal(gross) * Decimal("0.15")).quantize(Decimal("0.01"))
+        if expected["reimbursement"] > 0:
+            assert expected["fee"] != gross_based
+
+    def test_the_drawn_grosses_are_deterministic_and_spread(self) -> None:
+        """Seeded from the case id, so a failure is reproducible verbatim."""
+        first = [gross_for_case(case_id) for case_id in PROPERTY_CASE_IDS]
+        second = [gross_for_case(case_id) for case_id in PROPERTY_CASE_IDS]
+        assert first == second
+        assert len(set(first)) == len(first)
+        assert all(2 <= value <= 400_000 for value in first)

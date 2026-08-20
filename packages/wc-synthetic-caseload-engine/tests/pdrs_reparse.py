@@ -55,15 +55,17 @@ _INT = re.compile(r"-?\d+")
 
 
 def extracted_text_path() -> Path:
-    """The pinned extracted text, already committed as a repository artifact.
+    """The pinned extracted text, as PACKAGE DATA (round-1 finding F5).
 
-    Not re-vendored into package data: the same 336 KB file was already
-    committed here by the W2 arc, and a second copy would be a second thing to
-    keep in step with the pin. What matters for M5-R42(a) is that the chain ends
-    at BYTES ON DISK rather than at another copy of a constant, and this is
-    those bytes.
+    Moved out of ``tests/fixtures`` so that the artifact the parity oracles
+    parse is the same artifact ``PDRS_VENDORED_ARTIFACTS`` pins and the same one
+    ``tools/pdrs_extract.py`` derives. One canonical location: a pin naming one
+    copy while the oracles read another is provenance about a file nothing
+    consumes.
     """
-    return Path(__file__).parent / "fixtures" / "pdrs-2005-extracted-text.txt"
+    from wc_caseload_engine import rating_sources
+
+    return rating_sources.pdrs_data_dir() / "pdrs-2005-extracted-text.txt"
 
 
 @lru_cache(maxsize=1)

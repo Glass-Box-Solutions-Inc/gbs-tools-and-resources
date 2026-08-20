@@ -23,9 +23,10 @@ SECTION4_PATH = DATA_ROOT / "pdrs_2005_section4_matrix.json"
 DFEC_MIRROR_PATH = Path(__file__).with_name("fixtures") / (
     "dfec_1_4_table.pd_calculator.json"
 )
-EXTRACTED_TEXT_PATH = Path(__file__).with_name("fixtures") / (
-    "pdrs-2005-extracted-text.txt"
-)
+# AJC-64 item 0b (round-1 finding F5): moved into package data so the artifact
+# this module parses is the one PDRS_VENDORED_ARTIFACTS pins and the one
+# tools/pdrs_extract.py derives from the vendored source PDF.
+EXTRACTED_TEXT_PATH = DATA_ROOT / "pdrs-2005-extracted-text.txt"
 
 TABLES_SHA256 = "a7177da9a12cda090a767f3dccd9e604f3686ba2ded7b0ff36e3dae6e6ca2791"
 SECTION4_SHA256 = "23a56ded69f1cffd6ae9c2dc613c52d2e5750a9bd432a86fd5d00d50f3419e83"

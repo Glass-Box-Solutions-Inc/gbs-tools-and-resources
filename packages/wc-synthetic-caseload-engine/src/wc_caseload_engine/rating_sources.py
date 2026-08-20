@@ -417,23 +417,27 @@ PDRS_ARTIFACT_DIGEST_MISMATCH = "M5_PDRS_ARTIFACT_DIGEST_MISMATCH"
 #: The vendored artifacts whose bytes the pin chain terminates in, and the
 #: constant each must hash to. AJC-64 item 0b (M5-R42(a)).
 #:
-#: **Which of the spec's two options was taken, and why.** The 4 MB source PDF
-#: is NOT vendored into the package. The artifact the pin chain terminates in is
-#: the *derived extracted text*, already committed at
-#: ``tests/fixtures/pdrs-2005-extracted-text.txt`` by the W2 arc — the second
-#: option the rule offers, a reproducible derivation whose output hash is
-#: pinned. It is the right one here for a reason specific to this item: that
-#: text is the artifact all five per-table parity oracles actually parse, so the
-#: pinned bytes and the evidence source are the SAME bytes. Vendoring the PDF
-#: instead would have pinned four megabytes nothing in this package reads, and
-#: re-vendoring the text into package data would have created a second copy to
-#: keep in step with one digest.
+#: **Both options the rule offers, taken together (round-1 finding F5).** The
+#: source PDF is vendored at ``data/pdrs-2005-source.pdf`` AND the derivation
+#: from it is a committed, executable, version-pinned script,
+#: ``tools/pdrs_extract.py``. Round 1 took neither cleanly: it pointed at a
+#: docs-repo path that may not exist beside this package, which made the
+#: strongest link in the chain environment-dependent and therefore skippable,
+#: and it left the extracted text — the artifact the five parity oracles
+#: actually parse — out of this dictionary entirely.
 #:
-#: The PDF's own digest stays pinned as `PDRS_2005_PDF_SHA256` and is checked
-#: against the real file by `verify_pdrs_pdf` wherever the docs-repo artifact is
-#: reachable — a mismatch FAILS; only genuine absence is reported as absence,
-#: never as a pass.
+#: The chain now terminates in bytes at every hop, all of them in-tree:
+#:   pdrs-2005-source.pdf        the published schedule, hashed from disk
+#:     -> pdftotext -layout      one command, arguments pinned as data
+#:     -> pdrs-2005-extracted-text.txt   hashed from disk, parsed by the oracles
+#:     -> pdrs_2005_*.json       the shipped tables, checked cell-for-cell
+#:
+#: Four megabytes of PDF is a real cost and it is paid deliberately: a
+#: provenance chain whose first link is "assuming the documentation repository
+#: happens to be checked out next door" is not a provenance chain.
 PDRS_VENDORED_ARTIFACTS: dict[str, str] = {
+    "pdrs-2005-source.pdf": PDRS_2005_PDF_SHA256,
+    "pdrs-2005-extracted-text.txt": PDRS_2005_EXTRACTED_TEXT_SHA256,
     "pdrs_2005_tables.json": PDRS_2005_TABLES_SHA256,
     "pdrs_2005_section4_matrix.json": PDRS_2005_SECTION4_SHA256,
     "pdrs_2005_section4_matrix.meta.json": PDRS_2005_SECTION4_META_SHA256,

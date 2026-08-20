@@ -2339,6 +2339,32 @@ _NET_IN_PROSE: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?<=payable to applicant is )<b>\$[\d,]+(?:\.\d+)?</b>"),
 )
 
+#: AJC-64 item 0d (M5-R41), review round 1 finding F2. The three invented
+#: deduction rates print **twice** on a compromise and release: once in the
+#: distribution table and again in the operative prose the parties sign. Round 1
+#: labelled the table and left the prose bare, which is the worse of the two
+#: places to leave unlabelled — the table is a summary, the paragraph is the
+#: signed term.
+#:
+#: Read from the substrate's own sentences
+#: (``pdf_templates/legal/compromise_and_release.py:192,227``):
+#:   "...of $4,900 (15% of gross settlement) plus costs of $816. These amounts..."
+#:   "...acknowledge that $6,533 of the settlement proceeds..."   (set-aside)
+#: and the stipulations award's "which equals <b>$X</b>" fee sentence.
+#:
+#: Each pattern matches the **money token only**, so the label is appended after
+#: the figure and no surrounding wording moves.
+_PROSE_DEDUCTIONS: tuple[re.Pattern[str], ...] = (
+    # Fee, release form: "in the amount of $X (15% of gross settlement)"
+    re.compile(r"(?<=in the amount of )\$[\d,]+(?:\.\d+)?(?= \(15% of gross settlement\))"),
+    # Fee, award form: "which equals <b>$X</b>"
+    re.compile(r"(?<=which equals )<b>\$[\d,]+(?:\.\d+)?</b>"),
+    # Costs: "plus costs of $X"
+    re.compile(r"(?<=plus costs of )\$[\d,]+(?:\.\d+)?"),
+    # Medicare set-aside: "acknowledge that $X of the settlement"
+    re.compile(r"(?<=acknowledge that )\$[\d,]+(?:\.\d+)?(?= of the settlement)"),
+)
+
 _MONEY_AFTER_AWW = re.compile(r"average weekly wage of \$[\d,]+(?:\.\d+)?")
 
 #: Any money token at all — used only to decide whether an uncorrected
@@ -2495,6 +2521,51 @@ def _restate_fee_prose(story: list[Any], fee: Decimal, net: Decimal | None = Non
             story[index] = Paragraph(replaced, item.style)
         elif _ANY_MONEY.search(text):
             log.warning("fact_templates.fee_prose_not_restated", sentence=text[:120])
+
+    _label_prose_deductions(story)
+
+
+def _label_prose_deductions(story: list[Any]) -> None:
+    """Append the engine-policy label to every deduction figure stated in prose.
+
+    AJC-64 item 0d (M5-R41), round-1 finding F2. The fee, the costs and the
+    Medicare set-aside each print twice on a release — in the distribution table
+    and again in the operative paragraph — and round 1 labelled only the table.
+    An unlabelled figure in the signed term is the one that matters: it is the
+    sentence a reader treats as the agreement.
+
+    Runs over **every** paragraph rather than only the fifteen-percent ones,
+    because the set-aside sentence never mentions a percentage and would
+    otherwise never be reached.
+
+    Idempotent by construction — a figure already carrying the token is skipped,
+    so the pass is safe if a caller ever runs it twice.
+
+    Deliberately **not** called from inside ``_restate_distribution`` or
+    ``_restate_award_summary``: those are AST-frozen node-by-node under M5-R41a
+    with a closed exemption for label string constants only. Adding a call there
+    would have forced the exemption wider, which is the guard-weakening move
+    M5-R46 exists to catch. This function is reached from ``_restate_fee_prose``,
+    which is not a frozen region.
+    """
+    from reportlab.platypus import Paragraph
+
+    for index, item in enumerate(story):
+        text = getattr(item, "text", None)
+        if not isinstance(text, str) or "$" not in text:
+            continue
+        replaced = text
+        for pattern in _PROSE_DEDUCTIONS:
+            replaced = pattern.sub(
+                lambda match: (
+                    match.group(0)
+                    if match.group(0).endswith(ENGINE_POLICY_UNCONFIRMED_LABEL)
+                    else f"{match.group(0)} {ENGINE_POLICY_UNCONFIRMED_LABEL}"
+                ),
+                replaced,
+            )
+        if replaced != text:
+            story[index] = Paragraph(replaced, item.style)
 
 
 def _bold_like(pattern: re.Pattern[str], money: str) -> str:

@@ -31,6 +31,8 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -38,6 +40,10 @@ import pytest
 import pdrs_reparse
 from pdrs_reparse import EXPECTED_CELL_COUNTS
 from wc_caseload_engine import rating, rating_sources
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import pdrs_extract
+
 from wc_caseload_engine.rating_sources import (
     PDRS_2005_EXTRACTED_TEXT_SHA256,
     PDRS_2005_PDF_SHA256,
@@ -45,17 +51,6 @@ from wc_caseload_engine.rating_sources import (
     pdrs_data_dir,
     verify_pdrs_artifact,
     verify_pdrs_pdf,
-)
-
-#: Where the source PDF is vendored in the documentation repository. Checked
-#: when reachable; its absence is REPORTED, never treated as a pass.
-DOCS_REPO_PDF_CANDIDATES = (
-    Path.home()
-    / "projects/adjudica-documentation/Plans/research/wcce-money-w2/"
-    "pdrs-audit/source/pdr.pdf",
-    Path.home()
-    / "projects/adjudica-documentation-rollback/Plans/research/wcce-money-w2/"
-    "pdrs-audit/source/pdr.pdf",
 )
 
 
@@ -81,6 +76,35 @@ class TestPinTerminatesInBytes:
         payload = (pdrs_data_dir() / filename).read_bytes()
         assert hashlib.sha256(payload).hexdigest() == digest
 
+    def test_every_artifact_the_oracles_read_is_pinned(self) -> None:
+        """m24-154 — completeness, which the parametrized check cannot give.
+
+        The per-artifact check above is parametrized *over* the pin set, so
+        dropping an entry deletes the case that would have caught it: the guard
+        and the thing guarded are the same list. That is the shape of the round-1
+        defect one layer up — a chain checked against its own copy.
+
+        So this asserts membership from the other end. The five per-table parity
+        oracles parse the extracted text; ``pdrs_reparse`` names the file it
+        opens, and every file any oracle opens out of the data directory must
+        carry a pin. An unpinned artifact means the tables are compared
+        cell-for-cell against a source nothing vouches for.
+        """
+        # ``pdrs_reparse`` is a rootdir module, imported at the top of this
+        # file. It must NOT be reached as ``tests.pdrs_reparse``: the substrate
+        # root is appended to ``sys.path``, and it ships its own ``tests``
+        # package, so that spelling resolves to the substrate's and fails.
+        read_by_oracles = {
+            pdrs_reparse.extracted_text_path().name,
+            "pdrs-2005-source.pdf",
+        }
+        unpinned = read_by_oracles - set(PDRS_VENDORED_ARTIFACTS)
+        assert not unpinned, (
+            f"artifacts read by the parity oracles but carrying no digest pin: "
+            f"{sorted(unpinned)} — the provenance chain terminates one hop short "
+            "of where the evidence is actually read"
+        )
+
     def test_a_corrupted_artifact_fails_closed(self, tmp_path: Path) -> None:
         """m24-31: the self-comparison would pass this fixture happily."""
         forged = tmp_path / "forged.pdf"
@@ -92,15 +116,56 @@ class TestPinTerminatesInBytes:
         with pytest.raises(FileNotFoundError, match="M5_PDRS_ARTIFACT_PIN_MISSING"):
             verify_pdrs_pdf(tmp_path / "nothing.pdf")
 
-    def test_the_source_pdf_hashes_to_its_pin_where_reachable(self) -> None:
-        reachable = [path for path in DOCS_REPO_PDF_CANDIDATES if path.is_file()]
-        if not reachable:
-            pytest.skip(
-                "the documentation repository is not checked out beside this "
-                "package; the extracted-text artifact carries the in-package pin"
-            )
-        for path in reachable:
-            assert verify_pdrs_pdf(path) == PDRS_2005_PDF_SHA256
+    def test_the_source_pdf_is_in_tree_and_hashes_to_its_pin(self) -> None:
+        """MANDATORY — no environment-dependent skip (round-1 finding F5).
+
+        Round 1 pointed this at the documentation repository and skipped when it
+        was absent. A skip is indistinguishable from a pass in a summary, so the
+        strongest link in the chain was the one least likely to be exercised.
+        The PDF is vendored now, so the check simply runs.
+        """
+        path = pdrs_data_dir() / "pdrs-2005-source.pdf"
+        assert path.is_file(), (
+            "the PDRS source PDF must be vendored in-tree; the provenance chain "
+            "may not depend on a neighbouring checkout"
+        )
+        assert path.stat().st_size == 4_005_811
+        assert verify_pdrs_pdf(path) == PDRS_2005_PDF_SHA256
+        assert verify_pdrs_artifact("pdrs-2005-source.pdf") == PDRS_2005_PDF_SHA256
+
+    def test_the_derivation_script_is_committed_and_pins_both_ends(self) -> None:
+        """The derivation is executable and reproducible, not a claim in prose."""
+        assert pdrs_extract.SOURCE_PDF.is_file()
+        assert pdrs_extract.EXTRACTED_TEXT.is_file()
+        assert pdrs_extract.SOURCE_PDF_SHA256 == PDRS_2005_PDF_SHA256
+        assert pdrs_extract.EXTRACTED_TEXT_SHA256 == PDRS_2005_EXTRACTED_TEXT_SHA256
+        # The arguments are part of the contract: the default reading-order mode
+        # collapses the columns the parity oracles read positions out of.
+        assert pdrs_extract.PDFTOTEXT_ARGS == ("-layout",)
+        assert pdrs_extract.VERIFIED_POPPLER_VERSION == "22.02.0"
+        assert pdrs_extract.sha256_of(pdrs_extract.SOURCE_PDF) == PDRS_2005_PDF_SHA256
+        assert (
+            pdrs_extract.sha256_of(pdrs_extract.EXTRACTED_TEXT)
+            == PDRS_2005_EXTRACTED_TEXT_SHA256
+        )
+
+    def test_the_derivation_actually_reproduces_the_pinned_text(self) -> None:
+        """Re-run the derivation and compare — the reproducibility claim itself.
+
+        Skipped only when poppler is absent from the image, and that skip is
+        about the TOOL rather than about the artifacts: every pin above is still
+        asserted unconditionally, so an absent poppler cannot hide a bad digest.
+        """
+        version = pdrs_extract.pdftotext_version()
+        if not version:
+            pytest.skip("pdftotext (poppler-utils) is not installed on this host")
+        with tempfile.TemporaryDirectory() as directory:
+            derived = Path(directory) / "derived.txt"
+            digest = pdrs_extract.derive(derived)
+        assert digest == PDRS_2005_EXTRACTED_TEXT_SHA256, (
+            f"pdftotext {version} did not reproduce the pinned extraction "
+            f"(verified under {pdrs_extract.VERIFIED_POPPLER_VERSION})"
+        )
 
     def test_the_extracted_text_is_the_artifact_the_oracles_parse(self) -> None:
         """The pinned bytes and the evidence source are the SAME bytes.

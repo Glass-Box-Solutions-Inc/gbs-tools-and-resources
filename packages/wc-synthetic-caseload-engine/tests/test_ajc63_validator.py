@@ -1019,7 +1019,10 @@ def test_ajc63_default_and_feature_absent_outputs_are_byte_identical_to_post_ajc
         # re-record stays a reviewable decision rather than a silent refreeze.
         # The item's own allowlist proof is what establishes this is a LABEL
         # change: `facts` and `seed` did not move on any case.
-        "money-showcase.json": "866022279cb609fda48b84c6641a1b7e44eb90e189d7780410d9d3fad02b2b78",
+        # Round-1 finding F2 extended that labelling to the prose duplicates in
+        # the signed documents, superseding 866022279cb6…d02b2b78. Still a
+        # label-only move: facts and seed did not drift on any case.
+        "money-showcase.json": "540571c2689d3fa031aaf4065660439f39a3dab2d3cc20e5cccca4c7953e633a",
         "personas-showcase.json": (
             "f89280b194ef08877b81a9876e38c9752e8460ad3cd5d7441cd4e156c4dd8275"
         ),
