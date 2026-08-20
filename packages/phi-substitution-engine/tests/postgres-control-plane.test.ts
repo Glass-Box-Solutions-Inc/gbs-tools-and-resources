@@ -95,6 +95,16 @@ function scriptedControlPlane(results: readonly ScriptedQueryResult[]): {
   return { controlPlane: new PostgresControlPlane(pool), statements, boundParameters };
 }
 
+/**
+ * GLY-345 §8.1 candidacy arithmetic is otherwise pinned only by live-gated PG oracles;
+ * this SQL-shape assertion keeps the default (credential-free) gate from going blind to
+ * a dropped drain-MAX in the matter arm or a de-COALESCEd NULL-class fallback.
+ */
+function expectSupersededCandidacyShape(statement: string): void {
+  expect(statement).toContain("- greatest($4::numeric, $5::numeric))");
+  expect(statement).toContain("COALESCE(p.retention_class, 'matter') = 'matter'");
+}
+
 function expectReferenceFiltersBeforeLimit(statement: string): void {
   const claimFilter = statement.indexOf("AND NOT EXISTS (\n             SELECT 1 FROM reversal_claim");
   const currentFilter = statement.indexOf("AND NOT EXISTS (\n             SELECT 1 FROM reversal_current");
@@ -364,6 +374,7 @@ describe("PostgresControlPlane maintenance completion idempotency", () => {
     const liveSelectorSql = selected.statements.find((statement) => statement.includes("FOR UPDATE OF p SKIP LOCKED"));
     expect(liveSelectorSql).toBeDefined();
     expectReferenceFiltersBeforeLimit(liveSelectorSql ?? "");
+    expectSupersededCandidacyShape(liveSelectorSql ?? "");
 
     const previewed = scriptedControlPlane([
       { rowCount: 0, rows: [] },
@@ -390,6 +401,7 @@ describe("PostgresControlPlane maintenance completion idempotency", () => {
     );
     expect(previewSql).toBeDefined();
     expectReferenceFiltersBeforeLimit(previewSql ?? "");
+    expectSupersededCandidacyShape(previewSql ?? "");
   });
 });
 

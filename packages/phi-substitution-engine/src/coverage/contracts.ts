@@ -121,6 +121,10 @@ export interface EgressEvidenceSignature {
  * SEAM (GLY-335 Wave 0 seam-freeze): frozen as ONE hardened shape that M3 VERIFIES (N7 layer 3)
  * and M4 EMITS. Populating and SIGNING it is the M4 attestor lane; this seam-freeze authors the
  * TYPE + doc only. Per §9 no field here is ever assumed from application tests.
+ *
+ * 2026-08-18 — GLY-353 additive amendment: egressPolicyVersion and enginePolicyVersion are
+ * required signed claims; RFC 8785/SHA-256 canonicalization is normative. The original GLY-335
+ * seam freeze remains in force.
  */
 export interface AzureEgressPolicyEvidence {
   readonly environment: "cae-gbs-wp";
@@ -152,6 +156,16 @@ export interface AzureEgressPolicyEvidence {
   readonly denyByDefaultEgress: true;
   /** Per-logging-plane body-logging attestations; every egress-observing plane must be present. */
   readonly loggingPlanes: readonly LoggingPlaneBodyAttestation[];
+  /** Immutable revision of the attestor's observed egress posture. */
+  readonly egressPolicyVersion: string;
+  /**
+   * `sha256:<64 lowercase hex>` digest of normalized engine mode + BAA matrix consumer boot
+   * configuration. The attestor binds this supplied value but need not observe the matrix.
+   */
+  readonly enginePolicyVersion: string;
   /** Attestor signature + issuer identity binding all fields above (rejects self-issued/forged). */
   readonly signature: EgressEvidenceSignature;
 }
+
+/** Exact claims covered by `signature`; the signature object itself is never in its own digest. */
+export type AzureEgressPolicySignedClaims = Omit<AzureEgressPolicyEvidence, "signature">;

@@ -42,9 +42,10 @@ the new blob, but nonce/key work may already have occurred and gaps remain allow
 
 When a new commit becomes `reversal_current` for an existing `mapping_key`, the prior committed prepared row
 MUST atomically cease being current, become `superseded`, and lose all claim/current references. A superseded
-record has no reversal function: current-record latest-wins is the frozen reversal contract, so retaining the old
-record is pure encrypted-blob leakage. Hard delete remains double-gated by quarantine grace and operator-enabled
-`full` maintenance mode. Let `S = SUPERSEDE_RETENTION_MS` and `R = READ_DRAIN_MS`. The exact Path-1
+record no longer serves the current-record latest-wins reversal function, but its encrypted artifact may be needed
+to reconstruct historical egress under the organization's BAA posture and therefore receives the
+regulation-derived supersede-retention window. Hard delete remains double-gated by quarantine grace and
+operator-enabled `full` maintenance mode. Let `S = SUPERSEDE_RETENTION_MS` and `R = READ_DRAIN_MS`. The exact Path-1
 **candidacy deadline** is:
 
 1. matter: `superseded_at_ms + MAX(S, R)`; and
@@ -63,6 +64,11 @@ configuration therefore stacks the supersede/drain candidacy wait, quarantine gr
 additively. None of those physical-lifecycle delays extends reversal functionality: the current-record reversal
 function still ends exactly at the authenticated record expiry. A superseded record has already lost its reversal
 function when latest-wins current advances.
+
+At the default production values, `S = 189_216_000_000`, `R = 60_000`, and `graceMs = 86_400_000`. Matter
+candidacy is therefore no earlier than `superseded_at_ms + 189_216_000_000`, and the D2 physical-deletion lower
+bound is `T_bytes_gone >= superseded_at_ms + 189_302_400_000 + L_sweep`. Leap-day precision is immaterial to this
+fixed six-year conservative floor; the simple `6 * 365`-day duration is normative.
 
 The same terminalization applies to an out-of-order flush whose ordinal loses to an already-higher current
 pointer: the losing prepared row becomes `superseded` in that flush transaction rather than remaining committed
@@ -146,15 +152,23 @@ given).
 - `reversal_claim.state` gains terminal tombstone `superseded`; like `expired`, it has
   `prepared_blob_id = NULL`.
 
-`SUPERSEDE_RETENTION_MS` defaults to `2_592_000_000` (30 days) and is configurable through internal maintenance
-options. Construction/startup MUST validate `SUPERSEDE_RETENTION_MS >= graceMs >= READ_DRAIN_MS`. The supersede
-window is a retention policy; `READ_DRAIN_MS` remains a 60,000ms rename-delay heuristic. Tests MAY inject smaller
-non-negative values. The production profile uses `graceMs = 86_400_000` (24 hours); the 30-day supersede default
-satisfies both inequalities. Candidacy does not delete bytes: with `L_sweep` defined as the aggregate non-negative
-scheduler/execution latency across the quarantine and later eligible delete sweeps, the exact lower bound is
-`T_bytes_gone >= T_candidacy + graceMs + L_sweep`, and deletion occurs only in operator `full` mode. Thus the worst
-legal configuration stacks those delays additively even though reversal functionality still ends exactly at the
-authenticated record expiry.
+`SUPERSEDE_RETENTION_MS` defaults to `189_216_000_000` (`6 * 365` days) and is configurable through internal
+maintenance options and the reclaim-entrypoint environment knob. HIPAA 45 CFR §164.530(j) / §164.316(b)(2)(i)
+— 6-year retention for required documentation, adopted as the conservative floor for PHI-processing artifacts
+under the org's BAA posture; superseded reversal records may be needed to reconstruct historical egress, so they
+retain for 6 years after supersession by default; deployments may adjust via the SUPERSEDE_RETENTION_MS env knob
+subject to counsel. Leap-day precision is immaterial and simplicity wins: the normative fixed duration is
+`6 * 365 * 24 * 60 * 60 * 1000 = 189_216_000_000` milliseconds.
+
+Construction/startup MUST continue to validate `SUPERSEDE_RETENTION_MS >= graceMs >= READ_DRAIN_MS`. The
+supersede window is a retention policy; `READ_DRAIN_MS` remains a 60,000ms rename-delay heuristic. Tests MAY
+inject smaller non-negative values. The production profile uses `graceMs = 86_400_000` (24 hours); the six-year
+supersede default satisfies both inequalities. Candidacy does not delete bytes: with `L_sweep` defined as the
+aggregate non-negative scheduler/execution latency across the quarantine and later eligible delete sweeps, the
+exact lower bound is `T_bytes_gone >= T_candidacy + graceMs + L_sweep`, and deletion occurs only in operator
+`full` mode. For default matter retention this becomes
+`T_bytes_gone >= superseded_at_ms + 189_302_400_000 + L_sweep`. Thus the worst legal configuration stacks those
+delays additively even though reversal functionality still ends exactly at the authenticated record expiry.
 
 ### 4.2 Migration execution contract
 
@@ -1028,7 +1042,7 @@ Expected implementation touch points (not authorization to edit in this round):
   supersession, updated selectors/preview, and idempotent tombstone handling.
 - `src/tokens/durable/azure/azure-files-spool-volume.ts`: pass authenticated retention metadata internally;
   old-pointer original/quarantine fallback without inventing a reader deadline.
-- `src/tokens/durable/azure/azure-spool-maintenance.ts`: fold superseded into Path 1, configure the 30-day default,
+- `src/tokens/durable/azure/azure-spool-maintenance.ts`: fold superseded into Path 1, configure the regulation-derived six-year default,
   enforce `supersedeRetention >= grace >= drain`, rely on DB time, and strengthen quarantine proof.
 - `src/tokens/durable/dev/in-memory-control-plane.ts` and `dev/in-memory-spool-volume.ts`: exact durable-model
   mirror and crash hooks.
@@ -1258,7 +1272,7 @@ run alone RED followed by revert/green. Claims are not evidence; logs are.
    surface.
 5. No direct deletion API, list/export/debug widening, raw-canonical storage, or PHI in control-plane metadata.
 6. No reclamation of live current matter records and no reinterpretation of MaxUint64 for those committed rows;
-   superseded matter is intentionally governed by the independent 30-day window.
+   superseded matter is intentionally governed by the independent regulation-derived six-year window.
 7. No durable per-reader lease, adapter deadline, or claim that a non-transactional pointer read pins a reader.
    Rename delay plus original/quarantine fallback and grace are the chosen model.
 8. No `reversal_prepared_gly345_required_check`, `VALIDATE CONSTRAINT`, `SET NOT NULL`, or hot-table unique-index
@@ -1273,9 +1287,10 @@ run alone RED followed by revert/green. Claims are not evidence; logs are.
 
 ## 14. Open questions
 
-None for the principal. This v3 adopts all F1–F11 and D1–D6 rulings. Superseded matter gets a configurable 30-day
-default window; detector retains its defensive expiry floor; effective candidacy also includes the drain
-heuristic. The online expand migration is nullable/NOT VALID with a 100,000-row guard and no requiredness check;
+None for the principal. This v3 adopts all F1–F11 and D1–D6 rulings plus the 2026-08-19 principal amendment.
+Superseded matter gets a configurable regulation-derived six-year default window; detector retains its defensive
+expiry floor; effective candidacy also includes the drain heuristic. The online expand migration is nullable/NOT
+VALID with a 100,000-row guard and no requiredness check;
 application code precedes migration anywhere writers exist. First-seen bindings have no in-band override. DB
 time is authoritative, and quarantine fallback+grace carry read correctness.
 
@@ -1305,3 +1320,18 @@ time is authoritative, and quarantine fallback+grace carry read correctness.
 | D4 | The matter arm must use the superseded partial index; detector scan flexibility and optional future CASE index are explicit: §11.3.12. |
 | D5 | Self-heal reuses F-A verbatim, including old claim/prepared `FOR UPDATE` locks: protocol §6.2, state table §7.1, crash gate §9, oracle §11.2.12. |
 | D6 | Detector `least()` remains a defensive floor and is inert at production `window >= grace = 24h`: §2.2, §4.1, selector §8.1, oracle §11.2.5, acceptance §12.5. |
+
+## 17. Amendment 2026-08-19 — principal ruling: regulation-derived default
+
+This amendment is normative and supersedes the prior engineering default and rationale everywhere in this
+specification. HIPAA 45 CFR §164.530(j) / §164.316(b)(2)(i) — 6-year retention for required documentation,
+adopted as the conservative floor for PHI-processing artifacts under the org's BAA posture; superseded reversal
+records may be needed to reconstruct historical egress, so they retain for 6 years after supersession by default;
+deployments may adjust via the SUPERSEDE_RETENTION_MS env knob subject to counsel.
+
+The normative default is `189_216_000_000` milliseconds, calculated as `6 * 365 * 24 * 60 * 60 * 1000`.
+Leap-day precision is immaterial and simplicity wins for this conservative fixed-duration floor. The formulas
+remain unchanged: matter candidacy uses `superseded_at_ms + MAX(S, R)`, quarantine grace follows candidacy, and
+hard deletion remains operator-`full` only. At the production defaults, D2 therefore yields matter candidacy at
+`superseded_at_ms + 189_216_000_000` and the byte-deletion lower bound
+`T_bytes_gone >= superseded_at_ms + 189_302_400_000 + L_sweep`.

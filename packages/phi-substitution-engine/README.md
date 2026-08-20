@@ -46,10 +46,59 @@ Framework-free core with vendor/product dependencies behind explicit adapters �
 - **Wrapper** — `ProtectedAiProvider`, the only public binding for `generateText` / `generateStream` / `embedText`, with original-content BAA routing.
 - **Detector/redactor port** — `PhileasServiceAdapter` / `AzureLanguagePiiAdapter` implement one frozen port (Phase-2; disabled in Phase 1).
 
+## Production composition
+
+`createProductionProtectedAiProvider(...)` wraps the exact caller-owned
+`PhiSubstitutionEngine` singleton. The application composition root supplies trusted context and
+policy accessors, an exhaustive projector, an original-content BAA router, safe trace, durable audit
+primary/spool adapters, and its private provider adapters through the router. The production factory
+has no development defaults and never constructs a second engine or fallback provider.
+
+The protected surface is provider-neutral: `generateText` resolves a frozen
+`{ display, providerId, model?, usage?, toolCalls? }` envelope and `streamText` resolves the same
+completion tail after delivering ordered display chunks. Assistant text, streamed chunks, and every
+tool-call argument are reversed inside this package; `TokenizedText` and raw provider objects never
+cross the application seam. `providerId` always comes from the pinned original-content routing
+decision.
+
+`generateText` and `streamText` accept an optional `AbortSignal`. Interruption is audited as the
+distinct `interrupted` terminal and rejects with the fixed `CALL_INTERRUPTED` code. Once interruption
+is latched, the engine initiates no further provider egress. Transport cancellation is best-effort for
+an already-issued request; caller abort reasons are never traced, audited, or surfaced.
+
+The composition root has two deployment obligations which deliberately do not widen the engine
+interface: its documented `engineVersion` must identify the supplied engine, and its
+`enginePolicyVersion` must be the RFC-8785/SHA-256 digest of normalized engine mode plus BAA matrix.
+Production source must also enforce N7 layer-1 import scanning so development factories cannot create
+a second engine outside this boundary.
+
+### Production original-egress authorization
+
+`createProductionProtectedOriginalEgressAuthorizer(...)` is the narrow exception path for original
+case identifiers, TTS text, and audio streams sent to an explicitly authorized HTTPS/WSS
+destination. Its request and returned capability contain identity and policy metadata only—there is
+no field for text, identifiers, audio bytes, or a caller-controlled BAA/allow boolean. The injected
+policy must return unexpired evidence exactly matching the destination, protocol, content class, and
+`enginePolicyVersion`; otherwise authorization fails closed.
+
+Authorization resolves only after metadata-only audit PREPARE is durable. A given `attemptId` can
+receive only one operation-scoped, non-serializable capability. Call `finalize(outcome, failureCode?)`
+after the protected operation; duplicate finalization rejects, while a transient terminal-write
+failure may be retried because the audit emitter owns durable idempotency. The production factory has
+no development or permissive fallback.
+
+### Node support
+
+The supported floor is Node `>=20.19.0`; CI pins Node `20.20.2` and installs with
+`engine-strict=true`. Direct Azure dependencies are exactly pinned to the checked-in Node-20-compatible
+graph, and CI verifies the complete production **and development** lock closure. Node 22 remains
+allowed, not required. Any future dependency upgrade that raises the engine floor requires a separate
+compatibility decision rather than a caret-driven lock drift.
+
 ## Develop
 
 ```bash
-npm ci
+npm_config_engine_strict=true npm ci
 npm run typecheck   # tsc --noEmit (strict, noUncheckedIndexedAccess)
 npm test            # vitest run
 ```

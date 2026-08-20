@@ -27,6 +27,14 @@ export {
 export { CANONICAL_DISCOVERED, CANONICAL_REGISTRY } from "./canonical";
 
 export {
+  canonicalizeAzureEgressPolicySignedClaims,
+  computeAzureEgressPolicySignedClaimsDigest,
+  computeEnginePolicyVersion,
+  type JcsValue,
+  type NormalizedEnginePolicyConfiguration,
+} from "./evidence-canonicalization";
+
+export {
   classifyMultimodalCarveOut,
   type CarveOutMitigation,
   type MultimodalCarveOutInput,

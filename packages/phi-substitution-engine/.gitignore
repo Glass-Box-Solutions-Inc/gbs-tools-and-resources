@@ -6,3 +6,6 @@
 
 # Local/Docker executable compilation output.
 /dist-runtime/
+
+# npm package-lock.json is authoritative; never resurrect stale dependency ranges via Bun.
+/bun.lock

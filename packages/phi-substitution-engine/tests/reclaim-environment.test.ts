@@ -4,7 +4,7 @@ import { integerEnvironment } from "../jobs/reclaim-environment";
 const INTEGER_VARIABLES = [
   { name: "RECLAIM_HORIZON_MS", fallback: 86_400_000, allowZero: true },
   { name: "RECLAIM_GRACE_MS", fallback: 86_400_000, allowZero: true },
-  { name: "SUPERSEDE_RETENTION_MS", fallback: 2_592_000_000, allowZero: true },
+  { name: "SUPERSEDE_RETENTION_MS", fallback: 189_216_000_000, allowZero: true },
   { name: "RECLAIM_LIMIT", fallback: 1_000, allowZero: false },
 ] as const;
 

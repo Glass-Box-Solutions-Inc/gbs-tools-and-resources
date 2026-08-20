@@ -45,7 +45,15 @@ import type {
   SubstitutionResult,
   TrustedMatterAiPolicy,
 } from "./core/contracts";
-import type { AiProvider, SafeAiTrace } from "./core/protected-ai-provider";
+import type {
+  AiProvider,
+  CreateProductionProtectedAiProviderOptions,
+  DisplayChunkSink,
+  ProtectedAiCallSurface,
+  ProtectedAiResultTail,
+  ProtectedAiTextResult,
+  SafeAiTrace,
+} from "./core/protected-ai-provider";
 import type { CaseTruthReader, DictionaryVersionCoordinator, TaggedValue } from "./dictionary/contracts";
 import type {
   AuditPrimaryStore,
@@ -55,8 +63,10 @@ import type {
 import type { SpoolKeyProvider, SpoolVolume } from "./audit/spool-ports";
 
 import { ComposedSubstitutionEngine } from "./core/orchestrator";
+import { PhiEngineError } from "./core/errors";
 import {
   ComposedProtectedAiProvider,
+  type ComposedProductionProtectedAiProviderDeps,
   type ProtectedStreamResult,
   type RawProviderPort,
 } from "./core/wrapper";
@@ -538,4 +548,114 @@ export function createProtectedAiProvider(
     context: Object.freeze({ ...parts.context }),
     policy: Object.freeze({ ...parts.policy }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// createProductionProtectedAiProvider (GLY-353)
+// ---------------------------------------------------------------------------
+
+const ENGINE_POLICY_VERSION = /^sha256:[0-9a-f]{64}$/;
+const ENGINE_VERSION = /^[A-Za-z0-9._-]{1,64}$/;
+
+function requireMethods(value: unknown, methods: readonly string[]): void {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) throw new Error();
+  for (let i = 0; i < methods.length; i += 1) {
+    if (typeof (value as Record<string, unknown>)[methods[i]!] !== "function") throw new Error();
+  }
+}
+
+function snapshotProductionDependencies<GenerateOptions, EmbeddingKind>(
+  input: CreateProductionProtectedAiProviderOptions<GenerateOptions, EmbeddingKind>,
+): CreateProductionProtectedAiProviderOptions<GenerateOptions, EmbeddingKind> {
+  try {
+    const engine = input.engine;
+    const engineVersion = input.engineVersion;
+    const enginePolicyVersion = input.enginePolicyVersion;
+    const context = input.context;
+    const policy = input.policy;
+    const projector = input.projector;
+    const router = input.router;
+    const safeTrace = input.safeTrace;
+    const auditPrimary = input.auditPrimary;
+    const auditSpool = input.auditSpool;
+    const embeddingOptionsFactory = input.embeddingOptionsFactory;
+    const clock = input.clock;
+
+    requireMethods(engine, ["substitute", "reverse", "createReverseStream"]);
+    requireMethods(context, ["require"]);
+    requireMethods(policy, ["require"]);
+    requireMethods(projector, ["classify"]);
+    requireMethods(router, ["selectUsingOriginalContent"]);
+    requireMethods(safeTrace, ["request", "response", "metadata"]);
+    requireMethods(auditPrimary, ["prepare", "finalize"]);
+    requireMethods(auditSpool, ["appendPrepared", "finalize", "drainTo", "inspectEnvelope", "health"]);
+    if (typeof embeddingOptionsFactory !== "function") throw new Error();
+    if (typeof engineVersion !== "string" || !ENGINE_VERSION.test(engineVersion)) throw new Error();
+    if (typeof enginePolicyVersion !== "string" || !ENGINE_POLICY_VERSION.test(enginePolicyVersion)) {
+      throw new Error();
+    }
+    if (clock !== undefined && typeof clock !== "function") throw new Error();
+
+    return {
+      engine,
+      engineVersion,
+      enginePolicyVersion,
+      context,
+      policy,
+      projector,
+      router,
+      safeTrace,
+      auditPrimary,
+      auditSpool,
+      embeddingOptionsFactory,
+      ...(clock === undefined ? {} : { clock }),
+    };
+  } catch {
+    throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED");
+  }
+}
+
+/**
+ * Compose the exact caller-owned engine and production ports into a capability-tight protected
+ * surface. Construction snapshots references but invokes no port method and performs no I/O.
+ */
+export function createProductionProtectedAiProvider<GenerateOptions, EmbeddingKind = string>(
+  dependencies: CreateProductionProtectedAiProviderOptions<GenerateOptions, EmbeddingKind>,
+): ProtectedAiCallSurface<GenerateOptions, EmbeddingKind> {
+  const deps = snapshotProductionDependencies(dependencies);
+  const clock = deps.clock ?? ((): string => new Date().toISOString());
+  const audit = new DurablePhiAuditEmitter(
+    deps.auditPrimary,
+    deps.auditSpool,
+    new ExactAllowListAuditSerializer(),
+    clock,
+  );
+  const composedDeps: ComposedProductionProtectedAiProviderDeps<GenerateOptions, EmbeddingKind> = {
+    production: true,
+    engine: deps.engine,
+    context: deps.context,
+    policy: deps.policy,
+    options: deps.projector,
+    router: deps.router,
+    safeTrace: deps.safeTrace,
+    audit,
+    engineVersion: deps.engineVersion,
+    clock,
+    embeddingOptionsFactory: deps.embeddingOptionsFactory,
+  };
+  const provider = new ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind>(composedDeps);
+  const facade = Object.assign(Object.create(null) as object, {
+    generateText: (
+      options: GenerateOptions,
+      signal?: AbortSignal,
+    ): Promise<ProtectedAiTextResult> => provider.generateProductionText(options, signal),
+    streamText: (
+      options: GenerateOptions,
+      sink: DisplayChunkSink,
+      signal?: AbortSignal,
+    ): Promise<ProtectedAiResultTail> => provider.streamProductionText(options, sink, signal),
+    embedText: (text: string, kind: EmbeddingKind): Promise<readonly number[]> =>
+      provider.embedText(text, kind),
+  });
+  return Object.freeze(facade) as ProtectedAiCallSurface<GenerateOptions, EmbeddingKind>;
 }

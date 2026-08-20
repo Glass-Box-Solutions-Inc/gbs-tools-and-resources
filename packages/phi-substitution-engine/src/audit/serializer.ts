@@ -9,6 +9,7 @@ const AI_OPERATIONS: readonly AiOperation[] = ["generation", "stream", "embeddin
 const AUDIT_OUTCOMES: readonly PhiAuditOutcome[] = [
   "completed",
   "cancelled",
+  "interrupted",
   "failed_closed",
   "reversal_failed",
   "unknown_after_send",
@@ -18,11 +19,13 @@ const AUDIT_OUTCOMES: readonly PhiAuditOutcome[] = [
  * The ONLY non-null strings a terminal `failureCode` may carry (§7/N2). Without this value
  * allow-list a terminal event constructed with `preparedToTerminalEvent(prepared, outcome, <raw>, …)`
  * would persist an arbitrary — possibly PHI-laden — string into the durable audit record. This is
- * the last gate before persistence, so it must enumerate EVERY fixed code the coordinator/wrapper
- * legitimately record: the 11 `PhiEngineFailureCode`s plus the three fixed fallbacks
+ * the last gate before persistence, so it must enumerate EVERY fixed failure code the
+ * coordinator/wrapper legitimately record plus the three fixed fallbacks
  * (`FAILED_CLOSED` from the wrapper's `errorCodeString`, `PRECONDITION_FAILED` /
  * `PROVIDER_INVOCATION_FAILED` from the coordinator). Keep in sync with `core/errors.ts` and those
  * two call sites; a missing entry fails a legitimate terminal closed rather than leaking.
+ * `CALL_INTERRUPTED` is intentionally EXCLUDED: interruption has outcome `interrupted` and a null
+ * failureCode, so admitting it here would collapse the distinct non-failure terminal (GLY-353 R1).
  */
 const TERMINAL_FAILURE_CODES: readonly string[] = [
   "MISSING_TRUSTED_CONTEXT",

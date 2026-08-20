@@ -159,7 +159,7 @@ interface CurrentLockRow extends QueryResultRow {
 
 const MAX_UINT64 = 2n ** 64n - 1n;
 const DETECTOR_TTL_MS = 86_400_000n;
-const DEFAULT_SUPERSEDE_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+import { DEFAULT_SUPERSEDE_RETENTION_MS } from "../retention-defaults";
 const DEFAULT_READ_DRAIN_MS = 60_000;
 
 function encodeTextKey(value: string): string {
