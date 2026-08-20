@@ -5155,7 +5155,7 @@ note = 'M5-R41. Drops the set-aside sentence from the prose label set, so the MS
 id = 'm24-202'
 title = 'RENDERED-FEE-BASE-USES-GROSS'
 file = 'src/wc_caseload_engine/fact_templates.py'
-test = 'tests/test_ajc64_item0d.py::TestForcedSubtypeFigureProperty::test_the_subtype_prints_exactly_the_reference_figures[71030-STIPULATIONS_WITH_REQUEST_FOR_AWARD-True]'
+test = 'tests/test_ajc64_item0d.py::TestForcedSubtypeFigureProperty::test_the_subtype_prints_exactly_the_reference_figures[STIPULATIONS_WITH_REQUEST_FOR_AWARD-True]'
 find = '    fee, net_award = _fee_and_net(award._answer)'
 replace = '    fee, net_award = _fee_and_net(gross)'
 note = 'M5-R41 (round-1 finding F3). Computes the stipulations fee on the GROSS instead of the permanent-disability award component left after the self-procured reimbursement. Round 1 read this figure back through the same helper it was checking, so the two agreed by construction; the render-path oracle reads the number off the produced page and compares it to an independently restated equation. Round-2 finding R2-1 repointed the guard from the next()-selected single page to the forced full matrix (all eleven registry subtypes, set-aside on and off, generated grosses), so the stipulations fee base is now checked on every stipulations subtype rather than on whichever one a seed happened to emit.'
@@ -5233,3 +5233,12 @@ replace = '''        from wc_caseload_engine.money import _rng
 
         facts = self._derived_case(case_id, rng_seed)'''
 note = 'M5-R41 (F3-round-11), round-2 finding R2-2. Reintroduces the production _rng import the round-1 oracle used to manufacture its own expected weeks. That is the Form A anti-pattern: an oracle that reaches into the module under test for its expectation agrees with whatever arithmetic that module contains. The expectation must come from the pinned literal fixtures.'
+
+[[mutant]]
+id = 'm24-209'
+title = 'PROPERTY-SAMPLE-REFROZEN'
+file = 'tests/test_ajc64_item0d.py'
+test = 'tests/test_ajc64_item0d.py::TestEverySubtypeIsExercised::test_the_sample_is_not_frozen_across_runs'
+find = '''    generator = random.Random(f"{PROPERTY_SEED}:{cell}")'''
+replace = '''    generator = random.Random(f"0:{cell}")'''
+note = 'M5-R41, round-3 finding R3-1. Re-freezes the property sample by cutting the run seed out of the generator, so every run draws the same values again. This is the defect rounds 1 and 2 both shipped in different spellings — eight sha256-hashed case ids, then a PRNG memoized into a module-level tuple at import. Each looks like generation and behaves like a fixed grid, which is why the guard drives sample_grosses under three different run seeds and requires the draw to move.'

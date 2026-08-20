@@ -108,7 +108,7 @@ S0_SHA256 = {
 }
 
 # sha256 of each frozen tests/fixtures/ajc64_item1_s2/*.json witness, i.e.
-# the PROVISIONAL S2 capture this item ships.
+# the FINAL S2 capture this item ships.
 S2_SHA256 = {
     "demo-caseload": "f56160aa08dd6e6660a593b4d2e463c6a630c24277f5a6a6135b48ac41dd0e66",
     "doctrine-showcase": "11c0b95f5f4659112eaff4a04acc6eba96b6c63647f99d270c1e83dcaeb03df9",

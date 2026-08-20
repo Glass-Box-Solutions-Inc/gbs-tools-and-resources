@@ -33,8 +33,8 @@ from __future__ import annotations
 
 import ast
 import copy
-import hashlib
 import json
+import os
 import random
 import re
 from collections import Counter
@@ -873,33 +873,6 @@ class TestDrawConsistencyDiagnosticStaysInternal:
 
 RENDER_LABEL = "[ENGINE_POLICY_UNCONFIRMED]"
 
-#: Deterministic gross values. Derived from the CASE ID by sha256 — never from
-#: the wall clock and never from a bare `random.seed()` — so a failure is
-#: reproducible from the case id printed beside it (F3's sampling rule).
-PROPERTY_CASE_IDS = (
-    "prop-alpha",
-    "prop-bravo",
-    "prop-charlie",
-    "prop-delta",
-    "prop-echo",
-    "prop-foxtrot",
-    "prop-golf",
-    "prop-hotel",
-)
-
-
-def gross_for_case(case_id: str, *, low: int = 2, high: int = 400_000) -> int:
-    """A gross drawn deterministically from the case id.
-
-    Seeded from the id rather than from a clock so the same case always draws
-    the same figure and a reported failure can be re-run verbatim. The span
-    covers the floor-binding region and ordinary settlement magnitudes alike.
-    """
-    digest = hashlib.sha256(case_id.encode("utf-8")).digest()
-    span = high - low + 1
-    return low + (int.from_bytes(digest[:8], "big") % span)
-
-
 #: The subtypes a settlement case can actually emit, with the resolution that
 #: produces each. The registry holds eleven settlement entries; a seed produces
 #: the C&R family or the stipulations family plus the approval order, so the
@@ -1175,42 +1148,72 @@ class TestRenderedLabelCoverage:
             assert row not in page
 
 
-def property_grosses(count: int = 4) -> tuple[int, ...]:
-    """Admissible grosses, generated deterministically.
+#: How many arbitrary grosses each subtype/MSA cell draws.
+#:
+#: Measured budget, not a guess: one render costs ~0.147s on this machine, so
+#: 22 cells x 50 samples is ~162s of the suite. That is the cost of actually
+#: sampling the admissible range and it is paid deliberately.
+PROPERTY_SAMPLES_PER_CELL = 50
 
-    Round-2 finding R2-1. The previous version drew eight values by hashing
-    eight hand-written case-id strings, which is a fixed list wearing a
-    generator's clothes: the ids were the input, so the "sample" was as fixed
-    as the fifteen-value grid it replaced.
 
-    This generates from an explicitly seeded PRNG instead, so the sample size
-    is a parameter rather than the length of a literal. The seed is a constant
-    — never the clock, never ``random.seed()`` on ambient state — so a failure
-    reproduces verbatim from the values printed beside it.
+def _property_seed() -> int:
+    """The seed this run samples from — fresh per run, but recoverable.
 
-    The two boundary magnitudes are appended unconditionally because they are
-    where the ``max(..., 1)`` costs and set-aside floors bind (a gross under
-    $40 floors costs, one under $5 floors the set-aside), and a uniform draw
-    over the admissible range essentially never lands there.
+    Round-3 finding R3-1. Rounds 1 and 2 both shipped a *frozen* sample: first
+    eight sha256-hashed case ids, then a single seeded PRNG whose output was
+    memoized into a six-element ``PROPERTY_GROSSES`` tuple at import. Both
+    produce identical values on every run, which is a fixed grid however it is
+    spelled — a property that has only ever been checked at six points is a
+    property checked at six points.
 
-    The lower boundary is ``SETTLEMENT_GROSS_MINIMUM`` and not $2, because a
-    *stated* gross below the floor is refused at the seed — ``$2`` raises
-    ``SeedValidationError`` and never reaches a renderer. The sub-floor
-    magnitudes remain covered one layer down, in
-    :class:`TestIdentityProperty`, which exercises the equations directly and
-    is not bound by what a seed will accept.
+    A property test earns its name by trying values nobody chose. So the seed
+    is drawn fresh per run, and the contract that makes that safe is
+    reproducibility on demand: the seed is reported in every failure message,
+    and setting ``AJC64_PROPERTY_SEED`` replays that exact run. This is the
+    standard property-testing bargain — new inputs each run, deterministic
+    replay of any failure.
     """
+    override = os.environ.get(PROPERTY_SEED_ENV)
+    if override:
+        return int(override, 0)
+    return random.SystemRandom().getrandbits(64)
+
+
+PROPERTY_SEED_ENV = "AJC64_PROPERTY_SEED"
+PROPERTY_SEED = _property_seed()
+
+#: The admissible range for a STATED settlement gross, read from the schema
+#: rather than restated: ``seeds.py`` bounds the field ``ge=0, le=10_000_000``
+#: and refuses anything below ``SETTLEMENT_GROSS_MINIMUM``. Round 2 sampled to
+#: $400,000, leaving 96% of the admissible range — every gross a catastrophic
+#: or structured settlement would carry — entirely unexercised.
+PROPERTY_GROSS_CEILING = 10_000_000
+
+
+def property_gross_bounds() -> tuple[int, int]:
     from wc_caseload_engine.seeds import SETTLEMENT_GROSS_MINIMUM
 
-    generator = random.Random(PROPERTY_SEED)
-    drawn = {generator.randint(50, 400_000) for _ in range(count)}
-    return tuple(sorted(drawn | {int(SETTLEMENT_GROSS_MINIMUM), 41}))
+    return int(SETTLEMENT_GROSS_MINIMUM), PROPERTY_GROSS_CEILING
 
 
-#: Fixed, and stated as a literal so a failing case is reproducible verbatim.
-PROPERTY_SEED = 0x41_4A_43_36_34  # b"AJC64"
+def boundary_grosses() -> tuple[int, ...]:
+    """The edges, always tried — a uniform draw never lands on them."""
+    floor, ceiling = property_gross_bounds()
+    return (floor, floor + 1, ceiling - 1, ceiling)
 
-PROPERTY_GROSSES = property_grosses()
+
+def sample_grosses(cell: str, count: int = PROPERTY_SAMPLES_PER_CELL) -> list[int]:
+    """Arbitrary admissible grosses for one subtype/MSA cell.
+
+    Each cell draws its own values — derived from the run seed AND the cell
+    name — so the subtypes are not all handed the same list, and the whole
+    matrix explores far more of the range than any one cell does.
+    """
+    floor, ceiling = property_gross_bounds()
+    generator = random.Random(f"{PROPERTY_SEED}:{cell}")
+    drawn = [generator.randint(floor, ceiling) for _ in range(count)]
+    return [*boundary_grosses(), *drawn]
+
 
 #: Which family each of the eleven registry subtypes belongs to, as a literal
 #: map. Every subtype is named here explicitly — R2-1 requires the property to
@@ -1307,16 +1310,75 @@ class TestEverySubtypeIsExercised:
         assert {SUBTYPE_FAMILY[s] for s in STIPS_FAMILY} == {"stips"}
         assert SUBTYPE_FAMILY["ORDER_APPROVING_SETTLEMENT"] == "approval"
 
-    def test_the_generated_grosses_are_deterministic_and_admissible(self) -> None:
-        assert property_grosses() == property_grosses() == PROPERTY_GROSSES
-        assert len(PROPERTY_GROSSES) >= 5
-        assert all(2 <= value <= 400_000 for value in PROPERTY_GROSSES)
-        # The floor-binding boundaries are present, and they are the point.
-        from wc_caseload_engine.seeds import SETTLEMENT_GROSS_MINIMUM
+    def test_the_sample_covers_the_whole_admissible_range(self) -> None:
+        """R3-1: the sampler must actually be a sampler.
 
-        assert int(SETTLEMENT_GROSS_MINIMUM) in PROPERTY_GROSSES
-        assert 41 in PROPERTY_GROSSES
-        assert max(PROPERTY_GROSSES) > 50_000, "no ordinary magnitude drawn"
+        Guards the three ways this oracle has already been weakened: too few
+        values, too narrow a range, and — twice now — a "sample" that is the
+        same list on every run.
+        """
+        floor, ceiling = property_gross_bounds()
+        assert (floor, ceiling) == (3, 10_000_000), (
+            "bounds must track the seed schema (ge=0, le=10_000_000) and the "
+            "stated-gross floor"
+        )
+
+        drawn = sample_grosses("COMPROMISE_AND_RELEASE_STANDARD-msa")
+        assert len(drawn) >= PROPERTY_SAMPLES_PER_CELL >= 50
+        assert all(floor <= value <= ceiling for value in drawn)
+
+        # The edges are always tried; a uniform draw never lands on them.
+        for edge in boundary_grosses():
+            assert edge in drawn, f"boundary {edge} is not exercised"
+        assert boundary_grosses() == (3, 4, 9_999_999, 10_000_000)
+
+        # And the draw genuinely spans the range rather than clustering in the
+        # first few percent, which is where rounds 1 and 2 both stopped.
+        assert max(drawn) > 5_000_000, "nothing above the halfway mark drawn"
+        assert len({value // 1_000_000 for value in drawn}) >= 5
+
+    def test_each_cell_draws_its_own_values(self) -> None:
+        """Otherwise every subtype is handed one list and 22 cells prove one."""
+        first = sample_grosses("COMPROMISE_AND_RELEASE_STANDARD-msa")
+        second = sample_grosses("STIPULATIONS_WITH_REQUEST_FOR_AWARD-nomsa")
+        assert set(first) != set(second)
+
+    def test_the_sample_is_not_frozen_across_runs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The defect R3-1 names, asserted on the sampler itself (m24-209).
+
+        Rounds 1 and 2 both shipped a memoized tuple — first hashed case ids,
+        then a PRNG whose output was frozen into a module constant at import.
+        Both spellings look like generation and behave like a fixed grid. So
+        this drives ``sample_grosses`` under different run seeds and requires
+        the draw to move.
+        """
+        import test_ajc64_item0d as module
+
+        draws = []
+        for seed in (11, 22, 33):
+            monkeypatch.setattr(module, "PROPERTY_SEED", seed)
+            draws.append(tuple(sample_grosses("cell")))
+        assert len({tuple(d) for d in draws}) == 3, (
+            "sample_grosses returns the same values regardless of the run "
+            "seed — the sample is frozen, which is the R3-1 defect"
+        )
+        # The boundaries are the exception: they are meant to be constant.
+        for draw in draws:
+            assert draw[: len(boundary_grosses())] == boundary_grosses()
+
+    def test_a_failure_is_reproducible_from_the_reported_seed(self) -> None:
+        """The bargain that makes per-run sampling safe."""
+        floor, ceiling = property_gross_bounds()
+        os.environ[PROPERTY_SEED_ENV] = "12345"
+        try:
+            assert _property_seed() == 12345
+        finally:
+            del os.environ[PROPERTY_SEED_ENV]
+        replay_a = random.Random("12345:cell").randint(floor, ceiling)
+        replay_b = random.Random("12345:cell").randint(floor, ceiling)
+        assert replay_a == replay_b
 
 
 @requires_substrate
@@ -1333,61 +1395,72 @@ class TestForcedSubtypeFigureProperty:
     """
 
     @pytest.mark.parametrize(("subtype", "msa"), SUBTYPE_MSA_MATRIX)
-    @pytest.mark.parametrize("gross", PROPERTY_GROSSES)
     def test_the_subtype_prints_exactly_the_reference_figures(
-        self, tmp_path: Path, subtype: str, msa: bool, gross: int
+        self, tmp_path: Path, subtype: str, msa: bool
     ) -> None:
-        """m24-202: the printed figures equal the literal equations."""
-        page = render_one_subtype(tmp_path, subtype, gross, msa=msa)
+        """m24-202: the printed figures equal the literal equations.
+
+        Every sampled gross for this cell is tried, and the FIRST failure
+        reports the run seed and the offending value, so any failure replays
+        exactly via ``AJC64_PROPERTY_SEED``.
+        """
         family = SUBTYPE_FAMILY[subtype]
-        where = f"{subtype} (gross {gross}, msa={msa})"
+        cell = f"{subtype}-{'msa' if msa else 'nomsa'}"
+        grosses = sample_grosses(cell)
+        assert len(grosses) >= PROPERTY_SAMPLES_PER_CELL, "sample budget shrank"
 
-        def printed(name: str) -> Decimal:
-            found = LABELLED_RENDER_SITES[name].search(page)
-            assert found, f"{where}: {name} is not on the rendered page"
-            return Decimal(found.group(1).replace(",", ""))
-
-        if family == "approval":
-            # The approval order restates; it computes nothing of its own, so
-            # a deduction breakdown appearing here would mean item 0d invented
-            # one. Asserted on the page for both set-aside states.
-            assert RENDER_LABEL not in page, (
-                f"{where}: the approval order printed an engine-policy label"
+        for gross in grosses:
+            page = render_one_subtype(tmp_path, subtype, gross, msa=msa)
+            where = (
+                f"{subtype} (gross {gross}, msa={msa}) — replay this run with "
+                f"{PROPERTY_SEED_ENV}={PROPERTY_SEED}"
             )
-            for row in LABELLED_ROWS:
-                assert row not in page, f"{where}: approval order printed {row!r}"
-            return
 
-        if family == "cr":
-            expected = reference_cr_deductions(gross, wants_msa=msa)
-            assert printed("cr_table_fee") == expected["fee"]
-            assert printed("cr_table_costs") == expected["costs"]
-            # The signed paragraph must agree with the table it summarises.
-            assert printed("cr_prose_fee") == expected["fee"], (
-                f"{where}: the table and the signed paragraph state different fees"
-            )
-            assert printed("cr_prose_costs") == expected["costs"]
-            if msa:
-                assert printed("cr_table_msa") == expected["set_aside"]
-                assert printed("cr_prose_msa") == expected["set_aside"]
-            else:
-                assert not LABELLED_RENDER_SITES["cr_table_msa"].search(page), (
-                    f"{where}: a set-aside row printed for msa=False"
+            def printed(name: str, *, page: str = page, where: str = where) -> Decimal:
+                found = LABELLED_RENDER_SITES[name].search(page)
+                assert found, f"{where}: {name} is not on the rendered page"
+                return Decimal(found.group(1).replace(",", ""))
+
+            if family == "approval":
+                # The approval order restates; it computes nothing of its own,
+                # so a deduction breakdown here would mean item 0d invented one.
+                assert RENDER_LABEL not in page, (
+                    f"{where}: the approval order printed an engine-policy label"
                 )
-            return
+                for row in LABELLED_ROWS:
+                    assert row not in page, f"{where}: approval printed {row!r}"
+                continue
 
-        expected_stips = reference_stips_figures(gross)
-        assert printed("stips_table_fee") == expected_stips["fee"]
-        assert printed("stips_prose_fee") == expected_stips["fee"], (
-            f"{where}: the award table and its fee sentence disagree"
-        )
-        # The fee base is the AWARD component, never the gross — the mistake a
-        # single universal equation makes.
-        if expected_stips["reimbursement"] > 0:
-            gross_based = (Decimal(gross) * Decimal("0.15")).quantize(
-                Decimal("0.01")
+            if family == "cr":
+                expected = reference_cr_deductions(gross, wants_msa=msa)
+                assert printed("cr_table_fee") == expected["fee"], where
+                assert printed("cr_table_costs") == expected["costs"], where
+                # The signed paragraph must agree with the table it summarises.
+                assert printed("cr_prose_fee") == expected["fee"], (
+                    f"{where}: table and signed paragraph state different fees"
+                )
+                assert printed("cr_prose_costs") == expected["costs"], where
+                if msa:
+                    assert printed("cr_table_msa") == expected["set_aside"], where
+                    assert printed("cr_prose_msa") == expected["set_aside"], where
+                else:
+                    assert not LABELLED_RENDER_SITES["cr_table_msa"].search(page), (
+                        f"{where}: a set-aside row printed for msa=False"
+                    )
+                continue
+
+            expected_stips = reference_stips_figures(gross)
+            assert printed("stips_table_fee") == expected_stips["fee"], where
+            assert printed("stips_prose_fee") == expected_stips["fee"], (
+                f"{where}: the award table and its fee sentence disagree"
             )
-            assert expected_stips["fee"] != gross_based
+            # The fee base is the AWARD component, never the gross — the
+            # mistake a single universal equation makes.
+            if expected_stips["reimbursement"] > 0:
+                gross_based = (Decimal(gross) * Decimal("0.15")).quantize(
+                    Decimal("0.01")
+                )
+                assert expected_stips["fee"] != gross_based, where
 
     @pytest.mark.parametrize(("subtype", "msa"), SUBTYPE_MSA_MATRIX)
     def test_the_subtype_prints_no_unlabelled_deduction(
@@ -1400,5 +1473,3 @@ class TestForcedSubtypeFigureProperty:
                 f"{subtype} (msa={msa}) prints an UNLABELLED invented rate "
                 f"({name}): {probe.pattern}"
             )
-
-
