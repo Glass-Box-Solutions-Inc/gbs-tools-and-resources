@@ -78,7 +78,10 @@ export function extractHostnames(source: string): readonly string[] {
 }
 
 /** A host is denied if it equals, or is a subdomain of, any denylisted host. */
-export function hostIsDenied(host: string, deniedProviderHosts: readonly string[]): boolean {
+export function hostIsDenied(
+  host: string,
+  deniedProviderHosts: readonly string[],
+): boolean {
   return deniedProviderHosts.some(
     (denied) => host === denied || host.endsWith(`.${denied}`),
   );
@@ -92,7 +95,11 @@ export interface EgressLintInput {
 
 export interface EgressLintResult {
   readonly ok: boolean;
-  readonly violations: readonly Readonly<{ file: string; host: string; rule: "RAW_PROVIDER_FETCH" }>[];
+  readonly violations: readonly Readonly<{
+    file: string;
+    host: string;
+    rule: "RAW_PROVIDER_FETCH";
+  }>[];
   readonly diagnostics: readonly string[];
 }
 
@@ -101,13 +108,26 @@ export interface EgressLintResult {
  * protected module is an unprotected egress site — a raw fetch is never
  * "covered", so registration cannot whitewash it.
  */
-export function lintProviderHostEgress(input: EgressLintInput): EgressLintResult {
+export function lintProviderHostEgress(
+  input: EgressLintInput,
+): EgressLintResult {
   const policy = input.policy ?? DEFAULT_EGRESS_POLICY;
-  const fileProtected = isProtectedModule(input.addedFile, policy.protectedModuleRoots);
-  const violations: { file: string; host: string; rule: "RAW_PROVIDER_FETCH" }[] = [];
+  const fileProtected = isProtectedModule(
+    input.addedFile,
+    policy.protectedModuleRoots,
+  );
+  const violations: {
+    file: string;
+    host: string;
+    rule: "RAW_PROVIDER_FETCH";
+  }[] = [];
   for (const host of extractHostnames(input.source)) {
     if (hostIsDenied(host, policy.deniedProviderHosts) && !fileProtected) {
-      violations.push({ file: input.addedFile, host, rule: "RAW_PROVIDER_FETCH" });
+      violations.push({
+        file: input.addedFile,
+        host,
+        rule: "RAW_PROVIDER_FETCH",
+      });
     }
   }
   return {
@@ -134,7 +154,9 @@ export interface RawConstructionResult {
  * (`new AzureOpenAI`, `new Anthropic`, …) is forbidden anywhere but the single
  * protected module that owns the wrapper binding.
  */
-export function checkRawConstruction(input: RawConstructionInput): RawConstructionResult {
+export function checkRawConstruction(
+  input: RawConstructionInput,
+): RawConstructionResult {
   const policy = input.policy ?? DEFAULT_EGRESS_POLICY;
   const constructor = input.sourceKind.replace(/^new\s+/i, "").trim();
   const forbidden = policy.forbiddenConstructors.includes(constructor);

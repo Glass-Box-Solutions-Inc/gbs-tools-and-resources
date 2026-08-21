@@ -44,16 +44,26 @@ export class InMemoryKeyProvider implements KeyProvider {
       throw new Error("dev_kek_must_be_32_bytes");
     }
     this.#keyId = (options.keyId ?? "dev-kek") as unknown as WrappingKeyId;
-    this.#keyVersion = (options.keyVersion ?? "v1") as unknown as WrappingKeyVersion;
+    this.#keyVersion = (options.keyVersion ??
+      "v1") as unknown as WrappingKeyVersion;
   }
 
   public getWrappingKey(scope: WrappingKeyScope): Promise<WrappingKeyHandle> {
-    return Promise.resolve({ keyId: this.#keyId, keyVersion: this.#keyVersion, scope });
+    return Promise.resolve({
+      keyId: this.#keyId,
+      keyVersion: this.#keyVersion,
+      scope,
+    });
   }
 
   public wrap(input: WrapDekInput): Promise<WrappedDekMaterial> {
     const nonce = randomBytes(WRAP_NONCE_BYTES);
-    const { ciphertext, authTag } = gcmEncrypt(this.#kek, nonce, input.bindingDigest, input.dek);
+    const { ciphertext, authTag } = gcmEncrypt(
+      this.#kek,
+      nonce,
+      input.bindingDigest,
+      input.dek,
+    );
     // wrappedDek = nonce || authTag || ciphertext
     const wrapped = Buffer.concat([nonce, authTag, ciphertext]);
     return Promise.resolve(wrapped as unknown as WrappedDekMaterial);
@@ -62,11 +72,20 @@ export class InMemoryKeyProvider implements KeyProvider {
   public unwrap(input: UnwrapDekInput): Promise<DekMaterial> {
     const wrapped = Buffer.from(input.wrappedDek);
     const nonce = wrapped.subarray(0, WRAP_NONCE_BYTES);
-    const authTag = wrapped.subarray(WRAP_NONCE_BYTES, WRAP_NONCE_BYTES + WRAP_TAG_BYTES);
+    const authTag = wrapped.subarray(
+      WRAP_NONCE_BYTES,
+      WRAP_NONCE_BYTES + WRAP_TAG_BYTES,
+    );
     const ciphertext = wrapped.subarray(WRAP_NONCE_BYTES + WRAP_TAG_BYTES);
     // The bindingDigest is the GCM AAD: a wrong scope/KEK-version digest fails authentication and
     // throws, so a wrapped DEK cannot be unwrapped under a substituted scope (fail closed).
-    const dek = gcmDecrypt(this.#kek, nonce, input.bindingDigest, ciphertext, authTag);
+    const dek = gcmDecrypt(
+      this.#kek,
+      nonce,
+      input.bindingDigest,
+      ciphertext,
+      authTag,
+    );
     return Promise.resolve(dek as unknown as DekMaterial);
   }
 }

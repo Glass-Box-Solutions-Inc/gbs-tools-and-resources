@@ -15,7 +15,14 @@
  *     (Q4 disposition: single DEK generation per (tenant,matter), its wrapped form persisted durably
  *     so a remounted replica recovers the same generation).
  */
-import type { Brand, DictionaryVersion, MatterId, OperationAttemptId, SubstitutionToken, TenantId } from "../../core/brands";
+import type {
+  Brand,
+  DictionaryVersion,
+  MatterId,
+  OperationAttemptId,
+  SubstitutionToken,
+  TenantId,
+} from "../../core/brands";
 
 /**
  * 256-bit plaintext data-encryption key. Sensitive: only ever a lexical local or a `#private` cache slot.
@@ -173,7 +180,10 @@ export interface ReversalLookupResult {
  */
 export interface EnsureDekGenerationInput {
   readonly scope: WrappingKeyScope;
-  readonly mint: () => Promise<{ readonly dekGenerationId: DekGenerationId; readonly wrappedDek: WrappedDekMaterial }>;
+  readonly mint: () => Promise<{
+    readonly dekGenerationId: DekGenerationId;
+    readonly wrappedDek: WrappedDekMaterial;
+  }>;
 }
 
 export interface DekGeneration {
@@ -200,7 +210,9 @@ export interface SpoolVolume {
   flush(commit: PublishedCommitHandle): Promise<void>;
 
   /** Exact-key, bounded. Rejects an empty/all selector and never iterates stored records. */
-  readCurrent(requests: readonly ReversalLookupRequest[]): Promise<readonly ReversalLookupResult[]>;
+  readCurrent(
+    requests: readonly ReversalLookupRequest[],
+  ): Promise<readonly ReversalLookupResult[]>;
 }
 
 // ---- DurableReversalStore dependencies --------------------------------------------------------
@@ -218,7 +230,9 @@ export interface DurableReversalStoreDependencies {
    * non-deterministic classifier is a misbehaving trusted dependency (out of the bounded threat model);
    * store-enforced operation-retention binding is a governance follow-up, not an M2 requirement.
    */
-  readonly classifyRetention: (input: RetentionClassificationInput) => Promise<ReversalRetentionClass>;
+  readonly classifyRetention: (
+    input: RetentionClassificationInput,
+  ) => Promise<ReversalRetentionClass>;
   readonly nowEpochMilliseconds: () => number;
   readonly maximumEncounteredTokenBatch: number;
 }

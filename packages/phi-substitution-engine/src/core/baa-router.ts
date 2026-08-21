@@ -63,10 +63,13 @@ export interface ProviderRoutingDecision<RawProvider> {
   readonly providerId: string;
 }
 
-export class OriginalContentBaaRouter<GenerateOptions, RawProvider>
-  implements OriginalContentProviderRouter<GenerateOptions, RawProvider>
-{
-  public constructor(private readonly config: BaaRouterConfig<GenerateOptions, RawProvider>) {}
+export class OriginalContentBaaRouter<
+  GenerateOptions,
+  RawProvider,
+> implements OriginalContentProviderRouter<GenerateOptions, RawProvider> {
+  public constructor(
+    private readonly config: BaaRouterConfig<GenerateOptions, RawProvider>,
+  ) {}
 
   public async selectUsingOriginalContent(
     options: GenerateOptions,

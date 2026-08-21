@@ -35,13 +35,19 @@ export class AzureFilesSpoolVolume implements SpoolVolume {
   readonly #blobStore: BlobStore;
   readonly #nowEpochMilliseconds: () => number;
 
-  public constructor(controlPlane: ControlPlane, blobStore: BlobStore, nowEpochMilliseconds: () => number = Date.now) {
+  public constructor(
+    controlPlane: ControlPlane,
+    blobStore: BlobStore,
+    nowEpochMilliseconds: () => number = Date.now,
+  ) {
     this.#controlPlane = controlPlane;
     this.#blobStore = blobStore;
     this.#nowEpochMilliseconds = nowEpochMilliseconds;
   }
 
-  public ensureDekGeneration(input: EnsureDekGenerationInput): Promise<DekGeneration> {
+  public ensureDekGeneration(
+    input: EnsureDekGenerationInput,
+  ): Promise<DekGeneration> {
     return this.#controlPlane.ensureDekGeneration(input);
   }
 
@@ -49,7 +55,9 @@ export class AzureFilesSpoolVolume implements SpoolVolume {
     return this.#controlPlane.reserveNonce(input);
   }
 
-  public async prepare(input: PrepareReversalWriteInput): Promise<PreparedReversalWrite> {
+  public async prepare(
+    input: PrepareReversalWriteInput,
+  ): Promise<PreparedReversalWrite> {
     const handle = handleOf(randomUUID());
     const staging = stagingPath(handle);
     const blob = blobPath(handle);
@@ -77,7 +85,9 @@ export class AzureFilesSpoolVolume implements SpoolVolume {
     return { handle };
   }
 
-  public async publish(prepared: PreparedReversalWrite): Promise<PublishReversalResult> {
+  public async publish(
+    prepared: PreparedReversalWrite,
+  ): Promise<PublishReversalResult> {
     // The path is derived solely from the globally-unique durable handle. Reading the finalized
     // envelope avoids replica-local prepared context and lets a fresh adapter publish the handle.
     const bytes = await this.#blobStore.get(blobPath(prepared.handle));
@@ -127,15 +137,23 @@ export class AzureFilesSpoolVolume implements SpoolVolume {
     });
   }
 
-  public async readCurrent(requests: readonly ReversalLookupRequest[]): Promise<readonly ReversalLookupResult[]> {
+  public async readCurrent(
+    requests: readonly ReversalLookupRequest[],
+  ): Promise<readonly ReversalLookupResult[]> {
     if (requests.length === 0) {
       throw new Error("azure_files_spool_read_requires_exact_keys");
     }
-    const pointers = await this.#controlPlane.readCurrentPointers(requests.map((request) => request.mappingKey));
-    return Promise.all(pointers.map(async (pointer) => this.#readPointer(pointer)));
+    const pointers = await this.#controlPlane.readCurrentPointers(
+      requests.map((request) => request.mappingKey),
+    );
+    return Promise.all(
+      pointers.map(async (pointer) => this.#readPointer(pointer)),
+    );
   }
 
-  async #readPointer(pointer: CurrentPointerRow): Promise<ReversalLookupResult> {
+  async #readPointer(
+    pointer: CurrentPointerRow,
+  ): Promise<ReversalLookupResult> {
     const quarantine = `reclaim-quarantine/${pointer.preparedBlobId as unknown as string}`;
     for (const path of [pointer.blobPath, quarantine, pointer.blobPath]) {
       const [head, bytes] = await Promise.all([
@@ -155,7 +173,10 @@ export class AzureFilesSpoolVolume implements SpoolVolume {
       ) {
         throw new Error("azure_files_spool_read_integrity_failure");
       }
-      return { mappingKey: pointer.mappingKey, encryptedRecord: decodeReversalBlob(bytes) };
+      return {
+        mappingKey: pointer.mappingKey,
+        encryptedRecord: decodeReversalBlob(bytes),
+      };
     }
     throw new Error("azure_files_spool_read_integrity_failure");
   }

@@ -21,7 +21,12 @@
  *
  * The phase-1 detector belt is never invoked for a customer claim.
  */
-import type { DisplayText, EngineVersion, OperationId, TokenizedText } from "./brands";
+import type {
+  DisplayText,
+  EngineVersion,
+  OperationId,
+  TokenizedText,
+} from "./brands";
 import type {
   AiOperation,
   MatterAiContext,
@@ -50,9 +55,24 @@ import type {
   PhiAuditOutcome,
   PhiAuditPreparedRecord,
 } from "../audit/ports";
-import { isAuditError, preparedToTerminalEvent, safeClockNow, toTotalIdentifierCounts } from "../audit/index";
-import { isPhiEngineFailureCode, PhiEngineError, safeCodeString, toFailureCode } from "./errors";
-import { safeOwnKeys, safeRead, safeString, intrinsicCopy } from "./boundary-snapshot";
+import {
+  isAuditError,
+  preparedToTerminalEvent,
+  safeClockNow,
+  toTotalIdentifierCounts,
+} from "../audit/index";
+import {
+  isPhiEngineFailureCode,
+  PhiEngineError,
+  safeCodeString,
+  toFailureCode,
+} from "./errors";
+import {
+  safeOwnKeys,
+  safeRead,
+  safeString,
+  intrinsicCopy,
+} from "./boundary-snapshot";
 
 /** The single private raw-provider port. It is never exported as an application binding. */
 export interface RawProviderPort<GenerateOptions, EmbeddingKind = string> {
@@ -61,26 +81,36 @@ export interface RawProviderPort<GenerateOptions, EmbeddingKind = string> {
     options: GenerateOptions,
     onChunk: (chunk: TokenizedText) => void | Promise<void>,
   ): Promise<void>;
-  embedText(text: TokenizedText, kind: EmbeddingKind): Promise<readonly number[]>;
+  embedText(
+    text: TokenizedText,
+    kind: EmbeddingKind,
+  ): Promise<readonly number[]>;
 }
 
 export interface ProtectedStreamResult {
   readonly displayChunks: readonly DisplayText[];
 }
 
-export interface ComposedProtectedAiProviderDeps<GenerateOptions, EmbeddingKind = string>
-  extends ProtectedAiProviderDependencies<GenerateOptions, RawProviderPort<GenerateOptions, EmbeddingKind>> {
+export interface ComposedProtectedAiProviderDeps<
+  GenerateOptions,
+  EmbeddingKind = string,
+> extends ProtectedAiProviderDependencies<
+  GenerateOptions,
+  RawProviderPort<GenerateOptions, EmbeddingKind>
+> {
   readonly engineVersion: EngineVersion;
   readonly clock?: () => string;
   /** Wraps a bare embedding string into routable/traceable options (§4.3). */
   readonly embeddingOptionsFactory?: (text: string) => GenerateOptions;
 }
 
-export interface ComposedProductionProtectedAiProviderDeps<GenerateOptions, EmbeddingKind = string>
-  extends ProtectedAiProviderDependencies<
-    GenerateOptions,
-    ProductionRawProviderPort<GenerateOptions, EmbeddingKind>
-  > {
+export interface ComposedProductionProtectedAiProviderDeps<
+  GenerateOptions,
+  EmbeddingKind = string,
+> extends ProtectedAiProviderDependencies<
+  GenerateOptions,
+  ProductionRawProviderPort<GenerateOptions, EmbeddingKind>
+> {
   readonly production: true;
   readonly engineVersion: EngineVersion;
   readonly clock?: () => string;
@@ -98,7 +128,10 @@ type AnyComposedDeps<GenerateOptions, EmbeddingKind> =
 const SAFE_RESULT_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const INTERRUPTED = Symbol("GLY-353-interrupted");
 
-type ProductionFailureOutcome = "failed_closed" | "reversal_failed" | "unknown_after_send";
+type ProductionFailureOutcome =
+  | "failed_closed"
+  | "reversal_failed"
+  | "unknown_after_send";
 
 class ProductionCallFailure {
   public constructor(
@@ -218,22 +251,23 @@ function ownKey(keys: readonly string[], expected: string): boolean {
  */
 function errorCodeString(error: unknown): string {
   const code = safeCodeString(error);
-  return code !== undefined && code !== "CALL_INTERRUPTED" && isPhiEngineFailureCode(code)
+  return code !== undefined &&
+    code !== "CALL_INTERRUPTED" &&
+    isPhiEngineFailureCode(code)
     ? code
     : "FAILED_CLOSED";
 }
 
-
-export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string>
-  implements
-    AiProvider<
-      GenerateOptions,
-      Promise<DisplayText>,
-      Promise<ProtectedStreamResult>,
-      EmbeddingKind,
-      Promise<readonly number[]>
-    >
-{
+export class ComposedProtectedAiProvider<
+  GenerateOptions,
+  EmbeddingKind = string,
+> implements AiProvider<
+  GenerateOptions,
+  Promise<DisplayText>,
+  Promise<ProtectedStreamResult>,
+  EmbeddingKind,
+  Promise<readonly number[]>
+> {
   readonly #deps: AnyComposedDeps<GenerateOptions, EmbeddingKind>;
   readonly #clock: () => string;
 
@@ -252,7 +286,7 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     this.#clock =
       typeof injectedClock === "function"
         ? (injectedClock as () => string)
-        : ((): string => new Date().toISOString());
+        : (): string => new Date().toISOString();
   }
 
   public async generateText(options: GenerateOptions): Promise<DisplayText> {
@@ -263,7 +297,12 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       // §4.1 step 2 / N3: policy load is INSIDE the protected region — a policy rejection
       // after context is known finalizes exactly one terminal.
       const policy = await this.#deps.policy.require(context);
-      prepared = await this.#prepareForEgress(options, "generation", context, policy);
+      prepared = await this.#prepareForEgress(
+        options,
+        "generation",
+        context,
+        policy,
+      );
     } catch (error) {
       // §4.1 step 12 / N3: any pre-egress failure finalizes exactly one terminal.
       await this.#recordPreEgressFailure(context, "generation", error);
@@ -282,38 +321,70 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     let rawOutput: TokenizedText;
     try {
       // §4.1 step 10 / N1: invoke the PINNED provider EXACTLY ONCE with tokenized options.
-      rawOutput = await (prepared.provider as RawProviderPort<GenerateOptions, EmbeddingKind>)
-        .generateText(prepared.tokenizedOptions);
+      rawOutput = await (
+        prepared.provider as RawProviderPort<GenerateOptions, EmbeddingKind>
+      ).generateText(prepared.tokenizedOptions);
     } catch (error) {
       // N3: a provider rejection after send still finalizes exactly one terminal.
-      await this.#finalizeQuietly(prepared, "unknown_after_send", errorCodeString(error));
-      throw new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), prepared.context.operationId, {});
+      await this.#finalizeQuietly(
+        prepared,
+        "unknown_after_send",
+        errorCodeString(error),
+      );
+      throw new PhiEngineError(
+        toFailureCode(error, "REVERSAL_FAILED"),
+        prepared.context.operationId,
+        {},
+      );
     }
     // §7/N2: the provider result is an INJECTED-port return. A NON-STRING carrier (e.g. an object with a
     // PHI-producing `toJSON`) must NOT be forwarded to the trace or reversal — require a genuine string
     // (the tokenized output) and fail closed otherwise, so nothing but a tokenized string reaches a sink.
     if (typeof (rawOutput as unknown) !== "string") {
-      await this.#finalizeQuietly(prepared, "unknown_after_send", "PROVIDER_SAFETY_GATE_FAILED");
-      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", prepared.context.operationId, {});
+      await this.#finalizeQuietly(
+        prepared,
+        "unknown_after_send",
+        "PROVIDER_SAFETY_GATE_FAILED",
+      );
+      throw new PhiEngineError(
+        "PROVIDER_SAFETY_GATE_FAILED",
+        prepared.context.operationId,
+        {},
+      );
     }
     // §4.1 step 11 / N2/N3: tracing the tokenized output is AFTER the single provider call, so a
     // trace failure here still finalizes exactly one terminal (provider already invoked once).
     try {
       await this.#deps.safeTrace.response(rawOutput);
     } catch (error) {
-      await this.#finalizeQuietly(prepared, "unknown_after_send", errorCodeString(error));
-      throw new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), prepared.context.operationId, {});
+      await this.#finalizeQuietly(
+        prepared,
+        "unknown_after_send",
+        errorCodeString(error),
+      );
+      throw new PhiEngineError(
+        toFailureCode(error, "REVERSAL_FAILED"),
+        prepared.context.operationId,
+        {},
+      );
     }
     return this.#reverseAndFinalize(rawOutput, prepared);
   }
 
-  public async generateStream(options: GenerateOptions): Promise<ProtectedStreamResult> {
+  public async generateStream(
+    options: GenerateOptions,
+  ): Promise<ProtectedStreamResult> {
     const context = await this.#requireContext();
 
     let prepared: PreparedEgress<GenerateOptions, EmbeddingKind>;
     try {
       const policy = await this.#deps.policy.require(context);
-      prepared = await this.#prepareForEgress(options, "stream", context, policy);
+      prepared = await this.#prepareForEgress(
+        options,
+        "stream",
+        context,
+        policy,
+      );
     } catch (error) {
       await this.#recordPreEgressFailure(context, "stream", error);
       throw new PhiEngineError(
@@ -332,15 +403,22 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     try {
       // §4.2 / N3: the reverse-stream factory runs BEFORE egress; a factory throw finalizes a
       // fail-closed terminal with zero provider calls.
-      stream = this.#deps.engine.createReverseStream(prepared.substitutionHandle, (safe) => {
-        // §7/N2: the injected engine drives this sink — a NON-STRING carrier must NOT be placed in the
-        // caller-visible displayChunks. Drop anything that is not a genuine string (fail closed).
-        if (typeof (safe as unknown) === "string") {
-          displayChunks.push(safe);
-        }
-      });
+      stream = this.#deps.engine.createReverseStream(
+        prepared.substitutionHandle,
+        (safe) => {
+          // §7/N2: the injected engine drives this sink — a NON-STRING carrier must NOT be placed in the
+          // caller-visible displayChunks. Drop anything that is not a genuine string (fail closed).
+          if (typeof (safe as unknown) === "string") {
+            displayChunks.push(safe);
+          }
+        },
+      );
     } catch (error) {
-      await this.#finalizeQuietly(prepared, "failed_closed", errorCodeString(error));
+      await this.#finalizeQuietly(
+        prepared,
+        "failed_closed",
+        errorCodeString(error),
+      );
       throw new PhiEngineError(
         toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
         prepared.context.operationId,
@@ -349,18 +427,23 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     }
     try {
       // §4.1 step 10 / N1: exactly one PINNED provider call.
-      await (prepared.provider as RawProviderPort<GenerateOptions, EmbeddingKind>)
-        .generateStream(prepared.tokenizedOptions, async (chunk) => {
+      await (
+        prepared.provider as RawProviderPort<GenerateOptions, EmbeddingKind>
+      ).generateStream(prepared.tokenizedOptions, async (chunk) => {
         // §7/N2: each streamed chunk is an INJECTED-port return — a NON-STRING carrier must NOT be
         // traced or pushed to reversal. Fail closed BEFORE either sink (the catch below latches the
         // stream and surfaces a fixed code).
         if (typeof (chunk as unknown) !== "string") {
-          throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", prepared.context.operationId, {});
+          throw new PhiEngineError(
+            "PROVIDER_SAFETY_GATE_FAILED",
+            prepared.context.operationId,
+            {},
+          );
         }
         // §4.2 / N2: trace tokenized chunk, then feed it to the reverse stream only.
         await this.#deps.safeTrace.response(chunk);
         await stream.push(chunk);
-        });
+      });
       await stream.end();
     } catch (error) {
       // L4: latch the reverse stream so no later chunk can resume/complete. §7/N2: `abort()` is an
@@ -372,7 +455,8 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         /* best-effort latch; a hostile abort rejection must not escape */
       }
       const code = toFailureCode(error, "REVERSAL_FAILED");
-      const outcome: PhiAuditOutcome = code === "REVERSAL_FAILED" ? "reversal_failed" : "unknown_after_send";
+      const outcome: PhiAuditOutcome =
+        code === "REVERSAL_FAILED" ? "reversal_failed" : "unknown_after_send";
       // N3: a push/end failure after send still finalizes exactly one terminal.
       await this.#finalizeQuietly(prepared, outcome, code);
       throw new PhiEngineError(code, prepared.context.operationId, {});
@@ -391,8 +475,16 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     try {
       control = new ProductionCallControl(callerSignal);
     } catch {
-      await this.#recordFailedClosedTerminal(context, "generation", "PROVIDER_SAFETY_GATE_FAILED");
-      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", context.operationId, {});
+      await this.#recordFailedClosedTerminal(
+        context,
+        "generation",
+        "PROVIDER_SAFETY_GATE_FAILED",
+      );
+      throw new PhiEngineError(
+        "PROVIDER_SAFETY_GATE_FAILED",
+        context.operationId,
+        {},
+      );
     }
 
     let prepared: PreparedEgress<GenerateOptions, EmbeddingKind> | undefined;
@@ -405,10 +497,16 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       try {
         const policy = await this.#deps.policy.require(context);
         control.throwIfInterrupted();
-        prepared = await this.#prepareForEgress(options, "generation", context, policy);
+        prepared = await this.#prepareForEgress(
+          options,
+          "generation",
+          context,
+          policy,
+        );
       } catch (error) {
         if (control.interrupted || error === INTERRUPTED) {
-          if (!isAuditError(error)) await this.#recordInterruptedTerminal(context, "generation");
+          if (!isAuditError(error))
+            await this.#recordInterruptedTerminal(context, "generation");
           throw INTERRUPTED;
         }
         control.latchFailure();
@@ -422,19 +520,31 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       if (control.interrupted) throw INTERRUPTED;
       await this.#traceProductionRequest(prepared, control);
 
-      const provider = prepared.provider as ProductionRawProviderPort<GenerateOptions, EmbeddingKind>;
+      const provider = prepared.provider as ProductionRawProviderPort<
+        GenerateOptions,
+        EmbeddingKind
+      >;
       const raw = await this.#awaitControlled(
         control,
         provider.generateText(prepared.tokenizedOptions, control.signal),
-        (error) => new ProductionCallFailure(
-          this.#safeProductionCode(error, "REVERSAL_FAILED"),
-          "unknown_after_send",
-        ),
+        (error) =>
+          new ProductionCallFailure(
+            this.#safeProductionCode(error, "REVERSAL_FAILED"),
+            "unknown_after_send",
+          ),
       );
       const snapshot = this.#snapshotProductionTextResult(raw);
       await this.#traceProductionResponse(snapshot.text, control);
-      const display = await this.#reverseProductionValue(snapshot.text, prepared, control);
-      const toolCalls = await this.#reverseProductionTools(snapshot.tail.toolCalls, prepared, control);
+      const display = await this.#reverseProductionValue(
+        snapshot.text,
+        prepared,
+        control,
+      );
+      const toolCalls = await this.#reverseProductionTools(
+        snapshot.tail.toolCalls,
+        prepared,
+        control,
+      );
       const result = this.#freezeProductionTextResult(
         display,
         prepared.providerId,
@@ -461,7 +571,11 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       if (error instanceof ProductionCallFailure) {
         throw new PhiEngineError(error.code, context.operationId, {});
       }
-      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", context.operationId, {});
+      throw new PhiEngineError(
+        "PROVIDER_SAFETY_GATE_FAILED",
+        context.operationId,
+        {},
+      );
     } finally {
       control.dispose();
     }
@@ -478,12 +592,22 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     try {
       control = new ProductionCallControl(callerSignal);
     } catch {
-      await this.#recordFailedClosedTerminal(context, "stream", "PROVIDER_SAFETY_GATE_FAILED");
-      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", context.operationId, {});
+      await this.#recordFailedClosedTerminal(
+        context,
+        "stream",
+        "PROVIDER_SAFETY_GATE_FAILED",
+      );
+      throw new PhiEngineError(
+        "PROVIDER_SAFETY_GATE_FAILED",
+        context.operationId,
+        {},
+      );
     }
 
     let prepared: PreparedEgress<GenerateOptions, EmbeddingKind> | undefined;
-    let stream: ReturnType<PhiSubstitutionEngine["createReverseStream"]> | undefined;
+    let stream:
+      | ReturnType<PhiSubstitutionEngine["createReverseStream"]>
+      | undefined;
     try {
       if (control.interrupted) {
         await this.#recordInterruptedTerminal(context, "stream");
@@ -492,10 +616,16 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       try {
         const policy = await this.#deps.policy.require(context);
         control.throwIfInterrupted();
-        prepared = await this.#prepareForEgress(options, "stream", context, policy);
+        prepared = await this.#prepareForEgress(
+          options,
+          "stream",
+          context,
+          policy,
+        );
       } catch (error) {
         if (control.interrupted || error === INTERRUPTED) {
-          if (!isAuditError(error)) await this.#recordInterruptedTerminal(context, "stream");
+          if (!isAuditError(error))
+            await this.#recordInterruptedTerminal(context, "stream");
           throw INTERRUPTED;
         }
         control.latchFailure();
@@ -509,27 +639,43 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       control.throwIfInterrupted();
       await this.#traceProductionRequest(prepared, control);
       try {
-        stream = this.#deps.engine.createReverseStream(prepared.substitutionHandle, async (safe) => {
-          control.throwIfInterrupted();
-          if (typeof (safe as unknown) !== "string") {
-            control.latchFailure();
-            throw new ProductionCallFailure("PROVIDER_SAFETY_GATE_FAILED", "reversal_failed");
-          }
-          await this.#awaitControlled(
-            control,
-            Promise.resolve().then(() => sink(safe)),
-            () => new ProductionCallFailure("PROVIDER_SAFETY_GATE_FAILED", "unknown_after_send"),
-          );
-        });
+        stream = this.#deps.engine.createReverseStream(
+          prepared.substitutionHandle,
+          async (safe) => {
+            control.throwIfInterrupted();
+            if (typeof (safe as unknown) !== "string") {
+              control.latchFailure();
+              throw new ProductionCallFailure(
+                "PROVIDER_SAFETY_GATE_FAILED",
+                "reversal_failed",
+              );
+            }
+            await this.#awaitControlled(
+              control,
+              Promise.resolve().then(() => sink(safe)),
+              () =>
+                new ProductionCallFailure(
+                  "PROVIDER_SAFETY_GATE_FAILED",
+                  "unknown_after_send",
+                ),
+            );
+          },
+        );
       } catch (error) {
         if (control.interrupted || error === INTERRUPTED) throw INTERRUPTED;
         control.latchFailure();
         throw error instanceof ProductionCallFailure
           ? error
-          : new ProductionCallFailure("PROVIDER_SAFETY_GATE_FAILED", "failed_closed");
+          : new ProductionCallFailure(
+              "PROVIDER_SAFETY_GATE_FAILED",
+              "failed_closed",
+            );
       }
 
-      const provider = prepared.provider as ProductionRawProviderPort<GenerateOptions, EmbeddingKind>;
+      const provider = prepared.provider as ProductionRawProviderPort<
+        GenerateOptions,
+        EmbeddingKind
+      >;
       const rawTail = await this.#awaitControlled(
         control,
         provider.generateStream(
@@ -538,36 +684,46 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
             control.throwIfInterrupted();
             if (typeof (chunk as unknown) !== "string") {
               control.latchFailure();
-              throw new ProductionCallFailure("PROVIDER_SAFETY_GATE_FAILED", "unknown_after_send");
+              throw new ProductionCallFailure(
+                "PROVIDER_SAFETY_GATE_FAILED",
+                "unknown_after_send",
+              );
             }
             await this.#traceProductionResponse(chunk, control);
             await this.#awaitControlled(
               control,
               stream!.push(chunk),
-              (error) => error instanceof ProductionCallFailure
-                ? error
-                : new ProductionCallFailure("REVERSAL_FAILED", "reversal_failed"),
+              (error) =>
+                error instanceof ProductionCallFailure
+                  ? error
+                  : new ProductionCallFailure(
+                      "REVERSAL_FAILED",
+                      "reversal_failed",
+                    ),
             );
           },
           control.signal,
         ),
-        (error) => error instanceof ProductionCallFailure
-          ? error
-          : new ProductionCallFailure(
-            this.#safeProductionCode(error, "REVERSAL_FAILED"),
-            "unknown_after_send",
-          ),
+        (error) =>
+          error instanceof ProductionCallFailure
+            ? error
+            : new ProductionCallFailure(
+                this.#safeProductionCode(error, "REVERSAL_FAILED"),
+                "unknown_after_send",
+              ),
       );
 
-      await this.#awaitControlled(
-        control,
-        stream.end(),
-        (error) => error instanceof ProductionCallFailure
+      await this.#awaitControlled(control, stream.end(), (error) =>
+        error instanceof ProductionCallFailure
           ? error
           : new ProductionCallFailure("REVERSAL_FAILED", "reversal_failed"),
       );
       const snapshot = this.#snapshotProductionTail(rawTail);
-      const toolCalls = await this.#reverseProductionTools(snapshot.toolCalls, prepared, control);
+      const toolCalls = await this.#reverseProductionTools(
+        snapshot.toolCalls,
+        prepared,
+        control,
+      );
       const tail = this.#freezeProductionTail(
         prepared.providerId,
         snapshot.model,
@@ -599,7 +755,11 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       if (error instanceof ProductionCallFailure) {
         throw new PhiEngineError(error.code, context.operationId, {});
       }
-      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", context.operationId, {});
+      throw new PhiEngineError(
+        "PROVIDER_SAFETY_GATE_FAILED",
+        context.operationId,
+        {},
+      );
     } finally {
       control.dispose();
     }
@@ -622,9 +782,14 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     return result.value;
   }
 
-  #safeProductionCode(error: unknown, fallback: PhiEngineFailureCode): PhiEngineFailureCode {
+  #safeProductionCode(
+    error: unknown,
+    fallback: PhiEngineFailureCode,
+  ): PhiEngineFailureCode {
     const code = safeCodeString(error);
-    return code !== undefined && code !== "CALL_INTERRUPTED" && isPhiEngineFailureCode(code)
+    return code !== undefined &&
+      code !== "CALL_INTERRUPTED" &&
+      isPhiEngineFailureCode(code)
       ? code
       : fallback;
   }
@@ -641,28 +806,38 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     await this.#awaitControlled(
       control,
       this.#deps.safeTrace.request(traced),
-      (error) => new ProductionCallFailure(
-        this.#safeProductionCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
-        "failed_closed",
-      ),
+      (error) =>
+        new ProductionCallFailure(
+          this.#safeProductionCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
+          "failed_closed",
+        ),
     );
   }
 
-  async #traceProductionResponse(text: TokenizedText, control: ProductionCallControl): Promise<void> {
+  async #traceProductionResponse(
+    text: TokenizedText,
+    control: ProductionCallControl,
+  ): Promise<void> {
     await this.#awaitControlled(
       control,
       this.#deps.safeTrace.response(text),
-      (error) => new ProductionCallFailure(
-        this.#safeProductionCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
-        "unknown_after_send",
-      ),
+      (error) =>
+        new ProductionCallFailure(
+          this.#safeProductionCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
+          "unknown_after_send",
+        ),
     );
   }
 
-  #snapshotProductionTextResult(raw: ProductionRawTextResult): SnapshotProductionText {
+  #snapshotProductionTextResult(
+    raw: ProductionRawTextResult,
+  ): SnapshotProductionText {
     const text = safeString(raw, "text");
     if (text === undefined) {
-      throw new ProductionCallFailure("PROVIDER_SAFETY_GATE_FAILED", "unknown_after_send");
+      throw new ProductionCallFailure(
+        "PROVIDER_SAFETY_GATE_FAILED",
+        "unknown_after_send",
+      );
     }
     return {
       text: text as TokenizedText,
@@ -670,32 +845,62 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     };
   }
 
-  #snapshotProductionTail(raw: ProductionRawResultTail): SnapshotProductionTail {
+  #snapshotProductionTail(
+    raw: ProductionRawResultTail,
+  ): SnapshotProductionTail {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      throw new ProductionCallFailure("PROVIDER_SAFETY_GATE_FAILED", "unknown_after_send");
+      throw new ProductionCallFailure(
+        "PROVIDER_SAFETY_GATE_FAILED",
+        "unknown_after_send",
+      );
     }
     const keys = safeOwnKeys(raw);
     let model: string | undefined;
     if (ownKey(keys, "model")) {
       model = safeString(raw, "model");
       if (model === undefined || !SAFE_RESULT_IDENTIFIER.test(model)) {
-        throw new ProductionCallFailure("PROVIDER_SAFETY_GATE_FAILED", "unknown_after_send");
+        throw new ProductionCallFailure(
+          "PROVIDER_SAFETY_GATE_FAILED",
+          "unknown_after_send",
+        );
       }
     }
 
     let usage: ProtectedAiUsage | undefined;
     if (ownKey(keys, "usage")) {
       const liveUsage = safeRead(raw, "usage");
-      if (liveUsage === null || typeof liveUsage !== "object" || Array.isArray(liveUsage)) {
-        throw new ProductionCallFailure("PROVIDER_SAFETY_GATE_FAILED", "unknown_after_send");
+      if (
+        liveUsage === null ||
+        typeof liveUsage !== "object" ||
+        Array.isArray(liveUsage)
+      ) {
+        throw new ProductionCallFailure(
+          "PROVIDER_SAFETY_GATE_FAILED",
+          "unknown_after_send",
+        );
       }
       const usageKeys = safeOwnKeys(liveUsage);
-      const copied: { inputTokens?: number; outputTokens?: number; totalTokens?: number } = {};
-      for (const key of ["inputTokens", "outputTokens", "totalTokens"] as const) {
+      const copied: {
+        inputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+      } = {};
+      for (const key of [
+        "inputTokens",
+        "outputTokens",
+        "totalTokens",
+      ] as const) {
         if (!ownKey(usageKeys, key)) continue;
         const value = safeRead(liveUsage, key);
-        if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-          throw new ProductionCallFailure("PROVIDER_SAFETY_GATE_FAILED", "unknown_after_send");
+        if (
+          typeof value !== "number" ||
+          !Number.isSafeInteger(value) ||
+          value < 0
+        ) {
+          throw new ProductionCallFailure(
+            "PROVIDER_SAFETY_GATE_FAILED",
+            "unknown_after_send",
+          );
         }
         copied[key] = value;
       }
@@ -706,7 +911,10 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     if (ownKey(keys, "toolCalls")) {
       const liveTools = intrinsicCopy<unknown>(safeRead(raw, "toolCalls"));
       if (liveTools === null) {
-        throw new ProductionCallFailure("PROVIDER_SAFETY_GATE_FAILED", "unknown_after_send");
+        throw new ProductionCallFailure(
+          "PROVIDER_SAFETY_GATE_FAILED",
+          "unknown_after_send",
+        );
       }
       const copied: ProductionRawToolCall[] = [];
       for (let i = 0; i < liveTools.length; i += 1) {
@@ -715,10 +923,16 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         const name = safeString(tool, "name");
         const argument = safeString(tool, "arguments");
         if (
-          id === undefined || name === undefined || argument === undefined ||
-          !SAFE_RESULT_IDENTIFIER.test(id) || !SAFE_RESULT_IDENTIFIER.test(name)
+          id === undefined ||
+          name === undefined ||
+          argument === undefined ||
+          !SAFE_RESULT_IDENTIFIER.test(id) ||
+          !SAFE_RESULT_IDENTIFIER.test(name)
         ) {
-          throw new ProductionCallFailure("PROVIDER_SAFETY_GATE_FAILED", "unknown_after_send");
+          throw new ProductionCallFailure(
+            "PROVIDER_SAFETY_GATE_FAILED",
+            "unknown_after_send",
+          );
         }
         copied[copied.length] = Object.freeze({
           id,
@@ -804,7 +1018,10 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
   }
 
   /** Best-effort zero-egress interruption record. Durability failure never overrides CALL_INTERRUPTED. */
-  async #recordInterruptedTerminal(context: MatterAiContext, purpose: AiOperation): Promise<void> {
+  async #recordInterruptedTerminal(
+    context: MatterAiContext,
+    purpose: AiOperation,
+  ): Promise<void> {
     const record = this.#minimalPreparedRecord(context, purpose);
     try {
       const receipt = await this.#deps.audit.prepare(record);
@@ -814,15 +1031,26 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     }
   }
 
-  public async embedText(text: string, kind: EmbeddingKind): Promise<readonly number[]> {
+  public async embedText(
+    text: string,
+    kind: EmbeddingKind,
+  ): Promise<readonly number[]> {
     const context = await this.#requireContext();
 
     // §4.3 / L11: embedding MUST route on ORIGINAL content and enforce the conjunctive
     // safety/BAA gate. Without a factory we cannot inspect original content, so we FAIL
     // CLOSED with zero egress rather than skipping routing.
     if (this.#deps.embeddingOptionsFactory === undefined) {
-      await this.#recordFailedClosedTerminal(context, "embedding", "PROVIDER_SAFETY_GATE_FAILED");
-      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", context.operationId, {});
+      await this.#recordFailedClosedTerminal(
+        context,
+        "embedding",
+        "PROVIDER_SAFETY_GATE_FAILED",
+      );
+      throw new PhiEngineError(
+        "PROVIDER_SAFETY_GATE_FAILED",
+        context.operationId,
+        {},
+      );
     }
 
     let providerBinding: AnyRawProvider<GenerateOptions, EmbeddingKind>;
@@ -835,7 +1063,8 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       // terminal (N3) and NEVER surfaces a raw upstream message/code to the caller (§7).
       const policy = await this.#deps.policy.require(context);
       const routingOptions = this.#deps.embeddingOptionsFactory(text);
-      const decision = await this.#deps.router.selectUsingOriginalContent(routingOptions);
+      const decision =
+        await this.#deps.router.selectUsingOriginalContent(routingOptions);
       this.#enforceSafetyGate(decision, context);
       providerBinding = decision.provider;
       // §4.3: substitute the embedding text; tokenized-only, NO output reversal.
@@ -847,8 +1076,14 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
           purpose: "embedding",
         }),
       );
-      tokenizedText = substitution.segments[0]?.text ?? ("" as unknown as TokenizedText);
-      receipt = await this.#prepareAudit(context, policy, substitution, "embedding");
+      tokenizedText =
+        substitution.segments[0]?.text ?? ("" as unknown as TokenizedText);
+      receipt = await this.#prepareAudit(
+        context,
+        policy,
+        substitution,
+        "embedding",
+      );
     } catch (error) {
       await this.#recordPreEgressFailure(context, "embedding", error);
       throw new PhiEngineError(
@@ -862,7 +1097,9 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     // failure here finalizes against THIS receipt (exactly one terminal, no second prepare) and
     // surfaces only a fixed code.
     try {
-      await this.#deps.safeTrace.request([{ path: "embedding", text: tokenizedText }]);
+      await this.#deps.safeTrace.request([
+        { path: "embedding", text: tokenizedText },
+      ]);
     } catch (error) {
       await this.#finalizeAtQuietly(
         receipt,
@@ -887,7 +1124,11 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         "unknown_after_send",
         errorCodeString(error),
       );
-      throw new PhiEngineError(toFailureCode(error, "REVERSAL_FAILED"), context.operationId, {});
+      throw new PhiEngineError(
+        toFailureCode(error, "REVERSAL_FAILED"),
+        context.operationId,
+        {},
+      );
     }
 
     // §7/N2: the raw provider's embedding is a boundary result. Validate it is a genuine array of
@@ -917,7 +1158,11 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         "unknown_after_send",
         "PROVIDER_SAFETY_GATE_FAILED",
       );
-      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", context.operationId, {});
+      throw new PhiEngineError(
+        "PROVIDER_SAFETY_GATE_FAILED",
+        context.operationId,
+        {},
+      );
     }
 
     await this.#finalizeAtStrict(
@@ -938,8 +1183,11 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     policy: TrustedMatterAiPolicy,
   ): Promise<PreparedEgress<GenerateOptions, EmbeddingKind>> {
     // §4.1 step 3 / L11: route on ORIGINAL content and PIN the decision, then gate.
-    const liveDecision = await this.#deps.router.selectUsingOriginalContent(options);
-    const provider = safeRead(liveDecision, "provider") as AnyRawProvider<GenerateOptions, EmbeddingKind> | undefined;
+    const liveDecision =
+      await this.#deps.router.selectUsingOriginalContent(options);
+    const provider = safeRead(liveDecision, "provider") as
+      | AnyRawProvider<GenerateOptions, EmbeddingKind>
+      | undefined;
     const providerId = safeString(liveDecision, "providerId");
     const decision = {
       provider,
@@ -947,8 +1195,16 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       isProductionSafe: safeRead(liveDecision, "isProductionSafe") === true,
       baaSatisfied: safeRead(liveDecision, "baaSatisfied") === true,
     };
-    if (provider === undefined || providerId === undefined || !SAFE_RESULT_IDENTIFIER.test(providerId)) {
-      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", context.operationId, {});
+    if (
+      provider === undefined ||
+      providerId === undefined ||
+      !SAFE_RESULT_IDENTIFIER.test(providerId)
+    ) {
+      throw new PhiEngineError(
+        "PROVIDER_SAFETY_GATE_FAILED",
+        context.operationId,
+        {},
+      );
     }
     this.#enforceSafetyGate(
       {
@@ -980,7 +1236,9 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     const tracedSegments = snapshotSegments(substitution.segments);
     // §4.1 step 4 / L5: rebuild asserts a 1:1 path↔tokenized-segment mapping; a missing
     // or unexpected path fails closed here, before egress.
-    const tokenizedOptions = classified.rebuild(tracedSegments as unknown as readonly TokenizedTextSegment[]);
+    const tokenizedOptions = classified.rebuild(
+      tracedSegments as unknown as readonly TokenizedTextSegment[],
+    );
 
     // N3: read every value the prepared record needs — including the PINNED provider and the
     // reversal handle, which may be adversarial getters — BEFORE the durable PREPARE. Nothing may
@@ -990,7 +1248,12 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     // L11: the read-once pinned provider for the routed+gated decision.
 
     // §4.1 step 9 / N3: durably PREPARE the metadata-only record BEFORE egress (and last here).
-    const receipt = await this.#prepareAudit(context, policy, substitution, purpose);
+    const receipt = await this.#prepareAudit(
+      context,
+      policy,
+      substitution,
+      purpose,
+    );
 
     const prepared: PreparedEgress<GenerateOptions, EmbeddingKind> = {
       context,
@@ -1017,7 +1280,9 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
    * `#prepareForEgress`, so its failure propagates straight to the caller and never re-enters
    * `#recordPreEgressFailure` (which would prepare again).
    */
-  async #traceTokenizedRequest(prepared: PreparedEgress<GenerateOptions, EmbeddingKind>): Promise<void> {
+  async #traceTokenizedRequest(
+    prepared: PreparedEgress<GenerateOptions, EmbeddingKind>,
+  ): Promise<void> {
     try {
       // Trace the INERT read-once snapshot (built by #prepareForEgress from the injected engine's
       // segments), NEVER the live substitution object — so a mutating getter or a poisoned own
@@ -1031,7 +1296,11 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       }
       await this.#deps.safeTrace.request(traced);
     } catch (error) {
-      await this.#finalizeQuietly(prepared, "failed_closed", errorCodeString(error));
+      await this.#finalizeQuietly(
+        prepared,
+        "failed_closed",
+        errorCodeString(error),
+      );
       throw new PhiEngineError(
         toFailureCode(error, "PROVIDER_SAFETY_GATE_FAILED"),
         prepared.context.operationId,
@@ -1054,15 +1323,23 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
   }
 
   #enforceSafetyGate(
-    decision: Readonly<{ isProductionSafe: boolean; baaSatisfied: boolean; providerId: string }>,
+    decision: Readonly<{
+      isProductionSafe: boolean;
+      baaSatisfied: boolean;
+      providerId: string;
+    }>,
     context: MatterAiContext,
   ): void {
     // L11: the gate is conjunctive over the ORIGINAL-content decision. A successful
     // substitution ("it's tokenized now") never makes an unsafe provider safe.
     if (!decision.isProductionSafe || !decision.baaSatisfied) {
-      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", context.operationId, {
-        providerId: decision.providerId,
-      });
+      throw new PhiEngineError(
+        "PROVIDER_SAFETY_GATE_FAILED",
+        context.operationId,
+        {
+          providerId: decision.providerId,
+        },
+      );
     }
   }
 
@@ -1085,8 +1362,11 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     const operationId = safeString(raw, "operationId");
     const attemptId = safeString(raw, "attemptId");
     if (
-      tenantId === undefined || matterId === undefined || actorId === undefined ||
-      operationId === undefined || attemptId === undefined
+      tenantId === undefined ||
+      matterId === undefined ||
+      actorId === undefined ||
+      operationId === undefined ||
+      attemptId === undefined
     ) {
       throw new PhiEngineError("MISSING_TRUSTED_CONTEXT");
     }
@@ -1105,7 +1385,9 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     substitution: SubstitutionResult,
     purpose: AiOperation,
   ): Promise<AuditPreparationReceipt> {
-    return this.#deps.audit.prepare(this.#preparedRecord(context, substitution, purpose));
+    return this.#deps.audit.prepare(
+      this.#preparedRecord(context, substitution, purpose),
+    );
   }
 
   /**
@@ -1120,14 +1402,19 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     const detectorSnapshot =
       detector == null
         ? null
-        : { name: safeString(detector, "name") ?? "", version: safeString(detector, "version") ?? "" };
+        : {
+            name: safeString(detector, "name") ?? "",
+            version: safeString(detector, "version") ?? "",
+          };
     const latency = safeRead(s, "latencyMs");
     const ambiguityCount = safeRead(s, "ambiguityCount");
     // §7/N2: the injected engine's `segments` are UNTRUSTED. Deep-copy by own index and require each
     // path/kind/text to be a genuine STRING — a non-string `text` carrier (e.g. { toJSON: () => PHI })
     // would otherwise reach safeTrace.request (via rebuild) and the caller. Fail closed on any
     // non-string, non-array carrier, or throwing own-index getter.
-    const rawSegments = intrinsicCopy<TokenizedTextSegment>(safeRead(s, "segments"));
+    const rawSegments = intrinsicCopy<TokenizedTextSegment>(
+      safeRead(s, "segments"),
+    );
     if (rawSegments === null) {
       throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED");
     }
@@ -1148,8 +1435,14 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     }
     return {
       segments,
-      dictionaryVersion: safeRead(s, "dictionaryVersion") as SubstitutionResult["dictionaryVersion"],
-      engineVersion: safeRead(s, "engineVersion") as SubstitutionResult["engineVersion"],
+      dictionaryVersion: safeRead(
+        s,
+        "dictionaryVersion",
+      ) as SubstitutionResult["dictionaryVersion"],
+      engineVersion: safeRead(
+        s,
+        "engineVersion",
+      ) as SubstitutionResult["engineVersion"],
       counts: safeRead(s, "counts") as SubstitutionResult["counts"],
       ambiguityCount: typeof ambiguityCount === "number" ? ambiguityCount : 0,
       detector: detectorSnapshot,
@@ -1158,7 +1451,10 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
         detector: Number(safeRead(latency, "detector")) || 0,
         total: Number(safeRead(latency, "total")) || 0,
       },
-      reversalHandle: safeRead(s, "reversalHandle") as SubstitutionResult["reversalHandle"],
+      reversalHandle: safeRead(
+        s,
+        "reversalHandle",
+      ) as SubstitutionResult["reversalHandle"],
     };
   }
 
@@ -1196,7 +1492,10 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
   }
 
   /** A metadata-only PREPARED record for a fail-closed terminal recorded before substitution. */
-  #minimalPreparedRecord(context: MatterAiContext, purpose: AiOperation): PhiAuditPreparedRecord {
+  #minimalPreparedRecord(
+    context: MatterAiContext,
+    purpose: AiOperation,
+  ): PhiAuditPreparedRecord {
     return {
       state: "PREPARED",
       attemptId: context.attemptId,
@@ -1233,7 +1532,11 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     if (isAuditError(error)) {
       return;
     }
-    await this.#recordFailedClosedTerminal(context, purpose, errorCodeString(error));
+    await this.#recordFailedClosedTerminal(
+      context,
+      purpose,
+      errorCodeString(error),
+    );
   }
 
   /** Prepares + finalizes a single failed-closed terminal; never egresses (N3/N4). */
@@ -1259,9 +1562,16 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     let display: DisplayText;
     try {
       // §4.1 step 11 / N5: reverse tokens to CURRENT canonical values before display.
-      display = await this.#deps.engine.reverse(rawOutput, prepared.substitutionHandle);
+      display = await this.#deps.engine.reverse(
+        rawOutput,
+        prepared.substitutionHandle,
+      );
     } catch (error) {
-      await this.#finalizeQuietly(prepared, "reversal_failed", "REVERSAL_FAILED");
+      await this.#finalizeQuietly(
+        prepared,
+        "reversal_failed",
+        "REVERSAL_FAILED",
+      );
       throw new PhiEngineError(
         toFailureCode(error, "REVERSAL_FAILED"),
         prepared.context.operationId,
@@ -1271,8 +1581,16 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     // §7/N2: the injected engine's reverse() result is UNTRUSTED — a NON-STRING carrier (e.g. an object
     // whose toString/toJSON yields PHI) must NOT be returned to the caller. Require a genuine string.
     if (typeof (display as unknown) !== "string") {
-      await this.#finalizeQuietly(prepared, "reversal_failed", "REVERSAL_FAILED");
-      throw new PhiEngineError("REVERSAL_FAILED", prepared.context.operationId, {});
+      await this.#finalizeQuietly(
+        prepared,
+        "reversal_failed",
+        "REVERSAL_FAILED",
+      );
+      throw new PhiEngineError(
+        "REVERSAL_FAILED",
+        prepared.context.operationId,
+        {},
+      );
     }
     await this.#finalizeStrict(prepared, "completed", null);
     return display;
@@ -1285,7 +1603,11 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
   ): Promise<void> {
     await this.#finalizeAt(
       prepared.receipt,
-      this.#preparedRecord(prepared.context, prepared.substitution, prepared.purpose),
+      this.#preparedRecord(
+        prepared.context,
+        prepared.substitution,
+        prepared.purpose,
+      ),
       outcome,
       failureCode,
     );
@@ -1297,7 +1619,12 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
     outcome: PhiAuditOutcome,
     failureCode: string | null,
   ): Promise<void> {
-    const event: PhiAuditEvent = preparedToTerminalEvent(record, outcome, failureCode, this.#safeNow());
+    const event: PhiAuditEvent = preparedToTerminalEvent(
+      record,
+      outcome,
+      failureCode,
+      this.#safeNow(),
+    );
     await this.#deps.audit.finalize(receipt, event);
   }
 
@@ -1349,7 +1676,11 @@ export class ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind = string
       // §7/N2: the rejected error's message/code is NEVER surfaced — even a `PhiEngineError.code`
       // is untrusted here (it could be a raw value cast to a code by an injected finalizer). Fail
       // closed with a FIXED code.
-      throw new PhiEngineError("AUDIT_DURABILITY_UNAVAILABLE", prepared.context.operationId, {});
+      throw new PhiEngineError(
+        "AUDIT_DURABILITY_UNAVAILABLE",
+        prepared.context.operationId,
+        {},
+      );
     }
   }
 
@@ -1382,7 +1713,10 @@ interface PreparedEgress<GenerateOptions, EmbeddingKind> {
   /** §7/N2: an INERT read-once snapshot of the substitution segments (path/text read exactly once
    *  from the injected engine's result), used by BOTH rebuild and the trace so a mutating getter
    *  cannot show a tokenized value to rebuild and raw PHI to the trace. */
-  readonly tracedSegments: readonly { readonly path: string; readonly text: TokenizedText }[];
+  readonly tracedSegments: readonly {
+    readonly path: string;
+    readonly text: TokenizedText;
+  }[];
 }
 
 /**
@@ -1394,7 +1728,11 @@ interface PreparedEgress<GenerateOptions, EmbeddingKind> {
 function snapshotSegments(
   segments: readonly TokenizedTextSegment[],
 ): { path: string; kind: TokenizedTextSegment["kind"]; text: TokenizedText }[] {
-  const out: { path: string; kind: TokenizedTextSegment["kind"]; text: TokenizedText }[] = [];
+  const out: {
+    path: string;
+    kind: TokenizedTextSegment["kind"];
+    text: TokenizedText;
+  }[] = [];
   const len = (segments as { length: number }).length;
   for (let i = 0; i < len; i += 1) {
     const seg = segments[i] as TokenizedTextSegment;

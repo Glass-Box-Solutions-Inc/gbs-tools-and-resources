@@ -26,7 +26,10 @@ class BoundaryOffsetMap implements OriginalOffsetMap {
   public readonly normalized: string;
   private readonly boundaryToOriginal: ReadonlyMap<number, number>;
 
-  public constructor(normalized: string, boundaryToOriginal: ReadonlyMap<number, number>) {
+  public constructor(
+    normalized: string,
+    boundaryToOriginal: ReadonlyMap<number, number>,
+  ) {
     this.normalized = normalized;
     this.boundaryToOriginal = boundaryToOriginal;
   }
@@ -45,7 +48,10 @@ class BoundaryOffsetMap implements OriginalOffsetMap {
 }
 
 export class Phase1UnicodeNormalizer implements UnicodeNormalizer {
-  public normalizeWithOffsets(original: string, locale: string): OriginalOffsetMap {
+  public normalizeWithOffsets(
+    original: string,
+    locale: string,
+  ): OriginalOffsetMap {
     const groups: NormalizationGroup[] = [];
     let utf16Offset = 0;
 
@@ -55,7 +61,10 @@ export class Phase1UnicodeNormalizer implements UnicodeNormalizer {
       const last = groups[groups.length - 1];
       if (isMark && last !== undefined) {
         last.origEnd = utf16Offset + width;
-        last.folded = fold(original.slice(last.origStart, last.origEnd), locale);
+        last.folded = fold(
+          original.slice(last.origStart, last.origEnd),
+          locale,
+        );
       } else {
         groups.push({
           origStart: utf16Offset,

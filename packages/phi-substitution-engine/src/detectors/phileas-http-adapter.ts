@@ -57,7 +57,10 @@ export class PhileasHttpAdapter implements DetectorRedactorPort {
     this.observe = observe;
   }
 
-  async detect(input: DetectorInput, signal: AbortSignal): Promise<readonly RawDetectedSpan[]> {
+  async detect(
+    input: DetectorInput,
+    signal: AbortSignal,
+  ): Promise<readonly RawDetectedSpan[]> {
     // §7/N2: `classes` is boundary data — read it ONCE by own index/length (never `.map`, which an OWN
     // override could empty so the sidecar detects nothing and required PHI passes undetected). A
     // non-array carrier or a non-string class fails closed here rather than fail-OPEN detection.
@@ -83,7 +86,11 @@ export class PhileasHttpAdapter implements DetectorRedactorPort {
       text: input.text,
     };
     // Metadata only — the request text is counted but never handed to the observer.
-    this.observe({ path: "/internal/v1/detect", kind: "DETECT", requestBytes: utf8ByteLength(input.text) });
+    this.observe({
+      path: "/internal/v1/detect",
+      kind: "DETECT",
+      requestBytes: utf8ByteLength(input.text),
+    });
 
     const raw = await this.http.postJson("/internal/v1/detect", body, signal);
     const response = raw as PhileasWireResponse;
@@ -115,7 +122,12 @@ export class PhileasHttpAdapter implements DetectorRedactorPort {
     if (rawInstr === null) {
       throw new Error("INVALID_DETECTOR_OFFSET");
     }
-    const instr: { detectedSpanId: string; startUtf16: number; endUtf16: number; replacement: string }[] = [];
+    const instr: {
+      detectedSpanId: string;
+      startUtf16: number;
+      endUtf16: number;
+      replacement: string;
+    }[] = [];
     for (let i = 0; i < rawInstr.length; i += 1) {
       const r = rawInstr[i];
       const detectedSpanId = safeString(r, "detectedSpanId");
@@ -123,22 +135,40 @@ export class PhileasHttpAdapter implements DetectorRedactorPort {
       const endUtf16 = safeRead(r, "endUtf16");
       const replacement = safeString(r, "replacement");
       if (
-        detectedSpanId === undefined || typeof startUtf16 !== "number" ||
-        typeof endUtf16 !== "number" || replacement === undefined
+        detectedSpanId === undefined ||
+        typeof startUtf16 !== "number" ||
+        typeof endUtf16 !== "number" ||
+        replacement === undefined
       ) {
         throw new Error("INVALID_DETECTOR_OFFSET");
       }
-      instr[instr.length] = { detectedSpanId, startUtf16, endUtf16, replacement };
+      instr[instr.length] = {
+        detectedSpanId,
+        startUtf16,
+        endUtf16,
+        replacement,
+      };
     }
-    const plan = applyReplacementPlan(input.text, instr as unknown as readonly RedactionInstruction[]);
+    const plan = applyReplacementPlan(
+      input.text,
+      instr as unknown as readonly RedactionInstruction[],
+    );
     if (!plan.ok) {
       throw new Error("INVALID_DETECTOR_OFFSET");
     }
-    const wireReplacements: { spanId: string; startUtf16: number; endUtf16: number; token: string }[] = [];
+    const wireReplacements: {
+      spanId: string;
+      startUtf16: number;
+      endUtf16: number;
+      token: string;
+    }[] = [];
     for (let i = 0; i < instr.length; i += 1) {
       const r = instr[i]!;
       wireReplacements[wireReplacements.length] = {
-        spanId: r.detectedSpanId, startUtf16: r.startUtf16, endUtf16: r.endUtf16, token: r.replacement,
+        spanId: r.detectedSpanId,
+        startUtf16: r.startUtf16,
+        endUtf16: r.endUtf16,
+        token: r.replacement,
       };
     }
     const body = {
@@ -155,15 +185,26 @@ export class PhileasHttpAdapter implements DetectorRedactorPort {
       requestBytes: utf8ByteLength(input.text),
     });
 
-    const raw = await this.http.postJson("/internal/v1/apply-replacements", body, signal);
+    const raw = await this.http.postJson(
+      "/internal/v1/apply-replacements",
+      body,
+      signal,
+    );
     const response = raw as PhileasWireResponse;
     if (response.kind !== "REDACTED") {
       throw new Error("DETECTOR_PROTOCOL_ERROR");
     }
-    if (response.text !== (plan.text as string) || !sameIds(response.appliedSpanIds, plan.appliedSpanIds)) {
+    if (
+      response.text !== (plan.text as string) ||
+      !sameIds(response.appliedSpanIds, plan.appliedSpanIds)
+    ) {
       throw new Error("DETECTOR_REPLACEMENT_MISMATCH");
     }
-    return { text: plan.text, appliedSpanIds: plan.appliedSpanIds, serviceVersion: response.serviceVersion };
+    return {
+      text: plan.text,
+      appliedSpanIds: plan.appliedSpanIds,
+      serviceVersion: response.serviceVersion,
+    };
   }
 
   async health(): Promise<"ready" | "degraded" | "unavailable"> {

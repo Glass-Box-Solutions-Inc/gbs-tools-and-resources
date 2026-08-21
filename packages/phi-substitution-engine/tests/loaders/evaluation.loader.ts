@@ -1,6 +1,9 @@
 import type { ModuleHarness, OracleObservation } from "../harness-types";
 import type { IdentifierClass } from "../../src/core/contracts";
-import type { DetectorArtifactIdentity, PerClassEvaluation } from "../../src/eval/contracts";
+import type {
+  DetectorArtifactIdentity,
+  PerClassEvaluation,
+} from "../../src/eval/contracts";
 import {
   EvidenceBoundClaims,
   buildEvaluationManifest,
@@ -36,7 +39,9 @@ function asNumber(value: unknown, fallback: number): number {
 }
 
 function asStringArray(value: unknown): readonly string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
 /** Map a fixture `{ CLASS: { recallLower, recallPoint? } }` shape to gate evidence. */
@@ -44,7 +49,9 @@ function parseClassMap(value: unknown): ClassRecallEvidence[] {
   if (!isRecord(value)) return [];
   const out: ClassRecallEvidence[] = [];
   for (const [identifierClass, raw] of Object.entries(value)) {
-    const recallLower = isRecord(raw) ? asNumber(raw.recallLower, Number.NaN) : Number.NaN;
+    const recallLower = isRecord(raw)
+      ? asNumber(raw.recallLower, Number.NaN)
+      : Number.NaN;
     out.push({ identifierClass, recallWilsonLower95: recallLower });
   }
   return out;
@@ -67,11 +74,16 @@ const PINNED_ARTIFACT: DetectorArtifactIdentity = {
   containerImageDigest: "sha256:image-digest",
 };
 
-function perClassFromMap(classMap: unknown, classes: readonly ClassRecallEvidence[]): PerClassEvaluation[] {
+function perClassFromMap(
+  classMap: unknown,
+  classes: readonly ClassRecallEvidence[],
+): PerClassEvaluation[] {
   return classes.map((entry) => ({
     identifierClass: entry.identifierClass as IdentifierClass,
     recallPoint: classPoint(classMap, entry.identifierClass),
-    recallWilsonLower95: Number.isFinite(entry.recallWilsonLower95) ? entry.recallWilsonLower95 : 0,
+    recallWilsonLower95: Number.isFinite(entry.recallWilsonLower95)
+      ? entry.recallWilsonLower95
+      : 0,
     precisionPoint: 1,
     precisionWilsonLower95: 1,
     sampleCount: 1000,
@@ -113,12 +125,21 @@ function baseObservation(): OracleObservation {
   };
 }
 
-function runCase(caseId: string, fixture: Readonly<Record<string, unknown>>): OracleObservation {
+function runCase(
+  caseId: string,
+  fixture: Readonly<Record<string, unknown>>,
+): OracleObservation {
   switch (caseId) {
     // ---- N6: an unproved requested copy is rejected; only eligible copy is emitted ----
     case "M-N6-OVERCLAIM-ALL-PHI": {
-      const evidence: ClaimEvidence = { phase: asNumber(fixture.phase, 1), detectorClasses: [] };
-      const decision = resolveRequestedClaim(asString(fixture.requestedCopy), evidence);
+      const evidence: ClaimEvidence = {
+        phase: asNumber(fixture.phase, 1),
+        detectorClasses: [],
+      };
+      const decision = resolveRequestedClaim(
+        asString(fixture.requestedCopy),
+        evidence,
+      );
       return {
         ...baseObservation(),
         outputs: decision.outputs,
@@ -176,7 +197,8 @@ function runCase(caseId: string, fixture: Readonly<Record<string, unknown>>): Or
         p99InclusiveMs: asNumber(fixture.requiredP99MsInclusive, 100),
       };
       const withinBudget =
-        envelope.p95Ms < budget.p95ExclusiveMs && envelope.p99Ms <= budget.p99InclusiveMs;
+        envelope.p95Ms < budget.p95ExclusiveMs &&
+        envelope.p99Ms <= budget.p99InclusiveMs;
       return {
         ...baseObservation(),
         latencyMs: envelope.p95Ms,
@@ -192,7 +214,10 @@ function runCase(caseId: string, fixture: Readonly<Record<string, unknown>>): Or
     case "CLAIM-MULTIMODAL-CARVEOUT": {
       const claim = asString(fixture.claim);
       const carveouts = asStringArray(fixture.documentedCarveouts);
-      const decision = resolveRequestedClaim(claim, { phase: 1, detectorClasses: [] });
+      const decision = resolveRequestedClaim(claim, {
+        phase: 1,
+        detectorClasses: [],
+      });
       const diagnostics = [...decision.diagnostics];
       if (carveouts.includes("multimodal-image-egress")) {
         diagnostics.push("IMAGE_CARVEOUT_DOCUMENTED");
@@ -212,7 +237,10 @@ function runCase(caseId: string, fixture: Readonly<Record<string, unknown>>): Or
 
 export function loadEvaluationHarness(): ModuleHarness {
   return {
-    run(caseId: string, fixture: Readonly<Record<string, unknown>>): Promise<OracleObservation> {
+    run(
+      caseId: string,
+      fixture: Readonly<Record<string, unknown>>,
+    ): Promise<OracleObservation> {
       return Promise.resolve(runCase(caseId, fixture));
     },
   };

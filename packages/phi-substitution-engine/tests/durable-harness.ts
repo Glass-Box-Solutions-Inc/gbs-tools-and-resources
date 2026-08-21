@@ -54,7 +54,13 @@ export function makeClock(startMs = T0): MutableClock {
 /** Wraps a SpoolVolume to count publishes/flushes and capture the exact readCurrent keys. */
 export interface VolumeSpy {
   readonly wrapper: SpoolVolume;
-  readonly counts: { published: number; existing: number; prepare: number; flush: number; readCurrent: number };
+  readonly counts: {
+    published: number;
+    existing: number;
+    prepare: number;
+    flush: number;
+    readCurrent: number;
+  };
   lastReadRequests: readonly ReversalLookupRequest[];
 }
 
@@ -82,7 +88,9 @@ export function spyVolume(inner: SpoolVolume): VolumeSpy {
         spy.counts.flush += 1;
         return inner.flush(c);
       },
-      readCurrent: (requests: readonly ReversalLookupRequest[]): Promise<readonly ReversalLookupResult[]> => {
+      readCurrent: (
+        requests: readonly ReversalLookupRequest[],
+      ): Promise<readonly ReversalLookupResult[]> => {
         spy.counts.readCurrent += 1;
         spy.lastReadRequests = requests;
         return inner.readCurrent(requests);
@@ -94,7 +102,9 @@ export function spyVolume(inner: SpoolVolume): VolumeSpy {
 
 export type RetentionOption =
   | ReversalRetentionClass
-  | ((input: RetentionClassificationInput) => ReversalRetentionClass | Promise<ReversalRetentionClass>);
+  | ((
+      input: RetentionClassificationInput,
+    ) => ReversalRetentionClass | Promise<ReversalRetentionClass>);
 
 export interface HarnessOptions {
   retention?: RetentionOption;
@@ -115,13 +125,17 @@ export interface Harness extends MountedStore {
   readonly keyProvider: InMemoryKeyProvider;
   readonly clock: () => number;
   readonly faults: SpoolFaults;
-  readonly classifyRetention: (input: RetentionClassificationInput) => Promise<ReversalRetentionClass>;
+  readonly classifyRetention: (
+    input: RetentionClassificationInput,
+  ) => Promise<ReversalRetentionClass>;
   readonly maximumEncounteredTokenBatch: number;
   /** A fresh replica over the SAME durable backend + KEK (models replica loss / remount). */
   remount: (faults?: SpoolFaults) => MountedStore;
 }
 
-function classifierFrom(retention: RetentionOption): (input: RetentionClassificationInput) => Promise<ReversalRetentionClass> {
+function classifierFrom(
+  retention: RetentionOption,
+): (input: RetentionClassificationInput) => Promise<ReversalRetentionClass> {
   if (typeof retention === "function") {
     return async (input) => retention(input);
   }
@@ -132,7 +146,9 @@ function mountStore(
   backend: InMemoryReversalSpoolBackend,
   keyProvider: InMemoryKeyProvider,
   clock: () => number,
-  classifyRetention: (input: RetentionClassificationInput) => Promise<ReversalRetentionClass>,
+  classifyRetention: (
+    input: RetentionClassificationInput,
+  ) => Promise<ReversalRetentionClass>,
   maximumEncounteredTokenBatch: number,
   faults: SpoolFaults,
 ): MountedStore {
@@ -152,10 +168,18 @@ export function makeHarness(options: HarnessOptions = {}): Harness {
   const backend = options.backend ?? new InMemoryReversalSpoolBackend();
   const keyProvider = options.keyProvider ?? new InMemoryKeyProvider();
   const clock = options.clock ?? (() => Date.now());
-  const maximumEncounteredTokenBatch = options.maximumEncounteredTokenBatch ?? 256;
+  const maximumEncounteredTokenBatch =
+    options.maximumEncounteredTokenBatch ?? 256;
   const classifyRetention = classifierFrom(options.retention ?? "matter");
   const faults: SpoolFaults = options.faults ?? {};
-  const mounted = mountStore(backend, keyProvider, clock, classifyRetention, maximumEncounteredTokenBatch, faults);
+  const mounted = mountStore(
+    backend,
+    keyProvider,
+    clock,
+    classifyRetention,
+    maximumEncounteredTokenBatch,
+    faults,
+  );
   return {
     ...mounted,
     backend,
@@ -167,7 +191,14 @@ export function makeHarness(options: HarnessOptions = {}): Harness {
     remount: (remountFaults: SpoolFaults = {}) => {
       // Replica loss: a fresh replica takes over the durable volume; unflushed writes are discarded.
       backend.crash();
-      return mountStore(backend, keyProvider, clock, classifyRetention, maximumEncounteredTokenBatch, remountFaults);
+      return mountStore(
+        backend,
+        keyProvider,
+        clock,
+        classifyRetention,
+        maximumEncounteredTokenBatch,
+        remountFaults,
+      );
     },
   };
 }
@@ -183,7 +214,9 @@ export interface TwoMounts {
   publishedTotal: () => number;
 }
 
-export function twoMounts(options: { retention?: RetentionOption; clock?: () => number } = {}): TwoMounts {
+export function twoMounts(
+  options: { retention?: RetentionOption; clock?: () => number } = {},
+): TwoMounts {
   const backend = new InMemoryReversalSpoolBackend();
   const keyProvider = new InMemoryKeyProvider();
   const clock = options.clock ?? (() => Date.now());
@@ -208,7 +241,9 @@ export const DEFAULT_VERSION = brand<DictionaryVersion>(1n);
 export const DEFAULT_TOKEN = brand<SubstitutionToken>("[[Claimant]]");
 export const DEFAULT_CANONICAL = "Maria García";
 
-export function recordInput(over: Partial<ReversalRecordInput> = {}): ReversalRecordInput {
+export function recordInput(
+  over: Partial<ReversalRecordInput> = {},
+): ReversalRecordInput {
   return {
     tenantId: DEFAULT_TENANT,
     matterId: DEFAULT_MATTER,
@@ -237,7 +272,9 @@ export function resolveInput(over: Partial<ResolveInput> = {}): ResolveInput {
   };
 }
 
-export function keyFor(over: Partial<ResolveInput> & { token?: SubstitutionToken } = {}) {
+export function keyFor(
+  over: Partial<ResolveInput> & { token?: SubstitutionToken } = {},
+) {
   const tenantId = over.tenantId ?? DEFAULT_TENANT;
   const matterId = over.matterId ?? DEFAULT_MATTER;
   const dictionaryVersion = over.dictionaryVersion ?? DEFAULT_VERSION;

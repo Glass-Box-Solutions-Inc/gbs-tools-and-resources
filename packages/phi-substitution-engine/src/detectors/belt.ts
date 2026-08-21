@@ -64,12 +64,16 @@ function isFallbackEligible(eligibility: FallbackEligibility | null): boolean {
  * the shared-deadline runner over the primary and an independently-eligible fallback, and fails
  * closed (`DETECTOR_UNAVAILABLE`) if neither yields usable spans in time.
  */
-export async function runDetectionBelt(params: DetectionBeltParams): Promise<BeltResult> {
+export async function runDetectionBelt(
+  params: DetectionBeltParams,
+): Promise<BeltResult> {
   if (params.detectorRequirement === "DISABLED_PHASE_1") {
     return { invoked: false };
   }
 
-  const eligibleFallback = isFallbackEligible(params.fallbackEligibility) ? params.fallback : null;
+  const eligibleFallback = isFallbackEligible(params.fallbackEligibility)
+    ? params.fallback
+    : null;
 
   try {
     const outcome = await params.runner.detectWithin({
@@ -79,7 +83,11 @@ export async function runDetectionBelt(params: DetectionBeltParams): Promise<Bel
       deadlineMs: params.deadlineMs,
       normalizer: params.normalizer,
     });
-    return { invoked: true, descriptor: outcome.descriptor, spans: outcome.spans };
+    return {
+      invoked: true,
+      descriptor: outcome.descriptor,
+      spans: outcome.spans,
+    };
   } catch {
     throw new DetectorBeltUnavailableError();
   }

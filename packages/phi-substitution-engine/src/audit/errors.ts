@@ -22,12 +22,16 @@ export class PhiAuditError extends Error {
   public override readonly name = "PhiAuditError";
   public readonly code: AuditFailureCode;
   public readonly operationId: OperationId | null;
-  public readonly safeDetails: Readonly<Record<string, string | number | boolean | null>>;
+  public readonly safeDetails: Readonly<
+    Record<string, string | number | boolean | null>
+  >;
 
   public constructor(
     code: AuditFailureCode,
     operationId: OperationId | null,
-    safeDetails: Readonly<Record<string, string | number | boolean | null>> = {},
+    safeDetails: Readonly<
+      Record<string, string | number | boolean | null>
+    > = {},
   ) {
     super(code);
     this.code = code;
@@ -43,7 +47,10 @@ export class PhiAuditError extends Error {
  * canary) and the `.code` compare (a throwing/mutating getter) are guarded, so classifying a
  * hostile thrown value can never itself surface PHI (§7/N2).
  */
-export function isAuditError(value: unknown, code?: AuditFailureCode): value is PhiAuditError {
+export function isAuditError(
+  value: unknown,
+  code?: AuditFailureCode,
+): value is PhiAuditError {
   let isAudit: boolean;
   try {
     isAudit = value instanceof PhiAuditError;

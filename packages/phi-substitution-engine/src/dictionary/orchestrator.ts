@@ -36,10 +36,15 @@ import { isPhiEngineFailureCode, safeCodeString } from "../core/errors";
  * a raw cache/compiler/tokenize rejection must NEVER surface its message/code. A recognized
  * DictionaryError code is preserved (getter-throw-safe); anything else → the fixed fallback.
  */
-function dictionaryFailClosed(error: unknown, fallback: DictionaryFailureCode): EgressDecision {
+function dictionaryFailClosed(
+  error: unknown,
+  fallback: DictionaryFailureCode,
+): EgressDecision {
   const rawCode = isDictionaryError(error) ? safeCodeString(error) : undefined;
   const code: DictionaryFailureCode =
-    rawCode !== undefined && isPhiEngineFailureCode(rawCode) ? (rawCode as DictionaryFailureCode) : fallback;
+    rawCode !== undefined && isPhiEngineFailureCode(rawCode)
+      ? (rawCode as DictionaryFailureCode)
+      : fallback;
   return { kind: "FAILED_CLOSED", code, dictionaryVersion: null };
 }
 
@@ -72,16 +77,27 @@ export interface EgressDeps {
   readonly compiler: DictionaryCompiler;
 }
 
-export async function decideEgress(req: EgressRequest, deps: EgressDeps): Promise<EgressDecision> {
+export async function decideEgress(
+  req: EgressRequest,
+  deps: EgressDeps,
+): Promise<EgressDecision> {
   // N4: missing trusted context fails closed before any provider work.
   if (req.context === null) {
-    return { kind: "FAILED_CLOSED", code: MISSING_TRUSTED_CONTEXT, dictionaryVersion: null };
+    return {
+      kind: "FAILED_CLOSED",
+      code: MISSING_TRUSTED_CONTEXT,
+      dictionaryVersion: null,
+    };
   }
   const context = req.context;
 
   // N4: a dictionary outage fails closed; the raw provider is never a fallback.
   if (req.dictionaryHealth === "unavailable") {
-    return { kind: "FAILED_CLOSED", code: DICTIONARY_UNAVAILABLE, dictionaryVersion: null };
+    return {
+      kind: "FAILED_CLOSED",
+      code: DICTIONARY_UNAVAILABLE,
+      dictionaryVersion: null,
+    };
   }
 
   // L2: require an active READY version; reject BUILDING/FAILED/stale.
@@ -115,7 +131,11 @@ export async function decideEgress(req: EgressRequest, deps: EgressDeps): Promis
       return { kind: "FAILED_CLOSED", code, dictionaryVersion };
     }
     // §7/N2: an unexpected non-DictionaryError must never surface a raw message/code — fail closed.
-    return { kind: "FAILED_CLOSED", code: DICTIONARY_UNAVAILABLE, dictionaryVersion: null };
+    return {
+      kind: "FAILED_CLOSED",
+      code: DICTIONARY_UNAVAILABLE,
+      dictionaryVersion: null,
+    };
   }
 
   const compileInput: CompileInput = {

@@ -31,6 +31,31 @@ import { BOUNDARY_TOKEN_GRAMMAR_POLICY } from "../src/core/orchestrator";
 const DEV_NAME = "Jordan Testcase";
 
 describe("GLY-336 M1: capability-tight composition from the published root", () => {
+  it("GLY372-OR-06: assignment injection adds types only and leaks no authority capability", async () => {
+    const mod = (await import("../src/index")) as Record<string, unknown>;
+    expect(mod["TokenAssignmentStore"]).toBeUndefined();
+    expect(mod["assignmentStore"]).toBeUndefined();
+
+    const engineBundle = createSubstitutionEngine() as unknown as Record<
+      string,
+      unknown
+    >;
+    const providerBundle = createProtectedAiProvider() as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(engineBundle["assignmentStore"]).toBeUndefined();
+    expect(providerBundle["assignmentStore"]).toBeUndefined();
+    expect(
+      (engineBundle["engine"] as Record<string, unknown>)["assignmentStore"],
+    ).toBeUndefined();
+    expect(
+      (providerBundle["provider"] as Record<string, unknown>)[
+        "assignmentStore"
+      ],
+    ).toBeUndefined();
+  });
+
   it("root exports ONLY the factories + error surface (createTokensModule is not public)", async () => {
     const mod = (await import("../src/index")) as Record<string, unknown>;
     for (const name of [
@@ -43,7 +68,10 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
       "ReversalFailedError",
       "REVERSAL_FAILED",
     ]) {
-      expect(typeof mod[name] !== "undefined", `${name} MUST be a root export`).toBe(true);
+      expect(
+        typeof mod[name] !== "undefined",
+        `${name} MUST be a root export`,
+      ).toBe(true);
     }
     for (const name of [
       "createTokensModule", // finding 4 — dropped from the public root
@@ -90,13 +118,18 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
     // gcmDecrypt / InMemoryKeyProvider; today they are unreachable to an external consumer ONLY because
     // the package `exports` map has no subpath for them. A wildcard ("./*") or an added deep subpath would
     // silently re-open that capability boundary — this locks the allowlist against that regression.
-    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+    const pkg = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as {
       exports?: Record<string, unknown>;
     };
     const keys = Object.keys(pkg.exports ?? {}).sort();
     expect(keys).toEqual([".", "./package.json"]);
     for (const key of keys) {
-      expect(key, "no wildcard subpath may be added to `exports`").not.toContain("*");
+      expect(
+        key,
+        "no wildcard subpath may be added to `exports`",
+      ).not.toContain("*");
     }
   });
 
@@ -104,7 +137,9 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
     const { provider } = createProtectedAiProvider();
     // No prototype → no recoverable public constructor to `new` with a fake engine (finding 3).
     expect(Object.getPrototypeOf(provider)).toBeNull();
-    expect((provider as Record<string, unknown>)["constructor"]).toBeUndefined();
+    expect(
+      (provider as Record<string, unknown>)["constructor"],
+    ).toBeUndefined();
     expect(Object.isFrozen(provider)).toBe(true);
     // Exposes ONLY the AiProvider interface methods.
     expect(Object.getOwnPropertyNames(provider).sort()).toEqual([
@@ -125,7 +160,10 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
       "safeTrace",
       "deps",
     ]) {
-      expect((provider as Record<string, unknown>)[leak], `facade must not leak ${leak}`).toBeUndefined();
+      expect(
+        (provider as Record<string, unknown>)[leak],
+        `facade must not leak ${leak}`,
+      ).toBeUndefined();
     }
   });
 
@@ -152,7 +190,10 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
       "cache",
       "escaper",
     ]) {
-      expect((engine as Record<string, unknown>)[leak], `facade must not leak ${leak}`).toBeUndefined();
+      expect(
+        (engine as Record<string, unknown>)[leak],
+        `facade must not leak ${leak}`,
+      ).toBeUndefined();
     }
   });
 
@@ -164,11 +205,17 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
     expect(roles.has("Jordan Smith PHI role")).toBe(false);
     // No mutator method is exposed on the membership oracle.
     for (const mutator of ["add", "delete", "clear"]) {
-      expect(roles[mutator], `role set must not expose ${mutator}`).toBeUndefined();
+      expect(
+        roles[mutator],
+        `role set must not expose ${mutator}`,
+      ).toBeUndefined();
     }
     // And a stolen `Set.prototype.add` cannot operate on it — the oracle has no [[SetData]] slot.
     expect(() =>
-      (Set.prototype.add as (this: unknown, v: unknown) => unknown).call(roles, "Jordan Smith PHI role"),
+      (Set.prototype.add as (this: unknown, v: unknown) => unknown).call(
+        roles,
+        "Jordan Smith PHI role",
+      ),
     ).toThrow();
     expect(roles.has("Jordan Smith PHI role")).toBe(false);
     expect(Object.isFrozen(roles)).toBe(true);
@@ -181,11 +228,17 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
     // is imported — must not be able to make an unauthorized (PHI-bearing) role pass the allow-list and
     // be emitted as a token label. Membership is a null-prototype record read directly, so the poison
     // is inert. Mutation-proof: back `frozenRoleSet.has` with a live Set again and this test goes red.
-    const roles = BOUNDARY_TOKEN_GRAMMAR_POLICY.allowedRoles as unknown as { has: (v: string) => boolean };
+    const roles = BOUNDARY_TOKEN_GRAMMAR_POLICY.allowedRoles as unknown as {
+      has: (v: string) => boolean;
+    };
     const originalHas = Set.prototype.has;
     try {
       // Most aggressive poison: every Set membership check answers true.
-      (Set.prototype as unknown as { has: (this: unknown, v: unknown) => boolean }).has = function (): boolean {
+      (
+        Set.prototype as unknown as {
+          has: (this: unknown, v: unknown) => boolean;
+        }
+      ).has = function (): boolean {
         return true;
       };
       // Sanity: the poison is genuinely live on a real Set.
@@ -203,7 +256,9 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
   it("regression (#private): the concrete reversal store's raw map is NOT reflectively enumerable", async () => {
     const store = new InMemoryReversalStore() as unknown as {
       record: (input: unknown) => void;
-      resolveEncounteredTokens: (input: unknown) => Promise<ReadonlyMap<string, string>>;
+      resolveEncounteredTokens: (
+        input: unknown,
+      ) => Promise<ReadonlyMap<string, string>>;
     };
     const CANARY = "Jordan Testcase — 987-65-4320";
     store.record({
@@ -254,14 +309,22 @@ describe("GLY-336 M1: capability-tight composition from the published root", () 
 
     expect(() => result.reversalHandle.toJSON()).toThrow(); // non-serializable capability
 
-    const display = await dev.engine.reverse(result.segments[0]!.text, result.reversalHandle);
+    const display = await dev.engine.reverse(
+      result.segments[0]!.text,
+      result.reversalHandle,
+    );
     expect(String(display)).toContain(DEV_NAME);
   });
 
   it("createProtectedAiProvider() round-trips generateText through the protected binding", async () => {
     const dev = createProtectedAiProvider();
     const options: BoundaryGenerateOptions = {
-      messages: [{ role: "user", content: [{ type: "text", text: `Please contact ${DEV_NAME}.` }] }],
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: `Please contact ${DEV_NAME}.` }],
+        },
+      ],
     };
     const display = await dev.provider.generateText(options);
     expect(String(display)).toContain(DEV_NAME);

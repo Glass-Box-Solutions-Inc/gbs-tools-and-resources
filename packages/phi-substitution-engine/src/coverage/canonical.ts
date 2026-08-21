@@ -15,22 +15,38 @@ const PROTECTED_PROVIDER = "backend/src/modules/ai/protected-ai-provider.ts";
 /** The live LLM-egress sites a tree scan would currently discover. */
 export const CANONICAL_DISCOVERED: readonly DiscoveredEgressSite[] = [
   {
-    source: { repository: GLASSY, file: PROTECTED_PROVIDER, symbol: "ProtectedAiProvider.generateText" },
+    source: {
+      repository: GLASSY,
+      file: PROTECTED_PROVIDER,
+      symbol: "ProtectedAiProvider.generateText",
+    },
     evidence: "KNOWN_ADAPTER_CALL",
     providerHostOrPackage: "openai.azure.com",
   },
   {
-    source: { repository: GLASSY, file: PROTECTED_PROVIDER, symbol: "ProtectedAiProvider.generateStream" },
+    source: {
+      repository: GLASSY,
+      file: PROTECTED_PROVIDER,
+      symbol: "ProtectedAiProvider.generateStream",
+    },
     evidence: "KNOWN_ADAPTER_CALL",
     providerHostOrPackage: "openai.azure.com",
   },
   {
-    source: { repository: GLASSY, file: PROTECTED_PROVIDER, symbol: "ProtectedAiProvider.embedText" },
+    source: {
+      repository: GLASSY,
+      file: PROTECTED_PROVIDER,
+      symbol: "ProtectedAiProvider.embedText",
+    },
     evidence: "KNOWN_ADAPTER_CALL",
     providerHostOrPackage: "openai.azure.com",
   },
   {
-    source: { repository: ADJUDICA, file: "src/graph/graph-extractor.ts", symbol: "GraphExtractor.extract" },
+    source: {
+      repository: ADJUDICA,
+      file: "src/graph/graph-extractor.ts",
+      symbol: "GraphExtractor.extract",
+    },
     evidence: "KNOWN_ADAPTER_CALL",
     providerHostOrPackage: "openai.azure.com",
   },
@@ -52,28 +68,44 @@ export const CANONICAL_REGISTRY: EgressSurfaceRegistry = {
     {
       classification: "ENGINE_COVERED",
       id: "ENG-GEN-001",
-      source: { repository: GLASSY, file: PROTECTED_PROVIDER, symbol: "ProtectedAiProvider.generateText" },
+      source: {
+        repository: GLASSY,
+        file: PROTECTED_PROVIDER,
+        symbol: "ProtectedAiProvider.generateText",
+      },
       operation: "generation",
       protectedBoundary: "ProtectedAiProvider",
     },
     {
       classification: "ENGINE_COVERED",
       id: "ENG-STR-002",
-      source: { repository: GLASSY, file: PROTECTED_PROVIDER, symbol: "ProtectedAiProvider.generateStream" },
+      source: {
+        repository: GLASSY,
+        file: PROTECTED_PROVIDER,
+        symbol: "ProtectedAiProvider.generateStream",
+      },
       operation: "stream",
       protectedBoundary: "ProtectedAiProvider",
     },
     {
       classification: "ENGINE_COVERED",
       id: "ENG-EMB-003",
-      source: { repository: GLASSY, file: PROTECTED_PROVIDER, symbol: "ProtectedAiProvider.embedText" },
+      source: {
+        repository: GLASSY,
+        file: PROTECTED_PROVIDER,
+        symbol: "ProtectedAiProvider.embedText",
+      },
       operation: "embedding",
       protectedBoundary: "ProtectedAiProvider",
     },
     {
       classification: "ENGINE_COVERED",
       id: "ENG-GRAPH-004",
-      source: { repository: ADJUDICA, file: "src/graph/graph-extractor.ts", symbol: "GraphExtractor.extract" },
+      source: {
+        repository: ADJUDICA,
+        file: "src/graph/graph-extractor.ts",
+        symbol: "GraphExtractor.extract",
+      },
       operation: "graph_extraction",
       protectedBoundary: "ProtectedGraphExtractor",
     },

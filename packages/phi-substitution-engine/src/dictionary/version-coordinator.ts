@@ -12,7 +12,12 @@
  * must NOT serve. Rejecting a non-READY active version fails closed with
  * `DICTIONARY_NOT_READY` and reports the active version for a value-free trace.
  */
-import type { DictionaryVersion, MatterId, SchemaVersion, TenantId } from "../core/brands";
+import type {
+  DictionaryVersion,
+  MatterId,
+  SchemaVersion,
+  TenantId,
+} from "../core/brands";
 import type { DictionaryVersionCoordinator } from "./contracts";
 import { DICTIONARY_NOT_READY, DictionaryError } from "./errors";
 
@@ -23,7 +28,8 @@ interface ActiveVersion {
   readonly status: VersionStatus;
 }
 
-const asVersion = (value: bigint): DictionaryVersion => value as unknown as DictionaryVersion;
+const asVersion = (value: bigint): DictionaryVersion =>
+  value as unknown as DictionaryVersion;
 
 export class InMemoryDictionaryVersionCoordinator implements DictionaryVersionCoordinator {
   private readonly active = new Map<string, ActiveVersion>();
@@ -54,15 +60,20 @@ export class InMemoryDictionaryVersionCoordinator implements DictionaryVersionCo
     input: Readonly<{ tenantId: TenantId; matterId: MatterId }>,
     version: bigint,
   ): void {
-    this.active.set(this.key(input.tenantId, input.matterId), { version, status: "BUILDING" });
+    this.active.set(this.key(input.tenantId, input.matterId), {
+      version,
+      status: "BUILDING",
+    });
   }
 
-  public advanceForCommittedTruthWrite(input: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-    schemaVersion: SchemaVersion;
-    sourceTruthRevision: string;
-  }>): Promise<DictionaryVersion> {
+  public advanceForCommittedTruthWrite(
+    input: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+      schemaVersion: SchemaVersion;
+      sourceTruthRevision: string;
+    }>,
+  ): Promise<DictionaryVersion> {
     const key = this.key(input.tenantId, input.matterId);
     const current = this.active.get(key);
     // Atomic with the tagged write: advance the version and enqueue the outbox;
@@ -73,10 +84,12 @@ export class InMemoryDictionaryVersionCoordinator implements DictionaryVersionCo
     return Promise.resolve(asVersion(nextVersion));
   }
 
-  public requireActiveReady(input: Readonly<{
-    tenantId: TenantId;
-    matterId: MatterId;
-  }>): Promise<DictionaryVersion> {
+  public requireActiveReady(
+    input: Readonly<{
+      tenantId: TenantId;
+      matterId: MatterId;
+    }>,
+  ): Promise<DictionaryVersion> {
     const key = this.key(input.tenantId, input.matterId);
     const active = this.active.get(key);
     if (active === undefined) {

@@ -39,7 +39,11 @@ export {
 export { createProductionProtectedOriginalEgressAuthorizer } from "./core/original-egress-authorizer";
 
 // -- (3) Fixed, PHI-free error surface (a consumer catches/inspects these) --
-export { PhiEngineError, isPhiEngineError, isPhiEngineFailureCode } from "./core/errors";
+export {
+  PhiEngineError,
+  isPhiEngineError,
+  isPhiEngineFailureCode,
+} from "./core/errors";
 export { ReversalFailedError, REVERSAL_FAILED } from "./tokens/errors";
 
 // -- (2) Types only: factory option/result shapes. The provider/engine INTERFACES

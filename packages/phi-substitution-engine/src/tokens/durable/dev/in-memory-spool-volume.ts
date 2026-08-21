@@ -46,7 +46,12 @@ import type {
   DurableReversalRecordMeta,
 } from "../ports";
 
-export type SpoolFaultPhase = "ensureDekGeneration" | "reserveNonce" | "prepare" | "publish" | "flush";
+export type SpoolFaultPhase =
+  | "ensureDekGeneration"
+  | "reserveNonce"
+  | "prepare"
+  | "publish"
+  | "flush";
 
 export interface SpoolFaults {
   /** Throw a fault when entering this phase (simulates a crash / backend outage at that boundary). */
@@ -134,7 +139,10 @@ export class InMemoryReversalSpoolBackend {
   #handleSeq = 0n;
   #publishSeq = 0n;
 
-  public mount(faults: SpoolFaults = {}, nowEpochMilliseconds: () => number = Date.now): InMemoryReversalSpoolVolume {
+  public mount(
+    faults: SpoolFaults = {},
+    nowEpochMilliseconds: () => number = Date.now,
+  ): InMemoryReversalSpoolVolume {
     return new InMemoryReversalSpoolVolume(this, faults, nowEpochMilliseconds);
   }
 
@@ -152,7 +160,10 @@ export class InMemoryReversalSpoolBackend {
     }
     for (const [commit, ctx] of this.#commitIndex) {
       const claim = this.#claims.get(ctx.idempotencyKey as unknown as string);
-      if (claim === undefined || (claim.commit as unknown as string) !== commit) {
+      if (
+        claim === undefined ||
+        (claim.commit as unknown as string) !== commit
+      ) {
         this.#commitIndex.delete(commit);
       }
     }
@@ -174,7 +185,10 @@ export class InMemoryReversalSpoolBackend {
     this.#nonceNext.set(dekGenerationId, next + 1n);
     return next;
   }
-  putPreparedBlob(handle: PreparedWriteHandle, blob: EncryptedReversalRecordBlob): void {
+  putPreparedBlob(
+    handle: PreparedWriteHandle,
+    blob: EncryptedReversalRecordBlob,
+  ): void {
     this.#preparedBlobs.set(handle as unknown as string, blob);
   }
   bindOperationRetention(blob: EncryptedReversalRecordBlob): void {
@@ -183,9 +197,12 @@ export class InMemoryReversalSpoolBackend {
     if (existing !== undefined && existing !== blob.meta.retentionClass) {
       throw new Error("operation_retention_binding_mismatch");
     }
-    if (existing === undefined) this.#operationRetention.set(key, blob.meta.retentionClass);
+    if (existing === undefined)
+      this.#operationRetention.set(key, blob.meta.retentionClass);
   }
-  getPreparedBlob(handle: PreparedWriteHandle): EncryptedReversalRecordBlob | undefined {
+  getPreparedBlob(
+    handle: PreparedWriteHandle,
+  ): EncryptedReversalRecordBlob | undefined {
     return this.#preparedBlobs.get(handle as unknown as string);
   }
 
@@ -194,15 +211,25 @@ export class InMemoryReversalSpoolBackend {
    * current-mapping write happen with NO `await` between them, so two await-interleaved callers — even
    * on two volumes over this one backend — cannot both create a first commit. First writer wins.
    */
-  publishAtomic(ctx: CommitContext, blob: EncryptedReversalRecordBlob, nowEpochMs: number): PublishReversalResult {
+  publishAtomic(
+    ctx: CommitContext,
+    blob: EncryptedReversalRecordBlob,
+    nowEpochMs: number,
+  ): PublishReversalResult {
     const idempotencyKey = ctx.idempotencyKey as unknown as string;
     const existing = this.#claims.get(idempotencyKey);
     if (existing !== undefined) {
       const expired = BigInt(nowEpochMs) >= existing.expiresAtEpochMs;
-      return { kind: "existing", commit: existing.commit, immutableScopeDigest: existing.scopeDigest, expired };
+      return {
+        kind: "existing",
+        commit: existing.commit,
+        immutableScopeDigest: existing.scopeDigest,
+        expired,
+      };
     }
     this.#handleSeq += 1n;
-    const commit = `commit-${this.#handleSeq}` as unknown as PublishedCommitHandle;
+    const commit =
+      `commit-${this.#handleSeq}` as unknown as PublishedCommitHandle;
     // Atomic publication ordinal: this establishes commit order for "current record" (§9/§10).
     this.#publishSeq += 1n;
     const ordinal = this.#publishSeq;
@@ -239,7 +266,9 @@ export class InMemoryReversalSpoolBackend {
       // silent no-op lets a gated peer of a crashed claim ack with no durable mapping (MUT-FLUSH-LOST-COMMIT).
       throw new Error("flush_unknown_or_lost_commit");
     }
-    const blob = this.#preparedBlobs.get(ctx.preparedHandle as unknown as string);
+    const blob = this.#preparedBlobs.get(
+      ctx.preparedHandle as unknown as string,
+    );
     if (blob === undefined) {
       throw new Error("flush_missing_prepared_blob");
     }
@@ -248,15 +277,27 @@ export class InMemoryReversalSpoolBackend {
     this.#persistPublicationMetadata(commit, ctx);
   }
 
-  #persistRecordBytes(handle: PreparedWriteHandle, blob: EncryptedReversalRecordBlob): void {
+  #persistRecordBytes(
+    handle: PreparedWriteHandle,
+    blob: EncryptedReversalRecordBlob,
+  ): void {
     this.#committedRecords.set(handle as unknown as string, blob);
   }
 
-  #persistPublicationMetadata(commit: PublishedCommitHandle, ctx: CommitContext): void {
+  #persistPublicationMetadata(
+    commit: PublishedCommitHandle,
+    ctx: CommitContext,
+  ): void {
     const commitStr = commit as unknown as string;
     const claim = this.#claims.get(ctx.idempotencyKey as unknown as string);
-    if (claim !== undefined && (claim.commit as unknown as string) === commitStr) {
-      this.#claims.set(ctx.idempotencyKey as unknown as string, { ...claim, flushed: true });
+    if (
+      claim !== undefined &&
+      (claim.commit as unknown as string) === commitStr
+    ) {
+      this.#claims.set(ctx.idempotencyKey as unknown as string, {
+        ...claim,
+        flushed: true,
+      });
     }
     // Advance the durable current pointer to THIS commit ONLY when it is newer by publication order
     // (§9/§10). A flush of an older commit — a same-attempt replay flushing its original commit, or a
@@ -265,7 +306,9 @@ export class InMemoryReversalSpoolBackend {
     // pointer only moves forward and survives crash, an acknowledged commit's durable mapping is never
     // absent nor superseded by an unflushed successor.
     const ordinal = this.#commitOrdinal.get(commitStr) ?? 0n;
-    const durableCurrent = this.#durableMappings.get(ctx.mappingKey as unknown as string);
+    const durableCurrent = this.#durableMappings.get(
+      ctx.mappingKey as unknown as string,
+    );
     if (durableCurrent === undefined || ordinal > durableCurrent.ordinal) {
       this.#durableMappings.set(ctx.mappingKey as unknown as string, {
         mappingKey: ctx.mappingKey,
@@ -277,8 +320,14 @@ export class InMemoryReversalSpoolBackend {
     }
     // Keep the provisional pointer's flushed flag consistent when it still points here (bookkeeping only).
     const mapping = this.#mappings.get(ctx.mappingKey as unknown as string);
-    if (mapping !== undefined && (mapping.commit as unknown as string) === commitStr) {
-      this.#mappings.set(ctx.mappingKey as unknown as string, { ...mapping, flushed: true });
+    if (
+      mapping !== undefined &&
+      (mapping.commit as unknown as string) === commitStr
+    ) {
+      this.#mappings.set(ctx.mappingKey as unknown as string, {
+        ...mapping,
+        flushed: true,
+      });
     }
   }
 
@@ -289,13 +338,18 @@ export class InMemoryReversalSpoolBackend {
     return this.#durableMappings.get(mappingKey as unknown as string);
   }
   /** Only a committed (durably flushed) record is readable. */
-  readCommittedBlob(handle: PreparedWriteHandle): EncryptedReversalRecordBlob | undefined {
+  readCommittedBlob(
+    handle: PreparedWriteHandle,
+  ): EncryptedReversalRecordBlob | undefined {
     return this.#committedRecords.get(handle as unknown as string);
   }
 
   // ---- dev/attacker-simulation affordances (NOT part of the SpoolVolume port) ----
 
-  #blobFor(mappingKey: ReversalMappingKey): { handle: PreparedWriteHandle; blob: EncryptedReversalRecordBlob } {
+  #blobFor(mappingKey: ReversalMappingKey): {
+    handle: PreparedWriteHandle;
+    blob: EncryptedReversalRecordBlob;
+  } {
     // Attacker-sim operates on the DURABLE pointer — the same one reads follow.
     const m = this.#durableMappings.get(mappingKey as unknown as string);
     if (m === undefined) {
@@ -310,13 +364,18 @@ export class InMemoryReversalSpoolBackend {
     return { handle: m.preparedHandle, blob };
   }
 
-  #restore(handle: PreparedWriteHandle, blob: EncryptedReversalRecordBlob): void {
+  #restore(
+    handle: PreparedWriteHandle,
+    blob: EncryptedReversalRecordBlob,
+  ): void {
     this.#committedRecords.set(handle as unknown as string, blob);
     this.#preparedBlobs.set(handle as unknown as string, blob);
   }
 
   /** Read a stored blob (for attacker-simulation tests that reuse valid-but-wrong material). */
-  public debugReadBlob(mappingKey: ReversalMappingKey): EncryptedReversalRecordBlob {
+  public debugReadBlob(
+    mappingKey: ReversalMappingKey,
+  ): EncryptedReversalRecordBlob {
     return this.#blobFor(mappingKey).blob;
   }
 
@@ -326,17 +385,26 @@ export class InMemoryReversalSpoolBackend {
     if (m === undefined) {
       throw new Error("debug_relocate_source_absent");
     }
-    this.#durableMappings.set(to as unknown as string, { ...m, mappingKey: to });
+    this.#durableMappings.set(to as unknown as string, {
+      ...m,
+      mappingKey: to,
+    });
   }
 
   /** Simulates tampering of stored (authenticated) record metadata. */
-  public debugMutateMeta(mappingKey: ReversalMappingKey, patch: Partial<DurableReversalRecordMeta>): void {
+  public debugMutateMeta(
+    mappingKey: ReversalMappingKey,
+    patch: Partial<DurableReversalRecordMeta>,
+  ): void {
     const { handle, blob } = this.#blobFor(mappingKey);
     this.#restore(handle, { ...blob, meta: { ...blob.meta, ...patch } });
   }
 
   /** Simulates tampering of a top-level stored blob field (wrappedDek, wrappingKeyId, dekGenerationId…). */
-  public debugPatchBlob(mappingKey: ReversalMappingKey, patch: Partial<EncryptedReversalRecordBlob>): void {
+  public debugPatchBlob(
+    mappingKey: ReversalMappingKey,
+    patch: Partial<EncryptedReversalRecordBlob>,
+  ): void {
     const { handle, blob } = this.#blobFor(mappingKey);
     this.#restore(handle, { ...blob, ...patch });
   }
@@ -377,7 +445,9 @@ export class InMemoryReversalSpoolVolume implements SpoolVolume {
     }
   }
 
-  public async ensureDekGeneration(input: EnsureDekGenerationInput): Promise<DekGeneration> {
+  public async ensureDekGeneration(
+    input: EnsureDekGenerationInput,
+  ): Promise<DekGeneration> {
     this.#faultCheck("ensureDekGeneration");
     const scopeKey = `${input.scope.tenantId} ${input.scope.matterId} ${input.scope.purpose}`;
     const existing = this.#backend.getDekGeneration(scopeKey);
@@ -397,11 +467,15 @@ export class InMemoryReversalSpoolVolume implements SpoolVolume {
     this.#faultCheck("reserveNonce");
     // Durable reservation: advance the backend counter BEFORE returning, so the value survives crash
     // and remount and is never handed out twice for one DEK generation.
-    const counter = this.#backend.reserveNonceCounter(input.dekGenerationId as unknown as string);
+    const counter = this.#backend.reserveNonceCounter(
+      input.dekGenerationId as unknown as string,
+    );
     return Promise.resolve(nonce96(counter));
   }
 
-  public prepare(input: PrepareReversalWriteInput): Promise<PreparedReversalWrite> {
+  public prepare(
+    input: PrepareReversalWriteInput,
+  ): Promise<PreparedReversalWrite> {
     this.#faultCheck("prepare");
     const handle = this.#backend.nextPreparedHandle();
     // Synchronous with the prepared artifact insert: no replica-local classifier result can race or
@@ -417,7 +491,9 @@ export class InMemoryReversalSpoolVolume implements SpoolVolume {
     return Promise.resolve({ handle });
   }
 
-  public publish(prepared: PreparedReversalWrite): Promise<PublishReversalResult> {
+  public publish(
+    prepared: PreparedReversalWrite,
+  ): Promise<PublishReversalResult> {
     this.#faultCheck("publish");
     const ctx = this.#preparedContext.get(prepared.handle as unknown as string);
     if (ctx === undefined) {
@@ -442,7 +518,9 @@ export class InMemoryReversalSpoolVolume implements SpoolVolume {
     this.#backend.flushCommit(commit);
   }
 
-  public readCurrent(requests: readonly ReversalLookupRequest[]): Promise<readonly ReversalLookupResult[]> {
+  public readCurrent(
+    requests: readonly ReversalLookupRequest[],
+  ): Promise<readonly ReversalLookupResult[]> {
     if (requests.length === 0) {
       return Promise.reject(new Error("read_current_requires_exact_keys"));
     }

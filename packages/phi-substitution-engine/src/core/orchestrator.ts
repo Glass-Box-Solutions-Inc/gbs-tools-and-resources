@@ -55,12 +55,24 @@ import type {
   TextSegmentKind,
   TokenizedTextSegment,
 } from "./contracts";
-import type { CaseTruthReader, CompiledDictionaryCache, DictionaryVersionCoordinator } from "../dictionary/contracts";
-import type { EscapedTokenLiteral, TokenGrammarPolicy } from "../tokens/ports";
+import type {
+  CaseTruthReader,
+  CompiledDictionaryCache,
+  DictionaryVersionCoordinator,
+} from "../dictionary/contracts";
+import type {
+  EscapedTokenLiteral,
+  TokenAssignmentStore,
+  TokenGrammarPolicy,
+} from "../tokens/ports";
 import { isDictionaryError } from "../dictionary/errors";
 import { canonicalize, detectStructuredIdentifiers } from "../collision/index";
 import { MatterDictionaryCompiler } from "../dictionary/compiler";
-import { getOrCompile, tokenize, type DetectorSpanInput } from "../dictionary/tokenize";
+import {
+  getOrCompile,
+  tokenize,
+  type DetectorSpanInput,
+} from "../dictionary/tokenize";
 import { InMemoryCompiledDictionaryCache } from "../dictionary/cache";
 import { TokensLeafAssignmentPort } from "../dictionary/token-port";
 import type { AhoCorasickCompiledDictionary } from "../dictionary/compiled-dictionary";
@@ -189,7 +201,7 @@ export interface ComposedSubstitutionEngineDeps {
    * A persistent (restart-safe) store keeps ordinals monotonic across operations so two
    * operations' detector-only tokens never collide on the operation-blind reversal key.
    */
-  readonly assignmentStore?: InMemoryTokenAssignmentStore;
+  readonly assignmentStore?: TokenAssignmentStore;
 }
 
 export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
@@ -202,9 +214,10 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
   readonly #policy: TokenGrammarPolicy;
   readonly #streamFactory: HoldbackReverseStreamFactory;
   readonly #escaper: SentinelSourceTokenEscaper;
-  readonly #assignmentStore: InMemoryTokenAssignmentStore;
+  readonly #assignmentStore: TokenAssignmentStore;
+  readonly #injectedAssignmentStore: boolean;
   readonly #compiler: MatterDictionaryCompiler;
-  readonly #cache: CompiledDictionaryCache;
+  readonly #cache: CompiledDictionaryCache | null;
 
   public constructor(deps: ComposedSubstitutionEngineDeps) {
     this.#coordinator = deps.coordinator;
@@ -214,22 +227,32 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     this.#engineVersion = deps.engineVersion;
     this.#grammar = deps.grammar ?? new BracketTokenGrammar();
     this.#policy = deps.tokenPolicy ?? BOUNDARY_TOKEN_GRAMMAR_POLICY;
-    this.#streamFactory = deps.streamFactory ?? new HoldbackReverseStreamFactory();
+    this.#streamFactory =
+      deps.streamFactory ?? new HoldbackReverseStreamFactory();
     this.#escaper = new SentinelSourceTokenEscaper(this.#grammar);
-    this.#assignmentStore =
-      deps.assignmentStore ?? new InMemoryTokenAssignmentStore(this.#grammar, this.#policy);
+    this.#injectedAssignmentStore = deps.assignmentStore !== undefined;
+    this.#assignmentStore = this.#injectedAssignmentStore
+      ? deps.assignmentStore!
+      : new InMemoryTokenAssignmentStore(this.#grammar, this.#policy);
     // The compiler allocates subject tokens through the SAME shared assignment store, so
     // dictionary and detector-only tokens share one monotonic ordinal space (L1/#6) and
     // handle EVERY identifier class (not just the five person roles).
     this.#compiler = new MatterDictionaryCompiler(
       this.#truthReader,
-      () => new TokensLeafAssignmentPort(this.#assignmentStore),
+      () =>
+        new TokensLeafAssignmentPort(
+          this.#assignmentStore,
+          this.#grammar,
+          this.#policy,
+        ),
     );
     // NEW-B/L1: the warm cache is INTERNAL and lifecycle-coupled to THIS engine's assignment
     // store. It is never injectable/shareable, so a compiled dictionary is never served against a
     // different (fresh) assignment namespace — which would let a detector-only token collide with a
     // cached real-subject token. Warm reuse still happens across requests on the same engine.
-    this.#cache = new InMemoryCompiledDictionaryCache();
+    this.#cache = this.#injectedAssignmentStore
+      ? null
+      : new InMemoryCompiledDictionaryCache();
   }
 
   /**
@@ -250,8 +273,10 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     const operationId = safeString(context, "operationId");
     const attemptId = safeString(context, "attemptId");
     if (
-      tenantId === undefined || matterId === undefined ||
-      operationId === undefined || attemptId === undefined
+      tenantId === undefined ||
+      matterId === undefined ||
+      operationId === undefined ||
+      attemptId === undefined
     ) {
       throw new PhiEngineError("MISSING_TRUSTED_CONTEXT");
     }
@@ -278,7 +303,8 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     if (rawSegments === null) {
       throw new PhiEngineError("MISSING_TRUSTED_CONTEXT", operationId);
     }
-    const segments: { text: string; path: string; kind: TextSegmentKind }[] = [];
+    const segments: { text: string; path: string; kind: TextSegmentKind }[] =
+      [];
     for (let i = 0; i < rawSegments.length; i += 1) {
       const raw = rawSegments[i];
       const text = safeString(raw, "text");
@@ -292,7 +318,9 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     return segments;
   }
 
-  public async substitute(request: SubstitutionRequest): Promise<SubstitutionResult> {
+  public async substitute(
+    request: SubstitutionRequest,
+  ): Promise<SubstitutionResult> {
     // §7/N2: snapshot the caller-derived context + segments ONCE at ingestion so nothing downstream
     // ever touches a live (possibly PHI-throwing / mutating) getter on the request envelope.
     const context = this.#ingestContext(request);
@@ -305,7 +333,11 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     const locale = safeString(policy, "locale");
     const detectorRequirement = safeString(policy, "detectorRequirement");
     if (locale === undefined || detectorRequirement === undefined) {
-      throw new PhiEngineError("MISSING_TRUSTED_POLICY", context.operationId, {});
+      throw new PhiEngineError(
+        "MISSING_TRUSTED_POLICY",
+        context.operationId,
+        {},
+      );
     }
 
     // §4.1 step 2 / L2 / N4: require an active READY dictionary version.
@@ -319,16 +351,28 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       if (isDictionaryError(error)) {
         // §7/N2: read the code getter-throw-safe; `mapDictionaryFailure` already collapses any
         // unrecognized value to a fixed code, so a hostile `.code` can never ride the failure.
-        throw new PhiEngineError(mapDictionaryFailure(safeCodeString(error) ?? ""), context.operationId, {});
+        throw new PhiEngineError(
+          mapDictionaryFailure(safeCodeString(error) ?? ""),
+          context.operationId,
+          {},
+        );
       }
       // §7/N2: an unexpected non-DictionaryError (or a hostile Proxy `isDictionaryError` rejected)
       // must never surface a raw message/code — fail closed with a fixed code.
-      throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
+      throw new PhiEngineError(
+        "DICTIONARY_UNAVAILABLE",
+        context.operationId,
+        {},
+      );
     }
     // §7/N2: the injected coordinator's SUCCESS value is UNTRUSTED — a non-`bigint` (e.g. a PHI string)
     // must NOT be returned to the caller as SubstitutionResult.dictionaryVersion. Require a bigint.
     if (typeof (dictionaryVersion as unknown) !== "bigint") {
-      throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
+      throw new PhiEngineError(
+        "DICTIONARY_UNAVAILABLE",
+        context.operationId,
+        {},
+      );
     }
 
     // N4: phase-1 has no detection belt wired. A policy that REQUIRES it cannot be
@@ -344,7 +388,7 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     try {
       // L9 / NEW-B: the WARM-CACHE serving path — a compiled dictionary for this
       // tenant+matter+version+engine+schema is reused instead of recompiled on every request.
-      compiled = await getOrCompile(this.#cache, this.#compiler, {
+      const compileInput = {
         tenantId: context.tenantId,
         matterId: context.matterId,
         policy: request.policy,
@@ -352,13 +396,27 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
         engineVersion: this.#engineVersion,
         schemaVersion: request.policy.schemaVersion,
         sourceTruthRevision: this.#sourceTruthRevision,
-      });
+      };
+      compiled =
+        this.#cache === null
+          ? ((await this.#compiler.compile(
+              compileInput,
+            )) as AhoCorasickCompiledDictionary)
+          : await getOrCompile(this.#cache, this.#compiler, compileInput);
     } catch (error) {
       if (isDictionaryError(error)) {
-        throw new PhiEngineError(mapDictionaryFailure(safeCodeString(error) ?? ""), context.operationId, {});
+        throw new PhiEngineError(
+          mapDictionaryFailure(safeCodeString(error) ?? ""),
+          context.operationId,
+          {},
+        );
       }
       // §7/N2: an unexpected non-DictionaryError must never surface a raw message/code — fail closed.
-      throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
+      throw new PhiEngineError(
+        "DICTIONARY_UNAVAILABLE",
+        context.operationId,
+        {},
+      );
     }
 
     const started = performance.now();
@@ -384,7 +442,15 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       // span, so a detector-only span never coalesces with a real subject.
       const detectorCanonicalByToken = new Map<string, string>();
       const detectorSpans: DetectorSpanInput[] = [];
-      for (const span of detectStructuredIdentifiers(sourceText)) {
+      const detectedSpans = detectStructuredIdentifiers(sourceText);
+      if (this.#injectedAssignmentStore && detectedSpans.length > 0) {
+        throw new PhiEngineError(
+          "DICTIONARY_UNAVAILABLE",
+          context.operationId,
+          {},
+        );
+      }
+      for (const span of detectedSpans) {
         detectorOrdinal += 1;
         const syntheticSubject = `${SYNTHETIC_DETECTOR_PREFIX}${String(context.operationId)}\u0000${detectorOrdinal}`;
         // §7/N2: the injected assignment store is UNTRUSTED — a `getOrAllocate` REJECTION (its message
@@ -401,7 +467,11 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
             dictionaryVersion,
           });
         } catch {
-          throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
+          throw new PhiEngineError(
+            "DICTIONARY_UNAVAILABLE",
+            context.operationId,
+            {},
+          );
         }
         // §7/N2: the injected store's SUCCESS return is UNTRUSTED. Guarding only the REJECTION
         // (above) still lets a hostile allocation escape two ways: a non-string carrier whose
@@ -413,12 +483,22 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
         // legitimate allocation is rejected); a bracketed token can only carry an allow-listed role +
         // numeric sequence, structurally incapable of holding raw PHI. Anything else fails closed with
         // the same fixed code as a rejection.
-        if (typeof token !== "string" || this.#grammar.parse(token, this.#policy).kind !== "valid") {
-          throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
+        if (
+          typeof token !== "string" ||
+          this.#grammar.parse(token, this.#policy).kind !== "valid"
+        ) {
+          throw new PhiEngineError(
+            "DICTIONARY_UNAVAILABLE",
+            context.operationId,
+            {},
+          );
         }
         const start = span.startUtf16 as unknown as number;
         const end = span.endUtf16 as unknown as number;
-        detectorCanonicalByToken.set(String(token), canonicalize(sourceText.slice(start, end)));
+        detectorCanonicalByToken.set(
+          String(token),
+          canonicalize(sourceText.slice(start, end)),
+        );
         detectorSpans.push({
           startUtf16: start,
           endUtf16: end,
@@ -432,14 +512,29 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
       // tokenized text (dictionary identity overrides overlapping detector spans).
       let tokenizedText: string;
       try {
-        tokenizedText = tokenize(compiled, sourceText, locale, detectorSpans, this.#grammar, this.#policy).tokenizedText;
+        tokenizedText = tokenize(
+          compiled,
+          sourceText,
+          locale,
+          detectorSpans,
+          this.#grammar,
+          this.#policy,
+        ).tokenizedText;
       } catch (error) {
         if (isDictionaryError(error)) {
           // C6 ambiguity → fail closed; a known value is never guessed.
-          throw new PhiEngineError("AMBIGUOUS_KNOWN_IDENTIFIER", context.operationId, {});
+          throw new PhiEngineError(
+            "AMBIGUOUS_KNOWN_IDENTIFIER",
+            context.operationId,
+            {},
+          );
         }
         // §7/N2: an unexpected non-DictionaryError must never surface a raw message/code — fail closed.
-        throw new PhiEngineError("DICTIONARY_UNAVAILABLE", context.operationId, {});
+        throw new PhiEngineError(
+          "DICTIONARY_UNAVAILABLE",
+          context.operationId,
+          {},
+        );
       }
 
       // §4.1 step 8 / N5: record each output token → its CURRENT canonical value, and tally
@@ -450,7 +545,8 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
         }
         const token: SubstitutionToken = span.parsed.token;
         const canonical =
-          compiled.canonicalForToken(String(token)) ?? detectorCanonicalByToken.get(String(token));
+          compiled.canonicalForToken(String(token)) ??
+          detectorCanonicalByToken.get(String(token));
         if (canonical === undefined) {
           continue;
         }
@@ -471,7 +567,8 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
         } catch {
           throw new PhiEngineError("REVERSAL_FAILED", context.operationId, {});
         }
-        const identifierClass = ROLE_CLASS[span.parsed.role as unknown as string];
+        const identifierClass =
+          ROLE_CLASS[span.parsed.role as unknown as string];
         if (identifierClass !== undefined) {
           counts[identifierClass] = (counts[identifierClass] ?? 0) + 1;
         }
@@ -510,7 +607,10 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     };
   }
 
-  public async reverse(text: TokenizedText, handle: ReversalHandle): Promise<DisplayText> {
+  public async reverse(
+    text: TokenizedText,
+    handle: ReversalHandle,
+  ): Promise<DisplayText> {
     // §7/N2: `text` is a PUBLIC input — a NON-STRING carrier (e.g. { get length(){ throw PHI } }) would
     // leak raw through grammar scanning. Require a genuine string, fail closed otherwise.
     if (typeof (text as unknown) !== "string") {
@@ -526,7 +626,9 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     const operationId = safeString(handle, "operationId");
     const dictionaryVersion = safeRead(handle, "dictionaryVersion");
     if (
-      tenantId === undefined || matterId === undefined || operationId === undefined ||
+      tenantId === undefined ||
+      matterId === undefined ||
+      operationId === undefined ||
       typeof dictionaryVersion !== "bigint"
     ) {
       throw new Error("reversal_failed");
@@ -550,10 +652,9 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     // `[[Claimant]]` round-trips to itself, never a sentinel.
     let restored: string;
     try {
-      const candidate =
-        isInProcessReversalHandle(handle)
-          ? handle.restoreEscapedLiterals(String(reversed))
-          : String(reversed);
+      const candidate = isInProcessReversalHandle(handle)
+        ? handle.restoreEscapedLiterals(String(reversed))
+        : String(reversed);
       // §7/N2: the catch wraps only the CALL. A hostile handle's `restoreEscapedLiterals` can
       // SUCCESSFULLY return a NON-STRING carrier whose `.includes` (the residual-sentinel check below)
       // throws a raw (PHI) message — require a genuine string so that check runs only on a string.
@@ -607,7 +708,8 @@ export class ComposedSubstitutionEngine implements PhiSubstitutionEngine {
     const pattern = new RegExp(`${SENTINEL_OPEN}(\\d+)${SENTINEL_CLOSE}`, "g");
     return text.replace(
       pattern,
-      (_match, digits: string) => `${SENTINEL_OPEN}${base + Number(digits)}${SENTINEL_CLOSE}`,
+      (_match, digits: string) =>
+        `${SENTINEL_OPEN}${base + Number(digits)}${SENTINEL_CLOSE}`,
     );
   }
 }

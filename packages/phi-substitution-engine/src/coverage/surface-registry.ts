@@ -28,7 +28,9 @@ interface DriftDiagnostic {
 
 /** Structural identity of an egress site: repository + file + symbol. */
 export function sameSource(a: SourceSymbolRef, b: SourceSymbolRef): boolean {
-  return a.repository === b.repository && a.file === b.file && a.symbol === b.symbol;
+  return (
+    a.repository === b.repository && a.file === b.file && a.symbol === b.symbol
+  );
 }
 
 export interface StaticSurfaceRegistryVerifierOptions {
@@ -58,7 +60,11 @@ export class StaticSurfaceRegistryVerifier implements SurfaceRegistryVerifier {
         sameSource(surface.source, site.source),
       );
       if (matches.length === 0) {
-        diagnostics.push({ code: "UNREGISTERED_EGRESS", surfaceId: null, source: site.source });
+        diagnostics.push({
+          code: "UNREGISTERED_EGRESS",
+          surfaceId: null,
+          source: site.source,
+        });
       } else if (matches.length > 1) {
         diagnostics.push({
           code: "MULTIPLY_CLASSIFIED_EGRESS",
@@ -71,7 +77,9 @@ export class StaticSurfaceRegistryVerifier implements SurfaceRegistryVerifier {
     // Every registered surface must still exist in the live discovered tree;
     // a deleted/renamed symbol whose registry row survived is drift.
     for (const surface of registry.surfaces) {
-      const live = discovered.some((site) => sameSource(site.source, surface.source));
+      const live = discovered.some((site) =>
+        sameSource(site.source, surface.source),
+      );
       if (!live) {
         diagnostics.push({
           code: "STALE_REGISTRY_SYMBOL",

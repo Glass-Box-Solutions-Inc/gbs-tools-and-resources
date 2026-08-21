@@ -1,4 +1,10 @@
-import type { DictionaryVersion, MatterId, OperationAttemptId, SubstitutionToken, TenantId } from "../../../core/brands";
+import type {
+  DictionaryVersion,
+  MatterId,
+  OperationAttemptId,
+  SubstitutionToken,
+  TenantId,
+} from "../../../core/brands";
 import type {
   DekGenerationId,
   EncryptedReversalRecordBlob,
@@ -36,7 +42,11 @@ class Cursor {
   }
 
   public read(length: number): Buffer {
-    if (!Number.isSafeInteger(length) || length < 0 || length > this.remaining) {
+    if (
+      !Number.isSafeInteger(length) ||
+      length < 0 ||
+      length > this.remaining
+    ) {
       throw new Error("reversal_blob_codec_truncated");
     }
     const result = this.#bytes.subarray(this.#offset, this.#offset + length);
@@ -80,7 +90,11 @@ function u64Field(name: string, value: bigint): EncodedField {
 
 function fieldBuffer(field: EncodedField): Buffer {
   const name = Buffer.from(field.name, "utf8");
-  if (name.byteLength === 0 || name.byteLength > MAX_U16 || field.value.byteLength > MAX_U32) {
+  if (
+    name.byteLength === 0 ||
+    name.byteLength > MAX_U16 ||
+    field.value.byteLength > MAX_U32
+  ) {
     throw new Error("reversal_blob_codec_field_too_large");
   }
   const header = Buffer.alloc(FIELD_HEADER_BYTES);
@@ -90,7 +104,10 @@ function fieldBuffer(field: EncodedField): Buffer {
   return Buffer.concat([header, name, field.value]);
 }
 
-function stringValue(fields: ReadonlyMap<string, EncodedField>, name: string): string {
+function stringValue(
+  fields: ReadonlyMap<string, EncodedField>,
+  name: string,
+): string {
   const field = requireField(fields, name, 2);
   const value = Buffer.from(field.value).toString("utf8");
   if (!Buffer.from(value, "utf8").equals(Buffer.from(field.value))) {
@@ -99,11 +116,17 @@ function stringValue(fields: ReadonlyMap<string, EncodedField>, name: string): s
   return value;
 }
 
-function byteValue(fields: ReadonlyMap<string, EncodedField>, name: string): Uint8Array {
+function byteValue(
+  fields: ReadonlyMap<string, EncodedField>,
+  name: string,
+): Uint8Array {
   return Uint8Array.from(requireField(fields, name, 1).value);
 }
 
-function bigintValue(fields: ReadonlyMap<string, EncodedField>, name: string): bigint {
+function bigintValue(
+  fields: ReadonlyMap<string, EncodedField>,
+  name: string,
+): bigint {
   const value = requireField(fields, name, 3).value;
   if (value.byteLength !== 8) {
     throw new Error(`reversal_blob_codec_invalid_u64_${name}`);
@@ -111,7 +134,11 @@ function bigintValue(fields: ReadonlyMap<string, EncodedField>, name: string): b
   return Buffer.from(value).readBigUInt64BE(0);
 }
 
-function requireField(fields: ReadonlyMap<string, EncodedField>, name: string, kind: FieldKind): EncodedField {
+function requireField(
+  fields: ReadonlyMap<string, EncodedField>,
+  name: string,
+  kind: FieldKind,
+): EncodedField {
   const field = fields.get(name);
   if (field === undefined || field.kind !== kind) {
     throw new Error(`reversal_blob_codec_invalid_field_${name}`);
@@ -120,8 +147,13 @@ function requireField(fields: ReadonlyMap<string, EncodedField>, name: string, k
 }
 
 /** Encodes every envelope field as a named, typed, length-prefixed record. */
-export function encodeReversalBlob(record: EncryptedReversalRecordBlob): Uint8Array {
-  if (!Number.isSafeInteger(record.meta.createdAtEpochMs) || record.meta.createdAtEpochMs < 0) {
+export function encodeReversalBlob(
+  record: EncryptedReversalRecordBlob,
+): Uint8Array {
+  if (
+    !Number.isSafeInteger(record.meta.createdAtEpochMs) ||
+    record.meta.createdAtEpochMs < 0
+  ) {
     throw new Error("reversal_blob_codec_invalid_createdAtEpochMs");
   }
   const fields: readonly EncodedField[] = [
@@ -131,11 +163,17 @@ export function encodeReversalBlob(record: EncryptedReversalRecordBlob): Uint8Ar
     bytesField("wrappedDek", record.wrappedDek),
     textField("dekGenerationId", record.dekGenerationId as unknown as string),
     textField("wrappingKeyId", record.wrappingKeyId as unknown as string),
-    textField("wrappingKeyVersion", record.wrappingKeyVersion as unknown as string),
+    textField(
+      "wrappingKeyVersion",
+      record.wrappingKeyVersion as unknown as string,
+    ),
     bytesField("aad", record.aad),
     textField("meta.tenantId", record.meta.tenantId as unknown as string),
     textField("meta.matterId", record.meta.matterId as unknown as string),
-    u64Field("meta.dictionaryVersion", record.meta.dictionaryVersion as unknown as bigint),
+    u64Field(
+      "meta.dictionaryVersion",
+      record.meta.dictionaryVersion as unknown as bigint,
+    ),
     textField("meta.token", record.meta.token as unknown as string),
     textField("meta.attemptId", record.meta.attemptId as unknown as string),
     textField("meta.retentionClass", record.meta.retentionClass),
@@ -150,9 +188,14 @@ export function encodeReversalBlob(record: EncryptedReversalRecordBlob): Uint8Ar
 }
 
 /** Decodes the named record and rejects truncation, duplication, unknown fields, or invalid types. */
-export function decodeReversalBlob(bytes: Uint8Array): EncryptedReversalRecordBlob {
+export function decodeReversalBlob(
+  bytes: Uint8Array,
+): EncryptedReversalRecordBlob {
   const cursor = new Cursor(bytes);
-  if (!cursor.read(MAGIC.byteLength).equals(MAGIC) || cursor.u16() !== VERSION) {
+  if (
+    !cursor.read(MAGIC.byteLength).equals(MAGIC) ||
+    cursor.u16() !== VERSION
+  ) {
     throw new Error("reversal_blob_codec_invalid_header");
   }
   const fieldCount = cursor.u16();
@@ -168,16 +211,33 @@ export function decodeReversalBlob(bytes: Uint8Array): EncryptedReversalRecordBl
     if (name.length === 0 || fields.has(name)) {
       throw new Error("reversal_blob_codec_duplicate_or_empty_field");
     }
-    fields.set(name, { name, kind, value: Uint8Array.from(cursor.read(valueLength)) });
+    fields.set(name, {
+      name,
+      kind,
+      value: Uint8Array.from(cursor.read(valueLength)),
+    });
   }
   if (cursor.remaining !== 0 || fields.size !== 16) {
     throw new Error("reversal_blob_codec_invalid_field_set");
   }
 
   const expectedFields = new Set([
-    "ciphertext", "authTag", "nonce", "wrappedDek", "dekGenerationId", "wrappingKeyId",
-    "wrappingKeyVersion", "aad", "meta.tenantId", "meta.matterId", "meta.dictionaryVersion",
-    "meta.token", "meta.attemptId", "meta.retentionClass", "meta.createdAtEpochMs", "meta.expiresAtEpochMs",
+    "ciphertext",
+    "authTag",
+    "nonce",
+    "wrappedDek",
+    "dekGenerationId",
+    "wrappingKeyId",
+    "wrappingKeyVersion",
+    "aad",
+    "meta.tenantId",
+    "meta.matterId",
+    "meta.dictionaryVersion",
+    "meta.token",
+    "meta.attemptId",
+    "meta.retentionClass",
+    "meta.createdAtEpochMs",
+    "meta.expiresAtEpochMs",
   ]);
   for (const name of fields.keys()) {
     if (!expectedFields.has(name)) {
@@ -198,17 +258,35 @@ export function decodeReversalBlob(bytes: Uint8Array): EncryptedReversalRecordBl
     ciphertext: byteValue(fields, "ciphertext"),
     authTag: byteValue(fields, "authTag"),
     nonce: byteValue(fields, "nonce") as unknown as GcmNonce96,
-    wrappedDek: byteValue(fields, "wrappedDek") as unknown as WrappedDekMaterial,
-    dekGenerationId: stringValue(fields, "dekGenerationId") as unknown as DekGenerationId,
-    wrappingKeyId: stringValue(fields, "wrappingKeyId") as unknown as WrappingKeyId,
-    wrappingKeyVersion: stringValue(fields, "wrappingKeyVersion") as unknown as WrappingKeyVersion,
+    wrappedDek: byteValue(
+      fields,
+      "wrappedDek",
+    ) as unknown as WrappedDekMaterial,
+    dekGenerationId: stringValue(
+      fields,
+      "dekGenerationId",
+    ) as unknown as DekGenerationId,
+    wrappingKeyId: stringValue(
+      fields,
+      "wrappingKeyId",
+    ) as unknown as WrappingKeyId,
+    wrappingKeyVersion: stringValue(
+      fields,
+      "wrappingKeyVersion",
+    ) as unknown as WrappingKeyVersion,
     aad: byteValue(fields, "aad"),
     meta: {
       tenantId: stringValue(fields, "meta.tenantId") as unknown as TenantId,
       matterId: stringValue(fields, "meta.matterId") as unknown as MatterId,
-      dictionaryVersion: bigintValue(fields, "meta.dictionaryVersion") as unknown as DictionaryVersion,
+      dictionaryVersion: bigintValue(
+        fields,
+        "meta.dictionaryVersion",
+      ) as unknown as DictionaryVersion,
       token: stringValue(fields, "meta.token") as unknown as SubstitutionToken,
-      attemptId: stringValue(fields, "meta.attemptId") as unknown as OperationAttemptId,
+      attemptId: stringValue(
+        fields,
+        "meta.attemptId",
+      ) as unknown as OperationAttemptId,
       retentionClass,
       createdAtEpochMs: Number(createdAt),
       expiresAtEpochMs: bigintValue(fields, "meta.expiresAtEpochMs"),

@@ -36,7 +36,10 @@ import type {
   StaleUploadReclaimInput,
 } from "./control-plane";
 
-const MIGRATION_PATH = resolve(__dirname, "../../../../migrations/0001_phi_reversal_control_plane.sql");
+const MIGRATION_PATH = resolve(
+  __dirname,
+  "../../../../migrations/0001_phi_reversal_control_plane.sql",
+);
 const KEY_ENCODING_PREFIX = "b64url-v1:";
 
 interface DekRow extends QueryResultRow {
@@ -172,7 +175,10 @@ function decodeTextKey(value: string): string {
   if (!value.startsWith(KEY_ENCODING_PREFIX)) {
     throw new Error("postgres_control_plane_invalid_key_encoding");
   }
-  return Buffer.from(value.slice(KEY_ENCODING_PREFIX.length), "base64url").toString("utf8");
+  return Buffer.from(
+    value.slice(KEY_ENCODING_PREFIX.length),
+    "base64url",
+  ).toString("utf8");
 }
 
 function safeEpochMs(value: number, label: string): number {
@@ -222,11 +228,19 @@ function mappingKey(value: string): ReversalMappingKey {
   return decodeTextKey(value) as unknown as ReversalMappingKey;
 }
 
-function operationKey(tenantId: TenantId, attemptId: OperationAttemptId): string {
-  return encodeTextKey(`${tenantId as unknown as string}\0${attemptId as unknown as string}`);
+function operationKey(
+  tenantId: TenantId,
+  attemptId: OperationAttemptId,
+): string {
+  return encodeTextKey(
+    `${tenantId as unknown as string}\0${attemptId as unknown as string}`,
+  );
 }
 
-async function transaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
+async function transaction<T>(
+  pool: Pool,
+  operation: (client: PoolClient) => Promise<T>,
+): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -259,8 +273,12 @@ export class PostgresControlPlane implements ControlPlane {
     this.#pool = pool;
   }
 
-  public async ensureDekGeneration(input: Parameters<ControlPlane["ensureDekGeneration"]>[0]): Promise<DekGeneration> {
-    const scopeKey = encodeTextKey(`${input.scope.tenantId}\0${input.scope.matterId}\0${input.scope.purpose}`);
+  public async ensureDekGeneration(
+    input: Parameters<ControlPlane["ensureDekGeneration"]>[0],
+  ): Promise<DekGeneration> {
+    const scopeKey = encodeTextKey(
+      `${input.scope.tenantId}\0${input.scope.matterId}\0${input.scope.purpose}`,
+    );
     const existing = await this.#pool.query<DekRow>(
       `SELECT dek_generation_id, wrapped_dek
        FROM reversal_dek_generation
@@ -301,14 +319,19 @@ export class PostgresControlPlane implements ControlPlane {
     return this.#dekGeneration(row);
   }
 
-  public async reserveNonce(input: Parameters<ControlPlane["reserveNonce"]>[0]): Promise<GcmNonce96> {
+  public async reserveNonce(
+    input: Parameters<ControlPlane["reserveNonce"]>[0],
+  ): Promise<GcmNonce96> {
     const result = await this.#pool.query<CounterRow>(
       `INSERT INTO reversal_nonce_counter (tenant_id, dek_generation_id, next_counter)
        VALUES ($1, $2, 1)
        ON CONFLICT (tenant_id, dek_generation_id) DO UPDATE
        SET next_counter = reversal_nonce_counter.next_counter + 1
        RETURNING next_counter - 1 AS counter`,
-      [input.tenantId, encodeTextKey(input.dekGenerationId as unknown as string)],
+      [
+        input.tenantId,
+        encodeTextKey(input.dekGenerationId as unknown as string),
+      ],
     );
     const row = result.rows[0];
     if (row === undefined) {
@@ -317,13 +340,21 @@ export class PostgresControlPlane implements ControlPlane {
     return nonce96(BigInt(row.counter));
   }
 
-  public async insertPreparedUploading(input: InsertPreparedUploadingInput): Promise<void> {
-    const recordCreatedAtMs = safeEpochMs(input.createdAtEpochMs, "record_created_at_ms");
+  public async insertPreparedUploading(
+    input: InsertPreparedUploadingInput,
+  ): Promise<void> {
+    const recordCreatedAtMs = safeEpochMs(
+      input.createdAtEpochMs,
+      "record_created_at_ms",
+    );
     const attempt = input.attemptId as unknown as string;
     if (attempt.length === 0) {
       throw new Error("postgres_control_plane_invalid_attempt_id");
     }
-    if (input.retentionClass !== "matter" && input.retentionClass !== "detector-only") {
+    if (
+      input.retentionClass !== "matter" &&
+      input.retentionClass !== "detector-only"
+    ) {
       throw new Error("postgres_control_plane_invalid_retention_class");
     }
     if (input.expiresAtEpochMs < 0n || input.expiresAtEpochMs > MAX_UINT64) {
@@ -335,7 +366,10 @@ export class PostgresControlPlane implements ControlPlane {
     ) {
       throw new Error("postgres_control_plane_invalid_detector_expiry");
     }
-    if (input.retentionClass === "matter" && input.expiresAtEpochMs !== MAX_UINT64) {
+    if (
+      input.retentionClass === "matter" &&
+      input.expiresAtEpochMs !== MAX_UINT64
+    ) {
       throw new Error("postgres_control_plane_invalid_matter_expiry");
     }
     const encodedOperationKey = operationKey(input.tenantId, input.attemptId);
@@ -478,7 +512,10 @@ export class PostgresControlPlane implements ControlPlane {
       if (prepared === undefined) {
         throw new Error("publish_unknown_prepared");
       }
-      if (prepared.mapping_key !== located.mapping_key || prepared.tenant_id !== located.tenant_id) {
+      if (
+        prepared.mapping_key !== located.mapping_key ||
+        prepared.tenant_id !== located.tenant_id
+      ) {
         throw new Error("publish_prepared_identity_changed");
       }
       if (prepared.state !== "finalized" && prepared.state !== "committed") {
@@ -514,7 +551,11 @@ export class PostgresControlPlane implements ControlPlane {
       );
 
       if (inserted.rowCount === 1) {
-        if (prepared.state !== "finalized" || prepared.blob_etag === null || prepared.blob_len === null) {
+        if (
+          prepared.state !== "finalized" ||
+          prepared.blob_etag === null ||
+          prepared.blob_len === null
+        ) {
           throw new Error("publish_prepared_not_durable");
         }
         const committed = await client.query(
@@ -539,7 +580,10 @@ export class PostgresControlPlane implements ControlPlane {
       if (existing === undefined) {
         throw new Error("publish_conflict_missing_claim");
       }
-      if (existing.mapping_key === prepared.mapping_key && existing.state === "flushed") {
+      if (
+        existing.mapping_key === prepared.mapping_key &&
+        existing.state === "flushed"
+      ) {
         const currentResult = await client.query<CurrentLockRow>(
           `SELECT mapping_key, tenant_id, commit_handle, prepared_blob_id, ordinal, flushed_at_ms
            FROM reversal_current
@@ -560,13 +604,16 @@ export class PostgresControlPlane implements ControlPlane {
       return {
         kind: "existing",
         commit: commitHandle(existing.commit_handle),
-        immutableScopeDigest: existing.scope_digest as unknown as ReversalScopeDigest,
+        immutableScopeDigest:
+          existing.scope_digest as unknown as ReversalScopeDigest,
         expired,
       };
     });
   }
 
-  public async readClaimBlobReference(commit: PublishedCommitHandle): Promise<ClaimBlobReference> {
+  public async readClaimBlobReference(
+    commit: PublishedCommitHandle,
+  ): Promise<ClaimBlobReference> {
     const result = await this.#pool.query<ClaimBlobReferenceRow>(
       `SELECT c.state AS claim_state, c.ordinal AS claim_ordinal,
               c.prepared_blob_id, p.state AS prepared_state,
@@ -607,7 +654,7 @@ export class PostgresControlPlane implements ControlPlane {
     if (
       row.claim_state === "flushed" &&
       (row.current_commit_handle !== (commit as unknown as string) ||
-       row.current_prepared_blob_id !== row.prepared_blob_id)
+        row.current_prepared_blob_id !== row.prepared_blob_id)
     ) {
       throw new Error("flush_claim_blob_reference_integrity_failure");
     }
@@ -621,7 +668,10 @@ export class PostgresControlPlane implements ControlPlane {
 
   public async flushClaim(input: FlushClaimInput): Promise<void> {
     safeEpochMs(input.nowEpochMilliseconds, "now_ms");
-    if ("blobEtag" in input && (input.blobEtag.length === 0 || input.blobLength < 0n)) {
+    if (
+      "blobEtag" in input &&
+      (input.blobEtag.length === 0 || input.blobLength < 0n)
+    ) {
       throw new Error("flush_invalid_blob_attributes");
     }
     const located = await this.#pool.query<ClaimRow>(
@@ -654,7 +704,10 @@ export class PostgresControlPlane implements ControlPlane {
           [input.commit],
         );
         const claim = claimResult.rows[0];
-        if (claim === undefined || claim.mapping_key !== locatedClaim.mapping_key) {
+        if (
+          claim === undefined ||
+          claim.mapping_key !== locatedClaim.mapping_key
+        ) {
           throw new Error("flush_unknown_commit");
         }
         const currentResult = await client.query<CurrentLockRow>(
@@ -740,7 +793,14 @@ export class PostgresControlPlane implements ControlPlane {
               `INSERT INTO reversal_current (
                  mapping_key, tenant_id, commit_handle, prepared_blob_id, ordinal, flushed_at_ms
                ) VALUES ($1, $2, $3, $4, $5, $6)`,
-              [claim.mapping_key, claim.tenant_id, claim.commit_handle, claim.prepared_blob_id, claim.ordinal, txNow],
+              [
+                claim.mapping_key,
+                claim.tenant_id,
+                claim.commit_handle,
+                claim.prepared_blob_id,
+                claim.ordinal,
+                txNow,
+              ],
             );
             if (flushed.rowCount !== 1 || inserted.rowCount !== 1) {
               throw new Error("flush_initial_pointer_transition_lost");
@@ -785,7 +845,8 @@ export class PostgresControlPlane implements ControlPlane {
                WHERE commit_handle = $1 AND state = 'pending' AND prepared_blob_id = $2`,
               [claim.commit_handle, claim.prepared_blob_id],
             );
-            if (newClaim.rowCount !== 1) throw new Error("flush_claim_transition_lost");
+            if (newClaim.rowCount !== 1)
+              throw new Error("flush_claim_transition_lost");
             const pointer = await client.query(
               `UPDATE reversal_current
                SET tenant_id = $2, commit_handle = $3, prepared_blob_id = $4,
@@ -804,21 +865,24 @@ export class PostgresControlPlane implements ControlPlane {
                 current.ordinal,
               ],
             );
-            if (pointer.rowCount !== 1) throw new Error("flush_pointer_cas_lost");
+            if (pointer.rowCount !== 1)
+              throw new Error("flush_pointer_cas_lost");
             const detached = await client.query(
               `UPDATE reversal_claim
                SET state = 'superseded', prepared_blob_id = NULL
                WHERE commit_handle = $1 AND state = 'flushed' AND prepared_blob_id = $2`,
               [current.commit_handle, current.prepared_blob_id],
             );
-            if (detached.rowCount !== 1) throw new Error("flush_old_claim_detach_lost");
+            if (detached.rowCount !== 1)
+              throw new Error("flush_old_claim_detach_lost");
             const superseded = await client.query(
               `UPDATE reversal_prepared
                SET state = 'superseded', superseded_at_ms = $2, reclaim_after_ms = NULL
                WHERE prepared_blob_id = $1 AND state = 'committed'`,
               [current.prepared_blob_id, txNow],
             );
-            if (superseded.rowCount !== 1) throw new Error("flush_old_prepared_supersede_lost");
+            if (superseded.rowCount !== 1)
+              throw new Error("flush_old_prepared_supersede_lost");
           } else {
             const detached = await client.query(
               `UPDATE reversal_claim
@@ -826,14 +890,16 @@ export class PostgresControlPlane implements ControlPlane {
                WHERE commit_handle = $1 AND state = 'pending' AND prepared_blob_id = $2`,
               [claim.commit_handle, claim.prepared_blob_id],
             );
-            if (detached.rowCount !== 1) throw new Error("flush_loser_claim_detach_lost");
+            if (detached.rowCount !== 1)
+              throw new Error("flush_loser_claim_detach_lost");
             const superseded = await client.query(
               `UPDATE reversal_prepared
                SET state = 'superseded', superseded_at_ms = $2, reclaim_after_ms = NULL
                WHERE prepared_blob_id = $1 AND state = 'committed'`,
               [claim.prepared_blob_id, txNow],
             );
-            if (superseded.rowCount !== 1) throw new Error("flush_loser_prepared_supersede_lost");
+            if (superseded.rowCount !== 1)
+              throw new Error("flush_loser_prepared_supersede_lost");
           }
           await client.query("COMMIT");
         }
@@ -849,7 +915,9 @@ export class PostgresControlPlane implements ControlPlane {
     }
   }
 
-  public expirePendingDetach(input: ExpirePendingDetachInput): Promise<boolean> {
+  public expirePendingDetach(
+    input: ExpirePendingDetachInput,
+  ): Promise<boolean> {
     safeEpochMs(input.nowEpochMilliseconds, "now_ms");
     return transaction(this.#pool, async (client) => {
       const clock = await client.query<DbNowRow>(
@@ -871,17 +939,23 @@ export class PostgresControlPlane implements ControlPlane {
     });
   }
 
-  public async readCurrentPointers(mappingKeys: readonly ReversalMappingKey[]): Promise<readonly CurrentPointerRow[]> {
+  public async readCurrentPointers(
+    mappingKeys: readonly ReversalMappingKey[],
+  ): Promise<readonly CurrentPointerRow[]> {
     if (mappingKeys.length === 0) {
       throw new Error("read_current_requires_exact_keys");
     }
-    const encoded = [...new Set(mappingKeys.map((key) => {
-      const value = key as unknown as string;
-      if (value.length === 0) {
-        throw new Error("read_current_requires_nonempty_key");
-      }
-      return encodeTextKey(value);
-    }))];
+    const encoded = [
+      ...new Set(
+        mappingKeys.map((key) => {
+          const value = key as unknown as string;
+          if (value.length === 0) {
+            throw new Error("read_current_requires_nonempty_key");
+          }
+          return encodeTextKey(value);
+        }),
+      ),
+    ];
     const result = await this.#pool.query<PointerRow>(
       `SELECT c.mapping_key, c.tenant_id, c.commit_handle, c.prepared_blob_id,
               c.ordinal, c.flushed_at_ms, p.blob_path, p.blob_etag, p.blob_len,
@@ -914,8 +988,12 @@ export class PostgresControlPlane implements ControlPlane {
     });
   }
 
-  public reclaimFinalizedOrphans(input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]> {
-    return this.selectFinalizedOrphansForReclaim(input).then((selection) => selection.rows);
+  public reclaimFinalizedOrphans(
+    input: ReclaimQueryInput,
+  ): Promise<readonly ReclaimBlobRow[]> {
+    return this.selectFinalizedOrphansForReclaim(input).then(
+      (selection) => selection.rows,
+    );
   }
 
   public selectFinalizedOrphansForReclaim(
@@ -927,7 +1005,10 @@ export class PostgresControlPlane implements ControlPlane {
       input.supersedeRetentionMs ?? DEFAULT_SUPERSEDE_RETENTION_MS,
       "supersede_retention_ms",
     );
-    const readDrainMs = safeDuration(input.readDrainMs ?? DEFAULT_READ_DRAIN_MS, "read_drain_ms");
+    const readDrainMs = safeDuration(
+      input.readDrainMs ?? DEFAULT_READ_DRAIN_MS,
+      "read_drain_ms",
+    );
     return transaction(this.#pool, async (client) => {
       const clock = await client.query<DbNowRow>(
         `SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint::text AS db_now_ms`,
@@ -1002,15 +1083,22 @@ export class PostgresControlPlane implements ControlPlane {
                   p.prepared_blob_id
          FOR UPDATE OF p SKIP LOCKED
          LIMIT $2`,
-        [input.olderThanEpochMs, limit, dbNow, supersedeRetentionMs, readDrainMs],
+        [
+          input.olderThanEpochMs,
+          limit,
+          dbNow,
+          supersedeRetentionMs,
+          readDrainMs,
+        ],
       );
 
       const rows: ReclaimBlobRow[] = [];
       for (const candidate of candidates.rows) {
         if (candidate.state !== "reclaim_marked") {
-          const marked = candidate.state === "superseded"
-            ? await client.query(
-              `UPDATE reversal_prepared p
+          const marked =
+            candidate.state === "superseded"
+              ? await client.query(
+                  `UPDATE reversal_prepared p
                SET state = 'reclaim_marked', reclaim_after_ms = $2::numeric
                WHERE p.prepared_blob_id = $1
                  AND p.state = 'superseded'
@@ -1020,10 +1108,13 @@ export class PostgresControlPlane implements ControlPlane {
                  AND NOT EXISTS (
                    SELECT 1 FROM reversal_current c WHERE c.prepared_blob_id = p.prepared_blob_id
                  )`,
-              [candidate.prepared_blob_id, candidate.effective_reclaim_after_ms],
-            )
-            : await client.query(
-              `UPDATE reversal_prepared p
+                  [
+                    candidate.prepared_blob_id,
+                    candidate.effective_reclaim_after_ms,
+                  ],
+                )
+              : await client.query(
+                  `UPDATE reversal_prepared p
                SET state = 'reclaim_marked'
                WHERE p.prepared_blob_id = $1
                  AND p.state IN ('finalized', 'orphaned')
@@ -1034,8 +1125,8 @@ export class PostgresControlPlane implements ControlPlane {
                  AND NOT EXISTS (
                    SELECT 1 FROM reversal_current c WHERE c.prepared_blob_id = p.prepared_blob_id
                  )`,
-              [candidate.prepared_blob_id, input.olderThanEpochMs],
-            );
+                  [candidate.prepared_blob_id, input.olderThanEpochMs],
+                );
           if (marked.rowCount !== 1) {
             throw new Error("reclaim_finalized_orphan_transition_lost");
           }
@@ -1068,7 +1159,9 @@ export class PostgresControlPlane implements ControlPlane {
     });
   }
 
-  public reclaimStaleUploads(input: StaleUploadReclaimInput): Promise<readonly ReclaimUploadRow[]> {
+  public reclaimStaleUploads(
+    input: StaleUploadReclaimInput,
+  ): Promise<readonly ReclaimUploadRow[]> {
     safeEpochMs(input.uploadHorizonEpochMs, "upload_horizon_ms");
     const limit = safeLimit(input.limit);
     return transaction(this.#pool, async (client) => {
@@ -1081,10 +1174,11 @@ export class PostgresControlPlane implements ControlPlane {
         [limit],
       );
       const remaining = limit - recovered.rows.length;
-      const fresh = remaining === 0
-        ? { rows: [] as ReclaimUploadSqlRow[] }
-        : await client.query<ReclaimUploadSqlRow>(
-          `UPDATE reversal_prepared
+      const fresh =
+        remaining === 0
+          ? { rows: [] as ReclaimUploadSqlRow[] }
+          : await client.query<ReclaimUploadSqlRow>(
+              `UPDATE reversal_prepared
            SET state = 'upload_reclaim_marked'
            WHERE prepared_blob_id IN (
              SELECT prepared_blob_id
@@ -1094,8 +1188,8 @@ export class PostgresControlPlane implements ControlPlane {
              LIMIT $2
            )
            RETURNING prepared_blob_id, staging_path, blob_path`,
-          [input.uploadHorizonEpochMs, remaining],
-        );
+              [input.uploadHorizonEpochMs, remaining],
+            );
       return [...recovered.rows, ...fresh.rows].map((row) => ({
         preparedBlobId: preparedHandle(row.prepared_blob_id),
         stagingPath: row.staging_path,
@@ -1104,7 +1198,9 @@ export class PostgresControlPlane implements ControlPlane {
     });
   }
 
-  public markStaleUploads(input: StaleUploadReclaimInput): Promise<readonly ReclaimUploadRow[]> {
+  public markStaleUploads(
+    input: StaleUploadReclaimInput,
+  ): Promise<readonly ReclaimUploadRow[]> {
     safeEpochMs(input.uploadHorizonEpochMs, "upload_horizon_ms");
     const limit = safeLimit(input.limit);
     return transaction(this.#pool, async (client) => {
@@ -1125,7 +1221,9 @@ export class PostgresControlPlane implements ControlPlane {
     });
   }
 
-  public recoverStaleUploads(input: ReclaimLimitInput): Promise<readonly ReclaimUploadRow[]> {
+  public recoverStaleUploads(
+    input: ReclaimLimitInput,
+  ): Promise<readonly ReclaimUploadRow[]> {
     const limit = safeLimit(input.limit);
     return transaction(this.#pool, async (client) => {
       const result = await client.query<ReclaimUploadSqlRow>(
@@ -1140,11 +1238,19 @@ export class PostgresControlPlane implements ControlPlane {
     });
   }
 
-  public completeStaleUploadReclaim(preparedBlobId: PreparedWriteHandle): Promise<void> {
-    return this.#deleteInState(preparedBlobId, "upload_reclaim_marked", "complete_stale_upload_invalid_state");
+  public completeStaleUploadReclaim(
+    preparedBlobId: PreparedWriteHandle,
+  ): Promise<void> {
+    return this.#deleteInState(
+      preparedBlobId,
+      "upload_reclaim_marked",
+      "complete_stale_upload_invalid_state",
+    );
   }
 
-  public hardDeleteQuarantined(input: ReclaimQueryInput): Promise<readonly ReclaimBlobRow[]> {
+  public hardDeleteQuarantined(
+    input: ReclaimQueryInput,
+  ): Promise<readonly ReclaimBlobRow[]> {
     safeEpochMs(input.olderThanEpochMs, "older_than_ms");
     const limit = safeLimit(input.limit);
     return transaction(this.#pool, async (client) => {
@@ -1160,11 +1266,19 @@ export class PostgresControlPlane implements ControlPlane {
     });
   }
 
-  public completeHardDeleteQuarantined(preparedBlobId: PreparedWriteHandle): Promise<void> {
-    return this.#deleteInState(preparedBlobId, "quarantined", "complete_hard_delete_invalid_state");
+  public completeHardDeleteQuarantined(
+    preparedBlobId: PreparedWriteHandle,
+  ): Promise<void> {
+    return this.#deleteInState(
+      preparedBlobId,
+      "quarantined",
+      "complete_hard_delete_invalid_state",
+    );
   }
 
-  public previewReclamation(input: ReclaimPreviewInput): Promise<ReclaimPreviewOutcome> {
+  public previewReclamation(
+    input: ReclaimPreviewInput,
+  ): Promise<ReclaimPreviewOutcome> {
     safeEpochMs(input.olderThanEpochMs, "older_than_ms");
     safeEpochMs(input.uploadHorizonEpochMs, "upload_horizon_ms");
     safeEpochMs(input.quarantinedBeforeEpochMs, "quarantined_before_ms");
@@ -1173,14 +1287,18 @@ export class PostgresControlPlane implements ControlPlane {
       input.supersedeRetentionMs ?? DEFAULT_SUPERSEDE_RETENTION_MS,
       "supersede_retention_ms",
     );
-    const readDrainMs = safeDuration(input.readDrainMs ?? DEFAULT_READ_DRAIN_MS, "read_drain_ms");
+    const readDrainMs = safeDuration(
+      input.readDrainMs ?? DEFAULT_READ_DRAIN_MS,
+      "read_drain_ms",
+    );
     return transaction(this.#pool, async (client) => {
       await client.query("SET TRANSACTION READ ONLY");
       const clock = await client.query<DbNowRow>(
         `SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint::text AS db_now_ms`,
       );
       const dbNow = clock.rows[0]?.db_now_ms;
-      if (dbNow === undefined) throw new Error("preview_reclaim_missing_db_clock");
+      if (dbNow === undefined)
+        throw new Error("preview_reclaim_missing_db_clock");
       let remaining = limit;
       let scanned = 0;
       let reclaimed = 0;
@@ -1243,7 +1361,13 @@ export class PostgresControlPlane implements ControlPlane {
                   END,
                   p.prepared_blob_id
          LIMIT $2`,
-        [input.olderThanEpochMs, remaining, dbNow, supersedeRetentionMs, readDrainMs],
+        [
+          input.olderThanEpochMs,
+          remaining,
+          dbNow,
+          supersedeRetentionMs,
+          readDrainMs,
+        ],
       );
       scanned += pathOne.rows.length + skippedReferenced;
       reclaimed += pathOne.rows.length;
@@ -1353,13 +1477,21 @@ export class PostgresControlPlane implements ControlPlane {
       [olderThanEpochMs, limit, dbNowMs, supersedeRetentionMs, readDrainMs],
     );
     const count = result.rows[0]?.count;
-    if (!Number.isSafeInteger(count) || count === undefined || count < 0 || count > limit) {
+    if (
+      !Number.isSafeInteger(count) ||
+      count === undefined ||
+      count < 0 ||
+      count > limit
+    ) {
       throw new Error("reclaim_referenced_candidate_count_invalid");
     }
     return count;
   }
 
-  async #computeExpiredAndDetach(client: PoolClient, claim: ClaimRow): Promise<boolean> {
+  async #computeExpiredAndDetach(
+    client: PoolClient,
+    claim: ClaimRow,
+  ): Promise<boolean> {
     if (claim.state === "expired") {
       return true;
     }
@@ -1393,7 +1525,11 @@ export class PostgresControlPlane implements ControlPlane {
       [preparedBlobId, subjectIdempotencyKey, allowedCurrentMappingKey ?? null],
     );
     const reference = references.rows[0];
-    if (reference === undefined || reference.has_current || reference.has_other_claim) {
+    if (
+      reference === undefined ||
+      reference.has_current ||
+      reference.has_other_claim
+    ) {
       throw new Error("supersede_prepared_is_referenced");
     }
   }
@@ -1425,8 +1561,15 @@ export class PostgresControlPlane implements ControlPlane {
     if (prepared.rows[0]?.state !== "committed") {
       throw new Error("self_heal_prepared_invariant_failure");
     }
-    await this.#assertNoOtherPreparedReference(client, claim.prepared_blob_id, claim.idempotency_key);
-    const healed = await client.query<{ readonly detached_count: string; readonly superseded_count: string }>(
+    await this.#assertNoOtherPreparedReference(
+      client,
+      claim.prepared_blob_id,
+      claim.idempotency_key,
+    );
+    const healed = await client.query<{
+      readonly detached_count: string;
+      readonly superseded_count: string;
+    }>(
       `WITH detached AS (
          UPDATE reversal_claim
          SET state = 'superseded', prepared_blob_id = NULL
@@ -1454,7 +1597,10 @@ export class PostgresControlPlane implements ControlPlane {
     }
   }
 
-  async #expireLockedPending(client: PoolClient, claim: ClaimRow): Promise<void> {
+  async #expireLockedPending(
+    client: PoolClient,
+    claim: ClaimRow,
+  ): Promise<void> {
     if (claim.state !== "pending" || claim.prepared_blob_id === null) {
       throw new Error("expire_non_pending_claim");
     }
@@ -1480,7 +1626,11 @@ export class PostgresControlPlane implements ControlPlane {
       [claim.prepared_blob_id, claim.idempotency_key],
     );
     const reference = references.rows[0];
-    if (reference === undefined || reference.has_current || reference.has_other_claim) {
+    if (
+      reference === undefined ||
+      reference.has_current ||
+      reference.has_other_claim
+    ) {
       throw new Error("expire_pending_prepared_is_referenced");
     }
     const expired = await client.query(
@@ -1500,7 +1650,11 @@ export class PostgresControlPlane implements ControlPlane {
     }
   }
 
-  async #deleteInState(preparedBlobId: PreparedWriteHandle, state: string, error: string): Promise<void> {
+  async #deleteInState(
+    preparedBlobId: PreparedWriteHandle,
+    state: string,
+    error: string,
+  ): Promise<void> {
     return transaction(this.#pool, async (client) => {
       const deleted = await client.query(
         `DELETE FROM reversal_prepared
@@ -1522,8 +1676,12 @@ export class PostgresControlPlane implements ControlPlane {
 
   #dekGeneration(row: DekRow): DekGeneration {
     return {
-      dekGenerationId: decodeTextKey(row.dek_generation_id) as unknown as DekGenerationId,
-      wrappedDek: new Uint8Array(row.wrapped_dek) as unknown as WrappedDekMaterial,
+      dekGenerationId: decodeTextKey(
+        row.dek_generation_id,
+      ) as unknown as DekGenerationId,
+      wrappedDek: new Uint8Array(
+        row.wrapped_dek,
+      ) as unknown as WrappedDekMaterial,
     };
   }
 

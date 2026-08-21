@@ -11,10 +11,18 @@
  * provider spy sequenced after `substitute()` is never called (MUT-RETURN-BEFORE-FLUSH).
  */
 import { describe, expect, it } from "vitest";
-import { createSubstitutionEngine, PhiEngineError, ReversalFailedError } from "../src/index";
+import {
+  createSubstitutionEngine,
+  PhiEngineError,
+  ReversalFailedError,
+} from "../src/index";
 import type { TextSegment } from "../src/index";
 import type { TokenizedText } from "../src/core/brands";
-import { DurableReversalStore, InMemoryKeyProvider, InMemoryReversalSpoolBackend } from "../src/tokens/durable/index";
+import {
+  DurableReversalStore,
+  InMemoryKeyProvider,
+  InMemoryReversalSpoolBackend,
+} from "../src/tokens/durable/index";
 import { brand, makeHarness } from "./durable-harness";
 
 const DEV_NAME = "Jordan Testcase"; // dev seed (Claimant) — synthetic, non-real (SSA-reserved block)
@@ -31,7 +39,9 @@ describe("L2.4 DurableReversalStore — orchestrator swap-in (real ComposedSubst
     const result = await dev.engine.substitute({
       context: dev.context,
       policy: dev.policy,
-      segments: userSegments(`Please contact ${DEV_NAME} regarding the claim intake.`),
+      segments: userSegments(
+        `Please contact ${DEV_NAME} regarding the claim intake.`,
+      ),
       purpose: "generation",
     });
 
@@ -39,7 +49,10 @@ describe("L2.4 DurableReversalStore — orchestrator swap-in (real ComposedSubst
     expect(tokenized).toMatch(/\[\[Claimant/);
     expect(tokenized).not.toContain(DEV_NAME); // substituted, never egressed raw
 
-    const display = await dev.engine.reverse(result.segments[0]!.text, result.reversalHandle);
+    const display = await dev.engine.reverse(
+      result.segments[0]!.text,
+      result.reversalHandle,
+    );
     expect(String(display)).toContain(DEV_NAME); // reversed from the durable, envelope-encrypted mapping
   });
 
@@ -71,8 +84,13 @@ describe("L2.4 DurableReversalStore — orchestrator swap-in (real ComposedSubst
       nowEpochMilliseconds: clock,
       maximumEncounteredTokenBatch: 256,
     });
-    const replicaEngine = createSubstitutionEngine({ reversalStore: replicaStore });
-    const display = await replicaEngine.engine.reverse(result.segments[0]!.text, result.reversalHandle);
+    const replicaEngine = createSubstitutionEngine({
+      reversalStore: replicaStore,
+    });
+    const display = await replicaEngine.engine.reverse(
+      result.segments[0]!.text,
+      result.reversalHandle,
+    );
     expect(String(display)).toContain(DEV_NAME);
   });
 });
@@ -132,8 +150,11 @@ describe("L2.4 DurableReversalStore — N5 all-or-nothing lives at the reverser 
 
     // Append a grammar-valid but NEVER-recorded token. The store returns it ABSENT (partial map);
     // the reverser must fail the whole reversal rather than emit a partial display.
-    const tampered = `${String(result.segments[0]!.text)} and also [[Witness]]` as unknown as TokenizedText;
-    await expect(dev.engine.reverse(tampered, result.reversalHandle)).rejects.toBeInstanceOf(ReversalFailedError);
+    const tampered =
+      `${String(result.segments[0]!.text)} and also [[Witness]]` as unknown as TokenizedText;
+    await expect(
+      dev.engine.reverse(tampered, result.reversalHandle),
+    ).rejects.toBeInstanceOf(ReversalFailedError);
   });
 });
 

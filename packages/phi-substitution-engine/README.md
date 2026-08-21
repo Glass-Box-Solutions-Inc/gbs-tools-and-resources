@@ -48,6 +48,22 @@ Framework-free core with vendor/product dependencies behind explicit adapters â€
 
 ## Production composition
 
+### Durable token-assignment authority
+
+`createSubstitutionEngine({ assignmentStore })` and
+`createProtectedAiProvider({ assignmentStore })` accept the public-root
+`TokenAssignmentStore` port. When supplied, that exact caller-owned authority exclusively serves
+every real tagged-subject acquisition; results are grammar/role validated, failures collapse to the
+fixed `DICTIONARY_UNAVAILABLE` code, and no process-local retry occurs. Injected mode recompiles on
+every substitution so a live engine observes peer retirement rather than serving a stale compiled
+token. Omission or explicit `undefined` preserves the fresh per-engine in-memory authority and warm
+compiled-dictionary cache.
+
+Detector-only subjects never enter an injected durable authority. Until a collision-free ephemeral
+grammar/reversal namespace is separately ratified, detector-only substitution with an injected
+authority fails closed before provider egress. The default in-memory mode retains the existing
+detector assignment and reversal behavior.
+
 `createProductionProtectedAiProvider(...)` wraps the exact caller-owned
 `PhiSubstitutionEngine` singleton. The application composition root supplies trusted context and
 policy accessors, an exhaustive projector, an original-content BAA router, safe trace, durable audit

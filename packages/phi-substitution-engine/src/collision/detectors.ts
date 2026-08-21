@@ -19,7 +19,10 @@ interface DetectorRule {
 }
 
 const DETECTOR_RULES: readonly DetectorRule[] = [
-  { identifierClass: "EMAIL", pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/gu },
+  {
+    identifierClass: "EMAIL",
+    pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/gu,
+  },
   { identifierClass: "MRN", pattern: /\bMRN-[A-Za-z0-9]+\b/gu },
   { identifierClass: "DOB", pattern: /\b\d{1,2}\/\d{1,2}\/\d{4}\b/gu },
   { identifierClass: "SSN", pattern: /\b\d{3}-\d{2}-\d{4}\b/gu },
@@ -62,7 +65,9 @@ function detectCompactSsn(text: string, out: DetectorCollisionSpan[]): void {
   }
 }
 
-export function detectStructuredIdentifiers(text: string): readonly DetectorCollisionSpan[] {
+export function detectStructuredIdentifiers(
+  text: string,
+): readonly DetectorCollisionSpan[] {
   const spans: DetectorCollisionSpan[] = [];
   for (const rule of DETECTOR_RULES) {
     pushMatches(rule, text, spans);
@@ -71,7 +76,9 @@ export function detectStructuredIdentifiers(text: string): readonly DetectorColl
   return dedupe(spans);
 }
 
-function dedupe(spans: readonly DetectorCollisionSpan[]): readonly DetectorCollisionSpan[] {
+function dedupe(
+  spans: readonly DetectorCollisionSpan[],
+): readonly DetectorCollisionSpan[] {
   const seen = new Set<string>();
   const out: DetectorCollisionSpan[] = [];
   for (const span of spans) {
@@ -89,8 +96,9 @@ export function inferIdentifierClass(value: string): IdentifierClass {
   if (/@/.test(trimmed)) return "EMAIL";
   if (/^MRN-/i.test(trimmed)) return "MRN";
   if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) return "DOB";
-  if (/^\d{3}-\d{2}-\d{4}$/.test(trimmed) || /^\d{9}$/.test(trimmed)) return "SSN";
+  if (/^\d{3}-\d{2}-\d{4}$/.test(trimmed) || /^\d{9}$/.test(trimmed))
+    return "SSN";
   if (/^[12]\d{3}$/.test(trimmed)) return "OTHER_TAGGED"; // bare year -> C2 rejects it
-  if (/^\+?[\d\s()\-]{7,}$/.test(trimmed)) return "PHONE";
+  if (/^\+?[\d\s()-]{7,}$/.test(trimmed)) return "PHONE";
   return "PERSON_NAME";
 }

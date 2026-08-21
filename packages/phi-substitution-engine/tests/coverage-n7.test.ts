@@ -5,7 +5,8 @@ describe("N7 total LLM-egress coverage", () => {
   it("SEC-N7-01 / M-N7-RAW-FETCH-NEW-FILE: egress lint rejects new raw provider fetch", async () => {
     const r = await loadCoverageHarness().run("M-N7-RAW-FETCH-NEW-FILE", {
       addedFile: "backend/src/modules/new-feature/leak.service.ts",
-      source: "fetch('https://example.openai.azure.com/openai/deployments/x/chat/completions')",
+      source:
+        "fetch('https://example.openai.azure.com/openai/deployments/x/chat/completions')",
       registered: false,
     });
     expect(r.buildPassed).toBe(false);
@@ -13,18 +14,25 @@ describe("N7 total LLM-egress coverage", () => {
   });
 
   it("SEC-N7-02 / M-N7-CONSTRUCT-OUTSIDE-WRAPPER: architecture test rejects raw SDK/model handle", async () => {
-    const r = await loadCoverageHarness().run("M-N7-CONSTRUCT-OUTSIDE-WRAPPER", {
-      addedFile: "backend/src/modules/new-feature/model.ts",
-      sourceKind: "new AzureOpenAI",
-      outsideProtectedModule: true,
-    });
+    const r = await loadCoverageHarness().run(
+      "M-N7-CONSTRUCT-OUTSIDE-WRAPPER",
+      {
+        addedFile: "backend/src/modules/new-feature/model.ts",
+        sourceKind: "new AzureOpenAI",
+        outsideProtectedModule: true,
+      },
+    );
     expect(r.buildPassed).toBe(false);
     expect(r.diagnostics).toContain("RAW_PROVIDER_CONSTRUCTION_FORBIDDEN");
   });
 
   it("SEC-N7-03 / M-N7-STALE-REGISTRY-ENTRY: surface registry drift fails", async () => {
     const r = await loadCoverageHarness().run("M-N7-STALE-REGISTRY-ENTRY", {
-      registryEntry: { file: "deleted.ts", symbol: "oldCall", classification: "engine-covered" },
+      registryEntry: {
+        file: "deleted.ts",
+        symbol: "oldCall",
+        classification: "engine-covered",
+      },
       liveSymbols: [],
     });
     expect(r.buildPassed).toBe(false);

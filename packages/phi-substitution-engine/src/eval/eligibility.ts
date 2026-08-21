@@ -81,7 +81,8 @@ export function gateClasses(
   // like `{length:1}` would otherwise report eligible with zero evaluated classes; a throwing length
   // getter would leak raw).
   const eligible = classList.length > 0 && failedClasses.length === 0;
-  const macroRecallLower = classList.length > 0 ? lowerSum / classList.length : 0;
+  const macroRecallLower =
+    classList.length > 0 ? lowerSum / classList.length : 0;
 
   return { eligible, perClass, failedClasses, diagnostics, macroRecallLower };
 }

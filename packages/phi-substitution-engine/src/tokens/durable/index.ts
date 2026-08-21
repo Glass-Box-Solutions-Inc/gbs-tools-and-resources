@@ -5,7 +5,11 @@
  * or dev impls; it exposes only the port TYPES (for a production consumer to type its injection).
  */
 export { DurableReversalStore } from "./durable-reversal-store";
-export { buildReversalAad, MATTER_EXPIRES_AT, type ReversalAadFields } from "./aad";
+export {
+  buildReversalAad,
+  MATTER_EXPIRES_AT,
+  type ReversalAadFields,
+} from "./aad";
 export {
   bytesEqual,
   DEK_BYTES,
@@ -21,7 +25,10 @@ export {
   mappingKeyOf,
   scopeDigestOf,
 } from "./keys";
-export { InMemoryKeyProvider, type InMemoryKeyProviderOptions } from "./dev/in-memory-key-provider";
+export {
+  InMemoryKeyProvider,
+  type InMemoryKeyProviderOptions,
+} from "./dev/in-memory-key-provider";
 export {
   InMemoryReversalSpoolBackend,
   InMemoryReversalSpoolVolume,

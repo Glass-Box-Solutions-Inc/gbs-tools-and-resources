@@ -16,18 +16,28 @@ export const SEEDED_CANARIES = [
 ] as const;
 
 export function expectNoCanary(payloads: readonly string[]): void {
-  const joined = payloads.join("\n").normalize("NFKC").toLocaleLowerCase("en-US");
+  const joined = payloads
+    .join("\n")
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US");
   for (const canary of SEEDED_CANARIES) {
-    expect(joined).not.toContain(canary.normalize("NFKC").toLocaleLowerCase("en-US"));
+    expect(joined).not.toContain(
+      canary.normalize("NFKC").toLocaleLowerCase("en-US"),
+    );
   }
 }
 
-export function expectFailedClosed(observation: OracleObservation, code: string): void {
+export function expectFailedClosed(
+  observation: OracleObservation,
+  code: string,
+): void {
   expect(observation.providerCalls).toBe(0);
   expect(observation.errorCode).toBe(code);
 }
 
-export function expectExactlyOneProviderCall(observation: OracleObservation): void {
+export function expectExactlyOneProviderCall(
+  observation: OracleObservation,
+): void {
   expect(observation.providerCalls).toBe(1);
   expectNoCanary(observation.providerPayloads);
 }

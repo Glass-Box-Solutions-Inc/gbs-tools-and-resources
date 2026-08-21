@@ -9,7 +9,8 @@ import type { OperationId } from "../core/brands";
  */
 
 export const REVERSAL_FAILED = "REVERSAL_FAILED";
-export const DIAG_REVERSAL_HANDLE_NOT_SERIALIZABLE = "REVERSAL_HANDLE_NOT_SERIALIZABLE";
+export const DIAG_REVERSAL_HANDLE_NOT_SERIALIZABLE =
+  "REVERSAL_HANDLE_NOT_SERIALIZABLE";
 
 export class ReversalFailedError extends Error {
   readonly code: typeof REVERSAL_FAILED = REVERSAL_FAILED;

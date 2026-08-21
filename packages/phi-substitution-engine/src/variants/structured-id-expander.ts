@@ -47,7 +47,10 @@ export function expandStructuredIdVariants(
 
   // The required alpha prefix must be present and exact. Dropping or altering it
   // would produce a lossy, ambiguous identifier.
-  if (policy.requiredAlphaPrefix !== null && prefix !== policy.requiredAlphaPrefix) {
+  if (
+    policy.requiredAlphaPrefix !== null &&
+    prefix !== policy.requiredAlphaPrefix
+  ) {
     const code: VariantRejectionCode = "LOSSY_FORM";
     return { candidates: [], errorCode: code };
   }
@@ -67,7 +70,8 @@ export function expandStructuredIdVariants(
   // Never keep a form that falls below the policy minimum: a bare core or any
   // truncated identifier is exactly the lossy form L10 forbids.
   const kept = dedupeInOrder(generated).filter(
-    (candidate) => alphanumericLength(candidate) >= policy.minimumAlphanumericLength,
+    (candidate) =>
+      alphanumericLength(candidate) >= policy.minimumAlphanumericLength,
   );
 
   return { candidates: kept, errorCode: null };

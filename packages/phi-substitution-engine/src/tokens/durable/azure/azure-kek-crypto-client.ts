@@ -1,4 +1,7 @@
-import { DefaultAzureCredential, ManagedIdentityCredential } from "@azure/identity";
+import {
+  DefaultAzureCredential,
+  ManagedIdentityCredential,
+} from "@azure/identity";
 import { CryptographyClient } from "@azure/keyvault-keys";
 import type { WrappingKeyId, WrappingKeyVersion } from "../ports";
 import type { KekCryptoClient } from "./kek-crypto-client";
@@ -26,7 +29,9 @@ export class AzureKekCryptoClient implements KekCryptoClient {
     const credential =
       options.managedIdentityClientId === undefined
         ? new DefaultAzureCredential()
-        : new ManagedIdentityCredential({ clientId: options.managedIdentityClientId });
+        : new ManagedIdentityCredential({
+            clientId: options.managedIdentityClientId,
+          });
     this.#client = new CryptographyClient(options.keyId, credential);
   }
 

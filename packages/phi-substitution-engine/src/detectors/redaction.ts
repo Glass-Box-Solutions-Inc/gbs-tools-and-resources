@@ -4,8 +4,15 @@ import { splitsSurrogatePair } from "./offsets";
 import { safeRead, safeString, intrinsicCopy } from "../core/boundary-snapshot";
 
 export type ReplacementPlanResult =
-  | Readonly<{ ok: true; text: TokenizedText; appliedSpanIds: readonly string[] }>
-  | Readonly<{ ok: false; reason: "OUT_OF_RANGE" | "OVERLAP" | "INVALID_BOUNDARY" }>;
+  | Readonly<{
+      ok: true;
+      text: TokenizedText;
+      appliedSpanIds: readonly string[];
+    }>
+  | Readonly<{
+      ok: false;
+      reason: "OUT_OF_RANGE" | "OVERLAP" | "INVALID_BOUNDARY";
+    }>;
 
 /**
  * Applies an explicit, TS-assigned replacement plan through the protected reversal boundary
@@ -35,7 +42,12 @@ export function applyReplacementPlan(
   // Read EVERY field of EVERY instruction ONCE, getter-throw-safe, into inert plain data. A throwing/
   // mutating field getter (e.g. a `replacement` getter that throws PHI) fails closed here rather than
   // propagating raw out of this exported boundary; nothing downstream ever touches a live getter.
-  const copied: { startUtf16: number; endUtf16: number; replacement: string; detectedSpanId: string }[] = [];
+  const copied: {
+    startUtf16: number;
+    endUtf16: number;
+    replacement: string;
+    detectedSpanId: string;
+  }[] = [];
   for (let i = 0; i < rawInstructions.length; i += 1) {
     const raw = rawInstructions[i];
     const startUtf16 = safeRead(raw, "startUtf16");
@@ -43,12 +55,19 @@ export function applyReplacementPlan(
     const replacement = safeString(raw, "replacement");
     const detectedSpanId = safeString(raw, "detectedSpanId");
     if (
-      typeof startUtf16 !== "number" || typeof endUtf16 !== "number" ||
-      replacement === undefined || detectedSpanId === undefined
+      typeof startUtf16 !== "number" ||
+      typeof endUtf16 !== "number" ||
+      replacement === undefined ||
+      detectedSpanId === undefined
     ) {
       return { ok: false, reason: "OUT_OF_RANGE" };
     }
-    copied[copied.length] = { startUtf16, endUtf16, replacement, detectedSpanId };
+    copied[copied.length] = {
+      startUtf16,
+      endUtf16,
+      replacement,
+      detectedSpanId,
+    };
   }
   const ordered = copied.sort((a, b) => a.startUtf16 - b.startUtf16);
 
@@ -60,13 +79,22 @@ export function applyReplacementPlan(
     const start = instruction.startUtf16;
     const end = instruction.endUtf16;
 
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > length || start >= end) {
+    if (
+      !Number.isInteger(start) ||
+      !Number.isInteger(end) ||
+      start < 0 ||
+      end > length ||
+      start >= end
+    ) {
       return { ok: false, reason: "OUT_OF_RANGE" };
     }
     if (start < cursor) {
       return { ok: false, reason: "OVERLAP" };
     }
-    if (splitsSurrogatePair(originalText, start) || splitsSurrogatePair(originalText, end)) {
+    if (
+      splitsSurrogatePair(originalText, start) ||
+      splitsSurrogatePair(originalText, end)
+    ) {
       return { ok: false, reason: "INVALID_BOUNDARY" };
     }
 

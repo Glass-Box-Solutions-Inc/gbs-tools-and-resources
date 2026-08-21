@@ -54,13 +54,18 @@ import type {
   ProtectedAiTextResult,
   SafeAiTrace,
 } from "./core/protected-ai-provider";
-import type { CaseTruthReader, DictionaryVersionCoordinator, TaggedValue } from "./dictionary/contracts";
+import type {
+  CaseTruthReader,
+  DictionaryVersionCoordinator,
+  TaggedValue,
+} from "./dictionary/contracts";
 import type {
   AuditPrimaryStore,
   PhiAuditEvent,
   PhiAuditPreparedRecord,
 } from "./audit/ports";
 import type { SpoolKeyProvider, SpoolVolume } from "./audit/spool-ports";
+import type { TokenAssignmentStore } from "./tokens/ports";
 
 import { ComposedSubstitutionEngine } from "./core/orchestrator";
 import { PhiEngineError } from "./core/errors";
@@ -130,8 +135,20 @@ function devTaggedValue(
  * Never seed a real-person identifier here. Module-private — not part of the public root surface.
  */
 const DEFAULT_DEV_TAGGED_VALUES: readonly TaggedValue[] = [
-  devTaggedValue("dev-claimant", "PERSON_NAME", "Jordan Testcase", "Claimant", "person-name"),
-  devTaggedValue("dev-physician", "PERSON_NAME", "Casey Fixture", "Treating_Physician", "person-name"),
+  devTaggedValue(
+    "dev-claimant",
+    "PERSON_NAME",
+    "Jordan Testcase",
+    "Claimant",
+    "person-name",
+  ),
+  devTaggedValue(
+    "dev-physician",
+    "PERSON_NAME",
+    "Casey Fixture",
+    "Treating_Physician",
+    "person-name",
+  ),
   devTaggedValue("dev-mrn", "MRN", "MRN-TEST0000", "MRN", "literal"),
   devTaggedValue("dev-ssn", "SSN", "987-65-4320", "SSN", "literal"),
 ];
@@ -157,6 +174,11 @@ export interface CreateSubstitutionEngineOptions {
   readonly coordinator?: DictionaryVersionCoordinator;
   readonly truthReader?: CaseTruthReader;
   readonly reversalStore?: ReversalWriteStore;
+  /**
+   * Omitted/undefined: fresh per-engine process-local default.
+   * Provided: exclusive assignment authority; never fallback.
+   */
+  readonly assignmentStore?: TokenAssignmentStore;
   // No caller-supplied token grammar policy (GLY-336 gate finding 2): the engine always uses the
   // frozen internal boundary policy, so a consumer can never register a PHI-bearing token role.
 }
@@ -186,6 +208,28 @@ interface DevEngineParts {
   readonly dictionaryVersion: DictionaryVersion;
   readonly sourceTruthRevision: string;
   readonly brandedEngineVersion: EngineVersion;
+}
+
+/** Snapshot and validate the caller-owned assignment authority without leaking boundary failures. */
+function snapshotAssignmentStore(
+  options: CreateSubstitutionEngineOptions,
+): TokenAssignmentStore | undefined {
+  try {
+    const assignmentStore = options.assignmentStore;
+    if (assignmentStore === undefined) return undefined;
+    if (
+      assignmentStore === null ||
+      (typeof assignmentStore !== "object" &&
+        typeof assignmentStore !== "function") ||
+      typeof assignmentStore.getOrAllocate !== "function" ||
+      typeof assignmentStore.retire !== "function"
+    ) {
+      throw new Error();
+    }
+    return assignmentStore;
+  } catch {
+    throw new PhiEngineError("DICTIONARY_UNAVAILABLE");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -218,13 +262,17 @@ function sealReverseStream(stream: ReverseStream): ReverseStream {
 
 function sealEngine(engine: PhiSubstitutionEngine): PhiSubstitutionEngine {
   const facade = Object.assign(Object.create(null) as object, {
-    substitute: (request: SubstitutionRequest): Promise<SubstitutionResult> => engine.substitute(request),
-    reverse: (text: TokenizedText, handle: ReversalHandle): Promise<DisplayText> =>
-      engine.reverse(text, handle),
+    substitute: (request: SubstitutionRequest): Promise<SubstitutionResult> =>
+      engine.substitute(request),
+    reverse: (
+      text: TokenizedText,
+      handle: ReversalHandle,
+    ): Promise<DisplayText> => engine.reverse(text, handle),
     createReverseStream: (
       handle: ReversalHandle,
       sink: (safe: DisplayText) => void | Promise<void>,
-    ): ReverseStream => sealReverseStream(engine.createReverseStream(handle, sink)),
+    ): ReverseStream =>
+      sealReverseStream(engine.createReverseStream(handle, sink)),
   });
   return Object.freeze(facade) as PhiSubstitutionEngine;
 }
@@ -233,22 +281,30 @@ function sealProvider(provider: DevBoundaryProvider): DevBoundaryProvider {
   const facade = Object.assign(Object.create(null) as object, {
     generateText: (options: BoundaryGenerateOptions): Promise<DisplayText> =>
       provider.generateText(options),
-    generateStream: (options: BoundaryGenerateOptions): Promise<ProtectedStreamResult> =>
-      provider.generateStream(options),
+    generateStream: (
+      options: BoundaryGenerateOptions,
+    ): Promise<ProtectedStreamResult> => provider.generateStream(options),
     embedText: (text: string, kind: string): Promise<readonly number[]> =>
       provider.embedText(text, kind),
   });
   return Object.freeze(facade) as DevBoundaryProvider;
 }
 
-function buildDevEngineParts(options: CreateSubstitutionEngineOptions): DevEngineParts {
+function buildDevEngineParts(
+  options: CreateSubstitutionEngineOptions,
+): DevEngineParts {
+  const assignmentStore = snapshotAssignmentStore(options);
   const tenantId = brand<TenantId>(options.tenantId ?? DEV_TENANT);
   const matterId = brand<MatterId>(options.matterId ?? DEV_MATTER);
   const sourceTruthRevision = options.sourceTruthRevision ?? DEV_REVISION;
   const versionBigint = options.dictionaryVersion ?? DEV_VERSION;
   const dictionaryVersion = brand<DictionaryVersion>(versionBigint);
-  const brandedEngineVersion = brand<EngineVersion>(options.engineVersion ?? DEV_ENGINE);
-  const schemaVersion = brand<SchemaVersion>(options.schemaVersion ?? DEV_SCHEMA);
+  const brandedEngineVersion = brand<EngineVersion>(
+    options.engineVersion ?? DEV_ENGINE,
+  );
+  const schemaVersion = brand<SchemaVersion>(
+    options.schemaVersion ?? DEV_SCHEMA,
+  );
 
   let coordinator: DictionaryVersionCoordinator;
   if (options.coordinator !== undefined) {
@@ -271,7 +327,8 @@ function buildDevEngineParts(options: CreateSubstitutionEngineOptions): DevEngin
     truthReader = inMemory;
   }
 
-  const reversalStore: ReversalWriteStore = options.reversalStore ?? new InMemoryReversalStore();
+  const reversalStore: ReversalWriteStore =
+    options.reversalStore ?? new InMemoryReversalStore();
 
   const engine = new ComposedSubstitutionEngine({
     coordinator,
@@ -279,6 +336,7 @@ function buildDevEngineParts(options: CreateSubstitutionEngineOptions): DevEngin
     sourceTruthRevision,
     reversalStore,
     engineVersion: brandedEngineVersion,
+    ...(assignmentStore === undefined ? {} : { assignmentStore }),
     // Token policy is intentionally NOT injectable from here — the engine defaults to the frozen
     // BOUNDARY_TOKEN_GRAMMAR_POLICY (GLY-336 gate finding 2).
   });
@@ -361,7 +419,8 @@ function extractBoundaryText(options: BoundaryGenerateOptions): string {
     }
   }
   for (const tool of options.tools ?? []) parts.push(tool.description);
-  if (typeof options.embeddingText === "string") parts.push(options.embeddingText);
+  if (typeof options.embeddingText === "string")
+    parts.push(options.embeddingText);
   return parts.join("\n");
 }
 
@@ -370,8 +429,13 @@ function extractBoundaryText(options: BoundaryGenerateOptions): string {
  * exported. It echoes the tokenized request back so the reverse path round-trips in dev; a
  * production caller injects a real `invokeRaw` binding. It never sees pre-substitution content.
  */
-class DevEchoRawProvider implements RawProviderPort<BoundaryGenerateOptions, string> {
-  public generateText(options: BoundaryGenerateOptions): Promise<TokenizedText> {
+class DevEchoRawProvider implements RawProviderPort<
+  BoundaryGenerateOptions,
+  string
+> {
+  public generateText(
+    options: BoundaryGenerateOptions,
+  ): Promise<TokenizedText> {
     return Promise.resolve(brand<TokenizedText>(firstBoundaryText(options)));
   }
 
@@ -382,7 +446,10 @@ class DevEchoRawProvider implements RawProviderPort<BoundaryGenerateOptions, str
     await onChunk(brand<TokenizedText>(firstBoundaryText(options)));
   }
 
-  public embedText(_text: TokenizedText, _kind: string): Promise<readonly number[]> {
+  public embedText(
+    _text: TokenizedText,
+    _kind: string,
+  ): Promise<readonly number[]> {
     return Promise.resolve([0.1, 0.2, 0.3]);
   }
 }
@@ -391,7 +458,9 @@ class DevEchoRawProvider implements RawProviderPort<BoundaryGenerateOptions, str
 class DevCollectingSafeTrace implements SafeAiTrace {
   public readonly payloads: string[] = [];
 
-  public request(paths: readonly Readonly<{ path: string; text: TokenizedText }>[]): Promise<void> {
+  public request(
+    paths: readonly Readonly<{ path: string; text: TokenizedText }>[],
+  ): Promise<void> {
     for (const entry of paths) this.payloads.push(String(entry.text));
     return Promise.resolve();
   }
@@ -401,7 +470,9 @@ class DevCollectingSafeTrace implements SafeAiTrace {
     return Promise.resolve();
   }
 
-  public metadata(_values: Readonly<Record<string, string | number | boolean | null>>): Promise<void> {
+  public metadata(
+    _values: Readonly<Record<string, string | number | boolean | null>>,
+  ): Promise<void> {
     return Promise.resolve();
   }
 }
@@ -411,17 +482,25 @@ class DevInMemoryAuditPrimaryStore implements AuditPrimaryStore {
   public readonly finalized: PhiAuditEvent[] = [];
   readonly #prepared = new Set<string>();
 
-  public prepare(record: PhiAuditPreparedRecord): Promise<
+  public prepare(
+    record: PhiAuditPreparedRecord,
+  ): Promise<
     | Readonly<{ status: "stored"; durableRecordId: string }>
     | Readonly<{ status: "already_exists"; durableRecordId: string }>
     | Readonly<{ status: "unavailable"; fixedFailureCode: string }>
   > {
     const id = record.attemptId as unknown as string;
     if (this.#prepared.has(id)) {
-      return Promise.resolve({ status: "already_exists", durableRecordId: `primary:${id}` });
+      return Promise.resolve({
+        status: "already_exists",
+        durableRecordId: `primary:${id}`,
+      });
     }
     this.#prepared.add(id);
-    return Promise.resolve({ status: "stored", durableRecordId: `primary:${id}` });
+    return Promise.resolve({
+      status: "stored",
+      durableRecordId: `primary:${id}`,
+    });
   }
 
   public finalize(event: PhiAuditEvent): Promise<void> {
@@ -435,7 +514,10 @@ class DevInMemorySpoolVolume implements SpoolVolume {
   public readonly durable = true;
   readonly #store = new Map<string, Uint8Array>();
 
-  public putAtomic(recordId: string, bytes: Uint8Array): Promise<Readonly<{ flushed: boolean }>> {
+  public putAtomic(
+    recordId: string,
+    bytes: Uint8Array,
+  ): Promise<Readonly<{ flushed: boolean }>> {
     this.#store.set(recordId, Uint8Array.from(bytes));
     return Promise.resolve({ flushed: true });
   }
@@ -516,17 +598,30 @@ export function createProtectedAiProvider(
   });
 
   const primary = new DevInMemoryAuditPrimaryStore();
-  const spool = new Aes256GcmAuditSpool(new DevInMemorySpoolVolume(), new DevFixedSpoolKeyProvider(), clock);
-  const audit = new DurablePhiAuditEmitter(primary, spool, new ExactAllowListAuditSerializer(), clock);
+  const spool = new Aes256GcmAuditSpool(
+    new DevInMemorySpoolVolume(),
+    new DevFixedSpoolKeyProvider(),
+    clock,
+  );
+  const audit = new DurablePhiAuditEmitter(
+    primary,
+    spool,
+    new ExactAllowListAuditSerializer(),
+    clock,
+  );
 
   const contextAccessor: MatterAiContextAccessor = {
     require: (): Promise<MatterAiContext> => Promise.resolve(parts.context),
   };
   const policyAccessor: MatterAiPolicyAccessor = {
-    require: (): Promise<TrustedMatterAiPolicy> => Promise.resolve(parts.policy),
+    require: (): Promise<TrustedMatterAiPolicy> =>
+      Promise.resolve(parts.policy),
   };
 
-  const provider = new ComposedProtectedAiProvider<BoundaryGenerateOptions, string>({
+  const provider = new ComposedProtectedAiProvider<
+    BoundaryGenerateOptions,
+    string
+  >({
     engine: parts.engine,
     context: contextAccessor,
     policy: policyAccessor,
@@ -537,7 +632,9 @@ export function createProtectedAiProvider(
     invokeRaw: rawProvider,
     engineVersion: parts.brandedEngineVersion,
     clock,
-    embeddingOptionsFactory: (text: string): BoundaryGenerateOptions => ({ embeddingText: text }),
+    embeddingOptionsFactory: (text: string): BoundaryGenerateOptions => ({
+      embeddingText: text,
+    }),
   });
 
   // Seal the provider AND the engine into unforgeable facades; freeze the bundle + its data records.
@@ -558,14 +655,22 @@ const ENGINE_POLICY_VERSION = /^sha256:[0-9a-f]{64}$/;
 const ENGINE_VERSION = /^[A-Za-z0-9._-]{1,64}$/;
 
 function requireMethods(value: unknown, methods: readonly string[]): void {
-  if (value === null || (typeof value !== "object" && typeof value !== "function")) throw new Error();
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  )
+    throw new Error();
   for (let i = 0; i < methods.length; i += 1) {
-    if (typeof (value as Record<string, unknown>)[methods[i]!] !== "function") throw new Error();
+    if (typeof (value as Record<string, unknown>)[methods[i]!] !== "function")
+      throw new Error();
   }
 }
 
 function snapshotProductionDependencies<GenerateOptions, EmbeddingKind>(
-  input: CreateProductionProtectedAiProviderOptions<GenerateOptions, EmbeddingKind>,
+  input: CreateProductionProtectedAiProviderOptions<
+    GenerateOptions,
+    EmbeddingKind
+  >,
 ): CreateProductionProtectedAiProviderOptions<GenerateOptions, EmbeddingKind> {
   try {
     const engine = input.engine;
@@ -588,10 +693,23 @@ function snapshotProductionDependencies<GenerateOptions, EmbeddingKind>(
     requireMethods(router, ["selectUsingOriginalContent"]);
     requireMethods(safeTrace, ["request", "response", "metadata"]);
     requireMethods(auditPrimary, ["prepare", "finalize"]);
-    requireMethods(auditSpool, ["appendPrepared", "finalize", "drainTo", "inspectEnvelope", "health"]);
+    requireMethods(auditSpool, [
+      "appendPrepared",
+      "finalize",
+      "drainTo",
+      "inspectEnvelope",
+      "health",
+    ]);
     if (typeof embeddingOptionsFactory !== "function") throw new Error();
-    if (typeof engineVersion !== "string" || !ENGINE_VERSION.test(engineVersion)) throw new Error();
-    if (typeof enginePolicyVersion !== "string" || !ENGINE_POLICY_VERSION.test(enginePolicyVersion)) {
+    if (
+      typeof engineVersion !== "string" ||
+      !ENGINE_VERSION.test(engineVersion)
+    )
+      throw new Error();
+    if (
+      typeof enginePolicyVersion !== "string" ||
+      !ENGINE_POLICY_VERSION.test(enginePolicyVersion)
+    ) {
       throw new Error();
     }
     if (clock !== undefined && typeof clock !== "function") throw new Error();
@@ -619,8 +737,14 @@ function snapshotProductionDependencies<GenerateOptions, EmbeddingKind>(
  * Compose the exact caller-owned engine and production ports into a capability-tight protected
  * surface. Construction snapshots references but invokes no port method and performs no I/O.
  */
-export function createProductionProtectedAiProvider<GenerateOptions, EmbeddingKind = string>(
-  dependencies: CreateProductionProtectedAiProviderOptions<GenerateOptions, EmbeddingKind>,
+export function createProductionProtectedAiProvider<
+  GenerateOptions,
+  EmbeddingKind = string,
+>(
+  dependencies: CreateProductionProtectedAiProviderOptions<
+    GenerateOptions,
+    EmbeddingKind
+  >,
 ): ProtectedAiCallSurface<GenerateOptions, EmbeddingKind> {
   const deps = snapshotProductionDependencies(dependencies);
   const clock = deps.clock ?? ((): string => new Date().toISOString());
@@ -630,7 +754,10 @@ export function createProductionProtectedAiProvider<GenerateOptions, EmbeddingKi
     new ExactAllowListAuditSerializer(),
     clock,
   );
-  const composedDeps: ComposedProductionProtectedAiProviderDeps<GenerateOptions, EmbeddingKind> = {
+  const composedDeps: ComposedProductionProtectedAiProviderDeps<
+    GenerateOptions,
+    EmbeddingKind
+  > = {
     production: true,
     engine: deps.engine,
     context: deps.context,
@@ -643,19 +770,29 @@ export function createProductionProtectedAiProvider<GenerateOptions, EmbeddingKi
     clock,
     embeddingOptionsFactory: deps.embeddingOptionsFactory,
   };
-  const provider = new ComposedProtectedAiProvider<GenerateOptions, EmbeddingKind>(composedDeps);
+  const provider = new ComposedProtectedAiProvider<
+    GenerateOptions,
+    EmbeddingKind
+  >(composedDeps);
   const facade = Object.assign(Object.create(null) as object, {
     generateText: (
       options: GenerateOptions,
       signal?: AbortSignal,
-    ): Promise<ProtectedAiTextResult> => provider.generateProductionText(options, signal),
+    ): Promise<ProtectedAiTextResult> =>
+      provider.generateProductionText(options, signal),
     streamText: (
       options: GenerateOptions,
       sink: DisplayChunkSink,
       signal?: AbortSignal,
-    ): Promise<ProtectedAiResultTail> => provider.streamProductionText(options, sink, signal),
-    embedText: (text: string, kind: EmbeddingKind): Promise<readonly number[]> =>
-      provider.embedText(text, kind),
+    ): Promise<ProtectedAiResultTail> =>
+      provider.streamProductionText(options, sink, signal),
+    embedText: (
+      text: string,
+      kind: EmbeddingKind,
+    ): Promise<readonly number[]> => provider.embedText(text, kind),
   });
-  return Object.freeze(facade) as ProtectedAiCallSurface<GenerateOptions, EmbeddingKind>;
+  return Object.freeze(facade) as ProtectedAiCallSurface<
+    GenerateOptions,
+    EmbeddingKind
+  >;
 }

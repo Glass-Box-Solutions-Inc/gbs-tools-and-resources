@@ -18,5 +18,8 @@ export function splitsSurrogatePair(text: string, index: number): boolean {
   if (index <= 0 || index >= text.length) {
     return false;
   }
-  return isHighSurrogate(text.charCodeAt(index - 1)) && isLowSurrogate(text.charCodeAt(index));
+  return (
+    isHighSurrogate(text.charCodeAt(index - 1)) &&
+    isLowSurrogate(text.charCodeAt(index))
+  );
 }

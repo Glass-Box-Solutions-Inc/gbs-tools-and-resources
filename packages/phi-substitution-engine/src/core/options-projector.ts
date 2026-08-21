@@ -12,9 +12,16 @@
  * `rebuild` reconstructs the option object from exactly one tokenized value per
  * classified segment path, so the raw provider only ever sees tokenized text.
  */
-import type { TextSegment, TextSegmentKind, TokenizedTextSegment } from "./contracts";
+import type {
+  TextSegment,
+  TextSegmentKind,
+  TokenizedTextSegment,
+} from "./contracts";
 import { PhiEngineError } from "./errors";
-import type { AiProviderOptionProjector, ClassifiedProviderOptions } from "./protected-ai-provider";
+import type {
+  AiProviderOptionProjector,
+  ClassifiedProviderOptions,
+} from "./protected-ai-provider";
 
 export interface BoundaryContentPart {
   readonly type: string;
@@ -93,7 +100,10 @@ const PROVIDER_VISIBLE_STRUCTURAL_STRING = /^[A-Za-z0-9_.:-]+$/u;
 /** Expected runtime type of each non-text sampling knob. A knob present with any OTHER type —
  *  above all an object/array that could smuggle PHI text through a numeric/boolean slot — fails
  *  closed rather than reaching the provider unclassified (L5). */
-const NON_TEXT_KNOB_TYPES: ReadonlyMap<string, "number" | "boolean" | "string"> = new Map([
+const NON_TEXT_KNOB_TYPES: ReadonlyMap<
+  string,
+  "number" | "boolean" | "string"
+> = new Map([
   ["temperature", "number"],
   ["maxTokens", "number"],
   ["topP", "number"],
@@ -101,7 +111,11 @@ const NON_TEXT_KNOB_TYPES: ReadonlyMap<string, "number" | "boolean" | "string"> 
   ["model", "string"],
 ]);
 
-function assertAllowedEnum(value: string, allowed: ReadonlySet<string>, path: string): void {
+function assertAllowedEnum(
+  value: string,
+  allowed: ReadonlySet<string>,
+  path: string,
+): void {
   if (!allowed.has(value)) {
     throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
       unvalidatedProviderString: path,
@@ -114,7 +128,10 @@ function assertStructuralProviderString(value: unknown, path: string): void {
   // an object whose `toString()` returns a benign token (e.g. `"safe_tool"`) would pass the pattern
   // and then be copied RAW to the provider (L5). Only a genuine string is a valid provider-visible
   // structural identifier.
-  if (typeof value !== "string" || !PROVIDER_VISIBLE_STRUCTURAL_STRING.test(value)) {
+  if (
+    typeof value !== "string" ||
+    !PROVIDER_VISIBLE_STRUCTURAL_STRING.test(value)
+  ) {
     throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
       unvalidatedProviderString: path,
     });
@@ -147,10 +164,10 @@ interface MutableOptions {
  * fields is deliberately absent — omitting a known field here is exactly the
  * "new text option silently egresses" regression the invariant forbids.
  */
-export class StructuralOptionsProjector
-  implements AiProviderOptionProjector<BoundaryGenerateOptions>
-{
-  public classify(options: BoundaryGenerateOptions): ClassifiedProviderOptions<BoundaryGenerateOptions> {
+export class StructuralOptionsProjector implements AiProviderOptionProjector<BoundaryGenerateOptions> {
+  public classify(
+    options: BoundaryGenerateOptions,
+  ): ClassifiedProviderOptions<BoundaryGenerateOptions> {
     // Snapshot the caller's options ONCE into an inert, getter-free object; every read below (and
     // the rebuild) uses the snapshot, so a getter cannot pass validation and then egress a
     // different, PHI-laden value (TOCTOU / L5 fail-closed).
@@ -168,7 +185,8 @@ export class StructuralOptionsProjector
       if (!KNOWN_TOP_LEVEL_KEYS.has(key)) {
         const value = raw[key];
         const textBearing =
-          typeof value === "string" || (typeof value === "object" && value !== null);
+          typeof value === "string" ||
+          (typeof value === "object" && value !== null);
         if (textBearing) {
           // §7/N2: the UNEXPECTED option KEY is caller-controlled and could ITSELF be PHI — never
           // echo it into the caller-visible error details; report only a fixed marker.
@@ -202,7 +220,11 @@ export class StructuralOptionsProjector
     // the same non-array hazard the per-message `content` guard closes one level down.
     for (const arrayKey of ["messages", "tools"] as const) {
       const arrayValue = raw[arrayKey];
-      if (arrayValue !== undefined && arrayValue !== null && !Array.isArray(arrayValue)) {
+      if (
+        arrayValue !== undefined &&
+        arrayValue !== null &&
+        !Array.isArray(arrayValue)
+      ) {
         throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
           malformedTextCarrier: arrayKey,
         });
@@ -244,7 +266,11 @@ export class StructuralOptionsProjector
           malformedTextCarrier: `messages[${i}]`,
         });
       }
-      assertAllowedEnum(message.role, ALLOWED_MESSAGE_ROLES, `messages[${i}].role`);
+      assertAllowedEnum(
+        message.role,
+        ALLOWED_MESSAGE_ROLES,
+        `messages[${i}].role`,
+      );
       // L5 fail-closed: `content` MUST be a genuine array. A non-array (e.g. an object with a no-op
       // `forEach` that skips classification and a `map` that later emits raw PHI through the clone)
       // is rejected BEFORE any of its own methods are invoked. The snapshot preserves a non-array
@@ -262,7 +288,11 @@ export class StructuralOptionsProjector
             malformedTextCarrier: `messages[${i}].content[${j}]`,
           });
         }
-        assertAllowedEnum(part.type, ALLOWED_CONTENT_TYPES, `messages[${i}].content[${j}].type`);
+        assertAllowedEnum(
+          part.type,
+          ALLOWED_CONTENT_TYPES,
+          `messages[${i}].content[${j}].type`,
+        );
         const partText = (part as unknown as Record<string, unknown>)["text"];
         // A `text` carrier that is present but NON-string (an object smuggling PHI) fails closed;
         // it must never bypass tokenization and egress raw via the clone (L5).
@@ -297,7 +327,9 @@ export class StructuralOptionsProjector
       // A tool description is a known text carrier and MUST be a string. A present-but-non-string
       // value (an object smuggling PHI text past the segment's `text` typing, then egressed RAW via
       // the clone) fails closed rather than passing through unclassified (L5).
-      const descriptionValue = (tool as unknown as Record<string, unknown>)["description"];
+      const descriptionValue = (tool as unknown as Record<string, unknown>)[
+        "description"
+      ];
       if (typeof descriptionValue !== "string") {
         throw new PhiEngineError("UNCLASSIFIED_PROVIDER_FIELD", undefined, {
           malformedTextCarrier: `tools[${k}].description`,
@@ -331,11 +363,15 @@ export class StructuralOptionsProjector
 
     const segments = intrinsicMap(collected, (entry) => entry.segment);
 
-    const expectedPaths = new Set(intrinsicMap(collected, (entry) => entry.segment.path));
+    const expectedPaths = new Set(
+      intrinsicMap(collected, (entry) => entry.segment.path),
+    );
 
     return {
       segments,
-      rebuild: (tokenized: readonly TokenizedTextSegment[]): BoundaryGenerateOptions => {
+      rebuild: (
+        tokenized: readonly TokenizedTextSegment[],
+      ): BoundaryGenerateOptions => {
         // L5 / fail-closed: rebuild requires an EXACT 1:1 mapping between the classified
         // paths and the tokenized segments. A missing segment (which would leave the raw
         // original value in place), an unexpected path, or a duplicate path all fail
@@ -400,7 +436,10 @@ export class StructuralOptionsProjector
  * to index-getter traps for a genuine dense array) are used. Full intrinsic replacement (Object,
  * Reflect) is out of the in-process threat model — an attacker at that level already has ACE.
  */
-function intrinsicMap<T, U>(arr: readonly T[], fn: (item: T, index: number) => U): U[] {
+function intrinsicMap<T, U>(
+  arr: readonly T[],
+  fn: (item: T, index: number) => U,
+): U[] {
   const out: U[] = [];
   const len = (arr as { length: number }).length;
   for (let i = 0; i < len; i += 1) {
@@ -409,7 +448,9 @@ function intrinsicMap<T, U>(arr: readonly T[], fn: (item: T, index: number) => U
   return out;
 }
 
-function snapshotBoundaryOptions(options: BoundaryGenerateOptions): MutableOptions {
+function snapshotBoundaryOptions(
+  options: BoundaryGenerateOptions,
+): MutableOptions {
   const src = options as unknown as Record<string, unknown>;
   const snap: Record<string, unknown> = {};
   for (const key of Object.keys(src)) {
@@ -444,20 +485,28 @@ function snapshotBoundaryOptions(options: BoundaryGenerateOptions): MutableOptio
 /** Fresh deep clone of the inert snapshot so a tokenized write never mutates the shared snapshot.
  *  Reads only the snapshot (never the caller's original), so it introduces no new getter reads. */
 function cloneSnapshot(snap: MutableOptions): MutableOptions {
-  const draft: MutableOptions = { ...(snap as unknown as Record<string, unknown>) };
+  const draft: MutableOptions = {
+    ...(snap as unknown as Record<string, unknown>),
+  };
   if (Array.isArray(snap.messages)) {
     // Intrinsic map (never `Array.prototype.map`): a hostile `map` override must not be able to make
     // the clone drop or corrupt a carrier and egress raw, un-tokenized text (§7/N2 / L5).
     draft.messages = intrinsicMap(snap.messages, (message) => ({
       role: message.role,
-      content: intrinsicMap(message.content as { type: string; text: string }[], (part) => ({
-        type: part.type,
-        text: part.text,
-      })),
+      content: intrinsicMap(
+        message.content as { type: string; text: string }[],
+        (part) => ({
+          type: part.type,
+          text: part.text,
+        }),
+      ),
     }));
   }
   if (Array.isArray(snap.tools)) {
-    draft.tools = intrinsicMap(snap.tools, (tool) => ({ name: tool.name, description: tool.description }));
+    draft.tools = intrinsicMap(snap.tools, (tool) => ({
+      name: tool.name,
+      description: tool.description,
+    }));
   }
   return draft;
 }

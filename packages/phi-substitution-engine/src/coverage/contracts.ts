@@ -1,4 +1,6 @@
-export type EgressSurfaceClassification = "ENGINE_COVERED" | "REVIEWED_CARVE_OUT";
+export type EgressSurfaceClassification =
+  | "ENGINE_COVERED"
+  | "REVIEWED_CARVE_OUT";
 
 export interface SourceSymbolRef {
   readonly repository: "glassy-user-production" | "adjudica-ai-app";
@@ -10,7 +12,11 @@ export interface EngineCoveredSurface {
   readonly classification: "ENGINE_COVERED";
   readonly id: string;
   readonly source: SourceSymbolRef;
-  readonly operation: "generation" | "stream" | "embedding" | "graph_extraction";
+  readonly operation:
+    | "generation"
+    | "stream"
+    | "embedding"
+    | "graph_extraction";
   readonly protectedBoundary: string;
 }
 
@@ -19,7 +25,11 @@ export interface ReviewedCarveOutSurface {
   readonly id: string;
   readonly source: SourceSymbolRef;
   readonly kind: "MULTIMODAL_IMAGE" | "NON_LLM_EGRESS";
-  readonly mitigation: readonly ("BAA_PROVIDER" | "MINIMUM_NECESSARY" | "SEPARATE_TICKET")[];
+  readonly mitigation: readonly (
+    | "BAA_PROVIDER"
+    | "MINIMUM_NECESSARY"
+    | "SEPARATE_TICKET"
+  )[];
   readonly reviewDecisionId: string;
   readonly expiresAt: string | null;
 }
@@ -33,16 +43,23 @@ export interface EgressSurfaceRegistry {
 
 export interface DiscoveredEgressSite {
   readonly source: SourceSymbolRef;
-  readonly evidence: "PROVIDER_IMPORT" | "SDK_CONSTRUCTION" | "RAW_FETCH" | "MODEL_HANDLE" | "KNOWN_ADAPTER_CALL";
+  readonly evidence:
+    | "PROVIDER_IMPORT"
+    | "SDK_CONSTRUCTION"
+    | "RAW_FETCH"
+    | "MODEL_HANDLE"
+    | "KNOWN_ADAPTER_CALL";
   readonly providerHostOrPackage: string;
 }
 
 export interface SurfaceRegistryVerifier {
   /** Fails for zero matches, multiple matches, stale file/symbol refs, or an expired carve-out. */
-  verify(input: Readonly<{
-    registry: EgressSurfaceRegistry;
-    discovered: readonly DiscoveredEgressSite[];
-  }>): Readonly<{
+  verify(
+    input: Readonly<{
+      registry: EgressSurfaceRegistry;
+      discovered: readonly DiscoveredEgressSite[];
+    }>,
+  ): Readonly<{
     ok: boolean;
     diagnostics: readonly Readonly<{
       code:
@@ -64,14 +81,20 @@ export interface ProviderEgressArchitecturePolicy {
 }
 
 export interface ProviderEgressArchitectureVerifier {
-  verify(policy: ProviderEgressArchitecturePolicy): Promise<Readonly<{
-    ok: boolean;
-    violations: readonly Readonly<{
-      file: string;
-      line: number;
-      rule: "RAW_IMPORT" | "SDK_CONSTRUCTION" | "RAW_PROVIDER_FETCH" | "RAW_MODEL_HANDLE";
-    }>[];
-  }>>;
+  verify(policy: ProviderEgressArchitecturePolicy): Promise<
+    Readonly<{
+      ok: boolean;
+      violations: readonly Readonly<{
+        file: string;
+        line: number;
+        rule:
+          | "RAW_IMPORT"
+          | "SDK_CONSTRUCTION"
+          | "RAW_PROVIDER_FETCH"
+          | "RAW_MODEL_HANDLE";
+      }>[];
+    }>
+  >;
 }
 
 /**
@@ -168,4 +191,7 @@ export interface AzureEgressPolicyEvidence {
 }
 
 /** Exact claims covered by `signature`; the signature object itself is never in its own digest. */
-export type AzureEgressPolicySignedClaims = Omit<AzureEgressPolicyEvidence, "signature">;
+export type AzureEgressPolicySignedClaims = Omit<
+  AzureEgressPolicyEvidence,
+  "signature"
+>;

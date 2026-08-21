@@ -38,7 +38,9 @@ function isValidCalendarDay(month: number, day: number): boolean {
  * known locale to fix the order we reject it with AMBIGUOUS_LOCALE rather than
  * guess either interpretation. Partial or non-calendar inputs are rejected too.
  */
-export function expandDateVariants(request: DateVariantRequest): VariantExpansion {
+export function expandDateVariants(
+  request: DateVariantRequest,
+): VariantExpansion {
   const trimmed = request.canonical.trim();
   const parsed = /^(\d{1,2})([/.-])(\d{1,2})\2(\d{4})$/.exec(trimmed);
   if (parsed === null) {
@@ -48,7 +50,11 @@ export function expandDateVariants(request: DateVariantRequest): VariantExpansio
   const first = Number(parsed[1]);
   const second = Number(parsed[3]);
   const year = Number(parsed[4]);
-  if (!Number.isInteger(first) || !Number.isInteger(second) || !Number.isInteger(year)) {
+  if (
+    !Number.isInteger(first) ||
+    !Number.isInteger(second) ||
+    !Number.isInteger(year)
+  ) {
     return { candidates: [], errorCode: "UNSUPPORTED_FORMAT" };
   }
 

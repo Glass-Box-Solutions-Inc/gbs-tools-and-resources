@@ -44,7 +44,8 @@ const CLASS_ROLE: Readonly<Record<IdentifierClass, string>> = {
   OTHER_TAGGED: "OTHER",
 };
 
-const asToken = (value: string): SubstitutionToken => value as unknown as SubstitutionToken;
+const asToken = (value: string): SubstitutionToken =>
+  value as unknown as SubstitutionToken;
 const asSubject = (value: string): SubjectId => value as unknown as SubjectId;
 const asUtf16 = (value: number): Utf16Offset => value as unknown as Utf16Offset;
 const num = (value: Utf16Offset): number => value as unknown as number;
@@ -122,7 +123,7 @@ function findAll(haystack: string, needle: string): number[] {
 /** mulberry32: deterministic PRNG so entry-order shuffles are reproducible per seed. */
 function seededShuffle<T>(items: readonly T[], seed: number): T[] {
   const out = items.slice();
-  let state = (seed >>> 0) || 0x9e3779b9;
+  let state = seed >>> 0 || 0x9e3779b9;
   const next = (): number => {
     state = (state + 0x6d2b79f5) >>> 0;
     let t = state;
@@ -162,12 +163,16 @@ export function runCollision(input: CollisionInput): CollisionResult {
     const known = knownValues[ki]!;
     // §7/N2: read each element's key fields getter-throw-safe (a throwing `literal`/`normalizedForm`
     // getter must not propagate raw out of this boundary).
-    const rawKey = safeString(known, "literal") ?? safeString(known, "normalizedForm");
+    const rawKey =
+      safeString(known, "literal") ?? safeString(known, "normalizedForm");
     if (rawKey === undefined) continue;
     const foldedKey = fold(rawKey, locale);
     for (const normalizedStart of findAll(normalizedText, foldedKey)) {
       const normalizedEnd = normalizedStart + foldedKey.length;
-      const originalSpan = offsetMap.toOriginalSpan(normalizedStart, normalizedEnd);
+      const originalSpan = offsetMap.toOriginalSpan(
+        normalizedStart,
+        normalizedEnd,
+      );
       if (originalSpan === null) continue; // C8: must land on original boundaries.
       const start = num(originalSpan.startUtf16);
       const end = num(originalSpan.endUtf16);
@@ -198,7 +203,10 @@ export function runCollision(input: CollisionInput): CollisionResult {
     detectorCandidates.push(span);
     const start = num(span.startUtf16);
     const end = num(span.endUtf16);
-    canonicalByKey.set(`${start}:${end}:det`, canonicalize(originalText.slice(start, end)));
+    canonicalByKey.set(
+      `${start}:${end}:det`,
+      canonicalize(originalText.slice(start, end)),
+    );
   }
 
   const orderedDict =
@@ -250,7 +258,8 @@ export function runCollision(input: CollisionInput): CollisionResult {
       start,
       end,
       token: tokenFor(span.identifierClass) as unknown as string,
-      canonical: canonicalByKey.get(`${start}:${end}:det`) ?? canonicalize(matchText),
+      canonical:
+        canonicalByKey.get(`${start}:${end}:det`) ?? canonicalize(matchText),
       matchText,
     });
   }
@@ -259,7 +268,11 @@ export function runCollision(input: CollisionInput): CollisionResult {
   const ordered = [...selected].sort((a, b) => a.start - b.start);
 
   const tokenizedText = spliceWith(originalText, ordered, (span) => span.token);
-  const reversedText = spliceWith(originalText, ordered, (span) => span.canonical);
+  const reversedText = spliceWith(
+    originalText,
+    ordered,
+    (span) => span.canonical,
+  );
 
   return {
     tokenizedText,

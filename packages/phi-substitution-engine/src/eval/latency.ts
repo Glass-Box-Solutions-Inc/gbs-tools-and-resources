@@ -34,7 +34,9 @@ export function nearestRankPercentile(
   samplesMs: readonly number[],
   percentile: number,
 ): number {
-  const sorted = samplesMs.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  const sorted = samplesMs
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
   if (sorted.length === 0) return 0;
   const clamped = Math.max(0, Math.min(100, percentile));
   const rank = Math.max(1, Math.ceil((clamped / 100) * sorted.length));
@@ -49,7 +51,10 @@ export function nearestRankPercentile(
  * alone. A small linear-congruential generator seeded by `bytes` supplies the
  * jitter — never `Date.now()`.
  */
-export function modelBeltLatencyMs(bytes: number, sampleCount = 1000): number[] {
+export function modelBeltLatencyMs(
+  bytes: number,
+  sampleCount = 1000,
+): number[] {
   const kib = Math.max(0, bytes) / 1024;
   const base = 6;
   const perKib = 1.5;
@@ -67,7 +72,10 @@ export function modelBeltLatencyMs(bytes: number, sampleCount = 1000): number[] 
 }
 
 /** Compute the P95/P99 envelope for the belt at `bytes`. */
-export function measureBeltEnvelope(bytes: number, sampleCount = 1000): LatencyEnvelope {
+export function measureBeltEnvelope(
+  bytes: number,
+  sampleCount = 1000,
+): LatencyEnvelope {
   const samples = modelBeltLatencyMs(bytes, sampleCount);
   return {
     p95Ms: nearestRankPercentile(samples, 95),
@@ -81,5 +89,8 @@ export function envelopeWithinBudget(
   envelope: LatencyEnvelope,
   budget: LatencyBudget,
 ): boolean {
-  return envelope.p95Ms < budget.p95ExclusiveMs && envelope.p99Ms <= budget.p99InclusiveMs;
+  return (
+    envelope.p95Ms < budget.p95ExclusiveMs &&
+    envelope.p99Ms <= budget.p99InclusiveMs
+  );
 }

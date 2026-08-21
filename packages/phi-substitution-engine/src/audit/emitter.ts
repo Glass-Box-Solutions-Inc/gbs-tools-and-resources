@@ -49,7 +49,9 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     this.#clock = clock;
   }
 
-  public async prepare(record: PhiAuditPreparedRecord): Promise<AuditPreparationReceipt> {
+  public async prepare(
+    record: PhiAuditPreparedRecord,
+  ): Promise<AuditPreparationReceipt> {
     // The PREPARED record is itself UNTRUSTED — its fields may be mutating/throwing getters or a
     // poisoned own iterator. Validate AND read-once snapshot it into an inert record here; a bad
     // record is AUDIT_SCHEMA_REJECTED, and ONLY the inert snapshot is keyed on, remembered, or handed
@@ -65,21 +67,31 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       if (isAuditError(error)) {
         const code = safeCodeString(error);
         if (code !== undefined && isAuditFailureCode(code)) {
-          throw new PhiAuditError(code, durableRecord.operationId, { attemptId: durableRecord.attemptId });
+          throw new PhiAuditError(code, durableRecord.operationId, {
+            attemptId: durableRecord.attemptId,
+          });
         }
       }
-      throw new PhiAuditError("AUDIT_SCHEMA_REJECTED", durableRecord.operationId, {
-        attemptId: durableRecord.attemptId,
-      });
+      throw new PhiAuditError(
+        "AUDIT_SCHEMA_REJECTED",
+        durableRecord.operationId,
+        {
+          attemptId: durableRecord.attemptId,
+        },
+      );
     }
 
     // N3 idempotency: an attempt id that already has a terminal in this process must
     // not be re-prepared — that would permit a second provider egress and a second
     // terminal event for the same logical attempt.
     if (this.#finalized.has(this.#key(durableRecord.attemptId))) {
-      throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", durableRecord.operationId, {
-        attemptId: durableRecord.attemptId,
-      });
+      throw new PhiAuditError(
+        "AUDIT_ATTEMPT_ALREADY_FINALIZED",
+        durableRecord.operationId,
+        {
+          attemptId: durableRecord.attemptId,
+        },
+      );
     }
 
     try {
@@ -90,9 +102,13 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
         // rather than placing a raw (PHI) value onto the returned receipt.
         const durableRecordId = safeString(primaryResult, "durableRecordId");
         if (durableRecordId === undefined) {
-          throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", durableRecord.operationId, {
-            attemptId: durableRecord.attemptId,
-          });
+          throw new PhiAuditError(
+            "AUDIT_DURABILITY_UNAVAILABLE",
+            durableRecord.operationId,
+            {
+              attemptId: durableRecord.attemptId,
+            },
+          );
         }
         const receipt: AuditPreparationReceipt = {
           attemptId: durableRecord.attemptId,
@@ -105,16 +121,24 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       if (primaryResult.status === "already_exists") {
         // A durable record for this attempt already exists — never egress or finalize a
         // second time for the same attempt id (N3 exactly-one-terminal / idempotency).
-        throw new PhiAuditError("AUDIT_ATTEMPT_ALREADY_FINALIZED", durableRecord.operationId, {
-          attemptId: durableRecord.attemptId,
-        });
+        throw new PhiAuditError(
+          "AUDIT_ATTEMPT_ALREADY_FINALIZED",
+          durableRecord.operationId,
+          {
+            attemptId: durableRecord.attemptId,
+          },
+        );
       }
 
       // Primary outage alone proceeds through the spool.
       if ((await this.#spool.health()) !== "ready") {
-        throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", durableRecord.operationId, {
-          attemptId: durableRecord.attemptId,
-        });
+        throw new PhiAuditError(
+          "AUDIT_DURABILITY_UNAVAILABLE",
+          durableRecord.operationId,
+          {
+            attemptId: durableRecord.attemptId,
+          },
+        );
       }
       const receipt = this.#snapshotReceipt(
         await this.#spool.appendPrepared(durableRecord),
@@ -132,25 +156,36 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       if (isAuditError(error)) {
         const code = safeCodeString(error); // read ONCE, getter-throw-safe
         if (code !== undefined && isAuditFailureCode(code)) {
-          throw new PhiAuditError(code, durableRecord.operationId, { attemptId: durableRecord.attemptId });
+          throw new PhiAuditError(code, durableRecord.operationId, {
+            attemptId: durableRecord.attemptId,
+          });
         }
       }
       // §7/N2 + N3: a RAW store/spool rejection must never surface an upstream message/code, and it
       // must be recognizable to the caller as an audit-layer failure (a `PhiAuditError`) so a failed
       // PREPARE is never re-attempted into a second durable record (no double-prepare).
-      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", durableRecord.operationId, {
-        attemptId: durableRecord.attemptId,
-      });
+      throw new PhiAuditError(
+        "AUDIT_DURABILITY_UNAVAILABLE",
+        durableRecord.operationId,
+        {
+          attemptId: durableRecord.attemptId,
+        },
+      );
     }
   }
 
-  public async finalize(receipt: AuditPreparationReceipt, event: PhiAuditEvent): Promise<void> {
+  public async finalize(
+    receipt: AuditPreparationReceipt,
+    event: PhiAuditEvent,
+  ): Promise<void> {
     // §7/N2: read the receipt's routing scalars ONCE, getter-throw-safe. finalize receives the receipt
     // THIS emitter returned from prepare(), but reading its members live would let a fabricated receipt
     // throw raw out of this method — snapshot `attemptId`/`location` into inert locals. A receipt with
     // no usable attempt id / location cannot be finalized against, so fail closed silently (the durable
     // record can still be drained/reconciled) rather than propagate a raw throw.
-    const attemptId = safeRead(receipt, "attemptId") as OperationAttemptId | undefined;
+    const attemptId = safeRead(receipt, "attemptId") as
+      | OperationAttemptId
+      | undefined;
     const location = safeString(receipt, "location");
     if (attemptId === undefined || location === undefined) {
       return;
@@ -203,13 +238,21 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
     this.#inFlight.delete(this.#key(attemptId));
   }
 
-  public async reconcileUnknownAfterSend(attemptId: OperationAttemptId, occurredAt: string): Promise<void> {
+  public async reconcileUnknownAfterSend(
+    attemptId: OperationAttemptId,
+    occurredAt: string,
+  ): Promise<void> {
     const inFlight = this.#inFlight.get(this.#key(attemptId));
     if (inFlight === undefined) {
       // No in-process PREPARED record: a sweeper drains the durable spool/primary record instead.
       return;
     }
-    const event = preparedToTerminalEvent(inFlight.prepared, "unknown_after_send", null, occurredAt || safeClockNow(this.#clock));
+    const event = preparedToTerminalEvent(
+      inFlight.prepared,
+      "unknown_after_send",
+      null,
+      occurredAt || safeClockNow(this.#clock),
+    );
     await this.finalize(inFlight.receipt, event);
   }
 
@@ -230,12 +273,17 @@ export class DurablePhiAuditEmitter implements PhiAuditEmitter {
       (location !== "PRIMARY_STORE" && location !== "ENCRYPTED_LOCAL_SPOOL") ||
       durableRecordId === undefined
     ) {
-      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", operationId, { attemptId });
+      throw new PhiAuditError("AUDIT_DURABILITY_UNAVAILABLE", operationId, {
+        attemptId,
+      });
     }
     return { attemptId, location, durableRecordId };
   }
 
-  #remember(receipt: AuditPreparationReceipt, prepared: PhiAuditPreparedRecord): void {
+  #remember(
+    receipt: AuditPreparationReceipt,
+    prepared: PhiAuditPreparedRecord,
+  ): void {
     this.#inFlight.set(this.#key(receipt.attemptId), { receipt, prepared });
   }
 

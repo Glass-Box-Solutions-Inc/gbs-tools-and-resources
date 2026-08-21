@@ -6,9 +6,15 @@ import {
   AzureSpoolMaintenance,
   DEFAULT_SUPERSEDE_RETENTION_MS,
 } from "../src/tokens/durable/azure/azure-spool-maintenance";
-import type { BlobProperties, BlobStore } from "../src/tokens/durable/azure/blob-store";
+import type {
+  BlobProperties,
+  BlobStore,
+} from "../src/tokens/durable/azure/blob-store";
 import type { ControlPlane } from "../src/tokens/durable/azure/control-plane";
-import { PostgresControlPlane, runMigrations } from "../src/tokens/durable/azure/postgres-control-plane";
+import {
+  PostgresControlPlane,
+  runMigrations,
+} from "../src/tokens/durable/azure/postgres-control-plane";
 import { InMemoryControlPlane } from "../src/tokens/durable/dev/in-memory-control-plane";
 import type {
   PreparedWriteHandle,
@@ -38,7 +44,10 @@ class FakeBlobStore implements BlobStore {
     return Promise.resolve();
   }
 
-  public finalize(stagingPath: string, blobPath: string): Promise<BlobProperties> {
+  public finalize(
+    stagingPath: string,
+    blobPath: string,
+  ): Promise<BlobProperties> {
     const bytes = this.#objects.get(stagingPath);
     if (bytes === undefined || this.#objects.has(blobPath)) {
       return Promise.reject(new Error("fake_finalize_failed"));
@@ -55,14 +64,18 @@ class FakeBlobStore implements BlobStore {
   public head(path: string): Promise<BlobProperties | undefined> {
     const bytes = this.#objects.get(path);
     const etag = this.#etags.get(path);
-    return Promise.resolve(bytes === undefined || etag === undefined
-      ? undefined
-      : { etag, len: bytes.byteLength });
+    return Promise.resolve(
+      bytes === undefined || etag === undefined
+        ? undefined
+        : { etag, len: bytes.byteLength },
+    );
   }
 
   public get(path: string): Promise<Uint8Array | undefined> {
     const bytes = this.#objects.get(path);
-    return Promise.resolve(bytes === undefined ? undefined : Uint8Array.from(bytes));
+    return Promise.resolve(
+      bytes === undefined ? undefined : Uint8Array.from(bytes),
+    );
   }
 
   public rename(fromPath: string, toPath: string): Promise<void> {
@@ -73,7 +86,9 @@ class FakeBlobStore implements BlobStore {
       return Promise.reject(notFound());
     }
     if (this.#objects.has(toPath)) {
-      return Promise.reject(Object.assign(new Error("fake_conflict"), { statusCode: 409 }));
+      return Promise.reject(
+        Object.assign(new Error("fake_conflict"), { statusCode: 409 }),
+      );
     }
     this.#objects.delete(fromPath);
     this.#etags.delete(fromPath);
@@ -97,7 +112,7 @@ class FakeBlobStore implements BlobStore {
 
   public put(path: string, bytes = Uint8Array.of(1, 2, 3)): void {
     this.#objects.set(path, Uint8Array.from(bytes));
-    this.#etags.set(path, `etag-${this.#etagSequence += 1}`);
+    this.#etags.set(path, `etag-${(this.#etagSequence += 1)}`);
   }
 
   public has(path: string): boolean {
@@ -142,8 +157,12 @@ async function seedUploading(
     preparedBlobId: handle,
     tenantId: TENANT,
     mappingKey: brand<ReversalMappingKey>(`mapping-${fixtureSequence}`),
-    idempotencyKey: brand<ReversalIdempotencyKey>(`idempotency-${fixtureSequence}`),
-    immutableScopeDigest: brand<ReversalScopeDigest>(`scope-${fixtureSequence}`),
+    idempotencyKey: brand<ReversalIdempotencyKey>(
+      `idempotency-${fixtureSequence}`,
+    ),
+    immutableScopeDigest: brand<ReversalScopeDigest>(
+      `scope-${fixtureSequence}`,
+    ),
     stagingPath,
     blobPath,
     attemptId: brand(`attempt-${fixtureSequence}`),
@@ -160,7 +179,10 @@ async function seedUploading(
     );
   }
   if (withStaging) {
-    await blobs.putStaging(stagingPath, Uint8Array.of(fixtureSequence & 0xff, 2, 3));
+    await blobs.putStaging(
+      stagingPath,
+      Uint8Array.of(fixtureSequence & 0xff, 2, 3),
+    );
   }
   const properties = await blobs.head(stagingPath);
   return {
@@ -178,7 +200,13 @@ async function seedFinalized(
   createdAtEpochMs = T0,
   backdatePool?: Pool,
 ): Promise<SeededPrepared> {
-  const seeded = await seedUploading(controlPlane, blobs, createdAtEpochMs, true, backdatePool);
+  const seeded = await seedUploading(
+    controlPlane,
+    blobs,
+    createdAtEpochMs,
+    true,
+    backdatePool,
+  );
   const finalized = await blobs.finalize(seeded.stagingPath, seeded.blobPath);
   await controlPlane.markFinalized({
     preparedBlobId: seeded.handle,
@@ -198,8 +226,13 @@ async function seedQuarantined(
     olderThanEpochMs: T0 + 1,
     limit: 1,
   });
-  expect(selected.rows.map((row) => row.preparedBlobId)).toEqual([seeded.handle]);
-  await blobs.rename(seeded.blobPath, `reclaim-quarantine/${seeded.handle as unknown as string}`);
+  expect(selected.rows.map((row) => row.preparedBlobId)).toEqual([
+    seeded.handle,
+  ]);
+  await blobs.rename(
+    seeded.blobPath,
+    `reclaim-quarantine/${seeded.handle as unknown as string}`,
+  );
   await controlPlane.markQuarantined({
     preparedBlobId: seeded.handle,
     quarantinedAtEpochMs,
@@ -237,30 +270,39 @@ describe("AzureSpoolMaintenance unit", () => {
       readDrainMilliseconds: 10,
     });
     const blobs = new FakeBlobStore();
-    expect(() => new AzureSpoolMaintenance({
-      controlPlane,
-      blobStore: blobs,
-      uploadHorizonMs: 1,
-      graceMs: 10,
-      supersedeRetentionMs: 10,
-      readDrainMs: 10,
-    })).not.toThrow();
-    expect(() => new AzureSpoolMaintenance({
-      controlPlane,
-      blobStore: blobs,
-      uploadHorizonMs: 1,
-      graceMs: 9,
-      supersedeRetentionMs: 10,
-      readDrainMs: 10,
-    })).toThrow("retention_window_order");
-    expect(() => new AzureSpoolMaintenance({
-      controlPlane,
-      blobStore: blobs,
-      uploadHorizonMs: 1,
-      graceMs: 10,
-      supersedeRetentionMs: 9,
-      readDrainMs: 10,
-    })).toThrow("retention_window_order");
+    expect(
+      () =>
+        new AzureSpoolMaintenance({
+          controlPlane,
+          blobStore: blobs,
+          uploadHorizonMs: 1,
+          graceMs: 10,
+          supersedeRetentionMs: 10,
+          readDrainMs: 10,
+        }),
+    ).not.toThrow();
+    expect(
+      () =>
+        new AzureSpoolMaintenance({
+          controlPlane,
+          blobStore: blobs,
+          uploadHorizonMs: 1,
+          graceMs: 9,
+          supersedeRetentionMs: 10,
+          readDrainMs: 10,
+        }),
+    ).toThrow("retention_window_order");
+    expect(
+      () =>
+        new AzureSpoolMaintenance({
+          controlPlane,
+          blobStore: blobs,
+          uploadHorizonMs: 1,
+          graceMs: 10,
+          supersedeRetentionMs: 9,
+          readDrainMs: 10,
+        }),
+    ).toThrow("retention_window_order");
     expect(blobs.renameCalls).toEqual([]);
     expect(blobs.removeCalls).toEqual([]);
   });
@@ -284,14 +326,27 @@ describe("AzureSpoolMaintenance unit", () => {
     });
     controlPlane.debugSetPreparedState(referenced.handle, "finalized");
 
-    const outcome = await maintenance(controlPlane, blobs, T0 + 100, 10_000, 10_000)
-      .reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 10 });
+    const outcome = await maintenance(
+      controlPlane,
+      blobs,
+      T0 + 100,
+      10_000,
+      10_000,
+    ).reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 10 });
 
     expect(outcome).toEqual({ scanned: 2, reclaimed: 1, skippedReferenced: 1 });
-    expect(controlPlane.debugPrepared(unreferenced.handle)?.state).toBe("quarantined");
+    expect(controlPlane.debugPrepared(unreferenced.handle)?.state).toBe(
+      "quarantined",
+    );
     expect(blobs.has(unreferenced.blobPath)).toBe(false);
-    expect(blobs.has(`reclaim-quarantine/${unreferenced.handle as unknown as string}`)).toBe(true);
-    expect(controlPlane.debugPrepared(referenced.handle)?.state).toBe("finalized");
+    expect(
+      blobs.has(
+        `reclaim-quarantine/${unreferenced.handle as unknown as string}`,
+      ),
+    ).toBe(true);
+    expect(controlPlane.debugPrepared(referenced.handle)?.state).toBe(
+      "finalized",
+    );
     expect(blobs.has(referenced.blobPath)).toBe(true);
   });
 
@@ -313,13 +368,22 @@ describe("AzureSpoolMaintenance unit", () => {
     });
     controlPlane.debugSetPreparedState(referenced.handle, "finalized");
 
-    const outcome = await maintenance(controlPlane, blobs, T0 + 100, 10_000, 10_000)
-      .reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 1 });
+    const outcome = await maintenance(
+      controlPlane,
+      blobs,
+      T0 + 100,
+      10_000,
+      10_000,
+    ).reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 1 });
 
     expect(outcome).toEqual({ scanned: 1, reclaimed: 0, skippedReferenced: 1 });
-    expect(controlPlane.debugPrepared(referenced.handle)?.state).toBe("finalized");
+    expect(controlPlane.debugPrepared(referenced.handle)?.state).toBe(
+      "finalized",
+    );
     expect(blobs.has(referenced.blobPath)).toBe(true);
-    expect(blobs.has(`reclaim-quarantine/${referenced.handle as unknown as string}`)).toBe(false);
+    expect(
+      blobs.has(`reclaim-quarantine/${referenced.handle as unknown as string}`),
+    ).toBe(false);
     expect(blobs.renameCalls).toEqual([]);
   });
 
@@ -328,7 +392,11 @@ describe("AzureSpoolMaintenance unit", () => {
     const blobs = new FakeBlobStore();
 
     for (let index = 0; index < 2; index += 1) {
-      const referenced = await seedFinalized(controlPlane, blobs, T0 - 2 + index);
+      const referenced = await seedFinalized(
+        controlPlane,
+        blobs,
+        T0 - 2 + index,
+      );
       const published = await controlPlane.publish({
         prepared: { handle: referenced.handle },
         expiresAtEpochMs: 2n ** 64n - 1n,
@@ -345,20 +413,33 @@ describe("AzureSpoolMaintenance unit", () => {
     }
     const reclaimable = await seedFinalized(controlPlane, blobs, T0);
 
-    await expect(controlPlane.previewReclamation({
-      olderThanEpochMs: T0 + 1,
-      uploadHorizonEpochMs: 0,
-      quarantinedBeforeEpochMs: 0,
-      limit: 2,
-      includeHardDelete: false,
-    })).resolves.toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
+    await expect(
+      controlPlane.previewReclamation({
+        olderThanEpochMs: T0 + 1,
+        uploadHorizonEpochMs: 0,
+        quarantinedBeforeEpochMs: 0,
+        limit: 2,
+        includeHardDelete: false,
+      }),
+    ).resolves.toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
 
-    const outcome = await maintenance(controlPlane, blobs, T0 + 100, 10_000, 10_000)
-      .reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
+    const outcome = await maintenance(
+      controlPlane,
+      blobs,
+      T0 + 100,
+      10_000,
+      10_000,
+    ).reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
 
     expect(outcome).toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
-    expect(controlPlane.debugPrepared(reclaimable.handle)?.state).toBe("quarantined");
-    expect(blobs.has(`reclaim-quarantine/${reclaimable.handle as unknown as string}`)).toBe(true);
+    expect(controlPlane.debugPrepared(reclaimable.handle)?.state).toBe(
+      "quarantined",
+    );
+    expect(
+      blobs.has(
+        `reclaim-quarantine/${reclaimable.handle as unknown as string}`,
+      ),
+    ).toBe(true);
   });
 
   it("does not let referenced Path 1 rows starve Path 3 across sweeps", async () => {
@@ -383,22 +464,34 @@ describe("AzureSpoolMaintenance unit", () => {
       controlPlane.debugSetPreparedState(referenced.handle, "finalized");
     }
 
-    await expect(controlPlane.previewReclamation({
-      olderThanEpochMs: T0 + 1,
-      uploadHorizonEpochMs: 0,
-      quarantinedBeforeEpochMs: T0 + 900,
-      limit: 2,
-      includeHardDelete: true,
-    })).resolves.toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
+    await expect(
+      controlPlane.previewReclamation({
+        olderThanEpochMs: T0 + 1,
+        uploadHorizonEpochMs: 0,
+        quarantinedBeforeEpochMs: T0 + 900,
+        limit: 2,
+        includeHardDelete: true,
+      }),
+    ).resolves.toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
 
     const worker = maintenance(controlPlane, blobs, T0 + 1_000, 100, 100);
-    const first = await worker.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
-    const second = await worker.reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
+    const first = await worker.reclaimOrphanedPrepared({
+      olderThanEpochMs: T0 + 1,
+      limit: 2,
+    });
+    const second = await worker.reclaimOrphanedPrepared({
+      olderThanEpochMs: T0 + 1,
+      limit: 2,
+    });
 
     expect(first).toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
     expect(second).toEqual({ scanned: 2, reclaimed: 0, skippedReferenced: 2 });
     expect(controlPlane.debugPrepared(quarantined.handle)).toBeUndefined();
-    expect(blobs.has(`reclaim-quarantine/${quarantined.handle as unknown as string}`)).toBe(false);
+    expect(
+      blobs.has(
+        `reclaim-quarantine/${quarantined.handle as unknown as string}`,
+      ),
+    ).toBe(false);
   });
 
   it("Path 2b completes a crash-left upload mark and tolerates absent staging/blob paths", async () => {
@@ -411,16 +504,23 @@ describe("AzureSpoolMaintenance unit", () => {
     });
     expect(marked.map((row) => row.preparedBlobId)).toEqual([uploading.handle]);
     blobs.keepOnRemove(uploading.stagingPath, true);
-    await expect(maintenance(controlPlane, blobs)
-      .reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 }))
-      .rejects.toThrow("remove_not_confirmed");
-    expect(controlPlane.debugPrepared(uploading.handle)?.state).toBe("upload_reclaim_marked");
+    await expect(
+      maintenance(controlPlane, blobs).reclaimOrphanedPrepared({
+        olderThanEpochMs: 0,
+        limit: 10,
+      }),
+    ).rejects.toThrow("remove_not_confirmed");
+    expect(controlPlane.debugPrepared(uploading.handle)?.state).toBe(
+      "upload_reclaim_marked",
+    );
 
     blobs.keepOnRemove(uploading.stagingPath, false);
     await blobs.remove(uploading.stagingPath);
 
-    const outcome = await maintenance(controlPlane, blobs)
-      .reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 });
+    const outcome = await maintenance(
+      controlPlane,
+      blobs,
+    ).reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 });
 
     expect(outcome).toEqual({ scanned: 1, reclaimed: 1, skippedReferenced: 0 });
     expect(controlPlane.debugPrepared(uploading.handle)).toBeUndefined();
@@ -436,14 +536,23 @@ describe("AzureSpoolMaintenance unit", () => {
     const young = await seedQuarantined(controlPlane, blobs, T0 + 950);
     const old = await seedQuarantined(controlPlane, blobs, T0 + 800);
 
-    const outcome = await maintenance(controlPlane, blobs, T0 + 1_000, 100, 100)
-      .reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 });
+    const outcome = await maintenance(
+      controlPlane,
+      blobs,
+      T0 + 1_000,
+      100,
+      100,
+    ).reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 });
 
     expect(outcome).toEqual({ scanned: 1, reclaimed: 1, skippedReferenced: 0 });
     expect(controlPlane.debugPrepared(young.handle)?.state).toBe("quarantined");
-    expect(blobs.has(`reclaim-quarantine/${young.handle as unknown as string}`)).toBe(true);
+    expect(
+      blobs.has(`reclaim-quarantine/${young.handle as unknown as string}`),
+    ).toBe(true);
     expect(controlPlane.debugPrepared(old.handle)).toBeUndefined();
-    expect(blobs.has(`reclaim-quarantine/${old.handle as unknown as string}`)).toBe(false);
+    expect(
+      blobs.has(`reclaim-quarantine/${old.handle as unknown as string}`),
+    ).toBe(false);
   });
 
   it("quarantine mode runs without Path 3 hard deletion", async () => {
@@ -461,11 +570,16 @@ describe("AzureSpoolMaintenance unit", () => {
       includeHardDelete: false,
     });
 
-    const outcome = await worker.reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 });
+    const outcome = await worker.reclaimOrphanedPrepared({
+      olderThanEpochMs: 0,
+      limit: 10,
+    });
 
     expect(outcome).toEqual({ scanned: 0, reclaimed: 0, skippedReferenced: 0 });
     expect(controlPlane.debugPrepared(old.handle)?.state).toBe("quarantined");
-    expect(blobs.has(`reclaim-quarantine/${old.handle as unknown as string}`)).toBe(true);
+    expect(
+      blobs.has(`reclaim-quarantine/${old.handle as unknown as string}`),
+    ).toBe(true);
   });
 
   it("shares one global inspection budget across Paths 1, 2, and 3", async () => {
@@ -476,17 +590,32 @@ describe("AzureSpoolMaintenance unit", () => {
     const uploading = await seedUploading(controlPlane, blobs, T0);
     const secondUploading = await seedUploading(controlPlane, blobs, T0);
 
-    const outcome = await maintenance(controlPlane, blobs, T0 + 1_000, 100, 100)
-      .reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
+    const outcome = await maintenance(
+      controlPlane,
+      blobs,
+      T0 + 1_000,
+      100,
+      100,
+    ).reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
 
     expect(outcome.scanned).toBe(2);
     expect(outcome.scanned).toBeLessThanOrEqual(2);
     expect(outcome.reclaimed).toBe(2);
-    expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe("quarantined");
+    expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe(
+      "quarantined",
+    );
     expect(controlPlane.debugPrepared(uploading.handle)).toBeUndefined();
-    expect(controlPlane.debugPrepared(secondUploading.handle)?.state).toBe("uploading");
-    expect(controlPlane.debugPrepared(quarantined.handle)?.state).toBe("quarantined");
-    expect(blobs.has(`reclaim-quarantine/${quarantined.handle as unknown as string}`)).toBe(true);
+    expect(controlPlane.debugPrepared(secondUploading.handle)?.state).toBe(
+      "uploading",
+    );
+    expect(controlPlane.debugPrepared(quarantined.handle)?.state).toBe(
+      "quarantined",
+    );
+    expect(
+      blobs.has(
+        `reclaim-quarantine/${quarantined.handle as unknown as string}`,
+      ),
+    ).toBe(true);
   });
 
   it("recovers a reclaim_marked row whose source was already renamed without renaming twice", async () => {
@@ -497,16 +626,25 @@ describe("AzureSpoolMaintenance unit", () => {
       olderThanEpochMs: T0 + 1,
       limit: 1,
     });
-    expect(selected.rows.map((row) => row.preparedBlobId)).toEqual([finalized.handle]);
+    expect(selected.rows.map((row) => row.preparedBlobId)).toEqual([
+      finalized.handle,
+    ]);
     const quarantinePath = `reclaim-quarantine/${finalized.handle as unknown as string}`;
     await blobs.rename(finalized.blobPath, quarantinePath);
     blobs.clearRenameCalls();
 
-    const outcome = await maintenance(controlPlane, blobs, T0 + 100, 10_000, 10_000)
-      .reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 });
+    const outcome = await maintenance(
+      controlPlane,
+      blobs,
+      T0 + 100,
+      10_000,
+      10_000,
+    ).reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 });
 
     expect(outcome).toEqual({ scanned: 1, reclaimed: 1, skippedReferenced: 0 });
-    expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe("quarantined");
+    expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe(
+      "quarantined",
+    );
     expect(blobs.has(quarantinePath)).toBe(true);
     expect(blobs.renameCalls).toEqual([]);
   });
@@ -523,10 +661,18 @@ describe("AzureSpoolMaintenance unit", () => {
     });
     await blobs.remove(finalized.blobPath);
 
-    await expect(maintenance(controlPlane, blobs, T0 + 100, 10_000, 10_000)
-      .reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 }))
-      .rejects.toThrow("quarantine_both_paths_absent");
-    expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe("reclaim_marked");
+    await expect(
+      maintenance(
+        controlPlane,
+        blobs,
+        T0 + 100,
+        10_000,
+        10_000,
+      ).reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 }),
+    ).rejects.toThrow("quarantine_both_paths_absent");
+    expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe(
+      "reclaim_marked",
+    );
   });
 
   it("leaves reclaim_marked and fails when the quarantine candidate length differs", async () => {
@@ -541,18 +687,29 @@ describe("AzureSpoolMaintenance unit", () => {
     });
     blobs.put(finalized.blobPath, Uint8Array.of(9));
 
-    await expect(maintenance(controlPlane, blobs, T0 + 100, 10_000, 10_000)
-      .reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 }))
-      .rejects.toThrow("quarantine_length_mismatch");
-    expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe("reclaim_marked");
-    expect(blobs.has(`reclaim-quarantine/${finalized.handle as unknown as string}`)).toBe(false);
+    await expect(
+      maintenance(
+        controlPlane,
+        blobs,
+        T0 + 100,
+        10_000,
+        10_000,
+      ).reclaimOrphanedPrepared({ olderThanEpochMs: 0, limit: 10 }),
+    ).rejects.toThrow("quarantine_length_mismatch");
+    expect(controlPlane.debugPrepared(finalized.handle)?.state).toBe(
+      "reclaim_marked",
+    );
+    expect(
+      blobs.has(`reclaim-quarantine/${finalized.handle as unknown as string}`),
+    ).toBe(false);
   });
 });
 
 const LIVE = !!process.env.PHI_REVERSAL_PG_TEST;
 
 function pgConfig(): PoolConfig {
-  const port = process.env.PGPORT === undefined ? 5432 : Number(process.env.PGPORT);
+  const port =
+    process.env.PGPORT === undefined ? 5432 : Number(process.env.PGPORT);
   if (!Number.isInteger(port) || port <= 0) throw new Error("invalid_PGPORT");
   return {
     host: process.env.PGHOST,
@@ -560,7 +717,9 @@ function pgConfig(): PoolConfig {
     password: process.env.PGPASSWORD,
     database: process.env.PGDATABASE,
     port,
-    ...(process.env.PGSSLMODE === "require" ? { ssl: { rejectUnauthorized: false } } : {}),
+    ...(process.env.PGSSLMODE === "require"
+      ? { ssl: { rejectUnauthorized: false } }
+      : {}),
   };
 }
 
@@ -605,8 +764,13 @@ describe.skipIf(!LIVE)("AzureSpoolMaintenance live Postgres", () => {
     const finalized = await seedFinalized(controlPlane, blobs, T0, pool);
     const uploading = await seedUploading(controlPlane, blobs, T0, true, pool);
 
-    const outcome = await maintenance(controlPlane, blobs, T0 + 1_000, 100, 10_000)
-      .reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 10 });
+    const outcome = await maintenance(
+      controlPlane,
+      blobs,
+      T0 + 1_000,
+      100,
+      10_000,
+    ).reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 10 });
 
     expect(outcome).toEqual({ scanned: 2, reclaimed: 2, skippedReferenced: 0 });
     const finalizedState = await pool.query<{
@@ -617,12 +781,21 @@ describe.skipIf(!LIVE)("AzureSpoolMaintenance live Postgres", () => {
        FROM reversal_prepared WHERE prepared_blob_id = $1`,
       [finalized.handle],
     );
-    expect(finalizedState.rows[0]).toEqual({ state: "quarantined", quarantined_at_ms: String(T0 + 1_000) });
-    expect(blobs.has(`reclaim-quarantine/${finalized.handle as unknown as string}`)).toBe(true);
-    expect((await pool.query(
-      `SELECT 1 FROM reversal_prepared WHERE prepared_blob_id = $1`,
-      [uploading.handle],
-    )).rowCount).toBe(0);
+    expect(finalizedState.rows[0]).toEqual({
+      state: "quarantined",
+      quarantined_at_ms: String(T0 + 1_000),
+    });
+    expect(
+      blobs.has(`reclaim-quarantine/${finalized.handle as unknown as string}`),
+    ).toBe(true);
+    expect(
+      (
+        await pool.query(
+          `SELECT 1 FROM reversal_prepared WHERE prepared_blob_id = $1`,
+          [uploading.handle],
+        )
+      ).rowCount,
+    ).toBe(0);
     expect(blobs.has(uploading.stagingPath)).toBe(false);
     expect(blobs.has(uploading.blobPath)).toBe(false);
   });
@@ -631,7 +804,12 @@ describe.skipIf(!LIVE)("AzureSpoolMaintenance live Postgres", () => {
     const blobs = new FakeBlobStore();
 
     for (let index = 0; index < 2; index += 1) {
-      const referenced = await seedFinalized(controlPlane, blobs, T0 - 2 + index, pool);
+      const referenced = await seedFinalized(
+        controlPlane,
+        blobs,
+        T0 - 2 + index,
+        pool,
+      );
       const published = await controlPlane.publish({
         prepared: { handle: referenced.handle },
         expiresAtEpochMs: 2n ** 64n - 1n,
@@ -651,18 +829,29 @@ describe.skipIf(!LIVE)("AzureSpoolMaintenance live Postgres", () => {
     }
     const reclaimable = await seedFinalized(controlPlane, blobs, T0, pool);
 
-    await expect(controlPlane.previewReclamation({
-      olderThanEpochMs: T0 + 1,
-      uploadHorizonEpochMs: 0,
-      quarantinedBeforeEpochMs: 0,
-      limit: 2,
-      includeHardDelete: false,
-    })).resolves.toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
+    await expect(
+      controlPlane.previewReclamation({
+        olderThanEpochMs: T0 + 1,
+        uploadHorizonEpochMs: 0,
+        quarantinedBeforeEpochMs: 0,
+        limit: 2,
+        includeHardDelete: false,
+      }),
+    ).resolves.toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
 
-    const outcome = await maintenance(controlPlane, blobs, T0 + 100, 10_000, 10_000)
-      .reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
+    const outcome = await maintenance(
+      controlPlane,
+      blobs,
+      T0 + 100,
+      10_000,
+      10_000,
+    ).reclaimOrphanedPrepared({ olderThanEpochMs: T0 + 1, limit: 2 });
 
     expect(outcome).toEqual({ scanned: 3, reclaimed: 1, skippedReferenced: 2 });
-    expect(blobs.has(`reclaim-quarantine/${reclaimable.handle as unknown as string}`)).toBe(true);
+    expect(
+      blobs.has(
+        `reclaim-quarantine/${reclaimable.handle as unknown as string}`,
+      ),
+    ).toBe(true);
   });
 });

@@ -11,21 +11,31 @@ import type { PhiEngineFailureCode } from "../core/contracts";
 
 export type DictionaryFailureCode = PhiEngineFailureCode;
 
-export const DICTIONARY_NOT_READY: DictionaryFailureCode = "DICTIONARY_NOT_READY";
-export const DICTIONARY_UNAVAILABLE: DictionaryFailureCode = "DICTIONARY_UNAVAILABLE";
-export const MISSING_TRUSTED_CONTEXT: DictionaryFailureCode = "MISSING_TRUSTED_CONTEXT";
-export const MISSING_TRUSTED_POLICY: DictionaryFailureCode = "MISSING_TRUSTED_POLICY";
-export const AMBIGUOUS_KNOWN_IDENTIFIER: DictionaryFailureCode = "AMBIGUOUS_KNOWN_IDENTIFIER";
+export const DICTIONARY_NOT_READY: DictionaryFailureCode =
+  "DICTIONARY_NOT_READY";
+export const DICTIONARY_UNAVAILABLE: DictionaryFailureCode =
+  "DICTIONARY_UNAVAILABLE";
+export const MISSING_TRUSTED_CONTEXT: DictionaryFailureCode =
+  "MISSING_TRUSTED_CONTEXT";
+export const MISSING_TRUSTED_POLICY: DictionaryFailureCode =
+  "MISSING_TRUSTED_POLICY";
+export const AMBIGUOUS_KNOWN_IDENTIFIER: DictionaryFailureCode =
+  "AMBIGUOUS_KNOWN_IDENTIFIER";
 
 /** Safe metadata only; never text/values/variants/offsets/policy terms. */
-export type SafeDetails = Readonly<Record<string, string | number | boolean | null>>;
+export type SafeDetails = Readonly<
+  Record<string, string | number | boolean | null>
+>;
 
 export class DictionaryError extends Error {
   public override readonly name = "PhiEngineError";
   public readonly code: DictionaryFailureCode;
   public readonly safeDetails: SafeDetails;
 
-  public constructor(code: DictionaryFailureCode, safeDetails: SafeDetails = {}) {
+  public constructor(
+    code: DictionaryFailureCode,
+    safeDetails: SafeDetails = {},
+  ) {
     super(code);
     this.code = code;
     this.safeDetails = safeDetails;

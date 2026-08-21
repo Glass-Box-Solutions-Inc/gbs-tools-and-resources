@@ -20,7 +20,9 @@ function asString(value: unknown): string | null {
 }
 
 function asStringArray(value: unknown): readonly string[] {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
 function asNumber(value: unknown, fallback: number): number {
@@ -31,7 +33,10 @@ function asSeparators(value: unknown): readonly StructuredSeparator[] {
   if (!Array.isArray(value)) return [];
   const out: StructuredSeparator[] = [];
   for (const entry of value) {
-    if (typeof entry === "string" && (KNOWN_SEPARATORS as readonly string[]).includes(entry)) {
+    if (
+      typeof entry === "string" &&
+      (KNOWN_SEPARATORS as readonly string[]).includes(entry)
+    ) {
       out.push(entry as StructuredSeparator);
     }
   }
@@ -79,7 +84,9 @@ function baseObservation(): OracleObservation {
  * the fixture's shape — a structured-id policy, a name (approved-alias) request,
  * or a date — and never from any `expected`/`forbidden` hint in the fixture.
  */
-function expandFromFixture(fixture: Readonly<Record<string, unknown>>): VariantExpansion {
+function expandFromFixture(
+  fixture: Readonly<Record<string, unknown>>,
+): VariantExpansion {
   const canonical = asString(fixture.canonical) ?? "";
 
   if (isRecord(fixture.policy)) {
@@ -90,7 +97,10 @@ function expandFromFixture(fixture: Readonly<Record<string, unknown>>): VariantE
         requiredAlphaPrefix: asString(policy.requiredAlphaPrefix),
         permittedSeparators: asSeparators(policy.permittedSeparators),
         allowCompactForm: policy.allowCompactForm === true,
-        minimumAlphanumericLength: asNumber(policy.minimumAlphanumericLength, 0),
+        minimumAlphanumericLength: asNumber(
+          policy.minimumAlphanumericLength,
+          0,
+        ),
       },
     });
   }
@@ -122,7 +132,13 @@ function runVariants(
   const providerPayloads =
     unrelatedText === null
       ? []
-      : [replaceAllowListedVariants(unrelatedText, expansion.candidates, VARIANT_PLACEHOLDER)];
+      : [
+          replaceAllowListedVariants(
+            unrelatedText,
+            expansion.candidates,
+            VARIANT_PLACEHOLDER,
+          ),
+        ];
 
   return {
     ...baseObservation(),
@@ -137,7 +153,10 @@ function runVariants(
 
 export function loadVariantsHarness(): ModuleHarness {
   return {
-    run(caseId: string, fixture: Readonly<Record<string, unknown>>): Promise<OracleObservation> {
+    run(
+      caseId: string,
+      fixture: Readonly<Record<string, unknown>>,
+    ): Promise<OracleObservation> {
       return Promise.resolve(runVariants(caseId, fixture));
     },
   };

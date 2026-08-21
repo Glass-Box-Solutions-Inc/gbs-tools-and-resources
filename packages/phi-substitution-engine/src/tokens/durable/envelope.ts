@@ -24,7 +24,9 @@ export function gcmEncrypt(
   aad: Uint8Array,
   plaintext: Uint8Array,
 ): GcmSealed {
-  const cipher = createCipheriv("aes-256-gcm", dek, nonce, { authTagLength: AUTH_TAG_BYTES });
+  const cipher = createCipheriv("aes-256-gcm", dek, nonce, {
+    authTagLength: AUTH_TAG_BYTES,
+  });
   cipher.setAAD(aad, { plaintextLength: plaintext.byteLength });
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const authTag = cipher.getAuthTag();
@@ -39,7 +41,9 @@ export function gcmDecrypt(
   ciphertext: Uint8Array,
   authTag: Uint8Array,
 ): Uint8Array {
-  const decipher = createDecipheriv("aes-256-gcm", dek, nonce, { authTagLength: AUTH_TAG_BYTES });
+  const decipher = createDecipheriv("aes-256-gcm", dek, nonce, {
+    authTagLength: AUTH_TAG_BYTES,
+  });
   decipher.setAAD(aad, { plaintextLength: ciphertext.byteLength });
   decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);

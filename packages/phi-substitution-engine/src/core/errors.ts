@@ -14,12 +14,16 @@ export class PhiEngineError extends Error {
   public readonly name = "PhiEngineError";
   public readonly code: PhiEngineFailureCode;
   public readonly operationId: OperationId;
-  public readonly safeDetails: Readonly<Record<string, string | number | boolean | null>>;
+  public readonly safeDetails: Readonly<
+    Record<string, string | number | boolean | null>
+  >;
 
   public constructor(
     code: PhiEngineFailureCode,
     operationId: OperationId = PLACEHOLDER_OPERATION_ID,
-    safeDetails: Readonly<Record<string, string | number | boolean | null>> = {},
+    safeDetails: Readonly<
+      Record<string, string | number | boolean | null>
+    > = {},
   ) {
     super(code);
     this.code = code;
@@ -38,23 +42,26 @@ export function isPhiEngineError(value: unknown): value is PhiEngineError {
   }
 }
 
-const PHI_ENGINE_FAILURE_CODES: ReadonlySet<string> = new Set<PhiEngineFailureCode>([
-  "MISSING_TRUSTED_CONTEXT",
-  "MISSING_TRUSTED_POLICY",
-  "DICTIONARY_NOT_READY",
-  "DICTIONARY_UNAVAILABLE",
-  "AMBIGUOUS_KNOWN_IDENTIFIER",
-  "DETECTOR_UNAVAILABLE",
-  "INVALID_DETECTOR_OFFSET",
-  "UNCLASSIFIED_PROVIDER_FIELD",
-  "AUDIT_DURABILITY_UNAVAILABLE",
-  "REVERSAL_FAILED",
-  "PROVIDER_SAFETY_GATE_FAILED",
-  "CALL_INTERRUPTED",
-]);
+const PHI_ENGINE_FAILURE_CODES: ReadonlySet<string> =
+  new Set<PhiEngineFailureCode>([
+    "MISSING_TRUSTED_CONTEXT",
+    "MISSING_TRUSTED_POLICY",
+    "DICTIONARY_NOT_READY",
+    "DICTIONARY_UNAVAILABLE",
+    "AMBIGUOUS_KNOWN_IDENTIFIER",
+    "DETECTOR_UNAVAILABLE",
+    "INVALID_DETECTOR_OFFSET",
+    "UNCLASSIFIED_PROVIDER_FIELD",
+    "AUDIT_DURABILITY_UNAVAILABLE",
+    "REVERSAL_FAILED",
+    "PROVIDER_SAFETY_GATE_FAILED",
+    "CALL_INTERRUPTED",
+  ]);
 
 /** True only for a recognized, fixed, safe PhiEngineFailureCode (never a raw upstream code). */
-export function isPhiEngineFailureCode(value: unknown): value is PhiEngineFailureCode {
+export function isPhiEngineFailureCode(
+  value: unknown,
+): value is PhiEngineFailureCode {
   return typeof value === "string" && PHI_ENGINE_FAILURE_CODES.has(value);
 }
 
@@ -82,7 +89,10 @@ export function safeCodeString(value: unknown): string | undefined {
  * (PHI-laden) code via an `as any` cast, or expose it through a throwing getter (§7/N2). Any
  * unrecognized, throwing, or non-string code → the fallback.
  */
-export function toFailureCode(value: unknown, fallback: PhiEngineFailureCode): PhiEngineFailureCode {
+export function toFailureCode(
+  value: unknown,
+  fallback: PhiEngineFailureCode,
+): PhiEngineFailureCode {
   const code = safeCodeString(value);
   return code !== undefined && isPhiEngineFailureCode(code) ? code : fallback;
 }

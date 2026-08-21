@@ -1,5 +1,9 @@
 import type { EngineVersion } from "./brands";
-import type { AiOperation, MatterAiContext, PhiEngineFailureCode } from "./contracts";
+import type {
+  AiOperation,
+  MatterAiContext,
+  PhiEngineFailureCode,
+} from "./contracts";
 import type {
   AuditPreparationReceipt,
   AuditPrimaryStore,
@@ -11,10 +15,17 @@ import { DurablePhiAuditEmitter } from "../audit/emitter";
 import { ExactAllowListAuditSerializer } from "../audit/serializer";
 import { preparedToTerminalEvent } from "../audit/event-factory";
 import { toTotalIdentifierCounts } from "../audit/counts";
-import { isPhiEngineError, isPhiEngineFailureCode, PhiEngineError } from "./errors";
+import {
+  isPhiEngineError,
+  isPhiEngineFailureCode,
+  PhiEngineError,
+} from "./errors";
 
 export type OriginalEgressProtocol = "HTTPS" | "WSS";
-export type OriginalEgressContentClass = "case-identifier" | "tts-text" | "audio-stream";
+export type OriginalEgressContentClass =
+  | "case-identifier"
+  | "tts-text"
+  | "audio-stream";
 
 export interface OriginalEgressPolicyQuery {
   readonly context: MatterAiContext;
@@ -57,7 +68,10 @@ export interface OriginalEgressAuthorization {
   readonly evidenceId: string;
   readonly enginePolicyVersion: string;
   readonly expiresAt: string;
-  finalize(outcome: PhiAuditOutcome, failureCode?: PhiEngineFailureCode): Promise<void>;
+  finalize(
+    outcome: PhiAuditOutcome,
+    failureCode?: PhiEngineFailureCode,
+  ): Promise<void>;
   toJSON(): never;
 }
 
@@ -80,9 +94,19 @@ const ENGINE_VERSION = /^[A-Za-z0-9._-]{1,64}$/;
 const ENGINE_POLICY_VERSION = /^sha256:[0-9a-f]{64}$/;
 const SAFE_RESULT_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const ISO_8601_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
-const PURPOSES: readonly AiOperation[] = ["generation", "stream", "embedding", "graph_extraction"];
+const PURPOSES: readonly AiOperation[] = [
+  "generation",
+  "stream",
+  "embedding",
+  "graph_extraction",
+];
 const AUDIT_OUTCOMES: readonly PhiAuditOutcome[] = [
-  "completed", "cancelled", "interrupted", "failed_closed", "reversal_failed", "unknown_after_send",
+  "completed",
+  "cancelled",
+  "interrupted",
+  "failed_closed",
+  "reversal_failed",
+  "unknown_after_send",
 ];
 const PROTOCOLS: readonly OriginalEgressProtocol[] = ["HTTPS", "WSS"];
 const CONTENT_CLASSES: readonly OriginalEgressContentClass[] = [
@@ -91,7 +115,10 @@ const CONTENT_CLASSES: readonly OriginalEgressContentClass[] = [
   "audio-stream",
 ];
 
-function includes<T extends string>(values: readonly T[], candidate: unknown): candidate is T {
+function includes<T extends string>(
+  values: readonly T[],
+  candidate: unknown,
+): candidate is T {
   if (typeof candidate !== "string") return false;
   for (let index = 0; index < values.length; index += 1) {
     if (values[index] === candidate) return true;
@@ -99,11 +126,18 @@ function includes<T extends string>(values: readonly T[], candidate: unknown): c
   return false;
 }
 
-function reject(request: Pick<OriginalEgressAuthorizationRequest, "context">): never {
-  throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", request.context.operationId);
+function reject(
+  request: Pick<OriginalEgressAuthorizationRequest, "context">,
+): never {
+  throw new PhiEngineError(
+    "PROVIDER_SAFETY_GATE_FAILED",
+    request.context.operationId,
+  );
 }
 
-function snapshotRequest(input: OriginalEgressAuthorizationRequest): OriginalEgressAuthorizationRequest {
+function snapshotRequest(
+  input: OriginalEgressAuthorizationRequest,
+): OriginalEgressAuthorizationRequest {
   try {
     const context = input.context;
     const tenantId = context.tenantId;
@@ -117,14 +151,27 @@ function snapshotRequest(input: OriginalEgressAuthorizationRequest): OriginalEgr
     const enginePolicyVersion = input.enginePolicyVersion;
     const purpose = input.purpose;
     if (
-      typeof tenantId !== "string" || typeof matterId !== "string" || typeof actorId !== "string" ||
-      typeof operationId !== "string" || typeof attemptId !== "string" ||
-      typeof destinationKey !== "string" || !SAFE_RESULT_IDENTIFIER.test(destinationKey) ||
-      !includes(PROTOCOLS, protocol) || !includes(CONTENT_CLASSES, contentClass) ||
-      !ENGINE_POLICY_VERSION.test(enginePolicyVersion) || !includes(PURPOSES, purpose)
-    ) throw new Error();
+      typeof tenantId !== "string" ||
+      typeof matterId !== "string" ||
+      typeof actorId !== "string" ||
+      typeof operationId !== "string" ||
+      typeof attemptId !== "string" ||
+      typeof destinationKey !== "string" ||
+      !SAFE_RESULT_IDENTIFIER.test(destinationKey) ||
+      !includes(PROTOCOLS, protocol) ||
+      !includes(CONTENT_CLASSES, contentClass) ||
+      !ENGINE_POLICY_VERSION.test(enginePolicyVersion) ||
+      !includes(PURPOSES, purpose)
+    )
+      throw new Error();
     return Object.freeze({
-      context: Object.freeze({ tenantId, matterId, actorId, operationId, attemptId }),
+      context: Object.freeze({
+        tenantId,
+        matterId,
+        actorId,
+        operationId,
+        attemptId,
+      }),
       destinationKey,
       protocol,
       contentClass,
@@ -153,10 +200,14 @@ function snapshotDecision(
     });
     if (
       decision.kind !== "AUTHORIZED_ORIGINAL" ||
-      typeof decision.decisionId !== "string" || decision.decisionId.length === 0 ||
-      typeof decision.evidenceId !== "string" || decision.evidenceId.length === 0 ||
-      typeof decision.expiresAt !== "string" || !ISO_8601_UTC.test(decision.expiresAt)
-    ) reject(request);
+      typeof decision.decisionId !== "string" ||
+      decision.decisionId.length === 0 ||
+      typeof decision.evidenceId !== "string" ||
+      decision.evidenceId.length === 0 ||
+      typeof decision.expiresAt !== "string" ||
+      !ISO_8601_UTC.test(decision.expiresAt)
+    )
+      reject(request);
     return decision;
   } catch (error) {
     if (isPhiEngineError(error)) throw error;
@@ -168,10 +219,12 @@ function decisionMatches(
   decision: AuthorizedOriginalEgressDecision,
   request: OriginalEgressAuthorizationRequest,
 ): boolean {
-  return decision.destinationKey === request.destinationKey &&
+  return (
+    decision.destinationKey === request.destinationKey &&
     decision.protocol === request.protocol &&
     decision.contentClass === request.contentClass &&
-    decision.enginePolicyVersion === request.enginePolicyVersion;
+    decision.enginePolicyVersion === request.enginePolicyVersion
+  );
 }
 
 function snapshotOptions(
@@ -184,16 +237,40 @@ function snapshotOptions(
     const auditPrimary = input.auditPrimary;
     const auditSpool = input.auditSpool;
     const clock = input.clock ?? ((): string => new Date().toISOString());
-    if (typeof engineVersion !== "string" || !ENGINE_VERSION.test(engineVersion)) throw new Error();
-    if (typeof enginePolicyVersion !== "string" || !ENGINE_POLICY_VERSION.test(enginePolicyVersion)) throw new Error();
-    if (typeof policy?.requireAuthorizedOriginalEgress !== "function") throw new Error();
-    if (typeof auditPrimary?.prepare !== "function" || typeof auditPrimary?.finalize !== "function") throw new Error();
     if (
-      typeof auditSpool?.appendPrepared !== "function" || typeof auditSpool?.finalize !== "function" ||
-      typeof auditSpool?.drainTo !== "function" || typeof auditSpool?.inspectEnvelope !== "function" ||
-      typeof auditSpool?.health !== "function" || typeof clock !== "function"
-    ) throw new Error();
-    return { engineVersion, enginePolicyVersion, policy, auditPrimary, auditSpool, clock };
+      typeof engineVersion !== "string" ||
+      !ENGINE_VERSION.test(engineVersion)
+    )
+      throw new Error();
+    if (
+      typeof enginePolicyVersion !== "string" ||
+      !ENGINE_POLICY_VERSION.test(enginePolicyVersion)
+    )
+      throw new Error();
+    if (typeof policy?.requireAuthorizedOriginalEgress !== "function")
+      throw new Error();
+    if (
+      typeof auditPrimary?.prepare !== "function" ||
+      typeof auditPrimary?.finalize !== "function"
+    )
+      throw new Error();
+    if (
+      typeof auditSpool?.appendPrepared !== "function" ||
+      typeof auditSpool?.finalize !== "function" ||
+      typeof auditSpool?.drainTo !== "function" ||
+      typeof auditSpool?.inspectEnvelope !== "function" ||
+      typeof auditSpool?.health !== "function" ||
+      typeof clock !== "function"
+    )
+      throw new Error();
+    return {
+      engineVersion,
+      enginePolicyVersion,
+      policy,
+      auditPrimary,
+      auditSpool,
+      clock,
+    };
   } catch {
     throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED");
   }
@@ -251,26 +328,39 @@ function authorizationHandle(
     evidenceId: decision.evidenceId,
     enginePolicyVersion: decision.enginePolicyVersion,
     expiresAt: decision.expiresAt,
-    finalize: async (outcome: PhiAuditOutcome, failureCode?: PhiEngineFailureCode): Promise<void> => {
+    finalize: async (
+      outcome: PhiAuditOutcome,
+      failureCode?: PhiEngineFailureCode,
+    ): Promise<void> => {
       if (finalized || finalizing) reject(request);
       if (!includes(AUDIT_OUTCOMES, outcome)) reject(request);
-      if (failureCode !== undefined && !isPhiEngineFailureCode(failureCode)) reject(request);
+      if (failureCode !== undefined && !isPhiEngineFailureCode(failureCode))
+        reject(request);
       const occurredAt = clock();
       const safeFailure = failureCode === undefined ? null : failureCode;
       finalizing = true;
       try {
-        await audit.finalize(receipt, preparedToTerminalEvent(prepared, outcome, safeFailure, occurredAt));
+        await audit.finalize(
+          receipt,
+          preparedToTerminalEvent(prepared, outcome, safeFailure, occurredAt),
+        );
         // The handle owns concurrent/finalize-once admission; the emitter owns durable idempotency.
         // Latch only after persistence so a transient terminal-write failure remains retryable.
         finalized = true;
       } catch {
-        throw new PhiEngineError("AUDIT_DURABILITY_UNAVAILABLE", request.context.operationId);
+        throw new PhiEngineError(
+          "AUDIT_DURABILITY_UNAVAILABLE",
+          request.context.operationId,
+        );
       } finally {
         finalizing = false;
       }
     },
     toJSON: (): never => {
-      throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", request.context.operationId);
+      throw new PhiEngineError(
+        "PROVIDER_SAFETY_GATE_FAILED",
+        request.context.operationId,
+      );
     },
   });
   return Object.freeze(handle) as OriginalEgressAuthorization;
@@ -300,7 +390,8 @@ export function createProductionProtectedOriginalEgressAuthorizer(
       issuedAttemptIds.add(attemptKey);
       let durablePrepared = false;
       try {
-        if (request.enginePolicyVersion !== deps.enginePolicyVersion) reject(request);
+        if (request.enginePolicyVersion !== deps.enginePolicyVersion)
+          reject(request);
         let rawDecision: AuthorizedOriginalEgressDecision;
         const query: OriginalEgressPolicyQuery = Object.freeze({
           context: request.context,
@@ -310,7 +401,8 @@ export function createProductionProtectedOriginalEgressAuthorizer(
           enginePolicyVersion: request.enginePolicyVersion,
         });
         try {
-          rawDecision = await deps.policy.requireAuthorizedOriginalEgress(query);
+          rawDecision =
+            await deps.policy.requireAuthorizedOriginalEgress(query);
         } catch {
           reject(request);
         }
@@ -320,31 +412,55 @@ export function createProductionProtectedOriginalEgressAuthorizer(
         const now = asEpoch(preparedAt);
         const expiry = asEpoch(decision.expiresAt);
         if (now === null || expiry === null || expiry <= now) reject(request);
-        const prepared = preparedRecord(request, deps.engineVersion, preparedAt);
+        const prepared = preparedRecord(
+          request,
+          deps.engineVersion,
+          preparedAt,
+        );
         let receipt: AuditPreparationReceipt;
         try {
           receipt = await audit.prepare(prepared);
           durablePrepared = true;
         } catch {
-          throw new PhiEngineError("AUDIT_DURABILITY_UNAVAILABLE", request.context.operationId);
+          throw new PhiEngineError(
+            "AUDIT_DURABILITY_UNAVAILABLE",
+            request.context.operationId,
+          );
         }
         const afterPrepare = asEpoch(deps.clock());
         if (afterPrepare === null || expiry <= afterPrepare) {
           try {
             await audit.finalize(
               receipt,
-              preparedToTerminalEvent(prepared, "failed_closed", "PROVIDER_SAFETY_GATE_FAILED", deps.clock()),
+              preparedToTerminalEvent(
+                prepared,
+                "failed_closed",
+                "PROVIDER_SAFETY_GATE_FAILED",
+                deps.clock(),
+              ),
             );
-          } catch { /* the caller still receives only the fixed authorization rejection */ }
+          } catch {
+            /* the caller still receives only the fixed authorization rejection */
+          }
           reject(request);
         }
-        return authorizationHandle(request, decision, receipt, audit, prepared, deps.clock);
+        return authorizationHandle(
+          request,
+          decision,
+          receipt,
+          audit,
+          prepared,
+          deps.clock,
+        );
       } catch (error) {
         // Before a durable PREPARE there is no issued capability/attempt, so a corrected retry is legal.
         // Once PREPARE lands the key stays reserved permanently, preventing #inFlight overwrite.
         if (!durablePrepared) issuedAttemptIds.delete(attemptKey);
         if (isPhiEngineError(error)) throw error;
-        throw new PhiEngineError("PROVIDER_SAFETY_GATE_FAILED", request.context.operationId);
+        throw new PhiEngineError(
+          "PROVIDER_SAFETY_GATE_FAILED",
+          request.context.operationId,
+        );
       }
     },
   });

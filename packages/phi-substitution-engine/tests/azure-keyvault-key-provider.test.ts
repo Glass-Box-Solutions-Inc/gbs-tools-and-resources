@@ -40,12 +40,16 @@ function digest(fill: number): AadBindingDigest {
 }
 
 function dek(): DekMaterial {
-  return bytes<DekMaterial>(Uint8Array.from({ length: 32 }, (_, index) => index));
+  return bytes<DekMaterial>(
+    Uint8Array.from({ length: 32 }, (_, index) => index),
+  );
 }
 
 /** Opaque reversible transport fake: it authenticates bytes but never parses the provider plaintext. */
 class FakeKekCryptoClient implements KekCryptoClient {
-  public readonly keyId = branded<WrappingKeyId>("https://fake.vault/keys/phi-engine-kek");
+  public readonly keyId = branded<WrappingKeyId>(
+    "https://fake.vault/keys/phi-engine-kek",
+  );
   public readonly keyVersion = branded<WrappingKeyVersion>("version-1");
   public unwrapCalls = 0;
   public unwrapResult: Uint8Array | undefined;
@@ -54,7 +58,9 @@ class FakeKekCryptoClient implements KekCryptoClient {
   public wrapKey(plaintext: Uint8Array): Promise<Uint8Array> {
     const payload = Uint8Array.from(plaintext, (value) => value ^ 0x5a);
     const checksum = createHash("sha256").update(payload).digest();
-    return Promise.resolve(Uint8Array.from([FAKE_TAG, ...checksum, ...payload]));
+    return Promise.resolve(
+      Uint8Array.from([FAKE_TAG, ...checksum, ...payload]),
+    );
   }
 
   public unwrapKey(wrapped: Uint8Array): Promise<Uint8Array> {
@@ -79,11 +85,19 @@ class FakeKekCryptoClient implements KekCryptoClient {
   }
 }
 
-async function wrappedFixture(client: FakeKekCryptoClient, bindingDigest = digest(0x11)) {
+async function wrappedFixture(
+  client: FakeKekCryptoClient,
+  bindingDigest = digest(0x11),
+) {
   const provider = new AzureKeyVaultKeyProvider(client);
   const key = await provider.getWrappingKey(SCOPE);
   const originalDek = dek();
-  const wrappedDek = await provider.wrap({ scope: SCOPE, key, dek: originalDek, bindingDigest });
+  const wrappedDek = await provider.wrap({
+    scope: SCOPE,
+    key,
+    dek: originalDek,
+    bindingDigest,
+  });
   return { provider, key, originalDek, wrappedDek, bindingDigest };
 }
 
@@ -138,26 +152,37 @@ describe("AzureKeyVaultKeyProvider", () => {
     // guard). Layout: version(1) || bindingDigest(32) || dek(rest).
     [
       "64-byte plaintext (correct version + matching digest, short dek)",
-      Uint8Array.from([0x01, ...new Uint8Array(32).fill(0x11), ...new Uint8Array(31)]),
+      Uint8Array.from([
+        0x01,
+        ...new Uint8Array(32).fill(0x11),
+        ...new Uint8Array(31),
+      ]),
     ],
     [
       "wrong encoding version (matching digest + full dek)",
-      Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x11), ...new Uint8Array(32)]),
+      Uint8Array.from([
+        0x02,
+        ...new Uint8Array(32).fill(0x11),
+        ...new Uint8Array(32),
+      ]),
     ],
-  ])("rejects %s returned by the KEK client", async (_description, malformedPlaintext) => {
-    const client = new FakeKekCryptoClient();
-    const fixture = await wrappedFixture(client);
-    client.unwrapResult = malformedPlaintext;
+  ])(
+    "rejects %s returned by the KEK client",
+    async (_description, malformedPlaintext) => {
+      const client = new FakeKekCryptoClient();
+      const fixture = await wrappedFixture(client);
+      client.unwrapResult = malformedPlaintext;
 
-    await expect(
-      fixture.provider.unwrap({
-        scope: SCOPE,
-        key: fixture.key,
-        wrappedDek: fixture.wrappedDek,
-        bindingDigest: fixture.bindingDigest,
-      }),
-    ).rejects.toThrow("azure_keyvault_key_provider_validation_failed");
-  });
+      await expect(
+        fixture.provider.unwrap({
+          scope: SCOPE,
+          key: fixture.key,
+          wrappedDek: fixture.wrappedDek,
+          bindingDigest: fixture.bindingDigest,
+        }),
+      ).rejects.toThrow("azure_keyvault_key_provider_validation_failed");
+    },
+  );
 
   it("rejects an unequal-length digest before the constant-time comparison or remote unwrap", async () => {
     const client = new FakeKekCryptoClient();
