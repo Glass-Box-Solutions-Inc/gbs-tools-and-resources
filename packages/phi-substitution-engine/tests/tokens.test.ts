@@ -1,7 +1,31 @@
 import { describe, expect, it } from "vitest";
+import { createTokensModule } from "../src/tokens/index";
 import { loadTokensHarness } from "./implementation-under-test";
 
 describe("phase-1 token assignment, escape, reversal, and streaming", () => {
+  it("GLY372-MUT-11-ORACLE: omission-mode retirement never reuses a burned token", async () => {
+    const { assignmentStore } = createTokensModule();
+    type AssignmentInput = Parameters<typeof assignmentStore.getOrAllocate>[0];
+    const firstSubject = {
+      tenantId: "tenant-retirement",
+      matterId: "matter-retirement",
+      subjectId: "subject-retired",
+      role: "Claimant",
+      dictionaryVersion: 1n,
+    } as unknown as AssignmentInput;
+
+    const retiredToken = await assignmentStore.getOrAllocate(firstSubject);
+    await assignmentStore.retire(firstSubject);
+    const replacementToken = await assignmentStore.getOrAllocate({
+      ...firstSubject,
+      subjectId: "subject-replacement",
+    } as unknown as AssignmentInput);
+
+    expect(String(retiredToken)).toBe("[[Claimant]]");
+    expect(String(replacementToken)).toBe("[[Claimant_2]]");
+    expect(replacementToken).not.toBe(retiredToken);
+  });
+
   it("SEC-L1-01 / M-L1-RENUMBER-TOKENS: existing subjects keep tokens across versions", async () => {
     const r = await loadTokensHarness().run("M-L1-RENUMBER-TOKENS", {
       version1: ["physician-z"],
